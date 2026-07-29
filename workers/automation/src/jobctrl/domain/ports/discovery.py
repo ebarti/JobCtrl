@@ -75,6 +75,44 @@ class ContentOwnerMatch:
     basis: ContentMatchBasis
 
 
+@dataclass(frozen=True)
+class ResolvedJobIdentity:
+    """Stable identity, current locator, and legacy storage key for one Job.
+
+    ``job_id`` is the canonical aggregate identifier and ``posting_url`` is
+    the mutable current external locator. ``storage_url`` is the physical
+    ``jobs.url`` key retained only because compatibility-era child tables
+    still reference it. Keeping all three values in one typed result prevents
+    callers from treating either the UUID or a new locator as the legacy
+    storage key while those tables are migrated in later slices.
+    """
+
+    tenant_id: TenantId
+    job_id: JobId
+    posting_url: PostingUrl
+    storage_url: PostingUrl
+
+
+class JobIdentityResolver(Protocol):
+    """Resolve stable Job identities without exposing persistence details."""
+
+    def resolve_by_job_id(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> ResolvedJobIdentity | None:
+        """Resolve a canonical aggregate identifier."""
+        ...
+
+    def resolve_by_posting_url(
+        self,
+        tenant_id: TenantId,
+        posting_url: PostingUrl,
+    ) -> ResolvedJobIdentity | None:
+        """Resolve a current or historical posting-URL alias."""
+        ...
+
+
 class JobBoardScraperPort(Protocol):
     """Driven port for external job-board scraping.
 
@@ -111,19 +149,19 @@ class JobBoardScraperPort(Protocol):
         ...
 
 
-class JobRepository(Protocol):
+class JobRepository(JobIdentityResolver, Protocol):
     """Persistence port for the ``Job`` aggregate.
 
-    All methods are tenant-scoped. Local adapters accept ``tenant_id``
-    and ignore the value (single-tenant); hosted adapters use it for row
-    isolation.
+    All methods are tenant-scoped. The local adapter persists and enforces
+    the tenant alongside stable identity even though local mode normally uses
+    one tenant.
 
     Dedup contract:
 
-      * ``save`` enforces the §4.1 invariant — duplicate
-        ``(tenant_id, posting_url)`` is rejected. Callers should
-        ``load_by_url`` first if they want to update an existing job
-        rather than insert a new one.
+      * ``save`` atomically claims a new posting URL or upserts the Job that
+        already owns the stable id. When a concurrent writer wins the same URL,
+        it returns that winner's stable ``JobId`` so the caller can re-enter
+        the existing-owner flow.
       * ``load_by_url`` returns the canonical ``Job`` for a posting URL,
         regardless of tombstone state, so the URL-resolution flow in
         enrichment can find the row even after a soft-delete.
@@ -137,14 +175,16 @@ class JobRepository(Protocol):
         """Return the Job whose ``posting_url`` matches, or ``None``."""
         ...
 
-    def save(self, job: Job) -> None:
+    def save(self, job: Job) -> JobId:
         """Persist the aggregate.
 
         Inserts on first save; subsequent saves with the same
         ``(tenant_id, job_id)`` perform an upsert that preserves
         ``discovered_at``. The repository is responsible for refusing
         a save whose ``(tenant_id, posting_url)`` collides with a
-        DIFFERENT ``job_id``.
+        DIFFERENT ``job_id``. Returns the persisted stable id, which can differ
+        from ``job.job_id`` only when another concurrent writer won the same
+        posting URL.
         """
         ...
 

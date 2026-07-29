@@ -45,6 +45,7 @@ from jobctrl.domain.events import (
     create_duplicate_job_linked,
 )
 from jobctrl.domain.discovery.source_registry import SMART_EXTRACT_EXPERIMENTAL_POLICY
+from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.ports.discovery import ContentOwnerMatch
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.network import (
@@ -149,7 +150,16 @@ def _merge_smart_extract_content_duplicate(
     the surviving owner, resurface it if it was soft-deleted, and skip the
     insert.
     """
-    owner_url = str(owner_match.job_id)
+    owner = repository.load(LOCAL_TENANT, owner_match.job_id)
+    if owner is None:
+        raise LookupError(f"Content owner disappeared before merge: {owner_match.job_id!r}")
+    owner_identity = repository.resolve_by_job_id(
+        LOCAL_TENANT,
+        owner_match.job_id,
+    )
+    if owner_identity is None:
+        raise LookupError(f"Content owner identity disappeared before merge: {owner_match.job_id!r}")
+    owner_storage_url = owner_identity.storage_url.value
     if owner_match.basis == "fingerprint":
         reason = "content_fingerprint_match"
         confidence = CONTENT_MATCH_CONFIDENCE
@@ -161,7 +171,7 @@ def _merge_smart_extract_content_duplicate(
         LOCAL_TENANT,
         DuplicateJobLink(
             duplicate_link_id=duplicate_link_id,
-            surviving_job_id=owner_url,
+            surviving_job_id=str(owner_match.job_id),
             superseded_job_or_observation_id=url,
             reason=reason,
             confidence=confidence,
@@ -185,14 +195,18 @@ def _merge_smart_extract_content_duplicate(
             LOCAL_TENANT,
             DuplicateJobLinkedPayload(
                 duplicate_link_id=duplicate_link_id,
-                surviving_job_id=owner_url,
+                surviving_job_id=owner_storage_url,
                 superseded_job_or_observation_id=url,
                 reason=reason,
                 confidence=confidence,
             ),
         )
     )
-    resurface_deleted_job(conn, owner_url, resurfaced_at=observed_at)
+    resurface_deleted_job(
+        conn,
+        owner_storage_url,
+        resurfaced_at=observed_at,
+    )
 
 
 def _store_jobs_filtered(
@@ -237,25 +251,35 @@ def _store_jobs_filtered(
         if not description:
             missing_description += 1
             continue
+        url_identity = repository.resolve_by_posting_url(
+            LOCAL_TENANT,
+            PostingUrl(value=url),
+        )
         content_owner = repository.find_content_owner(
             LOCAL_TENANT,
             title=str(job.get("title") or ""),
             company=str(job.get("company") or ""),
             description=description,
         )
-        if content_owner is not None and str(content_owner.job_id) != url:
-            _merge_smart_extract_content_duplicate(
-                conn,
-                repository,
-                publisher,
-                content_owner,
-                url=url,
-                site=site,
-                observed_at=now,
-                run_id=run_id,
-            )
-            existing += 1
-            continue
+        if content_owner is not None:
+            resolved_owner = repository.load(LOCAL_TENANT, content_owner.job_id)
+            if resolved_owner is None:
+                raise LookupError(f"Content owner disappeared before comparison: {content_owner.job_id!r}")
+            if resolved_owner.posting_url.value != url and (
+                url_identity is None or url_identity.job_id != content_owner.job_id
+            ):
+                _merge_smart_extract_content_duplicate(
+                    conn,
+                    repository,
+                    publisher,
+                    content_owner,
+                    url=url,
+                    site=site,
+                    observed_at=now,
+                    run_id=run_id,
+                )
+                existing += 1
+                continue
         try:
             conn.execute(
                 "INSERT INTO jobs (url, title, company, salary, description, location, site, strategy, discovered_at) "
@@ -274,6 +298,15 @@ def _store_jobs_filtered(
             )
             new += 1
         except sqlite3.IntegrityError:
+            # The incoming locator may be a current or historical alias while
+            # every deferred child row (including the tombstone) still uses the
+            # physical jobs.url key. Resolve again after the failed INSERT so a
+            # concurrent winner is visible too.
+            url_identity = repository.resolve_by_posting_url(
+                LOCAL_TENANT,
+                PostingUrl(value=url),
+            )
+            storage_url = url_identity.storage_url.value if url_identity is not None else url
             company = str(job.get("company") or "").strip()
             title = str(job.get("title") or "").strip()
             location = str(job.get("location") or "").strip()
@@ -282,7 +315,9 @@ def _store_jobs_filtered(
             update_values: list[str] = []
             metadata_payload: dict[str, object] = {"source": site}
             if title:
-                update_fields.append("title = CASE WHEN title IS NULL OR title = '' OR title != ? THEN ? ELSE title END")
+                update_fields.append(
+                    "title = CASE WHEN title IS NULL OR title = '' OR title != ? THEN ? ELSE title END"
+                )
                 update_values.extend([title, title])
                 metadata_payload["title"] = title
             if company:
@@ -294,9 +329,7 @@ def _store_jobs_filtered(
                 update_values.append(salary)
                 metadata_payload["salary"] = True
             if description:
-                update_fields.append(
-                    f"description = CASE WHEN {_MISSING_DESCRIPTION_SQL} THEN ? ELSE description END"
-                )
+                update_fields.append(f"description = CASE WHEN {_MISSING_DESCRIPTION_SQL} THEN ? ELSE description END")
                 update_values.append(description)
                 metadata_payload["description"] = True
             if location:
@@ -323,28 +356,31 @@ def _store_jobs_filtered(
                 if location:
                     predicate_values.append(location)
                 cursor = conn.execute(
-                    f"UPDATE jobs SET {', '.join(update_fields)} WHERE url = ? "
-                    f"AND ({' OR '.join(update_predicates)})",
-                    (*update_values, url, *predicate_values),
+                    f"UPDATE jobs SET {', '.join(update_fields)} WHERE url = ? AND ({' OR '.join(update_predicates)})",
+                    (*update_values, storage_url, *predicate_values),
                 )
                 if cursor.rowcount:
                     from jobctrl.state import record_job_event
 
                     record_job_event(
                         conn,
-                        url,
+                        storage_url,
                         "discover",
                         "JobMetadataUpdated",
                         message="Job metadata refreshed from SmartExtract",
                         payload=metadata_payload,
                         occurred_at=now,
                     )
-            resurface_deleted_job(conn, url, resurfaced_at=now)
+            resurface_deleted_job(
+                conn,
+                storage_url,
+                resurfaced_at=now,
+            )
             existing += 1
 
         repository.attach_source_observation(
             LOCAL_TENANT,
-            JobId(url),
+            url_identity.job_id if url_identity is not None else JobId(url),
             JobSourceObservation(
                 source_observation_id=f"obs:{uuid.uuid4().hex}",
                 source_id=f"smartextract:{site}",
@@ -417,9 +453,7 @@ def _empty_page_intelligence(url: str) -> dict:
     }
 
 
-def collect_page_intelligence(
-    url: str, headless: bool = True, *, session: PolitenessSession | None = None
-) -> dict:
+def collect_page_intelligence(url: str, headless: bool = True, *, session: PolitenessSession | None = None) -> dict:
     """Load a page with Playwright and collect every signal a scraping engineer
     would look at in DevTools. Returns a structured intelligence report.
 
@@ -1335,7 +1369,9 @@ def _run_one_site(name: str, url: str, cancel_event: threading.Event | None = No
     salaries = sum(1 for j in jobs if j.get("salary"))
     descs = sum(1 for j in jobs if _job_description_text(j))
     usable = sum(1 for j in jobs if j.get("title") and j.get("url") and _job_description_text(j))
-    status = "PASS" if total > 0 and usable / max(total, 1) >= 0.8 else "FAIL" if total == 0 or usable == 0 else "PARTIAL"
+    status = (
+        "PASS" if total > 0 and usable / max(total, 1) >= 0.8 else "FAIL" if total == 0 or usable == 0 else "PARTIAL"
+    )
     log.info(
         "RESULT: %s -- %d jobs, %d usable, %d titles, %d urls, %d salaries, %d descriptions",
         status,

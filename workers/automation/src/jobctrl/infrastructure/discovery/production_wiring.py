@@ -663,16 +663,26 @@ def _promote_ats_source_description_to_enrichment(
         source_native_id=identity.source_native_id,
         canonical_url=identity.canonical_url,
     ) or JobId(identity.canonical_url or posting.posting_url.value)
-    if job_repository.load(LOCAL_TENANT, job_id) is None:
+    job = job_repository.load(LOCAL_TENANT, job_id)
+    if job is None:
         return False
+    resolved_job = job_repository.resolve_by_job_id(
+        LOCAL_TENANT,
+        job.job_id,
+    )
+    if resolved_job is None:
+        return False
+    # Enrichment and stage tables remain URL-keyed until their dedicated
+    # migration slice. Do not leak the stable UUID into those child tables.
+    legacy_job_id = JobId(resolved_job.storage_url.value)
 
-    existing = enrichment_repository.load(LOCAL_TENANT, job_id)
+    existing = enrichment_repository.load(LOCAL_TENANT, legacy_job_id)
     if existing is not None and (existing.is_enriched or existing.is_running):
         return False
 
     base = existing or JobEnrichment.empty(
         tenant_id=LOCAL_TENANT,
-        job_id=job_id,
+        job_id=legacy_job_id,
         updated_at=observed_at,
     )
     succeeded = base.start_attempt(
@@ -686,7 +696,7 @@ def _promote_ats_source_description_to_enrichment(
     )
     enrichment_repository.save(succeeded)
 
-    job_url = str(job_id)
+    job_url = resolved_job.storage_url.value
     ensure_job_stage_rows(conn, job_url, discovered_at=observed_at)
     stage_row = conn.execute(
         "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",

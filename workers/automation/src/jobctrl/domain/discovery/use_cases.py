@@ -59,7 +59,11 @@ from jobctrl.domain.events import (
     create_job_restored,
     create_job_source_observed,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import (
+    JobId,
+    canonical_job_id,
+    generate_job_id,
+)
 from jobctrl.domain.job_content_identity import is_genuine_employer_identity
 from jobctrl.domain.ports.discovery import (
     ContentOwnerMatch,
@@ -234,6 +238,7 @@ class DiscoverJobsUseCase:
         run_id_factory: object | None = None,
         clock: object | None = None,
         observation_id_factory: Callable[[], str] | None = None,
+        job_id_factory: Callable[[], JobId] | None = None,
         republish_canonical_identity: bool = False,
     ) -> None:
         self._repository = repository
@@ -243,6 +248,7 @@ class DiscoverJobsUseCase:
         self._run_id_factory = run_id_factory or (lambda: f"run:{uuid.uuid4().hex}")
         self._clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
         self._observation_id_factory = observation_id_factory or (lambda: f"obs:{uuid.uuid4().hex}")
+        self._job_id_factory = job_id_factory or generate_job_id
         self._republish_canonical_identity = republish_canonical_identity
 
     def execute(
@@ -355,7 +361,10 @@ class DiscoverJobsUseCase:
         observed_at: str,
     ) -> DiscoveryDecision:
         canonical_posting_url = PostingUrl(value=identity.canonical_url)
-        job_id = JobId(canonical_posting_url.value)
+        try:
+            job_id = canonical_job_id(str(self._job_id_factory()))
+        except ValueError as exc:
+            raise ValueError("job_id_factory must return a canonical UUID JobId") from exc
         job = Job.discover(
             tenant_id=tenant_id,
             job_id=job_id,
@@ -373,7 +382,27 @@ class DiscoverJobsUseCase:
             result="new_job",
             confidence=identity.confidence,
         ):
-            self._repository.save(job)
+            persisted_job_id = self._repository.save(job)
+            if persisted_job_id != job_id:
+                return self._observe_existing_job(
+                    tenant_id=tenant_id,
+                    posting=posting,
+                    identity=identity,
+                    owner_id=persisted_job_id,
+                    run_id=run_id,
+                    observation_id=observation_id,
+                    observed_at=observed_at,
+                )
+            persisted_identity = self._repository.resolve_by_job_id(
+                tenant_id,
+                persisted_job_id,
+            )
+            if persisted_identity is None:
+                raise LookupError("New Job disappeared before identity metadata was persisted")
+            # Durable events remain URL-keyed until the quiescent
+            # event/projection cutover in Phase 4. Child writes are translated
+            # through this physical compatibility key too.
+            legacy_job_key = persisted_identity.storage_url.value
             self._repository.set_canonical_identity(tenant_id, job_id, identity)
             self._repository.attach_source_observation(
                 tenant_id,
@@ -391,7 +420,7 @@ class DiscoverJobsUseCase:
             create_job_discovered(
                 tenant_id,
                 JobDiscoveredPayload(
-                    job_id=str(job_id),
+                    job_id=legacy_job_key,
                     posting_url=canonical_posting_url.value,
                     source=posting.source.board,
                     employer="Unknown",
@@ -404,7 +433,7 @@ class DiscoverJobsUseCase:
             create_canonical_job_identity_resolved(
                 tenant_id,
                 CanonicalJobIdentityResolvedPayload(
-                    job_id=str(job_id),
+                    job_id=legacy_job_key,
                     canonical_url=identity.canonical_url,
                     ats_kind=identity.ats_kind.value,
                     source_native_id=identity.source_native_id,
@@ -416,7 +445,7 @@ class DiscoverJobsUseCase:
             create_job_source_observed(
                 tenant_id,
                 JobSourceObservedPayload(
-                    job_id=str(job_id),
+                    job_id=legacy_job_key,
                     source_observation_id=observation_id,
                     source_id=posting.source_id,
                     source_native_id=identity.source_native_id,
@@ -451,7 +480,21 @@ class DiscoverJobsUseCase:
         content_matched = content_match is not None
         observed_url = identity.canonical_url or posting.posting_url.value
         normalized_observed = normalize_observed_url(observed_url)
-        is_distinct_url = normalized_observed != normalize_observed_url(str(owner_id)) and normalized_observed != ""
+        owner_identity = self._repository.resolve_by_job_id(
+            tenant_id,
+            owner_id,
+        )
+        if owner_identity is None:
+            raise LookupError(f"Canonical owner disappeared before observation: {owner_id!r}")
+        existing = self._repository.load(tenant_id, owner_id)
+        if existing is None:
+            raise LookupError(f"Canonical owner disappeared before observation: {owner_id!r}")
+        # See the new-job path above: downstream durable events keep their
+        # current URL identity until the event upcaster and projection cutover.
+        legacy_job_key = owner_identity.storage_url.value
+        is_distinct_url = (
+            normalized_observed != normalize_observed_url(existing.posting_url.value) and normalized_observed != ""
+        )
 
         if not content_matched and identity.confidence < MIN_AUTO_MERGE_CONFIDENCE and is_distinct_url:
             with dedupe_span(
@@ -465,6 +508,7 @@ class DiscoverJobsUseCase:
             self._record_and_publish_rejected_duplicate(
                 tenant_id=tenant_id,
                 owner_id=owner_id,
+                legacy_job_key=legacy_job_key,
                 candidate_url=observed_url,
                 reason="confidence_below_threshold",
                 rejected_at=observed_at,
@@ -484,6 +528,7 @@ class DiscoverJobsUseCase:
             return self._reject_content_matched_duplicate(
                 tenant_id=tenant_id,
                 owner_id=owner_id,
+                legacy_job_key=legacy_job_key,
                 observation_id=observation_id,
                 candidate_url=observed_url,
                 confidence=identity.confidence,
@@ -497,7 +542,6 @@ class DiscoverJobsUseCase:
             result="observed" if acceptance.accepted else "policy_rejected",
             confidence=identity.confidence,
         ):
-            existing = self._repository.load(tenant_id, owner_id)
             if existing is not None:
                 if self._republish_canonical_identity:
                     stored_identity = self._repository.load_canonical_identity(
@@ -514,7 +558,7 @@ class DiscoverJobsUseCase:
                         create_canonical_job_identity_resolved(
                             tenant_id,
                             CanonicalJobIdentityResolvedPayload(
-                                job_id=str(owner_id),
+                                job_id=legacy_job_key,
                                 canonical_url=identity.canonical_url,
                                 ats_kind=identity.ats_kind.value,
                                 source_native_id=identity.source_native_id,
@@ -528,6 +572,7 @@ class DiscoverJobsUseCase:
                         self._soft_delete_policy_rejected_job(
                             tenant_id=tenant_id,
                             job_id=owner_id,
+                            legacy_job_key=legacy_job_key,
                             reason=reason,
                             deleted_at=observed_at,
                         )
@@ -545,7 +590,7 @@ class DiscoverJobsUseCase:
                     )
                     self._publish_source_observed(
                         tenant_id=tenant_id,
-                        job_id=owner_id,
+                        legacy_job_key=legacy_job_key,
                         observation_id=observation_id,
                         posting=posting,
                         identity=identity,
@@ -572,7 +617,7 @@ class DiscoverJobsUseCase:
                             create_job_restored(
                                 tenant_id,
                                 JobRestoredPayload(
-                                    job_id=str(owner_id),
+                                    job_id=legacy_job_key,
                                     restored_at=observed_at,
                                 ),
                             )
@@ -593,7 +638,7 @@ class DiscoverJobsUseCase:
             )
         self._publish_source_observed(
             tenant_id=tenant_id,
-            job_id=owner_id,
+            legacy_job_key=legacy_job_key,
             observation_id=observation_id,
             posting=posting,
             identity=identity,
@@ -635,7 +680,7 @@ class DiscoverJobsUseCase:
                     tenant_id,
                     DuplicateJobLinkedPayload(
                         duplicate_link_id=duplicate_link_id,
-                        surviving_job_id=str(owner_id),
+                        surviving_job_id=legacy_job_key,
                         superseded_job_or_observation_id=observation_id,
                         reason=link.reason,
                         confidence=link_confidence,
@@ -658,6 +703,7 @@ class DiscoverJobsUseCase:
         *,
         tenant_id: TenantId,
         owner_id: JobId,
+        legacy_job_key: str,
         observation_id: str,
         candidate_url: str,
         confidence: float,
@@ -687,6 +733,7 @@ class DiscoverJobsUseCase:
         self._record_and_publish_rejected_duplicate(
             tenant_id=tenant_id,
             owner_id=owner_id,
+            legacy_job_key=legacy_job_key,
             candidate_url=candidate_url,
             reason=f"content_match_policy_rejected: {_policy_rejection_reason(acceptance)}",
             rejected_at=rejected_at,
@@ -703,6 +750,7 @@ class DiscoverJobsUseCase:
         *,
         tenant_id: TenantId,
         owner_id: JobId,
+        legacy_job_key: str,
         candidate_url: str,
         reason: str,
         rejected_at: str,
@@ -728,7 +776,7 @@ class DiscoverJobsUseCase:
                 tenant_id,
                 DuplicateJobLinkRejectedPayload(
                     duplicate_link_id=f"dup:{uuid.uuid4().hex}",
-                    job_id=str(owner_id),
+                    job_id=legacy_job_key,
                     candidate_job_id=candidate_url,
                     reason=reason,
                     rejected_at=rejected_at,
@@ -740,7 +788,7 @@ class DiscoverJobsUseCase:
         self,
         *,
         tenant_id: TenantId,
-        job_id: JobId,
+        legacy_job_key: str,
         observation_id: str,
         posting: ScrapedJobPosting,
         identity: CanonicalJobIdentity,
@@ -752,7 +800,7 @@ class DiscoverJobsUseCase:
             create_job_source_observed(
                 tenant_id,
                 JobSourceObservedPayload(
-                    job_id=str(job_id),
+                    job_id=legacy_job_key,
                     source_observation_id=observation_id,
                     source_id=posting.source_id,
                     source_native_id=identity.source_native_id,
@@ -768,6 +816,7 @@ class DiscoverJobsUseCase:
         *,
         tenant_id: TenantId,
         job_id: JobId,
+        legacy_job_key: str,
         reason: str,
         deleted_at: str,
     ) -> None:
@@ -783,7 +832,7 @@ class DiscoverJobsUseCase:
             create_job_deleted(
                 tenant_id,
                 JobDeletedPayload(
-                    job_id=str(job_id),
+                    job_id=legacy_job_key,
                     reason=reason,
                     deleted_at=deleted_at,
                 ),

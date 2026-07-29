@@ -9,14 +9,18 @@ from jobctrl.database import close_connection, init_db
 from jobctrl.discovery import smartextract
 from jobctrl.domain.discovery import (
     AtsKind,
+    DuplicateJobLink,
+    Employer,
+    Job,
     JobMetadata,
     PostingUrl,
     SearchStrategy,
     Source,
 )
 from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
+from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.discovery import SqliteJobRepository
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 
@@ -28,7 +32,13 @@ def test_short_headless_html_never_retries_headful_in_the_bundled_core(
 
     def collect(_url: str, **kwargs: object) -> dict[str, object]:
         calls.append(kwargs)
-        return {"full_html": "<html>short</html>", "json_ld": [], "api_responses": [], "data_testids": [], "card_candidates": []}
+        return {
+            "full_html": "<html>short</html>",
+            "json_ld": [],
+            "api_responses": [],
+            "data_testids": [],
+            "card_candidates": [],
+        }
 
     monkeypatch.setattr(smartextract, "collect_page_intelligence", collect)
     monkeypatch.setattr(smartextract, "is_bundled_runtime", lambda: True)
@@ -445,6 +455,109 @@ def test_smart_extract_updates_existing_serialized_null_description(
         close_connection(db_path)
 
 
+def test_smart_extract_current_alias_refreshes_and_restores_storage_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    conn = init_db(db_path)
+    try:
+        repository = SqliteJobRepository(conn)
+        stable_job_id = JobId("e02fc922-8320-4455-9f6b-ad839b9f7a8d")
+        storage_url = "https://example.com/jobs/original"
+        current_url = "https://example.com/jobs/current"
+        original = Job.discover(
+            tenant_id=LOCAL_TENANT,
+            job_id=stable_job_id,
+            posting_url=PostingUrl(value=storage_url),
+            source=Source(board="Acme Careers"),
+            employer=Employer(name="Acme"),
+            search_strategy=SearchStrategy.MANUAL,
+            metadata=JobMetadata(
+                title="Engineering Director",
+                description="Lead the engineering organization.",
+                location="Remote",
+            ),
+            discovered_at="2026-05-20T00:00:00+00:00",
+        )
+        assert repository.save(original) == stable_job_id
+        moved = Job.discover(
+            tenant_id=LOCAL_TENANT,
+            job_id=stable_job_id,
+            posting_url=PostingUrl(value=current_url),
+            source=original.source,
+            employer=original.employer,
+            search_strategy=original.search_strategy,
+            metadata=original.metadata,
+            discovered_at=original.discovered_at,
+        )
+        assert repository.save(moved) == stable_job_id
+        repository.soft_delete(
+            LOCAL_TENANT,
+            stable_job_id,
+            reason="temporarily hidden",
+            deleted_at="2026-05-21T00:00:00+00:00",
+        )
+
+        assert smartextract._store_jobs_filtered(
+            conn,
+            [
+                {
+                    "url": current_url,
+                    "title": "Head of Engineering",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "description": "Lead the engineering organization.",
+                }
+            ],
+            "Acme Careers",
+            "static",
+            ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
+            ["United States", "Canada"],
+            query="Head of Engineering",
+            run_id="run-current-alias",
+        ) == (0, 1)
+
+        loaded = repository.load(LOCAL_TENANT, stable_job_id)
+        assert loaded is not None
+        assert loaded.posting_url == PostingUrl(value=current_url)
+        assert loaded.metadata.title == "Head of Engineering"
+        assert loaded.metadata.location == "Barcelona, Spain"
+        assert loaded.is_deleted is False
+        physical = conn.execute(
+            "SELECT url FROM jobs WHERE job_id = ?",
+            (str(stable_job_id),),
+        ).fetchone()
+        assert physical["url"] == storage_url
+        tombstones = conn.execute("SELECT job_url, restored_at FROM jobctrl_deleted_jobs").fetchall()
+        assert [(row["job_url"], row["restored_at"] is not None) for row in tombstones] == [(storage_url, True)]
+        event_urls = {
+            row["job_url"]
+            for row in conn.execute(
+                """
+                SELECT job_url
+                FROM job_events
+                WHERE event_type IN ('JobMetadataUpdated', 'JobRestored')
+                """
+            ).fetchall()
+        }
+        assert event_urls == {storage_url}
+        observation_urls = {
+            row["job_url"]
+            for row in conn.execute(
+                """
+                SELECT job_url
+                FROM job_source_observations
+                WHERE source_id = 'smartextract:Acme Careers'
+                """
+            ).fetchall()
+        }
+        assert observation_urls == {storage_url}
+    finally:
+        close_connection(db_path)
+
+
 def test_smart_extract_refreshes_existing_title_location_before_restore(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -596,6 +709,47 @@ def test_smart_extract_dedups_against_ats_first_content_owner(
         )
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
 
+        same_url_result = smartextract._store_jobs_filtered(
+            conn,
+            [
+                {
+                    "url": owner_url,
+                    "title": "Staff Platform Engineer",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "description": description,
+                }
+            ],
+            "Acme Careers",
+            "static",
+            ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
+            ["United States", "Canada"],
+            query="Staff Platform Engineer",
+        )
+        assert same_url_result == (0, 1)
+        assert conn.execute("SELECT COUNT(*) FROM job_duplicate_links").fetchone()[0] == 0
+
+        owner_identity = repository.resolve_by_posting_url(
+            LOCAL_TENANT,
+            PostingUrl(value=owner_url),
+        )
+        assert owner_identity is not None
+        domain_links: list[DuplicateJobLink] = []
+        record_duplicate_link = SqliteJobRepository.record_duplicate_link
+
+        def capture_duplicate_link(
+            self: SqliteJobRepository,
+            tenant_id: TenantId,
+            link: DuplicateJobLink,
+        ) -> None:
+            domain_links.append(link)
+            record_duplicate_link(self, tenant_id, link)
+
+        monkeypatch.setattr(
+            SqliteJobRepository,
+            "record_duplicate_link",
+            capture_duplicate_link,
+        )
         result = smartextract._store_jobs_filtered(
             conn,
             [
@@ -615,10 +769,10 @@ def test_smart_extract_dedups_against_ats_first_content_owner(
         )
 
         assert result == (0, 1)
+        assert len(domain_links) == 1
+        assert domain_links[0].surviving_job_id == str(owner_identity.job_id)
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
-        link = conn.execute(
-            "SELECT surviving_job_id, reason, confidence FROM job_duplicate_links"
-        ).fetchone()
+        link = conn.execute("SELECT surviving_job_id, reason, confidence FROM job_duplicate_links").fetchone()
         assert link["surviving_job_id"] == owner_url
         assert link["reason"] == "content_fingerprint_match"
         assert link["confidence"] == 0.95
@@ -684,9 +838,7 @@ def test_ats_dedups_against_smart_extract_first_content_owner(
         assert summary.new_jobs == 0
         assert summary.duplicates_linked == 1
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
-        link = conn.execute(
-            "SELECT surviving_job_id, reason FROM job_duplicate_links"
-        ).fetchone()
+        link = conn.execute("SELECT surviving_job_id, reason FROM job_duplicate_links").fetchone()
         assert link["surviving_job_id"] == smart_url
         assert link["reason"] == "content_fingerprint_match"
     finally:

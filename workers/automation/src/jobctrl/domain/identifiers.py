@@ -12,6 +12,17 @@ from typing import NewType
 JobId = NewType("JobId", str)
 
 
+def canonical_job_id(value: str) -> JobId:
+    """Return ``value`` as a JobId only when it is a canonical UUID."""
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError) as exc:
+        raise ValueError("JobId must be a canonical UUID") from exc
+    if str(parsed) != value:
+        raise ValueError("JobId must be a canonical UUID")
+    return JobId(value)
+
+
 def generate_job_id() -> JobId:
     """Generate a new random JobId using uuid4."""
     return JobId(str(uuid.uuid4()))
