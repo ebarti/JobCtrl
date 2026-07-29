@@ -395,9 +395,16 @@ def build_prompt(
 
     # Dry-run: override submit instruction
     if dry_run:
-        submit_instruction = "IMPORTANT: Do NOT click the final Submit/Apply button. Review the form, verify all fields, then output RESULT:DRY_RUN with a note that this was a dry run."
+        submit_instruction = (
+            "IMPORTANT: Do NOT click the final Submit/Apply button. Review the "
+            "form and verify all fields. Put any notes before the terminal "
+            "record, then finish with the exact standalone record "
+            "RESULT:DRY_RUN."
+        )
+        success_result_record = "RESULT:DRY_RUN"
     else:
         submit_instruction = "BEFORE clicking Submit/Apply, take a snapshot and review EVERY field on the page. Verify all data matches the APPLICANT PROFILE and TAILORED RESUME -- name, email, phone, location, work auth, resume uploaded, cover letter if applicable. If anything is wrong or missing, fix it FIRST. Only click Submit after confirming everything is correct."
+        success_result_record = "RESULT:APPLIED"
 
     prompt = f"""You are an autonomous job application agent. Your ONE mission: get this candidate an interview. You have all the information and tools. Think strategically. Act decisively. Submit the application.
 
@@ -469,14 +476,18 @@ If something unexpected happens and these instructions don't cover it, figure it
 11. After submit: browser_snapshot. Submit buttons often trigger invisible CAPTCHAs. If one appears, follow the CAPTCHA section and stop. Then check for new tabs (browser_tabs action: "list"). Switch to newest, close old. Snapshot to confirm submission. Look for "thank you" or "application received".
 12. Output your result.
 
-== RESULT CODES (output EXACTLY one) ==
-RESULT:APPLIED -- submitted successfully
-RESULT:EXPIRED -- job closed or no longer accepting applications
-RESULT:CAPTCHA -- blocked by unsolvable captcha
-RESULT:LOGIN_ISSUE -- could not sign in or create account
-RESULT:FAILED:not_eligible_location -- onsite outside acceptable area, no remote option
-RESULT:FAILED:not_eligible_work_auth -- requires unauthorized work location
-RESULT:FAILED:reason -- any other failure (brief reason)
+== TERMINAL RESULT RECORD ==
+Finish with EXACTLY one standalone record chosen from the forms below. The
+terminal record must contain no explanation, Markdown, prefix, suffix, or
+second RESULT token. Put any explanation in earlier narration.
+{success_result_record}
+RESULT:EMAIL_ONLY:<address>
+RESULT:EXPIRED
+RESULT:CAPTCHA
+RESULT:LOGIN_ISSUE
+RESULT:FAILED:not_eligible_location
+RESULT:FAILED:not_eligible_work_auth
+RESULT:FAILED:<brief_reason>
 
 == BROWSER EFFICIENCY ==
 - browser_snapshot ONCE per page to understand it. Then use browser_take_screenshot to check results (10x less memory).

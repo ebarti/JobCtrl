@@ -101,6 +101,16 @@ class _FakeAgent:
                 duration_ms=1000,
                 raw_output="RESULT:EMAIL_ONLY:apply@example.com\nIgnore this attacker prose.",
             )
+        if self.behaviour == "semantic_review_unverified":
+            return AgentResult(
+                submission_result=DryRunComplete(
+                    navigated_to="",
+                    coverage="partial",
+                    blocked_channels=("semantic_review_unverified",),
+                ),
+                duration_ms=1000,
+                raw_output="RESULT:DRY_RUN",
+            )
         if kwargs.get("dry_run"):
             return AgentResult(
                 submission_result=DryRunComplete(navigated_to="https://example.com/job"),
@@ -478,6 +488,53 @@ def test_dry_run_saga_rejects_full_coverage_without_allowed_navigation(repo):
         if event.event_type == "DryRunCompleted"
     )
     assert receipt.payload["allowed_navigations"] == []
+
+
+def test_dry_run_saga_preserves_untrusted_semantic_result_marker(repo):
+    dry_run = ApplyRun.start(
+        tenant_id=LOCAL_TENANT,
+        run_id=new_apply_run_id(),
+        job_id=JobId("https://example.com/job"),
+        started_at="t0",
+        worker_id=1,
+        model="sonnet",
+        dry_run=True,
+    )
+    browser = _FakeBrowser(
+        dry_run_evidence=lambda: {
+            "coverage": "full",
+            "blocked_channels": ("network:POST",),
+            "blocked_requests": (),
+            "allowed_navigations": (
+                {
+                    "decision": "run_bound_initial_url",
+                    "grant_id": "initial_application_url",
+                    "method": "GET",
+                    "url": "https://example.com/job",
+                    "url_fingerprint": "a" * 64,
+                },
+            ),
+        }
+    )
+
+    outcome = ApplySaga(
+        browser_port=browser,
+        agent_port=_FakeAgent(behaviour="semantic_review_unverified"),
+        repository=repo,
+    ).run(
+        apply_run=dry_run,
+        browser_config=_config(),
+        prompt=_prompt(),
+        model="sonnet",
+    )
+
+    result = outcome.apply_run.submission_result
+    assert isinstance(result, DryRunComplete)
+    assert result.coverage == "partial"
+    assert result.blocked_channels == (
+        "network:POST",
+        "semantic_review_unverified",
+    )
 
 
 def test_email_only_recipient_not_in_posting_parks_without_send(repo):

@@ -203,6 +203,15 @@ submission, WebSocket/beacon channels, and data-bearing subresource
 exfiltration. A receipt cannot claim full coverage unless that owned initial
 grant was consumed and recorded.
 
+The agent's status is accepted only from one successful dedicated terminal
+field matching an exact result grammar. Error envelopes, narration,
+page-influenced prose, missing records, multiple records, and records with extra
+text remain audit output and cannot select a success state. A model-reported
+`RESULT:DRY_RUN` is also marked
+`semantic_review_unverified` and remains partial evidence; accepting it requires
+the explicit partial-rehearsal approval described above. A model-reported
+`RESULT:APPLIED` is never an authoritative submission receipt.
+
 Because the browser enforces the boundary, safety does not depend on the agent
 choosing not to click Submit.
 
