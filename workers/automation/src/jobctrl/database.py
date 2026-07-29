@@ -11,9 +11,10 @@ persistent run and event telemetry.
 import json
 import sqlite3
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 
@@ -35,7 +36,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # replay-idempotent receipts for caller-filtered provider results.
 # v6 (repeat-application prevention): evidence-bound confirmations,
 # one-attempt consumption, and immutable protection audit records.
-SCHEMA_VERSION = 6
+# v7 (stable job identity foundation): additive opaque job UUIDs, the
+# tenant-scoped posting-URL alias map, and insert/update guards. URL-keyed
+# authorities remain compatibility storage until their own bounded migrations.
+SCHEMA_VERSION = 7
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -142,28 +146,66 @@ def _resolve_backup_destination(source: Path, output: Path | str | None) -> Path
     return target_dir / f"jobctrl-{timestamp}.db"
 
 
-def _ensure_schema_version(conn: sqlite3.Connection) -> int:
-    """Stamp ``PRAGMA user_version`` as a lightweight schema guard.
+def _assert_schema_version_supported(
+    conn: sqlite3.Connection,
+    *,
+    supported_version: int = SCHEMA_VERSION,
+) -> int:
+    """Refuse a database written by a newer build before schema writes.
 
     Databases created before this guard report ``user_version == 0`` and are
-    adopted by stamping ``SCHEMA_VERSION``; an equal version is a no-op. A
-    database whose version is newer than this build fails closed with
-    ``IncompatibleSchemaVersionError`` -- the caller (``init_db``) invokes this
-    before any table creation or migration, so a stale build never runs its
-    potentially destructive ``ensure_*`` migrations against a forward-migrated
-    file, and is never silently downgraded.
+    eligible for migration. A database whose version is newer than this build
+    fails closed with ``IncompatibleSchemaVersionError``. Version stamping is
+    deliberately owned by the versioned migration after its DDL, backfill, and
+    verification succeed; a failed migration therefore remains retryable at
+    the prior version.
     """
     current = int(conn.execute("PRAGMA user_version").fetchone()[0])
-    if current > SCHEMA_VERSION:
+    if current > supported_version:
         raise IncompatibleSchemaVersionError(
             f"database was written by a newer JobCtrl build "
-            f"(schema version {current} > code schema version {SCHEMA_VERSION}); "
+            f"(schema version {current} > code schema version {supported_version}); "
             f"upgrade JobCtrl or restore a compatible backup ('jobctrl backup')."
         )
-    if current < SCHEMA_VERSION:
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        conn.commit()
-    return SCHEMA_VERSION
+    return current
+
+
+def _schema_migrations() -> tuple[
+    tuple[int, Callable[[sqlite3.Connection], list[str]]],
+    ...,
+]:
+    """Return the ordered schema migrations known to this build."""
+    return ((7, ensure_stable_job_identity_v7),)
+
+
+def _assert_schema_migration_path(current_version: int) -> None:
+    """Fail before schema writes when this build cannot reach its own version."""
+    reachable_version = current_version
+    for target_version, _migration in _schema_migrations():
+        if current_version < target_version <= SCHEMA_VERSION:
+            reachable_version = target_version
+    if reachable_version != SCHEMA_VERSION:
+        raise RuntimeError(
+            "JobCtrl has no schema migration path from "
+            f"version {current_version} to {SCHEMA_VERSION}"
+        )
+
+
+def _run_schema_migrations(conn: sqlite3.Connection) -> int:
+    """Run ordered migrations and require each one to stamp its own version."""
+    current_version = _assert_schema_version_supported(conn)
+    _assert_schema_migration_path(current_version)
+    for target_version, migration in _schema_migrations():
+        if current_version >= target_version:
+            continue
+        migration(conn)
+        observed_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        if observed_version != target_version:
+            raise RuntimeError(
+                f"schema migration {target_version} did not stamp its version"
+            )
+        current_version = observed_version
+    return current_version
 
 
 def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
@@ -194,7 +236,8 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
 
     conn = get_connection(path)
-    _ensure_schema_version(conn)
+    current_version = _assert_schema_version_supported(conn)
+    _assert_schema_migration_path(current_version)
     migrate_legacy_job_tables(conn)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS llm_spend (
@@ -208,6 +251,8 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS jobs (
             -- Discovery stage (smart_extract / job_search)
             url                   TEXT PRIMARY KEY,
+            tenant_id             TEXT NOT NULL DEFAULT 'local',
+            job_id                TEXT,
             title                 TEXT,
             company               TEXT,
             salary                TEXT,
@@ -303,6 +348,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_contact_tables(conn)
     ensure_projection_tables_in_db(conn)
     drop_legacy_apply_runs_tables(conn)
+    _run_schema_migrations(conn)
 
     return conn
 
@@ -632,6 +678,397 @@ def ensure_columns(conn: sqlite3.Connection | None = None) -> list[str]:
         conn.commit()
 
     return added
+
+
+_STABLE_JOB_IDENTITY_TRIGGER_NAMES = (
+    "jobs_stable_identity_validate_insert_v7",
+    "jobs_stable_identity_validate_update_v7",
+    "jobs_stable_identity_after_insert_v7",
+    "jobs_stable_identity_after_url_update_v7",
+    "jobs_stable_identity_after_delete_v7",
+)
+
+_STABLE_JOB_IDENTITY_SCHEMA_VERSION = 7
+
+_SQLITE_UUID_EXPRESSION = """
+    lower(hex(randomblob(4))) || '-' ||
+    lower(hex(randomblob(2))) || '-4' ||
+    substr(lower(hex(randomblob(2))), 2) || '-' ||
+    substr('89ab', abs(random() % 4) + 1, 1) ||
+    substr(lower(hex(randomblob(2))), 2) || '-' ||
+    lower(hex(randomblob(6)))
+"""
+
+
+def ensure_stable_job_identity_v7(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Apply the additive stable-JobId foundation and stamp schema v7.
+
+    The legacy ``jobs.url`` primary key and URL-keyed authority tables remain in
+    place during this phase. Every job gains one opaque UUID plus a
+    tenant-scoped posting-URL alias. Triggers keep legacy raw INSERT paths
+    compatible until their repositories move to explicit JobId writes.
+
+    All v7 DDL, backfill, validation, and the ``user_version`` stamp live in one
+    savepoint. A failure rolls the v7 work back and leaves the prior schema
+    version retryable.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _STABLE_JOB_IDENTITY_SCHEMA_VERSION:
+        return []
+
+    migration_timestamp = datetime.now(timezone.utc).isoformat()
+    created: list[str] = []
+
+    conn.execute("SAVEPOINT stable_job_identity_v7")
+    try:
+        before_count = int(
+            conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        )
+        columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
+        }
+        if "tenant_id" not in columns:
+            conn.execute(
+                "ALTER TABLE jobs ADD COLUMN tenant_id "
+                "TEXT NOT NULL DEFAULT 'local'"
+            )
+            created.append("jobs.tenant_id")
+        if "job_id" not in columns:
+            conn.execute("ALTER TABLE jobs ADD COLUMN job_id TEXT")
+            created.append("jobs.job_id")
+
+        rows = conn.execute(
+            "SELECT rowid, tenant_id, job_id FROM jobs ORDER BY rowid"
+        ).fetchall()
+        for row in rows:
+            rowid = int(row[0])
+            tenant_id = str(row[1] or "").strip() or "local"
+            existing_job_id = str(row[2] or "").strip().lower()
+            job_id = existing_job_id or str(uuid.uuid4())
+            _validate_job_uuid(job_id)
+            conn.execute(
+                "UPDATE jobs SET tenant_id = ?, job_id = ? WHERE rowid = ?",
+                (tenant_id, job_id, rowid),
+            )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS job_identity_aliases (
+                tenant_id   TEXT NOT NULL,
+                alias_kind  TEXT NOT NULL,
+                alias_value TEXT NOT NULL,
+                job_id      TEXT NOT NULL,
+                created_at  TEXT NOT NULL,
+                retired_at  TEXT,
+                PRIMARY KEY (tenant_id, alias_kind, alias_value),
+                CHECK (alias_kind = 'posting_url')
+            )
+            """
+        )
+        created.append("job_identity_aliases")
+
+        conflict = conn.execute(
+            """
+            SELECT a.tenant_id, a.alias_value, a.job_id, j.job_id
+            FROM job_identity_aliases a
+            JOIN jobs j
+              ON j.tenant_id = a.tenant_id
+             AND j.url = a.alias_value
+            WHERE a.alias_kind = 'posting_url'
+              AND a.job_id != j.job_id
+            LIMIT 1
+            """
+        ).fetchone()
+        if conflict is not None:
+            raise RuntimeError(
+                "stable JobId migration found a posting URL alias owned by "
+                "a different job"
+            )
+
+        conn.execute(
+            """
+            INSERT INTO job_identity_aliases (
+                tenant_id, alias_kind, alias_value, job_id, created_at, retired_at
+            )
+            SELECT
+                tenant_id,
+                'posting_url',
+                url,
+                job_id,
+                COALESCE(NULLIF(discovered_at, ''), ?),
+                NULL
+            FROM jobs
+            WHERE 1
+            ON CONFLICT(tenant_id, alias_kind, alias_value) DO UPDATE SET
+                retired_at = NULL
+            WHERE job_identity_aliases.job_id = excluded.job_id
+            """,
+            (migration_timestamp,),
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_tenant_job_id
+            ON jobs(tenant_id, job_id)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_job_identity_aliases_job
+            ON job_identity_aliases(tenant_id, job_id, alias_kind)
+            """
+        )
+        _create_stable_job_identity_triggers(conn)
+        _verify_stable_job_identity_v7(conn, expected_jobs=before_count)
+        conn.execute(
+            f"PRAGMA user_version = {_STABLE_JOB_IDENTITY_SCHEMA_VERSION}"
+        )
+        conn.execute("RELEASE SAVEPOINT stable_job_identity_v7")
+        conn.commit()
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT stable_job_identity_v7")
+        conn.execute("RELEASE SAVEPOINT stable_job_identity_v7")
+        raise
+
+    return created
+
+
+def _create_stable_job_identity_triggers(conn: sqlite3.Connection) -> None:
+    uuid_expression = " ".join(_SQLITE_UUID_EXPRESSION.split())
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS jobs_stable_identity_validate_insert_v7
+        BEFORE INSERT ON jobs
+        BEGIN
+            SELECT CASE
+              WHEN NEW.job_id IS NOT NULL
+               AND (
+                    NEW.job_id != trim(NEW.job_id)
+                 OR NEW.job_id != lower(NEW.job_id)
+                 OR length(NEW.job_id) != 36
+                 OR substr(NEW.job_id, 9, 1) != '-'
+                 OR substr(NEW.job_id, 14, 1) != '-'
+                 OR substr(NEW.job_id, 19, 1) != '-'
+                 OR substr(NEW.job_id, 24, 1) != '-'
+                 OR length(replace(NEW.job_id, '-', '')) != 32
+                 OR replace(NEW.job_id, '-', '') GLOB '*[^0-9a-f]*'
+               )
+              THEN RAISE(ABORT, 'jobs.job_id must be a canonical UUID')
+            END;
+            SELECT CASE
+              WHEN NEW.tenant_id IS NULL
+                OR trim(NEW.tenant_id) = ''
+                OR NEW.tenant_id != trim(NEW.tenant_id)
+              THEN RAISE(ABORT, 'jobs.tenant_id must be canonical')
+            END;
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS jobs_stable_identity_validate_update_v7
+        BEFORE UPDATE OF job_id, tenant_id ON jobs
+        BEGIN
+            SELECT CASE
+              WHEN OLD.job_id IS NOT NULL
+               AND NEW.job_id IS NOT OLD.job_id
+              THEN RAISE(ABORT, 'jobs.job_id is immutable')
+            END;
+            SELECT CASE
+              WHEN NEW.tenant_id IS NOT OLD.tenant_id
+              THEN RAISE(ABORT, 'jobs.tenant_id is immutable')
+            END;
+            SELECT CASE
+              WHEN NEW.job_id IS NULL
+                OR trim(NEW.job_id) = ''
+                OR length(trim(NEW.job_id)) != 36
+                OR substr(trim(NEW.job_id), 9, 1) != '-'
+                OR substr(trim(NEW.job_id), 14, 1) != '-'
+                OR substr(trim(NEW.job_id), 19, 1) != '-'
+                OR substr(trim(NEW.job_id), 24, 1) != '-'
+                OR length(replace(trim(NEW.job_id), '-', '')) != 32
+                OR lower(replace(trim(NEW.job_id), '-', '')) GLOB '*[^0-9a-f]*'
+              THEN RAISE(ABORT, 'jobs.job_id must be a UUID')
+            END;
+        END
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TRIGGER IF NOT EXISTS jobs_stable_identity_after_insert_v7
+        AFTER INSERT ON jobs
+        BEGIN
+            UPDATE jobs
+            SET job_id = {uuid_expression}
+            WHERE rowid = NEW.rowid
+              AND NEW.job_id IS NULL;
+
+            SELECT CASE
+              WHEN EXISTS (
+                SELECT 1
+                FROM job_identity_aliases a
+                JOIN jobs j ON j.rowid = NEW.rowid
+                WHERE a.tenant_id = j.tenant_id
+                  AND a.alias_kind = 'posting_url'
+                  AND a.alias_value = j.url
+                  AND a.job_id != j.job_id
+              )
+              THEN RAISE(ABORT, 'posting URL alias belongs to another job')
+            END;
+
+            INSERT INTO job_identity_aliases (
+                tenant_id, alias_kind, alias_value, job_id, created_at, retired_at
+            )
+            SELECT
+                tenant_id,
+                'posting_url',
+                url,
+                job_id,
+                COALESCE(
+                    NULLIF(discovered_at, ''),
+                    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                ),
+                NULL
+            FROM jobs
+            WHERE rowid = NEW.rowid
+            ON CONFLICT(tenant_id, alias_kind, alias_value) DO UPDATE SET
+                retired_at = NULL
+            WHERE job_identity_aliases.job_id = excluded.job_id;
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS jobs_stable_identity_after_delete_v7
+        AFTER DELETE ON jobs
+        BEGIN
+            DELETE FROM job_identity_aliases
+            WHERE tenant_id = OLD.tenant_id
+              AND job_id = OLD.job_id;
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS jobs_stable_identity_after_url_update_v7
+        AFTER UPDATE OF url ON jobs
+        WHEN NEW.url != OLD.url
+        BEGIN
+            SELECT CASE
+              WHEN EXISTS (
+                SELECT 1
+                FROM job_identity_aliases
+                WHERE tenant_id = NEW.tenant_id
+                  AND alias_kind = 'posting_url'
+                  AND alias_value = NEW.url
+                  AND job_id != NEW.job_id
+              )
+              THEN RAISE(ABORT, 'posting URL alias belongs to another job')
+            END;
+
+            INSERT INTO job_identity_aliases (
+                tenant_id, alias_kind, alias_value, job_id, created_at, retired_at
+            ) VALUES (
+                NEW.tenant_id,
+                'posting_url',
+                NEW.url,
+                NEW.job_id,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                NULL
+            )
+            ON CONFLICT(tenant_id, alias_kind, alias_value) DO UPDATE SET
+                retired_at = NULL
+            WHERE job_identity_aliases.job_id = excluded.job_id;
+        END
+        """
+    )
+
+
+def _verify_stable_job_identity_v7(
+    conn: sqlite3.Connection,
+    *,
+    expected_jobs: int | None = None,
+) -> None:
+    columns = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
+    }
+    if not {"tenant_id", "job_id"}.issubset(columns):
+        raise RuntimeError("stable JobId migration is missing jobs identity columns")
+
+    rows = conn.execute(
+        "SELECT tenant_id, job_id, url FROM jobs ORDER BY rowid"
+    ).fetchall()
+    if expected_jobs is not None and len(rows) != expected_jobs:
+        raise RuntimeError("stable JobId migration changed the canonical job count")
+    for row in rows:
+        if not str(row[0] or "").strip():
+            raise RuntimeError("stable JobId migration produced an empty tenant")
+        _validate_job_uuid(str(row[1] or ""))
+
+    duplicate = conn.execute(
+        """
+        SELECT tenant_id, job_id
+        FROM jobs
+        GROUP BY tenant_id, job_id
+        HAVING COUNT(*) > 1
+        LIMIT 1
+        """
+    ).fetchone()
+    if duplicate is not None:
+        raise RuntimeError("stable JobId migration produced duplicate job IDs")
+
+    missing_alias = conn.execute(
+        """
+        SELECT j.tenant_id, j.url
+        FROM jobs j
+        LEFT JOIN job_identity_aliases a
+          ON a.tenant_id = j.tenant_id
+         AND a.alias_kind = 'posting_url'
+         AND a.alias_value = j.url
+         AND a.job_id = j.job_id
+         AND a.retired_at IS NULL
+        WHERE a.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if missing_alias is not None:
+        raise RuntimeError("stable JobId migration left a job without its URL alias")
+
+    trigger_rows = conn.execute(
+        """
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'trigger'
+          AND name IN (?, ?, ?, ?, ?)
+        """,
+        _STABLE_JOB_IDENTITY_TRIGGER_NAMES,
+    ).fetchall()
+    if {str(row[0]) for row in trigger_rows} != set(
+        _STABLE_JOB_IDENTITY_TRIGGER_NAMES
+    ):
+        raise RuntimeError("stable JobId migration is missing identity triggers")
+
+    foreign_key_error = conn.execute("PRAGMA foreign_key_check").fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "stable JobId migration found an existing foreign-key violation"
+        )
+
+
+def _validate_job_uuid(value: str) -> None:
+    candidate = value.strip().lower()
+    try:
+        parsed = uuid.UUID(candidate)
+    except (AttributeError, ValueError) as exc:
+        raise RuntimeError("stable JobId migration found a non-UUID job_id") from exc
+    if str(parsed) != candidate:
+        raise RuntimeError("stable JobId migration found a non-canonical UUID")
 
 
 def ensure_posted_compensation_tables(conn: sqlite3.Connection | None = None) -> list[str]:

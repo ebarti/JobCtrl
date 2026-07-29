@@ -76,6 +76,24 @@ and accepted-artifact preservation. The
 [Regression Catalog](developer/qa/regression-catalog.md) explains which layer
 proves each class of invariant; the complete page maps every risk to exact tests.
 
+### Stable job identity migration
+
+Use disposable SQLite fixtures only. This matrix proves the additive schema-v7
+identity backfill, representative-reference retention, exact immutability,
+duplicate-delete alias cleanup and rediscovery, retry boundary, paired
+backup/reopen behavior, repository compatibility, and shared
+Python/TypeScript forward-version guard:
+
+```bash
+uv --project workers/automation run --extra dev pytest -q \
+  workers/automation/tests/test_stable_job_identity_migration.py \
+  workers/automation/tests/test_database_backup.py \
+  workers/automation/tests/test_job_repository.py \
+  workers/automation/tests/test_repeat_application_prevention.py
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/schema-version-guard.test.ts
+```
+
 ### Repeat-application prevention
 
 Use disposable SQLite fixtures and the simulated web dispatch boundary; never

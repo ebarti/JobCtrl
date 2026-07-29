@@ -1083,9 +1083,11 @@ Status: accepted
 
 Decision: the local database ships a first-class backup command and a
 schema-version guard. `jobctrl backup` (`cli.py`) writes a consistent copy via
-`backup_database` (`database.py`); every connection runs `_ensure_schema_version`,
-which stamps `PRAGMA user_version` to the code's `SCHEMA_VERSION` and refuses to
-open a database whose schema is newer than the running code.
+`backup_database` (`database.py`); every connection checks
+`PRAGMA user_version` and refuses to open a database whose schema is newer than
+the running code. Schema v7 amends the original eager-stamp implementation:
+each versioned migration now owns its stamp and writes it only after the
+migration and its integrity checks succeed.
 
 Rationale:
 
@@ -1099,7 +1101,8 @@ Consequences:
 
 - users can snapshot the workspace before destructive or upgrade operations
 - a newer-than-code database raises a clear error rather than being written
-- an older or unstamped database is adopted by stamping the current version
+- an older or unstamped database is adopted by a successful current migration;
+  a failed migration retains its prior version for recovery and retry
 
 Cites: PR #206.
 

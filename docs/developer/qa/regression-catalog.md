@@ -11,7 +11,7 @@ individual regression to exact test files.
 | --- | --- | --- |
 | Apply safety | Model-driven browsers never own final submit and direct use-case/saga/adapter calls fail closed; their prompt contains no profile, job-description, resume, cover-letter, generated prose, or local artifact paths; reviewed materials are not staged in the agent worker; artifact upload, generic form entry, credentials, and verification-code tools are explicitly denied and absent from the default MCP configuration; no owned email send occurs without exact approval; every Apply page/request stays on the reviewed canonical origin; dry-run grants only one exact reviewed initial navigation, records it, and cannot write; only one exact dedicated terminal result record affects state, and a model-only dry-run claim remains partial evidence; owned submit intent is at most once; confirmed prior applications block or require an evidence-bound one-attempt confirmation. | Apply use-case/saga/adapter tests plus a disposable browser harness. |
 | Durable workflows | Accepted work resumes or terminalizes correctly across restart, cancellation, and history loss. | Workflow tests plus targeted fault injection. |
-| Storage and projections | Schema versions are guarded; canonical writes and read projections agree; accepted artifacts survive retries, including failed cover-letter refreshes whose rejected bytes remain on separate audit paths. | Repository/projection tests and API readback. |
+| Storage and projections | Schema versions are guarded and stamped only after verified migration; stable job IDs and URL aliases backfill exactly once, remain immutable, and survive forward reopen; failed migration remains retryable; canonical writes and read projections agree; accepted artifacts survive retries, including failed cover-letter refreshes whose rejected bytes remain on separate audit paths. | Stable-identity migration, backup/reopen, repository/projection, and API schema-guard tests. |
 | Credentials and privacy | Secrets, profile content, raw mail, contact values, paths, and artifacts do not leak into settings, events, logs, or projections. | Boundary tests plus response/event inspection. |
 | Scoring and materials | Evidence, policy version, provenance, judge output, and fabrication gates remain inspectable and honest; free-form review/prior-output text remains audit-only while retries use bounded code-owned guidance. | Deterministic fixtures, quality evals, retry prompt-boundary regressions, and inspector smoke. |
 | Frontend state | URL/server/client state stay in their owning layers; every event and stage state has a handler/rendering path. | Hook/component/type tests plus parity tests. |
@@ -35,6 +35,16 @@ For the affected workflow, prove four outcomes:
 The [complete matrix](complete-checklist.md#temporal-fault-injection-matrix)
 lists the exact tests for Discover, Pipeline, Preparation, Apply, Profile Import,
 Compensation Refresh, and Interview Prep workflows.
+
+For schema-v7 stable identity groundwork, use only synthetic SQLite fixtures.
+Prove exact pre/post job and representative-reference counts, canonical UUID and
+tenant backfill, URL alias ownership and history, legacy insert compatibility,
+exact byte-level identity immutability, duplicate-row deletion alias cleanup
+plus URL-only rediscovery, failed alias/foreign-key migration rollback, retry
+without an early version stamp, forward reopen, and previous-build rejection of
+the migrated database. A previous-build rollback test restores and opens the
+paired pre-upgrade JobCtrl/Temporal snapshot; it must not simulate an
+unsupported in-place down-migration.
 
 For JobStreaming broad-board discovery, killing the activity is not enough: the
 fault must land after JobCtrl commits an accepted posting and unit receipt but

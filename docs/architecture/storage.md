@@ -55,8 +55,12 @@ flowchart LR
     MATERIALS -->|writes| FILES
 ```
 
-Within the job-owned families, one `jobs` row (keyed by posting URL) is the hub:
-stage state, events, scores, analysis, materials, and apply records hang off it.
+Within the job-owned families, one `jobs` row is the compatibility hub: stage
+state, events, scores, analysis, materials, and apply records hang off it.
+Schema version 7 assigns that row an immutable tenant-scoped `job_id` UUID and
+records posting URLs as aliases. The physical primary key and the downstream
+authorities remain URL-keyed during the bounded additive migration; they do not
+become stable-ID authorities until their later cutover slices.
 
 The remaining tables group by owner:
 
@@ -105,6 +109,44 @@ promoted into history. Existing databases advance additively from version 5 to
 6 while their prior application rows and events remain byte-for-byte unchanged.
 Both the TypeScript API and Python worker can create the new tables
 idempotently, and both reject a database created by a newer schema version.
+
+### Stable job identity foundation
+
+Schema version 7 introduces the first additive part of the stable identity
+migration without changing repository, route, event, projection, or workflow
+identity yet:
+
+- every existing and newly inserted `jobs` row receives an immutable opaque
+  UUID in `job_id` and a non-empty `tenant_id`;
+- `job_identity_aliases` maps each tenant-scoped posting URL to that stable ID
+  and retains an earlier URL if the canonical posting locator changes;
+- compatibility triggers cover legacy writers that still insert only a URL,
+  reject any byte-level identity reassignment, and remove aliases with a
+  physically deleted compatibility row so later URL-only rediscovery remains
+  valid; and
+- `jobs.url` remains the physical primary key in this slice. URL-keyed child
+  tables remain unchanged behind the existing repositories.
+
+The Python worker checks the current `PRAGMA user_version` and verifies that its
+ordered migration registry can reach the build's declared schema version before
+any schema write. Each migration owns its version stamp. The v7 DDL, UUID and
+alias backfill, canonical job-count check, UUID and alias checks, trigger check,
+foreign-key check, and version stamp then run in one savepoint. A
+representative-reference fixture proves the surrounding authorities remain
+byte-for-byte unchanged. A failed v7 migration rolls back those identity
+changes and leaves the earlier version retryable; the version is stamped only
+after every check passes. A future build that bumps the declared version
+without registering its migration fails closed instead of accidentally
+rerunning v7 under a new number. The TypeScript API remains a reader of the
+same version guard and fails closed on a database written by newer code.
+
+Forward reopen and previous-release rollback are different operations. Reopen
+with v7 retains the generated IDs. A previous release must use the paired
+pre-upgrade `jobctrl.db` and `temporal.db` snapshot; it rejects the v7 database,
+and there is no in-place down-migration. The authoritative Temporal quiescence
+preflight and paired live snapshot belong to the later identity-cutover slice,
+before workflow IDs, event payloads, projections, routes, or child references
+change.
 
 For a live run, the Python launcher opens `BEGIN IMMEDIATE`, recomputes the
 current evidence, performs the existing active-run and approval checks, and
