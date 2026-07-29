@@ -84,6 +84,7 @@ the Historical Spec Ledger in `plans/README.md`.
 - [Application-Outcome Feedback Loop With Bounded Gmail Ingestion](#_2026-06-01-application-outcome-feedback-loop-with-bounded-gmail-ingestion) · 2026-06-01
 - [At-Most-Once Apply With Binding Approval Gate](#_2026-07-03-at-most-once-apply-with-binding-approval-gate) · 2026-07-03
 - [Confirmed Facts And Canonical Identity Gate Repeat Applications](#_2026-07-20-confirmed-facts-and-canonical-identity-gate-repeat-applications) · 2026-07-20
+- [Keep Final Browser Submit Below The Page-Reading Model](#_2026-07-29-keep-final-browser-submit-below-the-page-reading-model) · 2026-07-29
 
 **Data durability & spend**
 
@@ -1199,6 +1200,43 @@ Consequences:
   claims cannot bypass or reuse the confirmation; and
 - the identity and audit contract can support later policy gates without adding
   those policies here.
+
+## 2026-07-29: Keep Final Browser Submit Below The Page-Reading Model
+
+Status: accepted
+
+Decision: supersede the autonomous browser-commit portion of the 2026-07-03
+decision. Model-driven browser sessions are transport-locked and may not perform
+the final browser submit. Ordinary live browser-form runs stop with
+`trusted_final_submit_required` before prompt rendering, browser launch, or
+agent execution. The saga independently rejects an unlocked live browser
+configuration before launch, and the agent adapter rejects `dry_run=False`
+before writing runtime files or starting a subprocess.
+
+The boundary may be relaxed only after JobCtrl has a canonical final-form
+manifest assembled from trusted profile/material authorities, a human or
+deterministic approval bound to that exact manifest, and a one-shot submit
+mediator below the model. The existing owned Gmail sender remains available for
+an exact-approved recipient/attachment candidate. It rechecks the active
+capability and records `ApplySubmitIntended` immediately before sending.
+
+Rationale:
+
+- the model reads attacker-controlled ATS content, so prompt instructions
+  cannot make generic final-click authority trustworthy;
+- origin confinement prevents cross-origin escape but cannot prove that the
+  final same-origin form fields and action are the ones the user approved; and
+- a conservative manual boundary is smaller and safer than inventing an
+  incomplete trusted-manifest protocol inside the agent.
+
+Consequences:
+
+- browser-form rehearsals remain available, but users complete final browser
+  submission manually;
+- direct use-case, saga, or adapter calls cannot bypass the boundary;
+- `applyApprovalRequired` still gates live claims while enabled, but disabling
+  it cannot grant browser-submit authority; and
+- at-most-once submit intent now describes owned email sends, not model clicks.
 
 ## 2026-07-03: Temporal Loop Closure — Finalize Activities + Describe Reconciler, Deterministic Workflow IDs
 

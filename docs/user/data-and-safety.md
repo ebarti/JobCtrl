@@ -205,7 +205,8 @@ before enabling a provider.
 ## Responsible Use Boundaries
 
 - **Employer actions are irreversible.** Rehearse with dry-run, review current
-  materials and field mappings, and keep `applyApprovalRequired` enabled.
+  materials and field mappings, complete browser final submission manually, and
+  keep `applyApprovalRequired` enabled for live claims.
 - **Email applications are live submissions.** They require a recorded
   recipient/attachment candidate and matching Apply Review approval.
 - **Source access has terms.** Enable only job boards, feeds, and public pages
@@ -225,15 +226,19 @@ before enabling a provider.
 The detailed enforcement model lives in [Security](security.md#approval-and-control-gates).
 The user-facing guarantees are:
 
-- live apply requires a current bound approval by default;
+- live claims require a current bound approval by default;
 - system-browser apply is disabled until you explicitly enable and adopt the
   `auto-apply-browser` capability;
 - Settings may detect a supported browser for display, but detection is
   read-only and exposes only an ID/label pair. JobCtrl does not launch, copy,
   persist, or adopt it until you explicitly select and enable that capability;
 - dry-run has a browser-layer network/submission guard;
-- submit intent is checkpointed so crashes do not cause blind retries;
-- email-only applications use the same reviewed binding; and
+- model-driven browser sessions are transport-locked and final browser submit
+  remains manual;
+- the owned email sender checkpoints submit intent immediately before sending,
+  so ambiguous crashes do not cause blind retries;
+- email-only applications require the same reviewed recipient/attachment
+  binding; and
 - failed replacements never delete the last accepted materials.
 
 ::: warning Applying is irreversible

@@ -132,12 +132,12 @@ class AgentResult:
 
 
 class AutonomousAgentPort(Protocol):
-    """Driven port: run one autonomous agent against an open browser session.
+    """Driven port: run one transport-locked agent against a browser session.
 
     The local adapter spawns the resolved Claude runtime with the MCP
-    config rendered to disk; the cloud adapter calls the Anthropic
-    API directly with tool use. Both produce the same ``AgentResult``
-    shape so the use case is portable.
+    config rendered to disk. Implementations produce the same
+    ``AgentResult`` shape so the use case is portable. This port does
+    not confer final browser-submit authority.
     """
 
     def submit_application(

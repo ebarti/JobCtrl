@@ -151,8 +151,9 @@ class ApplySaga:
         self._email_sender = email_sender
         self._timeout_seconds = timeout_seconds
         # This is deliberately a port-shaped callback rather than an
-        # infrastructure import: immediately before a live agent can use the
-        # browser, the composition root must re-authorize the capability.
+        # infrastructure import: immediately before the owned email sender can
+        # commit externally, the composition root must re-authorize the
+        # capability. The model-driven browser remains transport-locked.
         self._submission_authorizer = submission_authorizer or (lambda: None)
 
     # ------------------------------------------------------------------
@@ -195,6 +196,30 @@ class ApplySaga:
             payload={"job_id": str(run.job_id), "model": model},
         )
         self._repository.save(run)
+
+        if not run.dry_run and not browser_config.dry_run:
+            blocked_at = _utc_now()
+            run = run.record_event(
+                event_type="ApplySubmissionBlocked",
+                occurred_at=blocked_at,
+                level="warn",
+                message="unlocked autonomous browser submission is disabled",
+                payload={
+                    "reason": "trusted_final_submit_required",
+                    "submission_channel": "browser",
+                },
+            )
+            run = run.complete(
+                result=Manual(reason="trusted_final_submit_required"),
+                finished_at=blocked_at,
+                duration_ms=int((time.time() - start) * 1000),
+            )
+            self._repository.save(run)
+            return SagaOutcome(
+                apply_run=run,
+                browser_launched=False,
+                agent_invoked=False,
+            )
 
         try:
             # 1. Launch browser
@@ -248,56 +273,12 @@ class ApplySaga:
 
             # 3. Drive the agent
             try:
-                if not run.dry_run:
-                    # The initial launch gate is not enough for a long-running
-                    # saga. Re-check at the durable intent + agent boundary so
-                    # revocation after Chrome starts cannot create an intent or
-                    # start an autonomous submission process.
-                    try:
-                        self._submission_authorizer()
-                    except Exception as exc:  # noqa: BLE001 - external authorization port
-                        log.info("ApplySaga: submission authorization was revoked: %s", exc)
-                        run = run.record_event(
-                            event_type="ApplySubmissionBlocked",
-                            occurred_at=_utc_now(),
-                            level="warn",
-                            message="live apply submission was blocked by the active capability policy",
-                            payload={"reason": "submission_authorization_revoked"},
-                        )
-                        run = self._compensate_failure(
-                            run,
-                            error_code="SUBMISSION_AUTHORIZATION_REVOKED",
-                            message="live browser capability is no longer enabled",
-                            retryable=True,
-                            duration_ms=int((time.time() - start) * 1000),
-                        )
-                        self._repository.save(run)
-                        return SagaOutcome(
-                            apply_run=run,
-                            browser_launched=browser_launched,
-                            agent_invoked=False,
-                        )
-                    intended_at = _utc_now()
-                    run = run.record_event(
-                        event_type="ApplySubmitIntended",
-                        occurred_at=intended_at,
-                        level="info",
-                        message="apply submission intent recorded",
-                        payload={
-                            "tenant_id": str(run.tenant_id),
-                            "job_key": str(run.job_id),
-                            "run_id": str(run.run_id),
-                            "material_version": str(material_version or ""),
-                            "intended_at": intended_at,
-                        },
-                    )
-                    self._repository.save(run)
                 agent_invoked = True
                 agent_result: AgentResult = self._agent.submit_application(
                     prompt=prompt,
                     browser=session,
                     model=model,
-                    dry_run=run.dry_run,
+                    dry_run=browser_config.dry_run,
                     timeout_seconds=self._timeout_seconds,
                 )
             except TimeoutError as exc:
@@ -368,6 +349,17 @@ class ApplySaga:
                     submission_result,
                     email_application_context,
                     duration_ms=duration_ms,
+                    material_version=material_version,
+                )
+            elif not run.dry_run and isinstance(
+                submission_result,
+                DryRunComplete,
+            ):
+                submission_result = Manual(reason="trusted_final_submit_required")
+            elif not run.dry_run and isinstance(submission_result, Applied):
+                submission_result = Failed(
+                    error="untrusted_browser_submission_result",
+                    retryable=False,
                 )
             dry_run_evidence = _empty_dry_run_evidence()
             if run.dry_run and isinstance(submission_result, DryRunComplete):
@@ -476,6 +468,7 @@ class ApplySaga:
         context: EmailApplicationContext | None,
         *,
         duration_ms: int,
+        material_version: str,
     ) -> tuple[ApplyRun, SubmissionResult]:
         if context is None:
             run = run.record_event(
@@ -538,16 +531,58 @@ class ApplySaga:
             return run, Failed(error="email_sender_unavailable", retryable=False)
 
         try:
+            self._submission_authorizer()
+        except Exception as exc:  # noqa: BLE001 - external authorization port
+            log.info("ApplySaga: email submission authorization was revoked: %s", exc)
+            run = run.record_event(
+                event_type="ApplySubmissionBlocked",
+                occurred_at=_utc_now(),
+                level="warn",
+                message="owned email submission was blocked by the active capability policy",
+                payload={
+                    "reason": "submission_authorization_revoked",
+                    "submission_channel": "email",
+                },
+            )
+            return run, Failed(
+                error="SUBMISSION_AUTHORIZATION_REVOKED: auto-apply capability is no longer enabled",
+                retryable=True,
+            )
+
+        intended_at = _utc_now()
+        run = run.record_event(
+            event_type="ApplySubmitIntended",
+            occurred_at=intended_at,
+            level="info",
+            message="owned email application intent recorded",
+            payload={
+                "tenant_id": str(run.tenant_id),
+                "job_key": str(run.job_id),
+                "run_id": str(run.run_id),
+                "material_version": str(material_version or ""),
+                "submission_channel": "email",
+                "intended_at": intended_at,
+            },
+        )
+        self._repository.save(run)
+
+        try:
             send_result = self._email_sender.send_email_application(candidate)
         except Exception as exc:  # noqa: BLE001 - translate provider failures into terminal apply state
             run = run.record_event(
                 event_type="EmailApplicationSendFailed",
                 occurred_at=_utc_now(),
-                level="error",
-                message=str(exc)[:500],
-                payload={"reason": "email_send_failed"},
+                level="warn",
+                message="email application outcome is ambiguous after sender error",
+                payload={
+                    "reason": "email_send_outcome_ambiguous",
+                    "provider_error": str(exc)[:500],
+                },
             )
-            return run, Failed(error=f"email_send_failed:{str(exc)[:120]}", retryable=False)
+            return run, Failed(
+                error=f"email_send_outcome_ambiguous:{str(exc)[:120]}",
+                retryable=False,
+            )
 
         run = run.record_event(
             event_type="EmailApplicationSent",

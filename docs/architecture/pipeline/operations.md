@@ -47,9 +47,11 @@ The loop intentionally reuses the existing continuous poll mode in
 `ApplyWorkflow` and `apply.launcher.worker_loop`:
 
 - `apply_approval_required` is re-read by the apply activity at claim time. With
-  the default **true** value, the loop submits only jobs already approved in
+  the default **true** value, the loop claims only jobs already approved in
   Apply Review and parks unapproved jobs as awaiting approval. With **false**,
-  the loop may submit eligible prepared jobs autonomously.
+  it may claim eligible prepared jobs without that wait, but it still cannot
+  perform final browser submission. Browser forms stop for manual completion;
+  the owned Gmail sender still requires an exact recipient/attachment approval.
 - `min_fit_score` and `apply_concurrency` are re-read by auto-apply activities,
   so threshold and fan-out changes affect later polls without recreating the
   workflow.
@@ -58,9 +60,10 @@ The loop intentionally reuses the existing continuous poll mode in
   into a spend storm. The reconciler treats that failed projection as a budget
   halt and does not restart the loop while today's spend remains at or above the
   configured ceiling.
-- The existing launcher protections remain the source of truth: dry-run apply
-  paths never submit, submit-intent tracking enforces at-most-once, and CAPTCHA
-  or third-party challenge handling fails closed.
+- The existing apply boundaries remain the source of truth: dry-run paths never
+  submit, model-driven browser sessions are transport-locked, submit-intent
+  tracking protects owned email sends, and CAPTCHA or third-party challenge
+  handling fails closed.
 
 Because the loop is a normal workflow run, it is projected into
 `workflow_run_projections` and appears in the Runs / Operations surface as

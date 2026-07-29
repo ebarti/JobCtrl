@@ -1352,6 +1352,84 @@ def test_apply_recovery_after_submit_intent_needs_verification(tmp_path, monkeyp
         close_connection(db_path)
 
 
+def test_failed_result_after_submit_intent_parks_without_reclaim(
+    tmp_path,
+    monkeypatch,
+):
+    """An ambiguous owned send must never become a retryable failed job."""
+
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn)
+
+    try:
+        monkeypatch.setattr(
+            "jobctrl.apply.launcher.get_connection",
+            lambda: get_connection(db_path),
+        )
+        run_ctx: dict = {"workflow_id": "apply-email-send"}
+        job = acquire_job(
+            target_url="https://example.com/job",
+            worker_id=5,
+            run_ctx=run_ctx,
+            approval_required=False,
+        )
+        assert job is not None
+        record_job_event(
+            conn,
+            job["url"],
+            "apply",
+            "ApplySubmitIntended",
+            message="owned email application intent recorded",
+            payload={
+                "tenant_id": "local",
+                "job_key": job["url"],
+                "run_id": run_ctx["run_id"],
+                "material_version": "1",
+                "submission_channel": "email",
+                "intended_at": utc_now(),
+            },
+        )
+        conn.commit()
+
+        mark_result(
+            job["url"],
+            "failed",
+            "email_send_outcome_ambiguous:provider timed out after accepting request",
+            run_ctx=run_ctx,
+        )
+
+        row = conn.execute(
+            "SELECT state, error_code, retryable, next_action "
+            "FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
+            (job["url"],),
+        ).fetchone()
+        assert row["state"] == "needs_verification"
+        assert row["error_code"] == "APPLY_NEEDS_VERIFICATION"
+        assert row["retryable"] == 0
+        assert "confirmation email" in row["next_action"]
+
+        assert (
+            acquire_job(
+                target_url=job["url"],
+                worker_id=6,
+                run_ctx={"workflow_id": "apply-targeted-reclaim"},
+                approval_required=False,
+            )
+            is None
+        )
+        assert (
+            acquire_job(
+                worker_id=7,
+                run_ctx={"workflow_id": "apply-batch-reclaim"},
+                approval_required=False,
+            )
+            is None
+        )
+    finally:
+        close_connection(db_path)
+
+
 def test_acquire_job_concurrent_workers_only_one_succeeds(tmp_path, monkeypatch):
     """Reviewer-reported brief item (PR 37 Medium #2): the lock moved
     from per-run ``apply_runs`` rows to per-job-stage

@@ -501,20 +501,21 @@ Otherwise the reconciler leaves the loop stopped and reports the capability as
 disabled. Browser adoption does not pair the optional extension or copy an
 authenticated profile; those remain separate explicit actions. The Runs page
 shows the standing apply loop. With
-`applyApprovalRequired` still on, that loop live-submits only jobs already
-approved in Apply Review and parks the rest as awaiting approval. If you also
-turn approval off, the same loop may submit eligible prepared jobs
-autonomously, bounded by the minimum fit score, daily spend ceiling,
-at-most-once submit intent tracking, CAPTCHA fail-closed behavior, and the
-dry-run guard for dry-run apply paths.
+`applyApprovalRequired` still on, that loop claims only jobs already approved
+in Apply Review and parks the rest as awaiting approval. Turning approval off
+removes that claim-time wait, but does not grant the model final browser-submit
+authority. Browser-form runs stop for manual completion; only the owned Gmail
+sender can submit automatically, and only for the exact approved
+recipient/attachment candidate.
 
-Only approve real submission after inspecting the dry run, final materials,
-field mapping, blockers, and apply-run history. Submit approval is valid only
-for the materials generation, profile version, and application URL shown in
-Apply Review, and requires full dry-run evidence unless you explicitly accept a
-listed partial dry-run with its blocked channels. [Apply](apply.md) owns the
-application fields, material policy, automation modes, browser capability, and
-Gmail setup. The full approval model is on the [Security](security.md) page.
+Inspect the dry run, final materials, field mapping, blockers, and apply-run
+history before completing a browser form manually or approving an email
+application. Approval is valid only for the materials generation, profile
+version, and application URL shown in Apply Review, and requires full dry-run
+evidence unless you explicitly accept a listed partial dry-run with its blocked
+channels. [Apply](apply.md) owns the application fields, material policy,
+automation modes, browser capability, and Gmail setup. The full approval model
+is on the [Security](security.md) page.
 
 ## 10. Inspect Progress
 

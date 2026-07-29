@@ -12,6 +12,7 @@ from pathlib import Path
 
 from jobctrl.apply import chrome as chrome_mod
 from jobctrl.domain.apply import ApplyRun, ApplyRunStatus
+from jobctrl.domain.apply.process_manager import ApplySaga
 from jobctrl.domain.apply.services import (
     ApplyEligibilityChecker,
     ApplyPromptBuilder,
@@ -24,12 +25,15 @@ from jobctrl.domain.apply.value_objects import (
     Applied,
     Captcha,
     DryRunComplete,
+    EmailOnlyApplication,
     Failed,
+    Manual,
     TokenUsage,
 )
 from jobctrl.domain.ports.apply import (
     AgentResult,
     BrowserSession,
+    EmailApplicationSendResult,
 )
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.apply.local_chrome import LocalChromeAdapter
@@ -70,7 +74,11 @@ class _InMemoryApplyRunRepository:
 
 
 class _FakeBrowser:
+    def __init__(self):
+        self.configs = []
+
     def launch(self, config):
+        self.configs.append(config)
         return BrowserSession(config=config, pid=1, worker_dir="/tmp/w")
 
     def cleanup(self, session):
@@ -89,12 +97,27 @@ class _FakeAgent:
     def __init__(self, *, result):
         self.result = result
         self.calls = 0
+        self.last_kwargs = {}
 
-    def submit_application(self, **_kwargs):
+    def submit_application(self, **kwargs):
         self.calls += 1
+        self.last_kwargs = dict(kwargs)
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
+
+
+class _FakeEmailSender:
+    def __init__(self):
+        self.sent = []
+
+    def send_email_application(self, candidate):
+        self.sent.append(candidate)
+        return EmailApplicationSendResult(
+            provider="gmail",
+            message_id="message-1",
+            thread_id="thread-1",
+        )
 
 
 class _CapturingPublisher:
@@ -154,7 +177,9 @@ def _build_use_case(repo, *, agent_result=None, publisher=None) -> SubmitApplica
         agent_port=_FakeAgent(
             result=agent_result
             or AgentResult(
-                submission_result=Applied(applied_at="t9", verification_confidence=1.0),
+                submission_result=DryRunComplete(
+                    navigated_to="https://example.com/apply"
+                ),
                 duration_ms=100,
             )
         ),
@@ -183,6 +208,98 @@ class _ExplodingPromptBuilder:
         raise AssertionError("unsafe URL must be blocked before prompt build")
 
 
+def test_live_browser_apply_requires_trusted_final_submit_before_prompt_or_browser(repo):
+    agent = _FakeAgent(
+        result=AgentResult(
+            submission_result=Applied(
+                applied_at="t9",
+                verification_confidence=1.0,
+            ),
+            duration_ms=100,
+        )
+    )
+    use_case = SubmitApplicationUseCase(
+        repository=repo,
+        browser_port=_ExplodingBrowser(),
+        agent_port=agent,
+        eligibility_checker=ApplyEligibilityChecker(max_attempts=3),
+        prompt_builder=_ExplodingPromptBuilder(),
+        url_safety_checker=_allow_apply_target,
+    )
+
+    outcome = use_case.execute(
+        job=_ready_job(),
+        snapshot=_FakeSnapshot(),
+        worker_id=1,
+        cdp_port=9222,
+    )
+
+    assert isinstance(outcome.submission_result, Manual)
+    assert outcome.submission_result.reason == "trusted_final_submit_required"
+    assert agent.calls == 0
+    assert "ApplySubmissionBlocked" in {
+        event.event_type for event in outcome.apply_run.events
+    }
+
+
+def test_approved_email_uses_transport_locked_agent_and_owned_sender(
+    monkeypatch,
+    repo,
+):
+    _stub_legacy_prompt(monkeypatch)
+    browser = _FakeBrowser()
+    agent = _FakeAgent(
+        result=AgentResult(
+            submission_result=EmailOnlyApplication(
+                recipient_email="apply@example.com"
+            ),
+            duration_ms=100,
+        )
+    )
+    sender = _FakeEmailSender()
+    saga = ApplySaga(
+        browser_port=browser,
+        agent_port=agent,
+        repository=repo,
+        email_sender=sender,
+    )
+    use_case = SubmitApplicationUseCase(
+        repository=repo,
+        browser_port=browser,
+        agent_port=agent,
+        eligibility_checker=ApplyEligibilityChecker(max_attempts=3),
+        prompt_builder=ApplyPromptBuilder(
+            mcp_config_factory=lambda port: {"port": port}
+        ),
+        saga=saga,
+        url_safety_checker=_allow_apply_target,
+    )
+    job = {
+        **_ready_job(),
+        "full_description": "Email applications to apply@example.com.",
+        "resume_pdf_path": "/tmp/resume.pdf",
+        "resume_pdf_artifact_id": "resume-pdf-1",
+        "approved_email_recipient": "apply@example.com",
+        "approved_email_attachment_artifact_id": "resume-pdf-1",
+    }
+
+    outcome = use_case.execute(
+        job=job,
+        snapshot=_FakeSnapshot(),
+        worker_id=1,
+        cdp_port=9222,
+    )
+
+    assert outcome.apply_run.is_succeeded
+    assert browser.configs[0].dry_run is True
+    assert agent.last_kwargs["dry_run"] is True
+    assert sender.sent[0].recipient_email == "apply@example.com"
+    event_types = [event.event_type for event in outcome.apply_run.events]
+    assert event_types.index("ApplySubmitIntended") < event_types.index(
+        "EmailApplicationSent"
+    )
+
+
 def _stub_legacy_prompt(monkeypatch):
     monkeypatch.setattr(
         "jobctrl.apply.prompt.build_prompt",
@@ -190,7 +307,7 @@ def _stub_legacy_prompt(monkeypatch):
     )
 
 
-def test_happy_path_marks_run_succeeded(monkeypatch, repo):
+def test_live_browser_path_stops_at_manual_boundary(monkeypatch, repo):
     _stub_legacy_prompt(monkeypatch)
     use_case = _build_use_case(
         repo,
@@ -211,20 +328,24 @@ def test_happy_path_marks_run_succeeded(monkeypatch, repo):
     )
     assert outcome.ok is True
     assert not outcome.skipped
-    assert outcome.apply_run.is_succeeded
-    # The aggregate is persisted with the agent's events folded in.
+    assert isinstance(outcome.submission_result, Manual)
+    assert outcome.submission_result.reason == "trusted_final_submit_required"
     loaded = repo.load(LOCAL_TENANT, outcome.apply_run.run_id)
     assert loaded is not None
     event_types = [e.event_type for e in loaded.events]
-    assert "Tool" in event_types
-    assert "AgentResult" in event_types
+    assert event_types == ["ApplySubmissionBlocked"]
 
 
-def test_execute_allows_public_ip_application_url_to_reach_agent(monkeypatch, repo):
+def test_dry_run_accepts_public_ip_application_url_and_reaches_agent(
+    monkeypatch,
+    repo,
+):
     _stub_legacy_prompt(monkeypatch)
     agent = _FakeAgent(
         result=AgentResult(
-            submission_result=Applied(applied_at="t9", verification_confidence=1.0),
+            submission_result=DryRunComplete(
+                navigated_to="https://93.184.216.34/apply",
+            ),
             duration_ms=100,
         )
     )
@@ -243,9 +364,10 @@ def test_execute_allows_public_ip_application_url_to_reach_agent(monkeypatch, re
         snapshot=_FakeSnapshot(),
         worker_id=1,
         cdp_port=9222,
+        dry_run=True,
     )
 
-    assert outcome.apply_run.is_succeeded
+    assert isinstance(outcome.submission_result, DryRunComplete)
     assert agent.calls == 1
 
 
@@ -285,6 +407,7 @@ def test_execute_passes_worker_dir_to_prompt_builder(monkeypatch, repo):
         worker_id=1,
         cdp_port=9222,
         worker_dir="/tmp/apply-worker-1",
+        dry_run=True,
     )
 
     assert seen["upload_dir"] == "/tmp/apply-worker-1"
@@ -333,9 +456,8 @@ def test_execute_keeps_upload_files_after_local_chrome_launch(
             assert str(upload_path) not in prompt.text
             assert 'upload_artifact(kind="resume")' in prompt.text
             return AgentResult(
-                submission_result=Applied(
-                    applied_at="t9",
-                    verification_confidence=1.0,
+                submission_result=DryRunComplete(
+                    navigated_to="https://example.com/apply",
                 ),
                 duration_ms=100,
             )
@@ -362,9 +484,10 @@ def test_execute_keeps_upload_files_after_local_chrome_launch(
         cdp_port=9222 + worker_id,
         worker_dir=worker_dir,
         search_config={"location": {"accept_patterns": ["Barcelona"]}},
+        dry_run=True,
     )
 
-    assert outcome.apply_run.is_succeeded
+    assert outcome.apply_run.status == "dry_run_complete"
 
 
 def test_eligibility_accepts_posting_url_without_direct_application_url(monkeypatch, repo):
@@ -415,6 +538,7 @@ def test_execute_blocks_private_network_application_url_before_agent(repo):
         snapshot=_FakeSnapshot(),
         worker_id=1,
         cdp_port=9222,
+        dry_run=True,
     )
 
     assert outcome.skipped is False
@@ -451,6 +575,7 @@ def test_agent_failure_variant_routes_to_failed(monkeypatch, repo):
         snapshot=_FakeSnapshot(),
         worker_id=1,
         cdp_port=9222,
+        dry_run=True,
     )
     assert outcome.apply_run.status == "captcha"
 
@@ -463,6 +588,7 @@ def test_agent_timeout_routes_through_saga_compensation(monkeypatch, repo):
         snapshot=_FakeSnapshot(),
         worker_id=1,
         cdp_port=9222,
+        dry_run=True,
     )
     assert outcome.apply_run.is_failed
     submission = outcome.apply_run.submission_result
@@ -482,7 +608,7 @@ def test_publisher_receives_started_then_terminal_events(monkeypatch, repo):
     )
     types = [e.event_type for e in publisher.events]
     assert "ApplyRunStarted" in types
-    assert "ApplicationSubmitted" in types
+    assert "ApplicationFailed" in types
     assert "ApplyRunEventRecorded" in types
 
 
@@ -504,4 +630,5 @@ def test_submit_batch_iterates_acquirer(monkeypatch, repo):
     )
     summary = batch.execute(worker_id=0, cdp_port=9222, limit=0)
     assert summary.processed == 2
-    assert summary.applied == 2
+    assert summary.applied == 0
+    assert summary.failed == 2

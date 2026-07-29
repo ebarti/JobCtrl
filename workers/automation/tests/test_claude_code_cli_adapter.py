@@ -14,6 +14,7 @@ from jobctrl.domain.apply.value_objects import (
     ApplyPrompt,
     BrowserWorkerConfig,
     EmailOnlyApplication,
+    Manual,
 )
 from jobctrl.domain.ports.apply import BrowserSession
 from jobctrl.infrastructure.apply import claude_code_cli
@@ -158,6 +159,29 @@ def test_default_model_uses_local_claude_default(monkeypatch, tmp_path) -> None:
     assert not _FakePopen.mcp_config_paths[0].exists()
     with claude_code_cli._ACTIVE_CLAUDE_LOCK:
         assert claude_code_cli._ACTIVE_CLAUDE_PROCS == {}
+
+
+def test_live_adapter_refuses_without_trusted_final_submit_boundary(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+    _FakePopen.calls.clear()
+
+    result = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    ).submit_application(
+        prompt=ApplyPrompt(text="apply", mcp_config={}),
+        browser=_session(),
+        model="default",
+        dry_run=False,
+    )
+
+    assert isinstance(result.submission_result, Manual)
+    assert result.submission_result.reason == "trusted_final_submit_required"
+    assert _FakePopen.calls == []
 
 
 def test_explicit_model_is_forwarded_to_claude(monkeypatch, tmp_path) -> None:

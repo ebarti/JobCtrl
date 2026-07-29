@@ -978,7 +978,9 @@ def mark_result(
     ``DryRunCompleted`` event whose payload feeds
     ``apply_run_projections``, and — when the run carries a
     ``worker_id`` — a ``job_artifacts`` row pointing at the agent's
-    per-worker log file (kind ``apply_log``). The legacy
+    per-worker log file (kind ``apply_log``). A non-success result
+    after this run's submit-intent checkpoint is parked in
+    ``needs_verification`` and is never made retryable. The legacy
     ``jobs.apply_*`` columns are NOT touched.
     """
     conn = get_connection()
@@ -993,6 +995,10 @@ def mark_result(
     worker_id = run_ctx.get("worker_id") if run_ctx else None
     model = run_ctx.get("model") if run_ctx else None
     dry_run = bool(run_ctx.get("dry_run")) if run_ctx else False
+    submit_intent_recorded = (
+        status not in {"applied", "dry_run"}
+        and _has_apply_submit_intent(conn, url, str(run_id))
+    )
 
     if status == "applied":
         # Launcher owns lock-release policy: if a competing process raced
@@ -1061,6 +1067,45 @@ def mark_result(
                 "materials_generation": binding["materials_generation"],
                 "application_url": binding["application_url"],
                 "profile_version": binding["profile_version"],
+            },
+        )
+    elif submit_intent_recorded:
+        reason = (error or "unknown").strip()
+        set_stage_state(
+            conn,
+            url,
+            "apply",
+            "needs_verification",
+            finished_at=now,
+            duration_ms=duration_ms,
+            error_code="APPLY_NEEDS_VERIFICATION",
+            error_message=(
+                "Apply reached the submit-intent checkpoint, but the external "
+                f"outcome is ambiguous: {reason}"
+            ),
+            retryable=False,
+            next_action=(
+                "Review the employer site or confirmation email before retrying."
+            ),
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            url,
+            "apply",
+            "ApplicationFailed",
+            level="warn",
+            message="Application outcome requires manual verification",
+            payload={
+                "run_id": str(run_id),
+                "result": "needs_verification",
+                "reason": reason,
+                "finished_at": now,
+                "duration_ms": duration_ms,
+                "worker_id": worker_id,
+                "model": model,
+                "dry_run": dry_run,
+                "retryable": False,
             },
         )
     else:
@@ -1806,6 +1851,7 @@ PERMANENT_FAILURES: set[str] = {
     "site_blocked",
     "cloudflare_blocked",
     "blocked_by_cloudflare",
+    "trusted_final_submit_required",
 }
 
 PERMANENT_PREFIXES: tuple[str, ...] = (

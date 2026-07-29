@@ -39,6 +39,7 @@ from jobctrl.domain.apply.value_objects import (
     ApplyRunId,
     BrowserWorkerConfig,
     Failed,
+    Manual,
     SubmissionResult,
     new_apply_run_id,
 )
@@ -105,13 +106,14 @@ class _ApplyTargetUrlSafety:
 
 
 class SubmitApplicationUseCase:
-    """Run one autonomous apply lifecycle for one job.
+    """Run one bounded apply lifecycle for one job.
 
     The use case is the single transactional boundary: load the job,
-    check eligibility, render the prompt, drive the saga, and
-    publish events. Repository writes happen inside the saga (each
-    state transition persists the aggregate); the use case only owns
-    the orchestration.
+    check eligibility, enforce the final-submit boundary, render a
+    transport-locked prompt when allowed, drive the saga, and publish
+    events. Repository writes happen inside the saga (each state
+    transition persists the aggregate); the use case owns orchestration
+    plus the pre-saga browser-submit refusal.
     """
 
     def __init__(
@@ -255,14 +257,49 @@ class SubmitApplicationUseCase:
         # 4. Publish ApplyRunStarted (per §6.7)
         self._publish_started(apply_run)
 
+        # A page-influenced model cannot own the final browser commit. Until a
+        # trusted form-manifest review + one-shot submit mediator exists, live
+        # browser forms stop here and require an operator-owned manual submit.
+        # Approval-bound email applications continue through their separate
+        # owned sender below.
+        if not dry_run and not _has_approved_email_candidate(job):
+            finished_at = _utc_now()
+            apply_run = apply_run.record_event(
+                event_type="ApplySubmissionBlocked",
+                occurred_at=finished_at,
+                level="warn",
+                message="browser application requires a trusted final-submit boundary",
+                payload={
+                    "reason": "trusted_final_submit_required",
+                    "submission_channel": "browser",
+                },
+            )
+            apply_run = apply_run.complete(
+                result=Manual(reason="trusted_final_submit_required"),
+                finished_at=finished_at,
+                duration_ms=0,
+            )
+            self._repository.save(apply_run)
+            self._publish_event_records(apply_run)
+            self._publish_failed(apply_run, apply_run.submission_result)
+            return SubmitApplicationOutcome(
+                apply_run=apply_run,
+                ok=True,
+                submission_result=apply_run.submission_result,
+            )
+
         # 5. Render prompt + browser config
+        # Every model-driven browser session is transport locked. A live run
+        # may still discover an approval-bound email candidate, but the model
+        # never receives browser submit authority.
+        agent_transport_locked = True
         tailored_resume = _read_tailored_resume_text(job)
         prompt = self._prompt_builder.build(
             job=job,
             tailored_resume=tailored_resume,
             snapshot=snapshot,
             cdp_port=cdp_port,
-            dry_run=dry_run,
+            dry_run=agent_transport_locked,
             search_config=search_config,
             upload_dir=worker_dir,
         )
@@ -271,7 +308,7 @@ class SubmitApplicationUseCase:
             cdp_port=cdp_port,
             headless=headless,
             user_data_dir=worker_dir,
-            dry_run=dry_run,
+            dry_run=agent_transport_locked,
             approved_application_url=str(
                 job.get("application_url") or job.get("url") or ""
             ),
@@ -562,6 +599,13 @@ def _email_application_context(
         attachment_path=resume_path,
         approved_recipient_email=str(job.get("approved_email_recipient") or ""),
         approved_attachment_artifact_id=str(job.get("approved_email_attachment_artifact_id") or ""),
+    )
+
+
+def _has_approved_email_candidate(job: Mapping[str, Any]) -> bool:
+    return bool(
+        str(job.get("approved_email_recipient") or "").strip()
+        and str(job.get("approved_email_attachment_artifact_id") or "").strip()
     )
 
 
