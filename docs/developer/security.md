@@ -170,7 +170,8 @@ and broad permission bypass. The default inspection MCP configuration also
 omits Gmail, profile-database, and credential-policy access. Model-driven
 browser sessions are transport-locked and cannot perform final browser
 submission. Job-site passwords and CAPTCHA provider keys are not placed in the
-model prompt; only the owned CAPTCHA tool receives its configured provider key.
+model prompt; only the owned CAPTCHA tool receives its configured provider key,
+and the server consumes at most one outbound solve attempt per apply run.
 Gmail email applications are sent by JobCtrl's owned sender only after exact
 Apply Review approval, not by an agent mailbox tool.
 The detailed containment rules are below in
@@ -310,7 +311,8 @@ is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
   explicitly denied and cannot be restored by a caller-supplied MCP
   configuration. Job-site passwords and CAPTCHA provider keys stay out of the
   model prompt. The local `solve_captcha` tool owns provider-key use when
-  configured.
+  configured and enforces one outbound provider attempt per apply run even when
+  that attempt fails.
   Gmail send is not exposed as an agent tool; email-only applications are
   recorded as review candidates and sent only by the owned email sender after a
   matching Apply Review approval.

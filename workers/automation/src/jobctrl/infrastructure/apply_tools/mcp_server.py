@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -67,6 +68,8 @@ class ApplyToolsMcpServer:
         self._captcha_key_resolver = captcha_key_resolver or _captcha_api_key
         self._captcha_solver = captcha_solver or _solve_with_capsolver
         self._captcha_injector = captcha_injector or _inject_captcha_token
+        self._captcha_attempt_lock = Lock()
+        self._captcha_attempt_consumed = False
 
     def handle_json(self, line: str) -> dict[str, Any] | None:
         try:
@@ -181,6 +184,10 @@ class ApplyToolsMcpServer:
             kind,
             self._approved_application_url,
         )
+        with self._captcha_attempt_lock:
+            if self._captcha_attempt_consumed:
+                raise ValueError("CAPTCHA solver may be called at most once per apply run")
+            self._captcha_attempt_consumed = True
         result = self._captcha_solver(api_key, challenge)
         if not isinstance(result, CaptchaSolveResult):
             result = CaptchaSolveResult(token=str(result or ""), kind=challenge.kind, elapsed_s=0.0)

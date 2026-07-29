@@ -513,6 +513,78 @@ def test_solve_captcha_uses_owned_solver_without_returning_secret(monkeypatch, t
     assert json.loads(usage_events)["event_type"] == "CaptchaSolveCompleted"
 
 
+def test_solve_captcha_allows_only_one_provider_attempt_per_apply_run(monkeypatch, tmp_path):
+    calls: list[CaptchaChallenge] = []
+    injected: list[str] = []
+    _install_fake_captcha_cdp(
+        monkeypatch,
+        detection={
+            "ok": True,
+            "href": "https://example.com/apply/form",
+            "sitekey": "active-site-key",
+        },
+    )
+    server = ApplyToolsMcpServer(
+        upload_dir=tmp_path,
+        cdp_endpoint="http://localhost:9222",
+        approved_application_url="https://example.com/apply",
+        captcha_key_resolver=lambda: "capsolver-secret",
+        captcha_solver=lambda _api_key, challenge: (
+            calls.append(challenge)
+            or CaptchaSolveResult(
+                token="solver-token",
+                kind=challenge.kind,
+                elapsed_s=1.0,
+            )
+        ),
+        captcha_injector=lambda _endpoint, _challenge, token: injected.append(token),
+    )
+
+    first = _call(server, "solve_captcha", {"kind": "hcaptcha"})
+    second = _call(server, "solve_captcha", {"kind": "hcaptcha"})
+
+    assert "result" in first
+    assert second["error"]["code"] == -32000
+    assert "at most once per apply run" in second["error"]["message"]
+    assert len(calls) == 1
+    assert injected == ["solver-token"]
+
+
+def test_solve_captcha_failed_provider_attempt_consumes_run_budget(monkeypatch, tmp_path):
+    calls: list[CaptchaChallenge] = []
+    _install_fake_captcha_cdp(
+        monkeypatch,
+        detection={
+            "ok": True,
+            "href": "https://example.com/apply/form",
+            "sitekey": "active-site-key",
+        },
+    )
+    server = ApplyToolsMcpServer(
+        upload_dir=tmp_path,
+        cdp_endpoint="http://localhost:9222",
+        approved_application_url="https://example.com/apply",
+        captcha_key_resolver=lambda: "capsolver-secret",
+        captcha_solver=lambda _api_key, challenge: (
+            calls.append(challenge)
+            or CaptchaSolveResult(
+                token="",
+                kind=challenge.kind,
+                elapsed_s=1.0,
+            )
+        ),
+    )
+
+    first = _call(server, "solve_captcha", {"kind": "hcaptcha"})
+    second = _call(server, "solve_captcha", {"kind": "hcaptcha"})
+
+    assert first["error"]["code"] == -32000
+    assert "returned no token" in first["error"]["message"]
+    assert second["error"]["code"] == -32000
+    assert "at most once per apply run" in second["error"]["message"]
+    assert len(calls) == 1
+
+
 def test_solve_captcha_rejects_model_supplied_challenge_coordinates(tmp_path):
     calls: list[tuple[str, CaptchaChallenge]] = []
     injected: list[str] = []
