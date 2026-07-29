@@ -189,6 +189,100 @@ def test_load_current_approved_ignores_newer_rejected_generation(
     assert current.tailored_resume.status is ArtifactStatus.APPROVED
 
 
+def test_rejected_cover_refresh_round_trips_without_changing_projected_path(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    url = _seed_job(conn)
+    repo = SqliteMaterialsRepository(conn)
+    approved_path = tmp_path / "approved-cover.txt"
+    rejected_path = tmp_path / "rejected-cover.txt"
+    approved_path.write_text("previously approved", encoding="utf-8")
+    rejected_path.write_text("rejected refresh", encoding="utf-8")
+    approved = _approved_with_pdf(url).with_cover_letter(
+        _make_artifact(ArtifactType.COVER_LETTER, path=str(approved_path)),
+        validation=ValidationResult.success(),
+        updated_at="2024-01-03T00:00:00+00:00",
+    )
+    repo.save(approved)
+    rejected = _make_artifact(
+        ArtifactType.COVER_LETTER,
+        path=str(rejected_path),
+    ).with_status(ArtifactStatus.REJECTED)
+    failed_validation = ValidationResult.failure(("fabricated metric",))
+    preserved = approved.with_metadata(
+        {
+            "cover_letter_attempts": [
+                {
+                    "artifact": rejected.to_dict(),
+                    "validation": failed_validation.to_dict(),
+                    "recorded_at": "2024-01-04T00:00:00+00:00",
+                }
+            ]
+        },
+        updated_at="2024-01-04T00:00:00+00:00",
+    )
+
+    repo.save(preserved)
+
+    loaded = repo.load_current_approved(LOCAL_TENANT, JobId(url))
+    assert loaded is not None
+    assert loaded.cover_letter is not None
+    assert loaded.cover_letter.status is ArtifactStatus.APPROVED
+    assert loaded.cover_letter.path == str(approved_path)
+    history = loaded.metadata["cover_letter_attempts"]
+    assert history[0]["artifact"]["path"] == str(rejected_path)
+    assert history[0]["artifact"]["status"] == ArtifactStatus.REJECTED.value
+    projected = get_jobs_by_stage(conn, stage="discovered")
+    assert projected[0]["cover_letter_path"] == str(approved_path)
+
+
+def test_approved_cover_refresh_supersedes_stale_pdf_and_projects_pending_pdf(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    url = _seed_job(conn)
+    repo = SqliteMaterialsRepository(conn)
+    old_cover_path = tmp_path / "old-cover.txt"
+    old_pdf_path = tmp_path / "old-cover.pdf"
+    new_cover_path = tmp_path / "new-cover.txt"
+    old_cover_path.write_text("old cover", encoding="utf-8")
+    old_pdf_path.write_bytes(b"%PDF-old")
+    new_cover_path.write_text("new cover", encoding="utf-8")
+    complete = _approved_with_pdf(url).with_cover_letter(
+        _make_artifact(ArtifactType.COVER_LETTER, path=str(old_cover_path)),
+        validation=ValidationResult.success(),
+        updated_at="2024-01-03T00:00:00+00:00",
+    ).with_cover_letter_pdf(
+        _make_artifact(
+            ArtifactType.COVER_LETTER_PDF,
+            path=str(old_pdf_path),
+            render_format=RenderFormat.HTML_PDF,
+        ),
+        updated_at="2024-01-03T01:00:00+00:00",
+    )
+    repo.save(complete)
+    refreshed = complete.with_cover_letter(
+        _make_artifact(ArtifactType.COVER_LETTER, path=str(new_cover_path)),
+        validation=ValidationResult.success(),
+        updated_at="2024-01-04T00:00:00+00:00",
+    )
+
+    repo.save(refreshed)
+
+    loaded = repo.load_current_approved(LOCAL_TENANT, JobId(url))
+    assert loaded is not None
+    assert loaded.cover_letter is not None
+    assert loaded.cover_letter.path == str(new_cover_path)
+    assert loaded.cover_letter_pdf is not None
+    assert loaded.cover_letter_pdf.status is ArtifactStatus.SUPERSEDED
+    assert loaded.status == "cover_letter_ready"
+    assert repo.list_pending_pdf(LOCAL_TENANT) == [JobId(url)]
+    pending_pdf = get_jobs_by_stage(conn, stage="pending_pdf", limit=0)
+    assert [row["url"] for row in pending_pdf] == [url]
+    assert pending_pdf[0]["cover_letter_path"] == str(new_cover_path)
+
+
 # ---------------------------------------------------------------------------
 # Generation conflict
 # ---------------------------------------------------------------------------

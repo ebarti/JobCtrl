@@ -289,6 +289,42 @@ def test_with_cover_letter_passed_promotes_to_cover_letter_ready() -> None:
     assert next_materials.status == MaterialsLifecycle.COVER_LETTER_READY
 
 
+def test_with_cover_letter_replacement_clears_stale_pdf() -> None:
+    materials = _initial_materials().with_resume_attempt(
+        _sample_artifact(),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-02T00:00:00+00:00",
+    ).with_resume_pdf(
+        _sample_artifact(ArtifactType.RESUME_PDF),
+        updated_at="2024-01-02T01:00:00+00:00",
+    ).with_cover_letter(
+        _sample_artifact(ArtifactType.COVER_LETTER),
+        validation=ValidationResult.success(),
+        updated_at="2024-01-03T00:00:00+00:00",
+    ).with_cover_letter_pdf(
+        _sample_artifact(ArtifactType.COVER_LETTER_PDF),
+        updated_at="2024-01-03T01:00:00+00:00",
+    )
+    assert materials.status == MaterialsLifecycle.COMPLETE
+    assert materials.cover_letter_pdf is not None
+    replacement = _sample_artifact(ArtifactType.COVER_LETTER)
+
+    refreshed = materials.with_cover_letter(
+        replacement,
+        validation=ValidationResult.success(),
+        updated_at="2024-01-04T00:00:00+00:00",
+    )
+
+    assert refreshed.cover_letter is not None
+    assert refreshed.cover_letter.artifact_id == replacement.artifact_id
+    assert refreshed.cover_letter.status is ArtifactStatus.APPROVED
+    assert refreshed.cover_letter_pdf is not None
+    assert refreshed.cover_letter_pdf.status is ArtifactStatus.SUPERSEDED
+    assert refreshed.cover_letter_pdf.superseded_at == "2024-01-04T00:00:00+00:00"
+    assert refreshed.status == MaterialsLifecycle.COVER_LETTER_READY
+
+
 def test_pdf_attaches_only_after_text_present() -> None:
     materials = _initial_materials().with_resume_attempt(
         _sample_artifact(),

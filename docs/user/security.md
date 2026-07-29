@@ -379,8 +379,13 @@ grounding remains authoritative. Retry prompts use only fixed, code-owned reason
 guidance; free-form validator, judge, adversarial-review, and prior-model text
 stays in the audit trail and is never promoted into a later generator message.
 When regeneration or review fails, JobCtrl keeps the last accepted artifact
-visible and records the failed attempt instead of replacing or hiding known-good
-material. Approval decisions, submit intent, provider failures, residual
+visible and records the failed attempt at a separate audit path instead of
+overwriting, replacing, or hiding known-good material. Approval decisions,
+including successful refreshes, use immutable artifact paths so a persistence
+failure cannot change the bytes behind the current approved record. Replacing
+approved text also invalidates its derived PDF before persistence, so a render
+failure cannot leave a stale PDF marked approved. Submit intent, provider
+failures, residual
 warnings, terminal outcomes, and verification parks remain inspectable in the
 local event/read model so the UI can explain what happened and which evidence
 was used.

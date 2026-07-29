@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from collections.abc import Iterable, Mapping as MappingABC
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
@@ -3481,9 +3482,12 @@ class GenerateCoverLetterUseCase:
             target_skill_terms=target_skill_terms,
         )
 
+        generated_at = _utc_now()
         prefix = _safe_filename_prefix(job)
         cover_letter_dir.mkdir(parents=True, exist_ok=True)
-        cl_path = cover_letter_dir / f"{prefix}_CL.txt"
+        artifact_id = uuid.uuid4().hex
+        path_role = "CL" if validation.passed else "CL_rejected"
+        cl_path = cover_letter_dir / f"{prefix}_{path_role}_{artifact_id}.txt"
         cl_path.write_text(letter, encoding="utf-8")
 
         try:
@@ -3494,7 +3498,7 @@ class GenerateCoverLetterUseCase:
         artifact = Artifact.create(
             type=ArtifactType.COVER_LETTER,
             path=str(cl_path),
-            created_at=_utc_now(),
+            created_at=generated_at,
             render_format=RenderFormat.TEXT,
             size_bytes=size_bytes,
             metadata={
@@ -3504,10 +3508,46 @@ class GenerateCoverLetterUseCase:
                     findings, target_skill_terms=target_skill_terms
                 ),
             },
+            artifact_id=artifact_id,
         )
-        materials = materials.with_cover_letter(
-            artifact, validation=validation, updated_at=_utc_now()
-        )
+        if validation.passed:
+            materials = materials.with_cover_letter(
+                artifact,
+                validation=validation,
+                updated_at=generated_at,
+            )
+        else:
+            rejected_artifact = artifact.with_status(ArtifactStatus.REJECTED)
+            attempt_history = list(materials.metadata.get("cover_letter_attempts") or ())
+            attempt_history.append(
+                {
+                    "artifact": rejected_artifact.to_dict(),
+                    "validation": validation.to_dict(),
+                    "recorded_at": generated_at,
+                }
+            )
+            if (
+                materials.cover_letter is not None
+                and materials.cover_letter.status is ArtifactStatus.APPROVED
+            ):
+                materials = materials.with_metadata(
+                    {
+                        **dict(materials.metadata),
+                        "cover_letter_attempts": attempt_history,
+                    },
+                    updated_at=generated_at,
+                )
+            else:
+                materials = materials.with_cover_letter(
+                    artifact,
+                    validation=validation,
+                    updated_at=generated_at,
+                ).with_metadata(
+                    {
+                        **dict(materials.metadata),
+                        "cover_letter_attempts": attempt_history,
+                    }
+                )
         self._repository.save(materials)
 
         if validation.passed:
