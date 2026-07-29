@@ -214,6 +214,15 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkey
             evidence = chrome.get_dry_run_cdp_guard_evidence(dry_port)
             channels = set(evidence["blocked_channels"])
             assert evidence["coverage"] == "partial"
+            assert len(evidence["allowed_navigations"]) == 1
+            assert (
+                evidence["allowed_navigations"][0]["decision"]
+                == "run_bound_initial_url"
+            )
+            assert (
+                evidence["allowed_navigations"][0]["url"]
+                == f"http://127.0.0.1:{server.server_port}/"
+            )
             assert "network:GET" in channels
             assert "network:POST" in channels
             assert "network:DELETE" in channels
@@ -324,42 +333,44 @@ def test_live_origin_guard_blocks_cross_origin_worker_request(
         collector.server_close()
 
 
-def test_dry_run_request_policy_blocks_all_mutating_methods():
-    assert chrome._should_block_dry_run_request("POST") is True
-    assert chrome._should_block_dry_run_request("PUT") is True
-    assert chrome._should_block_dry_run_request("PATCH") is True
-    assert chrome._should_block_dry_run_request("DELETE") is True
-    assert chrome._should_block_dry_run_request("OPTIONS") is True
-    assert chrome._should_block_dry_run_request("GET", resource_type="Image") is True
-    assert chrome._should_block_dry_run_request("GET", resource_type="Fetch") is True
-    assert chrome._should_block_dry_run_request("HEAD", resource_type="Script") is True
+def test_dry_run_navigation_grant_rejects_every_ungranted_request_shape():
+    approved_url = "https://apply.example.com/job/42?source=review"
+    guard = chrome._DryRunCdpGuard(
+        port=1,
+        approved_application_url=approved_url,
+    )
+
+    for method in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"):
+        assert (
+            guard.consume_navigation_grant(
+                method=method,
+                url=approved_url,
+                resource_type="Document",
+            )
+            is False
+        )
+    for resource_type in ("Image", "Fetch", "Script", "XHR"):
+        assert (
+            guard.consume_navigation_grant(
+                method="GET",
+                url=approved_url,
+                resource_type=resource_type,
+            )
+            is False
+        )
     assert (
-        chrome._should_block_dry_run_request(
-            "GET",
+        guard.consume_navigation_grant(
+            method="GET",
+            url=approved_url,
             resource_type="Document",
         )
         is True
     )
     assert (
-        chrome._should_block_dry_run_request(
-            "HEAD",
+        guard.consume_navigation_grant(
+            method="GET",
+            url=approved_url,
             resource_type="Document",
-        )
-        is True
-    )
-    assert (
-        chrome._should_block_dry_run_request(
-            "GET",
-            resource_type="Document",
-            initiator_type="script",
-        )
-        is True
-    )
-    assert (
-        chrome._should_block_dry_run_request(
-            "GET",
-            resource_type="Document",
-            initiator_type="other",
         )
         is False
     )
@@ -977,6 +988,7 @@ def test_dry_run_guard_evidence_reports_unprotected_when_guard_is_missing():
         "coverage": "unprotected",
         "blocked_channels": (),
         "blocked_requests": (),
+        "allowed_navigations": (),
         "protected_targets": 0,
     }
 

@@ -259,10 +259,13 @@ is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
   `needs_verification` for a human instead of blindly re-submitting; a run with no
   submit intent can be safely rewound to `pending`.
 - **Browser-layer dry-run guard.** In dry-run, `chrome.py` attaches a CDP session
-  that enables the `Fetch` domain and fails every non-loopback `POST`/`PUT`/`PATCH`
-  request with `BlockedByClient`, plus a `Page.addScriptToEvaluateOnNewDocument`
-  form-submit guard. Dry-run safety therefore does not rely on the agent choosing
-  not to click submit — the transport itself refuses the write.
+  that enables the `Fetch` domain with one run-bound grant for an exact initial
+  `GET` to the reviewed application URL. It consumes and records that grant,
+  then fails replays, `HEAD`, path/query changes, redirects, later document
+  navigation, and all other requests with `BlockedByClient`, alongside a
+  `Page.addScriptToEvaluateOnNewDocument` form-submit guard. Missing allowed
+  navigation evidence downgrades coverage, so dry-run safety and receipts do
+  not depend on the agent choosing not to click submit or narrate success.
 - **Approval-origin browser capability.** `BrowserWorkerConfig` carries the
   reviewed application URL into `chrome.py`. The browser-level CDP guard
   canonicalizes its HTTP(S) origin and fails every intercepted page-target

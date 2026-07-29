@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ipaddress import ip_address
-from urllib.parse import SplitResult, urlsplit
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 
 def _parsed_http_url(value: str) -> tuple[SplitResult, str, str, int | None]:
@@ -57,4 +57,23 @@ def canonical_http_origin(value: str) -> str:
     return f"{scheme}://{rendered_host}{port_suffix}"
 
 
-__all__ = ["canonical_http_origin"]
+def canonical_http_url(value: str) -> str:
+    """Return an exact request identity without a client-only fragment."""
+
+    parsed, scheme, host, port = _parsed_http_url(value)
+    rendered_host = f"[{host}]" if ":" in host else host
+    default_port = 443 if scheme == "https" else 80
+    port_suffix = "" if port is None or port == default_port else f":{port}"
+    path = parsed.path or "/"
+    return urlunsplit(
+        (
+            scheme,
+            f"{rendered_host}{port_suffix}",
+            path,
+            parsed.query,
+            "",
+        )
+    )
+
+
+__all__ = ["canonical_http_origin", "canonical_http_url"]

@@ -196,9 +196,12 @@ at-most-once claiming, and `needs_verification` remain separate required gates.
 ### Dry-Run Cannot Submit
 
 Dry-run combines instruction with enforcement. A Chrome DevTools Protocol guard
-blocks mutating requests, form submission, WebSocket/beacon channels, scripted
-navigation, and data-bearing subresource exfiltration. Ordinary page navigation
-remains available for rehearsal.
+grants one exact `GET` to the reviewed application URL and records the
+sanitized decision plus a URL fingerprint. It blocks `HEAD`, replay, path or
+query changes, redirects, later document navigation, mutating requests, form
+submission, WebSocket/beacon channels, and data-bearing subresource
+exfiltration. A receipt cannot claim full coverage unless that owned initial
+grant was consumed and recorded.
 
 Because the browser enforces the boundary, safety does not depend on the agent
 choosing not to click Submit.

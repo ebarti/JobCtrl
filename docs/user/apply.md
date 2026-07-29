@@ -96,6 +96,13 @@ The daily LLM ceiling and shared setting precedence remain in
 current materials, profile, application URL, and qualifying dry-run evidence as
 described in [Security](security.md#apply-approval-is-required-by-default).
 
+Dry-run navigation is intentionally strict: the browser permits one `GET` to
+the exact reviewed application URL and records that grant in the receipt.
+Replays, `HEAD`, path/query changes, redirects, and later document navigation
+are blocked. A multi-page application therefore needs another reviewed target
+or a supervised live/manual path; dry-run does not learn navigation authority
+from the page or model.
+
 ## Repeat-Application Protection
 
 Before every live application claim, JobCtrl compares the target with confirmed

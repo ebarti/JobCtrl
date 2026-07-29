@@ -329,6 +329,15 @@ def test_dry_run_saga_records_guard_evidence_for_approval_gate(repo):
                     "resource_type": "Fetch",
                 },
             ),
+            "allowed_navigations": (
+                {
+                    "decision": "run_bound_initial_url",
+                    "grant_id": "initial_application_url",
+                    "method": "GET",
+                    "url": "https://example.com/job",
+                    "url_fingerprint": "a" * 64,
+                },
+            ),
         }
     )
     saga = ApplySaga(browser_port=browser, agent_port=_FakeAgent(), repository=repo)
@@ -361,6 +370,15 @@ def test_dry_run_saga_records_guard_evidence_for_approval_gate(repo):
         "dry_run": True,
         "coverage": "partial",
         "blocked_channels": ["network:POST", "form_submit:POST"],
+        "allowed_navigations": [
+            {
+                "decision": "run_bound_initial_url",
+                "grant_id": "initial_application_url",
+                "method": "GET",
+                "url": "https://example.com/job",
+                "url_fingerprint": "a" * 64,
+            }
+        ],
         "materials_generation": 12,
         "application_url": "https://example.com/job",
         "profile_version": 3,
@@ -376,6 +394,47 @@ def test_dry_run_saga_records_guard_evidence_for_approval_gate(repo):
             "resource_type": "Fetch",
         }
     ]
+
+
+def test_dry_run_saga_rejects_full_coverage_without_allowed_navigation(repo):
+    dry_run = ApplyRun.start(
+        tenant_id=LOCAL_TENANT,
+        run_id=new_apply_run_id(),
+        job_id=JobId("https://example.com/job"),
+        started_at="t0",
+        worker_id=1,
+        model="sonnet",
+        dry_run=True,
+    )
+    browser = _FakeBrowser(
+        dry_run_evidence=lambda: {
+            "coverage": "full",
+            "blocked_channels": (),
+            "blocked_requests": (),
+            "allowed_navigations": (),
+        }
+    )
+
+    outcome = ApplySaga(
+        browser_port=browser,
+        agent_port=_FakeAgent(),
+        repository=repo,
+    ).run(
+        apply_run=dry_run,
+        browser_config=_config(),
+        prompt=_prompt(),
+        model="sonnet",
+    )
+
+    result = outcome.apply_run.submission_result
+    assert isinstance(result, DryRunComplete)
+    assert result.coverage == "partial"
+    receipt = next(
+        event
+        for event in outcome.apply_run.events
+        if event.event_type == "DryRunCompleted"
+    )
+    assert receipt.payload["allowed_navigations"] == []
 
 
 def test_email_only_recipient_not_in_posting_parks_without_send(repo):

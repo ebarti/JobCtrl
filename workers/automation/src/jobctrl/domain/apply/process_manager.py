@@ -377,9 +377,12 @@ class ApplySaga:
                     and submission_result.blocked_channels
                 ):
                     dry_run_evidence = {
-                        "coverage": submission_result.coverage,
+                        "coverage": "partial",
                         "blocked_channels": submission_result.blocked_channels,
                         "blocked_requests": (),
+                        "allowed_navigations": dry_run_evidence[
+                            "allowed_navigations"
+                        ],
                     }
                 submission_result = DryRunComplete(
                     navigated_to=submission_result.navigated_to,
@@ -427,6 +430,9 @@ class ApplySaga:
                         "dry_run": True,
                         "coverage": submission_result.coverage,
                         "blocked_channels": list(submission_result.blocked_channels),
+                        "allowed_navigations": list(
+                            dry_run_evidence["allowed_navigations"]
+                        ),
                         "materials_generation": _coerce_optional_int(
                             materials_generation
                             if materials_generation is not None
@@ -648,9 +654,10 @@ def _describe_result(result: SubmissionResult) -> str:
 
 def _empty_dry_run_evidence() -> dict[str, object]:
     return {
-        "coverage": "full",
+        "coverage": "partial",
         "blocked_channels": (),
         "blocked_requests": (),
+        "allowed_navigations": (),
     }
 
 
@@ -666,9 +673,6 @@ def _collect_dry_run_evidence(session: BrowserSession | None) -> dict[str, objec
 
 
 def _normalise_dry_run_evidence(raw: Mapping[str, Any]) -> dict[str, object]:
-    coverage = str(raw.get("coverage") or "full")
-    if coverage not in {"full", "partial"}:
-        coverage = "partial"
     raw_channels = raw.get("blocked_channels") or ()
     if isinstance(raw_channels, str):
         raw_channels = (raw_channels,)
@@ -678,10 +682,19 @@ def _normalise_dry_run_evidence(raw: Mapping[str, Any]) -> dict[str, object]:
         for item in (raw.get("blocked_requests") or ())
         if isinstance(item, Mapping)
     )
+    allowed_navigations = tuple(
+        dict(item)
+        for item in (raw.get("allowed_navigations") or ())
+        if isinstance(item, Mapping)
+    )
+    coverage = str(raw.get("coverage") or "partial")
+    if coverage not in {"full", "partial"} or not allowed_navigations:
+        coverage = "partial"
     return {
         "coverage": coverage,
         "blocked_channels": blocked_channels,
         "blocked_requests": blocked_requests,
+        "allowed_navigations": allowed_navigations,
     }
 
 

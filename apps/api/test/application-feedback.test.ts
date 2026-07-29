@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -1403,6 +1404,25 @@ describe("application feedback API", () => {
       "INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
     ).run(7, NOW);
     db.prepare("DELETE FROM job_events WHERE event_type = 'DryRunCompleted'").run();
+    db.prepare(
+      `INSERT INTO job_events (
+         job_url, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES (?, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
+    ).run(
+      READY_JOB,
+      "Unbound full dry run completed",
+      "2026-06-01T12:01:00.000Z",
+      JSON.stringify({
+        run_id: "dry-run-ready",
+        result: "dry_run_complete",
+        dry_run: true,
+        coverage: "full",
+        materials_generation: 1,
+        profile_version: 7,
+        application_url: READY_JOB,
+        finished_at: "2026-06-01T12:01:00.000Z",
+      }),
+    );
     db.close();
     const app = buildApp(options);
     const readyKey = encodeURIComponent(READY_JOB);
@@ -2456,6 +2476,7 @@ function seedDatabase(dbPath: string): void {
       result: "dry_run_complete",
       dry_run: true,
       coverage: "full",
+      allowed_navigations: runBoundNavigation(READY_JOB),
       materials_generation: 1,
       application_url: READY_JOB,
       finished_at: "2026-05-31T09:01:00.000Z",
@@ -2506,12 +2527,28 @@ function insertVersionedDryRunEvidence(
       result: "dry_run_complete",
       dry_run: true,
       coverage,
+      allowed_navigations: runBoundNavigation(options.applicationUrl),
       materials_generation: options.materialsGeneration,
       profile_version: options.profileVersion,
       application_url: options.applicationUrl,
       finished_at: "2026-06-01T12:01:00.000Z",
     }),
   );
+}
+
+function runBoundNavigation(applicationUrl: string): Array<Record<string, string>> {
+  const parsed = new URL(applicationUrl);
+  parsed.hash = "";
+  const canonical = `${parsed.protocol}//${parsed.host}${parsed.pathname || "/"}${parsed.search}`;
+  return [
+    {
+      decision: "run_bound_initial_url",
+      grant_id: "initial_application_url",
+      method: "GET",
+      url: `${parsed.protocol}//${parsed.host}${parsed.pathname || "/"}`,
+      url_fingerprint: crypto.createHash("sha256").update(canonical, "utf8").digest("hex"),
+    },
+  ];
 }
 
 function insertCompensationRows(db: Database.Database, jobUrl: string): void {

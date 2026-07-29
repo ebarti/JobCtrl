@@ -418,10 +418,12 @@ MCP** and performs any form interaction. Terminal apply outcomes are
    configurable but binding — it is enforced in the launcher, not merely surfaced
    in the UI.
 4. **Browser-layer dry-run guard (CDP).** In dry-run the browser adapter
-   overrides the form-submit action and uses the CDP Fetch domain to block
-   non-local `POST`/`PUT`/`PATCH` requests. So dry-run safety does not rely on
-   the agent choosing not to click submit — even a misbehaving agent cannot
-   submit through the browser.
+   overrides the form-submit action and uses the CDP Fetch domain to grant one
+   exact initial `GET` to the reviewed application URL. The grant is consumed
+   once and recorded with a sanitized URL plus fingerprint; `HEAD`, replays,
+   path/query changes, redirects, later document navigation, and every other
+   request are blocked. Full coverage requires the recorded grant, so a
+   misbehaving agent cannot manufacture a qualifying rehearsal by narration.
 5. **Approval-origin confinement.** The reviewed application URL is carried
    through `BrowserWorkerConfig` into the browser-level CDP guard. Every page,
    popup, redirect, subresource, and form request must remain on that canonical
