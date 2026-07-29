@@ -20,6 +20,7 @@ interface Fixture {
   dbPath: string;
   configPath: string;
   db: Database.Database;
+  legacyExecutionReferences: boolean;
 }
 
 afterEach(() => {
@@ -30,6 +31,25 @@ afterEach(() => {
 });
 
 describe("pipeline operations read model", () => {
+  it("reads v8 URL memberships while the worker migration is pending", () => {
+    const fixture = createFixture({ legacyExecutionReferences: true });
+    insertExecution(fixture, { status: "succeeded" });
+    insertMember(fixture, {
+      key: "v8-upgrade-window",
+      cohort: "observed_this_run",
+      requiredSteps: ["score"],
+    });
+    insertStageState(fixture, "v8-upgrade-window", "score", "pending");
+
+    expect(snapshot(fixture).execution).toMatchObject({
+      currentExecution: {
+        members: 1,
+        planned: 1,
+        remaining: 1,
+      },
+    });
+  });
+
   it("keeps projection coverage absent only when fresh telemetry proves no selected execution or runtime work", () => {
     const fixture = createFixture();
     insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
@@ -1113,13 +1133,27 @@ describe("pipeline operations read model", () => {
   });
 });
 
-function createFixture(): Fixture {
+function createFixture(
+  options: { legacyExecutionReferences?: boolean } = {},
+): Fixture {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-pipeline-operations-"));
   const dbPath = path.join(directory, "jobctrl.db");
   const configPath = path.join(directory, "config.json");
   fs.writeFileSync(configPath, JSON.stringify({ daily_budget_usd: 25 }));
   const db = new Database(dbPath);
+  const legacyExecutionReferences = options.legacyExecutionReferences === true;
+  const executionReferenceColumn = legacyExecutionReferences
+    ? "job_url TEXT NOT NULL"
+    : "job_id TEXT NOT NULL";
   db.exec(`
+    CREATE TABLE fixture_jobs (
+      url TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      UNIQUE (tenant_id, job_id)
+    );
+    CREATE VIEW jobs AS
+      SELECT url, tenant_id, job_id FROM fixture_jobs;
     CREATE TABLE job_stage_states (
       job_url TEXT NOT NULL,
       stage TEXT NOT NULL,
@@ -1140,7 +1174,7 @@ function createFixture(): Fixture {
       tenant_id TEXT NOT NULL,
       discover_workflow_id TEXT NOT NULL,
       discover_run_id TEXT NOT NULL,
-      job_url TEXT NOT NULL,
+      ${executionReferenceColumn},
       cohort_kind TEXT NOT NULL,
       preparation_workflow_id TEXT,
       work_plan_state TEXT NOT NULL,
@@ -1186,7 +1220,13 @@ function createFixture(): Fixture {
     );
   `);
   ensureProjectionTables(db);
-  const fixture = { directory, dbPath, configPath, db };
+  const fixture = {
+    directory,
+    dbPath,
+    configPath,
+    db,
+    legacyExecutionReferences,
+  };
   fixtures.push(fixture);
   return fixture;
 }
@@ -1207,10 +1247,24 @@ function insertReadyRecoveryCheckpoints(fixture: Fixture): void {
         AND temporal_run_id IS NOT NULL`,
   ).all() as Array<{ workflow_id: string; temporal_run_id: string }>;
   for (const execution of executions) {
+    const membershipSql = fixture.legacyExecutionReferences
+      ? `SELECT job_url
+           FROM discovery_execution_jobs
+          WHERE tenant_id = 'local'
+            AND discover_workflow_id = ?
+            AND discover_run_id = ?
+          ORDER BY job_url`
+      : `SELECT jobs.url AS job_url
+           FROM discovery_execution_jobs AS execution
+           JOIN jobs
+             ON jobs.tenant_id = execution.tenant_id
+            AND jobs.job_id = execution.job_id
+          WHERE execution.tenant_id = 'local'
+            AND execution.discover_workflow_id = ?
+            AND execution.discover_run_id = ?
+          ORDER BY jobs.url`;
     const memberships = (fixture.db.prepare(
-      `SELECT job_url FROM discovery_execution_jobs
-        WHERE tenant_id = 'local' AND discover_workflow_id = ? AND discover_run_id = ?
-        ORDER BY job_url`,
+      membershipSql,
     ).all(execution.workflow_id, execution.temporal_run_id) as Array<{ job_url: string }>)
       .map((row) => row.job_url);
     const steps = (fixture.db.prepare(
@@ -1339,20 +1393,38 @@ function insertMember(
   },
 ): { preparationWorkflowId: string } {
   const preparationWorkflowId = `prep-preparation:${createHash("sha256").update(input.key).digest("hex")}`;
+  const jobUrl = input.jobUrl ?? `https://private.invalid/${input.key}`;
+  const jobId = stableJobId(jobUrl);
+  fixture.db.prepare(
+    `INSERT OR IGNORE INTO fixture_jobs (url, tenant_id, job_id)
+     VALUES (?, 'local', ?)`,
+  ).run(jobUrl, jobId);
   fixture.db.prepare(
     `INSERT INTO discovery_execution_jobs (
-       tenant_id, discover_workflow_id, discover_run_id, job_url, cohort_kind,
+       tenant_id, discover_workflow_id, discover_run_id,
+       ${fixture.legacyExecutionReferences ? "job_url" : "job_id"}, cohort_kind,
        preparation_workflow_id, work_plan_state, required_steps_json
      ) VALUES ('local', ?, ?, ?, ?, ?, 'planned', ?)`,
   ).run(
     input.workflowId ?? DISCOVER_WORKFLOW_ID,
     input.runId ?? DISCOVER_RUN_ID,
-    input.jobUrl ?? `https://private.invalid/${input.key}`,
+    fixture.legacyExecutionReferences ? jobUrl : jobId,
     input.cohort ?? "observed_this_run",
     preparationWorkflowId,
     JSON.stringify(input.requiredSteps),
   );
   return { preparationWorkflowId };
+}
+
+function stableJobId(jobUrl: string): string {
+  const digest = createHash("sha256").update(jobUrl).digest("hex");
+  return [
+    digest.slice(0, 8),
+    digest.slice(8, 12),
+    `4${digest.slice(13, 16)}`,
+    `8${digest.slice(17, 20)}`,
+    digest.slice(20, 32),
+  ].join("-");
 }
 
 function insertStageState(

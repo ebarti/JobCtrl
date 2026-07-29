@@ -41,7 +41,9 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v8 (discovery identity references): source observations, canonical identity,
 # and duplicate-link authorities reference ``(tenant_id, job_id)`` rather than
 # storing a posting URL as aggregate identity.
-SCHEMA_VERSION = 8
+# v9 (execution and search receipts): Discover execution membership and
+# accepted JobStreaming receipts reference the same stable identity.
+SCHEMA_VERSION = 9
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -180,6 +182,7 @@ def _schema_migrations() -> tuple[
     return (
         (7, ensure_stable_job_identity_v7),
         (8, ensure_discovery_identity_references_v8),
+        (9, ensure_execution_search_references_v9),
     )
 
 
@@ -3567,7 +3570,7 @@ def ensure_discovery_execution_tables(conn: sqlite3.Connection | None = None) ->
             tenant_id                TEXT NOT NULL,
             discover_workflow_id     TEXT NOT NULL,
             discover_run_id          TEXT NOT NULL,
-            job_url                  TEXT NOT NULL,
+            job_id                   TEXT NOT NULL,
             cohort_kind              TEXT NOT NULL
                 CHECK (cohort_kind IN ('observed_this_run', 'existing_backlog')),
             source_family            TEXT,
@@ -3578,8 +3581,9 @@ def ensure_discovery_execution_tables(conn: sqlite3.Connection | None = None) ->
             required_steps_json      TEXT,
             work_plan_reason         TEXT,
             linked_at                TEXT NOT NULL,
-            PRIMARY KEY (tenant_id, discover_workflow_id, discover_run_id, job_url),
-            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            PRIMARY KEY (tenant_id, discover_workflow_id, discover_run_id, job_id),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
         )
         """
     )
@@ -3599,10 +3603,15 @@ def ensure_discovery_execution_tables(conn: sqlite3.Connection | None = None) ->
         )
         """
     )
+    execution_reference = (
+        "job_id"
+        if "job_id" in _table_columns(conn, "discovery_execution_jobs")
+        else "job_url"
+    )
     conn.execute(
-        """
+        f"""
         CREATE INDEX IF NOT EXISTS idx_discovery_execution_jobs_job
-        ON discovery_execution_jobs(tenant_id, job_url, linked_at)
+        ON discovery_execution_jobs(tenant_id, {execution_reference}, linked_at)
         """
     )
     conn.commit()
@@ -3691,18 +3700,19 @@ def ensure_discovery_search_unit_tables(
             discover_workflow_id   TEXT NOT NULL,
             discover_run_id        TEXT NOT NULL,
             unit_id                TEXT NOT NULL,
-            job_url                TEXT NOT NULL,
+            job_id                 TEXT NOT NULL,
             was_new                INTEGER NOT NULL CHECK (was_new IN (0, 1)),
             accepted_at            TEXT NOT NULL,
             PRIMARY KEY (
-                tenant_id, discover_workflow_id, discover_run_id, unit_id, job_url
+                tenant_id, discover_workflow_id, discover_run_id, unit_id, job_id
             ),
             FOREIGN KEY (
                 tenant_id, discover_workflow_id, discover_run_id, unit_id
             ) REFERENCES discovery_search_units(
                 tenant_id, discover_workflow_id, discover_run_id, unit_id
             ) ON DELETE CASCADE,
-            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
         )
         """
     )
@@ -4014,6 +4024,26 @@ def reassign_discovery_identity_references(
     losing aggregate's discovery evidence under the surviving stable JobId
     before deleting the losing row.
     """
+    conn.execute("SAVEPOINT reassign_discovery_identity_references")
+    try:
+        _reassign_discovery_identity_references(
+            conn,
+            losing_job_url=losing_job_url,
+            surviving_job_url=surviving_job_url,
+        )
+        conn.execute("RELEASE SAVEPOINT reassign_discovery_identity_references")
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT reassign_discovery_identity_references")
+        conn.execute("RELEASE SAVEPOINT reassign_discovery_identity_references")
+        raise
+
+
+def _reassign_discovery_identity_references(
+    conn: sqlite3.Connection,
+    *,
+    losing_job_url: str,
+    surviving_job_url: str,
+) -> None:
     if losing_job_url == surviving_job_url:
         return
     identities = conn.execute(
@@ -4124,7 +4154,254 @@ def reassign_discovery_identity_references(
         """,
         (surviving_job_id, tenant_id, losing_job_id),
     )
+    if "job_id" in _table_columns(conn, "discovery_execution_jobs"):
+        _reassign_execution_memberships(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+    if "job_id" in _table_columns(conn, "discovery_search_unit_jobs"):
+        _reassign_search_unit_receipts(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
 
+
+def _reassign_execution_memberships(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    losing_rows = conn.execute(
+        """
+        SELECT discover_workflow_id, discover_run_id, cohort_kind,
+               source_family, source_run_id, preparation_workflow_id,
+               work_plan_state, required_steps_json, work_plan_reason,
+               linked_at
+        FROM discovery_execution_jobs
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (tenant_id, losing_job_id),
+    ).fetchall()
+    for losing in losing_rows:
+        workflow_id = str(losing[0])
+        run_id = str(losing[1])
+        surviving = conn.execute(
+            """
+            SELECT discover_workflow_id, discover_run_id, cohort_kind,
+                   source_family, source_run_id, preparation_workflow_id,
+                   work_plan_state, required_steps_json, work_plan_reason,
+                   linked_at
+            FROM discovery_execution_jobs
+            WHERE tenant_id = ?
+              AND discover_workflow_id = ?
+              AND discover_run_id = ?
+              AND job_id = ?
+            """,
+            (tenant_id, workflow_id, run_id, surviving_job_id),
+        ).fetchone()
+        if surviving is None:
+            conn.execute(
+                """
+                UPDATE discovery_execution_jobs
+                SET job_id = ?
+                WHERE tenant_id = ?
+                  AND discover_workflow_id = ?
+                  AND discover_run_id = ?
+                  AND job_id = ?
+                """,
+                (
+                    surviving_job_id,
+                    tenant_id,
+                    workflow_id,
+                    run_id,
+                    losing_job_id,
+                ),
+            )
+            continue
+
+        cohort_kind = (
+            "observed_this_run"
+            if "observed_this_run" in {str(surviving[2]), str(losing[2])}
+            else "existing_backlog"
+        )
+        if str(surviving[2]) == "observed_this_run":
+            source_family = surviving[3]
+            source_run_id = surviving[4]
+        elif str(losing[2]) == "observed_this_run":
+            source_family = losing[3]
+            source_run_id = losing[4]
+        else:
+            source_family = surviving[3] or losing[3]
+            source_run_id = surviving[4] or losing[4]
+
+        work_plan = _merged_execution_work_plan(surviving, losing)
+        linked_at = min(str(surviving[9]), str(losing[9]))
+        conn.execute(
+            """
+            UPDATE discovery_execution_jobs
+            SET cohort_kind = ?,
+                source_family = ?,
+                source_run_id = ?,
+                preparation_workflow_id = ?,
+                work_plan_state = ?,
+                required_steps_json = ?,
+                work_plan_reason = ?,
+                linked_at = ?
+            WHERE tenant_id = ?
+              AND discover_workflow_id = ?
+              AND discover_run_id = ?
+              AND job_id = ?
+            """,
+            (
+                cohort_kind,
+                source_family,
+                source_run_id,
+                *work_plan,
+                linked_at,
+                tenant_id,
+                workflow_id,
+                run_id,
+                surviving_job_id,
+            ),
+        )
+        conn.execute(
+            """
+            DELETE FROM discovery_execution_jobs
+            WHERE tenant_id = ?
+              AND discover_workflow_id = ?
+              AND discover_run_id = ?
+              AND job_id = ?
+            """,
+            (tenant_id, workflow_id, run_id, losing_job_id),
+        )
+
+def _merged_execution_work_plan(
+    surviving: sqlite3.Row | tuple[Any, ...],
+    losing: sqlite3.Row | tuple[Any, ...],
+) -> tuple[Any, str, Any, Any]:
+    def plan(row: sqlite3.Row | tuple[Any, ...]) -> tuple[Any, str, Any, Any]:
+        return (row[5], str(row[6]), row[7], row[8])
+
+    surviving_plan = plan(surviving)
+    losing_plan = plan(losing)
+    surviving_decided = surviving_plan[1] in {"planned", "not_eligible"}
+    losing_decided = losing_plan[1] in {"planned", "not_eligible"}
+    if surviving_decided and losing_decided:
+        if surviving_plan != losing_plan:
+            raise RuntimeError("URL collision merge found conflicting decided execution work plans")
+        return surviving_plan
+    if surviving_decided:
+        return surviving_plan
+    if losing_decided:
+        return losing_plan
+
+    surviving_workflow = surviving_plan[0]
+    losing_workflow = losing_plan[0]
+    if surviving_workflow is not None and losing_workflow is not None and surviving_workflow != losing_workflow:
+        raise RuntimeError("URL collision merge found conflicting preparation workflow owners")
+    if surviving_workflow is None and losing_workflow is not None:
+        return losing_plan
+    if surviving_plan[1] == "pending" and losing_plan[1] == "failed":
+        return losing_plan
+    return surviving_plan
+
+def _reassign_search_unit_receipts(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    losing_rows = conn.execute(
+        """
+        SELECT discover_workflow_id, discover_run_id, unit_id,
+               was_new, accepted_at
+        FROM discovery_search_unit_jobs
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (tenant_id, losing_job_id),
+    ).fetchall()
+    for losing in losing_rows:
+        workflow_id = str(losing[0])
+        run_id = str(losing[1])
+        unit_id = str(losing[2])
+        surviving = conn.execute(
+            """
+            SELECT was_new, accepted_at
+            FROM discovery_search_unit_jobs
+            WHERE tenant_id = ?
+              AND discover_workflow_id = ?
+              AND discover_run_id = ?
+              AND unit_id = ?
+              AND job_id = ?
+            """,
+            (
+                tenant_id,
+                workflow_id,
+                run_id,
+                unit_id,
+                surviving_job_id,
+            ),
+        ).fetchone()
+        if surviving is None:
+            conn.execute(
+                """
+                UPDATE discovery_search_unit_jobs
+                SET job_id = ?
+                WHERE tenant_id = ?
+                  AND discover_workflow_id = ?
+                  AND discover_run_id = ?
+                  AND unit_id = ?
+                  AND job_id = ?
+                """,
+                (
+                    surviving_job_id,
+                    tenant_id,
+                    workflow_id,
+                    run_id,
+                    unit_id,
+                    losing_job_id,
+                ),
+            )
+            continue
+        conn.execute(
+            """
+            UPDATE discovery_search_unit_jobs
+            SET was_new = ?,
+                accepted_at = ?
+            WHERE tenant_id = ?
+              AND discover_workflow_id = ?
+              AND discover_run_id = ?
+              AND unit_id = ?
+              AND job_id = ?
+            """,
+            (
+                max(int(surviving[0]), int(losing[3])),
+                min(str(surviving[1]), str(losing[4])),
+                tenant_id,
+                workflow_id,
+                run_id,
+                unit_id,
+                surviving_job_id,
+            ),
+        )
+        conn.execute(
+            """
+            DELETE FROM discovery_search_unit_jobs
+            WHERE tenant_id = ?
+              AND discover_workflow_id = ?
+              AND discover_run_id = ?
+              AND unit_id = ?
+              AND job_id = ?
+            """,
+            (tenant_id, workflow_id, run_id, unit_id, losing_job_id),
+        )
 
 def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
     return {
@@ -4150,40 +4427,55 @@ def _legacy_or_stable_reference_column(
     )
 
 
-def _resolved_job_id_sql(table_alias: str, reference_column: str) -> str:
+def _resolved_job_id_sql(
+    table_alias: str,
+    reference_column: str,
+    *,
+    legacy_url: bool = False,
+) -> str:
     """Return a correlated SQL expression resolving a legacy or stable key."""
 
     reference = f"{table_alias}.{reference_column}"
     tenant = f"{table_alias}.tenant_id"
-    return f"""
-        COALESCE(
-            (
-                SELECT j.job_id
-                FROM jobs j
-                WHERE j.tenant_id = {tenant}
-                  AND j.job_id = {reference}
-                LIMIT 1
-            ),
-            (
-                SELECT j.job_id
-                FROM jobs j
-                WHERE j.tenant_id = {tenant}
-                  AND j.url = {reference}
-                LIMIT 1
-            ),
-            (
-                SELECT a.job_id
-                FROM job_identity_aliases a
-                JOIN jobs j
-                  ON j.tenant_id = a.tenant_id
-                 AND j.job_id = a.job_id
-                WHERE a.tenant_id = {tenant}
-                  AND a.alias_kind = 'posting_url'
-                  AND a.alias_value = {reference}
-                LIMIT 1
-            )
+    by_job_id = f"""
+        (
+            SELECT j.job_id
+            FROM jobs j
+            WHERE j.tenant_id = {tenant}
+              AND j.job_id = {reference}
+            LIMIT 1
         )
     """
+    by_storage_url = f"""
+        (
+            SELECT j.job_id
+            FROM jobs j
+            WHERE j.tenant_id = {tenant}
+              AND j.url = {reference}
+            LIMIT 1
+        )
+    """
+    by_posting_alias = f"""
+        (
+            SELECT a.job_id
+            FROM job_identity_aliases a
+            JOIN jobs j
+              ON j.tenant_id = a.tenant_id
+             AND j.job_id = a.job_id
+            WHERE a.tenant_id = {tenant}
+              AND a.alias_kind = 'posting_url'
+              AND a.alias_value = {reference}
+            LIMIT 1
+        )
+    """
+    # A legacy URL token can itself be UUID-shaped. Resolve it through URL
+    # ownership before considering a same-text JobId owned by another
+    # aggregate. Stable or historically ambiguous columns retain the
+    # migration framework's JobId-first behavior.
+    lookups = (
+        (by_storage_url, by_posting_alias, by_job_id) if legacy_url else (by_job_id, by_storage_url, by_posting_alias)
+    )
+    return f"COALESCE({','.join(lookups)})"
 
 
 def _create_discovery_identity_v8_rebuild_tables(
@@ -4433,15 +4725,12 @@ def _verify_discovery_identity_references_v8(
     conn: sqlite3.Connection,
     *,
     expected_counts: dict[str, int],
+    check_all_foreign_keys: bool = True,
 ) -> None:
     if not _has_discovery_identity_reference_schema_v8(conn):
-        raise RuntimeError(
-            "discovery identity migration did not create the stable reference schema"
-        )
+        raise RuntimeError("discovery identity migration did not create the stable reference schema")
     for table, expected_count in expected_counts.items():
-        observed_count = int(
-            conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
-        )
+        observed_count = int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
         if observed_count != expected_count:
             raise RuntimeError(
                 "discovery identity migration changed row count for "
@@ -4467,17 +4756,386 @@ def _verify_discovery_identity_references_v8(
             """
         ).fetchone()
         if orphan is not None:
-            raise RuntimeError(
-                "discovery identity migration left an unresolved reference in "
-                f"{table}.{column}"
+            raise RuntimeError(f"discovery identity migration left an unresolved reference in {table}.{column}")
+
+    if check_all_foreign_keys:
+        foreign_key_error = conn.execute("PRAGMA foreign_key_check").fetchone()
+        if foreign_key_error is not None:
+            raise RuntimeError("discovery identity migration found a foreign-key violation")
+
+
+_EXECUTION_SEARCH_REFERENCE_SCHEMA_VERSION = 9
+_EXECUTION_SEARCH_REFERENCE_TABLES = (
+    "discovery_execution_jobs",
+    "discovery_search_unit_jobs",
+)
+
+
+def ensure_execution_search_references_v9(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move Discover membership and accepted receipts to stable JobIds."""
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _EXECUTION_SEARCH_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _DISCOVERY_IDENTITY_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError("execution/search reference migration requires discovery identity schema v8")
+
+    conn.execute("SAVEPOINT execution_search_references_v9")
+    try:
+        _verify_discovery_identity_references_v8(
+            conn,
+            expected_counts={
+                table: int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+                for table in _DISCOVERY_IDENTITY_REFERENCE_TABLES
+            },
+            check_all_foreign_keys=False,
+        )
+        before_counts = {
+            table: int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+            for table in _EXECUTION_SEARCH_REFERENCE_TABLES
+        }
+
+        if not _has_execution_search_reference_schema_v9(conn):
+            execution_reference = _legacy_or_stable_reference_column(
+                conn,
+                "discovery_execution_jobs",
+                stable="job_id",
+                legacy="job_url",
             )
+            receipt_reference = _legacy_or_stable_reference_column(
+                conn,
+                "discovery_search_unit_jobs",
+                stable="job_id",
+                legacy="job_url",
+            )
+            for table, reference_column in (
+                ("discovery_execution_jobs", execution_reference),
+                ("discovery_search_unit_jobs", receipt_reference),
+            ):
+                unresolved = conn.execute(
+                    f"""
+                    SELECT source.{reference_column}
+                    FROM {table} AS source
+                    WHERE {
+                        _resolved_job_id_sql(
+                            "source",
+                            reference_column,
+                            legacy_url=reference_column == "job_url",
+                        )
+                    }
+                          IS NULL
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if unresolved is not None:
+                    raise RuntimeError(
+                        "execution/search reference migration could not resolve "
+                        f"{table}.{reference_column}={unresolved[0]!r}"
+                    )
+
+            _create_execution_search_v9_rebuild_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO discovery_execution_jobs_v9 (
+                    tenant_id, discover_workflow_id, discover_run_id, job_id,
+                    cohort_kind, source_family, source_run_id,
+                    preparation_workflow_id, work_plan_state,
+                    required_steps_json, work_plan_reason, linked_at
+                )
+                SELECT
+                    source.tenant_id,
+                    source.discover_workflow_id,
+                    source.discover_run_id,
+                    {
+                    _resolved_job_id_sql(
+                        "source",
+                        execution_reference,
+                        legacy_url=execution_reference == "job_url",
+                    )
+                },
+                    source.cohort_kind,
+                    source.source_family,
+                    source.source_run_id,
+                    source.preparation_workflow_id,
+                    source.work_plan_state,
+                    source.required_steps_json,
+                    source.work_plan_reason,
+                    source.linked_at
+                FROM discovery_execution_jobs AS source
+                """
+            )
+            conn.execute(
+                f"""
+                INSERT INTO discovery_search_unit_jobs_v9 (
+                    tenant_id, discover_workflow_id, discover_run_id,
+                    unit_id, job_id, was_new, accepted_at
+                )
+                SELECT
+                    source.tenant_id,
+                    source.discover_workflow_id,
+                    source.discover_run_id,
+                    source.unit_id,
+                    {
+                    _resolved_job_id_sql(
+                        "source",
+                        receipt_reference,
+                        legacy_url=receipt_reference == "job_url",
+                    )
+                },
+                    source.was_new,
+                    source.accepted_at
+                FROM discovery_search_unit_jobs AS source
+                """
+            )
+
+            for table in _EXECUTION_SEARCH_REFERENCE_TABLES:
+                conn.execute(f'DROP TABLE "{table}"')
+                conn.execute(f'ALTER TABLE "{table}_v9" RENAME TO "{table}"')
+            _create_execution_search_v9_indexes(conn)
+
+        _verify_execution_search_references_v9(
+            conn,
+            expected_counts=before_counts,
+        )
+        conn.execute(f"PRAGMA user_version = {_EXECUTION_SEARCH_REFERENCE_SCHEMA_VERSION}")
+        conn.execute("RELEASE SAVEPOINT execution_search_references_v9")
+        conn.commit()
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT execution_search_references_v9")
+        conn.execute("RELEASE SAVEPOINT execution_search_references_v9")
+        raise
+
+    return list(_EXECUTION_SEARCH_REFERENCE_TABLES)
+
+
+def _create_execution_search_v9_rebuild_tables(
+    conn: sqlite3.Connection,
+) -> None:
+    for table in _EXECUTION_SEARCH_REFERENCE_TABLES:
+        conn.execute(f'DROP TABLE IF EXISTS "{table}_v9"')
+    conn.execute(
+        """
+        CREATE TABLE discovery_execution_jobs_v9 (
+            tenant_id                TEXT NOT NULL,
+            discover_workflow_id     TEXT NOT NULL,
+            discover_run_id          TEXT NOT NULL,
+            job_id                   TEXT NOT NULL,
+            cohort_kind              TEXT NOT NULL
+                CHECK (cohort_kind IN (
+                    'observed_this_run', 'existing_backlog'
+                )),
+            source_family            TEXT,
+            source_run_id            TEXT,
+            preparation_workflow_id  TEXT,
+            work_plan_state          TEXT NOT NULL DEFAULT 'pending'
+                CHECK (work_plan_state IN (
+                    'pending', 'planned', 'not_eligible', 'failed'
+                )),
+            required_steps_json      TEXT,
+            work_plan_reason         TEXT,
+            linked_at                TEXT NOT NULL,
+            PRIMARY KEY (
+                tenant_id, discover_workflow_id, discover_run_id, job_id
+            ),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE discovery_search_unit_jobs_v9 (
+            tenant_id              TEXT NOT NULL,
+            discover_workflow_id   TEXT NOT NULL,
+            discover_run_id        TEXT NOT NULL,
+            unit_id                TEXT NOT NULL,
+            job_id                 TEXT NOT NULL,
+            was_new                INTEGER NOT NULL CHECK (was_new IN (0, 1)),
+            accepted_at            TEXT NOT NULL,
+            PRIMARY KEY (
+                tenant_id, discover_workflow_id, discover_run_id,
+                unit_id, job_id
+            ),
+            FOREIGN KEY (
+                tenant_id, discover_workflow_id, discover_run_id, unit_id
+            ) REFERENCES discovery_search_units(
+                tenant_id, discover_workflow_id, discover_run_id, unit_id
+            ) ON DELETE CASCADE,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_execution_search_v9_indexes(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discovery_execution_jobs_cohort
+        ON discovery_execution_jobs(
+            tenant_id, discover_workflow_id, discover_run_id, cohort_kind
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discovery_execution_jobs_plan
+        ON discovery_execution_jobs(
+            tenant_id, discover_workflow_id, discover_run_id, work_plan_state
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discovery_execution_jobs_job
+        ON discovery_execution_jobs(tenant_id, job_id, linked_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discovery_search_unit_jobs_execution
+        ON discovery_search_unit_jobs(
+            tenant_id, discover_workflow_id, discover_run_id, was_new
+        )
+        """
+    )
+
+
+def _has_search_unit_foreign_key(conn: sqlite3.Connection) -> bool:
+    groups: dict[int, set[tuple[str, str]]] = {}
+    cascades: dict[int, bool] = {}
+    for row in conn.execute('PRAGMA foreign_key_list("discovery_search_unit_jobs")').fetchall():
+        if str(row[2]) != "discovery_search_units":
+            continue
+        foreign_key_id = int(row[0])
+        groups.setdefault(foreign_key_id, set()).add((str(row[3]), str(row[4])))
+        cascades[foreign_key_id] = str(row[6]).upper() == "CASCADE"
+    expected = {
+        ("tenant_id", "tenant_id"),
+        ("discover_workflow_id", "discover_workflow_id"),
+        ("discover_run_id", "discover_run_id"),
+        ("unit_id", "unit_id"),
+    }
+    return any(
+        columns == expected and cascades.get(foreign_key_id, False) for foreign_key_id, columns in groups.items()
+    )
+
+
+def _has_execution_search_reference_schema_v9(
+    conn: sqlite3.Connection,
+) -> bool:
+    return (
+        "job_id" in _table_columns(conn, "discovery_execution_jobs")
+        and "job_url" not in _table_columns(conn, "discovery_execution_jobs")
+        and _primary_key_columns(conn, "discovery_execution_jobs")
+        == (
+            "tenant_id",
+            "discover_workflow_id",
+            "discover_run_id",
+            "job_id",
+        )
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "discovery_execution_jobs",
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            "discovery_execution_jobs",
+            "idx_discovery_execution_jobs_cohort",
+            (
+                "tenant_id",
+                "discover_workflow_id",
+                "discover_run_id",
+                "cohort_kind",
+            ),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "discovery_execution_jobs",
+            "idx_discovery_execution_jobs_plan",
+            (
+                "tenant_id",
+                "discover_workflow_id",
+                "discover_run_id",
+                "work_plan_state",
+            ),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "discovery_execution_jobs",
+            "idx_discovery_execution_jobs_job",
+            ("tenant_id", "job_id", "linked_at"),
+            unique=False,
+        )
+        and "job_id" in _table_columns(conn, "discovery_search_unit_jobs")
+        and "job_url" not in _table_columns(conn, "discovery_search_unit_jobs")
+        and _primary_key_columns(conn, "discovery_search_unit_jobs")
+        == (
+            "tenant_id",
+            "discover_workflow_id",
+            "discover_run_id",
+            "unit_id",
+            "job_id",
+        )
+        and _has_search_unit_foreign_key(conn)
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "discovery_search_unit_jobs",
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            "discovery_search_unit_jobs",
+            "idx_discovery_search_unit_jobs_execution",
+            (
+                "tenant_id",
+                "discover_workflow_id",
+                "discover_run_id",
+                "was_new",
+            ),
+            unique=False,
+        )
+    )
+
+
+def _verify_execution_search_references_v9(
+    conn: sqlite3.Connection,
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    if not _has_execution_search_reference_schema_v9(conn):
+        raise RuntimeError("execution/search reference migration did not create the stable reference schema")
+    for table, expected_count in expected_counts.items():
+        observed_count = int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+        if observed_count != expected_count:
+            raise RuntimeError(
+                "execution/search reference migration changed row count for "
+                f"{table}: expected {expected_count}, found {observed_count}"
+            )
+        orphan = conn.execute(
+            f"""
+            SELECT source.job_id
+            FROM {table} AS source
+            LEFT JOIN jobs j
+              ON j.tenant_id = source.tenant_id
+             AND j.job_id = source.job_id
+            WHERE j.job_id IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if orphan is not None:
+            raise RuntimeError(f"execution/search reference migration left an unresolved reference in {table}.job_id")
 
     foreign_key_error = conn.execute("PRAGMA foreign_key_check").fetchone()
     if foreign_key_error is not None:
-        raise RuntimeError(
-            "discovery identity migration found a foreign-key violation"
-        )
-
+        raise RuntimeError("execution/search reference migration found a foreign-key violation")
 
 # ---------------------------------------------------------------------------
 # job_enrichments read fragments — used by every selector / stat that

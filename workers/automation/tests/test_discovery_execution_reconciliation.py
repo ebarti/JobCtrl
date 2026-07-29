@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 
 import pytest
 
@@ -329,6 +330,9 @@ def _append_workflow_started(
     temporal_run_id: str,
     input_summary: dict[str, object],
 ) -> None:
+    job_url = input_summary.get("jobUrl")
+    if isinstance(job_url, str):
+        _ensure_job_identity(conn, job_url)
     record_job_event(
         conn,
         None,
@@ -342,6 +346,37 @@ def _append_workflow_started(
             "inputSummary": input_summary,
         },
         occurred_at=occurred_at,
+    )
+
+
+def _ensure_job_identity(
+    conn: sqlite3.Connection,
+    job_url: str,
+    *,
+    tenant_id: str = "local",
+) -> None:
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").fetchone() is None:
+        return
+    job_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{tenant_id}:{job_url}"))
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO jobs (url, tenant_id, job_id, title)
+        VALUES (?, ?, ?, 'Recovery fixture')
+        """,
+        (job_url, tenant_id, job_id),
+    )
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+        (tenant_id, job_url),
+    ).fetchone()
+    assert row is not None
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO job_identity_aliases (
+            tenant_id, alias_kind, alias_value, job_id, created_at
+        ) VALUES (?, 'posting_url', ?, ?, '2026-07-16T00:00:00+00:00')
+        """,
+        (tenant_id, job_url, str(row["job_id"])),
     )
 
 
@@ -577,7 +612,12 @@ async def test_decoder_v2_recovers_exact_legacy_fanouts_and_resumes_partial_repl
         *(("preparation_fanout", f"streaming:pass-{index}") for index in range(1, 5)),
     }
     native_step_keys = {step_key for _, _, step_key, _ in native_specs}
-    assert [step.item_count for step in legacy_steps if step.step_kind == "preparation_fanout"] == [0, 71, 67, 34]
+    assert [step.item_count for step in legacy_steps if step.step_kind == "preparation_fanout"] == [
+        0,
+        71,
+        67,
+        34,
+    ]
     assert skipped_native == 4
     assert legacy_step_keys == expected_legacy_step_keys
     assert len(legacy_step_keys) == 12
@@ -736,10 +776,17 @@ async def test_decoder_v2_recovers_exact_legacy_fanouts_and_resumes_partial_repl
 
     memberships = conn.execute(
         """
-        SELECT job_url, work_plan_state, required_steps_json,
-               preparation_workflow_id, work_plan_reason
-        FROM discovery_execution_jobs
-        WHERE tenant_id = ? AND discover_workflow_id = ? AND discover_run_id = ?
+        SELECT jobs.url AS job_url, execution.work_plan_state,
+               execution.required_steps_json,
+               execution.preparation_workflow_id,
+               execution.work_plan_reason
+        FROM discovery_execution_jobs AS execution
+        JOIN jobs
+          ON jobs.tenant_id = execution.tenant_id
+         AND jobs.job_id = execution.job_id
+        WHERE execution.tenant_id = ?
+          AND execution.discover_workflow_id = ?
+          AND execution.discover_run_id = ?
         """,
         (execution.tenant_id, execution.workflow_id, execution.temporal_run_id),
     ).fetchall()
@@ -1060,6 +1107,7 @@ async def test_ready_manifest_retries_history_read_without_losing_durable_proof(
         temporal_run_id="run-history-retry",
     )
     repository = SqliteDiscoveryExecutionRepository(conn)
+    _ensure_job_identity(conn, "job:durable")
     repository.link_job(
         execution,
         "job:durable",
@@ -1299,7 +1347,14 @@ async def test_retried_fanout_recovers_exact_work_without_inventing_queue_time(
     assert result.jobs_linked == 1
     assert result.work_plans_recovered == 1
     membership = conn.execute(
-        "SELECT * FROM discovery_execution_jobs WHERE job_url = 'job:retried'"
+        """
+        SELECT execution.*
+        FROM discovery_execution_jobs AS execution
+        JOIN jobs
+          ON jobs.tenant_id = execution.tenant_id
+         AND jobs.job_id = execution.job_id
+        WHERE jobs.url = 'job:retried'
+        """
     ).fetchone()
     assert membership["work_plan_state"] == "planned"
     assert membership["preparation_workflow_id"] == "prep-retried"
@@ -1671,7 +1726,14 @@ async def test_terminal_failed_fanout_persists_exact_partial_incomplete_coverage
     assert result.jobs_linked == 1
     assert result.work_plans_recovered == 1
     membership = conn.execute(
-        "SELECT * FROM discovery_execution_jobs WHERE job_url = 'job:partial'"
+        """
+        SELECT execution.*
+        FROM discovery_execution_jobs AS execution
+        JOIN jobs
+          ON jobs.tenant_id = execution.tenant_id
+         AND jobs.job_id = execution.job_id
+        WHERE jobs.url = 'job:partial'
+        """
     ).fetchone()
     assert membership["work_plan_state"] == "planned"
     assert membership["preparation_workflow_id"] == "prep-partial"
@@ -1724,6 +1786,7 @@ async def test_reconciliation_repairs_stale_ready_manifest(tmp_path, monkeypatch
         workflow_id="discover-local",
         temporal_run_id="run-stale",
     )
+    _ensure_job_identity(conn, "job:new")
     SqliteDiscoveryExecutionRepository(conn).link_job(
         execution,
         "job:new",

@@ -16,6 +16,7 @@ from jobstreaming import (
 )
 
 from jobctrl.database import ensure_discovery_search_unit_tables
+from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.search_units import (
     DiscoverySearchSpec,
@@ -24,6 +25,11 @@ from jobctrl.domain.discovery.search_units import (
     search_unit_id,
     validate_search_unit_state,
     validate_unit_id,
+)
+from jobctrl.domain.identifiers import canonical_job_id
+from jobctrl.domain.tenant import TenantId
+from jobctrl.infrastructure.discovery.sqlite_identity_resolver import (
+    SqliteJobIdentityResolver,
 )
 
 
@@ -37,7 +43,7 @@ _SELECT_UNIT = """
            u.last_error_retryable, u.reset_checkpoint,
            u.reset_checkpoint_after_revision,
            u.created_at, u.updated_at, u.completed_at,
-           COUNT(j.job_url) AS accepted_jobs,
+           COUNT(j.job_id) AS accepted_jobs,
            COALESCE(SUM(j.was_new), 0) AS new_jobs
       FROM discovery_search_units u
       LEFT JOIN discovery_search_unit_jobs j
@@ -84,7 +90,13 @@ class SqliteDiscoverySearchUnitRepository:
 
         planned_at = created_at or _utc_now()
         desired = [
-            (search_unit_id(ordinal, spec), ordinal, spec, spec.to_json(), spec.fingerprint())
+            (
+                search_unit_id(ordinal, spec),
+                ordinal,
+                spec,
+                spec.to_json(),
+                spec.fingerprint(),
+            )
             for ordinal, spec in enumerate(specs)
         ]
         with self._conn:
@@ -399,9 +411,7 @@ class SqliteDiscoverySearchUnitRepository:
             return False
         current_revision = int(row[1]) if row[1] is not None else None
         required_revision = int(row[2]) if row[2] is not None else None
-        if required_revision is not None and (
-            current_revision is None or current_revision < required_revision
-        ):
+        if required_revision is not None and (current_revision is None or current_revision < required_revision):
             return False
         self.clear_checkpoint(lease)
         return True
@@ -416,31 +426,59 @@ class SqliteDiscoverySearchUnitRepository:
     ) -> None:
         """Record an idempotent accepted-job receipt under the current fence."""
 
-        normalized_url = job_url.strip()
-        if not normalized_url:
-            raise ValueError("job_url must be non-empty")
+        stable_job_id = self._resolve_job_id(
+            lease.execution,
+            job_url,
+        )
         with self._conn:
             self.fence_write(lease)
             self._conn.execute(
                 """
                 INSERT INTO discovery_search_unit_jobs (
                     tenant_id, discover_workflow_id, discover_run_id,
-                    unit_id, job_url, was_new, accepted_at
+                    unit_id, job_id, was_new, accepted_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (
                     tenant_id, discover_workflow_id, discover_run_id,
-                    unit_id, job_url
+                    unit_id, job_id
                 ) DO UPDATE SET
                     was_new = MAX(discovery_search_unit_jobs.was_new, excluded.was_new)
                 """,
                 (
                     *_execution_params(lease.execution),
                     lease.unit_id,
-                    normalized_url,
+                    stable_job_id,
                     int(was_new),
                     accepted_at or _utc_now(),
                 ),
             )
+
+    def _resolve_job_id(
+        self,
+        execution: DiscoveryExecutionRef,
+        job_url: str,
+    ) -> str:
+        normalized = job_url.strip()
+        if not normalized:
+            raise ValueError("job_url must be non-empty")
+        resolver = SqliteJobIdentityResolver(self._conn)
+        identity = resolver.resolve_by_posting_url(
+            TenantId(execution.tenant_id),
+            PostingUrl(normalized),
+        )
+        if identity is None:
+            try:
+                stable_job_id = canonical_job_id(normalized)
+            except ValueError:
+                stable_job_id = None
+            if stable_job_id is not None:
+                identity = resolver.resolve_by_job_id(
+                    TenantId(execution.tenant_id),
+                    stable_job_id,
+                )
+        if identity is None:
+            raise KeyError(f"No stable Job identity for accepted search result: {normalized}")
+        return str(identity.job_id)
 
     def record_filtered_result(
         self,
@@ -515,13 +553,11 @@ class SqliteDiscoverySearchUnitRepository:
                 (*_execution_params(lease.execution), lease.unit_id),
             ).fetchone()
             current_revision = (
-                int(checkpoint_row[0])
-                if checkpoint_row is not None and checkpoint_row[0] is not None
-                else None
+                int(checkpoint_row[0]) if checkpoint_row is not None and checkpoint_row[0] is not None else None
             )
             reset_after_revision = (
-                (current_revision + 1) if current_revision is not None else 1
-            ) if reset_checkpoint else None
+                ((current_revision + 1) if current_revision is not None else 1) if reset_checkpoint else None
+            )
             self._conn.execute(
                 """
                 UPDATE discovery_search_units
@@ -737,12 +773,8 @@ class SqliteDiscoverySearchUnitRepository:
             try:
                 checkpoint = SearchCheckpoint.model_validate_json(str(row[1]))
             except Exception as exc:
-                raise CheckpointError(
-                    f"unable to read checkpoint for search unit {row[0]}"
-                ) from exc
-            total += sum(
-                adapter.emitted_count for adapter in checkpoint.adapters.values()
-            )
+                raise CheckpointError(f"unable to read checkpoint for search unit {row[0]}") from exc
+            total += sum(adapter.emitted_count for adapter in checkpoint.adapters.values())
         return total
 
     def execution_filtered_count(
@@ -826,9 +858,7 @@ class SqliteDiscoverySearchUnitRepository:
             last_error_type=str(row[14]) if row[14] is not None else None,
             last_error_retryable=(bool(row[15]) if row[15] is not None else None),
             reset_checkpoint=bool(row[16]),
-            reset_checkpoint_after_revision=(
-                int(row[17]) if row[17] is not None else None
-            ),
+            reset_checkpoint_after_revision=(int(row[17]) if row[17] is not None else None),
             created_at=str(row[18]),
             updated_at=str(row[19]),
             completed_at=str(row[20]) if row[20] is not None else None,

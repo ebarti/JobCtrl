@@ -804,6 +804,18 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
   if (jobId) {
     deleteWhere(db, "job_source_observations", "job_id = ?", [jobId]);
     deleteWhere(db, "job_canonical_identities", "job_id = ?", [jobId]);
+    deleteDiscoveryJobReferences(
+      db,
+      "discovery_execution_jobs",
+      jobId,
+      jobUrl,
+    );
+    deleteDiscoveryJobReferences(
+      db,
+      "discovery_search_unit_jobs",
+      jobId,
+      jobUrl,
+    );
     deleteWhere(db, "job_rejected_duplicate_links", "owner_job_id = ?", [jobId]);
     deleteWhere(
       db,
@@ -823,6 +835,31 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
   ]);
   deleteWhere(db, "discovery_feedback", "job_key = ?", [jobUrl]);
   deleteWhere(db, "jobs", "url = ?", [jobUrl]);
+}
+
+function deleteDiscoveryJobReferences(
+  db: SqliteDatabase,
+  tableName: "discovery_execution_jobs" | "discovery_search_unit_jobs",
+  jobId: string,
+  jobUrl: string,
+): void {
+  const columns = columnNames(db, tableName);
+  const tenantScoped = columns.has("tenant_id");
+  if (columns.has("job_id")) {
+    deleteWhere(
+      db,
+      tableName,
+      tenantScoped ? "tenant_id = 'local' AND job_id = ?" : "job_id = ?",
+      [jobId],
+    );
+  } else if (columns.has("job_url")) {
+    deleteWhere(
+      db,
+      tableName,
+      tenantScoped ? "tenant_id = 'local' AND job_url = ?" : "job_url = ?",
+      [jobUrl],
+    );
+  }
 }
 
 function invalidateOperationsProjections(db: SqliteDatabase): void {

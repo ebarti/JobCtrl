@@ -2740,9 +2740,23 @@ describe("local TypeScript API", () => {
   });
 
   it("permanently deletes job rows and clears delete/hide tombstones so rediscovery can add them again", async () => {
-    const app = buildApp(options);
     const readyUrl = "https://example.com/jobs/ready";
     const blockedUrl = "https://example.com/jobs/blocked-tailor";
+    const readyJobId = `test-job:${readyUrl}`;
+    const blockedJobId = `test-job:${blockedUrl}`;
+    const setup = new Database(options.dbPath);
+    setup.exec(`
+      CREATE TABLE discovery_execution_jobs (job_id TEXT NOT NULL);
+      CREATE TABLE discovery_search_unit_jobs (job_url TEXT NOT NULL);
+    `);
+    setup
+      .prepare("INSERT INTO discovery_execution_jobs (job_id) VALUES (?), (?)")
+      .run(readyJobId, blockedJobId);
+    setup
+      .prepare("INSERT INTO discovery_search_unit_jobs (job_url) VALUES (?), (?)")
+      .run(readyUrl, blockedUrl);
+    setup.close();
+    const app = buildApp(options);
 
     const softDelete = await app.inject({
       method: "POST",
@@ -2786,6 +2800,10 @@ describe("local TypeScript API", () => {
     expect(countRows(db, "jobctrl_hidden_jobs", "job_url", blockedUrl)).toBe(0);
     expect(countRows(db, "job_stage_states", "job_url", readyUrl)).toBe(0);
     expect(countRows(db, "job_scores", "job_url", readyUrl)).toBe(0);
+    expect(countRows(db, "discovery_execution_jobs", "job_id", readyJobId)).toBe(0);
+    expect(countRows(db, "discovery_execution_jobs", "job_id", blockedJobId)).toBe(0);
+    expect(countRows(db, "discovery_search_unit_jobs", "job_url", readyUrl)).toBe(0);
+    expect(countRows(db, "discovery_search_unit_jobs", "job_url", blockedUrl)).toBe(0);
 
     insertJob(db, {
       url: readyUrl,

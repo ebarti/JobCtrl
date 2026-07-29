@@ -95,6 +95,12 @@ def _create_representative_v6_pair(
             "2026-07-01T10:05:00+00:00",
         ),
     )
+    job_id = str(
+        conn.execute(
+            "SELECT job_id FROM jobs WHERE url = ?",
+            (job_url,),
+        ).fetchone()[0]
+    )
     database_module.ensure_source_observation_tables(conn)
     conn.execute(
         """
@@ -153,7 +159,7 @@ def _create_representative_v6_pair(
     conn.execute(
         """
         INSERT INTO discovery_execution_jobs (
-            tenant_id, discover_workflow_id, discover_run_id, job_url,
+            tenant_id, discover_workflow_id, discover_run_id, job_id,
             cohort_kind, source_family, preparation_workflow_id,
             work_plan_state, required_steps_json, linked_at
         ) VALUES (
@@ -162,7 +168,7 @@ def _create_representative_v6_pair(
             'planned', '["enrich","score"]', ?
         )
         """,
-        (job_url, "2026-07-01T10:01:00+00:00"),
+        (job_id, "2026-07-01T10:01:00+00:00"),
     )
     conn.execute(
         """
@@ -218,6 +224,81 @@ def _create_representative_v6_pair(
              AND j.job_id = o.job_id
             """
         ).fetchall()
+        execution_rows = raw.execute(
+            """
+            SELECT
+                execution.tenant_id,
+                execution.discover_workflow_id,
+                execution.discover_run_id,
+                jobs.url,
+                execution.cohort_kind,
+                execution.source_family,
+                execution.source_run_id,
+                execution.preparation_workflow_id,
+                execution.work_plan_state,
+                execution.required_steps_json,
+                execution.work_plan_reason,
+                execution.linked_at
+            FROM discovery_execution_jobs AS execution
+            JOIN jobs
+              ON jobs.tenant_id = execution.tenant_id
+             AND jobs.job_id = execution.job_id
+            """
+        ).fetchall()
+        raw.execute("DROP TABLE discovery_execution_jobs")
+        raw.execute("DROP TABLE discovery_search_unit_jobs")
+        raw.executescript(
+            """
+            CREATE TABLE discovery_execution_jobs (
+                tenant_id                TEXT NOT NULL,
+                discover_workflow_id     TEXT NOT NULL,
+                discover_run_id          TEXT NOT NULL,
+                job_url                  TEXT NOT NULL,
+                cohort_kind              TEXT NOT NULL,
+                source_family            TEXT,
+                source_run_id            TEXT,
+                preparation_workflow_id  TEXT,
+                work_plan_state          TEXT NOT NULL DEFAULT 'pending',
+                required_steps_json      TEXT,
+                work_plan_reason         TEXT,
+                linked_at                TEXT NOT NULL,
+                PRIMARY KEY (
+                    tenant_id, discover_workflow_id, discover_run_id, job_url
+                ),
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            );
+            CREATE TABLE discovery_search_unit_jobs (
+                tenant_id              TEXT NOT NULL,
+                discover_workflow_id   TEXT NOT NULL,
+                discover_run_id        TEXT NOT NULL,
+                unit_id                TEXT NOT NULL,
+                job_url                TEXT NOT NULL,
+                was_new                INTEGER NOT NULL,
+                accepted_at            TEXT NOT NULL,
+                PRIMARY KEY (
+                    tenant_id, discover_workflow_id, discover_run_id,
+                    unit_id, job_url
+                ),
+                FOREIGN KEY (
+                    tenant_id, discover_workflow_id, discover_run_id, unit_id
+                ) REFERENCES discovery_search_units(
+                    tenant_id, discover_workflow_id, discover_run_id, unit_id
+                ) ON DELETE CASCADE,
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            );
+            """
+        )
+        raw.executemany(
+            """
+            INSERT INTO discovery_execution_jobs (
+                tenant_id, discover_workflow_id, discover_run_id, job_url,
+                cohort_kind, source_family, source_run_id,
+                preparation_workflow_id, work_plan_state,
+                required_steps_json, work_plan_reason, linked_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            execution_rows,
+        )
         for table in (
             "job_rejected_duplicate_links",
             "job_duplicate_links",
@@ -320,14 +401,38 @@ def _reference_snapshot(db_path: Path) -> dict[str, list[tuple[object, ...]]]:
     conn = sqlite3.connect(db_path)
     try:
         snapshot = {
-            table: [
-                tuple(row)
-                for row in conn.execute(
-                    f'SELECT * FROM "{table}" ORDER BY rowid'
-                ).fetchall()
-            ]
+            table: [tuple(row) for row in conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall()]
             for table in REFERENCE_TABLES
         }
+        execution_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(discovery_execution_jobs)").fetchall()
+        }
+        if "job_id" in execution_columns:
+            snapshot["discovery_execution_jobs"] = [
+                tuple(row)
+                for row in conn.execute(
+                    """
+                    SELECT
+                        execution.tenant_id,
+                        execution.discover_workflow_id,
+                        execution.discover_run_id,
+                        jobs.url,
+                        execution.cohort_kind,
+                        execution.source_family,
+                        execution.source_run_id,
+                        execution.preparation_workflow_id,
+                        execution.work_plan_state,
+                        execution.required_steps_json,
+                        execution.work_plan_reason,
+                        execution.linked_at
+                    FROM discovery_execution_jobs AS execution
+                    JOIN jobs
+                      ON jobs.tenant_id = execution.tenant_id
+                     AND jobs.job_id = execution.job_id
+                    ORDER BY execution.rowid
+                    """
+                ).fetchall()
+            ]
         snapshot["jobs"] = [
             tuple(row)
             for row in conn.execute(
@@ -368,7 +473,7 @@ def test_v6_jobs_gain_stable_uuid_and_posting_url_alias_once(
     init_db(db_path)
     close_connection(db_path)
 
-    assert _user_version(db_path) == SCHEMA_VERSION == 8
+    assert _user_version(db_path) == SCHEMA_VERSION == 9
     first_ids = _identity_rows(db_path)
     assert [row[0] for row in first_ids] == ["local", "local"]
     for _tenant_id, job_id, _url in first_ids:
@@ -624,6 +729,70 @@ def test_production_url_collision_cleans_aliases_and_allows_rediscovery(
         """,
         ((surviving_job_id,), (losing_job_id,)),
     )
+    conn.execute(
+        """
+        INSERT INTO discovery_search_units (
+            tenant_id, discover_workflow_id, discover_run_id, unit_id,
+            ordinal, request_json, request_fingerprint, state,
+            created_at, updated_at
+        ) VALUES (
+            'local', 'discover-local', 'discover-run', 'unit-1',
+            0, '{}', 'collision-fixture', 'completed',
+            '2026-07-29T09:00:00+00:00',
+            '2026-07-29T10:00:00+00:00'
+        )
+        """
+    )
+    conn.executemany(
+        """
+        INSERT INTO discovery_execution_jobs (
+            tenant_id, discover_workflow_id, discover_run_id, job_id,
+            cohort_kind, source_family, source_run_id,
+            preparation_workflow_id, work_plan_state,
+            required_steps_json, work_plan_reason, linked_at
+        ) VALUES (
+            'local', 'discover-local', 'discover-run', ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
+        """,
+        (
+            (
+                surviving_job_id,
+                "existing_backlog",
+                None,
+                None,
+                None,
+                "pending",
+                None,
+                None,
+                "2026-07-29T10:05:00+00:00",
+            ),
+            (
+                losing_job_id,
+                "observed_this_run",
+                "synthetic",
+                "source-run-relative",
+                "prepare-relative",
+                "planned",
+                '["score","tailor"]',
+                "selected_for_preparation",
+                "2026-07-29T10:00:00+00:00",
+            ),
+        ),
+    )
+    conn.executemany(
+        """
+        INSERT INTO discovery_search_unit_jobs (
+            tenant_id, discover_workflow_id, discover_run_id,
+            unit_id, job_id, was_new, accepted_at
+        ) VALUES (
+            'local', 'discover-local', 'discover-run', 'unit-1', ?, ?, ?
+        )
+        """,
+        (
+            (surviving_job_id, 0, "2026-07-29T10:04:00+00:00"),
+            (losing_job_id, 1, "2026-07-29T10:01:00+00:00"),
+        ),
+    )
     conn.commit()
     monkeypatch.setattr(
         detail,
@@ -670,6 +839,38 @@ def test_production_url_collision_cleans_aliases_and_allows_rediscovery(
             """
         ).fetchall()
     ] == [(surviving_job_id,)]
+    assert tuple(
+        conn.execute(
+            """
+            SELECT job_id, cohort_kind, source_family, source_run_id,
+                   preparation_workflow_id, work_plan_state,
+                   required_steps_json, work_plan_reason, linked_at
+            FROM discovery_execution_jobs
+            """
+        ).fetchone()
+    ) == (
+        surviving_job_id,
+        "observed_this_run",
+        "synthetic",
+        "source-run-relative",
+        "prepare-relative",
+        "planned",
+        '["score","tailor"]',
+        "selected_for_preparation",
+        "2026-07-29T10:00:00+00:00",
+    )
+    assert tuple(
+        conn.execute(
+            """
+            SELECT job_id, was_new, accepted_at
+            FROM discovery_search_unit_jobs
+            """
+        ).fetchone()
+    ) == (
+        surviving_job_id,
+        1,
+        "2026-07-29T10:01:00+00:00",
+    )
     assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
     active_orphans = conn.execute(
         """

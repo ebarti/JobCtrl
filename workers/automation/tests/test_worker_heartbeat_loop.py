@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -79,7 +80,13 @@ def _recovery_connection() -> sqlite3.Connection:
             tenant_id TEXT NOT NULL,
             discover_workflow_id TEXT NOT NULL,
             discover_run_id TEXT NOT NULL,
-            job_url TEXT NOT NULL
+            job_id TEXT NOT NULL
+        );
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL,
+            job_id TEXT NOT NULL,
+            UNIQUE (tenant_id, job_id)
         );
         CREATE TABLE pipeline_step_projections (
             tenant_id TEXT NOT NULL,
@@ -110,6 +117,30 @@ def _recovery_connection() -> sqlite3.Connection:
     return conn
 
 
+def _insert_membership(
+    conn: sqlite3.Connection,
+    workflow_id: str,
+    run_id: str,
+    job_url: str,
+) -> None:
+    job_id = str(uuid.uuid5(uuid.NAMESPACE_URL, job_url))
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO jobs (url, tenant_id, job_id)
+        VALUES (?, 'local', ?)
+        """,
+        (job_url, job_id),
+    )
+    conn.execute(
+        """
+        INSERT INTO discovery_execution_jobs (
+            tenant_id, discover_workflow_id, discover_run_id, job_id
+        ) VALUES ('local', ?, ?, ?)
+        """,
+        (workflow_id, run_id, job_id),
+    )
+
+
 def test_recovery_candidates_keep_open_runs_and_only_latest_incomplete_terminal() -> None:
     conn = _recovery_connection()
     rows = (
@@ -129,14 +160,15 @@ def test_recovery_candidates_keep_open_runs_and_only_latest_incomplete_terminal(
     # even after partial durable recovery.
     for table in ("discovery_execution_jobs", "pipeline_step_projections"):
         if table == "discovery_execution_jobs":
-            conn.execute(
-                f"INSERT INTO {table} VALUES "
-                "('local', 'discover-open', 'run-open', 'job:open')"
+            _insert_membership(
+                conn,
+                "discover-open",
+                "run-open",
+                "job:open",
             )
         else:
             conn.execute(
-                f"INSERT INTO {table} VALUES "
-                "('local', 'discover-open', 'run-open', 'source_planning', 'plan')"
+                f"INSERT INTO {table} VALUES ('local', 'discover-open', 'run-open', 'source_planning', 'plan')"
             )
 
     assert cli._legacy_discovery_recovery_candidates(conn, tenant_id="local") == [
@@ -180,9 +212,11 @@ def test_recovery_candidates_skip_terminal_incomplete_checkpoint() -> None:
         """
     )
     digest = execution_reconciliation._recovery_key_digest({"job:partial"}, set())
-    conn.execute(
-        "INSERT INTO discovery_execution_jobs VALUES "
-        "('local', 'discover-incomplete', 'run-incomplete', 'job:partial')"
+    _insert_membership(
+        conn,
+        "discover-incomplete",
+        "run-incomplete",
+        "job:partial",
     )
     conn.execute(
         """
@@ -208,12 +242,11 @@ def test_recovery_candidates_repair_stale_ready_checkpoint() -> None:
                   '2026-07-16T09:00:00Z', 'run-stale')
         """
     )
-    conn.execute(
-        """
-        INSERT INTO discovery_execution_jobs VALUES (
-            'local', 'discover-stale', 'run-stale', 'job:new'
-        )
-        """
+    _insert_membership(
+        conn,
+        "discover-stale",
+        "run-stale",
+        "job:new",
     )
     stale_digest = execution_reconciliation._recovery_key_digest({"job:old"}, set())
     conn.execute(
@@ -241,9 +274,11 @@ def test_recovery_candidates_do_not_infer_readiness_from_projection_counts() -> 
                   '2026-07-16T09:00:00Z', 'run-partial')
         """
     )
-    conn.execute(
-        "INSERT INTO discovery_execution_jobs VALUES "
-        "('local', 'discover-partial', 'run-partial', 'job:partial')"
+    _insert_membership(
+        conn,
+        "discover-partial",
+        "run-partial",
+        "job:partial",
     )
     conn.execute(
         "INSERT INTO pipeline_step_projections VALUES "

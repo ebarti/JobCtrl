@@ -388,11 +388,30 @@ function loadMemberships(
   runId: string,
 ): MembershipRow[] {
   if (!tableExists(db, "discovery_execution_jobs")) return [];
+  if (!hasColumns(db, "discovery_execution_jobs", ["job_id"])) {
+    return allRows<MembershipRow>(
+      db,
+      `SELECT job_url, cohort_kind, preparation_workflow_id,
+              work_plan_state, required_steps_json
+         FROM discovery_execution_jobs
+        WHERE tenant_id = ?
+          AND discover_workflow_id = ?
+          AND discover_run_id = ?`,
+      [tenantId, workflowId, runId],
+    );
+  }
   return allRows<MembershipRow>(
     db,
-    `SELECT job_url, cohort_kind, preparation_workflow_id, work_plan_state, required_steps_json
-       FROM discovery_execution_jobs
-      WHERE tenant_id = ? AND discover_workflow_id = ? AND discover_run_id = ?`,
+    `SELECT jobs.url AS job_url, execution.cohort_kind,
+            execution.preparation_workflow_id, execution.work_plan_state,
+            execution.required_steps_json
+       FROM discovery_execution_jobs AS execution
+       JOIN jobs
+         ON jobs.tenant_id = execution.tenant_id
+        AND jobs.job_id = execution.job_id
+      WHERE execution.tenant_id = ?
+        AND execution.discover_workflow_id = ?
+        AND execution.discover_run_id = ?`,
     [tenantId, workflowId, runId],
   );
 }
@@ -1230,21 +1249,30 @@ function loadUniqueGlobalPreparationOwners(
   const candidates = new Map(jobUrls.map((jobUrl) => [jobUrl, new Set<string>()] as const));
   const ambiguous = new Set<string>();
   for (const group of chunks(jobUrls, 500)) {
+    if (!hasColumns(db, "discovery_execution_jobs", ["job_id"])) {
+      const rows = allRows<{ job_url: string; preparation_workflow_id: string | null }>(
+        db,
+        `SELECT job_url, preparation_workflow_id
+           FROM discovery_execution_jobs
+          WHERE tenant_id = ?
+            AND job_url IN (${group.map(() => "?").join(", ")})`,
+        [tenantId, ...group],
+      );
+      collectPreparationOwners(rows, candidates, ambiguous);
+      continue;
+    }
     const rows = allRows<{ job_url: string; preparation_workflow_id: string | null }>(
       db,
-      `SELECT job_url, preparation_workflow_id
-         FROM discovery_execution_jobs
-        WHERE tenant_id = ? AND job_url IN (${group.map(() => "?").join(", ")})`,
+      `SELECT jobs.url AS job_url, execution.preparation_workflow_id
+         FROM discovery_execution_jobs AS execution
+         JOIN jobs
+           ON jobs.tenant_id = execution.tenant_id
+          AND jobs.job_id = execution.job_id
+        WHERE execution.tenant_id = ?
+          AND jobs.url IN (${group.map(() => "?").join(", ")})`,
       [tenantId, ...group],
     );
-    for (const row of rows) {
-      const workflowId = nullableText(row.preparation_workflow_id);
-      if (!workflowId) {
-        ambiguous.add(row.job_url);
-        continue;
-      }
-      candidates.get(row.job_url)?.add(workflowId);
-    }
+    collectPreparationOwners(rows, candidates, ambiguous);
   }
   for (const jobUrl of jobUrls) {
     const workflowIds = candidates.get(jobUrl);
@@ -1254,6 +1282,21 @@ function loadUniqueGlobalPreparationOwners(
     }
   }
   return owners;
+}
+
+function collectPreparationOwners(
+  rows: Array<{ job_url: string; preparation_workflow_id: string | null }>,
+  candidates: Map<string, Set<string>>,
+  ambiguous: Set<string>,
+): void {
+  for (const row of rows) {
+    const workflowId = nullableText(row.preparation_workflow_id);
+    if (!workflowId) {
+      ambiguous.add(row.job_url);
+      continue;
+    }
+    candidates.get(row.job_url)?.add(workflowId);
+  }
 }
 
 function loadPreparationWorkflowStatusById(

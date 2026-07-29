@@ -1133,8 +1133,14 @@ def _persisted_membership_keys(
         str(row["job_url"])
         for row in conn.execute(
             """
-            SELECT job_url FROM discovery_execution_jobs
-            WHERE tenant_id = ? AND discover_workflow_id = ? AND discover_run_id = ?
+            SELECT jobs.url AS job_url
+            FROM discovery_execution_jobs AS execution
+            JOIN jobs
+              ON jobs.tenant_id = execution.tenant_id
+             AND jobs.job_id = execution.job_id
+            WHERE execution.tenant_id = ?
+              AND execution.discover_workflow_id = ?
+              AND execution.discover_run_id = ?
             """,
             (tenant_id, workflow_id, temporal_run_id),
         ).fetchall()

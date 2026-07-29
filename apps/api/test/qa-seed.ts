@@ -233,6 +233,8 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
   db.exec(`
     CREATE TABLE jobs (
       url TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT NOT NULL,
       title TEXT,
       site TEXT,
       strategy TEXT,
@@ -255,7 +257,8 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
       cover_attempts INTEGER,
       apply_status TEXT,
       apply_error TEXT,
-      applied_at TEXT
+      applied_at TEXT,
+      UNIQUE (tenant_id, job_id)
     );
     CREATE TABLE job_stage_states (
       job_url TEXT NOT NULL,
@@ -351,7 +354,7 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
       tenant_id                TEXT NOT NULL,
       discover_workflow_id     TEXT NOT NULL,
       discover_run_id          TEXT NOT NULL,
-      job_url                  TEXT NOT NULL,
+      job_id                   TEXT NOT NULL,
       cohort_kind              TEXT NOT NULL
           CHECK (cohort_kind IN ('observed_this_run', 'existing_backlog')),
       source_family            TEXT,
@@ -362,8 +365,9 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
       required_steps_json      TEXT,
       work_plan_reason         TEXT,
       linked_at                TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, discover_workflow_id, discover_run_id, job_url),
-      FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+      PRIMARY KEY (tenant_id, discover_workflow_id, discover_run_id, job_id),
+      FOREIGN KEY (tenant_id, job_id)
+        REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
     );
     CREATE TABLE pipeline_step_projections (
       tenant_id              TEXT NOT NULL,
@@ -1283,7 +1287,7 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
 
   const insertMember = db.prepare(
     `INSERT INTO discovery_execution_jobs (
-      tenant_id, discover_workflow_id, discover_run_id, job_url, cohort_kind,
+      tenant_id, discover_workflow_id, discover_run_id, job_id, cohort_kind,
       source_family, source_run_id, preparation_workflow_id, work_plan_state,
       required_steps_json, work_plan_reason, linked_at
     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1291,7 +1295,7 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
   insertMember.run(
     discoverWorkflowId,
     discoverRunId,
-    QA_PLATFORM_JOB_URL,
+    stableJobId(QA_PLATFORM_JOB_URL),
     "observed_this_run",
     "greenhouse",
     "qa-greenhouse-run",
@@ -1304,7 +1308,7 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
   insertMember.run(
     discoverWorkflowId,
     discoverRunId,
-    "https://talent.com/view?id=qa-marketing-director",
+    stableJobId("https://talent.com/view?id=qa-marketing-director"),
     "observed_this_run",
     "talent",
     "qa-talent-run",
@@ -1317,7 +1321,7 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
   insertMember.run(
     discoverWorkflowId,
     discoverRunId,
-    "https://linkedin.com/jobs/view/qa-risk-manager",
+    stableJobId("https://linkedin.com/jobs/view/qa-risk-manager"),
     "existing_backlog",
     "linkedin",
     "qa-linkedin-run",
@@ -1330,7 +1334,7 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
   insertMember.run(
     discoverWorkflowId,
     discoverRunId,
-    "https://motorolasolutions.com/careers/qa-command-center",
+    stableJobId("https://motorolasolutions.com/careers/qa-command-center"),
     "observed_this_run",
     "greenhouse",
     "qa-greenhouse-run",
@@ -1451,9 +1455,15 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
   const recoveryMemberships = (
     db
       .prepare(
-        `SELECT job_url FROM discovery_execution_jobs
-          WHERE tenant_id = 'local' AND discover_workflow_id = ? AND discover_run_id = ?
-          ORDER BY job_url`,
+        `SELECT jobs.url AS job_url
+           FROM discovery_execution_jobs AS execution
+           JOIN jobs
+             ON jobs.tenant_id = execution.tenant_id
+            AND jobs.job_id = execution.job_id
+          WHERE execution.tenant_id = 'local'
+            AND execution.discover_workflow_id = ?
+            AND execution.discover_run_id = ?
+          ORDER BY jobs.url`,
       )
       .all(discoverWorkflowId, discoverRunId) as Array<{ job_url: string }>
   ).map((row) => row.job_url);
@@ -2043,12 +2053,14 @@ function seedWorkerHeartbeat(db: Database.Database, dbPath: string): void {
 function insertJob(db: Database.Database, job: QaJobSeed): void {
   db.prepare(
     `INSERT INTO jobs (
-      url, title, site, strategy, location, salary, discovered_at, application_url,
+      url, tenant_id, job_id, title, site, strategy, location, salary,
+      discovered_at, application_url,
       description, full_description, detail_scraped_at, fit_score, score_reasoning,
       scored_at, tailored_resume_path, tailored_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     job.url,
+    stableJobId(job.url),
     job.title,
     job.site,
     job.strategy ?? "qa",
@@ -2065,6 +2077,17 @@ function insertJob(db: Database.Database, job: QaJobSeed): void {
     null,
     null,
   );
+}
+
+function stableJobId(jobUrl: string): string {
+  const digest = createHash("sha256").update(jobUrl).digest("hex");
+  return [
+    digest.slice(0, 8),
+    digest.slice(8, 12),
+    `4${digest.slice(13, 16)}`,
+    `8${digest.slice(17, 20)}`,
+    digest.slice(20, 32),
+  ].join("-");
 }
 
 function insertStage(db: Database.Database, jobUrl: string, stage: string, state: string, errorCode: string | null = null): void {

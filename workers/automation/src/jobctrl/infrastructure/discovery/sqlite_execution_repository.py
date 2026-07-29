@@ -18,12 +18,21 @@ from jobctrl.domain.discovery.execution import (
     validate_safe_reason_code,
     validate_work_plan_state,
 )
+from jobctrl.domain.discovery.value_objects import PostingUrl
+from jobctrl.domain.identifiers import canonical_job_id
+from jobctrl.domain.tenant import TenantId
+from jobctrl.infrastructure.discovery.sqlite_identity_resolver import (
+    SqliteJobIdentityResolver,
+)
 
 
 _SELECT_COLUMNS = """
-    tenant_id, discover_workflow_id, discover_run_id, job_url, cohort_kind,
-    source_family, source_run_id, preparation_workflow_id, work_plan_state,
-    required_steps_json, work_plan_reason, linked_at
+    execution.tenant_id, execution.discover_workflow_id,
+    execution.discover_run_id, jobs.url AS job_url, execution.cohort_kind,
+    execution.source_family, execution.source_run_id,
+    execution.preparation_workflow_id, execution.work_plan_state,
+    execution.required_steps_json, execution.work_plan_reason,
+    execution.linked_at
 """
 
 
@@ -58,16 +67,19 @@ class SqliteDiscoveryExecutionRepository:
         if resolved_cohort == "observed_this_run" and normalized_family is None:
             raise ValueError("source_family is required for an observed execution job")
         linked = linked_at or datetime.now(timezone.utc).isoformat()
+        stable_job_id = self._resolve_job_id(execution, normalized_job_url)
 
         with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO discovery_execution_jobs (
-                    tenant_id, discover_workflow_id, discover_run_id, job_url,
+                    tenant_id, discover_workflow_id, discover_run_id, job_id,
                     cohort_kind, source_family, source_run_id, work_plan_state,
                     linked_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-                ON CONFLICT (tenant_id, discover_workflow_id, discover_run_id, job_url)
+                ON CONFLICT (
+                    tenant_id, discover_workflow_id, discover_run_id, job_id
+                )
                 DO UPDATE SET
                     cohort_kind = CASE
                         WHEN excluded.cohort_kind = 'observed_this_run'
@@ -93,7 +105,7 @@ class SqliteDiscoveryExecutionRepository:
                     execution.tenant_id,
                     execution.workflow_id,
                     execution.temporal_run_id,
-                    normalized_job_url,
+                    stable_job_id,
                     resolved_cohort,
                     normalized_family,
                     normalized_source_run_id,
@@ -145,14 +157,13 @@ class SqliteDiscoveryExecutionRepository:
             raise ValueError(f"{resolved_state} work cannot name a preparation workflow")
 
         normalized_job_url = _required_text(job_url, "job_url")
+        stable_job_id = self._resolve_job_id(execution, normalized_job_url)
         existing = self.get(execution, normalized_job_url)
         if existing is None:
             raise KeyError(f"Job is not linked to discovery execution: {normalized_job_url}")
 
         desired_steps_json = (
-            json.dumps(list(normalized_steps), separators=(",", ":"))
-            if normalized_steps is not None
-            else None
+            json.dumps(list(normalized_steps), separators=(",", ":")) if normalized_steps is not None else None
         )
         if existing.work_plan_state in {"planned", "not_eligible"}:
             desired = (
@@ -171,10 +182,7 @@ class SqliteDiscoveryExecutionRepository:
                 raise ValueError("A decided discovery execution work plan is immutable")
             return existing
 
-        if (
-            existing.preparation_workflow_id is not None
-            and normalized_workflow_id != existing.preparation_workflow_id
-        ):
+        if existing.preparation_workflow_id is not None and normalized_workflow_id != existing.preparation_workflow_id:
             raise ValueError("preparation_workflow_id is immutable once assigned")
 
         with self._conn:
@@ -188,7 +196,7 @@ class SqliteDiscoveryExecutionRepository:
                  WHERE tenant_id = ?
                    AND discover_workflow_id = ?
                    AND discover_run_id = ?
-                   AND job_url = ?
+                   AND job_id = ?
                    AND work_plan_state IN ('pending', 'failed')
                 """,
                 (
@@ -199,7 +207,7 @@ class SqliteDiscoveryExecutionRepository:
                     execution.tenant_id,
                     execution.workflow_id,
                     execution.temporal_run_id,
-                    normalized_job_url,
+                    stable_job_id,
                 ),
             )
             if updated.rowcount != 1:
@@ -224,20 +232,27 @@ class SqliteDiscoveryExecutionRepository:
         return result
 
     def get(self, execution: DiscoveryExecutionRef, job_url: str) -> DiscoveryExecutionJob | None:
+        try:
+            stable_job_id = self._resolve_job_id(execution, job_url)
+        except KeyError:
+            return None
         row = self._conn.execute(
             f"""
             SELECT {_SELECT_COLUMNS}
-              FROM discovery_execution_jobs
-             WHERE tenant_id = ?
-               AND discover_workflow_id = ?
-               AND discover_run_id = ?
-               AND job_url = ?
+              FROM discovery_execution_jobs AS execution
+              JOIN jobs
+                ON jobs.tenant_id = execution.tenant_id
+               AND jobs.job_id = execution.job_id
+             WHERE execution.tenant_id = ?
+               AND execution.discover_workflow_id = ?
+               AND execution.discover_run_id = ?
+               AND execution.job_id = ?
             """,
             (
                 execution.tenant_id,
                 execution.workflow_id,
                 execution.temporal_run_id,
-                job_url,
+                stable_job_id,
             ),
         ).fetchone()
         return _row_to_execution_job(row) if row is not None else None
@@ -246,18 +261,48 @@ class SqliteDiscoveryExecutionRepository:
         rows = self._conn.execute(
             f"""
             SELECT {_SELECT_COLUMNS}
-              FROM discovery_execution_jobs
-             WHERE tenant_id = ?
-               AND discover_workflow_id = ?
-               AND discover_run_id = ?
-             ORDER BY job_url
+              FROM discovery_execution_jobs AS execution
+              JOIN jobs
+                ON jobs.tenant_id = execution.tenant_id
+               AND jobs.job_id = execution.job_id
+             WHERE execution.tenant_id = ?
+               AND execution.discover_workflow_id = ?
+               AND execution.discover_run_id = ?
+             ORDER BY jobs.url
             """,
             (execution.tenant_id, execution.workflow_id, execution.temporal_run_id),
         ).fetchall()
         return [_row_to_execution_job(row) for row in rows]
 
+    def _resolve_job_id(
+        self,
+        execution: DiscoveryExecutionRef,
+        job_reference: str,
+    ) -> str:
+        normalized = _required_text(job_reference, "job_url")
+        resolver = SqliteJobIdentityResolver(self._conn)
+        identity = resolver.resolve_by_posting_url(
+            TenantId(execution.tenant_id),
+            PostingUrl(normalized),
+        )
+        if identity is None:
+            try:
+                stable_job_id = canonical_job_id(normalized)
+            except ValueError:
+                stable_job_id = None
+            if stable_job_id is not None:
+                identity = resolver.resolve_by_job_id(
+                    TenantId(execution.tenant_id),
+                    stable_job_id,
+                )
+        if identity is None:
+            raise KeyError(f"No stable Job identity for discovery execution member: {normalized}")
+        return str(identity.job_id)
 
-def _row_to_execution_job(row: sqlite3.Row | tuple[object, ...]) -> DiscoveryExecutionJob:
+
+def _row_to_execution_job(
+    row: sqlite3.Row | tuple[object, ...],
+) -> DiscoveryExecutionJob:
     raw_steps = row[9]
     steps: tuple[DiscoveryPreparationStep, ...] | None = None
     if raw_steps is not None:
