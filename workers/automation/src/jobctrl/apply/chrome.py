@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import threading
 import time
+from hashlib import sha256
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -21,7 +22,7 @@ from jobctrl.browser_capabilities import (
     require_system_browser_capability,
     system_browser_capability_is_enabled,
 )
-from jobctrl.apply.origins import canonical_http_origin
+from jobctrl.apply.origins import canonical_http_origin, canonical_http_url
 from jobctrl.infrastructure.network import validate_public_http_url
 
 logger = logging.getLogger(__name__)
@@ -416,6 +417,7 @@ def get_dry_run_cdp_guard_evidence(port: int) -> dict[str, object]:
             "coverage": "unprotected",
             "blocked_channels": (),
             "blocked_requests": (),
+            "allowed_navigations": (),
             "protected_targets": 0,
         }
     return guard.evidence()
@@ -435,6 +437,9 @@ class _ApplyCdpGuard:
         self._port = int(port)
         self._enforce_dry_run = enforce_dry_run
         self._approved_origin = canonical_http_origin(approved_application_url)
+        self._approved_application_url = canonical_http_url(
+            approved_application_url
+        )
         self._capability_checker = capability_checker
         self._worker_id = worker_id
         self._process = process
@@ -444,7 +449,12 @@ class _ApplyCdpGuard:
         self._protected_targets: set[str] = set()
         self._blocked: list[dict[str, str]] = []
         self._blocked_keys: set[tuple[str, str, str, str]] = set()
-        self._request_initiators: dict[str, str] = {}
+        self._navigation_grants = (
+            {("GET", self._approved_application_url)}
+            if enforce_dry_run
+            else set()
+        )
+        self._allowed_navigations: list[dict[str, str]] = []
         self._lock = threading.Lock()
 
     @property
@@ -540,28 +550,61 @@ class _ApplyCdpGuard:
         except ValueError:
             return False
 
+    def consume_navigation_grant(
+        self,
+        *,
+        method: str,
+        url: str,
+        resource_type: str,
+    ) -> bool:
+        if (
+            not self._enforce_dry_run
+            or str(method or "").upper() != "GET"
+            or str(resource_type or "") != "Document"
+        ):
+            return False
+        try:
+            canonical_url = canonical_http_url(url)
+        except ValueError:
+            return False
+        grant = ("GET", canonical_url)
+        with self._lock:
+            if grant not in self._navigation_grants:
+                return False
+            self._navigation_grants.remove(grant)
+            self._allowed_navigations.append(
+                {
+                    "decision": "run_bound_initial_url",
+                    "grant_id": "initial_application_url",
+                    "method": "GET",
+                    "url": _sanitize_evidence_url(canonical_url),
+                    "url_fingerprint": sha256(
+                        canonical_url.encode("utf-8")
+                    ).hexdigest(),
+                }
+            )
+        return True
+
     def evidence(self) -> dict[str, object]:
         with self._lock:
             blocked = tuple(dict(item) for item in self._blocked)
+            allowed_navigations = tuple(
+                dict(item) for item in self._allowed_navigations
+            )
             protected_targets = len(self._protected_targets)
         return {
-            "coverage": _dry_run_coverage(blocked, protected_targets=protected_targets),
+            "coverage": _dry_run_coverage(
+                blocked,
+                protected_targets=protected_targets,
+                allowed_navigations=(
+                    allowed_navigations if self._enforce_dry_run else None
+                ),
+            ),
             "blocked_channels": _dry_run_blocked_channels(blocked),
             "blocked_requests": blocked,
+            "allowed_navigations": allowed_navigations,
             "protected_targets": protected_targets,
         }
-
-    def record_request_initiator(self, request_id: str, initiator_type: str) -> None:
-        if not request_id:
-            return
-        with self._lock:
-            self._request_initiators[request_id] = (initiator_type or "")[:40]
-
-    def request_initiator(self, request_id: str) -> str:
-        if not request_id:
-            return ""
-        with self._lock:
-            return self._request_initiators.pop(request_id, "")
 
 
 class _DryRunCdpGuard(_ApplyCdpGuard):
@@ -1114,20 +1157,14 @@ def _handle_apply_page_event(message: dict, guard: _ApplyCdpGuard, send) -> bool
             resource_type="WebSocket",
         )
         return True
-    if method_name == "Network.requestWillBeSent":
-        if guard.enforce_dry_run:
-            _record_request_initiator(message, guard)
-        return True
     if method_name != "Fetch.requestPaused":
         return True
     params = message.get("params") or {}
     request = params.get("request") or {}
     request_id = params.get("requestId")
-    network_id = str(params.get("networkId") or "")
     method = str(request.get("method") or "GET").upper()
     url = str(request.get("url") or "")
     resource_type = str(params.get("resourceType") or "Other")
-    initiator_type = guard.request_initiator(network_id)
     if request_id and not guard.live_submission_allowed():
         guard.record_blocked_request(
             channel="capability_revoked",
@@ -1158,22 +1195,24 @@ def _handle_apply_page_event(message: dict, guard: _ApplyCdpGuard, send) -> bool
             resource_type=resource_type,
         )
         send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
-    elif (
-        request_id
-        and guard.enforce_dry_run
-        and _should_block_dry_run_request(
-            method,
-            resource_type=resource_type,
-            initiator_type=initiator_type,
-        )
-    ):
-        guard.record_blocked_request(
-            channel="network",
+    elif request_id and guard.enforce_dry_run:
+        if guard.consume_navigation_grant(
             method=method,
             url=url,
             resource_type=resource_type,
-        )
-        send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
+        ):
+            send("Fetch.continueRequest", {"requestId": request_id})
+        else:
+            guard.record_blocked_request(
+                channel="network",
+                method=method,
+                url=url,
+                resource_type=resource_type,
+            )
+            send(
+                "Fetch.failRequest",
+                {"requestId": request_id, "errorReason": "BlockedByClient"},
+            )
     elif request_id:
         send("Fetch.continueRequest", {"requestId": request_id})
     return True
@@ -1197,30 +1236,6 @@ def _record_binding_call(message: dict, guard: _DryRunCdpGuard) -> None:
     )
 
 
-def _record_request_initiator(message: dict, guard: _DryRunCdpGuard) -> None:
-    params = message.get("params") or {}
-    request_id = str(params.get("requestId") or "")
-    initiator = params.get("initiator") or {}
-    initiator_type = ""
-    if isinstance(initiator, dict):
-        initiator_type = str(initiator.get("type") or "")
-    guard.record_request_initiator(request_id, initiator_type)
-
-
-def _should_block_dry_run_request(
-    method: str,
-    *,
-    resource_type: str = "Other",
-    initiator_type: str = "",
-) -> bool:
-    method_name = str(method or "GET").upper()
-    if method_name not in {"GET", "HEAD"}:
-        return True
-    if str(resource_type or "Other") != "Document":
-        return True
-    return str(initiator_type or "").strip().lower() != "other"
-
-
 def _sanitize_evidence_url(url: str) -> str:
     try:
         parsed = urlparse(str(url or ""))
@@ -1234,7 +1249,12 @@ def _sanitize_evidence_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{path}"
 
 
-def _dry_run_coverage(blocked: tuple[dict[str, str], ...], *, protected_targets: int = 1) -> str:
+def _dry_run_coverage(
+    blocked: tuple[dict[str, str], ...],
+    *,
+    protected_targets: int = 1,
+    allowed_navigations: tuple[dict[str, str], ...] | None = None,
+) -> str:
     if protected_targets <= 0 and not blocked:
         return "unprotected"
     partial_resources = {
@@ -1254,6 +1274,8 @@ def _dry_run_coverage(blocked: tuple[dict[str, str], ...], *, protected_targets:
             return "partial"
         if item.get("channel") in partial_channels:
             return "partial"
+    if allowed_navigations is not None and not allowed_navigations:
+        return "unprotected"
     return "full"
 
 

@@ -35,6 +35,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,7 @@ from jobctrl.apply.dashboard import (
     render_full,
     update_state,
 )
+from jobctrl.apply.origins import canonical_http_url
 from jobctrl.database import (
     _ACTIVE_STATE_JOIN,
     _EFFECTIVE_APPLICATION_URL,
@@ -277,6 +279,46 @@ def _payload_int(payload: dict[str, Any], *names: str) -> int | None:
         return None
 
 
+def _allowed_navigation_evidence(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = _payload_value(payload, "allowed_navigations", "allowedNavigations")
+    if not isinstance(raw, list):
+        return []
+    return [dict(item) for item in raw if isinstance(item, dict)]
+
+
+def _has_run_bound_initial_navigation(
+    payload: dict[str, Any],
+    *,
+    application_url: str,
+) -> bool:
+    allowed = _allowed_navigation_evidence(payload)
+    if len(allowed) != 1:
+        return False
+    try:
+        expected_fingerprint = sha256(
+            canonical_http_url(application_url).encode("utf-8")
+        ).hexdigest()
+    except ValueError:
+        return False
+    navigation = allowed[0]
+    return (
+        str(_payload_value(navigation, "decision") or "")
+        == "run_bound_initial_url"
+        and str(_payload_value(navigation, "grant_id", "grantId") or "")
+        == "initial_application_url"
+        and str(_payload_value(navigation, "method") or "").upper() == "GET"
+        and str(
+            _payload_value(
+                navigation,
+                "url_fingerprint",
+                "urlFingerprint",
+            )
+            or ""
+        )
+        == expected_fingerprint
+    )
+
+
 def _dry_run_evidence_exists(
     conn,
     *,
@@ -304,6 +346,11 @@ def _dry_run_evidence_exists(
         if run_id and payload_run_id != run_id:
             continue
         if str(_payload_value(payload, "coverage", "dry_run_coverage") or "") != coverage:
+            continue
+        if not _has_run_bound_initial_navigation(
+            payload,
+            application_url=application_url,
+        ):
             continue
         payload_generation = _payload_int(payload, "materials_generation", "materialsGeneration")
         payload_profile_version = _payload_int(payload, "profile_version", "profileVersion")
@@ -376,6 +423,28 @@ def _apply_run_started_payload(conn, *, job_key: str, run_id: str) -> dict[str, 
     return {}
 
 
+def _latest_dry_run_completion_payload(
+    conn,
+    *,
+    job_key: str,
+    run_id: str,
+) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT payload_json FROM job_events
+        WHERE job_url = ? AND stage = 'apply' AND event_type = 'DryRunCompleted'
+        ORDER BY event_id DESC
+        LIMIT 24
+        """,
+        (job_key,),
+    ).fetchall()
+    for row in rows:
+        payload = _payload_from_row(row)
+        if str(_payload_value(payload, "run_id", "runId") or "") == run_id:
+            return payload
+    return {}
+
+
 def _dry_run_completion_binding(
     conn,
     *,
@@ -385,7 +454,18 @@ def _dry_run_completion_binding(
 ) -> dict[str, Any]:
     ctx = run_ctx or {}
     started_payload = _apply_run_started_payload(conn, job_key=job_key, run_id=run_id)
+    completion_payload = _latest_dry_run_completion_payload(
+        conn,
+        job_key=job_key,
+        run_id=run_id,
+    )
     materials_generation = _payload_int(ctx, "materials_generation", "materialsGeneration")
+    if materials_generation is None:
+        materials_generation = _payload_int(
+            completion_payload,
+            "materials_generation",
+            "materialsGeneration",
+        )
     if materials_generation is None:
         materials_generation = _payload_int(
             started_payload,
@@ -394,18 +474,42 @@ def _dry_run_completion_binding(
         )
     application_url = str(
         _payload_value(ctx, "application_url", "applicationUrl")
+        or _payload_value(completion_payload, "application_url", "applicationUrl")
         or _payload_value(started_payload, "application_url", "applicationUrl")
         or ""
     )
     profile_version = _payload_int(ctx, "profile_version", "profileVersion")
     if profile_version is None:
+        profile_version = _payload_int(
+            completion_payload,
+            "profile_version",
+            "profileVersion",
+        )
+    if profile_version is None:
         profile_version = _payload_int(started_payload, "profile_version", "profileVersion")
-    coverage = str(_payload_value(ctx, "coverage", "dry_run_coverage") or "full")
+    coverage = str(
+        _payload_value(completion_payload, "coverage", "dry_run_coverage")
+        or _payload_value(ctx, "coverage", "dry_run_coverage")
+        or "partial"
+    )
     if coverage not in {"full", "partial"}:
-        coverage = "full"
-    blocked_channels = _payload_value(ctx, "blocked_channels", "blockedChannels") or []
+        coverage = "partial"
+    blocked_channels = (
+        _payload_value(completion_payload, "blocked_channels", "blockedChannels")
+        or _payload_value(ctx, "blocked_channels", "blockedChannels")
+        or []
+    )
     if not isinstance(blocked_channels, list):
         blocked_channels = [str(blocked_channels)]
+    allowed_navigations = (
+        _allowed_navigation_evidence(completion_payload)
+        or _allowed_navigation_evidence(ctx)
+    )
+    if not _has_run_bound_initial_navigation(
+        {"allowed_navigations": allowed_navigations},
+        application_url=application_url,
+    ):
+        coverage = "partial"
     return {
         "materials_generation": materials_generation,
         "application_url": application_url or None,
@@ -416,6 +520,7 @@ def _dry_run_completion_binding(
             for channel in blocked_channels
             if channel is not None and str(channel)
         ],
+        "allowed_navigations": allowed_navigations,
     }
 
 
@@ -952,6 +1057,7 @@ def mark_result(
                 "dry_run": True,
                 "coverage": binding["coverage"],
                 "blocked_channels": binding["blocked_channels"],
+                "allowed_navigations": binding["allowed_navigations"],
                 "materials_generation": binding["materials_generation"],
                 "application_url": binding["application_url"],
                 "profile_version": binding["profile_version"],

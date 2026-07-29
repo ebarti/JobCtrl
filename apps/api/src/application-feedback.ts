@@ -1229,8 +1229,54 @@ function dryRunCompletionMatches(
   return (
     matchedGeneration === expected.materialsGeneration &&
     matchedProfileVersion === expected.profileVersion &&
-    matchedUrl === expected.applicationUrl
+    matchedUrl === expected.applicationUrl &&
+    hasRunBoundInitialNavigation(completionPayload, expected.applicationUrl)
   );
+}
+
+function hasRunBoundInitialNavigation(
+  completionPayload: Record<string, unknown> | null,
+  applicationUrl: string,
+): boolean {
+  const allowed = recordValue(completionPayload, "allowedNavigations", "allowed_navigations");
+  if (!Array.isArray(allowed) || allowed.length !== 1) {
+    return false;
+  }
+  const navigation = asRecord(allowed[0]);
+  if (!navigation) {
+    return false;
+  }
+  const expectedFingerprint = canonicalApplicationUrlFingerprint(applicationUrl);
+  return (
+    expectedFingerprint !== null &&
+    stringValue(navigation.decision) === "run_bound_initial_url" &&
+    stringValue(recordValue(navigation, "grantId", "grant_id")) === "initial_application_url" &&
+    stringValue(navigation.method).toUpperCase() === "GET" &&
+    stringValue(recordValue(navigation, "urlFingerprint", "url_fingerprint")) === expectedFingerprint
+  );
+}
+
+function canonicalApplicationUrlFingerprint(value: string): string | null {
+  const raw = value.trim();
+  if (!raw || raw !== value || /[\\\s]/u.test(raw)) {
+    return null;
+  }
+  try {
+    const parsed = new URL(raw);
+    if (
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+      !parsed.hostname ||
+      parsed.username ||
+      parsed.password
+    ) {
+      return null;
+    }
+    parsed.hash = "";
+    const canonical = `${parsed.protocol}//${parsed.host}${parsed.pathname || "/"}${parsed.search}`;
+    return crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
+  } catch {
+    return null;
+  }
 }
 
 function stageBlockerReason(row: ReviewQueueRow, currentState: StageState): string {

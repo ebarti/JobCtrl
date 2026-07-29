@@ -234,7 +234,9 @@ persistent warning because the standing loop may submit eligible prepared
 jobs autonomously — still bounded by minimum fit score, the daily spend
 ceiling, at-most-once submit intent tracking, CAPTCHA fail-closed behavior,
 and the dry-run guard when a dry-run apply path is used. Use dry-run paths
-and narrow targets before allowing live submission.
+and narrow targets before allowing live submission. The dry-run browser grants
+only one exact navigation to the reviewed application URL; replays and
+path/query changes are blocked and recorded.
 The auto-apply toggle, approval requirement, and minimum fit threshold are all
 owned by **Discovery → Runtime settings**.
 

@@ -77,6 +77,68 @@ def test_live_guard_blocks_public_cross_origin_requests() -> None:
     assert guard.evidence()["blocked_channels"] == ("approval_origin:POST",)
 
 
+def test_dry_run_consumes_one_exact_initial_navigation_grant() -> None:
+    approved_url = "https://apply.example.com/job/42?source=review"
+    guard = chrome._DryRunCdpGuard(
+        port=1,
+        approved_application_url=approved_url,
+    )
+    guard.record_protected_target("page-1")
+    sent: list[tuple[str, dict | None]] = []
+
+    def dispatch(request_id: str, url: str, *, method: str = "GET") -> None:
+        chrome._handle_apply_page_event(
+            _paused_request(
+                request_id=request_id,
+                url=url,
+                method=method,
+            ),
+            guard,
+            lambda command, params=None: sent.append((command, params)),
+        )
+
+    dispatch("initial", approved_url)
+
+    initial_evidence = guard.evidence()
+    assert initial_evidence["coverage"] == "full"
+    assert len(initial_evidence["allowed_navigations"]) == 1
+    allowed = initial_evidence["allowed_navigations"][0]
+    assert allowed["decision"] == "run_bound_initial_url"
+    assert allowed["grant_id"] == "initial_application_url"
+    assert allowed["method"] == "GET"
+    assert allowed["url"] == "https://apply.example.com/job/42"
+    assert len(allowed["url_fingerprint"]) == 64
+
+    dispatch("head", approved_url, method="HEAD")
+    dispatch("replay", approved_url)
+    dispatch("query", "https://apply.example.com/job/42?source=attacker")
+    dispatch("path", "https://apply.example.com/job/43?source=review")
+
+    assert sent == [
+        ("Fetch.continueRequest", {"requestId": "initial"}),
+        (
+            "Fetch.failRequest",
+            {"requestId": "head", "errorReason": "BlockedByClient"},
+        ),
+        (
+            "Fetch.failRequest",
+            {"requestId": "replay", "errorReason": "BlockedByClient"},
+        ),
+        (
+            "Fetch.failRequest",
+            {"requestId": "query", "errorReason": "BlockedByClient"},
+        ),
+        (
+            "Fetch.failRequest",
+            {"requestId": "path", "errorReason": "BlockedByClient"},
+        ),
+    ]
+    evidence = guard.evidence()
+    assert len(evidence["allowed_navigations"]) == 1
+    assert evidence["coverage"] == "partial"
+    assert evidence["blocked_channels"] == ("network:GET", "network:HEAD")
+
+
 def test_launch_fails_before_profile_or_process_without_approved_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -181,3 +243,24 @@ def test_canonical_http_origin_normalizes_security_equivalent_urls(
 def test_canonical_http_origin_rejects_ambiguous_urls(value: str) -> None:
     with pytest.raises(ValueError):
         chrome.canonical_http_origin(value)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("HTTPS://Example.COM:443", "https://example.com/"),
+        (
+            "https://bücher.example/apply%2Frole?source=review#section",
+            "https://xn--bcher-kva.example/apply%2Frole?source=review",
+        ),
+        (
+            "http://[2001:0db8::1]:80/apply?q=1",
+            "http://[2001:db8::1]/apply?q=1",
+        ),
+    ],
+)
+def test_canonical_http_url_preserves_exact_request_identity(
+    value: str,
+    expected: str,
+) -> None:
+    assert chrome.canonical_http_url(value) == expected

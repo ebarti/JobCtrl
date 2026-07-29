@@ -13,6 +13,7 @@ import json
 import sqlite3
 import threading
 from collections import Counter
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,7 @@ from jobctrl.apply.launcher import (
     worker_loop,
 )
 from jobctrl.apply.dashboard import get_recent_events
+from jobctrl.apply.origins import canonical_http_url
 from jobctrl.database import close_connection, get_connection, init_db
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
@@ -242,6 +244,7 @@ def _seed_current_apply_binding(
                 "result": "dry_run_complete",
                 "dry_run": True,
                 "coverage": coverage,
+                "allowed_navigations": _run_bound_navigation(application_url),
                 "materials_generation": generation,
                 "application_url": application_url,
                 "profile_version": profile_version,
@@ -249,6 +252,19 @@ def _seed_current_apply_binding(
             },
         )
     conn.commit()
+
+
+def _run_bound_navigation(application_url: str) -> list[dict[str, str]]:
+    canonical_url = canonical_http_url(application_url)
+    return [
+        {
+            "decision": "run_bound_initial_url",
+            "grant_id": "initial_application_url",
+            "method": "GET",
+            "url": canonical_url.split("?", 1)[0],
+            "url_fingerprint": sha256(canonical_url.encode("utf-8")).hexdigest(),
+        }
+    ]
 
 
 def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
@@ -482,6 +498,25 @@ def test_normal_dry_run_completion_satisfies_approval_gate(tmp_path, monkeypatch
             approval_required=True,
         )
         assert dry_run_job is not None
+        record_job_event(
+            conn,
+            "https://example.com/job",
+            "apply",
+            "DryRunCompleted",
+            message="Saga dry run completed",
+            payload={
+                "run_id": run_ctx["run_id"],
+                "result": "dry_run_complete",
+                "dry_run": True,
+                "coverage": "full",
+                "allowed_navigations": _run_bound_navigation(
+                    "https://example.com/apply"
+                ),
+                "materials_generation": 1,
+                "application_url": "https://example.com/apply",
+                "profile_version": 1,
+            },
+        )
         mark_result(
             "https://example.com/job",
             "dry_run",
@@ -498,6 +533,9 @@ def test_normal_dry_run_completion_satisfies_approval_gate(tmp_path, monkeypatch
         assert completion is not None
         payload = json.loads(completion["payload_json"])
         assert payload["coverage"] == "full"
+        assert payload["allowed_navigations"] == _run_bound_navigation(
+            "https://example.com/apply"
+        )
         assert payload["materials_generation"] == 1
         assert payload["application_url"] == "https://example.com/apply"
 
@@ -516,6 +554,66 @@ def test_normal_dry_run_completion_satisfies_approval_gate(tmp_path, monkeypatch
             approval_required=True,
         )
         assert live_job is not None
+    finally:
+        close_connection(db_path)
+
+
+def test_full_dry_run_without_navigation_receipt_cannot_satisfy_approval_gate(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn)
+    _seed_current_apply_binding(conn, coverage=None)
+
+    try:
+        monkeypatch.setattr(
+            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        run_ctx: dict = {"dry_run": True}
+        assert (
+            acquire_job(
+                target_url="https://example.com/job",
+                worker_id=1,
+                run_ctx=run_ctx,
+                approval_required=True,
+            )
+            is not None
+        )
+        mark_result(
+            "https://example.com/job",
+            "dry_run",
+            duration_ms=123,
+            task_id=run_ctx["run_id"],
+            run_ctx=run_ctx,
+        )
+        completion = conn.execute(
+            "SELECT payload_json FROM job_events "
+            "WHERE job_url = ? AND event_type = 'DryRunCompleted' "
+            "ORDER BY event_id DESC LIMIT 1",
+            ("https://example.com/job",),
+        ).fetchone()
+        assert completion is not None
+        assert json.loads(completion["payload_json"])["coverage"] == "partial"
+
+        _insert_review_decision(
+            conn,
+            decision="approve_submit",
+            decided_at="2026-01-02T00:00:00+00:00",
+            materials_generation=1,
+            profile_version=1,
+            application_url="https://example.com/apply",
+        )
+
+        assert (
+            acquire_job(
+                target_url="https://example.com/job",
+                worker_id=2,
+                approval_required=True,
+            )
+            is None
+        )
     finally:
         close_connection(db_path)
 
