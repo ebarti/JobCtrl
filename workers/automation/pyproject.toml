@@ -19,13 +19,14 @@ classifiers = [
 
 dependencies = [
     "typer>=0.9.0",
+    "click>=8.3.3",
     "rich>=13.0",
     "httpx>=0.24",
     "websocket-client>=1.8",
     "beautifulsoup4>=4.12",
     "playwright>=1.40",
     "python-dotenv>=1.0",
-    "pypdf>=5.0",
+    "pypdf>=6.14.2",
     "pyyaml>=6.0",
     "pandas>=2.0",
     "temporalio>=1.6",
@@ -59,9 +60,11 @@ dev = [
 ]
 providers = [
     "claude-agent-sdk==0.2.115",
+    "mcp>=1.28.1",
     "openai-codex==0.1.0b3",
     "openai-codex-cli-bin==0.137.0a4",
     "google-antigravity==0.1.2",
+    "pyasn1>=0.6.4",
 ]
 
 # Source checkouts keep the provider ensemble available on ordinary `uv sync`
