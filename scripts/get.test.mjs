@@ -157,9 +157,9 @@ test("local fixture mode cannot select a network release and the released path c
     assert.equal(local.status, 1);
     assert.match(local.stderr, /cannot use --release-url/);
     const source = readFileSync(GET, "utf8");
-    assert.match(source, /^INSTALLER_URL="https:\/\/releases\.jobctrl\.dev\/v1\/artifacts\/2\.0\.7-db257efe1087ec00ac2ec49b846a95d2423aecc2-darwin-arm64\/jobctrl-installer"$/m);
-    assert.match(source, /^INSTALLER_SHA256="d862a8edc7fa68aa23b6f32a98af6d06f5e8f2898966f71e0146a29ec24ee749"$/m);
-    assert.match(source, /^INSTALLER_VERSION="2\.0\.7"$/m);
+    assert.match(source, /^INSTALLER_URL="https:\/\/releases\.jobctrl\.dev\/v1\/artifacts\/2\.0\.8-92770fe5fcc99e73c0a06e73315acbb7b506a7af-darwin-arm64\/jobctrl-installer"$/m);
+    assert.match(source, /^INSTALLER_SHA256="be91015004c63d0f26f9ed6891d70e393058e99cc975cd4737a4e907a8229ccb"$/m);
+    assert.match(source, /^INSTALLER_VERSION="2\.0\.8"$/m);
     assert.doesNotMatch(source, /^INSTALLER_URL=""$/m);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
