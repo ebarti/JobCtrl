@@ -336,9 +336,12 @@ trace to recorded profile evidence; a prose skill/tool gate rejects invented
 named technologies; claim grounding binds every coverage-bearing claim to shipped
 rendered text; and a structured judge (plus adversarial personas on high-fit jobs)
 must pass before approval. The same never-fabricate and skill/tool gates run over
-the cover-letter body before it can ship. These gates fail closed — when no clean
-candidate survives, the resume is not approved and the last accepted artifact is
-preserved. Full detail is in [Resume Tailoring](../architecture/tailoring.md).
+the cover-letter body before it can ship. Generator retries map outcomes to
+bounded code-owned reason guidance; free-form validator, judge, adversarial, and
+prior-output text remains audit-only and never enters a later generator message.
+These gates fail closed — when no clean candidate survives, the resume is not
+approved and the last accepted artifact is preserved. Full detail is in
+[Resume Tailoring](../architecture/tailoring.md).
 
 ## Secrets And Data Hygiene
 

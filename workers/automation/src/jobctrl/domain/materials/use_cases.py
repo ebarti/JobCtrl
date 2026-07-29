@@ -847,6 +847,52 @@ def _audit_prompt_text(value: object, *, max_chars: int = 2400) -> str:
     return text if len(text) <= max_chars else f"{text[:max_chars - 1]}…"
 
 
+_RETRY_GUIDANCE: dict[str, str] = {
+    "adversarial_rejected": (
+        "Regenerate using only canonical profile evidence and preserve every "
+        "claim-to-evidence binding."
+    ),
+    "cover_letter_validation_failed": (
+        "Regenerate the cover letter in the required shape using only canonical "
+        "resume evidence and the required completion marker."
+    ),
+    "fabrication_detected": (
+        "Remove unsupported claims and use only metrics, tools, roles, employers, "
+        "and dates present in canonical profile evidence."
+    ),
+    "invalid_json": "Return exactly one JSON object matching the required schema.",
+    "judge_rejected": (
+        "Regenerate conservatively from canonical profile evidence and satisfy "
+        "every code-defined quality criterion."
+    ),
+    "residual_quality_warning": (
+        "Prefer concise, specific, evidence-bound wording without changing facts."
+    ),
+    "validation_failed": (
+        "Correct the schema and deterministic validation failures without adding "
+        "facts beyond canonical profile evidence."
+    ),
+}
+
+
+def _retry_system_prompt(base_prompt: str, reason_codes: list[str]) -> str:
+    """Append only code-owned retry guidance to a generator system prompt.
+
+    Validator, judge, adversarial-review, and prior model output text is retained
+    in the audit trail but must never be promoted into a later system message.
+    """
+    ordered_codes = tuple(dict.fromkeys(reason_codes[-5:]))
+    if not ordered_codes:
+        return base_prompt
+    unknown = [code for code in ordered_codes if code not in _RETRY_GUIDANCE]
+    if unknown:
+        raise ValueError(f"unknown retry reason code: {unknown[0]}")
+    guidance = "\n".join(
+        f"- {code}: {_RETRY_GUIDANCE[code]}" for code in ordered_codes
+    )
+    return f"{base_prompt}\n\n## CODE-OWNED RETRY REQUIREMENTS\n{guidance}"
+
+
 def _candidate_warning_notes(record: dict[str, Any]) -> tuple[str, ...]:
     notes: list[str] = []
     validator = record.get("validator") if isinstance(record.get("validator"), dict) else {}
@@ -893,13 +939,12 @@ _FABRICATION_KIND_LABELS: dict[str, str] = {
 
 
 def _render_fabrication_avoid_notes(findings: tuple[FabricationFinding, ...]) -> list[str]:
-    """Render deterministic never-fabricate findings as actionable retry avoid_notes.
+    """Render deterministic never-fabricate findings as auditable avoid notes.
 
-    The deterministic-gate analogue of the judge/adversarial repair notes: one
-    concise imperative per fabricated token so the next attempt can drop the exact
-    claim the profile cannot support (A6d — a deterministic hard finding feeds the
-    retry budget instead of failing the whole run outright). De-duplicated so a
-    token repeated across bullets yields a single instruction.
+    These retain one concise item per fabricated token in attempt history. They
+    never enter a later generator message; the retry path uses only the fixed
+    ``fabrication_detected`` guidance. De-duplicated so a token repeated across
+    bullets yields a single audit item.
     """
     notes: list[str] = []
     seen: set[str] = set()
@@ -1987,6 +2032,7 @@ class TailorResumeUseCase:
             "candidate_summaries": [],
         }
         avoid_notes: list[str] = []
+        retry_reasons: list[str] = []
         last_payload: dict | None = None
         last_validation: ValidationResult = ValidationResult.failure(("no attempt yet",))
         last_verdict: JudgeVerdict | None = None
@@ -2039,14 +2085,11 @@ class TailorResumeUseCase:
         for attempt in range(self._max_retries + 1):
             report["attempts"] = attempt + 1
 
-            prompt = tailor_prompt_base
-            if avoid_notes:
-                prompt += "\n\n## AVOID THESE ISSUES (from previous attempt):\n" + "\n".join(
-                    f"- {n}" for n in avoid_notes[-5:]
-                )
+            prompt = _retry_system_prompt(tailor_prompt_base, retry_reasons)
             attempt_record: dict[str, Any] = {
                 "attempt": attempt + 1,
                 "avoid_notes": list(avoid_notes[-5:]),
+                "retry_reasons": list(dict.fromkeys(retry_reasons[-5:])),
                 "system_prompt": prompt,
                 "candidates": [],
             }
@@ -2087,10 +2130,10 @@ class TailorResumeUseCase:
                 ):
                     # Deterministic never-fabricate gate on a validation- and
                     # judge-approved candidate BEFORE it can be selected (A6d): a hard
-                    # finding rejects THIS candidate and feeds its findings into the
-                    # retry avoid_notes below, so the next attempt can drop the exact
-                    # fabrication instead of the whole run failing outright. This runs
-                    # the same gate ``_voice_and_audit`` re-confirms on the shipped text.
+                    # finding rejects THIS candidate, records its details for audit,
+                    # and triggers fixed code-owned retry guidance instead of promoting
+                    # finding text into the next prompt. This runs the same gate
+                    # ``_voice_and_audit`` re-confirms on the shipped text.
                     if not self._apply_fabrication_gate(
                         candidate,
                         profile_snapshot=profile_snapshot,
@@ -2140,6 +2183,7 @@ class TailorResumeUseCase:
                     best_warned_approved = (selected, warning_notes)
                 if attempt < self._max_retries:
                     avoid_notes.extend(warning_notes)
+                    retry_reasons.append("residual_quality_warning")
                     report["review_feedback"]["warning_retry_attempted"] = True
                     attempt_record["status"] = "approved_with_warnings_retry"
                     attempt_record["warning_retry_notes"] = list(warning_notes[:8])
@@ -2168,22 +2212,27 @@ class TailorResumeUseCase:
                 status = str(candidate_record.get("status", ""))
                 if status == "parse_error":
                     avoid_notes.append("Output was not valid JSON. Return ONLY a JSON object.")
+                    retry_reasons.append("invalid_json")
                 elif status == "failed_validation":
                     validator = candidate_record.get("validator") or {}
                     avoid_notes.extend(str(error) for error in validator.get("errors", []))
+                    retry_reasons.append("validation_failed")
                 elif status == "judge_rejected":
                     judge = candidate_record.get("judge") or {}
                     avoid_notes.append(f"Judge rejected: {judge.get('issues') or 'quality gate failed'}")
+                    retry_reasons.append("judge_rejected")
                 elif status == "adversarial_rejected":
                     review = candidate_record.get("adversarial_review") or {}
                     blockers = review.get("blockers") or []
                     repairs = review.get("repair_instructions") or []
                     avoid_notes.extend(str(item) for item in [*blockers, *repairs] if str(item))
+                    retry_reasons.append("adversarial_rejected")
                 elif status == "failed_fabrication_gate":
                     gate = candidate_record.get("fabrication_gate") or {}
                     avoid_notes.extend(
                         note for note in gate.get("avoid_notes") or [] if str(note).strip()
                     )
+                    retry_reasons.append("fabrication_detected")
 
             attempt_record["status"] = "failed_quality_gate"
             report["attempt_history"].append(attempt_record)
@@ -2743,7 +2792,7 @@ class TailorResumeUseCase:
         non-existent evidence/requirement id (GROUND-05: FK bindings, not free
         text). ``findings`` carries the structured never-fabricate findings (empty
         for an FK binding error or a clean candidate) so the caller can render
-        per-token retry avoid_notes and record an inspectable audit trail. On reject
+        per-token audit notes and record an inspectable trail. On reject
         the rows are dropped so no provenance is persisted for an unaccepted
         candidate.
 
@@ -2838,10 +2887,10 @@ class TailorResumeUseCase:
         hard finding it stamps ``status = "failed_fabrication_gate"`` plus an
         inspectable ``fabrication_gate`` record (the audit trail for a rejected
         candidate — the findings that did NOT ship, distinct from residual warnings
-        accepted on the shipped candidate) whose ``avoid_notes`` the attempt loop
-        feeds into the next attempt (A6d), and returns ``True`` so the caller drops
-        the candidate from selection. Returns ``False`` when the candidate is
-        grounded — nothing changes and it stays selectable.
+        accepted on the shipped candidate). The attempt loop retains those notes for
+        audit and uses only the fixed ``fabrication_detected`` retry reason. Returns
+        ``True`` so the caller drops the candidate from selection; returns ``False``
+        when the candidate is grounded.
         """
         _rows, error, findings = self._compute_provenance(
             profile_snapshot=profile_snapshot,
@@ -3514,16 +3563,12 @@ class GenerateCoverLetterUseCase:
         target_company = _job_company(job)
         job_title = str(job.get("title") or "")
 
-        avoid_notes: list[str] = []
+        retry_reasons: list[str] = []
         letter = ""
         findings: list[FabricationFinding] = []
         last_validation: ValidationResult = ValidationResult.failure(("no attempt yet",))
         for attempt in range(self._max_retries + 1):
-            prompt = cl_prompt_base
-            if avoid_notes:
-                prompt += "\n\n## AVOID THESE ISSUES:\n" + "\n".join(
-                    f"- {n}" for n in avoid_notes[-5:]
-                )
+            prompt = _retry_system_prompt(cl_prompt_base, retry_reasons)
             messages = [
                 LlmMessage(role="system", content=prompt),
                 LlmMessage(
@@ -3566,7 +3611,7 @@ class GenerateCoverLetterUseCase:
             last_validation = validation
             if validation.passed:
                 return letter, validation, findings
-            avoid_notes.extend(errors)
+            retry_reasons.append("cover_letter_validation_failed")
             log.debug(
                 "Cover letter attempt %d/%d failed: %s",
                 attempt + 1, self._max_retries + 1, validation.errors,

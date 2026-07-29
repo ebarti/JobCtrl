@@ -114,7 +114,7 @@ Tailoring combines several inputs. Each input has a different authority.
 | Employer analysis | `EmployerAnalysis` aggregate | Grounded role framing, inferred seniority, requirements, and reasoned keywords |
 | Requirement fit report | Scoring context, when available | Pre-tailoring fit by requirement, allowed evidence IDs, target keywords, prohibited claims, tailoring directives |
 | Requirement-led coverage graph | Deterministic target-profile adapter plus constrained planner | Which profile achievements can cover which target requirements, which requirements are uncovered, which achievements are unused, and what claim policy each edge requires |
-| Previous attempt feedback | Tailoring retry loop | Validation errors, judge repair instructions, adversarial blockers, warning-retry notes |
+| Previous attempt outcome | Tailoring retry loop | Typed, code-owned retry reason only; free-form validator, judge, adversarial, and prior-output text remains audit data |
 
 The target job is context, not candidate evidence. The prompt explicitly tells
 the model not to copy target-job tools, systems, responsibilities, or business
@@ -144,6 +144,10 @@ so providers that support structured output receive the schema at the LLM
 gateway boundary. If an adapter lacks `chat_json()`, `_chat_json_payload()` falls
 back to `chat(..., response_schema=schema)` and parses the returned text. The
 deterministic validators still run after the gateway returns a parsed payload.
+On retries, the system message may add only fixed guidance selected from
+code-owned reason codes such as `validation_failed`, `judge_rejected`, or
+`fabrication_detected`. Free-form prior model or reviewer text is never copied
+into a later generator message.
 
 The system prompt contains these sections:
 
@@ -273,9 +277,10 @@ can say, for example:
 For each attempt:
 
 1. Start with the base tailor prompt.
-2. Add `AVOID THESE ISSUES` when earlier attempts produced parse errors,
-   validation errors, judge rejections, adversarial blockers, or retryable
-   warnings.
+2. Map earlier parse, validation, judge, adversarial, fabrication, or warning
+   outcomes to a bounded code-owned retry reason and append only its fixed
+   guidance to the system prompt. Keep original free-form findings in attempt
+   history for audit, never in a later generator message.
 3. Build two LLM messages:
    - system: the tailor prompt,
    - user: original resume baseline, target job blob, and JSON-only reminder.
@@ -446,8 +451,9 @@ run an additional adversarial review after the judge approves. Six personas
 challenge the resume — `ats_parser`, `skeptical_recruiter`,
 `hiring_manager_domain_expert`, `evidence_auditor`, `anti_ai_voice_critic`,
 and `interview_defensibility_critic` — each with its own rubric.
-If it finds blockers, the candidate becomes rejected and its blockers/repair
-instructions feed the retry loop.
+If it finds blockers, the candidate becomes rejected. Its blockers and repair
+instructions remain inspectable audit data; only the code-owned
+`adversarial_rejected` reason can influence the next generator prompt.
 
 ### 9. Optional Voice Pass
 
@@ -474,9 +480,10 @@ persistence:
   profile-backed tools, corpus-grounded concept terms, and ordinary English
   words never false-fire.
 
-A hard finding with retry budget remaining re-enters the attempt loop as an
-`avoid_note` (recorded as per-candidate `failed_fabrication_gate` repair-loop
-history). When every candidate trips the gate, the run fails closed: the
+A hard finding with retry budget remaining records its per-candidate
+`failed_fabrication_gate` repair-loop history and triggers the fixed
+`fabrication_detected` retry guidance. The finding's free-form text never enters
+the later system or user message. When every candidate trips the gate, the
 resume is NOT approved and the prior accepted generation is preserved. The
 cover-letter body runs the same never-fabricate and prose skill/tool gates
 before acceptance; a fabricated letter is rejected while the aggregate stays
