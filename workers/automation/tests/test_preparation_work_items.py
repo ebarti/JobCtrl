@@ -16,7 +16,16 @@ from jobctrl.infrastructure.preparation import SqlitePreparationWorkItemReposito
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    return init_db(tmp_path / "jobctrl.db")
+    connection = init_db(tmp_path / "jobctrl.db")
+    connection.executemany(
+        "INSERT INTO jobs (url, title) VALUES (?, 'Synthetic preparation job')",
+        (
+            ("https://example.com/job/1",),
+            ("https://example.com/job/2",),
+        ),
+    )
+    connection.commit()
+    return connection
 
 
 def test_enqueue_is_idempotent_for_work_item_key(conn: sqlite3.Connection) -> None:

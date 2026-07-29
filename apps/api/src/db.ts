@@ -9,7 +9,7 @@ export type SqliteValue = string | number | bigint | null;
 // writer that stamps ``PRAGMA user_version``; the API only reads it to fail
 // closed on a database written by a newer build. Bump both constants together
 // whenever the schema shape changes.
-export const SUPPORTED_SCHEMA_VERSION = 9;
+export const SUPPORTED_SCHEMA_VERSION = 10;
 
 export class IncompatibleSchemaVersionError extends Error {
   constructor(current: number) {
@@ -68,6 +68,41 @@ export function tableExists(db: SqliteDatabase, tableName: string): boolean {
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(tableName) as { name?: string } | undefined;
   return row?.name === tableName;
+}
+
+export function hasCompositeJobIdForeignKey(
+  db: SqliteDatabase,
+  tableName: string,
+  referenceColumn = "job_id",
+): boolean {
+  if (!tableExists(db, tableName)) return false;
+  const rows = db
+    .prepare(`PRAGMA foreign_key_list(${quoteIdentifier(tableName)})`)
+    .all() as Array<{
+      id: number;
+      table: string;
+      from: string;
+      to: string;
+      on_delete: string;
+    }>;
+  const groups = new Map<number, Set<string>>();
+  const cascades = new Map<number, boolean>();
+  for (const row of rows) {
+    if (row.table !== "jobs") continue;
+    const columns = groups.get(row.id) ?? new Set<string>();
+    columns.add(`${row.from}:${row.to}`);
+    groups.set(row.id, columns);
+    cascades.set(row.id, row.on_delete.toUpperCase() === "CASCADE");
+  }
+  const expected = new Set([
+    "tenant_id:tenant_id",
+    `${referenceColumn}:job_id`,
+  ]);
+  return [...groups.entries()].some(([id, columns]) => (
+    cascades.get(id) === true
+    && columns.size === expected.size
+    && [...expected].every((column) => columns.has(column))
+  ));
 }
 
 const legacyProductTokens = ["job" + "ctl", "job" + "hunter"] as const;

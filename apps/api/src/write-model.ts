@@ -22,7 +22,14 @@ import {
   deserializeStageStateKind,
   type StageStateKind,
 } from "@jobctrl/domain-types";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import {
+  allRows,
+  getRow,
+  hasCompositeJobIdForeignKey,
+  tableExists,
+  type SqliteDatabase,
+  type SqliteValue,
+} from "./db.js";
 import { matchingJobKeys, readSettingsConfig } from "./read-model.js";
 import { updateConfigObject } from "./config-file.js";
 
@@ -801,6 +808,7 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
   deleteWhere(db, "job_materials_artifacts", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_materials", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_enrichments", "job_url = ?", [jobUrl]);
+  deletePreparationJobReferences(db, jobId, jobUrl);
   if (jobId) {
     deleteWhere(db, "job_source_observations", "job_id = ?", [jobId]);
     deleteWhere(db, "job_canonical_identities", "job_id = ?", [jobId]);
@@ -835,6 +843,32 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
   ]);
   deleteWhere(db, "discovery_feedback", "job_key = ?", [jobUrl]);
   deleteWhere(db, "jobs", "url = ?", [jobUrl]);
+}
+
+function deletePreparationJobReferences(
+  db: SqliteDatabase,
+  jobId: string | undefined,
+  jobUrl: string,
+): void {
+  if (!tableExists(db, "preparation_work_items")) return;
+  if (
+    jobId
+    && hasCompositeJobIdForeignKey(db, "preparation_work_items")
+  ) {
+    deleteWhere(
+      db,
+      "preparation_work_items",
+      "tenant_id = 'local' AND job_id = ?",
+      [jobId],
+    );
+    return;
+  }
+  deleteWhere(
+    db,
+    "preparation_work_items",
+    "tenant_id = 'local' AND job_id = ?",
+    [jobUrl],
+  );
 }
 
 function deleteDiscoveryJobReferences(

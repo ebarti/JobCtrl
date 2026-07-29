@@ -43,7 +43,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # storing a posting URL as aggregate identity.
 # v9 (execution and search receipts): Discover execution membership and
 # accepted JobStreaming receipts reference the same stable identity.
-SCHEMA_VERSION = 9
+# v10 (preparation references): the legacy preparation work-item ledger
+# references ``(tenant_id, job_id)`` while preserving its opaque historical
+# idempotency keys for the later quiescent workflow cutover.
+SCHEMA_VERSION = 10
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -183,6 +186,7 @@ def _schema_migrations() -> tuple[
         (7, ensure_stable_job_identity_v7),
         (8, ensure_discovery_identity_references_v8),
         (9, ensure_execution_search_references_v9),
+        (10, ensure_preparation_references_v10),
     )
 
 
@@ -2278,7 +2282,12 @@ def ensure_tailoring_policy_tables(conn: sqlite3.Connection | None = None) -> li
 
 
 def ensure_preparation_work_item_tables(conn: sqlite3.Connection | None = None) -> list[str]:
-    """Create Pipeline/Preparation durable work-item persistence tables."""
+    """Create the legacy Pipeline/Preparation work-item ledger.
+
+    New databases use stable JobId references immediately. Existing schema-v9
+    databases keep their URL-shaped ``job_id`` values until the versioned v10
+    migration resolves and verifies every row transactionally.
+    """
     if conn is None:
         conn = get_connection()
 
@@ -2297,7 +2306,9 @@ def ensure_preparation_work_item_tables(conn: sqlite3.Connection | None = None) 
             last_error       TEXT NOT NULL DEFAULT '',
             created_at       TEXT NOT NULL,
             updated_at       TEXT NOT NULL,
-            available_at     TEXT NOT NULL
+            available_at     TEXT NOT NULL,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
         )
         """
     )
@@ -4168,6 +4179,15 @@ def _reassign_discovery_identity_references(
             losing_job_id=losing_job_id,
             surviving_job_id=surviving_job_id,
         )
+    if _has_preparation_reference_schema_v10(conn):
+        conn.execute(
+            """
+            UPDATE preparation_work_items
+            SET job_id = ?
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (surviving_job_id, tenant_id, losing_job_id),
+        )
 
 
 def _reassign_execution_memberships(
@@ -5136,6 +5156,251 @@ def _verify_execution_search_references_v9(
     foreign_key_error = conn.execute("PRAGMA foreign_key_check").fetchone()
     if foreign_key_error is not None:
         raise RuntimeError("execution/search reference migration found a foreign-key violation")
+
+
+_PREPARATION_REFERENCE_SCHEMA_VERSION = 10
+
+
+def ensure_preparation_references_v10(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move legacy preparation work-item references to stable JobIds.
+
+    The table's historical idempotency keys are opaque workflow-association
+    facts and remain byte-for-byte unchanged. The later quiescent workflow
+    cutover owns the transition to stable-ID-derived Temporal workflow keys.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _PREPARATION_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _EXECUTION_SEARCH_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "preparation reference migration requires execution/search schema v9"
+        )
+
+    conn.execute("SAVEPOINT preparation_references_v10")
+    try:
+        _verify_execution_search_references_v9(
+            conn,
+            expected_counts={
+                table: int(
+                    conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+                )
+                for table in _EXECUTION_SEARCH_REFERENCE_TABLES
+            },
+        )
+        before_count = int(
+            conn.execute("SELECT COUNT(*) FROM preparation_work_items").fetchone()[0]
+        )
+
+        if not _has_preparation_reference_schema_v10(conn):
+            columns = _table_columns(conn, "preparation_work_items")
+            if "job_id" not in columns:
+                raise RuntimeError(
+                    "preparation reference migration found no job reference "
+                    "in preparation_work_items"
+                )
+            resolved_job_id = _resolved_job_id_sql(
+                "source",
+                "job_id",
+                legacy_url=True,
+            )
+            unresolved = conn.execute(
+                f"""
+                SELECT source.job_id
+                FROM preparation_work_items AS source
+                WHERE {resolved_job_id} IS NULL
+                LIMIT 1
+                """
+            ).fetchone()
+            if unresolved is not None:
+                raise RuntimeError(
+                    "preparation reference migration could not resolve "
+                    f"preparation_work_items.job_id={unresolved[0]!r}"
+                )
+
+            conn.execute("DROP TABLE IF EXISTS preparation_work_items_v10")
+            _create_preparation_work_items_v10(
+                conn,
+                table_name="preparation_work_items_v10",
+            )
+            conn.execute(
+                f"""
+                INSERT INTO preparation_work_items_v10 (
+                    item_id, tenant_id, job_id, kind, target_version,
+                    source_event_id, state, idempotency_key, attempts,
+                    last_error, created_at, updated_at, available_at
+                )
+                SELECT
+                    source.item_id,
+                    source.tenant_id,
+                    {resolved_job_id},
+                    source.kind,
+                    source.target_version,
+                    source.source_event_id,
+                    source.state,
+                    source.idempotency_key,
+                    source.attempts,
+                    source.last_error,
+                    source.created_at,
+                    source.updated_at,
+                    source.available_at
+                FROM preparation_work_items AS source
+                """
+            )
+            conn.execute("DROP TABLE preparation_work_items")
+            conn.execute(
+                "ALTER TABLE preparation_work_items_v10 "
+                "RENAME TO preparation_work_items"
+            )
+            _create_preparation_work_item_indexes(conn)
+
+        _verify_preparation_references_v10(
+            conn,
+            expected_count=before_count,
+        )
+        conn.execute(
+            f"PRAGMA user_version = {_PREPARATION_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute("RELEASE SAVEPOINT preparation_references_v10")
+        conn.commit()
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT preparation_references_v10")
+        conn.execute("RELEASE SAVEPOINT preparation_references_v10")
+        raise
+
+    return ["preparation_work_items"]
+
+
+def _create_preparation_work_items_v10(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str = "preparation_work_items",
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE {table_name} (
+            item_id          TEXT NOT NULL PRIMARY KEY,
+            tenant_id        TEXT NOT NULL DEFAULT 'local',
+            job_id           TEXT NOT NULL,
+            kind             TEXT NOT NULL,
+            target_version   INTEGER NOT NULL,
+            source_event_id  TEXT NOT NULL DEFAULT '',
+            state            TEXT NOT NULL,
+            idempotency_key  TEXT NOT NULL,
+            attempts         INTEGER NOT NULL DEFAULT 0,
+            last_error       TEXT NOT NULL DEFAULT '',
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL,
+            available_at     TEXT NOT NULL,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_preparation_work_item_indexes(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_preparation_work_items_idempotency
+        ON preparation_work_items(tenant_id, idempotency_key)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_preparation_work_items_claim
+        ON preparation_work_items(tenant_id, state, kind, available_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_preparation_work_items_job_target
+        ON preparation_work_items(tenant_id, job_id, kind, target_version)
+        """
+    )
+
+
+def _has_preparation_reference_schema_v10(
+    conn: sqlite3.Connection,
+) -> bool:
+    return (
+        "job_id" in _table_columns(conn, "preparation_work_items")
+        and _primary_key_columns(conn, "preparation_work_items") == ("item_id",)
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "preparation_work_items",
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            "preparation_work_items",
+            "idx_preparation_work_items_idempotency",
+            ("tenant_id", "idempotency_key"),
+            unique=True,
+        )
+        and _has_index(
+            conn,
+            "preparation_work_items",
+            "idx_preparation_work_items_claim",
+            ("tenant_id", "state", "kind", "available_at"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "preparation_work_items",
+            "idx_preparation_work_items_job_target",
+            ("tenant_id", "job_id", "kind", "target_version"),
+            unique=False,
+        )
+    )
+
+
+def _verify_preparation_references_v10(
+    conn: sqlite3.Connection,
+    *,
+    expected_count: int,
+) -> None:
+    if not _has_preparation_reference_schema_v10(conn):
+        raise RuntimeError(
+            "preparation reference migration did not create the stable "
+            "reference schema"
+        )
+    observed_count = int(
+        conn.execute("SELECT COUNT(*) FROM preparation_work_items").fetchone()[0]
+    )
+    if observed_count != expected_count:
+        raise RuntimeError(
+            "preparation reference migration changed row count for "
+            "preparation_work_items: "
+            f"expected {expected_count}, found {observed_count}"
+        )
+    orphan = conn.execute(
+        """
+        SELECT source.job_id
+        FROM preparation_work_items AS source
+        LEFT JOIN jobs j
+          ON j.tenant_id = source.tenant_id
+         AND j.job_id = source.job_id
+        WHERE j.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise RuntimeError(
+            "preparation reference migration left an unresolved reference "
+            "in preparation_work_items.job_id"
+        )
+    foreign_key_error = conn.execute("PRAGMA foreign_key_check").fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "preparation reference migration found a foreign-key violation"
+        )
 
 # ---------------------------------------------------------------------------
 # job_enrichments read fragments — used by every selector / stat that

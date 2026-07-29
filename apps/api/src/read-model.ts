@@ -72,7 +72,14 @@ import {
 } from "./contracts.js";
 import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { evaluateRepeatApplication } from "./repeat-application.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import {
+  allRows,
+  getRow,
+  hasCompositeJobIdForeignKey,
+  tableExists,
+  type SqliteDatabase,
+  type SqliteValue,
+} from "./db.js";
 import { emptyPolitenessOutcomes, politenessOutcomesBySource } from "./source-politeness.js";
 import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 import { normalizeJobLocation } from "./location-normalization.js";
@@ -1002,16 +1009,32 @@ function countPreparationWorkItems(
   if (!tableExists(db, "preparation_work_items")) return counts;
   const activeJobs = activeJobUrlSet(db);
   if (activeJobs.size === 0) return counts;
-  const rows = allRows<{ job_id: string; state: string }>(
+  const stableReferences = hasCompositeJobIdForeignKey(
     db,
-    `SELECT job_id, state
-       FROM preparation_work_items
-      WHERE tenant_id = ?
-        AND state IN ('queued', 'running', 'failed')`,
-    [tenantId],
+    "preparation_work_items",
   );
+  const rows = stableReferences
+    ? allRows<{ job_url: string; state: string }>(
+        db,
+        `SELECT jobs.url AS job_url, work.state
+           FROM preparation_work_items AS work
+           JOIN jobs
+             ON jobs.tenant_id = work.tenant_id
+            AND jobs.job_id = work.job_id
+          WHERE work.tenant_id = ?
+            AND work.state IN ('queued', 'running', 'failed')`,
+        [tenantId],
+      )
+    : allRows<{ job_url: string; state: string }>(
+        db,
+        `SELECT job_id AS job_url, state
+           FROM preparation_work_items
+          WHERE tenant_id = ?
+            AND state IN ('queued', 'running', 'failed')`,
+        [tenantId],
+      );
   for (const row of rows) {
-    if (!activeJobs.has(row.job_id)) continue;
+    if (!activeJobs.has(row.job_url)) continue;
     if (row.state === "queued" || row.state === "running" || row.state === "failed") {
       counts[row.state] += 1;
     }

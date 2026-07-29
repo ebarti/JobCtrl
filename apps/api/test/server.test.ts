@@ -2746,8 +2746,27 @@ describe("local TypeScript API", () => {
     const blockedJobId = `test-job:${blockedUrl}`;
     const setup = new Database(options.dbPath);
     setup.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_tenant_job_id_fixture
+        ON jobs(tenant_id, job_id);
       CREATE TABLE discovery_execution_jobs (job_id TEXT NOT NULL);
       CREATE TABLE discovery_search_unit_jobs (job_url TEXT NOT NULL);
+      CREATE TABLE preparation_work_items (
+        item_id TEXT NOT NULL PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        target_version INTEGER NOT NULL,
+        source_event_id TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        available_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
     `);
     setup
       .prepare("INSERT INTO discovery_execution_jobs (job_id) VALUES (?), (?)")
@@ -2755,6 +2774,20 @@ describe("local TypeScript API", () => {
     setup
       .prepare("INSERT INTO discovery_search_unit_jobs (job_url) VALUES (?), (?)")
       .run(readyUrl, blockedUrl);
+    const insertPreparationReference = setup.prepare(
+      `INSERT INTO preparation_work_items (
+         item_id, tenant_id, job_id, kind, target_version, source_event_id,
+         state, idempotency_key, attempts, last_error, created_at,
+         updated_at, available_at
+       ) VALUES (
+         ?, 'local', ?, 'score_job', 3, 'event-delete', 'completed', ?,
+         1, '', '2026-07-29T10:00:00+00:00',
+         '2026-07-29T10:01:00+00:00',
+         '2026-07-29T10:00:00+00:00'
+       )`,
+    );
+    insertPreparationReference.run("prep-ready", readyJobId, "prep-ready-key");
+    insertPreparationReference.run("prep-blocked", blockedJobId, "prep-blocked-key");
     setup.close();
     const app = buildApp(options);
 
@@ -2804,6 +2837,8 @@ describe("local TypeScript API", () => {
     expect(countRows(db, "discovery_execution_jobs", "job_id", blockedJobId)).toBe(0);
     expect(countRows(db, "discovery_search_unit_jobs", "job_url", readyUrl)).toBe(0);
     expect(countRows(db, "discovery_search_unit_jobs", "job_url", blockedUrl)).toBe(0);
+    expect(countRows(db, "preparation_work_items", "job_id", readyJobId)).toBe(0);
+    expect(countRows(db, "preparation_work_items", "job_id", blockedJobId)).toBe(0);
 
     insertJob(db, {
       url: readyUrl,
@@ -2830,6 +2865,61 @@ describe("local TypeScript API", () => {
     });
 
     await app.close();
+  });
+
+  it("permanently deletes schema-v9 URL-shaped preparation references during upgrade", async () => {
+    const jobUrl = "https://example.com/jobs/ready";
+    const setup = new Database(options.dbPath);
+    setup.exec(`
+      CREATE TABLE preparation_work_items (
+        item_id TEXT NOT NULL PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        target_version INTEGER NOT NULL,
+        source_event_id TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        available_at TEXT NOT NULL
+      );
+    `);
+    setup
+      .prepare(
+        `INSERT INTO preparation_work_items (
+           item_id, tenant_id, job_id, kind, target_version, source_event_id,
+           state, idempotency_key, attempts, last_error, created_at,
+           updated_at, available_at
+         ) VALUES (
+           'legacy-prep', 'local', ?, 'score_job', 3, 'event-legacy',
+           'completed', 'legacy-prep-key', 1, '',
+           '2026-07-29T10:00:00+00:00',
+           '2026-07-29T10:01:00+00:00',
+           '2026-07-29T10:00:00+00:00'
+         )`,
+      )
+      .run(jobUrl);
+    setup.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-delete-permanent",
+      payload: { allMatching: false, jobKeys: [jobUrl] },
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    await app.close();
+
+    const verify = new Database(options.dbPath);
+    try {
+      expect(countRows(verify, "preparation_work_items", "job_id", jobUrl)).toBe(0);
+      expect(countRows(verify, "jobs", "url", jobUrl)).toBe(0);
+    } finally {
+      verify.close();
+    }
   });
 
   it("derives apply state from apply_run_projections when legacy jobs columns are NULL", async () => {
@@ -5103,6 +5193,74 @@ describe("local TypeScript API", () => {
         outdatedScoreCount: 1,
         outdatedTailoredArtifactCount: 1,
         workItems: { queued: 1, running: 1, failed: 1 },
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("counts stable preparation JobId references against active job projections", async () => {
+    const seedDb = new Database(options.dbPath);
+    seedDb.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_tenant_job_id_fixture
+        ON jobs(tenant_id, job_id);
+      CREATE TABLE preparation_work_items (
+        item_id TEXT NOT NULL PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        target_version INTEGER NOT NULL,
+        source_event_id TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        available_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
+    `);
+    const insert = seedDb.prepare(
+      `INSERT INTO preparation_work_items (
+         item_id, tenant_id, job_id, kind, target_version, source_event_id,
+         state, idempotency_key, attempts, last_error, created_at,
+         updated_at, available_at
+       )
+       SELECT ?, tenant_id, job_id, 'score_job', 3, 'event-stable',
+              ?, ?, 0, '', ?, ?, ?
+         FROM jobs
+        WHERE tenant_id = 'local' AND url = ?`,
+    );
+    for (const [itemId, state, jobUrl] of [
+      ["stable-queued", "queued", "https://example.com/jobs/ready"],
+      ["stable-running", "running", "https://example.com/jobs/failed-score"],
+      ["stable-failed", "failed", "https://example.com/jobs/blocked-tailor"],
+    ] as const) {
+      insert.run(
+        itemId,
+        state,
+        `${itemId}-key`,
+        "2026-07-29T10:00:00+00:00",
+        "2026-07-29T10:00:00+00:00",
+        "2026-07-29T10:00:00+00:00",
+        jobUrl,
+      );
+    }
+    seedDb.close();
+
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/dashboard/summary",
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().preparation.workItems).toEqual({
+        queued: 1,
+        running: 1,
+        failed: 1,
       });
     } finally {
       await app.close();

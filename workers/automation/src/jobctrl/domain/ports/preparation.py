@@ -26,7 +26,7 @@ class PreparationWorkItemRepository(Protocol):
         available_at: str | None = None,
         now: str | None = None,
     ) -> PreparationWorkItem:
-        """Create or return the existing idempotent queued work item."""
+        """Create or return one idempotent item for a stable job."""
         ...
 
 

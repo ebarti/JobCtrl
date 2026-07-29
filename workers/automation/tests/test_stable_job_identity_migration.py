@@ -473,7 +473,7 @@ def test_v6_jobs_gain_stable_uuid_and_posting_url_alias_once(
     init_db(db_path)
     close_connection(db_path)
 
-    assert _user_version(db_path) == SCHEMA_VERSION == 9
+    assert _user_version(db_path) == SCHEMA_VERSION == 10
     first_ids = _identity_rows(db_path)
     assert [row[0] for row in first_ids] == ["local", "local"]
     for _tenant_id, job_id, _url in first_ids:
@@ -793,6 +793,38 @@ def test_production_url_collision_cleans_aliases_and_allows_rediscovery(
             (losing_job_id, 1, "2026-07-29T10:01:00+00:00"),
         ),
     )
+    conn.executemany(
+        """
+        INSERT INTO preparation_work_items (
+            item_id, tenant_id, job_id, kind, target_version,
+            source_event_id, state, idempotency_key, attempts,
+            last_error, created_at, updated_at, available_at
+        ) VALUES (
+            ?, 'local', ?, 'score_job', 3, ?, 'completed', ?, 1,
+            '', ?, ?, ?
+        )
+        """,
+        (
+            (
+                "prep-surviving",
+                surviving_job_id,
+                "event-surviving",
+                "key-surviving",
+                "2026-07-29T09:00:00+00:00",
+                "2026-07-29T09:05:00+00:00",
+                "2026-07-29T09:00:00+00:00",
+            ),
+            (
+                "prep-losing",
+                losing_job_id,
+                "event-losing",
+                "key-losing",
+                "2026-07-29T09:01:00+00:00",
+                "2026-07-29T09:06:00+00:00",
+                "2026-07-29T09:01:00+00:00",
+            ),
+        ),
+    )
     conn.commit()
     monkeypatch.setattr(
         detail,
@@ -871,6 +903,19 @@ def test_production_url_collision_cleans_aliases_and_allows_rediscovery(
         1,
         "2026-07-29T10:01:00+00:00",
     )
+    assert [
+        tuple(row)
+        for row in conn.execute(
+            """
+            SELECT item_id, job_id, idempotency_key
+            FROM preparation_work_items
+            ORDER BY item_id
+            """
+        ).fetchall()
+    ] == [
+        ("prep-losing", surviving_job_id, "key-losing"),
+        ("prep-surviving", surviving_job_id, "key-surviving"),
+    ]
     assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
     active_orphans = conn.execute(
         """
