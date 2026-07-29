@@ -5,7 +5,7 @@ The generated bundles vendor code from these exact locked packages:
 
 - ajv 8.20.0
 - fast-deep-equal 3.1.3
-- fast-uri 3.1.2
+- fast-uri 3.1.4
 - json-schema-traverse 1.0.0
 
 ajv 8.20.0
@@ -58,7 +58,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-fast-uri 3.1.2
+fast-uri 3.1.4
 --------------
 
 Copyright (c) 2011-2021, Gary Court until https://github.com/garycourt/uri-js/commit/a1acf730b4bba3f1097c9f52e7d9d3aba8cdcaae
