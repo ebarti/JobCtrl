@@ -2127,6 +2127,6 @@ Consequences:
   acknowledgement, start a fresh worker, and prove exactly-once product counts
   over at-least-once provider delivery.
 
-Cites: `docs/plans/2026-07-17-resumable-jobstreaming-discovery-plan.md`;
+Cites: `docs/plans/implemented/2026-07-17-resumable-jobstreaming-discovery-plan.md`;
 `docs/architecture/pipeline/envelope.md`; `docs/architecture/storage.md`;
 `workers/automation/tests/test_jobstreaming_resumable_discovery.py`.

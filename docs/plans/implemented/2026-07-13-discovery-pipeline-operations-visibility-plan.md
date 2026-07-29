@@ -1,9 +1,10 @@
 # Discovery Pipeline Operations Visibility Plan
 
 - **Date:** 2026-07-13
-- **Status:** Active — implementation and canonical documentation are complete
-  on the open cumulative stack; cumulative Tier 3 QA and independent gates are
-  in progress.
+- **Status (2026-07-29):** Implemented — the reviewed #459–#462 stack was
+  integrated through cumulative PR #464, with production follow-ups #465–#467.
+  Canonical documentation, cumulative Tier 3 QA, and independent gates are
+  complete.
 - **Anchors:** Current behavior and file ownership verified against
   `main @ 47cfba58`. Re-verify every path and contract against the base of each
   implementation PR.
@@ -16,10 +17,12 @@
   concurrency limit applies, whether telemetry is fresh, and when the current
   execution is likely to finish.
 
-### Delivery status — 2026-07-15
+### Delivery status — 2026-07-29
 
 - Execution lineage, runtime telemetry, the operations read model, and the
-  Rhea Pipelines workspace are published as stacked PRs #459–#462.
+  Rhea Pipelines workspace were reviewed in stacked PRs #459–#462. Those PRs
+  were closed without individual merges after their cumulative content landed
+  through #464; production refinements followed in #465–#467.
 - The implemented workspace preserves the plan's stable semantic contract
   while using the current shadcn/Base UI system rather than the pre-redesign
   composition names.
@@ -30,9 +33,8 @@
   `draining`. Only global work outside the selected execution is excluded from
   its phase. This supersedes the earlier single-cohort wording below.
 - Canonical documentation and the synthetic 32-image screenshot gallery are
-  complete. The implementation remains active rather than archived because the
-  stack is not merged and cumulative QA, reviewer, and QA-agent gates are not
-  yet complete.
+  complete. Cumulative QA, reviewer, and QA gates passed before integration,
+  so the plan is archived as delivered.
 
 ---
 

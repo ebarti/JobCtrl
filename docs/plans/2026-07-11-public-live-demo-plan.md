@@ -1,17 +1,14 @@
 # Public JobCtrl Live Demo Plan
 
 - **Date:** 2026-07-11
-- **Status (2026-07-12):** Active / implementation landed, public cutover not
-  complete. The plan (#407) and P0–P7 stack (#408–#417) are merged to `main`.
-  A private candidate is deployed at `demo.jobctrl.dev` behind a Cloudflare
-  Access IP restriction, with Pages, Workers, EU D1, migrations, retention,
-  consent, synthetic workspace, guided experience, and local production smoke
-  verified. Public launch still requires the owner-approved repository-public
-  sequence, real hosted workflow passes on the exact `main` SHA, approved
-  controller/privacy notice and lawful-basis copy, removal of the IP
-  restriction, public CTA publication, and final production smoke/rollback
-  evidence. Current private-repository Actions runs stop before checkout on the
-  account billing gate; they are neither product failures nor passing evidence.
+- **Status (2026-07-29):** Active / public implementation landed. The plan
+  (#407) and P0–P7 stack (#408–#417) are merged to `main`, and the synthetic
+  demo is public at `demo.jobctrl.dev`. The public CTA, production deployment,
+  consent gate, privacy copy, hosted checks, and launch smoke are complete.
+  Consent-gated documentation analytics shipped separately in #511–#512.
+  Analytics-optional demo access remains outside the approved plan and requires
+  an explicit owner/privacy decision plus Tier 3 delivery. Post-accept
+  withdrawal and current-visitor erasure remain deferred privacy work.
 - **Anchors:** Current behavior and file ownership verified against
   `main @ b513b356`. Re-verify all cited paths and contracts against the base of
   each implementation PR before coding.

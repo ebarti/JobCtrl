@@ -95,7 +95,7 @@ proof.
 ### 9.0 — Cumulative Rhea/Base UI redesign acceptance
 
 The owning contract is
-[`docs/plans/2026-07-14-end-to-end-product-redesign.md`](plans/2026-07-14-end-to-end-product-redesign.md),
+[`docs/plans/implemented/2026-07-14-end-to-end-product-redesign.md`](plans/implemented/2026-07-14-end-to-end-product-redesign.md),
 especially §§11–14. This is a release precondition, not permission to publish.
 
 - **Documentation and screenshot freeze.** Complete every owning user,
