@@ -150,7 +150,11 @@ import {
   readCompensationSourcePreferences,
   updateCompensationSourcePolicy,
 } from "./compensation-source-policy.js";
-import { databaseExists, openDatabase } from "./db.js";
+import {
+  databaseExists,
+  jobReferenceColumn,
+  openDatabase,
+} from "./db.js";
 import { ConfigFileInputError } from "./config-file.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
@@ -3614,11 +3618,14 @@ function preparationPickupEligibility(
   if (!tableExists(db, "job_list_projections")) {
     return ineligiblePickup("projection_unavailable", "Preparation pickup is waiting for job projections.");
   }
+  const staleReference = tableExists(db, "job_score_staleness")
+    ? jobReferenceColumn(db, "job_score_staleness")
+    : "job_url";
   const staleScoreSelect = tableExists(db, "job_score_staleness")
     ? `(SELECT COUNT(*)
         FROM job_score_staleness stale
         WHERE stale.tenant_id = 'local'
-          AND stale.job_url = jobs.url
+          AND stale.${staleReference} = jobs.${staleReference === "job_id" ? "job_id" : "url"}
           AND stale.resolved = 0)`
     : "0";
   const row = db

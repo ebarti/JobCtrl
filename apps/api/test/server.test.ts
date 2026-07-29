@@ -4007,6 +4007,83 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("writes and resets score policy staleness through v12 stable JobIds", async () => {
+    const comparableUrl = "https://example.com/jobs/stable-comparable";
+    const seedDb = new Database(options.dbPath);
+    insertJob(seedDb, {
+      url: comparableUrl,
+      title: "Stable Comparable Engineer",
+      site: "ExampleCo",
+      fitScore: 7,
+    });
+    insertScore(seedDb, comparableUrl, 1, 7);
+    insertStage(seedDb, comparableUrl, "score", "succeeded");
+    migrateSeededScoringReferencesToV12(seedDb);
+    seedDb.close();
+
+    const app = buildApp(options);
+    const correctedUrl = "https://example.com/jobs/ready";
+    const correctionResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(correctedUrl)}/score-correction`,
+      payload: {
+        correctedScore: 6,
+        reason: "Synthetic v12 stable identity correction.",
+      },
+    });
+    expect(correctionResponse.statusCode, correctionResponse.body).toBe(200);
+
+    const resetResponse = await app.inject({
+      method: "POST",
+      url: "/v1/scoring/stale-scores/actions/reset-for-rescore",
+      payload: { limit: 1, jobKeys: [comparableUrl] },
+    });
+    expect(resetResponse.statusCode, resetResponse.body).toBe(200);
+    expect(resetResponse.json()).toMatchObject({
+      ok: true,
+      count: 1,
+      jobKeys: [comparableUrl],
+    });
+
+    const db = new Database(options.dbPath);
+    try {
+      const correctedJobId = (
+        db.prepare("SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?")
+          .get(correctedUrl) as { job_id: string }
+      ).job_id;
+      const comparableJobId = (
+        db.prepare("SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?")
+          .get(comparableUrl) as { job_id: string }
+      ).job_id;
+      expect(
+        db.prepare(
+          "SELECT version, fit_score FROM job_scores "
+            + "WHERE tenant_id = 'local' AND job_id = ? ORDER BY version",
+        ).all(correctedJobId),
+      ).toEqual([
+        { version: 1, fit_score: 9 },
+        { version: 2, fit_score: 6 },
+      ]);
+      expect(
+        db.prepare(
+          "SELECT resolved, resolved_at FROM job_score_staleness "
+            + "WHERE tenant_id = 'local' AND job_id = ?",
+        ).get(comparableJobId),
+      ).toMatchObject({ resolved: 1, resolved_at: expect.any(String) });
+      expect(
+        db.prepare("PRAGMA table_info(job_scores)").all()
+          .map((row) => String((row as { name: unknown }).name)),
+      ).not.toContain("job_url");
+      expect(
+        db.prepare("PRAGMA table_info(job_score_staleness)").all()
+          .map((row) => String((row as { name: unknown }).name)),
+      ).not.toContain("job_url");
+    } finally {
+      db.close();
+      await app.close();
+    }
+  });
+
   it("rolls back the whole score correction when a later staleness write fails", async () => {
     const comparableUrl = "https://example.com/jobs/comparable-atomic";
     const seedDb = new Database(options.dbPath);
@@ -10967,6 +11044,43 @@ function createScoreStalenessTable(db: Database.Database): void {
         old_policy_version, new_policy_version
       )
     )
+  `);
+}
+
+function migrateSeededScoringReferencesToV12(db: Database.Database): void {
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_tenant_job_id
+      ON jobs(tenant_id, job_id);
+    ALTER TABLE job_scores RENAME TO job_scores_v11;
+    CREATE TABLE job_scores (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      fit_score INTEGER NOT NULL CHECK(fit_score BETWEEN 1 AND 10),
+      breakdown_json TEXT NOT NULL,
+      keywords_json TEXT NOT NULL,
+      scored_at TEXT NOT NULL,
+      correction_json TEXT,
+      criteria_json TEXT NOT NULL DEFAULT '{}',
+      trace_json TEXT NOT NULL DEFAULT '{}',
+      PRIMARY KEY (tenant_id, job_id, version),
+      FOREIGN KEY (tenant_id, job_id)
+        REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+    );
+    INSERT INTO job_scores (
+      tenant_id, job_id, version, fit_score, breakdown_json, keywords_json,
+      scored_at, correction_json, criteria_json, trace_json
+    )
+    SELECT
+      jobs.tenant_id, jobs.job_id, legacy.version, legacy.fit_score,
+      legacy.breakdown_json, legacy.keywords_json, legacy.scored_at,
+      legacy.correction_json, legacy.criteria_json, legacy.trace_json
+    FROM job_scores_v11 AS legacy
+    JOIN jobs
+      ON jobs.tenant_id = legacy.tenant_id
+     AND jobs.url = legacy.job_url;
+    DROP TABLE job_scores_v11;
+    PRAGMA user_version = 12;
   `);
 }
 

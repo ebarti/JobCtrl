@@ -25,6 +25,8 @@ import {
   allRows,
   getRow,
   hasCompositeJobIdForeignKey,
+  jobReferenceColumn,
+  jobReferenceForUrl,
   tableExists,
   type SqliteDatabase,
   type SqliteValue,
@@ -1892,16 +1894,31 @@ function loadRequirementFitReportJson(
 ): string | null {
   if (!tableExists(db, "job_requirement_fit_reports")) return null;
   if (!tableExists(db, "job_requirement_fit_items")) return null;
+  const reportReference = jobReferenceColumn(db, "job_requirement_fit_reports");
+  const itemReference = jobReferenceColumn(db, "job_requirement_fit_items");
+  const referenceValue = jobReferenceForUrl(
+    db,
+    "job_requirement_fit_reports",
+    jobUrl,
+    tenantId,
+  );
+  const itemReferenceValue = jobReferenceForUrl(
+    db,
+    "job_requirement_fit_items",
+    jobUrl,
+    tenantId,
+  );
   const row = getRow<RequirementFitReportRow>(
     db,
-    `SELECT job_url, score_version, tenant_id, employer_analysis_generation,
+    `SELECT ${reportReference} AS job_reference,
+            score_version, tenant_id, employer_analysis_generation,
             profile_snapshot_version, scoring_policy_version, formula_version,
             resolved_fit_score, fit_band, confidence, summary_json
        FROM job_requirement_fit_reports
-      WHERE tenant_id = ? AND job_url = ?
+      WHERE tenant_id = ? AND ${reportReference} = ?
       ORDER BY score_version DESC
       LIMIT 1`,
-    [tenantId, jobUrl],
+    [tenantId, referenceValue],
   );
   if (!row) return null;
   const scoreVersion = Number(row.score_version);
@@ -1910,12 +1927,12 @@ function loadRequirementFitReportJson(
     `SELECT requirement_id, requirement_text, tier, weight, job_evidence_span,
             fit_json, contribution_json, tailoring_json, artifact_coverage_json
        FROM job_requirement_fit_items
-      WHERE tenant_id = ? AND job_url = ? AND score_version = ?
+      WHERE tenant_id = ? AND ${itemReference} = ? AND score_version = ?
       ORDER BY position ASC, requirement_id ASC`,
-    [tenantId, jobUrl, scoreVersion],
+    [tenantId, itemReferenceValue, scoreVersion],
   );
   const readModel = {
-    jobKey: row.job_url,
+    jobKey: jobUrl,
     scoreVersion,
     employerAnalysisGeneration: Number(row.employer_analysis_generation ?? 0),
     profileSnapshotVersion: Number(row.profile_snapshot_version ?? 0),
@@ -1936,14 +1953,24 @@ function loadLatestRequirementFitBand(
   jobUrl: string,
 ): string | null {
   if (!tableExists(db, "job_requirement_fit_reports")) return null;
+  const referenceColumn = jobReferenceColumn(
+    db,
+    "job_requirement_fit_reports",
+  );
+  const referenceValue = jobReferenceForUrl(
+    db,
+    "job_requirement_fit_reports",
+    jobUrl,
+    tenantId,
+  );
   const row = getRow<{ fit_band: string | null }>(
     db,
     `SELECT fit_band
        FROM job_requirement_fit_reports
-      WHERE tenant_id = ? AND job_url = ?
+      WHERE tenant_id = ? AND ${referenceColumn} = ?
       ORDER BY score_version DESC
       LIMIT 1`,
-    [tenantId, jobUrl],
+    [tenantId, referenceValue],
   );
   return nullableString(row?.fit_band);
 }
@@ -2467,8 +2494,17 @@ function attachRequirementUsagesAndGaps(
   gaps: Map<string, EvidenceGapPayload>,
 ): void {
   if (!tableExists(db, "job_requirement_fit_reports") || !tableExists(db, "job_requirement_fit_items")) return;
-  const jobMetadata = jobMetadataJoinSql(db, "items.job_url");
-  const lifecycle = jobLifecycleExclusionSql(db, "items.job_url");
+  const itemReference = jobReferenceColumn(db, "job_requirement_fit_items");
+  const reportReference = jobReferenceColumn(db, "job_requirement_fit_reports");
+  const stableReferences = itemReference === "job_id";
+  const jobUrlExpression = stableReferences ? "score_jobs.url" : "items.job_url";
+  const stableJobJoin = stableReferences
+    ? `JOIN jobs AS score_jobs
+         ON score_jobs.tenant_id = items.tenant_id
+        AND score_jobs.job_id = items.job_id`
+    : "";
+  const jobMetadata = jobMetadataJoinSql(db, jobUrlExpression);
+  const lifecycle = jobLifecycleExclusionSql(db, jobUrlExpression);
   const rows = allRows<RequirementFitItemRow & {
     job_url: string;
     score_version: number;
@@ -2476,21 +2512,23 @@ function attachRequirementUsagesAndGaps(
     employer: string | null;
   }>(
     db,
-    `SELECT items.job_url, items.score_version, items.requirement_id,
+    `SELECT ${jobUrlExpression} AS job_url,
+            items.score_version, items.requirement_id,
             items.requirement_text, items.tier, items.weight, items.job_evidence_span,
             items.fit_json, items.contribution_json, items.tailoring_json,
             items.artifact_coverage_json,
             ${jobMetadata.selectSql}
        FROM job_requirement_fit_items AS items
+       ${stableJobJoin}
        ${jobMetadata.joinSql}${lifecycle.joinSql}
       WHERE items.tenant_id = ?${lifecycle.whereSql}
         AND items.score_version = (
           SELECT MAX(report.score_version)
-            FROM job_requirement_fit_reports AS report
+           FROM job_requirement_fit_reports AS report
            WHERE report.tenant_id = items.tenant_id
-             AND report.job_url = items.job_url
+             AND report.${reportReference} = items.${itemReference}
         )
-      ORDER BY items.job_url, items.position, items.requirement_id`,
+      ORDER BY ${jobUrlExpression}, items.position, items.requirement_id`,
     [tenantId],
   );
   for (const row of rows) {
@@ -2709,6 +2747,8 @@ function loadLatestScore(db: SqliteDatabase, jobUrl: string): ScoreLatest {
   if (!tableExists(db, "job_scores")) {
     return emptyScore();
   }
+  const referenceColumn = jobReferenceColumn(db, "job_scores");
+  const referenceValue = jobReferenceForUrl(db, "job_scores", jobUrl);
   const row = getRow<{
     fit_score: number;
     version: number;
@@ -2722,8 +2762,11 @@ function loadLatestScore(db: SqliteDatabase, jobUrl: string): ScoreLatest {
     db,
     `SELECT fit_score, version, breakdown_json, keywords_json, scored_at,
             correction_json, criteria_json, trace_json
-     FROM job_scores WHERE job_url = ? ORDER BY version DESC LIMIT 1`,
-    [jobUrl],
+     FROM job_scores
+     WHERE tenant_id = 'local'
+       AND ${referenceColumn} = ?
+     ORDER BY version DESC LIMIT 1`,
+    [referenceValue],
   );
   if (!row) {
     return emptyScore();

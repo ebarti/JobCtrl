@@ -986,8 +986,13 @@ def _requirement_fit_report_matches(
 ) -> bool:
     if requirement_fit_report is None:
         return False
-    job_url = str(job.get("url") or "").strip()
-    if job_url and str(getattr(requirement_fit_report, "job_id", "") or "") != job_url:
+    expected_job_id = str(
+        job.get("job_id") or job.get("url") or ""
+    ).strip()
+    if expected_job_id and (
+        str(getattr(requirement_fit_report, "job_id", "") or "")
+        != expected_job_id
+    ):
         return False
     generation = int(getattr(requirement_fit_report, "employer_analysis_generation", 0) or 0)
     return generation == employer_analysis.generation

@@ -2390,15 +2390,26 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
-  it("serves the canonical requirement fit report from projection rows", async () => {
+  it.each([
+    { label: "v11 URL references", stableReferences: false },
+    { label: "v12 stable JobId references", stableReferences: true },
+  ])("serves the canonical requirement fit report from $label", async ({ stableReferences }) => {
     const { dbPath, cleanup } = withTempDb();
     const jobUrl = "https://example.com/jobs/event-driven";
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
+      const referenceColumn = stableReferences ? "job_id" : "job_url";
+      const referenceValue = stableReferences
+        ? (
+            db.prepare(
+              "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+            ).get(jobUrl) as { job_id: string }
+          ).job_id
+        : jobUrl;
       db.exec(`
         CREATE TABLE job_requirement_fit_reports (
-          job_url TEXT NOT NULL,
+          ${referenceColumn} TEXT NOT NULL,
           score_version INTEGER NOT NULL,
           tenant_id TEXT NOT NULL DEFAULT 'local',
           employer_analysis_generation INTEGER NOT NULL,
@@ -2410,10 +2421,10 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           confidence TEXT NOT NULL,
           summary_json TEXT NOT NULL DEFAULT '{}',
           created_at TEXT NOT NULL,
-          PRIMARY KEY (job_url, score_version, tenant_id)
+          PRIMARY KEY (${referenceColumn}, score_version, tenant_id)
         );
         CREATE TABLE job_requirement_fit_items (
-          job_url TEXT NOT NULL,
+          ${referenceColumn} TEXT NOT NULL,
           score_version INTEGER NOT NULL,
           tenant_id TEXT NOT NULL DEFAULT 'local',
           requirement_id TEXT NOT NULL,
@@ -2426,18 +2437,18 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           tailoring_json TEXT NOT NULL DEFAULT '{}',
           artifact_coverage_json TEXT,
           position INTEGER NOT NULL DEFAULT 0,
-          PRIMARY KEY (job_url, score_version, tenant_id, requirement_id)
+          PRIMARY KEY (${referenceColumn}, score_version, tenant_id, requirement_id)
         );
       `);
       const insertReport = db.prepare(
         `INSERT INTO job_requirement_fit_reports (
-          job_url, score_version, tenant_id, employer_analysis_generation,
+          ${referenceColumn}, score_version, tenant_id, employer_analysis_generation,
           profile_snapshot_version, scoring_policy_version, formula_version,
           resolved_fit_score, fit_band, confidence, summary_json, created_at
         ) VALUES (?, ?, 'local', ?, ?, ?, 'requirement-fit-v1', ?, ?, ?, ?, ?)`,
       );
       insertReport.run(
-        jobUrl,
+        referenceValue,
         1,
         1,
         2,
@@ -2454,7 +2465,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         "2026-05-04T11:00:00+00:00",
       );
       insertReport.run(
-        jobUrl,
+        referenceValue,
         2,
         2,
         3,
@@ -2472,12 +2483,12 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       );
       db.prepare(
         `INSERT INTO job_requirement_fit_items (
-          job_url, score_version, tenant_id, requirement_id, requirement_text,
+          ${referenceColumn}, score_version, tenant_id, requirement_id, requirement_text,
           tier, weight, job_evidence_span, fit_json, contribution_json,
           tailoring_json, artifact_coverage_json, position
         ) VALUES (?, 2, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
-        jobUrl,
+        referenceValue,
         "r1",
         "5+ years Python",
         "must_have",

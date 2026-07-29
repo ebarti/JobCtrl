@@ -101,17 +101,25 @@ def _save_score(
 
 
 def _insert_active_score_staleness_marker(conn: sqlite3.Connection, url: str) -> None:
+    job_id = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+        (str(LOCAL_TENANT), url),
+    ).fetchone()[0]
     conn.execute(
         """
         INSERT INTO job_score_staleness (
-            tenant_id, job_url, stale_reason,
+            tenant_id, job_id, stale_reason,
             old_policy_id, old_policy_version,
             new_policy_id, new_policy_version,
             marked_at, resolved, resolved_at, resolved_by_score_version
         ) VALUES (?, ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
                   'local:scoring-policy-v2', 2, ?, 0, NULL, NULL)
         """,
-        (str(LOCAL_TENANT), url, datetime.now(timezone.utc).isoformat()),
+        (
+            str(LOCAL_TENANT),
+            job_id,
+            datetime.now(timezone.utc).isoformat(),
+        ),
     )
     conn.commit()
 

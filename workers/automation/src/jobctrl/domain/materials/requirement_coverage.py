@@ -728,7 +728,12 @@ def build_target_profile(
     nice_to_have = tuple(requirement for requirement in requirements if requirement.tier != "must_have")
     job_skills = _clean_string_tuple(job.get("skills", ()))
     return TargetProfile(
-        job_id=str(job.get("url") or getattr(requirement_fit_report, "job_id", "") or ""),
+        job_id=str(
+            job.get("job_id")
+            or job.get("url")
+            or getattr(requirement_fit_report, "job_id", "")
+            or ""
+        ),
         target_role=str(job.get("title") or job.get("role_title") or ""),
         seniority=str(employer_analysis.canonical.inferred_seniority or ""),
         must_have_requirements=must_have,

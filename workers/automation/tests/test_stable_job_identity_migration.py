@@ -129,12 +129,12 @@ def _create_representative_v6_pair(
     conn.execute(
         """
         INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json,
+            job_id, version, tenant_id, fit_score, breakdown_json,
             keywords_json, scored_at, criteria_json, trace_json
         ) VALUES (?, 1, 'local', 8, ?, ?, ?, ?, ?)
         """,
         (
-            job_url,
+            job_id,
             '{"technical_fit":8}',
             '["python","sqlite"]',
             "2026-07-01T10:05:00+00:00",
@@ -212,6 +212,27 @@ def _create_representative_v6_pair(
 
     raw = sqlite3.connect(db_path)
     try:
+        score_rows = raw.execute(
+            """
+            SELECT
+                scores.job_id,
+                jobs.url,
+                scores.version,
+                scores.tenant_id,
+                scores.fit_score,
+                scores.breakdown_json,
+                scores.keywords_json,
+                scores.scored_at,
+                scores.correction_json,
+                scores.criteria_json,
+                scores.trace_json
+            FROM job_scores AS scores
+            JOIN jobs
+              ON jobs.tenant_id = scores.tenant_id
+             AND jobs.job_id = scores.job_id
+            ORDER BY scores.tenant_id, scores.job_id, scores.version
+            """
+        ).fetchall()
         source_rows = raw.execute(
             """
             SELECT
@@ -362,6 +383,52 @@ def _create_representative_v6_pair(
             """,
             source_rows,
         )
+        raw.execute("DROP TABLE job_requirement_fit_items")
+        raw.execute("DROP TABLE job_requirement_fit_reports")
+        raw.execute("DROP TABLE job_score_staleness")
+        raw.execute("DROP TABLE job_scores")
+        raw.execute(
+            """
+            CREATE TABLE job_scores (
+                job_url         TEXT NOT NULL,
+                version         INTEGER NOT NULL,
+                tenant_id       TEXT NOT NULL DEFAULT 'local',
+                fit_score       INTEGER NOT NULL CHECK(fit_score BETWEEN 1 AND 10),
+                breakdown_json  TEXT NOT NULL,
+                keywords_json   TEXT NOT NULL,
+                scored_at       TEXT NOT NULL,
+                correction_json TEXT,
+                criteria_json   TEXT NOT NULL DEFAULT '{}',
+                trace_json      TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY (job_url, version),
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            )
+            """
+        )
+        raw.executemany(
+            """
+            INSERT INTO job_scores (
+                job_url, version, tenant_id, fit_score, breakdown_json,
+                keywords_json, scored_at, correction_json, criteria_json,
+                trace_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    row[1],
+                    row[2],
+                    row[3],
+                    row[4],
+                    row[5],
+                    row[6],
+                    row[7],
+                    row[8],
+                    row[9],
+                    row[10],
+                )
+                for row in score_rows
+            ),
+        )
         for trigger_name in database_module._STABLE_JOB_IDENTITY_TRIGGER_NAMES:
             raw.execute(f'DROP TRIGGER IF EXISTS "{trigger_name}"')
         raw.execute("DROP INDEX IF EXISTS idx_jobs_tenant_job_id")
@@ -433,6 +500,34 @@ def _reference_snapshot(db_path: Path) -> dict[str, list[tuple[object, ...]]]:
                     """
                 ).fetchall()
             ]
+        score_columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(job_scores)").fetchall()
+        }
+        if "job_id" in score_columns:
+            snapshot["job_scores"] = [
+                tuple(row)
+                for row in conn.execute(
+                    """
+                    SELECT
+                        jobs.url,
+                        scores.version,
+                        scores.tenant_id,
+                        scores.fit_score,
+                        scores.breakdown_json,
+                        scores.keywords_json,
+                        scores.scored_at,
+                        scores.correction_json,
+                        scores.criteria_json,
+                        scores.trace_json
+                    FROM job_scores AS scores
+                    JOIN jobs
+                      ON jobs.tenant_id = scores.tenant_id
+                     AND jobs.job_id = scores.job_id
+                    ORDER BY scores.tenant_id, scores.job_id, scores.version
+                    """
+                ).fetchall()
+            ]
         snapshot["jobs"] = [
             tuple(row)
             for row in conn.execute(
@@ -473,7 +568,7 @@ def test_v6_jobs_gain_stable_uuid_and_posting_url_alias_once(
     init_db(db_path)
     close_connection(db_path)
 
-    assert _user_version(db_path) == SCHEMA_VERSION == 11
+    assert _user_version(db_path) == SCHEMA_VERSION == 12
     first_ids = _identity_rows(db_path)
     assert [row[0] for row in first_ids] == ["local", "local"]
     for _tenant_id, job_id, _url in first_ids:

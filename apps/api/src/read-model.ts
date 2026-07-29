@@ -76,6 +76,7 @@ import {
   allRows,
   getRow,
   hasCompositeJobIdForeignKey,
+  jobReferenceColumn,
   tableExists,
   type SqliteDatabase,
   type SqliteValue,
@@ -908,45 +909,96 @@ function countOutdatedScores(
   if (activeJobs.size === 0) return 0;
 
   if (tableExists(db, "job_score_staleness")) {
+    const staleReference = jobReferenceColumn(db, "job_score_staleness");
+    const stableReferences = staleReference === "job_id";
     const rows = tableExists(db, "job_scores")
-      ? allRows<{ job_url: string }>(
-          db,
-          `SELECT DISTINCT stale.job_url
-             FROM job_score_staleness stale
-             JOIN (
-               SELECT job_url, MAX(version) AS max_version
-               FROM job_scores
-               WHERE tenant_id = ?
-               GROUP BY job_url
-             ) latest ON latest.job_url = stale.job_url
-             JOIN job_scores s
-               ON s.tenant_id = stale.tenant_id
-              AND s.job_url = stale.job_url
-              AND s.version = latest.max_version
-            WHERE stale.tenant_id = ?
-              AND stale.resolved = 0
-              AND (s.correction_json IS NULL OR TRIM(s.correction_json) = '')`,
-          [tenantId, tenantId],
-        )
-      : allRows<{ job_url: string }>(
-          db,
-          "SELECT DISTINCT job_url FROM job_score_staleness WHERE tenant_id = ? AND resolved = 0",
-          [tenantId],
-        );
+      ? (
+        stableReferences
+          ? allRows<{ job_url: string }>(
+              db,
+              `SELECT DISTINCT jobs.url AS job_url
+                 FROM job_score_staleness stale
+                 JOIN jobs
+                   ON jobs.tenant_id = stale.tenant_id
+                  AND jobs.job_id = stale.job_id
+                 JOIN (
+                   SELECT tenant_id, job_id, MAX(version) AS max_version
+                   FROM job_scores
+                   WHERE tenant_id = ?
+                   GROUP BY tenant_id, job_id
+                 ) latest
+                   ON latest.tenant_id = stale.tenant_id
+                  AND latest.job_id = stale.job_id
+                 JOIN job_scores s
+                   ON s.tenant_id = stale.tenant_id
+                  AND s.job_id = stale.job_id
+                  AND s.version = latest.max_version
+                WHERE stale.tenant_id = ?
+                  AND stale.resolved = 0
+                  AND (s.correction_json IS NULL OR TRIM(s.correction_json) = '')`,
+              [tenantId, tenantId],
+            )
+          : allRows<{ job_url: string }>(
+              db,
+              `SELECT DISTINCT stale.job_url
+                 FROM job_score_staleness stale
+                 JOIN (
+                   SELECT job_url, MAX(version) AS max_version
+                   FROM job_scores
+                   WHERE tenant_id = ?
+                   GROUP BY job_url
+                 ) latest ON latest.job_url = stale.job_url
+                 JOIN job_scores s
+                   ON s.tenant_id = stale.tenant_id
+                  AND s.job_url = stale.job_url
+                  AND s.version = latest.max_version
+                WHERE stale.tenant_id = ?
+                  AND stale.resolved = 0
+                  AND (s.correction_json IS NULL OR TRIM(s.correction_json) = '')`,
+              [tenantId, tenantId],
+            )
+      )
+      : (
+        stableReferences
+          ? allRows<{ job_url: string }>(
+              db,
+              `SELECT DISTINCT jobs.url AS job_url
+                 FROM job_score_staleness stale
+                 JOIN jobs
+                   ON jobs.tenant_id = stale.tenant_id
+                  AND jobs.job_id = stale.job_id
+                WHERE stale.tenant_id = ? AND stale.resolved = 0`,
+              [tenantId],
+            )
+          : allRows<{ job_url: string }>(
+              db,
+              "SELECT DISTINCT job_url FROM job_score_staleness WHERE tenant_id = ? AND resolved = 0",
+              [tenantId],
+            )
+      );
     return rows.filter((row) => activeJobs.has(row.job_url)).length;
   }
 
   if (currentPolicyVersion === null || !tableExists(db, "job_scores")) return 0;
+  const scoreReference = jobReferenceColumn(db, "job_scores");
+  const stableScores = scoreReference === "job_id";
   const rows = allRows<{ job_url: string; trace_json: string | null; correction_json: string | null }>(
     db,
-    `SELECT s.job_url, s.trace_json, s.correction_json
+    `SELECT ${stableScores ? "jobs.url" : "s.job_url"} AS job_url,
+            s.trace_json, s.correction_json
        FROM job_scores s
+       ${stableScores
+         ? "JOIN jobs ON jobs.tenant_id = s.tenant_id AND jobs.job_id = s.job_id"
+         : ""}
        JOIN (
-         SELECT job_url, MAX(version) AS max_version
+         SELECT tenant_id, ${scoreReference}, MAX(version) AS max_version
          FROM job_scores
          WHERE tenant_id = ?
-         GROUP BY job_url
-       ) latest ON latest.job_url = s.job_url AND latest.max_version = s.version
+         GROUP BY tenant_id, ${scoreReference}
+       ) latest
+         ON latest.tenant_id = s.tenant_id
+        AND latest.${scoreReference} = s.${scoreReference}
+        AND latest.max_version = s.version
       WHERE s.tenant_id = ?`,
     [tenantId, tenantId],
   );
@@ -4737,32 +4789,42 @@ function jobProjectionSelect(db: SqliteDatabase): string {
            AND h.unhidden_at IS NULL
          LIMIT 1) AS hidden_at`
     : "NULL AS hidden_at";
+  const staleReference = tableExists(db, "job_score_staleness")
+    ? jobReferenceColumn(db, "job_score_staleness")
+    : "job_url";
+  const staleJobReference = staleReference === "job_id"
+    ? `(SELECT j.job_id
+          FROM jobs j
+         WHERE j.tenant_id = job_list_projections.tenant_id
+           AND j.url = job_list_projections.job_id
+         LIMIT 1)`
+    : "job_list_projections.job_id";
   const stalenessSelect = tableExists(db, "job_score_staleness")
     ? `(SELECT s.stale_reason
           FROM job_score_staleness s
          WHERE s.tenant_id = job_list_projections.tenant_id
-           AND s.job_url = job_list_projections.job_id
+           AND s.${staleReference} = ${staleJobReference}
            AND s.resolved = 0
          ORDER BY s.marked_at DESC
          LIMIT 1) AS score_stale_reason,
        (SELECT s.old_policy_version
           FROM job_score_staleness s
          WHERE s.tenant_id = job_list_projections.tenant_id
-           AND s.job_url = job_list_projections.job_id
+           AND s.${staleReference} = ${staleJobReference}
            AND s.resolved = 0
          ORDER BY s.marked_at DESC
          LIMIT 1) AS score_stale_old_policy_version,
        (SELECT s.new_policy_version
           FROM job_score_staleness s
          WHERE s.tenant_id = job_list_projections.tenant_id
-           AND s.job_url = job_list_projections.job_id
+           AND s.${staleReference} = ${staleJobReference}
            AND s.resolved = 0
          ORDER BY s.marked_at DESC
          LIMIT 1) AS score_stale_new_policy_version,
        (SELECT s.marked_at
           FROM job_score_staleness s
          WHERE s.tenant_id = job_list_projections.tenant_id
-           AND s.job_url = job_list_projections.job_id
+           AND s.${staleReference} = ${staleJobReference}
            AND s.resolved = 0
          ORDER BY s.marked_at DESC
          LIMIT 1) AS score_stale_marked_at`

@@ -40,22 +40,26 @@ def scoring_current_policy_job_urls(
           ON je.tenant_id = j.tenant_id
          AND je.job_id = j.job_id
         LEFT JOIN (
-            SELECT s.job_url, s.trace_json, s.correction_json
+            SELECT s.tenant_id, s.job_id, s.trace_json, s.correction_json
             FROM job_scores s
             INNER JOIN (
-                SELECT job_url, MAX(version) AS max_version
+                SELECT tenant_id, job_id, MAX(version) AS max_version
                 FROM job_scores
                 WHERE tenant_id = ?
-                GROUP BY job_url
+                GROUP BY tenant_id, job_id
             ) latest
-              ON latest.job_url = s.job_url AND latest.max_version = s.version
+              ON latest.tenant_id = s.tenant_id
+             AND latest.job_id = s.job_id
+             AND latest.max_version = s.version
             WHERE s.tenant_id = ?
-        ) latest_score ON latest_score.job_url = j.url
+        ) latest_score
+          ON latest_score.tenant_id = j.tenant_id
+         AND latest_score.job_id = j.job_id
         WHERE COALESCE(je.full_description, j.full_description) IS NOT NULL
           {active_sql}
           {requested_sql}
           AND (
-            latest_score.job_url IS NULL
+            latest_score.job_id IS NULL
             OR (
               (latest_score.correction_json IS NULL OR TRIM(latest_score.correction_json) = '')
               AND {_score_policy_version_expr("latest_score.trace_json")} != ?
@@ -105,23 +109,29 @@ def tailoring_current_policy_job_urls(
           ON je.tenant_id = j.tenant_id
          AND je.job_id = j.job_id
         LEFT JOIN (
-            SELECT s.job_url, s.fit_score, s.breakdown_json
+            SELECT s.tenant_id, s.job_id, s.fit_score, s.breakdown_json
             FROM job_scores s
             INNER JOIN (
-                SELECT job_url, MAX(version) AS max_version
+                SELECT tenant_id, job_id, MAX(version) AS max_version
                 FROM job_scores
                 WHERE tenant_id = ?
-                GROUP BY job_url
+                GROUP BY tenant_id, job_id
             ) latest
-              ON latest.job_url = s.job_url AND latest.max_version = s.version
+              ON latest.tenant_id = s.tenant_id
+             AND latest.job_id = s.job_id
+             AND latest.max_version = s.version
             WHERE s.tenant_id = ?
-        ) latest_score ON latest_score.job_url = j.url
+        ) latest_score
+          ON latest_score.tenant_id = j.tenant_id
+         AND latest_score.job_id = j.job_id
         LEFT JOIN (
-            SELECT job_url AS stale_job_url
+            SELECT tenant_id AS stale_tenant_id, job_id AS stale_job_id
             FROM job_score_staleness
             WHERE tenant_id = ? AND resolved = 0
-            GROUP BY job_url
-        ) stale_score ON stale_score.stale_job_url = j.url
+            GROUP BY tenant_id, job_id
+        ) stale_score
+          ON stale_score.stale_tenant_id = j.tenant_id
+         AND stale_score.stale_job_id = j.job_id
         LEFT JOIN job_stage_states score_state
           ON score_state.job_url = j.url AND score_state.stage = 'score'
         LEFT JOIN job_stage_states tailor_state
@@ -150,7 +160,7 @@ def tailoring_current_policy_job_urls(
           {requested_sql}
           AND COALESCE(latest_score.fit_score, j.fit_score) >= ?
           AND {_score_eligible_expr("latest_score.breakdown_json")}
-          AND stale_score.stale_job_url IS NULL
+          AND stale_score.stale_job_id IS NULL
           AND (
             score_state.state IS NULL
             OR score_state.state = 'succeeded'

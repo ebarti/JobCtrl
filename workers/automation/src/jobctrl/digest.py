@@ -624,9 +624,42 @@ def _count_stale_scores(conn: sqlite3.Connection) -> int:
     if not active_jobs:
         return 0
     if _table_exists(conn, "job_score_staleness"):
+        stale_columns = {
+            str(row[1])
+            for row in conn.execute(
+                "PRAGMA table_info(job_score_staleness)"
+            ).fetchall()
+        }
+        stable_references = "job_id" in stale_columns
         if _table_exists(conn, "job_scores"):
-            rows = conn.execute(
+            sql = (
                 """
+                SELECT DISTINCT jobs.url AS job_url
+                FROM job_score_staleness stale
+                JOIN jobs
+                  ON jobs.tenant_id = stale.tenant_id
+                 AND jobs.job_id = stale.job_id
+                JOIN (
+                    SELECT tenant_id, job_id, MAX(version) AS max_version
+                    FROM job_scores
+                    WHERE tenant_id = ?
+                    GROUP BY tenant_id, job_id
+                ) latest
+                  ON latest.tenant_id = stale.tenant_id
+                 AND latest.job_id = stale.job_id
+                JOIN job_scores scores
+                  ON scores.tenant_id = stale.tenant_id
+                 AND scores.job_id = stale.job_id
+                 AND scores.version = latest.max_version
+                WHERE stale.tenant_id = ?
+                  AND stale.resolved = 0
+                  AND (
+                    scores.correction_json IS NULL
+                    OR TRIM(scores.correction_json) = ''
+                  )
+                """
+                if stable_references
+                else """
                 SELECT DISTINCT stale.job_url
                 FROM job_score_staleness stale
                 JOIN (
@@ -641,20 +674,33 @@ def _count_stale_scores(conn: sqlite3.Connection) -> int:
                  AND scores.version = latest.max_version
                 WHERE stale.tenant_id = ?
                   AND stale.resolved = 0
-                  AND (scores.correction_json IS NULL OR TRIM(scores.correction_json) = '')
-                """,
-                [TENANT_ID, TENANT_ID],
-            ).fetchall()
+                  AND (
+                    scores.correction_json IS NULL
+                    OR TRIM(scores.correction_json) = ''
+                  )
+                """
+            )
+            rows = conn.execute(sql, [TENANT_ID, TENANT_ID]).fetchall()
             return sum(1 for row in rows if _row_get(row, "job_url") in active_jobs)
-        rows = conn.execute(
+        sql = (
             """
+            SELECT DISTINCT jobs.url AS job_url
+            FROM job_score_staleness stale
+            JOIN jobs
+              ON jobs.tenant_id = stale.tenant_id
+             AND jobs.job_id = stale.job_id
+            WHERE stale.tenant_id = ?
+              AND stale.resolved = 0
+            """
+            if stable_references
+            else """
             SELECT DISTINCT job_url
             FROM job_score_staleness
             WHERE tenant_id = ?
               AND resolved = 0
-            """,
-            [TENANT_ID],
-        ).fetchall()
+            """
+        )
+        rows = conn.execute(sql, [TENANT_ID]).fetchall()
         return sum(1 for row in rows if _row_get(row, "job_url") in active_jobs)
     if _table_exists(conn, "job_list_projections"):
         rows = conn.execute(

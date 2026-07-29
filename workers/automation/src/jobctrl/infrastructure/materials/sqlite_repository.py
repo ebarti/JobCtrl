@@ -236,7 +236,8 @@ class SqliteMaterialsRepository:
         # this adapter stays self-contained.
         score_join = (
             "LEFT JOIN ("
-            "SELECT s.job_url AS sj_job_url, s.fit_score AS sj_fit_score, "
+            "SELECT s.tenant_id AS sj_tenant_id, s.job_id AS sj_job_id, "
+            "s.fit_score AS sj_fit_score, "
             "CASE WHEN json_valid(s.breakdown_json) "
             "THEN LOWER(COALESCE(CAST(json_extract(s.breakdown_json, '$.eligibility.status') AS TEXT), '')) "
             "ELSE '' END AS sj_eligibility_status, "
@@ -248,10 +249,13 @@ class SqliteMaterialsRepository:
             "0) ELSE 0 END AS sj_hard_blocker_count "
             "FROM job_scores s "
             "INNER JOIN ("
-            "SELECT job_url, MAX(version) AS max_version FROM job_scores GROUP BY job_url"
-            ") latest ON latest.job_url = s.job_url AND latest.max_version = s.version "
+            "SELECT tenant_id, job_id, MAX(version) AS max_version "
+            "FROM job_scores GROUP BY tenant_id, job_id"
+            ") latest ON latest.tenant_id = s.tenant_id "
+            "AND latest.job_id = s.job_id AND latest.max_version = s.version "
             "WHERE s.tenant_id = ?"
-            ") sj ON sj.sj_job_url = j.url"
+            ") sj ON sj.sj_tenant_id = j.tenant_id "
+            "AND sj.sj_job_id = j.job_id"
         )
         materials_join = (
             "LEFT JOIN ("
@@ -306,7 +310,8 @@ class SqliteMaterialsRepository:
         params: list[Any] = [str(tenant_id)]
         score_join = (
             "LEFT JOIN ("
-            "SELECT s.job_url AS sj_job_url, s.fit_score AS sj_fit_score, "
+            "SELECT s.tenant_id AS sj_tenant_id, s.job_id AS sj_job_id, "
+            "s.fit_score AS sj_fit_score, "
             "CASE WHEN json_valid(s.breakdown_json) "
             "THEN LOWER(COALESCE(CAST(json_extract(s.breakdown_json, '$.eligibility.status') AS TEXT), '')) "
             "ELSE '' END AS sj_eligibility_status, "
@@ -318,10 +323,13 @@ class SqliteMaterialsRepository:
             "0) ELSE 0 END AS sj_hard_blocker_count "
             "FROM job_scores s "
             "INNER JOIN ("
-            "SELECT job_url, MAX(version) AS max_version FROM job_scores GROUP BY job_url"
-            ") latest ON latest.job_url = s.job_url AND latest.max_version = s.version "
+            "SELECT tenant_id, job_id, MAX(version) AS max_version "
+            "FROM job_scores GROUP BY tenant_id, job_id"
+            ") latest ON latest.tenant_id = s.tenant_id "
+            "AND latest.job_id = s.job_id AND latest.max_version = s.version "
             "WHERE s.tenant_id = ?"
-            ") sj ON sj.sj_job_url = j.url"
+            ") sj ON sj.sj_tenant_id = j.tenant_id "
+            "AND sj.sj_job_id = j.job_id"
         )
         params.append(str(tenant_id))
         materials_join = (

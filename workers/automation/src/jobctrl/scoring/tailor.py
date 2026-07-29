@@ -34,6 +34,7 @@ from jobctrl import database as db_module
 from jobctrl import config
 from jobctrl.config import TAILORED_DIR
 from jobctrl.database import get_connection, get_jobs_by_stage
+from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
 from jobctrl.domain.materials.use_cases import (
@@ -209,12 +210,12 @@ def _build_pdf_renderer() -> PdfRendererPort:
 
 
 def _load_requirement_fit_report_for_job(*, tenant_id: TenantId, job: dict):
-    job_url = str(job.get("url") or "").strip()
-    if not job_url:
+    job_reference = str(job.get("job_id") or job.get("url") or "").strip()
+    if not job_reference:
         return None
     return SqliteRequirementFitReportRepository(get_connection()).load(
         tenant_id,
-        JobId(job_url),
+        JobId(job_reference),
     )
 
 
@@ -781,7 +782,10 @@ def _reconcile_score_eligibility_skip(
     job_url: str,
     tenant_id: TenantId,
 ) -> bool:
-    score = SqliteScoreRepository(conn).load(tenant_id, JobId(job_url))
+    score = SqliteScoreRepository(conn).load_by_posting_url(
+        tenant_id,
+        PostingUrl(job_url),
+    )
     if score is None:
         return False
     eligibility = score.breakdown.eligibility

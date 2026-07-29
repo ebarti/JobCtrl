@@ -73,13 +73,19 @@ def test_feedback_adjustments_affect_downstream_selector_order(tmp_path: Path) -
             "VALUES (?, ?, ?, ?, ?)",
             (url, "Engineer", "Acme", "Need Python.", "2026-05-14T00:00:00+00:00"),
         )
+    job_ids = {
+        str(row["url"]): str(row["job_id"])
+        for row in conn.execute(
+            "SELECT url, job_id FROM jobs WHERE tenant_id = 'local'"
+        ).fetchall()
+    }
     conn.execute(
         """INSERT INTO job_scores (
-          job_url, version, tenant_id, fit_score, breakdown_json, keywords_json, scored_at,
+          job_id, version, tenant_id, fit_score, breakdown_json, keywords_json, scored_at,
           correction_json, criteria_json, trace_json
         ) VALUES (?, 2, 'local', 9, ?, '["python"]', ?, ?, '{}', ?)""",
         (
-            corrected,
+            job_ids[corrected],
             json.dumps({"reasoning": "Corrected after review.", "eligibility": {"status": "eligible"}}),
             "2026-05-14T10:00:00+00:00",
             json.dumps({"corrected_fit_score": 9, "rationale": "Better leadership fit."}),
@@ -88,11 +94,11 @@ def test_feedback_adjustments_affect_downstream_selector_order(tmp_path: Path) -
     )
     conn.execute(
         """INSERT INTO job_scores (
-          job_url, version, tenant_id, fit_score, breakdown_json, keywords_json, scored_at,
+          job_id, version, tenant_id, fit_score, breakdown_json, keywords_json, scored_at,
           correction_json, criteria_json, trace_json
         ) VALUES (?, 1, 'local', 10, ?, '["python"]', ?, NULL, '{}', '{}')""",
         (
-            skipped,
+            job_ids[skipped],
             json.dumps({"reasoning": "High raw score.", "eligibility": {"status": "eligible"}}),
             "2026-05-14T10:00:00+00:00",
         ),

@@ -63,6 +63,15 @@ def _seed_job(conn: sqlite3.Connection, url: str = "https://example.com/job/1") 
     return url
 
 
+def _stable_job_id(conn: sqlite3.Connection, url: str) -> str:
+    return str(
+        conn.execute(
+            "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+            (str(LOCAL_TENANT), url),
+        ).fetchone()[0]
+    )
+
+
 def _build_score(
     url: str,
     version: int = 1,
@@ -263,15 +272,16 @@ def test_save_and_load_round_trips_criteria_and_trace(conn: sqlite3.Connection) 
 
 def test_load_legacy_trace_without_policy_metadata(conn: sqlite3.Connection) -> None:
     url = _seed_job(conn)
+    job_id = _stable_job_id(conn, url)
     conn.execute(
         """
         INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json,
+            job_id, version, tenant_id, fit_score, breakdown_json,
             keywords_json, scored_at, correction_json, criteria_json, trace_json
         ) VALUES (?, 1, ?, 7, ?, ?, ?, NULL, ?, ?)
         """,
         (
-            url,
+            job_id,
             str(LOCAL_TENANT),
             '{"technical_fit": 7, "experience_fit": 7, "role_fit": 7, "reasoning": "legacy"}',
             '["python"]',
@@ -324,12 +334,17 @@ def test_init_db_creates_requirement_fit_tables(conn: sqlite3.Connection) -> Non
 def test_requirement_fit_report_repository_round_trips(conn: sqlite3.Connection) -> None:
     url = _seed_job(conn)
     SqliteScoreRepository(conn).save(_build_score(url, fit=8))
-    report = _requirement_report(url)
+    stable_job_id = _stable_job_id(conn, url)
+    report = _requirement_report(stable_job_id)
 
     repo = SqliteRequirementFitReportRepository(conn)
     repo.save(LOCAL_TENANT, report)
 
-    loaded = repo.load(LOCAL_TENANT, JobId(url), score_version=1)
+    loaded = repo.load(
+        LOCAL_TENANT,
+        JobId(stable_job_id),
+        score_version=1,
+    )
 
     assert loaded == report
     assert loaded is not None
@@ -445,7 +460,7 @@ def test_list_pending_returns_jobs_without_score(conn: sqlite3.Connection) -> No
     repo.save(_build_score(url_scored))
 
     pending = repo.list_pending(LOCAL_TENANT)
-    assert pending == [JobId(url_pending)]
+    assert pending == [JobId(_stable_job_id(conn, url_pending))]
 
 
 def test_list_pending_respects_limit(conn: sqlite3.Connection) -> None:
@@ -533,9 +548,13 @@ def test_score_correction_marks_comparable_uncorrected_scores_stale_and_resolve_
 
     rows = conn.execute(
         """
-        SELECT job_url, stale_reason, old_policy_version, new_policy_version, resolved
-        FROM job_score_staleness
-        ORDER BY job_url
+        SELECT jobs.url AS job_url, stale_reason, old_policy_version,
+               new_policy_version, resolved
+        FROM job_score_staleness stale
+        JOIN jobs
+          ON jobs.tenant_id = stale.tenant_id
+         AND jobs.job_id = stale.job_id
+        ORDER BY jobs.url
         """
     ).fetchall()
     assert [row["job_url"] for row in rows] == [comparable_url]
@@ -560,12 +579,25 @@ def test_score_correction_marks_comparable_uncorrected_scores_stale_and_resolve_
         """
         SELECT resolved, resolved_by_score_version
         FROM job_score_staleness
-        WHERE job_url = ?
+        WHERE job_id = ?
         """,
-        (comparable_url,),
+        (_stable_job_id(conn, comparable_url),),
     ).fetchone()
     assert resolved["resolved"] == 1
     assert resolved["resolved_by_score_version"] == 2
+    resolved_event = conn.execute(
+        """
+        SELECT job_url, payload_json
+        FROM job_events
+        WHERE event_type = 'ScoreStalenessResolved'
+        ORDER BY event_id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    assert resolved_event["job_url"] == comparable_url
+    assert json.loads(resolved_event["payload_json"])["jobId"] == (
+        _stable_job_id(conn, comparable_url)
+    )
 
 
 def test_score_correction_governance_report_and_downstream_staleness_gate(
@@ -693,7 +725,9 @@ def test_score_correction_governance_report_and_downstream_staleness_gate(
         row["url"]
         for row in get_jobs_by_stage(conn, "pending_tailor", min_score=7, limit=0)
     }
-    assert [str(marker.job_id) for marker in markers] == [comparable_url]
+    assert [str(marker.job_id) for marker in markers] == [
+        _stable_job_id(conn, comparable_url)
+    ]
     assert comparable_url not in pending_after_reset
 
     refreshed_resolution = policy_v2.resolve(
@@ -771,8 +805,8 @@ def test_backfill_is_idempotent(tmp_path: Path) -> None:
     ensure_score_tables(conn)
 
     count = conn.execute(
-        "SELECT COUNT(*) FROM job_scores WHERE job_url = ?",
-        ("https://example.com/legacy",),
+        "SELECT COUNT(*) FROM job_scores WHERE job_id = ?",
+        (_stable_job_id(conn, "https://example.com/legacy"),),
     ).fetchone()[0]
     assert count == 1
 

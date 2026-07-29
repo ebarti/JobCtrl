@@ -9,7 +9,7 @@ export type SqliteValue = string | number | bigint | null;
 // writer that stamps ``PRAGMA user_version``; the API only reads it to fail
 // closed on a database written by a newer build. Bump both constants together
 // whenever the schema shape changes.
-export const SUPPORTED_SCHEMA_VERSION = 11;
+export const SUPPORTED_SCHEMA_VERSION = 12;
 
 export class IncompatibleSchemaVersionError extends Error {
   constructor(current: number) {
@@ -68,6 +68,67 @@ export function tableExists(db: SqliteDatabase, tableName: string): boolean {
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(tableName) as { name?: string } | undefined;
   return row?.name === tableName;
+}
+
+export type JobReferenceColumn = "job_id" | "job_url";
+
+export function tableColumnSet(db: SqliteDatabase, tableName: string): Set<string> {
+  if (!tableExists(db, tableName)) return new Set();
+  return new Set(
+    (db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as Array<{ name: string }>)
+      .map((row) => row.name),
+  );
+}
+
+export function jobReferenceColumn(
+  db: SqliteDatabase,
+  tableName: string,
+): JobReferenceColumn {
+  const columns = tableColumnSet(db, tableName);
+  if (columns.has("job_id")) return "job_id";
+  if (columns.has("job_url")) return "job_url";
+  throw new Error(`${tableName} has no Job identity column.`);
+}
+
+export function stableJobIdForUrl(
+  db: SqliteDatabase,
+  jobUrl: string,
+  tenantId = "local",
+): string | null {
+  const direct = db.prepare(
+    `SELECT job_id
+       FROM jobs
+      WHERE tenant_id = ? AND url = ?
+      LIMIT 1`,
+  ).get(tenantId, jobUrl) as { job_id?: string } | undefined;
+  if (direct?.job_id) return direct.job_id;
+  if (!tableExists(db, "job_identity_aliases")) return null;
+  const alias = db.prepare(
+    `SELECT alias.job_id
+       FROM job_identity_aliases alias
+       JOIN jobs j
+         ON j.tenant_id = alias.tenant_id
+        AND j.job_id = alias.job_id
+      WHERE alias.tenant_id = ?
+        AND alias.alias_kind = 'posting_url'
+        AND alias.alias_value = ?
+      LIMIT 1`,
+  ).get(tenantId, jobUrl) as { job_id?: string } | undefined;
+  return alias?.job_id ?? null;
+}
+
+export function jobReferenceForUrl(
+  db: SqliteDatabase,
+  tableName: string,
+  jobUrl: string,
+  tenantId = "local",
+): string {
+  if (jobReferenceColumn(db, tableName) === "job_url") return jobUrl;
+  const jobId = stableJobIdForUrl(db, jobUrl, tenantId);
+  if (!jobId) {
+    throw new Error(`No stable Job identity for ${jobUrl}.`);
+  }
+  return jobId;
 }
 
 export function hasCompositeJobIdForeignKey(

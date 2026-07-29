@@ -1574,6 +1574,9 @@ class TailorResumeUseCase:
         requirement_fit_report: "RequirementFitReport | None" = None,
     ) -> TailorOutcome:
         job_id = JobId(str(job["url"]))
+        scoring_job_id = JobId(
+            str(job.get("job_id") or job["url"])
+        )
         # D-20: run/reuse the canonical employer analysis as the front-half
         # sub-step of tailor (cache-backed, so a re-tailor reuses it). The
         # analysis drives keyword selection in ``build_tailoring_plan``.
@@ -1583,7 +1586,7 @@ class TailorResumeUseCase:
         if requirement_fit_report is None and self._requirement_fit_repository is not None:
             requirement_fit_report = self._requirement_fit_repository.load(
                 tenant_id,
-                job_id,
+                scoring_job_id,
             )
         previous = self._repository.load(tenant_id, job_id)
         created_at = _utc_now()
@@ -1849,7 +1852,9 @@ class TailorResumeUseCase:
 
         if record_provenance and self._provenance_repository is not None:
             self._record_requirement_artifact_coverage(
-                materials=materials, bullets=provenance_rows
+                materials=materials,
+                scoring_job_id=scoring_job_id,
+                bullets=provenance_rows,
             )
             self._publish_provenance(
                 materials,
@@ -3223,6 +3228,7 @@ class TailorResumeUseCase:
         self,
         *,
         materials: MaterialsSet,
+        scoring_job_id: JobId,
         bullets: tuple[BulletProvenance, ...],
     ) -> None:
         """Map accepted artifact provenance back onto the latest requirement fit report."""
@@ -3231,7 +3237,7 @@ class TailorResumeUseCase:
         try:
             report = self._requirement_fit_repository.load(
                 materials.tenant_id,
-                materials.job_id,
+                scoring_job_id,
             )
             if report is None:
                 return

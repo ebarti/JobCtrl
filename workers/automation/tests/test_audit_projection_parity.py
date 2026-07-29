@@ -103,9 +103,12 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_scores (
-                job_url, version, tenant_id, fit_score, breakdown_json,
+                job_id, version, tenant_id, fit_score, breakdown_json,
                 keywords_json, scored_at, correction_json, criteria_json, trace_json
-            ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (
+                (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+                ?, 'local', ?, ?, ?, ?, ?, ?, ?
+            )
             """,
             (
                 job_url,
@@ -374,9 +377,12 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
             conn.execute(
                 """
                 INSERT INTO job_scores (
-                    job_url, version, tenant_id, fit_score, breakdown_json,
+                    job_id, version, tenant_id, fit_score, breakdown_json,
                     keywords_json, scored_at, correction_json, criteria_json, trace_json
-                ) VALUES (?, 1, 'local', ?, ?, '[]', ?, NULL, '{}', '{}')
+                ) VALUES (
+                    (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+                    1, 'local', ?, ?, '[]', ?, NULL, '{}', '{}'
+                )
                 """,
                 (
                     agg["url"],

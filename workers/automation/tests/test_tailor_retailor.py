@@ -58,9 +58,12 @@ def _insert_blocked_score(conn, *, url: str, blocker: str = "No sponsorship.") -
     conn.execute(
         """
         INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json,
+            job_id, version, tenant_id, fit_score, breakdown_json,
             keywords_json, scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, 1, 'local', 10, ?, '[]', ?, NULL, '{}', '{}')
+        ) VALUES (
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            1, 'local', 10, ?, '[]', ?, NULL, '{}', '{}'
+        )
         """,
         (
             url,

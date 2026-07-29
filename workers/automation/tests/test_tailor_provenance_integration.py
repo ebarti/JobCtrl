@@ -182,6 +182,23 @@ class _FakeRequirementFitRepo:
         self.saved.append(report)
 
 
+class _CollisionRequirementFitRepo:
+    def __init__(self, reports: tuple[RequirementFitReport, ...]) -> None:
+        self._reports = {str(report.job_id): report for report in reports}
+        self.loaded_job_ids: list[str] = []
+        self.saved: list[RequirementFitReport] = []
+
+    def load(self, tenant_id, job_id, *, score_version=None) -> RequirementFitReport | None:
+        _ = tenant_id, score_version
+        self.loaded_job_ids.append(str(job_id))
+        return self._reports.get(str(job_id))
+
+    def save(self, tenant_id, report: RequirementFitReport) -> None:
+        _ = tenant_id
+        self._reports[str(report.job_id)] = report
+        self.saved.append(report)
+
+
 class _ScriptedLlm:
     def __init__(self, responses: list[str]) -> None:
         self._responses = list(responses)
@@ -647,6 +664,58 @@ def test_accepted_resume_updates_requirement_fit_artifact_coverage(tmp_path: Pat
     assert platform_coverage.state == "missing_from_resume"
     assert salesforce_coverage is not None
     assert salesforce_coverage.state == "missing_from_profile"
+
+
+def test_requirement_coverage_keeps_stable_id_when_posting_url_is_another_job_id(
+    tmp_path: Path,
+) -> None:
+    posting_url = "11111111-1111-4111-8111-111111111111"
+    stable_job_id = "22222222-2222-4222-8222-222222222222"
+    intended_report = replace(
+        _requirement_fit_report(),
+        job_id=stable_job_id,
+        fit_band="strong",
+    )
+    other_job_report = replace(
+        _requirement_fit_report(),
+        job_id=posting_url,
+        fit_band="poor",
+    )
+    requirement_fit_repo = _CollisionRequirementFitRepo(
+        (intended_report, other_job_report)
+    )
+    outcome = _use_case(
+        _FakeMaterialsRepo(),
+        _FakeProvenanceRepo(),
+        _ScriptedLlm(
+            [
+                _payload(
+                    "Owned the API and cut latency 40% with Python by "
+                    "replacing synchronous calls."
+                ),
+                _judge_pass(),
+            ]
+        ),
+        _RecordingPublisher(),
+        requirement_fit_repo=requirement_fit_repo,
+    ).execute(
+        job={
+            **_job(),
+            "url": posting_url,
+            "job_id": stable_job_id,
+        },
+        profile_snapshot=_snapshot(),
+        tailored_dir=tmp_path,
+    )
+
+    assert outcome.status == "approved"
+    assert requirement_fit_repo.loaded_job_ids == [
+        stable_job_id,
+        stable_job_id,
+    ]
+    assert len(requirement_fit_repo.saved) == 1
+    assert requirement_fit_repo.saved[0].job_id == stable_job_id
+    assert requirement_fit_repo.saved[0].fit_band == "strong"
 
 
 def test_suffixed_bare_magnitude_is_hard_rejected_by_detector_and_writes_no_provenance(

@@ -599,7 +599,7 @@ def score_job_by_url(
         repository = SqliteScoreRepository(conn)
     if policy_repository is None:
         policy_repository = SqliteScoringPolicyRepository(conn)
-    existing = repository.load(tenant_id, JobId(job_url))
+    existing = repository.load(tenant_id, _job_id_from_record(job))
     reusable_repost_score = _preferred_direct_score_for_repost(
         conn=conn,
         job=job,
@@ -736,7 +736,9 @@ def _ensure_existing_score_stage_succeeded(
     score: JobScore,
     tenant_id: TenantId,
 ) -> None:
-    job_url = str(score.job_id)
+    job_url = str(job.get("url") or "").strip()
+    if not job_url:
+        raise ValueError("score stage state requires the job storage URL")
     if _has_unresolved_score_staleness(conn, tenant_id=tenant_id, job_url=job_url):
         return
 
@@ -786,7 +788,9 @@ def _record_score_stage_succeeded(
     finished_at: str | None = None,
     validate_transition: bool = False,
 ) -> None:
-    job_url = str(score.job_id)
+    job_url = str(job.get("url") or "").strip()
+    if not job_url:
+        raise ValueError("score stage state requires the job storage URL")
     finished_at = finished_at or utc_now()
     ensure_job_stage_rows(conn, job_url, discovered_at=job.get("discovered_at"))
     set_stage_state(
@@ -835,16 +839,27 @@ def _has_unresolved_score_staleness(
     tenant_id: TenantId,
     job_url: str,
 ) -> bool:
+    identity = conn.execute(
+        """
+        SELECT job_id
+        FROM jobs
+        WHERE tenant_id = ? AND url = ?
+        LIMIT 1
+        """,
+        (str(tenant_id), job_url),
+    ).fetchone()
+    if identity is None:
+        return False
     row = conn.execute(
         """
         SELECT 1
         FROM job_score_staleness
         WHERE tenant_id = ?
-          AND job_url = ?
+          AND job_id = ?
           AND resolved = 0
         LIMIT 1
         """,
-        (str(tenant_id), job_url),
+        (str(tenant_id), str(identity[0])),
     ).fetchone()
     return row is not None
 
@@ -1010,7 +1025,7 @@ def _preferred_direct_score_for_repost(
     deleted_filter = "AND d.job_url IS NULL" if deleted_join else ""
     rows = conn.execute(
         f"""
-        SELECT j.url, j.title, j.location,
+        SELECT j.url, j.job_id, j.title, j.location,
                COALESCE(je.application_url, j.application_url) AS application_url,
                COALESCE(c.ats_kind, 'other') AS ats_kind,
                s.scored_at
@@ -1022,14 +1037,16 @@ def _preferred_direct_score_for_repost(
           ON c.tenant_id = ? AND c.job_id = j.job_id
         {deleted_join}
         INNER JOIN (
-            SELECT job_url, MAX(version) AS max_version
+            SELECT tenant_id, job_id, MAX(version) AS max_version
             FROM job_scores
             WHERE tenant_id = ?
-            GROUP BY job_url
-        ) latest ON latest.job_url = j.url
+            GROUP BY tenant_id, job_id
+        ) latest
+          ON latest.tenant_id = j.tenant_id
+         AND latest.job_id = j.job_id
         INNER JOIN job_scores s
           ON s.tenant_id = ?
-         AND s.job_url = latest.job_url
+         AND s.job_id = latest.job_id
          AND s.version = latest.max_version
         WHERE j.url != ?
           {deleted_filter}
@@ -1047,7 +1064,10 @@ def _preferred_direct_score_for_repost(
         candidate = dict(row)
         if not _same_reference_repost_opportunity(job, candidate):
             continue
-        score = repository.load(tenant_id, JobId(str(candidate["url"])))
+        score = repository.load(
+            tenant_id,
+            _job_id_from_record(candidate),
+        )
         if score is None:
             continue
         if not _score_matches_context(
@@ -1141,20 +1161,22 @@ def _reusable_scores_by_content_key(
         return {}
     rows = conn.execute(
         """
-        SELECT j.url, j.title, j.company,
+        SELECT j.url, j.job_id, j.title, j.company,
                COALESCE(je.full_description, j.full_description) AS full_description
         FROM jobs j
         LEFT JOIN job_enrichments je
           ON je.tenant_id = j.tenant_id
          AND je.job_id = j.job_id
         INNER JOIN (
-            SELECT s.job_url, MAX(s.version) AS max_version
+            SELECT s.tenant_id, s.job_id, MAX(s.version) AS max_version
             FROM job_scores s
             WHERE s.tenant_id = ?
-            GROUP BY s.job_url
-        ) latest ON latest.job_url = j.url
+            GROUP BY s.tenant_id, s.job_id
+        ) latest
+          ON latest.tenant_id = j.tenant_id
+         AND latest.job_id = j.job_id
         INNER JOIN job_scores s
-            ON s.job_url = latest.job_url
+            ON s.job_id = latest.job_id
            AND s.version = latest.max_version
            AND s.tenant_id = ?
         ORDER BY s.scored_at DESC
@@ -1168,7 +1190,7 @@ def _reusable_scores_by_content_key(
         key = _score_content_key(job)
         if key is None or key not in wanted_keys or key in reusable:
             continue
-        score = repository.load(tenant_id, JobId(str(job["url"])))
+        score = repository.load(tenant_id, _job_id_from_record(job))
         if score is None or not _score_matches_context(
             score=score,
             criteria=criteria,
@@ -1199,7 +1221,7 @@ def _persist_reused_score(
     job: dict[str, Any],
     source_score: JobScore,
 ) -> ScoreJobOutcome:
-    job_id = JobId(str(job["url"]))
+    job_id = _job_id_from_record(job)
     previous = repository.load(tenant_id, job_id)
     scored_at = utc_now()
     if previous is None:
@@ -1224,6 +1246,13 @@ def _persist_reused_score(
         )
     repository.save(copied)
     return ScoreJobOutcome(ok=True, score=copied)
+
+
+def _job_id_from_record(job: dict[str, Any]) -> JobId:
+    reference = str(job.get("job_id") or job.get("url") or "").strip()
+    if not reference:
+        raise ValueError("job requires job_id or url")
+    return JobId(reference)
 
 
 # ---------------------------------------------------------------------------

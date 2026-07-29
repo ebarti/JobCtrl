@@ -184,11 +184,12 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
     conn.execute(
         """
         INSERT INTO job_requirement_fit_reports (
-            job_url, score_version, tenant_id, employer_analysis_generation,
+            job_id, score_version, tenant_id, employer_analysis_generation,
             profile_snapshot_version, scoring_policy_version, formula_version,
             resolved_fit_score, fit_band, confidence, summary_json, created_at
         ) VALUES (
-            ?, 2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high',
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high',
             '{"weighted_fit":0.8,"must_have_coverage":0.5,"blocker_count":0,"missing_high_weight_count":1}',
             '2026-07-05T12:20:00Z'
         )
@@ -198,11 +199,12 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
     conn.execute(
         """
         INSERT INTO job_requirement_fit_items (
-            job_url, score_version, tenant_id, requirement_id, requirement_text,
+            job_id, score_version, tenant_id, requirement_id, requirement_text,
             tier, weight, job_evidence_span, fit_json, contribution_json,
             tailoring_json, artifact_coverage_json, position
         ) VALUES (
-            ?, 2, 'local', 'req-platform', 'Own platform migrations',
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            2, 'local', 'req-platform', 'Own platform migrations',
             'must_have', 0.8, 'platform migrations',
             '{"kind":"matched","evidence_ids":["ev_platform"],"strength":"direct"}',
             '{}', '{}',
@@ -215,11 +217,12 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
     conn.execute(
         """
         INSERT INTO job_requirement_fit_items (
-            job_url, score_version, tenant_id, requirement_id, requirement_text,
+            job_id, score_version, tenant_id, requirement_id, requirement_text,
             tier, weight, job_evidence_span, fit_json, contribution_json,
             tailoring_json, artifact_coverage_json, position
         ) VALUES (
-            ?, 2, 'local', 'req-kubernetes', 'Run Kubernetes clusters',
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            2, 'local', 'req-kubernetes', 'Run Kubernetes clusters',
             'must_have', 0.7, 'Kubernetes clusters',
             '{"kind":"missing","reason":"No Kubernetes profile evidence."}',
             '{}', '{}',
@@ -408,11 +411,12 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
         conn.execute(
             """
             INSERT INTO job_requirement_fit_reports (
-                job_url, score_version, tenant_id, employer_analysis_generation,
+                job_id, score_version, tenant_id, employer_analysis_generation,
                 profile_snapshot_version, scoring_policy_version, formula_version,
                 resolved_fit_score, fit_band, confidence, summary_json, created_at
             ) VALUES (
-                ?, 2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high',
+                (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+                2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high',
                 '{"weighted_fit":0.8,"must_have_coverage":0.5,"blocker_count":0,"missing_high_weight_count":1}',
                 '2026-07-05T12:20:00Z'
             )
@@ -422,11 +426,12 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
         conn.execute(
             """
             INSERT INTO job_requirement_fit_items (
-                job_url, score_version, tenant_id, requirement_id, requirement_text,
+                job_id, score_version, tenant_id, requirement_id, requirement_text,
                 tier, weight, job_evidence_span, fit_json, contribution_json,
                 tailoring_json, artifact_coverage_json, position
             ) VALUES (
-                ?, 2, 'local', 'req-platform', 'Own platform migrations',
+                (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+                2, 'local', 'req-platform', 'Own platform migrations',
                 'must_have', 0.8, 'platform migrations',
                 '{"kind":"matched","evidence_ids":["ev_platform"],"strength":"direct"}',
                 '{}', '{}',
@@ -439,11 +444,12 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
         conn.execute(
             """
             INSERT INTO job_requirement_fit_items (
-                job_url, score_version, tenant_id, requirement_id, requirement_text,
+                job_id, score_version, tenant_id, requirement_id, requirement_text,
                 tier, weight, job_evidence_span, fit_json, contribution_json,
                 tailoring_json, artifact_coverage_json, position
             ) VALUES (
-                ?, 2, 'local', 'req-kubernetes', 'Run Kubernetes clusters',
+                (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+                2, 'local', 'req-kubernetes', 'Run Kubernetes clusters',
                 'must_have', 0.7, 'Kubernetes clusters',
                 '{"kind":"missing","reason":"No Kubernetes profile evidence."}',
                 '{}', '{}',
@@ -676,10 +682,13 @@ def _insert_score(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+        INSERT INTO job_scores (job_id, version, tenant_id, fit_score,
                                 breakdown_json, keywords_json, scored_at,
                                 correction_json, criteria_json, trace_json)
-        VALUES (?, 1, 'local', ?, ?, ?, ?, ?, ?, ?)
+        VALUES (
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            1, 'local', ?, ?, ?, ?, ?, ?, ?
+        )
         """,
         (
             job_url,

@@ -271,11 +271,15 @@ def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:
     _seed_job(conn, url)
     conn.execute(
         """
-        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+        INSERT INTO job_scores (job_id, version, tenant_id, fit_score,
                                 breakdown_json, keywords_json, scored_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (
+            (SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?),
+            ?, ?, ?, ?, ?, ?
+        )
         """,
         (
+            "local",
             url,
             1,
             "local",
@@ -343,11 +347,15 @@ def test_score_evidence_schema_migration_backfills_existing_projection(
     _seed_job(conn, url)
     conn.execute(
         """
-        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+        INSERT INTO job_scores (job_id, version, tenant_id, fit_score,
                                 breakdown_json, keywords_json, scored_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (
+            (SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?),
+            ?, ?, ?, ?, ?, ?
+        )
         """,
         (
+            "local",
             url,
             1,
             "local",

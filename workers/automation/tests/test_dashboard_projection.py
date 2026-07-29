@@ -175,9 +175,12 @@ def test_score_distribution_groups_by_score(conn: sqlite3.Connection) -> None:
         _seed_job(conn, url)
         conn.execute(
             """
-            INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+            INSERT INTO job_scores (job_id, version, tenant_id, fit_score,
                                     breakdown_json, keywords_json, scored_at)
-            VALUES (?, 1, 'local', ?, ?, ?, ?)
+            VALUES (
+                (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+                1, 'local', ?, ?, ?, ?
+            )
             """,
             (url, score, json.dumps({}), json.dumps([]), utc_now()),
         )
@@ -381,9 +384,12 @@ def _apply_job(
     at = applied_at or utc_now()
     conn.execute(
         """
-        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+        INSERT INTO job_scores (job_id, version, tenant_id, fit_score,
                                 breakdown_json, keywords_json, scored_at)
-        VALUES (?, 1, 'local', ?, '{}', '[]', ?)
+        VALUES (
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            1, 'local', ?, '{}', '[]', ?
+        )
         """,
         (url, fit_score, utc_now()),
     )
@@ -410,9 +416,12 @@ def _mark_manual_applied(
     at = applied_at or utc_now()
     conn.execute(
         """
-        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+        INSERT INTO job_scores (job_id, version, tenant_id, fit_score,
                                 breakdown_json, keywords_json, scored_at)
-        VALUES (?, 1, 'local', ?, '{}', '[]', ?)
+        VALUES (
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            1, 'local', ?, '{}', '[]', ?
+        )
         """,
         (url, fit_score, utc_now()),
     )
@@ -435,9 +444,12 @@ def _mark_external_confirmed(
     at = applied_at or utc_now()
     conn.execute(
         """
-        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+        INSERT INTO job_scores (job_id, version, tenant_id, fit_score,
                                 breakdown_json, keywords_json, scored_at)
-        VALUES (?, 1, 'local', ?, '{}', '[]', ?)
+        VALUES (
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            1, 'local', ?, '{}', '[]', ?
+        )
         """,
         (url, fit_score, utc_now()),
     )
@@ -452,10 +464,13 @@ def _record_fit_band(conn: sqlite3.Connection, url: str, fit_score: int, fit_ban
     conn.execute(
         """
         INSERT INTO job_requirement_fit_reports (
-            job_url, score_version, tenant_id, employer_analysis_generation,
+            job_id, score_version, tenant_id, employer_analysis_generation,
             profile_snapshot_version, scoring_policy_version, formula_version,
             resolved_fit_score, fit_band, confidence, summary_json, created_at
-        ) VALUES (?, 1, 'local', 1, 1, 1, 'test', ?, ?, 'medium', '{}', ?)
+        ) VALUES (
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            1, 'local', 1, 1, 1, 'test', ?, ?, 'medium', '{}', ?
+        )
         """,
         (url, fit_score, fit_band, utc_now()),
     )

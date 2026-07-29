@@ -26,6 +26,8 @@ import {
   allRows,
   getRow,
   hasCompositeJobIdForeignKey,
+  jobReferenceColumn,
+  jobReferenceForUrl,
   tableExists,
   type SqliteDatabase,
   type SqliteValue,
@@ -353,12 +355,14 @@ export function correctScore(
   }
   ensureJobScoresTable(db);
   ensureScoreStalenessTable(db);
+  const scoreReferenceColumn = jobReferenceColumn(db, "job_scores");
+  const scoreReference = jobReferenceForUrl(db, "job_scores", jobUrl);
   const latest = getRow<Record<string, unknown>>(
     db,
     `SELECT * FROM job_scores
-     WHERE tenant_id = 'local' AND job_url = ?
+     WHERE tenant_id = 'local' AND ${scoreReferenceColumn} = ?
      ORDER BY version DESC LIMIT 1`,
-    [jobUrl],
+    [scoreReference],
   );
   if (!latest) {
     throw new InputError("Score correction requires an existing score.");
@@ -381,11 +385,12 @@ export function correctScore(
   const transaction = db.transaction(() => {
     db.prepare(
       `INSERT INTO job_scores (
-         job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+         ${scoreReferenceColumn}, version, tenant_id,
+         fit_score, breakdown_json, keywords_json,
          scored_at, correction_json, criteria_json, trace_json
        ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      jobUrl,
+      scoreReference,
       nextVersion,
       request.correctedScore,
       String(latest.breakdown_json ?? "{}"),
@@ -434,17 +439,34 @@ export function resetStaleScoresForRescore(
   ensureScoreStalenessTable(db);
   const limit = Math.max(0, Math.floor(request.limit ?? 0));
   const jobKeysFilter = [...new Set((request.jobKeys ?? []).map((key) => key.trim()).filter(Boolean))];
+  const staleReferenceColumn = jobReferenceColumn(db, "job_score_staleness");
+  const selectedReferences = jobKeysFilter
+    .map((key) => resolveJobUrl(db, key))
+    .filter((jobUrl): jobUrl is string => Boolean(jobUrl))
+    .map((jobUrl) => jobReferenceForUrl(db, "job_score_staleness", jobUrl));
   const selectedWhere = jobKeysFilter.length
-    ? ` AND job_url IN (${jobKeysFilter.map(() => "?").join(", ")})`
+    ? (
+      selectedReferences.length
+        ? ` AND stale.${staleReferenceColumn} IN (${selectedReferences.map(() => "?").join(", ")})`
+        : " AND 0 = 1"
+    )
     : "";
+  const identityJoin = staleReferenceColumn === "job_id"
+    ? "JOIN jobs ON jobs.tenant_id = stale.tenant_id AND jobs.job_id = stale.job_id"
+    : "";
+  const jobUrlSelect = staleReferenceColumn === "job_id"
+    ? "jobs.url"
+    : "stale.job_url";
   const rows = allRows<Record<string, unknown>>(
     db,
-    `SELECT job_url, stale_reason, old_policy_version, new_policy_version
-     FROM job_score_staleness
-     WHERE tenant_id = 'local' AND resolved = 0
+    `SELECT ${jobUrlSelect} AS job_url, stale.${staleReferenceColumn} AS job_reference,
+            stale.stale_reason, stale.old_policy_version, stale.new_policy_version
+     FROM job_score_staleness stale
+     ${identityJoin}
+     WHERE stale.tenant_id = 'local' AND stale.resolved = 0
        ${selectedWhere}
-     ORDER BY marked_at ASC${limit > 0 ? " LIMIT ?" : ""}`,
-    [...jobKeysFilter, ...(limit > 0 ? [limit] : [])],
+     ORDER BY stale.marked_at ASC${limit > 0 ? " LIMIT ?" : ""}`,
+    [...selectedReferences, ...(limit > 0 ? [limit] : [])],
   );
   const now = new Date().toISOString();
   const jobKeys = rows.map((row) => String(row.job_url ?? "")).filter(Boolean);
@@ -463,13 +485,13 @@ export function resetStaleScoresForRescore(
           SET resolved = 1,
               resolved_at = ?
         WHERE tenant_id = 'local'
-          AND job_url = ?
+          AND ${staleReferenceColumn} = ?
           AND stale_reason = ?
           AND old_policy_version = ?
           AND new_policy_version = ?`,
     ).run(
       now,
-      jobUrl,
+      String(row.job_reference ?? ""),
       String(row.stale_reason ?? ""),
       Number(row.old_policy_version ?? 0),
       Number(row.new_policy_version ?? 0),
@@ -806,8 +828,7 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
   deleteWhere(db, "job_stage_states", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_events", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_artifacts", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_scores", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_score_staleness", "job_url = ?", [jobUrl]);
+  deleteScoringJobReferences(db, jobId, jobUrl);
   deleteWhere(db, "job_materials_artifacts", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_materials", "job_url = ?", [jobUrl]);
   deleteEnrichmentJobReferences(db, jobId, jobUrl);
@@ -939,22 +960,60 @@ function deleteWhere(db: SqliteDatabase, tableName: string, whereSql: string, pa
   db.prepare(`DELETE FROM ${tableName} WHERE ${whereSql}`).run(...params);
 }
 
+function deleteScoringJobReferences(
+  db: SqliteDatabase,
+  jobId: string | undefined,
+  jobUrl: string,
+): void {
+  for (const tableName of [
+    "job_requirement_fit_items",
+    "job_requirement_fit_reports",
+    "job_score_staleness",
+    "job_scores",
+  ]) {
+    if (!tableExists(db, tableName)) continue;
+    const referenceColumn = jobReferenceColumn(db, tableName);
+    const reference = referenceColumn === "job_id" ? jobId : jobUrl;
+    if (!reference) continue;
+    deleteWhere(db, tableName, `${referenceColumn} = ?`, [reference]);
+  }
+}
+
 function ensureJobScoresTable(db: SqliteDatabase): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS job_scores (
-      job_url TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      fit_score INTEGER NOT NULL,
-      breakdown_json TEXT NOT NULL,
-      keywords_json TEXT NOT NULL,
-      scored_at TEXT NOT NULL,
-      correction_json TEXT,
-      criteria_json TEXT NOT NULL DEFAULT '{}',
-      trace_json TEXT NOT NULL DEFAULT '{}',
-      PRIMARY KEY (job_url, version)
-    )
-  `);
+  const schemaVersion = db.pragma("user_version", { simple: true }) as number;
+  db.exec(schemaVersion >= 12
+    ? `
+      CREATE TABLE IF NOT EXISTS job_scores (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK(version > 0),
+        fit_score INTEGER NOT NULL CHECK(fit_score BETWEEN 1 AND 10),
+        breakdown_json TEXT NOT NULL,
+        keywords_json TEXT NOT NULL,
+        scored_at TEXT NOT NULL,
+        correction_json TEXT,
+        criteria_json TEXT NOT NULL DEFAULT '{}',
+        trace_json TEXT NOT NULL DEFAULT '{}',
+        PRIMARY KEY (tenant_id, job_id, version),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      )
+    `
+    : `
+      CREATE TABLE IF NOT EXISTS job_scores (
+        job_url TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        fit_score INTEGER NOT NULL,
+        breakdown_json TEXT NOT NULL,
+        keywords_json TEXT NOT NULL,
+        scored_at TEXT NOT NULL,
+        correction_json TEXT,
+        criteria_json TEXT NOT NULL DEFAULT '{}',
+        trace_json TEXT NOT NULL DEFAULT '{}',
+        PRIMARY KEY (job_url, version)
+      )
+    `);
   const columns = columnNames(db, "job_scores");
   if (!columns.has("criteria_json")) {
     db.exec("ALTER TABLE job_scores ADD COLUMN criteria_json TEXT NOT NULL DEFAULT '{}'");
@@ -965,32 +1024,56 @@ function ensureJobScoresTable(db: SqliteDatabase): void {
 }
 
 function ensureScoreStalenessTable(db: SqliteDatabase): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS job_score_staleness (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      stale_reason TEXT NOT NULL,
-      old_policy_id TEXT NOT NULL DEFAULT '',
-      old_policy_version INTEGER NOT NULL,
-      new_policy_id TEXT NOT NULL DEFAULT '',
-      new_policy_version INTEGER NOT NULL,
-      marked_at TEXT NOT NULL,
-      resolved INTEGER NOT NULL DEFAULT 0,
-      resolved_at TEXT,
-      resolved_by_score_version INTEGER,
-      PRIMARY KEY (
-        tenant_id, job_url, stale_reason,
-        old_policy_version, new_policy_version
+  const schemaVersion = db.pragma("user_version", { simple: true }) as number;
+  db.exec(schemaVersion >= 12
+    ? `
+      CREATE TABLE IF NOT EXISTS job_score_staleness (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        stale_reason TEXT NOT NULL,
+        old_policy_id TEXT NOT NULL DEFAULT '',
+        old_policy_version INTEGER NOT NULL,
+        new_policy_id TEXT NOT NULL DEFAULT '',
+        new_policy_version INTEGER NOT NULL,
+        marked_at TEXT NOT NULL,
+        resolved INTEGER NOT NULL DEFAULT 0 CHECK(resolved IN (0, 1)),
+        resolved_at TEXT,
+        resolved_by_score_version INTEGER,
+        PRIMARY KEY (
+          tenant_id, job_id, stale_reason,
+          old_policy_version, new_policy_version
+        ),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
       )
-    )
-  `);
+    `
+    : `
+      CREATE TABLE IF NOT EXISTS job_score_staleness (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_url TEXT NOT NULL,
+        stale_reason TEXT NOT NULL,
+        old_policy_id TEXT NOT NULL DEFAULT '',
+        old_policy_version INTEGER NOT NULL,
+        new_policy_id TEXT NOT NULL DEFAULT '',
+        new_policy_version INTEGER NOT NULL,
+        marked_at TEXT NOT NULL,
+        resolved INTEGER NOT NULL DEFAULT 0,
+        resolved_at TEXT,
+        resolved_by_score_version INTEGER,
+        PRIMARY KEY (
+          tenant_id, job_url, stale_reason,
+          old_policy_version, new_policy_version
+        )
+      )
+    `);
+  const referenceColumn = jobReferenceColumn(db, "job_score_staleness");
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_job_score_staleness_unresolved
     ON job_score_staleness(tenant_id, resolved, marked_at DESC)
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_job_score_staleness_job
-    ON job_score_staleness(tenant_id, job_url, resolved)
+    ON job_score_staleness(tenant_id, ${referenceColumn}, resolved)
   `);
 }
 
@@ -1076,17 +1159,28 @@ function markComparableScoresStale(
   },
 ): void {
   ensureScoreStalenessTable(db);
+  const scoreReferenceColumn = jobReferenceColumn(db, "job_scores");
+  const staleReferenceColumn = jobReferenceColumn(db, "job_score_staleness");
+  const identityJoin = scoreReferenceColumn === "job_id"
+    ? "JOIN jobs ON jobs.tenant_id = s.tenant_id AND jobs.job_id = s.job_id"
+    : "";
+  const jobUrlSelect = scoreReferenceColumn === "job_id"
+    ? "jobs.url"
+    : "s.job_url";
   const latestRows = allRows<Record<string, unknown>>(
     db,
-    `SELECT s.job_url, s.trace_json
+    `SELECT ${jobUrlSelect} AS job_url, s.trace_json
      FROM job_scores s
+     ${identityJoin}
      INNER JOIN (
-       SELECT job_url, MAX(version) AS max_version
+       SELECT tenant_id, ${scoreReferenceColumn}, MAX(version) AS max_version
        FROM job_scores
        WHERE tenant_id = 'local'
-       GROUP BY job_url
+       GROUP BY tenant_id, ${scoreReferenceColumn}
      ) latest
-       ON latest.job_url = s.job_url AND latest.max_version = s.version
+       ON latest.tenant_id = s.tenant_id
+      AND latest.${scoreReferenceColumn} = s.${scoreReferenceColumn}
+      AND latest.max_version = s.version
      WHERE s.tenant_id = 'local'
        AND (s.correction_json IS NULL OR TRIM(s.correction_json) = '')`,
   );
@@ -1102,17 +1196,22 @@ function markComparableScoresStale(
     }
     const staleReason = "scoring_policy_changed";
     const oldPolicyId = String(trace.scoring_policy_id ?? "");
+    const staleReference = jobReferenceForUrl(
+      db,
+      "job_score_staleness",
+      jobUrl,
+    );
     const result = db
       .prepare(
         `INSERT OR IGNORE INTO job_score_staleness (
-           tenant_id, job_url, stale_reason,
+           tenant_id, ${staleReferenceColumn}, stale_reason,
            old_policy_id, old_policy_version,
            new_policy_id, new_policy_version,
            marked_at, resolved, resolved_at, resolved_by_score_version
          ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL)`,
       )
       .run(
-        jobUrl,
+        staleReference,
         staleReason,
         oldPolicyId,
         oldPolicyVersion,

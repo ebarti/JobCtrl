@@ -1719,10 +1719,13 @@ def _seed_score(
     conn.execute(
         """
         INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+            job_id, version, tenant_id, fit_score, breakdown_json, keywords_json,
             scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, 1, 'local', ?, ?, '[]', '2026-05-26T10:00:00+00:00',
-            ?, '{}', ?)
+        ) VALUES (
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            1, 'local', ?, ?, '[]', '2026-05-26T10:00:00+00:00',
+            ?, '{}', ?
+        )
         """,
         (
             url,

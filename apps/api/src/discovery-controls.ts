@@ -47,7 +47,14 @@ import {
   SOURCE_PRIORITY_VALUES,
   SOURCE_STATE_VALUES,
 } from "./contracts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import {
+  allRows,
+  getRow,
+  jobReferenceColumn,
+  tableExists,
+  type SqliteDatabase,
+  type SqliteValue,
+} from "./db.js";
 import { emptyPolitenessOutcomes, politenessOutcomesBySource } from "./source-politeness.js";
 import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 import { refreshProjections } from "./projections.js";
@@ -1484,13 +1491,17 @@ function lowScoreJobRows(db: SqliteDatabase): LowScoreJobRow[] {
       : "''";
   const siteExpr = columns.has("site") ? "COALESCE(j.site, '')" : "''";
   const strategyExpr = columns.has("strategy") ? "COALESCE(j.strategy, '')" : "''";
+  const scoreReference = jobReferenceColumn(db, "job_scores");
+  const jobJoin = scoreReference === "job_id"
+    ? "j.tenant_id = s.tenant_id AND j.job_id = s.job_id"
+    : "j.tenant_id = s.tenant_id AND j.url = s.job_url";
   return allRows<LowScoreJobRow>(
     db,
     `WITH latest_scores AS (
-       SELECT job_url, MAX(version) AS version
+       SELECT tenant_id, ${scoreReference}, MAX(version) AS version
        FROM job_scores
        WHERE tenant_id = ?
-       GROUP BY job_url
+       GROUP BY tenant_id, ${scoreReference}
      )
      SELECT j.url AS job_key,
             ${titleExpr} AS title,
@@ -1501,8 +1512,11 @@ function lowScoreJobRows(db: SqliteDatabase): LowScoreJobRow[] {
             s.breakdown_json,
             s.scored_at
      FROM latest_scores latest
-     JOIN job_scores s ON s.job_url = latest.job_url AND s.version = latest.version
-     JOIN jobs j ON j.url = s.job_url
+     JOIN job_scores s
+       ON s.tenant_id = latest.tenant_id
+      AND s.${scoreReference} = latest.${scoreReference}
+      AND s.version = latest.version
+     JOIN jobs j ON ${jobJoin}
      WHERE s.tenant_id = ?
        AND s.fit_score <= 2
      ORDER BY s.scored_at DESC

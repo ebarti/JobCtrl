@@ -607,9 +607,12 @@ def _seed_blocked_latest_score(conn: sqlite3.Connection, url: str, fit_score: in
     conn.execute(
         """
         INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json,
+            job_id, version, tenant_id, fit_score, breakdown_json,
             keywords_json, scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, 1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}')
+        ) VALUES (
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}'
+        )
         """,
         (
             url,

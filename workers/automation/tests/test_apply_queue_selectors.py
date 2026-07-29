@@ -152,9 +152,12 @@ def _insert_blocked_score(conn, url: str, *, fit_score: int = 9) -> None:
     conn.execute(
         """
         INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json,
+            job_id, version, tenant_id, fit_score, breakdown_json,
             keywords_json, scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, 1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}')
+        ) VALUES (
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}'
+        )
         """,
         (
             url,
@@ -180,9 +183,12 @@ def _insert_allowed_score(conn, url: str, *, fit_score: int = 9) -> None:
     conn.execute(
         """
         INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json,
+            job_id, version, tenant_id, fit_score, breakdown_json,
             keywords_json, scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, 1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}')
+        ) VALUES (
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}'
+        )
         """,
         (
             url,
@@ -208,14 +214,19 @@ def _insert_active_score_staleness_marker(conn, url: str) -> None:
     conn.execute(
         """
         INSERT INTO job_score_staleness (
-            tenant_id, job_url, stale_reason,
+            tenant_id, job_id, stale_reason,
             old_policy_id, old_policy_version,
             new_policy_id, new_policy_version,
             marked_at, resolved, resolved_at, resolved_by_score_version
-        ) VALUES (?, ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
-                  'local:scoring-policy-v2', 2, '2026-05-19T00:00:00+00:00', 0, NULL, NULL)
+        ) VALUES (
+            ?,
+            (SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?),
+            'scoring_policy_changed', 'local:scoring-policy-v1', 1,
+            'local:scoring-policy-v2', 2, '2026-05-19T00:00:00+00:00',
+            0, NULL, NULL
+        )
         """,
-        (str(LOCAL_TENANT), url),
+        (str(LOCAL_TENANT), str(LOCAL_TENANT), url),
     )
     conn.commit()
 

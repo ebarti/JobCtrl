@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.operations.projections import (
@@ -1805,24 +1806,34 @@ class ProjectionBuilder:
             self._conn, "job_requirement_fit_items"
         ):
             return
-        job_metadata = _job_metadata_join_sql(self._conn, "items.job_url")
-        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "items.job_url")
+        job_metadata = _job_metadata_join_sql(
+            self._conn,
+            "score_jobs.url",
+        )
+        lifecycle = _job_lifecycle_exclusion_sql(
+            self._conn,
+            "score_jobs.url",
+        )
         rows = self._conn.execute(
             f"""
-            SELECT items.job_url, items.score_version, items.requirement_id,
+            SELECT score_jobs.url AS job_url, items.score_version,
+                   items.requirement_id,
                    items.requirement_text, items.tier, items.weight,
                    items.fit_json, items.artifact_coverage_json,
                    {job_metadata['select_sql']}
               FROM job_requirement_fit_items AS items
+              JOIN jobs AS score_jobs
+                ON score_jobs.tenant_id = items.tenant_id
+               AND score_jobs.job_id = items.job_id
               {job_metadata['join_sql']}{lifecycle['join_sql']}
              WHERE items.tenant_id = ?{lifecycle['where_sql']}
                AND items.score_version = (
                  SELECT MAX(report.score_version)
                    FROM job_requirement_fit_reports AS report
                   WHERE report.tenant_id = items.tenant_id
-                    AND report.job_url = items.job_url
+                    AND report.job_id = items.job_id
                )
-             ORDER BY items.job_url, items.position, items.requirement_id
+             ORDER BY score_jobs.url, items.position, items.requirement_id
             """,
             (str(self._tenant_id),),
         ).fetchall()
@@ -2154,11 +2165,15 @@ class ProjectionBuilder:
                        s.keywords_json, s.criteria_json, s.trace_json,
                        s.correction_json
                 FROM job_scores s
-                WHERE s.job_url = ?
+                JOIN jobs j
+                  ON j.tenant_id = s.tenant_id
+                 AND j.job_id = s.job_id
+                WHERE j.tenant_id = ?
+                  AND j.url = ?
                 ORDER BY s.version DESC
                 LIMIT 1
                 """,
-                (job_url,),
+                (str(self._tenant_id), job_url),
             ).fetchone()
         except sqlite3.OperationalError:
             return {}
@@ -2422,14 +2437,22 @@ class ProjectionBuilder:
         from jobctrl.infrastructure.scoring import SqliteRequirementFitReportRepository
 
         try:
-            record = SqliteRequirementFitReportRepository(self._conn).load(
-                self._tenant_id, JobId(job_url)
+            record = SqliteRequirementFitReportRepository(
+                self._conn
+            ).load_by_posting_url(
+                self._tenant_id,
+                PostingUrl(job_url),
             )
         except sqlite3.OperationalError:
             return None
         if record is None:
             return None
-        return json.dumps(record.to_read_model(), ensure_ascii=False)
+        read_model = record.to_read_model()
+        # Operations projections remain URL-keyed until their dedicated
+        # identity cutover; keep that compatibility projection explicit while
+        # the scoring authority itself is keyed by stable JobId.
+        read_model["jobKey"] = job_url
+        return json.dumps(read_model, ensure_ascii=False)
 
     def _load_interview_prep(self, job_url: str) -> str | None:
         """Project the latest accepted interview-prep read shape.
@@ -2733,7 +2756,12 @@ class ProjectionBuilder:
                 """
                 SELECT p.job_id
                 FROM job_list_projections p
-                JOIN job_scores s ON s.job_url = p.job_id
+                JOIN jobs j
+                  ON j.tenant_id = p.tenant_id
+                 AND j.url = p.job_id
+                JOIN job_scores s
+                  ON s.tenant_id = j.tenant_id
+                 AND s.job_id = j.job_id
                 WHERE p.tenant_id = ?
                   AND p.score_criteria_json IS NULL
                 """,

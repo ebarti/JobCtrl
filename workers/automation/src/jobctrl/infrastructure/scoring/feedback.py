@@ -79,11 +79,29 @@ def rank_jobs_with_feedback(
 def _correction_signals(conn: sqlite3.Connection) -> list[ScoringFeedbackSignal]:
     if not _table_exists(conn, "job_scores"):
         return []
+    columns = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(job_scores)").fetchall()
+    }
+    stable_references = "job_id" in columns
+    identity_select = "jobs.url" if stable_references else "score.job_url"
+    identity_join = (
+        """
+        JOIN jobs
+          ON jobs.tenant_id = score.tenant_id
+         AND jobs.job_id = score.job_id
+        """
+        if stable_references
+        else ""
+    )
     rows = conn.execute(
-        """SELECT job_url, fit_score, correction_json, trace_json
-           FROM job_scores
-           WHERE correction_json IS NOT NULL AND correction_json != ''
-           ORDER BY job_url, version"""
+        f"""SELECT {identity_select} AS job_url, score.fit_score,
+                  score.correction_json, score.trace_json
+           FROM job_scores score
+           {identity_join}
+           WHERE score.correction_json IS NOT NULL
+             AND score.correction_json != ''
+           ORDER BY {identity_select}, score.version"""
     ).fetchall()
     signals: list[ScoringFeedbackSignal] = []
     for row in rows:

@@ -49,7 +49,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v11 (enrichment references): JobEnrichment and PostingSnapshotSet authorities
 # reference ``(tenant_id, job_id)``; embedded snapshot aggregate identity and
 # duplicate-candidate references are upcast in the same transaction.
-SCHEMA_VERSION = 11
+# v12 (scoring references): score history, staleness markers, and requirement-fit
+# authorities reference ``(tenant_id, job_id)`` with dependent score versions
+# remapped atomically when multiple historical URL aliases collapse.
+SCHEMA_VERSION = 12
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -191,6 +194,7 @@ def _schema_migrations() -> tuple[
         (9, ensure_execution_search_references_v9),
         (10, ensure_preparation_references_v10),
         (11, ensure_enrichment_snapshot_references_v11),
+        (12, ensure_scoring_references_v12),
     )
 
 
@@ -2002,35 +2006,43 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     if conn is None:
         conn = get_connection()
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS job_scores (
-            job_url             TEXT NOT NULL,
-            version             INTEGER NOT NULL,
-            tenant_id           TEXT NOT NULL DEFAULT 'local',
-            fit_score           INTEGER NOT NULL CHECK(fit_score BETWEEN 1 AND 10),
-            breakdown_json      TEXT NOT NULL,
-            keywords_json       TEXT NOT NULL,
-            scored_at           TEXT NOT NULL,
-            correction_json     TEXT,
-            criteria_json       TEXT NOT NULL DEFAULT '{}',
-            trace_json          TEXT NOT NULL DEFAULT '{}',
-            PRIMARY KEY (job_url, version),
-            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
-        )
-    """)
-    existing_score_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_scores)").fetchall()}
-    if "criteria_json" not in existing_score_cols:
-        conn.execute("ALTER TABLE job_scores ADD COLUMN criteria_json TEXT NOT NULL DEFAULT '{}'")
-    if "trace_json" not in existing_score_cols:
-        conn.execute("ALTER TABLE job_scores ADD COLUMN trace_json TEXT NOT NULL DEFAULT '{}'")
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_job_scores_tenant_score
-        ON job_scores(tenant_id, fit_score DESC, scored_at DESC)
-    """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_job_scores_job_version
-        ON job_scores(job_url, version DESC)
-    """)
+    current_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if current_version >= _SCORING_REFERENCE_SCHEMA_VERSION:
+        _create_job_scores_v12(conn)
+    else:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS job_scores (
+                job_url             TEXT NOT NULL,
+                version             INTEGER NOT NULL,
+                tenant_id           TEXT NOT NULL DEFAULT 'local',
+                fit_score           INTEGER NOT NULL CHECK(fit_score BETWEEN 1 AND 10),
+                breakdown_json      TEXT NOT NULL,
+                keywords_json       TEXT NOT NULL,
+                scored_at           TEXT NOT NULL,
+                correction_json     TEXT,
+                criteria_json       TEXT NOT NULL DEFAULT '{}',
+                trace_json          TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY (job_url, version),
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            )
+        """)
+        existing_score_cols = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(job_scores)"
+            ).fetchall()
+        }
+        if "criteria_json" not in existing_score_cols:
+            conn.execute(
+                "ALTER TABLE job_scores ADD COLUMN "
+                "criteria_json TEXT NOT NULL DEFAULT '{}'"
+            )
+        if "trace_json" not in existing_score_cols:
+            conn.execute(
+                "ALTER TABLE job_scores ADD COLUMN "
+                "trace_json TEXT NOT NULL DEFAULT '{}'"
+            )
+    _create_job_score_indexes(conn)
     ensure_scoring_policy_tables(conn)
     ensure_score_staleness_tables(conn)
     ensure_requirement_fit_tables(conn)
@@ -2039,9 +2051,16 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     # job_scores has no rows AND there are jobs with a legacy fit_score.
     backfill_count = conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0]
     if backfill_count == 0:
+        jobs_columns = _table_columns(conn, "jobs")
+        tenant_select = (
+            "tenant_id" if "tenant_id" in jobs_columns else "'local'"
+        )
+        job_id_select = "job_id" if "job_id" in jobs_columns else "NULL"
         legacy_rows = conn.execute(
-            """
-            SELECT url, fit_score, score_reasoning, scored_at
+            f"""
+            SELECT url, fit_score, score_reasoning, scored_at,
+                   {tenant_select} AS tenant_id,
+                   {job_id_select} AS job_id
             FROM jobs
             WHERE fit_score IS NOT NULL
               AND fit_score BETWEEN 1 AND 10
@@ -2054,6 +2073,16 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
                 fit = row["fit_score"] if isinstance(row, sqlite3.Row) else row[1]
                 reasoning = row["score_reasoning"] if isinstance(row, sqlite3.Row) else row[2]
                 scored_at = row["scored_at"] if isinstance(row, sqlite3.Row) else row[3]
+                tenant_id = (
+                    str(row["tenant_id"] or "local")
+                    if isinstance(row, sqlite3.Row)
+                    else str(row[4] or "local")
+                )
+                stable_job_id = (
+                    str(row["job_id"] or "")
+                    if isinstance(row, sqlite3.Row)
+                    else str(row[5] or "")
+                )
                 breakdown_json = json.dumps(
                     {
                         "technical_fit": 0,
@@ -2068,16 +2097,29 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
                 # non-empty" invariant (round-1 review M1) intact for
                 # backfilled rows that pre-date keyword extraction.
                 keywords_json = json.dumps(["legacy"])
+                reference_column = (
+                    "job_id"
+                    if "job_id" in _table_columns(conn, "job_scores")
+                    else "job_url"
+                )
+                job_reference = (
+                    stable_job_id if reference_column == "job_id" else str(url)
+                )
+                if not job_reference:
+                    raise RuntimeError(
+                        "score backfill requires stable JobId on schema v12"
+                    )
                 conn.execute(
-                    """
+                    f"""
                     INSERT OR IGNORE INTO job_scores (
-                        job_url, version, tenant_id, fit_score,
+                        {reference_column}, version, tenant_id, fit_score,
                         breakdown_json, keywords_json, scored_at, correction_json,
                         criteria_json, trace_json
-                    ) VALUES (?, 1, 'local', ?, ?, ?, ?, NULL, ?, ?)
+                    ) VALUES (?, 1, ?, ?, ?, ?, ?, NULL, ?, ?)
                     """,
                     (
-                        url,
+                        job_reference,
+                        tenant_id,
                         int(fit),
                         breakdown_json,
                         keywords_json,
@@ -2117,57 +2159,62 @@ def ensure_requirement_fit_tables(conn: sqlite3.Connection | None = None) -> lis
     if conn is None:
         conn = get_connection()
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS job_requirement_fit_reports (
-            job_url                       TEXT NOT NULL,
-            score_version                 INTEGER NOT NULL,
-            tenant_id                     TEXT NOT NULL DEFAULT 'local',
-            employer_analysis_generation  INTEGER NOT NULL,
-            profile_snapshot_version      INTEGER NOT NULL,
-            scoring_policy_version        INTEGER NOT NULL,
-            formula_version               TEXT NOT NULL,
-            resolved_fit_score            INTEGER CHECK(
-                resolved_fit_score IS NULL
-                OR resolved_fit_score BETWEEN 1 AND 10
-            ),
-            fit_band                      TEXT NOT NULL,
-            confidence                    TEXT NOT NULL,
-            summary_json                  TEXT NOT NULL DEFAULT '{}',
-            created_at                    TEXT NOT NULL,
-            PRIMARY KEY (job_url, score_version, tenant_id),
-            FOREIGN KEY (job_url, score_version)
-                REFERENCES job_scores(job_url, version) ON DELETE CASCADE
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS job_requirement_fit_items (
-            job_url                 TEXT NOT NULL,
-            score_version           INTEGER NOT NULL,
-            tenant_id               TEXT NOT NULL DEFAULT 'local',
-            requirement_id          TEXT NOT NULL,
-            requirement_text        TEXT NOT NULL,
-            tier                    TEXT NOT NULL CHECK(tier IN ('must_have', 'nice_to_have')),
-            weight                  REAL NOT NULL CHECK(weight >= 0 AND weight <= 1),
-            job_evidence_span       TEXT NOT NULL,
-            fit_json                TEXT NOT NULL,
-            contribution_json       TEXT NOT NULL,
-            tailoring_json          TEXT NOT NULL,
-            artifact_coverage_json  TEXT,
-            position                INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (job_url, score_version, tenant_id, requirement_id),
-            FOREIGN KEY (job_url, score_version, tenant_id)
-                REFERENCES job_requirement_fit_reports(job_url, score_version, tenant_id)
-                ON DELETE CASCADE
-        )
-    """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_requirement_fit_reports_tenant_job
-        ON job_requirement_fit_reports(tenant_id, job_url, score_version DESC)
-    """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_requirement_fit_items_requirement
-        ON job_requirement_fit_items(tenant_id, requirement_id)
-    """)
+    current_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if current_version >= _SCORING_REFERENCE_SCHEMA_VERSION:
+        _create_requirement_fit_tables_v12(conn)
+    else:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS job_requirement_fit_reports (
+                job_url                       TEXT NOT NULL,
+                score_version                 INTEGER NOT NULL,
+                tenant_id                     TEXT NOT NULL DEFAULT 'local',
+                employer_analysis_generation  INTEGER NOT NULL,
+                profile_snapshot_version      INTEGER NOT NULL,
+                scoring_policy_version        INTEGER NOT NULL,
+                formula_version               TEXT NOT NULL,
+                resolved_fit_score            INTEGER CHECK(
+                    resolved_fit_score IS NULL
+                    OR resolved_fit_score BETWEEN 1 AND 10
+                ),
+                fit_band                      TEXT NOT NULL,
+                confidence                    TEXT NOT NULL,
+                summary_json                  TEXT NOT NULL DEFAULT '{}',
+                created_at                    TEXT NOT NULL,
+                PRIMARY KEY (job_url, score_version, tenant_id),
+                FOREIGN KEY (job_url, score_version)
+                    REFERENCES job_scores(job_url, version) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS job_requirement_fit_items (
+                job_url                 TEXT NOT NULL,
+                score_version           INTEGER NOT NULL,
+                tenant_id               TEXT NOT NULL DEFAULT 'local',
+                requirement_id          TEXT NOT NULL,
+                requirement_text        TEXT NOT NULL,
+                tier                    TEXT NOT NULL CHECK(
+                    tier IN ('must_have', 'nice_to_have')
+                ),
+                weight                  REAL NOT NULL CHECK(
+                    weight >= 0 AND weight <= 1
+                ),
+                job_evidence_span       TEXT NOT NULL,
+                fit_json                TEXT NOT NULL,
+                contribution_json       TEXT NOT NULL,
+                tailoring_json          TEXT NOT NULL,
+                artifact_coverage_json  TEXT,
+                position                INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (
+                    job_url, score_version, tenant_id, requirement_id
+                ),
+                FOREIGN KEY (job_url, score_version, tenant_id)
+                    REFERENCES job_requirement_fit_reports(
+                        job_url, score_version, tenant_id
+                    )
+                    ON DELETE CASCADE
+            )
+        """)
+    _create_requirement_fit_indexes(conn)
     conn.commit()
     return ["job_requirement_fit_reports", "job_requirement_fit_items"]
 
@@ -2209,40 +2256,33 @@ def ensure_score_staleness_tables(conn: sqlite3.Connection | None = None) -> lis
     if conn is None:
         conn = get_connection()
 
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS job_score_staleness (
-            tenant_id                 TEXT NOT NULL DEFAULT 'local',
-            job_url                   TEXT NOT NULL,
-            stale_reason              TEXT NOT NULL,
-            old_policy_id             TEXT NOT NULL DEFAULT '',
-            old_policy_version        INTEGER NOT NULL,
-            new_policy_id             TEXT NOT NULL DEFAULT '',
-            new_policy_version        INTEGER NOT NULL,
-            marked_at                 TEXT NOT NULL,
-            resolved                  INTEGER NOT NULL DEFAULT 0,
-            resolved_at               TEXT,
-            resolved_by_score_version INTEGER,
-            PRIMARY KEY (
-                tenant_id, job_url, stale_reason,
-                old_policy_version, new_policy_version
-            ),
-            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+    current_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if current_version >= _SCORING_REFERENCE_SCHEMA_VERSION:
+        _create_score_staleness_v12(conn)
+    else:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS job_score_staleness (
+                tenant_id                 TEXT NOT NULL DEFAULT 'local',
+                job_url                   TEXT NOT NULL,
+                stale_reason              TEXT NOT NULL,
+                old_policy_id             TEXT NOT NULL DEFAULT '',
+                old_policy_version        INTEGER NOT NULL,
+                new_policy_id             TEXT NOT NULL DEFAULT '',
+                new_policy_version        INTEGER NOT NULL,
+                marked_at                 TEXT NOT NULL,
+                resolved                  INTEGER NOT NULL DEFAULT 0,
+                resolved_at               TEXT,
+                resolved_by_score_version INTEGER,
+                PRIMARY KEY (
+                    tenant_id, job_url, stale_reason,
+                    old_policy_version, new_policy_version
+                ),
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            )
+            """
         )
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_job_score_staleness_unresolved
-        ON job_score_staleness(tenant_id, resolved, marked_at DESC)
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_job_score_staleness_job
-        ON job_score_staleness(tenant_id, job_url, resolved)
-        """
-    )
+    _create_score_staleness_indexes(conn)
     conn.commit()
     return ["job_score_staleness"]
 
@@ -4219,6 +4259,13 @@ def _reassign_discovery_identity_references(
         )
     if _has_enrichment_snapshot_reference_schema_v11(conn):
         _reassign_enrichment_snapshot_references_v11(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+    if _has_scoring_reference_schema_v12(conn):
+        _reassign_scoring_references_v12(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
@@ -6491,6 +6538,1355 @@ def _verify_enrichment_snapshot_references_v11(
         )
 
 
+_SCORING_REFERENCE_SCHEMA_VERSION = 12
+_SCORING_REFERENCE_TABLES = (
+    "job_scores",
+    "job_score_staleness",
+    "job_requirement_fit_reports",
+    "job_requirement_fit_items",
+)
+
+
+def _create_job_scores_v12(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str = "job_scores",
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            tenant_id        TEXT NOT NULL DEFAULT 'local',
+            job_id           TEXT NOT NULL,
+            version          INTEGER NOT NULL CHECK(version > 0),
+            fit_score        INTEGER NOT NULL CHECK(fit_score BETWEEN 1 AND 10),
+            breakdown_json   TEXT NOT NULL,
+            keywords_json    TEXT NOT NULL,
+            scored_at        TEXT NOT NULL,
+            correction_json  TEXT,
+            criteria_json    TEXT NOT NULL DEFAULT '{{}}',
+            trace_json       TEXT NOT NULL DEFAULT '{{}}',
+            PRIMARY KEY (tenant_id, job_id, version),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_score_staleness_v12(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str = "job_score_staleness",
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            tenant_id                 TEXT NOT NULL DEFAULT 'local',
+            job_id                   TEXT NOT NULL,
+            stale_reason              TEXT NOT NULL,
+            old_policy_id             TEXT NOT NULL DEFAULT '',
+            old_policy_version        INTEGER NOT NULL,
+            new_policy_id             TEXT NOT NULL DEFAULT '',
+            new_policy_version        INTEGER NOT NULL,
+            marked_at                 TEXT NOT NULL,
+            resolved                  INTEGER NOT NULL DEFAULT 0
+                CHECK(resolved IN (0, 1)),
+            resolved_at               TEXT,
+            resolved_by_score_version INTEGER,
+            PRIMARY KEY (
+                tenant_id, job_id, stale_reason,
+                old_policy_version, new_policy_version
+            ),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_requirement_fit_tables_v12(
+    conn: sqlite3.Connection,
+    *,
+    reports_table_name: str = "job_requirement_fit_reports",
+    items_table_name: str = "job_requirement_fit_items",
+    scores_table_name: str = "job_scores",
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {reports_table_name} (
+            tenant_id                     TEXT NOT NULL DEFAULT 'local',
+            job_id                        TEXT NOT NULL,
+            score_version                 INTEGER NOT NULL,
+            employer_analysis_generation  INTEGER NOT NULL,
+            profile_snapshot_version      INTEGER NOT NULL,
+            scoring_policy_version        INTEGER NOT NULL,
+            formula_version               TEXT NOT NULL,
+            resolved_fit_score            INTEGER CHECK(
+                resolved_fit_score IS NULL
+                OR resolved_fit_score BETWEEN 1 AND 10
+            ),
+            fit_band                      TEXT NOT NULL,
+            confidence                    TEXT NOT NULL,
+            summary_json                  TEXT NOT NULL DEFAULT '{{}}',
+            created_at                    TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, job_id, score_version),
+            FOREIGN KEY (tenant_id, job_id, score_version)
+                REFERENCES {scores_table_name}(
+                    tenant_id, job_id, version
+                ) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {items_table_name} (
+            tenant_id              TEXT NOT NULL DEFAULT 'local',
+            job_id                 TEXT NOT NULL,
+            score_version          INTEGER NOT NULL,
+            requirement_id         TEXT NOT NULL,
+            requirement_text       TEXT NOT NULL,
+            tier                   TEXT NOT NULL CHECK(
+                tier IN ('must_have', 'nice_to_have')
+            ),
+            weight                 REAL NOT NULL CHECK(
+                weight >= 0 AND weight <= 1
+            ),
+            job_evidence_span       TEXT NOT NULL,
+            fit_json                TEXT NOT NULL,
+            contribution_json       TEXT NOT NULL,
+            tailoring_json          TEXT NOT NULL,
+            artifact_coverage_json  TEXT,
+            position                INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (
+                tenant_id, job_id, score_version, requirement_id
+            ),
+            FOREIGN KEY (tenant_id, job_id, score_version)
+                REFERENCES {reports_table_name}(
+                    tenant_id, job_id, score_version
+                ) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_job_score_indexes(conn: sqlite3.Connection) -> None:
+    reference = (
+        "job_id" if "job_id" in _table_columns(conn, "job_scores") else "job_url"
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_scores_tenant_score
+        ON job_scores(tenant_id, fit_score DESC, scored_at DESC)
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_job_scores_job_version
+        ON job_scores(tenant_id, {reference}, version DESC)
+        """
+    )
+
+
+def _create_score_staleness_indexes(conn: sqlite3.Connection) -> None:
+    reference = (
+        "job_id"
+        if "job_id" in _table_columns(conn, "job_score_staleness")
+        else "job_url"
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_score_staleness_unresolved
+        ON job_score_staleness(tenant_id, resolved, marked_at DESC)
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_job_score_staleness_job
+        ON job_score_staleness(tenant_id, {reference}, resolved)
+        """
+    )
+
+
+def _create_requirement_fit_indexes(conn: sqlite3.Connection) -> None:
+    reference = (
+        "job_id"
+        if "job_id" in _table_columns(conn, "job_requirement_fit_reports")
+        else "job_url"
+    )
+    conn.execute(
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_requirement_fit_reports_tenant_job
+        ON job_requirement_fit_reports(
+            tenant_id, {reference}, score_version DESC
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_requirement_fit_items_requirement
+        ON job_requirement_fit_items(tenant_id, requirement_id)
+        """
+    )
+
+
+def _has_composite_foreign_key(
+    conn: sqlite3.Connection,
+    table: str,
+    referenced_table: str,
+    columns: set[tuple[str, str]],
+    *,
+    on_delete: str,
+) -> bool:
+    groups: dict[int, set[tuple[str, str]]] = {}
+    deletes: dict[int, str] = {}
+    for row in conn.execute(f'PRAGMA foreign_key_list("{table}")').fetchall():
+        if str(row[2]) != referenced_table:
+            continue
+        foreign_key_id = int(row[0])
+        groups.setdefault(foreign_key_id, set()).add((str(row[3]), str(row[4])))
+        deletes[foreign_key_id] = str(row[6]).upper()
+    return any(
+        group == columns and deletes.get(foreign_key_id) == on_delete.upper()
+        for foreign_key_id, group in groups.items()
+    )
+
+
+def _has_scoring_reference_schema_v12(conn: sqlite3.Connection) -> bool:
+    return (
+        "job_id" in _table_columns(conn, "job_scores")
+        and "job_url" not in _table_columns(conn, "job_scores")
+        and _primary_key_columns(conn, "job_scores")
+        == ("tenant_id", "job_id", "version")
+        and _has_composite_job_id_foreign_key(conn, "job_scores", "job_id")
+        and _has_index(
+            conn,
+            "job_scores",
+            "idx_job_scores_tenant_score",
+            ("tenant_id", "fit_score", "scored_at"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_scores",
+            "idx_job_scores_job_version",
+            ("tenant_id", "job_id", "version"),
+            unique=False,
+        )
+        and "job_id" in _table_columns(conn, "job_score_staleness")
+        and "job_url" not in _table_columns(conn, "job_score_staleness")
+        and _primary_key_columns(conn, "job_score_staleness")
+        == (
+            "tenant_id",
+            "job_id",
+            "stale_reason",
+            "old_policy_version",
+            "new_policy_version",
+        )
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "job_score_staleness",
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            "job_score_staleness",
+            "idx_job_score_staleness_unresolved",
+            ("tenant_id", "resolved", "marked_at"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_score_staleness",
+            "idx_job_score_staleness_job",
+            ("tenant_id", "job_id", "resolved"),
+            unique=False,
+        )
+        and "job_id" in _table_columns(
+            conn,
+            "job_requirement_fit_reports",
+        )
+        and "job_url" not in _table_columns(
+            conn,
+            "job_requirement_fit_reports",
+        )
+        and _primary_key_columns(conn, "job_requirement_fit_reports")
+        == ("tenant_id", "job_id", "score_version")
+        and _has_composite_foreign_key(
+            conn,
+            "job_requirement_fit_reports",
+            "job_scores",
+            {
+                ("tenant_id", "tenant_id"),
+                ("job_id", "job_id"),
+                ("score_version", "version"),
+            },
+            on_delete="CASCADE",
+        )
+        and _has_index(
+            conn,
+            "job_requirement_fit_reports",
+            "idx_requirement_fit_reports_tenant_job",
+            ("tenant_id", "job_id", "score_version"),
+            unique=False,
+        )
+        and "job_id" in _table_columns(
+            conn,
+            "job_requirement_fit_items",
+        )
+        and "job_url" not in _table_columns(
+            conn,
+            "job_requirement_fit_items",
+        )
+        and _primary_key_columns(conn, "job_requirement_fit_items")
+        == ("tenant_id", "job_id", "score_version", "requirement_id")
+        and _has_composite_foreign_key(
+            conn,
+            "job_requirement_fit_items",
+            "job_requirement_fit_reports",
+            {
+                ("tenant_id", "tenant_id"),
+                ("job_id", "job_id"),
+                ("score_version", "score_version"),
+            },
+            on_delete="CASCADE",
+        )
+        and _has_index(
+            conn,
+            "job_requirement_fit_items",
+            "idx_requirement_fit_items_requirement",
+            ("tenant_id", "requirement_id"),
+            unique=False,
+        )
+    )
+
+
+def ensure_scoring_references_v12(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move scoring history and its dependants to stable JobId references.
+
+    Multiple historical posting URLs may resolve to one JobId. Their score
+    histories are therefore ordered deterministically and renumbered together;
+    requirement-fit reports, items, and resolved staleness markers are remapped
+    through the same version map before any legacy table is replaced.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _SCORING_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _ENRICHMENT_SNAPSHOT_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "scoring reference migration requires enrichment/snapshot "
+            "schema v11"
+        )
+
+    conn.execute("SAVEPOINT scoring_references_v12")
+    try:
+        _verify_scoring_prerequisites_v12(conn)
+        before_counts = {
+            table: int(
+                conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            )
+            for table in _SCORING_REFERENCE_TABLES
+        }
+        expected_counts = dict(before_counts)
+
+        if not _has_scoring_reference_schema_v12(conn):
+            score_reference = _legacy_or_stable_reference_column(
+                conn,
+                "job_scores",
+                stable="job_id",
+                legacy="job_url",
+            )
+            staleness_reference = _legacy_or_stable_reference_column(
+                conn,
+                "job_score_staleness",
+                stable="job_id",
+                legacy="job_url",
+            )
+            report_reference = _legacy_or_stable_reference_column(
+                conn,
+                "job_requirement_fit_reports",
+                stable="job_id",
+                legacy="job_url",
+            )
+            item_reference = _legacy_or_stable_reference_column(
+                conn,
+                "job_requirement_fit_items",
+                stable="job_id",
+                legacy="job_url",
+            )
+            reference_columns = {
+                "job_scores": score_reference,
+                "job_score_staleness": staleness_reference,
+                "job_requirement_fit_reports": report_reference,
+                "job_requirement_fit_items": item_reference,
+            }
+            for table, reference_column in reference_columns.items():
+                unresolved = conn.execute(
+                    f"""
+                    SELECT source.{reference_column}
+                    FROM {table} AS source
+                    WHERE {
+                        _resolved_job_id_sql(
+                            "source",
+                            reference_column,
+                            legacy_url=reference_column == "job_url",
+                        )
+                    } IS NULL
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if unresolved is not None:
+                    raise RuntimeError(
+                        "scoring reference migration could not resolve "
+                        f"{table}.{reference_column}={unresolved[0]!r}"
+                    )
+
+            (
+                score_rows,
+                version_map,
+            ) = _canonical_score_rows_v12(
+                conn,
+                reference_column=score_reference,
+            )
+            report_rows = _remapped_requirement_report_rows_v12(
+                conn,
+                reference_column=report_reference,
+                version_map=version_map,
+            )
+            item_rows = _remapped_requirement_item_rows_v12(
+                conn,
+                reference_column=item_reference,
+                version_map=version_map,
+            )
+            staleness_rows = _canonical_staleness_rows_v12(
+                conn,
+                reference_column=staleness_reference,
+                version_map=version_map,
+            )
+            expected_counts["job_score_staleness"] = len(staleness_rows)
+
+            for table in (
+                "job_requirement_fit_items_v12",
+                "job_requirement_fit_reports_v12",
+                "job_score_staleness_v12",
+                "job_scores_v12",
+            ):
+                conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+            _create_job_scores_v12(conn, table_name="job_scores_v12")
+            _create_requirement_fit_tables_v12(
+                conn,
+                reports_table_name="job_requirement_fit_reports_v12",
+                items_table_name="job_requirement_fit_items_v12",
+                scores_table_name="job_scores_v12",
+            )
+            _create_score_staleness_v12(
+                conn,
+                table_name="job_score_staleness_v12",
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_scores_v12 (
+                    tenant_id, job_id, version, fit_score, breakdown_json,
+                    keywords_json, scored_at, correction_json,
+                    criteria_json, trace_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                score_rows,
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_requirement_fit_reports_v12 (
+                    tenant_id, job_id, score_version,
+                    employer_analysis_generation, profile_snapshot_version,
+                    scoring_policy_version, formula_version,
+                    resolved_fit_score, fit_band, confidence, summary_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                report_rows,
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_requirement_fit_items_v12 (
+                    tenant_id, job_id, score_version, requirement_id,
+                    requirement_text, tier, weight, job_evidence_span,
+                    fit_json, contribution_json, tailoring_json,
+                    artifact_coverage_json, position
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                item_rows,
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_score_staleness_v12 (
+                    tenant_id, job_id, stale_reason,
+                    old_policy_id, old_policy_version,
+                    new_policy_id, new_policy_version,
+                    marked_at, resolved, resolved_at,
+                    resolved_by_score_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                staleness_rows,
+            )
+
+            for table in (
+                "job_requirement_fit_items",
+                "job_requirement_fit_reports",
+                "job_score_staleness",
+                "job_scores",
+            ):
+                conn.execute(f'DROP TABLE "{table}"')
+            for table in (
+                "job_scores",
+                "job_requirement_fit_reports",
+                "job_requirement_fit_items",
+                "job_score_staleness",
+            ):
+                conn.execute(
+                    f'ALTER TABLE "{table}_v12" RENAME TO "{table}"'
+                )
+            _create_job_score_indexes(conn)
+            _create_requirement_fit_indexes(conn)
+            _create_score_staleness_indexes(conn)
+
+        _verify_scoring_references_v12(
+            conn,
+            expected_counts=expected_counts,
+        )
+        conn.execute(
+            f"PRAGMA user_version = {_SCORING_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute("RELEASE SAVEPOINT scoring_references_v12")
+        conn.commit()
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT scoring_references_v12")
+        conn.execute("RELEASE SAVEPOINT scoring_references_v12")
+        raise
+
+    return list(_SCORING_REFERENCE_TABLES)
+
+
+def _verify_scoring_prerequisites_v12(
+    conn: sqlite3.Connection,
+) -> None:
+    """Verify v11-owned authority without rejecting migratable URL aliases."""
+    if not _has_enrichment_snapshot_reference_schema_v11(conn):
+        raise RuntimeError(
+            "scoring reference migration requires the stable "
+            "enrichment/snapshot reference schema"
+        )
+    for table in _ENRICHMENT_SNAPSHOT_REFERENCE_TABLES:
+        orphan = conn.execute(
+            f"""
+            SELECT source.job_id
+            FROM {table} AS source
+            LEFT JOIN jobs j
+              ON j.tenant_id = source.tenant_id
+             AND j.job_id = source.job_id
+            WHERE j.job_id IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if orphan is not None:
+            raise RuntimeError(
+                "scoring reference migration found an unresolved "
+                f"{table}.job_id prerequisite"
+            )
+
+
+def _canonical_score_rows_v12(
+    conn: sqlite3.Connection,
+    *,
+    reference_column: str,
+) -> tuple[
+    list[tuple[Any, ...]],
+    dict[tuple[str, str, int], int],
+]:
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, {reference_column}, version, fit_score,
+               breakdown_json, keywords_json, scored_at, correction_json,
+               criteria_json, trace_json
+        FROM job_scores
+        ORDER BY tenant_id, {reference_column}, version
+        """
+    ).fetchall()
+    grouped: dict[
+        tuple[str, str],
+        list[tuple[str, int, tuple[Any, ...]]],
+    ] = {}
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        old_version = int(row[2])
+        if old_version <= 0:
+            raise RuntimeError(
+                "scoring reference migration found a non-positive score "
+                "version"
+            )
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=reference_column == "job_url",
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "scoring reference migration could not resolve score "
+                f"identity {raw_reference!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        grouped.setdefault((tenant_id, stable_job_id), []).append(
+            (
+                raw_reference,
+                old_version,
+                (
+                    int(row[3]),
+                    str(row[4]),
+                    str(row[5]),
+                    str(row[6]),
+                    row[7],
+                    str(row[8] or "{}"),
+                    str(row[9] or "{}"),
+                ),
+            )
+        )
+
+    canonical: list[tuple[Any, ...]] = []
+    version_map: dict[tuple[str, str, int], int] = {}
+    for (tenant_id, stable_job_id), history in sorted(grouped.items()):
+        ordered_history = _merge_score_histories_preserving_version_order(
+            history
+        )
+        for new_version, (
+            raw_reference,
+            old_version,
+            values,
+        ) in enumerate(ordered_history, start=1):
+            version_map[(tenant_id, raw_reference, old_version)] = new_version
+            canonical.append(
+                (
+                    tenant_id,
+                    stable_job_id,
+                    new_version,
+                    *values,
+                )
+            )
+    return canonical, version_map
+
+
+def _merge_score_histories_preserving_version_order(
+    history: list[tuple[str, int, tuple[Any, ...]]],
+) -> list[tuple[str, int, tuple[Any, ...]]]:
+    """Deterministically interleave aliases without reversing one history.
+
+    ``version`` is the authoritative order within one scoring aggregate.
+    Timestamps are useful only to choose between the next eligible row from
+    different aliases because older databases do not constrain timestamp
+    monotonicity. This is a stable topological merge: every alias retains its
+    original version order even when its timestamps move backwards.
+    """
+    by_reference: dict[str, list[tuple[str, int, tuple[Any, ...]]]] = {}
+    for entry in history:
+        by_reference.setdefault(entry[0], []).append(entry)
+    for entries in by_reference.values():
+        entries.sort(key=lambda entry: entry[1])
+
+    offsets = {reference: 0 for reference in by_reference}
+    merged: list[tuple[str, int, tuple[Any, ...]]] = []
+    while len(merged) < len(history):
+        eligible = [
+            entries[offsets[reference]]
+            for reference, entries in by_reference.items()
+            if offsets[reference] < len(entries)
+        ]
+        selected = min(
+            eligible,
+            key=lambda entry: (
+                str(entry[2][3]),
+                entry[0],
+                entry[1],
+            ),
+        )
+        merged.append(selected)
+        offsets[selected[0]] += 1
+    return merged
+
+
+def _remapped_requirement_report_rows_v12(
+    conn: sqlite3.Connection,
+    *,
+    reference_column: str,
+    version_map: dict[tuple[str, str, int], int],
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, {reference_column}, score_version,
+               employer_analysis_generation, profile_snapshot_version,
+               scoring_policy_version, formula_version, resolved_fit_score,
+               fit_band, confidence, summary_json, created_at
+        FROM job_requirement_fit_reports
+        ORDER BY tenant_id, {reference_column}, score_version
+        """
+    ).fetchall()
+    remapped: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        old_version = int(row[2])
+        new_version = version_map.get(
+            (tenant_id, raw_reference, old_version)
+        )
+        if new_version is None:
+            raise RuntimeError(
+                "scoring reference migration found a requirement-fit "
+                "report without its score history"
+            )
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=reference_column == "job_url",
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "scoring reference migration could not resolve a "
+                "requirement-fit report"
+            )
+        remapped.append(
+            (
+                tenant_id,
+                stable_job_id,
+                new_version,
+                *tuple(row[3:]),
+            )
+        )
+    return remapped
+
+
+def _remapped_requirement_item_rows_v12(
+    conn: sqlite3.Connection,
+    *,
+    reference_column: str,
+    version_map: dict[tuple[str, str, int], int],
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, {reference_column}, score_version,
+               requirement_id, requirement_text, tier, weight,
+               job_evidence_span, fit_json, contribution_json,
+               tailoring_json, artifact_coverage_json, position
+        FROM job_requirement_fit_items
+        ORDER BY tenant_id, {reference_column}, score_version, position,
+                 requirement_id
+        """
+    ).fetchall()
+    remapped: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        old_version = int(row[2])
+        new_version = version_map.get(
+            (tenant_id, raw_reference, old_version)
+        )
+        if new_version is None:
+            raise RuntimeError(
+                "scoring reference migration found a requirement-fit item "
+                "without its score history"
+            )
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=reference_column == "job_url",
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "scoring reference migration could not resolve a "
+                "requirement-fit item"
+            )
+        remapped.append(
+            (
+                tenant_id,
+                stable_job_id,
+                new_version,
+                *tuple(row[3:]),
+            )
+        )
+    return remapped
+
+
+def _canonical_staleness_rows_v12(
+    conn: sqlite3.Connection,
+    *,
+    reference_column: str,
+    version_map: dict[tuple[str, str, int], int],
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, {reference_column}, stale_reason,
+               old_policy_id, old_policy_version,
+               new_policy_id, new_policy_version,
+               marked_at, resolved, resolved_at,
+               resolved_by_score_version
+        FROM job_score_staleness
+        ORDER BY tenant_id, {reference_column}, marked_at
+        """
+    ).fetchall()
+    canonical: dict[
+        tuple[str, str, str, int, int],
+        dict[str, Any],
+    ] = {}
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=reference_column == "job_url",
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "scoring reference migration could not resolve a score "
+                "staleness marker"
+            )
+        resolved = bool(row[8])
+        old_resolved_version = (
+            int(row[10]) if row[10] is not None else None
+        )
+        resolved_version = None
+        if old_resolved_version is not None:
+            resolved_version = version_map.get(
+                (tenant_id, raw_reference, old_resolved_version)
+            )
+            if resolved_version is None:
+                raise RuntimeError(
+                    "scoring reference migration found a staleness marker "
+                    "resolved by a missing score version"
+                )
+        if not resolved and (
+            row[9] is not None or old_resolved_version is not None
+        ):
+            raise RuntimeError(
+                "scoring reference migration found an unresolved marker "
+                "with resolution evidence"
+            )
+
+        key = (
+            tenant_id,
+            stable_job_id,
+            str(row[2]),
+            int(row[4]),
+            int(row[6]),
+        )
+        candidate = {
+            "old_policy_id": str(row[3] or ""),
+            "new_policy_id": str(row[5] or ""),
+            "marked_at": str(row[7]),
+            "resolved": resolved,
+            "resolved_at": str(row[9]) if row[9] is not None else None,
+            "resolved_version": resolved_version,
+        }
+        existing = canonical.get(key)
+        if existing is None:
+            canonical[key] = candidate
+            continue
+        if (
+            existing["old_policy_id"] != candidate["old_policy_id"]
+            or existing["new_policy_id"] != candidate["new_policy_id"]
+        ):
+            raise RuntimeError(
+                "scoring reference migration found conflicting policy "
+                "identity on duplicate staleness markers"
+            )
+        existing["marked_at"] = min(
+            existing["marked_at"],
+            candidate["marked_at"],
+        )
+        if not candidate["resolved"]:
+            existing["resolved"] = False
+            existing["resolved_at"] = None
+            existing["resolved_version"] = None
+        elif existing["resolved"]:
+            resolved_times = [
+                value
+                for value in (
+                    existing["resolved_at"],
+                    candidate["resolved_at"],
+                )
+                if value is not None
+            ]
+            existing["resolved_at"] = (
+                max(resolved_times) if resolved_times else None
+            )
+            resolved_versions = [
+                value
+                for value in (
+                    existing["resolved_version"],
+                    candidate["resolved_version"],
+                )
+                if value is not None
+            ]
+            existing["resolved_version"] = (
+                max(resolved_versions) if resolved_versions else None
+            )
+
+    return [
+        (
+            tenant_id,
+            stable_job_id,
+            stale_reason,
+            values["old_policy_id"],
+            old_policy_version,
+            values["new_policy_id"],
+            new_policy_version,
+            values["marked_at"],
+            int(values["resolved"]),
+            values["resolved_at"],
+            values["resolved_version"],
+        )
+        for (
+            tenant_id,
+            stable_job_id,
+            stale_reason,
+            old_policy_version,
+            new_policy_version,
+        ), values in sorted(canonical.items())
+    ]
+
+
+def _verify_scoring_references_v12(
+    conn: sqlite3.Connection,
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    if not _has_scoring_reference_schema_v12(conn):
+        raise RuntimeError(
+            "scoring reference migration did not create the stable "
+            "reference schema"
+        )
+    for table, expected_count in expected_counts.items():
+        observed_count = int(
+            conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        )
+        if observed_count != expected_count:
+            raise RuntimeError(
+                "scoring reference migration changed row count for "
+                f"{table}: expected {expected_count}, found {observed_count}"
+            )
+        invalid_identity = conn.execute(
+            f"""
+            SELECT source.job_id
+            FROM {table} AS source
+            LEFT JOIN jobs j
+              ON j.tenant_id = source.tenant_id
+             AND j.job_id = source.job_id
+            WHERE j.job_id IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if invalid_identity is not None:
+            raise RuntimeError(
+                "scoring reference migration left an unresolved reference "
+                f"in {table}.job_id"
+            )
+
+    invalid_history = conn.execute(
+        """
+        SELECT tenant_id, job_id
+        FROM job_scores
+        GROUP BY tenant_id, job_id
+        HAVING MIN(version) <> 1
+            OR MAX(version) <> COUNT(*)
+            OR COUNT(DISTINCT version) <> COUNT(*)
+        LIMIT 1
+        """
+    ).fetchone()
+    if invalid_history is not None:
+        raise RuntimeError(
+            "scoring reference migration did not preserve a contiguous "
+            "score history"
+        )
+    orphan_report = conn.execute(
+        """
+        SELECT report.job_id
+        FROM job_requirement_fit_reports AS report
+        LEFT JOIN job_scores AS score
+          ON score.tenant_id = report.tenant_id
+         AND score.job_id = report.job_id
+         AND score.version = report.score_version
+        WHERE score.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan_report is not None:
+        raise RuntimeError(
+            "scoring reference migration left a requirement-fit report "
+            "without its score"
+        )
+    orphan_item = conn.execute(
+        """
+        SELECT item.job_id
+        FROM job_requirement_fit_items AS item
+        LEFT JOIN job_requirement_fit_reports AS report
+          ON report.tenant_id = item.tenant_id
+         AND report.job_id = item.job_id
+         AND report.score_version = item.score_version
+        WHERE report.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan_item is not None:
+        raise RuntimeError(
+            "scoring reference migration left a requirement-fit item "
+            "without its report"
+        )
+    invalid_resolution = conn.execute(
+        """
+        SELECT marker.job_id
+        FROM job_score_staleness AS marker
+        LEFT JOIN job_scores AS score
+          ON score.tenant_id = marker.tenant_id
+         AND score.job_id = marker.job_id
+         AND score.version = marker.resolved_by_score_version
+        WHERE marker.resolved_by_score_version IS NOT NULL
+          AND score.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if invalid_resolution is not None:
+        raise RuntimeError(
+            "scoring reference migration left a staleness marker resolved "
+            "by a missing score"
+        )
+    for row in conn.execute(
+        """
+        SELECT job_id FROM job_scores
+        UNION
+        SELECT job_id FROM job_score_staleness
+        UNION
+        SELECT job_id FROM job_requirement_fit_reports
+        UNION
+        SELECT job_id FROM job_requirement_fit_items
+        """
+    ).fetchall():
+        _validate_job_uuid(str(row[0]))
+
+    foreign_key_error = conn.execute("PRAGMA foreign_key_check").fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "scoring reference migration found a foreign-key violation"
+        )
+
+
+def _reassign_scoring_references_v12(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    """Merge two stable scoring histories without overwriting either one."""
+    if losing_job_id == surviving_job_id:
+        return
+
+    before_counts = {
+        table: int(
+            conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        )
+        for table in _SCORING_REFERENCE_TABLES
+    }
+    selected_staleness_count = int(
+        conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM job_score_staleness
+            WHERE tenant_id = ? AND job_id IN (?, ?)
+            """,
+            (tenant_id, losing_job_id, surviving_job_id),
+        ).fetchone()[0]
+    )
+
+    raw_scores = conn.execute(
+        """
+        SELECT job_id, version, fit_score, breakdown_json, keywords_json,
+               scored_at, correction_json, criteria_json, trace_json
+        FROM job_scores
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY scored_at, job_id, version
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    ordered_scores = _merge_score_histories_preserving_version_order(
+        [
+            (
+                str(row[0]),
+                int(row[1]),
+                tuple(row[2:]),
+            )
+            for row in raw_scores
+        ]
+    )
+    version_map: dict[tuple[str, int], int] = {}
+    score_rows: list[tuple[Any, ...]] = []
+    for new_version, (
+        source_job_id,
+        old_version,
+        values,
+    ) in enumerate(ordered_scores, start=1):
+        version_map[(source_job_id, old_version)] = new_version
+        score_rows.append(
+            (
+                tenant_id,
+                surviving_job_id,
+                new_version,
+                *values,
+            )
+        )
+
+    raw_reports = conn.execute(
+        """
+        SELECT job_id, score_version, employer_analysis_generation,
+               profile_snapshot_version, scoring_policy_version,
+               formula_version, resolved_fit_score, fit_band, confidence,
+               summary_json, created_at
+        FROM job_requirement_fit_reports
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id, score_version
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    report_rows: list[tuple[Any, ...]] = []
+    for row in raw_reports:
+        new_version = version_map.get((str(row[0]), int(row[1])))
+        if new_version is None:
+            raise RuntimeError(
+                "URL collision merge found a requirement-fit report "
+                "without its score history"
+            )
+        report_rows.append(
+            (
+                tenant_id,
+                surviving_job_id,
+                new_version,
+                *tuple(row[2:]),
+            )
+        )
+
+    raw_items = conn.execute(
+        """
+        SELECT job_id, score_version, requirement_id, requirement_text,
+               tier, weight, job_evidence_span, fit_json, contribution_json,
+               tailoring_json, artifact_coverage_json, position
+        FROM job_requirement_fit_items
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id, score_version, position, requirement_id
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    item_rows: list[tuple[Any, ...]] = []
+    for row in raw_items:
+        new_version = version_map.get((str(row[0]), int(row[1])))
+        if new_version is None:
+            raise RuntimeError(
+                "URL collision merge found a requirement-fit item "
+                "without its score history"
+            )
+        item_rows.append(
+            (
+                tenant_id,
+                surviving_job_id,
+                new_version,
+                *tuple(row[2:]),
+            )
+        )
+
+    raw_staleness = conn.execute(
+        """
+        SELECT job_id, stale_reason, old_policy_id, old_policy_version,
+               new_policy_id, new_policy_version, marked_at, resolved,
+               resolved_at, resolved_by_score_version
+        FROM job_score_staleness
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id, marked_at
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    canonical_staleness: dict[
+        tuple[str, int, int],
+        dict[str, Any],
+    ] = {}
+    for row in raw_staleness:
+        source_job_id = str(row[0])
+        resolved = bool(row[7])
+        old_resolved_version = (
+            int(row[9]) if row[9] is not None else None
+        )
+        resolved_version = None
+        if old_resolved_version is not None:
+            resolved_version = version_map.get(
+                (source_job_id, old_resolved_version)
+            )
+            if resolved_version is None:
+                raise RuntimeError(
+                    "URL collision merge found a staleness marker resolved "
+                    "by a missing score version"
+                )
+        if not resolved and (
+            row[8] is not None or old_resolved_version is not None
+        ):
+            raise RuntimeError(
+                "URL collision merge found an unresolved score marker "
+                "with resolution evidence"
+            )
+        key = (str(row[1]), int(row[3]), int(row[5]))
+        candidate = {
+            "old_policy_id": str(row[2] or ""),
+            "new_policy_id": str(row[4] or ""),
+            "marked_at": str(row[6]),
+            "resolved": resolved,
+            "resolved_at": str(row[8]) if row[8] is not None else None,
+            "resolved_version": resolved_version,
+        }
+        existing = canonical_staleness.get(key)
+        if existing is None:
+            canonical_staleness[key] = candidate
+            continue
+        if (
+            existing["old_policy_id"] != candidate["old_policy_id"]
+            or existing["new_policy_id"] != candidate["new_policy_id"]
+        ):
+            raise RuntimeError(
+                "URL collision merge found conflicting policy identity "
+                "on duplicate staleness markers"
+            )
+        existing["marked_at"] = min(
+            existing["marked_at"],
+            candidate["marked_at"],
+        )
+        if not candidate["resolved"]:
+            existing["resolved"] = False
+            existing["resolved_at"] = None
+            existing["resolved_version"] = None
+        elif existing["resolved"]:
+            resolved_times = [
+                value
+                for value in (
+                    existing["resolved_at"],
+                    candidate["resolved_at"],
+                )
+                if value is not None
+            ]
+            existing["resolved_at"] = (
+                max(resolved_times) if resolved_times else None
+            )
+            resolved_versions = [
+                value
+                for value in (
+                    existing["resolved_version"],
+                    candidate["resolved_version"],
+                )
+                if value is not None
+            ]
+            existing["resolved_version"] = (
+                max(resolved_versions) if resolved_versions else None
+            )
+    staleness_rows = [
+        (
+            tenant_id,
+            surviving_job_id,
+            stale_reason,
+            values["old_policy_id"],
+            old_policy_version,
+            values["new_policy_id"],
+            new_policy_version,
+            values["marked_at"],
+            int(values["resolved"]),
+            values["resolved_at"],
+            values["resolved_version"],
+        )
+        for (
+            stale_reason,
+            old_policy_version,
+            new_policy_version,
+        ), values in sorted(canonical_staleness.items())
+    ]
+
+    for table in (
+        "job_requirement_fit_items",
+        "job_requirement_fit_reports",
+        "job_score_staleness",
+        "job_scores",
+    ):
+        conn.execute(
+            f"""
+            DELETE FROM {table}
+            WHERE tenant_id = ? AND job_id IN (?, ?)
+            """,
+            (tenant_id, losing_job_id, surviving_job_id),
+        )
+    conn.executemany(
+        """
+        INSERT INTO job_scores (
+            tenant_id, job_id, version, fit_score, breakdown_json,
+            keywords_json, scored_at, correction_json,
+            criteria_json, trace_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        score_rows,
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_requirement_fit_reports (
+            tenant_id, job_id, score_version,
+            employer_analysis_generation, profile_snapshot_version,
+            scoring_policy_version, formula_version, resolved_fit_score,
+            fit_band, confidence, summary_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        report_rows,
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_requirement_fit_items (
+            tenant_id, job_id, score_version, requirement_id,
+            requirement_text, tier, weight, job_evidence_span,
+            fit_json, contribution_json, tailoring_json,
+            artifact_coverage_json, position
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        item_rows,
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_score_staleness (
+            tenant_id, job_id, stale_reason,
+            old_policy_id, old_policy_version,
+            new_policy_id, new_policy_version,
+            marked_at, resolved, resolved_at,
+            resolved_by_score_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        staleness_rows,
+    )
+
+    expected_counts = dict(before_counts)
+    expected_counts["job_score_staleness"] = (
+        before_counts["job_score_staleness"]
+        - selected_staleness_count
+        + len(staleness_rows)
+    )
+    _verify_scoring_references_v12(
+        conn,
+        expected_counts=expected_counts,
+    )
+
+
 # ---------------------------------------------------------------------------
 # job_enrichments read fragments — used by every selector / stat that
 # previously read bare ``jobs.full_description`` / ``jobs.application_url``
@@ -6668,12 +8064,14 @@ _SCORE_DOWNSTREAM_STATE_JOIN: str = (
     "FROM job_stage_states WHERE stage = 'score'"
     ") jss_s ON jss_s.jss_s_job_url = jobs.url "
     "LEFT JOIN ("
-    "SELECT DISTINCT job_url AS jss_stale_job_url "
+    "SELECT DISTINCT tenant_id AS jss_stale_tenant_id, "
+    "job_id AS jss_stale_job_id "
     "FROM job_score_staleness WHERE resolved = 0"
-    ") jss_stale ON jss_stale.jss_stale_job_url = jobs.url"
+    ") jss_stale ON jss_stale.jss_stale_tenant_id = jobs.tenant_id "
+    "AND jss_stale.jss_stale_job_id = jobs.job_id"
 )
 _SCORE_CURRENT_FOR_DOWNSTREAM: str = (
-    "(jss_stale.jss_stale_job_url IS NULL "
+    "(jss_stale.jss_stale_job_id IS NULL "
     "AND (jss_s.jss_s_state IS NULL "
     "OR jss_s.jss_s_state = 'succeeded' "
     "OR (js.js_fit_score IS NULL AND jss_s.jss_s_state != 'stale')))"
@@ -6689,7 +8087,7 @@ _EFFECTIVE_SCORE_ATTEMPTS: str = "COALESCE(jss_s.jss_s_attempts, 0)"
 # ---------------------------------------------------------------------------
 # job_scores read fragments — used by every selector / stat that previously
 # read bare ``jobs.fit_score``. After Phase 5 the canonical fit score lives
-# in ``job_scores`` (latest version per ``job_url``); the legacy
+# in ``job_scores`` (latest version per stable ``JobId``); the legacy
 # ``jobs.fit_score`` column stays as a read-only fallback for historical
 # rows that were never re-scored. ``_EFFECTIVE_FIT_SCORE`` is the COALESCE
 # expression every WHERE / ORDER BY / aggregate query should use instead of
@@ -6700,7 +8098,8 @@ _EFFECTIVE_SCORE_ATTEMPTS: str = "COALESCE(jss_s.jss_s_attempts, 0)"
 
 _LATEST_SCORE_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT s.job_url AS js_job_url, s.fit_score AS js_fit_score, "
+    "SELECT s.tenant_id AS js_tenant_id, s.job_id AS js_job_id, "
+    "s.fit_score AS js_fit_score, "
     "CASE WHEN json_valid(s.breakdown_json) "
     "THEN LOWER(COALESCE(CAST(json_extract(s.breakdown_json, '$.eligibility.status') AS TEXT), '')) "
     "ELSE '' END AS js_eligibility_status, "
@@ -6712,9 +8111,12 @@ _LATEST_SCORE_JOIN: str = (
     "0) ELSE 0 END AS js_hard_blocker_count "
     "FROM job_scores s "
     "INNER JOIN ("
-    "SELECT job_url, MAX(version) AS max_version FROM job_scores GROUP BY job_url"
-    ") latest ON latest.job_url = s.job_url AND latest.max_version = s.version"
-    ") js ON js.js_job_url = jobs.url"
+    "SELECT tenant_id, job_id, MAX(version) AS max_version "
+    "FROM job_scores GROUP BY tenant_id, job_id"
+    ") latest ON latest.tenant_id = s.tenant_id "
+    "AND latest.job_id = s.job_id AND latest.max_version = s.version"
+    ") js ON js.js_tenant_id = jobs.tenant_id "
+    "AND js.js_job_id = jobs.job_id"
 )
 
 _EFFECTIVE_FIT_SCORE: str = "COALESCE(js.js_fit_score, jobs.fit_score)"

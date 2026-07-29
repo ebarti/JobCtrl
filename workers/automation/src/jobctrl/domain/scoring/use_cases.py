@@ -559,7 +559,7 @@ class ScoreJobUseCase:
                 error=parse.error or "Unknown parse error",
             )
 
-        job_id = JobId(str(job["url"]))
+        job_id = _job_id_from_record(job)
         resolved_parse = (
             self._resolve_with_requirement_fit(
                 parse=parse,
@@ -708,7 +708,7 @@ class ScoreJobUseCase:
         parse: ScoreParseResult,
         scored_at: str,
     ) -> JobScore:
-        job_id = JobId(str(job["url"]))
+        job_id = _job_id_from_record(job)
         previous = self._repository.load(tenant_id, job_id)
         # Type guard: parse.ok is True at this point (caller checks).
         assert parse.fit_score is not None
@@ -1042,6 +1042,14 @@ def _policy_evidence_from_score(score: JobScore) -> dict[str, Any]:
         "missing_signal_count": len(score.breakdown.missing_signals),
         "transferable_signal_count": len(score.breakdown.transferable_signals),
     }
+
+
+def _job_id_from_record(job: dict[str, Any]) -> JobId:
+    """Prefer canonical identity while retaining generic-port test fixtures."""
+    reference = str(job.get("job_id") or job.get("url") or "").strip()
+    if not reference:
+        raise ValueError("job requires job_id or url")
+    return JobId(reference)
 
 
 __all__ = [

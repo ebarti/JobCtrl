@@ -239,15 +239,31 @@ def _load_requirements(
             SELECT requirement_id, requirement_text, tier, weight, fit_json
             FROM job_requirement_fit_items
             WHERE tenant_id = ?
-              AND job_url = ?
+              AND job_id = (
+                SELECT job_id FROM jobs
+                WHERE tenant_id = ? AND url = ?
+                LIMIT 1
+              )
               AND score_version = (
                 SELECT MAX(score_version)
                 FROM job_requirement_fit_reports
-                WHERE tenant_id = ? AND job_url = ?
+                WHERE tenant_id = ?
+                  AND job_id = (
+                    SELECT job_id FROM jobs
+                    WHERE tenant_id = ? AND url = ?
+                    LIMIT 1
+                  )
               )
             ORDER BY position, requirement_id
             """,
-            (str(tenant_id), job_url, str(tenant_id), job_url),
+            (
+                str(tenant_id),
+                str(tenant_id),
+                job_url,
+                str(tenant_id),
+                str(tenant_id),
+                job_url,
+            ),
         ).fetchall()
     except sqlite3.OperationalError:
         return ()
