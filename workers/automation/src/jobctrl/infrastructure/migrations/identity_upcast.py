@@ -26,6 +26,8 @@ _SINGULAR_FIELDS = {
     "surviving_job_url": "surviving_job_id",
     "surviving_job_key": "surviving_job_id",
     "surviving_job_id": "surviving_job_id",
+    "candidateJobId": "candidateJobId",
+    "candidate_job_id": "candidate_job_id",
 }
 _PLURAL_FIELDS = {
     "jobUrls": "jobIds",
@@ -49,6 +51,7 @@ _PRIMARY_FIELDS = frozenset(
         "surviving_job_id",
     }
 )
+_NON_JOB_SCOPE_REFERENCES = frozenset({"pipeline"})
 
 
 class EventIdentityUpcastError(RuntimeError):
@@ -203,6 +206,8 @@ def _upcast_singular(
         return None, ()
     if not isinstance(value, str):
         raise EventIdentityUpcastError("event_job_identity_invalid")
+    if value.strip() in _NON_JOB_SCOPE_REFERENCES:
+        return value.strip(), ()
     resolved = _resolve_required(job_ids, value)
     return resolved, (resolved,)
 
