@@ -23,6 +23,10 @@ from urllib.parse import urlparse
 from jobctrl.database import (
     _resolve_job_reference_value,
     _table_columns,
+    deleted_jobs_join_to_jobs,
+    deleted_jobs_missing_reference_sql,
+    deleted_jobs_reference_values,
+    ensure_deleted_jobs_table,
     ensure_discovery_control_tables,
     ensure_enrichment_tables,
     ensure_posting_snapshot_tables,
@@ -766,6 +770,15 @@ def retire_invalid_source_jobs(
     ensure_source_observation_tables(conn)
     ensure_enrichment_tables(conn)
     _ensure_deleted_jobs_table(conn)
+    deleted_join = deleted_jobs_join_to_jobs(
+        conn,
+        deleted_alias="d",
+        jobs_alias="j",
+    )
+    deleted_missing = deleted_jobs_missing_reference_sql(
+        conn,
+        deleted_alias="d",
+    )
     query_specs_by_family = _query_specs_by_family(search_cfg)
     accept_locs, reject_locs = configured_location_filters(search_cfg)
     locations = tuple(_location_values(search_cfg))
@@ -773,9 +786,10 @@ def retire_invalid_source_jobs(
     retired: list[dict[str, str]] = []
 
     rows = conn.execute(
-        """
+        f"""
         SELECT
             j.url,
+            j.job_id,
             COALESCE(j.title, '') AS title,
             COALESCE(j.location, '') AS location,
             COALESCE(e.full_description, '') AS enrichment_description,
@@ -792,9 +806,9 @@ def retire_invalid_source_jobs(
         LEFT JOIN job_source_observations o
           ON o.tenant_id = j.tenant_id AND o.job_id = j.job_id
         LEFT JOIN jobctrl_deleted_jobs d
-          ON d.job_url = j.url
+          ON {deleted_join}
          AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
-        WHERE j.tenant_id = ? AND d.job_url IS NULL
+        WHERE j.tenant_id = ? AND {deleted_missing}
         GROUP BY j.url
         """,
         (str(LOCAL_TENANT),),
@@ -826,16 +840,29 @@ def retire_invalid_source_jobs(
         source_id = str(row["source_id"] or row["ats_kind"] or family)
         reason = f"discovery hygiene rejected {source_id}: {', '.join(reasons)}"
         job_url = str(row["url"])
+        (
+            identity_columns,
+            identity_placeholders,
+            identity_values,
+            conflict_target,
+        ) = deleted_jobs_reference_values(
+            conn,
+            tenant_id=str(LOCAL_TENANT),
+            job_id=str(row["job_id"]),
+            job_url=job_url,
+        )
         conn.execute(
-            """
-            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-            VALUES (?, ?, ?, NULL)
-            ON CONFLICT(job_url) DO UPDATE SET
+            f"""
+            INSERT INTO jobctrl_deleted_jobs (
+                {identity_columns}, deleted_at, reason, restored_at
+            )
+            VALUES ({identity_placeholders}, ?, ?, NULL)
+            ON CONFLICT({conflict_target}) DO UPDATE SET
                 deleted_at = excluded.deleted_at,
                 reason = excluded.reason,
                 restored_at = NULL
             """,
-            (job_url, now, reason),
+            (*identity_values, now, reason),
         )
         record_job_event(
             conn,
@@ -993,17 +1020,7 @@ def _source_rejection_reasons(
 
 
 def _ensure_deleted_jobs_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-            job_url TEXT PRIMARY KEY,
-            deleted_at TEXT NOT NULL,
-            reason TEXT,
-            restored_at TEXT,
-            FOREIGN KEY(job_url) REFERENCES jobs(url)
-        )
-        """
-    )
+    ensure_deleted_jobs_table(conn)
 
 
 def _scraped_posting_key(posting: ScrapedJobPosting) -> tuple[str, str, str]:

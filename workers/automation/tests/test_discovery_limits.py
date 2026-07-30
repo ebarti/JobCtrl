@@ -815,10 +815,18 @@ def test_jobspy_existing_row_refreshes_metadata_before_restore(tmp_path):
         jobspy._ensure_deleted_jobs_table(conn)
         conn.execute(
             """
-            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-            VALUES (?, ?, ?, NULL)
+            INSERT INTO jobctrl_deleted_jobs (
+                tenant_id, job_id, deleted_at, reason, restored_at
+            )
+            SELECT tenant_id, job_id, ?, ?, NULL
+            FROM jobs
+            WHERE url = ?
             """,
-            (url, "2026-05-21T00:00:00+00:00", "stale invalid row"),
+            (
+                "2026-05-21T00:00:00+00:00",
+                "stale invalid row",
+                url,
+            ),
         )
         conn.commit()
 
@@ -849,7 +857,14 @@ def test_jobspy_existing_row_refreshes_metadata_before_restore(tmp_path):
             "location": "Barcelona, Spain",
         }
         tombstone = conn.execute(
-            "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
+            """
+            SELECT deleted.restored_at
+            FROM jobctrl_deleted_jobs AS deleted
+            JOIN jobs
+              ON jobs.tenant_id = deleted.tenant_id
+             AND jobs.job_id = deleted.job_id
+            WHERE jobs.url = ?
+            """,
             (url,),
         ).fetchone()
         assert tombstone["restored_at"] is not None
@@ -1563,10 +1578,18 @@ def test_jobspy_exact_rediscovery_keeps_deleted_content_duplicate_suppressed(tmp
         )
         conn.execute(
             """
-            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-            VALUES (?, ?, ?, NULL)
+            INSERT INTO jobctrl_deleted_jobs (
+                tenant_id, job_id, deleted_at, reason, restored_at
+            )
+            SELECT tenant_id, job_id, ?, ?, NULL
+            FROM jobs
+            WHERE url = ?
             """,
-            (duplicate_url, "2026-05-21T11:00:00+00:00", "content duplicate"),
+            (
+                "2026-05-21T11:00:00+00:00",
+                "content duplicate",
+                duplicate_url,
+            ),
         )
         conn.commit()
 
@@ -1584,7 +1607,14 @@ def test_jobspy_exact_rediscovery_keeps_deleted_content_duplicate_suppressed(tmp
         assert jobspy.store_jobspy_results(conn, rediscovered, "Product", limit=10) == (0, 1)
 
         tombstone = conn.execute(
-            "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
+            """
+            SELECT deleted.restored_at
+            FROM jobctrl_deleted_jobs AS deleted
+            JOIN jobs
+              ON jobs.tenant_id = deleted.tenant_id
+             AND jobs.job_id = deleted.job_id
+            WHERE jobs.url = ?
+            """,
             (duplicate_url,),
         ).fetchone()
         assert tombstone["restored_at"] is None

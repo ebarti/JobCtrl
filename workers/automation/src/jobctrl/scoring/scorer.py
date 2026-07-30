@@ -26,7 +26,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Mapping, Protocol
 
 from jobctrl.config import RESUME_PATH
-from jobctrl.database import get_connection, get_jobs_by_stage, load_job_with_enrichment
+from jobctrl.database import (
+    deleted_jobs_join_to_jobs,
+    deleted_jobs_missing_reference_sql,
+    get_connection,
+    get_jobs_by_stage,
+    load_job_with_enrichment,
+)
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.job_content_identity import (
     job_content_fingerprint,
@@ -1013,16 +1019,33 @@ def _preferred_direct_score_for_repost(
 
     if not _is_reference_repost_candidate(conn, job, tenant_id=tenant_id):
         return None
+    deleted_join_sql = (
+        deleted_jobs_join_to_jobs(
+            conn,
+            deleted_alias="d",
+            jobs_alias="j",
+        )
+        if _table_exists(conn, "jobctrl_deleted_jobs")
+        else ""
+    )
     deleted_join = (
-        """
+        f"""
         LEFT JOIN jobctrl_deleted_jobs d
-          ON d.job_url = j.url
+          ON {deleted_join_sql}
          AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
         """
         if _table_exists(conn, "jobctrl_deleted_jobs")
         else ""
     )
-    deleted_filter = "AND d.job_url IS NULL" if deleted_join else ""
+    deleted_filter = (
+        "AND "
+        + deleted_jobs_missing_reference_sql(
+            conn,
+            deleted_alias="d",
+        )
+        if deleted_join
+        else ""
+    )
     rows = conn.execute(
         f"""
         SELECT j.url, j.job_id, j.title, j.location,

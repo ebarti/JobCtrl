@@ -9,7 +9,7 @@ export type SqliteValue = string | number | bigint | null;
 // writer that stamps ``PRAGMA user_version``; the API only reads it to fail
 // closed on a database written by a newer build. Bump both constants together
 // whenever the schema shape changes.
-export const SUPPORTED_SCHEMA_VERSION = 28;
+export const SUPPORTED_SCHEMA_VERSION = 29;
 
 export class IncompatibleSchemaVersionError extends Error {
   constructor(current: number) {
@@ -191,6 +191,112 @@ export function jobReferenceJoinToJobs(
     : `${sourceAlias}.job_url = ${jobsAlias}.url`;
 }
 
+function hasPostingUrlAliasSchema(db: SqliteDatabase): boolean {
+  const columns = tableColumnSet(db, "job_identity_aliases");
+  const jobColumns = tableColumnSet(db, "jobs");
+  return (
+    ["tenant_id", "alias_kind", "alias_value", "job_id"].every(
+      (column) => columns.has(column),
+    )
+    && ["tenant_id", "job_id", "url"].every(
+      (column) => jobColumns.has(column),
+    )
+  );
+}
+
+export function stableJobIdForUrlSqlExpression(
+  db: SqliteDatabase,
+  tenantExpression: string,
+  jobUrlExpression: string,
+): string {
+  const jobColumns = tableColumnSet(db, "jobs");
+  if (!jobColumns.has("job_id") || !jobColumns.has("url")) {
+    return "NULL";
+  }
+  const tenantPredicate = jobColumns.has("tenant_id")
+    ? `lifecycle_job.tenant_id = ${tenantExpression} AND `
+    : "";
+  const directUrl = `(SELECT lifecycle_job.job_id
+        FROM jobs AS lifecycle_job
+        WHERE ${tenantPredicate}lifecycle_job.url = ${jobUrlExpression}
+        LIMIT 1
+      )`;
+  if (!hasPostingUrlAliasSchema(db)) {
+    return directUrl;
+  }
+  const postingUrlAlias = `(SELECT lifecycle_alias.job_id
+        FROM job_identity_aliases AS lifecycle_alias
+        JOIN jobs AS lifecycle_alias_job
+          ON lifecycle_alias_job.tenant_id = lifecycle_alias.tenant_id
+         AND lifecycle_alias_job.job_id = lifecycle_alias.job_id
+        WHERE lifecycle_alias.tenant_id = ${tenantExpression}
+          AND lifecycle_alias.alias_kind = 'posting_url'
+          AND lifecycle_alias.alias_value = ${jobUrlExpression}
+        LIMIT 1
+      )`;
+  // URL-shaped legacy values must resolve as URLs before any other identity
+  // interpretation. This also makes a current URL win if an old posting alias
+  // happens to contain the same UUID-shaped text.
+  return `COALESCE(${directUrl}, ${postingUrlAlias})`;
+}
+
+export function canonicalJobUrlForUrlSqlExpression(
+  db: SqliteDatabase,
+  tenantExpression: string,
+  jobUrlExpression: string,
+): string {
+  const jobColumns = tableColumnSet(db, "jobs");
+  if (!jobColumns.has("url")) {
+    return jobUrlExpression;
+  }
+  const tenantPredicate = jobColumns.has("tenant_id")
+    ? `lifecycle_job.tenant_id = ${tenantExpression} AND `
+    : "";
+  const directUrl = `(SELECT lifecycle_job.url
+        FROM jobs AS lifecycle_job
+        WHERE ${tenantPredicate}lifecycle_job.url = ${jobUrlExpression}
+        LIMIT 1
+      )`;
+  if (!hasPostingUrlAliasSchema(db)) {
+    return `COALESCE(${directUrl}, ${jobUrlExpression})`;
+  }
+  const postingUrlAlias = `(SELECT lifecycle_alias_job.url
+        FROM job_identity_aliases AS lifecycle_alias
+        JOIN jobs AS lifecycle_alias_job
+          ON lifecycle_alias_job.tenant_id = lifecycle_alias.tenant_id
+         AND lifecycle_alias_job.job_id = lifecycle_alias.job_id
+        WHERE lifecycle_alias.tenant_id = ${tenantExpression}
+          AND lifecycle_alias.alias_kind = 'posting_url'
+          AND lifecycle_alias.alias_value = ${jobUrlExpression}
+        LIMIT 1
+      )`;
+  return `COALESCE(${directUrl}, ${postingUrlAlias}, ${jobUrlExpression})`;
+}
+
+export function jobReferenceJoinToUrl(
+  db: SqliteDatabase,
+  tableName: string,
+  sourceAlias: string,
+  tenantExpression: string,
+  jobUrlExpression: string,
+): string {
+  return jobReferenceColumn(db, tableName) === "job_id"
+    ? `${sourceAlias}.tenant_id = ${tenantExpression} AND ${sourceAlias}.job_id = ${stableJobIdForUrlSqlExpression(
+        db,
+        tenantExpression,
+        jobUrlExpression,
+      )}`
+    : `${sourceAlias}.job_url = ${jobUrlExpression}`;
+}
+
+export function jobReferenceMissingSql(
+  db: SqliteDatabase,
+  tableName: string,
+  sourceAlias: string,
+): string {
+  return `${sourceAlias}.${jobReferenceColumn(db, tableName)} IS NULL`;
+}
+
 export function jobKeyReferenceColumn(
   db: SqliteDatabase,
   tableName: string,
@@ -341,6 +447,9 @@ const jobLifecycleTableSpecs: JobLifecycleTableSpec[] = [
 export function migrateLegacyJobTables(db: SqliteDatabase): string[] {
   return db.transaction(() => {
     const migrated = new Set<string>();
+    const schemaVersion = Number(
+      db.pragma("user_version", { simple: true }),
+    );
     for (const spec of jobLifecycleTableSpecs) {
       const suffix = spec.suffix;
       const currentTable = spec.currentTable;
@@ -349,6 +458,58 @@ export function migrateLegacyJobTables(db: SqliteDatabase): string[] {
         .filter((legacyTable) => tableExists(db, legacyTable));
       const currentExists = tableExists(db, currentTable);
       if (existingLegacyTables.length === 0 && !currentExists) continue;
+      if (
+        suffix === "deleted_jobs"
+        && currentExists
+        && schemaVersion < 29
+      ) {
+        const currentColumns = new Set(
+          tableColumns(db, currentTable),
+        );
+        const stableCurrent = (
+          currentColumns.has("tenant_id")
+          && currentColumns.has("job_id")
+          && !currentColumns.has("job_url")
+        );
+        if (stableCurrent) {
+          if (existingLegacyTables.length > 0) {
+            throw new Error(
+              "Cannot merge URL-era branded soft-delete "
+                + "tables into stable JobId tombstones.",
+            );
+          }
+          continue;
+        }
+      }
+      if (
+        suffix === "deleted_jobs"
+        && schemaVersion >= 29
+      ) {
+        if (existingLegacyTables.length > 0) {
+          throw new Error(
+            "Schema v29 cannot merge URL-era branded soft-delete "
+              + "tables after the stable JobId cutover.",
+          );
+        }
+        const columns = new Set(tableColumns(db, currentTable));
+        if (
+          !columns.has("tenant_id")
+          || !columns.has("job_id")
+          || columns.has("job_url")
+          || primaryKeyColumns(db, currentTable).join(",")
+            !== "tenant_id,job_id"
+          || !hasCompositeJobIdForeignKey(
+            db,
+            currentTable,
+          )
+        ) {
+          throw new Error(
+            "Schema v29 requires stable soft-delete "
+              + "tombstone JobId references.",
+          );
+        }
+        continue;
+      }
 
       for (const legacyTable of existingLegacyTables) {
         const legacyColumns = tableColumns(db, legacyTable);
@@ -416,6 +577,22 @@ function assertNoLifecycleMigrationConflicts(db: SqliteDatabase, currentTable: s
 
 function tableColumns(db: SqliteDatabase, tableName: string): string[] {
   return db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all().map((row) => String((row as { name: unknown }).name));
+}
+
+function primaryKeyColumns(
+  db: SqliteDatabase,
+  tableName: string,
+): string[] {
+  return (
+    db
+      .prepare(
+        `PRAGMA table_info(${quoteIdentifier(tableName)})`,
+      )
+      .all() as Array<{ name: string; pk: number }>
+  )
+    .filter((row) => row.pk > 0)
+    .sort((left, right) => left.pk - right.pk)
+    .map((row) => row.name);
 }
 
 function quoteIdentifier(identifier: string): string {

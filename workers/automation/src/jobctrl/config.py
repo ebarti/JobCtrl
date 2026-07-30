@@ -213,6 +213,9 @@ def migrate_legacy_job_tables(conn: sqlite3.Connection) -> list[str]:
     lifecycle columns used by the read model.
     """
     renamed: list[str] = []
+    schema_version = int(
+        conn.execute("PRAGMA user_version").fetchone()[0]
+    )
     with conn:
         for suffix, spec in _JOB_LIFECYCLE_TABLES.items():
             legacy_tables = [f"{token}_{suffix}" for token in _LEGACY_TOKENS]
@@ -220,6 +223,48 @@ def migrate_legacy_job_tables(conn: sqlite3.Connection) -> list[str]:
             existing_legacy_tables = [table for table in legacy_tables if _table_exists(conn, table)]
             current_exists = _table_exists(conn, current)
             if not existing_legacy_tables and not current_exists:
+                continue
+            if (
+                suffix == "deleted_jobs"
+                and current_exists
+                and schema_version < 29
+            ):
+                current_columns = set(
+                    _table_columns(conn, current)
+                )
+                stable_current = (
+                    {"tenant_id", "job_id"}.issubset(
+                        current_columns
+                    )
+                    and "job_url" not in current_columns
+                )
+                if stable_current:
+                    if existing_legacy_tables:
+                        raise WorkspaceMigrationError(
+                            "cannot merge URL-era branded soft-delete "
+                            "tables into stable JobId tombstones"
+                        )
+                    # Migration regression fixtures may temporarily roll
+                    # user_version back while retaining an already-migrated
+                    # lifecycle table. Preserve that forward-compatible
+                    # authority; the normal schema runner will validate it
+                    # again when it reaches v29.
+                    continue
+            if suffix == "deleted_jobs" and schema_version >= 29:
+                if existing_legacy_tables:
+                    raise WorkspaceMigrationError(
+                        "schema v29 cannot merge URL-era branded "
+                        "soft-delete tables after the stable JobId cutover"
+                    )
+                columns = set(_table_columns(conn, current))
+                if (
+                    not {"tenant_id", "job_id"}.issubset(columns)
+                    or "job_url" in columns
+                ):
+                    raise WorkspaceMigrationError(
+                        "schema v29 requires stable soft-delete "
+                        "tombstone JobId references"
+                    )
                 continue
 
             for legacy in existing_legacy_tables:

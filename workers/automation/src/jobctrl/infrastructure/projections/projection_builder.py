@@ -45,6 +45,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from jobctrl.database import (
+    deleted_jobs_join_to_jobs,
+    deleted_jobs_join_to_url,
+    deleted_jobs_missing_reference_sql,
+    deleted_jobs_reference_column,
+)
 from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.identifiers import JobId
@@ -1822,7 +1828,11 @@ class ProjectionBuilder:
         if not _table_exists(self._conn, "job_bullet_provenance"):
             return
         job_metadata = _job_metadata_join_sql(self._conn, "identity.url")
-        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "identity.url")
+        lifecycle = _job_lifecycle_exclusion_sql(
+            self._conn,
+            "identity.url",
+            tenant_expression="identity.tenant_id",
+        )
         rows = self._conn.execute(
             f"""
             SELECT identity.url AS job_url, provenance.artifact_id,
@@ -1893,6 +1903,7 @@ class ProjectionBuilder:
         lifecycle = _job_lifecycle_exclusion_sql(
             self._conn,
             "score_jobs.url",
+            tenant_expression="score_jobs.tenant_id",
         )
         rows = self._conn.execute(
             f"""
@@ -1981,7 +1992,11 @@ class ProjectionBuilder:
     ) -> None:
         if not _table_exists(self._conn, "artifact_list_projections"):
             return
-        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "alp.job_id")
+        lifecycle = _job_lifecycle_exclusion_sql(
+            self._conn,
+            "alp.job_id",
+            tenant_expression="alp.tenant_id",
+        )
         rows = self._conn.execute(
             f"""
             SELECT alp.job_id, alp.job_title, alp.job_employer, alp.artifact_id, alp.generation,
@@ -2812,13 +2827,25 @@ class ProjectionBuilder:
 
     def _load_deleted_at(self, job_url: str) -> str | None:
         try:
+            deleted_join = deleted_jobs_join_to_jobs(
+                self._conn,
+                deleted_alias="deleted",
+                jobs_alias="jobs",
+            )
             row = self._conn.execute(
-                """
-                SELECT deleted_at FROM jobctrl_deleted_jobs
-                WHERE job_url = ?
-                  AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))
+                f"""
+                SELECT deleted.deleted_at
+                FROM jobs
+                JOIN jobctrl_deleted_jobs AS deleted
+                  ON {deleted_join}
+                 AND (
+                      deleted.restored_at IS NULL
+                      OR julianday(deleted.restored_at)
+                         <= julianday(deleted.deleted_at)
+                 )
+                WHERE jobs.tenant_id = ? AND jobs.url = ?
                 """,
-                (job_url,),
+                (str(self._tenant_id), job_url),
             ).fetchone()
         except sqlite3.OperationalError:
             return None
@@ -2828,25 +2855,69 @@ class ProjectionBuilder:
 
     def _stale_deleted_projection_jobs(self) -> set[str]:
         try:
+            deleted_join = deleted_jobs_join_to_url(
+                self._conn,
+                deleted_alias="d",
+                tenant_expression="p.tenant_id",
+                job_url_expression="p.job_id",
+            )
+            stable_reference = (
+                deleted_jobs_reference_column(self._conn)
+                == "job_id"
+            )
+            canonical_select = (
+                "canonical_deleted_job.url AS canonical_job_url"
+                if stable_reference
+                else "p.job_id AS canonical_job_url"
+            )
+            canonical_join = (
+                "JOIN jobs canonical_deleted_job "
+                "ON canonical_deleted_job.tenant_id = d.tenant_id "
+                "AND canonical_deleted_job.job_id = d.job_id"
+                if stable_reference
+                else ""
+            )
             rows = self._conn.execute(
-                """
-                SELECT p.job_id
+                f"""
+                SELECT p.job_id, {canonical_select}
                 FROM job_list_projections p
                 JOIN jobctrl_deleted_jobs d
-                  ON d.job_url = p.job_id
+                  ON {deleted_join}
+                {canonical_join}
                 WHERE p.tenant_id = ?
-                  AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
-                  AND (p.deleted_at IS NULL OR p.deleted_at != d.deleted_at)
+                  AND (
+                    (
+                      (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
+                      AND (p.deleted_at IS NULL OR p.deleted_at != d.deleted_at)
+                    )
+                    OR (
+                      d.restored_at IS NOT NULL
+                      AND julianday(d.restored_at) > julianday(d.deleted_at)
+                      AND p.deleted_at IS NOT NULL
+                    )
+                  )
                 """,
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
             return set()
-        return {
-            str(row["job_id"] if not isinstance(row, tuple) else row[0])
-            for row in rows
-            if (row["job_id"] if not isinstance(row, tuple) else row[0])
-        }
+        dirty_jobs: set[str] = set()
+        for row in rows:
+            projection_job = (
+                row["job_id"]
+                if not isinstance(row, tuple)
+                else row[0]
+            )
+            canonical_job = (
+                row["canonical_job_url"]
+                if not isinstance(row, tuple)
+                else row[1]
+            )
+            if projection_job:
+                dirty_jobs.add(str(projection_job))
+            if canonical_job:
+                dirty_jobs.add(str(canonical_job))
+        return dirty_jobs
 
     def _stale_stage_projection_jobs(self) -> set[str]:
         try:
@@ -3184,17 +3255,27 @@ class ProjectionBuilder:
                        AND pss.job_url = arp.job_id
                 """
             )
+            deleted_join = deleted_jobs_join_to_url(
+                self._conn,
+                deleted_alias="d",
+                tenant_expression="arp.tenant_id",
+                job_url_expression="arp.job_id",
+            )
+            deleted_missing = deleted_jobs_missing_reference_sql(
+                self._conn,
+                deleted_alias="d",
+            )
             dry_runs = int(
                 self._conn.execute(
                     f"""
                     SELECT COUNT(*)
                     FROM apply_run_projections arp
                     LEFT JOIN jobctrl_deleted_jobs d
-                        ON d.job_url = arp.job_id
+                        ON {deleted_join}
                        AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
                     {snapshot_join}
                     WHERE arp.dry_run = 1
-                      AND d.job_url IS NULL
+                      AND {deleted_missing}
                       AND (
                         pss.latest_active_state IS NULL
                         OR pss.latest_active_state NOT IN (
@@ -4422,7 +4503,10 @@ def _job_metadata_join_sql(conn: sqlite3.Connection, job_url_expression: str) ->
 
 
 def _job_lifecycle_exclusion_sql(
-    conn: sqlite3.Connection, job_url_expression: str
+    conn: sqlite3.Connection,
+    job_url_expression: str,
+    *,
+    tenant_expression: str,
 ) -> dict[str, str]:
     """Anti-join fragments excluding soft-deleted and hidden jobs from a
     tenant-wide read, mirroring the TS ``jobLifecycleExclusionSql``. Guarded by
@@ -4432,12 +4516,24 @@ def _job_lifecycle_exclusion_sql(
     joins: list[str] = []
     wheres: list[str] = []
     if _table_exists(conn, "jobctrl_deleted_jobs"):
+        deleted_join = deleted_jobs_join_to_url(
+            conn,
+            deleted_alias="d",
+            tenant_expression=tenant_expression,
+            job_url_expression=job_url_expression,
+        )
         joins.append(
             "LEFT JOIN jobctrl_deleted_jobs d "
-            f"ON d.job_url = {job_url_expression} "
-            "AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
+            f"ON {deleted_join} "
+            "AND (d.restored_at IS NULL OR "
+            "julianday(d.restored_at) <= julianday(d.deleted_at))"
         )
-        wheres.append("d.job_url IS NULL")
+        wheres.append(
+            deleted_jobs_missing_reference_sql(
+                conn,
+                deleted_alias="d",
+            )
+        )
     if _table_exists(conn, "jobctrl_hidden_jobs"):
         joins.append(
             "LEFT JOIN jobctrl_hidden_jobs h "

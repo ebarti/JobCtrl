@@ -31,6 +31,8 @@ import {
   jobReferenceColumn,
   jobReferenceForUrl,
   jobReferenceJoinToJobs,
+  jobReferenceJoinToUrl,
+  jobReferenceMissingSql,
   jobReferencePredicateForUrl,
   tableColumnSet,
   tableExists,
@@ -2659,7 +2661,11 @@ function attachResumeUsages(
           AND provenance_jobs.job_id = provenance.job_id`
     : "";
   const jobMetadata = jobMetadataJoinSql(db, jobUrlExpression);
-  const lifecycle = jobLifecycleExclusionSql(db, jobUrlExpression);
+  const lifecycle = jobLifecycleExclusionSql(
+    db,
+    jobUrlExpression,
+    "provenance.tenant_id",
+  );
   const latestIdentityMatch = stableReferences
     ? "latest.job_id = provenance.job_id"
     : "latest.job_url = provenance.job_url";
@@ -2732,7 +2738,11 @@ function attachRequirementUsagesAndGaps(
         AND score_jobs.job_id = items.job_id`
     : "";
   const jobMetadata = jobMetadataJoinSql(db, jobUrlExpression);
-  const lifecycle = jobLifecycleExclusionSql(db, jobUrlExpression);
+  const lifecycle = jobLifecycleExclusionSql(
+    db,
+    jobUrlExpression,
+    "items.tenant_id",
+  );
   const rows = allRows<RequirementFitItemRow & {
     job_url: string;
     score_version: number;
@@ -2821,7 +2831,11 @@ function attachSkillCoverageUsagesAndGaps(
   gaps: Map<string, EvidenceGapPayload>,
 ): void {
   if (!tableExists(db, "artifact_list_projections")) return;
-  const lifecycle = jobLifecycleExclusionSql(db, "alp.job_id");
+  const lifecycle = jobLifecycleExclusionSql(
+    db,
+    "alp.job_id",
+    "alp.tenant_id",
+  );
   const rows = allRows<{
     job_id: string;
     job_title: string;
@@ -3225,25 +3239,52 @@ function loadLatestApplyRun(db: SqliteDatabase, jobUrl: string): ApplyLatest {
 
 function loadDeletedAt(db: SqliteDatabase, jobUrl: string): string | null {
   if (!tableExists(db, "jobctrl_deleted_jobs")) return null;
+  const reference = jobReferencePredicateForUrl(
+    db,
+    "jobctrl_deleted_jobs",
+    jobUrl,
+  );
   const row = getRow<{ deleted_at: string | null }>(
     db,
-    "SELECT deleted_at FROM jobctrl_deleted_jobs WHERE job_url = ? AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
-    [jobUrl],
+    `SELECT deleted_at
+     FROM jobctrl_deleted_jobs
+     WHERE ${reference.sql}
+       AND (
+         restored_at IS NULL
+         OR julianday(restored_at) <= julianday(deleted_at)
+       )`,
+    reference.params,
   );
   return row ? nullableString(row.deleted_at) : null;
 }
 
 function staleDeletedProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
   if (!tableExists(db, "jobctrl_deleted_jobs")) return [];
+  const deletedJoin = jobReferenceJoinToUrl(
+    db,
+    "jobctrl_deleted_jobs",
+    "d",
+    "p.tenant_id",
+    "p.job_id",
+  );
   const rows = allRows<{ job_id: string }>(
     db,
     `SELECT p.job_id
      FROM job_list_projections p
      JOIN jobctrl_deleted_jobs d
-       ON d.job_url = p.job_id
+       ON ${deletedJoin}
      WHERE p.tenant_id = ?
-       AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
-       AND (p.deleted_at IS NULL OR p.deleted_at != d.deleted_at)`,
+       AND (
+         (
+           (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
+           AND (p.deleted_at IS NULL OR p.deleted_at != d.deleted_at)
+         )
+         OR (
+           d.restored_at IS NOT NULL
+           AND julianday(d.restored_at) > julianday(d.deleted_at)
+           AND p.deleted_at IS NOT NULL
+         )
+       )`,
     [tenantId],
   );
   return rows.map((row) => row.job_id).filter(Boolean);
@@ -4533,7 +4574,16 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
       const hasHidden = tableExists(db, "jobctrl_hidden_jobs");
       const hasSnapshots = tableExists(db, "posting_snapshot_sets");
       const deletedJoin = hasDeleted
-        ? " LEFT JOIN jobctrl_deleted_jobs d ON d.job_url = arp.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
+        ? ` LEFT JOIN jobctrl_deleted_jobs d ON ${jobReferenceJoinToUrl(
+            db,
+            "jobctrl_deleted_jobs",
+            "d",
+            "arp.tenant_id",
+            "arp.job_id",
+          )} AND (
+            d.restored_at IS NULL
+            OR julianday(d.restored_at) <= julianday(d.deleted_at)
+          )`
         : "";
       const hiddenJoin = hasHidden
         ? " LEFT JOIN jobctrl_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
@@ -4544,7 +4594,13 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
           : " LEFT JOIN posting_snapshot_sets pss ON pss.tenant_id = arp.tenant_id AND pss.job_url = arp.job_id"
         : "";
       const lifecycleWhere = [
-        hasDeleted ? "d.job_url IS NULL" : "",
+        hasDeleted
+          ? jobReferenceMissingSql(
+              db,
+              "jobctrl_deleted_jobs",
+              "d",
+            )
+          : "",
         hasHidden ? "h.job_url IS NULL" : "",
         hasSnapshots
           ? `(pss.latest_active_state IS NULL OR pss.latest_active_state NOT IN (${CLOSED_ACTIVE_STATES.map((state) => `'${state}'`).join(", ")}))`
@@ -5668,14 +5724,30 @@ function jobMetadataJoinSql(
 function jobLifecycleExclusionSql(
   db: SqliteDatabase,
   jobUrlExpression: string,
+  tenantExpression: string,
 ): { joinSql: string; whereSql: string } {
   const joins: string[] = [];
   const wheres: string[] = [];
   if (tableExists(db, "jobctrl_deleted_jobs")) {
     joins.push(
-      `LEFT JOIN jobctrl_deleted_jobs d ON d.job_url = ${jobUrlExpression} AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))`,
+      `LEFT JOIN jobctrl_deleted_jobs d ON ${jobReferenceJoinToUrl(
+        db,
+        "jobctrl_deleted_jobs",
+        "d",
+        tenantExpression,
+        jobUrlExpression,
+      )} AND (
+        d.restored_at IS NULL
+        OR julianday(d.restored_at) <= julianday(d.deleted_at)
+      )`,
     );
-    wheres.push("d.job_url IS NULL");
+    wheres.push(
+      jobReferenceMissingSql(
+        db,
+        "jobctrl_deleted_jobs",
+        "d",
+      ),
+    );
   }
   if (tableExists(db, "jobctrl_hidden_jobs")) {
     joins.push(

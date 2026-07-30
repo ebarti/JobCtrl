@@ -608,17 +608,24 @@ def _unselected_work_plan_outcome(
 ) -> tuple[DiscoveryExecutionWorkPlanState, str]:
     is_deleted = "0"
     if _table_exists(conn, "jobctrl_deleted_jobs"):
+        deleted_reference = (
+            "deleted.tenant_id = jobs.tenant_id "
+            "AND deleted.job_id = jobs.job_id"
+            if db_module.deleted_jobs_reference_column(conn)
+            == "job_id"
+            else "deleted.job_url = jobs.url"
+        )
         is_deleted = """
             CASE WHEN EXISTS (
                 SELECT 1
                   FROM jobctrl_deleted_jobs deleted
-                 WHERE deleted.job_url = jobs.url
+                 WHERE %s
                    AND (
                        deleted.restored_at IS NULL
                        OR julianday(deleted.restored_at) <= julianday(deleted.deleted_at)
                    )
             ) THEN 1 ELSE 0 END
-        """
+        """ % deleted_reference
     row = conn.execute(
         f"""
         SELECT {db_module._EFFECTIVE_FIT_SCORE} AS effective_score,

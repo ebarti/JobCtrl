@@ -414,21 +414,18 @@ def test_smart_extract_updates_existing_serialized_null_description(
         )
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-                job_url TEXT PRIMARY KEY,
-                deleted_at TEXT NOT NULL,
-                reason TEXT,
-                restored_at TEXT,
-                FOREIGN KEY(job_url) REFERENCES jobs(url)
+            INSERT INTO jobctrl_deleted_jobs (
+                tenant_id, job_id, deleted_at, reason, restored_at
             )
-            """
-        )
-        conn.execute(
-            """
-            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-            VALUES (?, ?, ?, NULL)
+            SELECT tenant_id, job_id, ?, ?, NULL
+            FROM jobs
+            WHERE url = ?
             """,
-            (url, "2026-05-20T00:00:00+00:00", "missing_description"),
+            (
+                "2026-05-20T00:00:00+00:00",
+                "missing_description",
+                url,
+            ),
         )
         conn.commit()
 
@@ -453,7 +450,9 @@ def test_smart_extract_updates_existing_serialized_null_description(
             """
             SELECT j.description, d.restored_at
             FROM jobs j
-            JOIN jobctrl_deleted_jobs d ON d.job_url = j.url
+            JOIN jobctrl_deleted_jobs d
+              ON d.tenant_id = j.tenant_id
+             AND d.job_id = j.job_id
             WHERE j.url = ?
             """,
             (url,),
@@ -539,7 +538,15 @@ def test_smart_extract_current_alias_refreshes_and_restores_storage_owner(
             (str(stable_job_id),),
         ).fetchone()
         assert physical["url"] == storage_url
-        tombstones = conn.execute("SELECT job_url, restored_at FROM jobctrl_deleted_jobs").fetchall()
+        tombstones = conn.execute(
+            """
+            SELECT jobs.url AS job_url, deleted.restored_at
+            FROM jobctrl_deleted_jobs AS deleted
+            JOIN jobs
+              ON jobs.tenant_id = deleted.tenant_id
+             AND jobs.job_id = deleted.job_id
+            """
+        ).fetchall()
         assert [(row["job_url"], row["restored_at"] is not None) for row in tombstones] == [(storage_url, True)]
         event_urls = {
             row["job_url"]
@@ -595,21 +602,18 @@ def test_smart_extract_refreshes_existing_title_location_before_restore(
         )
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-                job_url TEXT PRIMARY KEY,
-                deleted_at TEXT NOT NULL,
-                reason TEXT,
-                restored_at TEXT,
-                FOREIGN KEY(job_url) REFERENCES jobs(url)
+            INSERT INTO jobctrl_deleted_jobs (
+                tenant_id, job_id, deleted_at, reason, restored_at
             )
-            """
-        )
-        conn.execute(
-            """
-            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-            VALUES (?, ?, ?, NULL)
+            SELECT tenant_id, job_id, ?, ?, NULL
+            FROM jobs
+            WHERE url = ?
             """,
-            (url, "2026-05-20T00:00:00+00:00", "title/location mismatch"),
+            (
+                "2026-05-20T00:00:00+00:00",
+                "title/location mismatch",
+                url,
+            ),
         )
         conn.commit()
 
@@ -635,7 +639,9 @@ def test_smart_extract_refreshes_existing_title_location_before_restore(
             """
             SELECT j.title, j.company, j.description, j.location, d.restored_at
             FROM jobs j
-            JOIN jobctrl_deleted_jobs d ON d.job_url = j.url
+            JOIN jobctrl_deleted_jobs d
+              ON d.tenant_id = j.tenant_id
+             AND d.job_id = j.job_id
             WHERE j.url = ?
             """,
             (url,),

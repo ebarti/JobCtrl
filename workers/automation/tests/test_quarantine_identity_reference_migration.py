@@ -10,7 +10,6 @@ import pytest
 
 import jobctrl.database as database_module
 from jobctrl.database import (
-    SCHEMA_VERSION,
     ensure_discovery_control_tables,
     ensure_quarantine_references_v28,
     init_db,
@@ -266,7 +265,6 @@ def test_v27_rows_migrate_and_duplicate_authorities_merge(
 
     assert (
         conn.execute("PRAGMA user_version").fetchone()[0]
-        == SCHEMA_VERSION
         == 28
     )
     assert database_module._has_quarantine_reference_schema_v28(

@@ -322,7 +322,7 @@ def test_v10_enrichment_snapshot_references_migrate_and_reopen(
     init_db(db_path)
     close_connection(db_path)
 
-    assert _user_version(db_path) == SCHEMA_VERSION == 28
+    assert _user_version(db_path) == SCHEMA_VERSION == 29
     check = sqlite3.connect(db_path)
     try:
         enrichment_rows = check.execute(

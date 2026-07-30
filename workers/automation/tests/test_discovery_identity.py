@@ -600,7 +600,14 @@ def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
     assert resurfaced.metadata.description == "Lead platform engineering teams in Spain."
     assert resurfaced.metadata.location == "Barcelona, Spain"
     tombstone = conn.execute(
-        "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
+        """
+        SELECT deleted.restored_at
+        FROM jobctrl_deleted_jobs AS deleted
+        JOIN jobs
+          ON jobs.tenant_id = deleted.tenant_id
+         AND jobs.job_id = deleted.job_id
+        WHERE jobs.url = ?
+        """,
         ("https://boards.greenhouse.io/acme/jobs/123",),
     ).fetchone()
     assert tombstone is not None
@@ -760,8 +767,15 @@ def test_discover_jobs_use_case_keeps_policy_rejected_deleted_job_hidden(
     assert hidden.is_deleted is True
     assert hidden.metadata.title == "Platform Engineer"
     tombstone = conn.execute(
-        "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
-        (str(job_id),),
+        """
+        SELECT deleted.restored_at
+        FROM jobctrl_deleted_jobs AS deleted
+        JOIN jobs
+          ON jobs.tenant_id = deleted.tenant_id
+         AND jobs.job_id = deleted.job_id
+        WHERE jobs.url = ?
+        """,
+        ("https://boards.greenhouse.io/acme/jobs/123",),
     ).fetchone()
     assert tombstone is not None
     assert tombstone["restored_at"] is None

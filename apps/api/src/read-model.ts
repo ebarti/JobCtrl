@@ -74,11 +74,14 @@ import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { evaluateRepeatApplication } from "./repeat-application.js";
 import {
   allRows,
+  canonicalJobUrlForUrlSqlExpression,
   getRow,
   hasCompositeJobIdForeignKey,
   jobKeyReferenceColumn,
   jobKeyReferencePredicateForUrl,
   jobReferenceColumn,
+  jobReferenceJoinToUrl,
+  jobReferenceMissingSql,
   tableColumnSet,
   tableExists,
   type SqliteDatabase,
@@ -444,24 +447,30 @@ function dashboardWorkSummary(db: SqliteDatabase): DashboardSummary["work"] {
   const stageJoin = hasStageState
     ? jobReferenceColumn(db, "job_stage_states") === "job_id"
       ? `LEFT JOIN jobs AS stage_jobs
-           ON stage_jobs.tenant_id = job_list_projections.tenant_id
-          AND stage_jobs.url = job_list_projections.job_id
+           ON stage_jobs.tenant_id = work.tenant_id
+          AND stage_jobs.url = work.job_id
          LEFT JOIN job_stage_states AS stage_state
            ON stage_state.tenant_id = stage_jobs.tenant_id
           AND stage_state.job_id = stage_jobs.job_id
-          AND stage_state.stage = job_list_projections.current_substage`
+          AND stage_state.stage = work.current_substage`
       : `LEFT JOIN job_stage_states AS stage_state
-           ON stage_state.job_url = job_list_projections.job_id
-          AND stage_state.stage = job_list_projections.current_substage`
+           ON stage_state.job_url = work.job_id
+          AND stage_state.stage = work.current_substage`
     : "";
   const rows = allRows<DashboardWorkRow>(
     db,
-    `SELECT job_id, title, employer, current_stage, current_substage, current_state,
+    `SELECT work.job_id, work.title, work.employer, work.current_stage,
+            work.current_substage, work.current_state,
             ${stageColumns}
-       FROM job_list_projections
+       FROM (
+         SELECT tenant_id, job_id, title, employer, current_stage,
+                current_substage, current_state
+           FROM job_list_projections
+           ${activeFilter.where}
+            AND current_state IN ('queued', 'running')
+       ) AS work
        ${stageJoin}
-       ${activeFilter.where}
-        AND current_state IN ('queued', 'running')`,
+       `,
     activeFilter.params,
   );
 
@@ -2507,12 +2516,27 @@ export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): Pag
   refreshProjections(db, DEFAULT_TENANT);
   const normalizedQuery = query.q.toLowerCase();
   const deletedJoin = tableExists(db, "jobctrl_deleted_jobs")
-    ? " LEFT JOIN jobctrl_deleted_jobs d ON d.job_url = ap.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
+    ? ` LEFT JOIN jobctrl_deleted_jobs d ON ${jobReferenceJoinToUrl(
+        db,
+        "jobctrl_deleted_jobs",
+        "d",
+        "ap.tenant_id",
+        "ap.job_id",
+      )} AND (
+        d.restored_at IS NULL
+        OR julianday(d.restored_at) <= julianday(d.deleted_at)
+      )`
     : "";
   const hiddenJoin = tableExists(db, "jobctrl_hidden_jobs")
     ? " LEFT JOIN jobctrl_hidden_jobs h ON h.job_url = ap.job_id AND h.unhidden_at IS NULL"
     : "";
-  const deletedWhere = tableExists(db, "jobctrl_deleted_jobs") ? " AND d.job_url IS NULL" : "";
+  const deletedWhere = tableExists(db, "jobctrl_deleted_jobs")
+    ? ` AND ${jobReferenceMissingSql(
+        db,
+        "jobctrl_deleted_jobs",
+        "d",
+      )}`
+    : "";
   const hiddenWhere = tableExists(db, "jobctrl_hidden_jobs") ? " AND h.job_url IS NULL" : "";
   const rows = allRows<ArtifactProjectionRow>(
     db,
@@ -5696,14 +5720,33 @@ function listActivityFromEvents(
   const eventTypeSelect = eventColumns.has("event_type") ? "e.event_type" : "'Event' AS event_type";
   const eventTypePredicate = eventColumns.has("event_type") ? "COALESCE(e.event_type, '')" : "'Event'";
   const hideDeletedJoin = tableExists(db, "jobctrl_deleted_jobs")
-    ? " LEFT JOIN jobctrl_deleted_jobs d ON d.job_url = e.job_url AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
+    ? ` LEFT JOIN jobctrl_deleted_jobs d ON ${jobReferenceJoinToUrl(
+        db,
+        "jobctrl_deleted_jobs",
+        "d",
+        `'${DEFAULT_TENANT}'`,
+        "e.job_url",
+      )} AND (
+        d.restored_at IS NULL
+        OR julianday(d.restored_at) <= julianday(d.deleted_at)
+      )`
     : "";
   const hideHiddenJoin = tableExists(db, "jobctrl_hidden_jobs")
-    ? " LEFT JOIN jobctrl_hidden_jobs h ON h.job_url = e.job_url AND h.unhidden_at IS NULL"
+    ? ` LEFT JOIN jobctrl_hidden_jobs h ON h.job_url = ${canonicalJobUrlForUrlSqlExpression(
+        db,
+        `'${DEFAULT_TENANT}'`,
+        "e.job_url",
+      )} AND h.unhidden_at IS NULL`
     : "";
   const activityClauses = [
     "(e.job_url IS NULL OR e.job_url = '' OR jp.job_id IS NOT NULL)",
-    tableExists(db, "jobctrl_deleted_jobs") ? "d.job_url IS NULL" : "",
+    tableExists(db, "jobctrl_deleted_jobs")
+      ? jobReferenceMissingSql(
+          db,
+          "jobctrl_deleted_jobs",
+          "d",
+        )
+      : "",
     tableExists(db, "jobctrl_hidden_jobs") ? "h.job_url IS NULL" : "",
   ].filter(Boolean);
   const params: SqliteValue[] = [DEFAULT_TENANT];
@@ -5738,7 +5781,12 @@ function listActivityFromEvents(
   const activityWhere = `WHERE ${activityClauses.join(" AND ")}`;
   const fromSql = `
     FROM job_events e
-    LEFT JOIN job_list_projections jp ON jp.tenant_id = ? AND jp.job_id = e.job_url
+    LEFT JOIN job_list_projections jp ON jp.tenant_id = ?
+      AND jp.job_id = ${canonicalJobUrlForUrlSqlExpression(
+        db,
+        `'${DEFAULT_TENANT}'`,
+        "e.job_url",
+      )}
     ${hideDeletedJoin}
     ${hideHiddenJoin}
     ${activityWhere}`;
@@ -5783,15 +5831,34 @@ function getActivityEventFromEvents(db: SqliteDatabase, eventId: string): Activi
   const eventColumns = columnNames(db, "job_events");
   const eventTypeSelect = eventColumns.has("event_type") ? "e.event_type" : "'Event' AS event_type";
   const hideDeletedJoin = tableExists(db, "jobctrl_deleted_jobs")
-    ? " LEFT JOIN jobctrl_deleted_jobs d ON d.job_url = e.job_url AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
+    ? ` LEFT JOIN jobctrl_deleted_jobs d ON ${jobReferenceJoinToUrl(
+        db,
+        "jobctrl_deleted_jobs",
+        "d",
+        `'${DEFAULT_TENANT}'`,
+        "e.job_url",
+      )} AND (
+        d.restored_at IS NULL
+        OR julianday(d.restored_at) <= julianday(d.deleted_at)
+      )`
     : "";
   const hideHiddenJoin = tableExists(db, "jobctrl_hidden_jobs")
-    ? " LEFT JOIN jobctrl_hidden_jobs h ON h.job_url = e.job_url AND h.unhidden_at IS NULL"
+    ? ` LEFT JOIN jobctrl_hidden_jobs h ON h.job_url = ${canonicalJobUrlForUrlSqlExpression(
+        db,
+        `'${DEFAULT_TENANT}'`,
+        "e.job_url",
+      )} AND h.unhidden_at IS NULL`
     : "";
   const activityClauses = [
     "e.event_id = ?",
     "(e.job_url IS NULL OR e.job_url = '' OR jp.job_id IS NOT NULL)",
-    tableExists(db, "jobctrl_deleted_jobs") ? "d.job_url IS NULL" : "",
+    tableExists(db, "jobctrl_deleted_jobs")
+      ? jobReferenceMissingSql(
+          db,
+          "jobctrl_deleted_jobs",
+          "d",
+        )
+      : "",
     tableExists(db, "jobctrl_hidden_jobs") ? "h.job_url IS NULL" : "",
   ].filter(Boolean);
   const row = getRow<Record<string, unknown>>(
@@ -5807,7 +5874,12 @@ function getActivityEventFromEvents(db: SqliteDatabase, eventId: string): Activi
        jp.title    AS title,
        jp.employer AS employer
      FROM job_events e
-     LEFT JOIN job_list_projections jp ON jp.tenant_id = ? AND jp.job_id = e.job_url
+     LEFT JOIN job_list_projections jp ON jp.tenant_id = ?
+       AND jp.job_id = ${canonicalJobUrlForUrlSqlExpression(
+         db,
+         `'${DEFAULT_TENANT}'`,
+         "e.job_url",
+       )}
      ${hideDeletedJoin}
      ${hideHiddenJoin}
      WHERE ${activityClauses.join(" AND ")}
@@ -6100,7 +6172,16 @@ export function listWorkflowRuns(
   // rows have a NULL apply_job_id and pass through untouched.
   const deletedJoin =
     hasApply && tableExists(db, "jobctrl_deleted_jobs")
-      ? " LEFT JOIN jobctrl_deleted_jobs d ON d.job_url = arp.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
+      ? ` LEFT JOIN jobctrl_deleted_jobs d ON ${jobReferenceJoinToUrl(
+          db,
+          "jobctrl_deleted_jobs",
+          "d",
+          "arp.tenant_id",
+          "arp.job_id",
+        )} AND (
+          d.restored_at IS NULL
+          OR julianday(d.restored_at) <= julianday(d.deleted_at)
+        )`
       : "";
   const hiddenJoin =
     hasApply && tableExists(db, "jobctrl_hidden_jobs")
@@ -6109,7 +6190,13 @@ export function listWorkflowRuns(
   const where: string[] = ["wrp.tenant_id = ?"];
   const params: SqliteValue[] = [DEFAULT_TENANT];
   if (deletedJoin) {
-    where.push("d.job_url IS NULL");
+    where.push(
+      jobReferenceMissingSql(
+        db,
+        "jobctrl_deleted_jobs",
+        "d",
+      ),
+    );
   }
   if (hiddenJoin) {
     where.push("h.job_url IS NULL");
@@ -6317,12 +6404,27 @@ function recentApplyRuns(db: SqliteDatabase): DashboardSummary["applyRuns"] {
   // L3 (round-1 review): caller (``buildDashboardSummary``) already
   // refreshed projections; do not double-refresh here.
   const deletedJoin = tableExists(db, "jobctrl_deleted_jobs")
-    ? " LEFT JOIN jobctrl_deleted_jobs d ON d.job_url = arp.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
+    ? ` LEFT JOIN jobctrl_deleted_jobs d ON ${jobReferenceJoinToUrl(
+        db,
+        "jobctrl_deleted_jobs",
+        "d",
+        "arp.tenant_id",
+        "arp.job_id",
+      )} AND (
+        d.restored_at IS NULL
+        OR julianday(d.restored_at) <= julianday(d.deleted_at)
+      )`
     : "";
   const hiddenJoin = tableExists(db, "jobctrl_hidden_jobs")
     ? " LEFT JOIN jobctrl_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
     : "";
-  const deletedWhere = tableExists(db, "jobctrl_deleted_jobs") ? " AND d.job_url IS NULL" : "";
+  const deletedWhere = tableExists(db, "jobctrl_deleted_jobs")
+    ? ` AND ${jobReferenceMissingSql(
+        db,
+        "jobctrl_deleted_jobs",
+        "d",
+      )}`
+    : "";
   const hiddenWhere = tableExists(db, "jobctrl_hidden_jobs") ? " AND h.job_url IS NULL" : "";
   const rows = allRows<ApplyRunProjectionRow>(
     db,

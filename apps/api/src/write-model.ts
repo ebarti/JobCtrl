@@ -30,6 +30,7 @@ import {
   jobReferenceColumn,
   jobReferenceForUrl,
   jobReferencePredicateForUrl,
+  stableJobIdForUrl,
   tableColumnSet,
   tableExists,
   type SqliteDatabase,
@@ -133,11 +134,50 @@ export function resolveJobUrl(db: SqliteDatabase, jobKey: string): string | null
   if (!tableExists(db, "jobs")) {
     return null;
   }
-  const row = getRow<{ url?: string }>(db, "SELECT url FROM jobs WHERE url = ? OR application_url = ? LIMIT 1", [
-    jobKey,
-    jobKey,
-  ]);
-  return row?.url ?? null;
+  const jobColumns = tableColumnSet(db, "jobs");
+  const tenantScoped = jobColumns.has("tenant_id");
+  const row = getRow<{ url?: string }>(
+    db,
+    `SELECT url
+       FROM jobs
+      WHERE ${tenantScoped ? "tenant_id = 'local' AND " : ""}
+            (url = ? OR application_url = ?)
+      LIMIT 1`,
+    [jobKey, jobKey],
+  );
+  if (row?.url) {
+    return row.url;
+  }
+  if (
+    !tenantScoped
+    || !jobColumns.has("job_id")
+  ) {
+    return null;
+  }
+  // A legacy posting URL can itself be UUID-shaped. Resolve current URLs and
+  // posting aliases before interpreting the token as another aggregate's
+  // stable JobId; destructive lifecycle mutations must retain URL semantics.
+  const stableJobId = stableJobIdForUrl(db, jobKey, "local") ?? getRow<{ job_id?: string }>(
+    db,
+    `SELECT job_id
+       FROM jobs
+      WHERE tenant_id = 'local'
+        AND job_id = ?
+      LIMIT 1`,
+    [jobKey],
+  )?.job_id;
+  if (!stableJobId) {
+    return null;
+  }
+  return getRow<{ url?: string }>(
+    db,
+    `SELECT url
+       FROM jobs
+      WHERE tenant_id = 'local'
+        AND job_id = ?
+      LIMIT 1`,
+    [stableJobId],
+  )?.url ?? null;
 }
 
 export function resetJobStage(
@@ -541,17 +581,46 @@ export function softDeleteJobs(db: SqliteDatabase, request: BulkJobMutationReque
   ensureDeletedJobsTable(db);
   const deletedAt = new Date().toISOString();
   const jobKeys = mutableJobKeys(db, request);
+  const referenceColumn = jobReferenceColumn(
+    db,
+    "jobctrl_deleted_jobs",
+  );
+  const stableReference = referenceColumn === "job_id";
+  const identityColumns = stableReference
+    ? "tenant_id, job_id"
+    : "job_url";
+  const identityPlaceholders = stableReference
+    ? "?, ?"
+    : "?";
+  const conflictTarget = stableReference
+    ? "tenant_id, job_id"
+    : "job_url";
   const statement = db.prepare(`
-    INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-    VALUES (?, ?, ?, NULL)
-    ON CONFLICT(job_url) DO UPDATE SET
+    INSERT INTO jobctrl_deleted_jobs (
+      ${identityColumns}, deleted_at, reason, restored_at
+    )
+    VALUES (${identityPlaceholders}, ?, ?, NULL)
+    ON CONFLICT(${conflictTarget}) DO UPDATE SET
       deleted_at = excluded.deleted_at,
       reason = excluded.reason,
       restored_at = NULL
   `);
   const transaction = db.transaction((keys: string[]) => {
     for (const jobUrl of keys) {
-      statement.run(jobUrl, deletedAt, request.reason ?? null);
+      const reference = stableReference
+        ? jobReferenceForUrl(
+            db,
+            "jobctrl_deleted_jobs",
+            jobUrl,
+          )
+        : jobUrl;
+      statement.run(
+        ...(stableReference
+          ? ["local", reference]
+          : [reference]),
+        deletedAt,
+        request.reason ?? null,
+      );
       recordActionEvent(db, {
         jobUrl,
         stage: currentMutableStage(db, jobUrl),
@@ -574,12 +643,37 @@ export function restoreJobs(db: SqliteDatabase, request: BulkJobMutationRequest)
   ensureDeletedJobsTable(db);
   const restoredAt = new Date().toISOString();
   const jobKeys = mutableJobKeys(db, request);
+  const referenceColumn = jobReferenceColumn(
+    db,
+    "jobctrl_deleted_jobs",
+  );
+  const stableReference = referenceColumn === "job_id";
   const statement = db.prepare(
-    "UPDATE jobctrl_deleted_jobs SET restored_at = ? WHERE job_url = ? AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
+    `UPDATE jobctrl_deleted_jobs
+     SET restored_at = ?
+     WHERE ${stableReference
+       ? "tenant_id = ? AND job_id = ?"
+       : "job_url = ?"}
+       AND (
+         restored_at IS NULL
+         OR julianday(restored_at) <= julianday(deleted_at)
+       )`,
   );
   const transaction = db.transaction((keys: string[]) => {
     for (const jobUrl of keys) {
-      statement.run(restoredAt, jobUrl);
+      const reference = stableReference
+        ? jobReferenceForUrl(
+            db,
+            "jobctrl_deleted_jobs",
+            jobUrl,
+          )
+        : jobUrl;
+      statement.run(
+        restoredAt,
+        ...(stableReference
+          ? ["local", reference]
+          : [reference]),
+      );
       recordActionEvent(db, {
         jobUrl,
         stage: currentMutableStage(db, jobUrl),
@@ -791,15 +885,56 @@ function resetEnrichmentAggregate(db: SqliteDatabase, jobUrl: string): void {
 }
 
 function ensureDeletedJobsTable(db: SqliteDatabase): void {
-  db.prepare(
-    `CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-      job_url TEXT PRIMARY KEY,
-      deleted_at TEXT NOT NULL,
-      reason TEXT,
-      restored_at TEXT,
-      FOREIGN KEY(job_url) REFERENCES jobs(url)
-    )`,
-  ).run();
+  const schemaVersion = Number(
+    db.pragma("user_version", { simple: true }),
+  );
+  const stableReference = schemaVersion >= 29;
+  if (!tableExists(db, "jobctrl_deleted_jobs")) {
+    db.prepare(
+      stableReference
+        ? `CREATE TABLE jobctrl_deleted_jobs (
+            tenant_id TEXT NOT NULL DEFAULT 'local',
+            job_id TEXT NOT NULL,
+            deleted_at TEXT NOT NULL,
+            reason TEXT,
+            restored_at TEXT,
+            PRIMARY KEY (tenant_id, job_id),
+            FOREIGN KEY (tenant_id, job_id)
+              REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+          )`
+        : `CREATE TABLE jobctrl_deleted_jobs (
+            job_url TEXT PRIMARY KEY,
+            deleted_at TEXT NOT NULL,
+            reason TEXT,
+            restored_at TEXT,
+            FOREIGN KEY(job_url) REFERENCES jobs(url)
+          )`,
+    ).run();
+  }
+  if (
+    stableReference
+    && (
+      jobReferenceColumn(db, "jobctrl_deleted_jobs")
+        !== "job_id"
+      || tableColumnSet(
+        db,
+        "jobctrl_deleted_jobs",
+      ).has("job_url")
+      || !hasCompositeJobIdForeignKey(
+        db,
+        "jobctrl_deleted_jobs",
+      )
+      || tablePrimaryKeyColumns(
+        db,
+        "jobctrl_deleted_jobs",
+      ).join(",") !== "tenant_id,job_id"
+    )
+  ) {
+    throw new Error(
+      "Schema v29 requires stable soft-delete "
+        + "tombstone JobId references.",
+    );
+  }
 }
 
 function ensureHiddenJobsTable(db: SqliteDatabase): void {
@@ -836,7 +971,27 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
     [jobUrl],
   );
   const jobId = identity?.job_id;
-  deleteWhere(db, "jobctrl_deleted_jobs", "job_url = ?", [jobUrl]);
+  if (tableExists(db, "jobctrl_deleted_jobs")) {
+    const deletedReference = jobReferenceColumn(
+      db,
+      "jobctrl_deleted_jobs",
+    );
+    if (deletedReference === "job_id" && jobId) {
+      deleteWhere(
+        db,
+        "jobctrl_deleted_jobs",
+        "tenant_id = ? AND job_id = ?",
+        ["local", jobId],
+      );
+    } else if (deletedReference === "job_url") {
+      deleteWhere(
+        db,
+        "jobctrl_deleted_jobs",
+        "job_url = ?",
+        [jobUrl],
+      );
+    }
+  }
   deleteWhere(db, "jobctrl_hidden_jobs", "job_url = ?", [jobUrl]);
   if (tableExists(db, "job_stage_states")) {
     const stageReference = jobReferenceColumn(db, "job_stage_states");
@@ -1210,6 +1365,22 @@ function deleteWhere(db: SqliteDatabase, tableName: string, whereSql: string, pa
     return;
   }
   db.prepare(`DELETE FROM ${tableName} WHERE ${whereSql}`).run(...params);
+}
+
+function tablePrimaryKeyColumns(
+  db: SqliteDatabase,
+  tableName: string,
+): string[] {
+  return (
+    db
+      .prepare(
+        `PRAGMA table_info("${tableName.replaceAll('"', '""')}")`,
+      )
+      .all() as Array<{ name: string; pk: number }>
+  )
+    .filter((row) => row.pk > 0)
+    .sort((left, right) => left.pk - right.pk)
+    .map((row) => row.name);
 }
 
 function deleteScoringJobReferences(

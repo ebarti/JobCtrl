@@ -474,21 +474,17 @@ def test_apply_run_succeeded_marks_applied(conn: sqlite3.Connection) -> None:
 def test_soft_deleted_job_carries_deleted_at(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/5"
     _seed_job(conn, url)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-            job_url     TEXT PRIMARY KEY,
-            deleted_at  TEXT NOT NULL,
-            reason      TEXT,
-            restored_at TEXT
-        )
-        """
-    )
     deleted_at = "2026-05-04T14:00:00+00:00"
     conn.execute(
-        "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at) "
-        "VALUES (?, ?, ?, NULL)",
-        (url, deleted_at, "test"),
+        """
+        INSERT INTO jobctrl_deleted_jobs (
+            tenant_id, job_id, deleted_at, reason, restored_at
+        )
+        SELECT tenant_id, job_id, ?, ?, NULL
+        FROM jobs
+        WHERE url = ?
+        """,
+        (deleted_at, "test", url),
     )
     record_job_event(conn, url, "discover", "JobDeleted")
     conn.commit()
@@ -504,21 +500,22 @@ def test_soft_deleted_job_carries_deleted_at(conn: sqlite3.Connection) -> None:
 def test_stale_restore_before_delete_still_carries_deleted_at(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/stale-restore"
     _seed_job(conn, url)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-            job_url     TEXT PRIMARY KEY,
-            deleted_at  TEXT NOT NULL,
-            reason      TEXT,
-            restored_at TEXT
-        )
-        """
-    )
     deleted_at = "2026-05-25T23:10:33.870522+00:00"
     conn.execute(
-        "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at) "
-        "VALUES (?, ?, ?, ?)",
-        (url, deleted_at, "discovery hygiene rejected source", "2026-05-25T21:35:55.879345+00:00"),
+        """
+        INSERT INTO jobctrl_deleted_jobs (
+            tenant_id, job_id, deleted_at, reason, restored_at
+        )
+        SELECT tenant_id, job_id, ?, ?, ?
+        FROM jobs
+        WHERE url = ?
+        """,
+        (
+            deleted_at,
+            "discovery hygiene rejected source",
+            "2026-05-25T21:35:55.879345+00:00",
+            url,
+        ),
     )
     record_job_event(conn, url, "discover", "JobDeleted")
     conn.commit()

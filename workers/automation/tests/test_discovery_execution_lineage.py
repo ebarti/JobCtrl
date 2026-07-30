@@ -430,17 +430,14 @@ def test_terminal_fanout_honors_deleted_job_tombstone_when_table_exists(
     job_url = _insert_job(conn, "deleted")
     conn.execute(
         """
-        CREATE TABLE jobctrl_deleted_jobs (
-            job_url TEXT PRIMARY KEY,
-            deleted_at TEXT NOT NULL,
-            reason TEXT,
-            restored_at TEXT
+        INSERT INTO jobctrl_deleted_jobs (
+            tenant_id, job_id, deleted_at
         )
-        """
-    )
-    conn.execute(
-        "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at) VALUES (?, ?)",
-        (job_url, "2026-07-14T09:00:00+00:00"),
+        SELECT tenant_id, job_id, ?
+        FROM jobs
+        WHERE url = ?
+        """,
+        ("2026-07-14T09:00:00+00:00", job_url),
     )
     conn.commit()
     repository.link_job(

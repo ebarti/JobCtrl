@@ -38,6 +38,13 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
+from jobctrl.database import (
+    deleted_jobs_join_to_jobs,
+    deleted_jobs_missing_reference_sql,
+    deleted_jobs_reference_predicate,
+    deleted_jobs_reference_values,
+    ensure_deleted_jobs_table as ensure_deleted_jobs_schema,
+)
 from jobctrl.domain.discovery.aggregate import Job
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.search_units import DiscoverySearchUnitLease
@@ -152,17 +159,7 @@ class SqliteJobRepository:
         Created on demand so the worker-side delete path matches the
         API-side delete path on row shape.
         """
-        self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-                job_url TEXT PRIMARY KEY,
-                deleted_at TEXT NOT NULL,
-                reason TEXT,
-                restored_at TEXT,
-                FOREIGN KEY(job_url) REFERENCES jobs(url)
-            )
-            """
-        )
+        ensure_deleted_jobs_schema(self._conn)
         self._conn.commit()
 
     # ------------------------------------------------------------------
@@ -253,6 +250,15 @@ class SqliteJobRepository:
         limit: int = 100,
         include_deleted: bool = False,
     ) -> list[Job]:
+        deleted_join = deleted_jobs_join_to_jobs(
+            self._conn,
+            deleted_alias="d",
+            jobs_alias="j",
+        )
+        deleted_missing = deleted_jobs_missing_reference_sql(
+            self._conn,
+            deleted_alias="d",
+        )
         if not include_deleted:
             sql = (
                 "SELECT j.tenant_id, j.job_id, j.url, "
@@ -261,9 +267,9 @@ class SqliteJobRepository:
                 "d.deleted_at, d.reason "
                 "FROM jobs j "
                 "LEFT JOIN jobctrl_deleted_jobs d "
-                "  ON d.job_url = j.url "
+                f"  ON {deleted_join} "
                 " AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at)) "
-                "WHERE j.tenant_id = ? AND d.job_url IS NULL "
+                f"WHERE j.tenant_id = ? AND {deleted_missing} "
                 "ORDER BY j.discovered_at DESC NULLS LAST"
             )
         else:
@@ -274,7 +280,7 @@ class SqliteJobRepository:
                 "d.deleted_at, d.reason "
                 "FROM jobs j "
                 "LEFT JOIN jobctrl_deleted_jobs d "
-                "  ON d.job_url = j.url "
+                f"  ON {deleted_join} "
                 " AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at)) "
                 "WHERE j.tenant_id = ? "
                 "ORDER BY j.discovered_at DESC NULLS LAST"
@@ -597,17 +603,30 @@ class SqliteJobRepository:
         identity = self._require_identity(tenant_id, existing.job_id)
         self._fence_search_unit_write()
         deleted = existing.soft_delete(reason=reason, deleted_at=deleted_at)
+        (
+            identity_columns,
+            identity_placeholders,
+            identity_values,
+            conflict_target,
+        ) = deleted_jobs_reference_values(
+            self._conn,
+            tenant_id=str(tenant_id),
+            job_id=str(identity.job_id),
+            job_url=identity.storage_url.value,
+        )
         self._conn.execute(
-            """
-            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-            VALUES (?, ?, ?, NULL)
-            ON CONFLICT(job_url) DO UPDATE SET
+            f"""
+            INSERT INTO jobctrl_deleted_jobs (
+                {identity_columns}, deleted_at, reason, restored_at
+            )
+            VALUES ({identity_placeholders}, ?, ?, NULL)
+            ON CONFLICT({conflict_target}) DO UPDATE SET
                 deleted_at = excluded.deleted_at,
                 reason = excluded.reason,
                 restored_at = NULL
             """,
             (
-                identity.storage_url.value,
+                *identity_values,
                 deleted.deleted_at,
                 deleted.delete_reason,
             ),
@@ -629,14 +648,22 @@ class SqliteJobRepository:
         self._fence_search_unit_write()
         restored = existing.restore()
         restore_timestamp = _restore_timestamp(restored_at, deleted_at=existing.deleted_at)
+        reference_sql, reference_params = (
+            deleted_jobs_reference_predicate(
+                self._conn,
+                tenant_id=str(tenant_id),
+                job_id=str(identity.job_id),
+                job_url=identity.storage_url.value,
+            )
+        )
         # Mirror the API's restore semantics — set restored_at rather
         # than deleting the tombstone row so audit history is
         # preserved.
         self._conn.execute(
             "UPDATE jobctrl_deleted_jobs SET restored_at = ? "
-            "WHERE job_url = ? "
+            f"WHERE {reference_sql} "
             "AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
-            (restore_timestamp, identity.storage_url.value),
+            (restore_timestamp, *reference_params),
         )
         self._conn.commit()
         return restored
@@ -771,19 +798,28 @@ class SqliteJobRepository:
         if incoming_key is None:
             return None
         self._conn.create_function("jh_normalize_identity", 1, normalize_identity_text, deterministic=True)
+        deleted_join = deleted_jobs_join_to_jobs(
+            self._conn,
+            deleted_alias="d",
+            jobs_alias="j",
+        )
+        deleted_missing = deleted_jobs_missing_reference_sql(
+            self._conn,
+            deleted_alias="d",
+        )
         rows = self._conn.execute(
-            """
+            f"""
             SELECT j.job_id, j.url, j.title, j.company, j.site,
                    j.description AS listing_description,
                    COALESCE(je.full_description, j.full_description)
                        AS enriched_description,
-                   CASE WHEN d.job_url IS NULL THEN 0 ELSE 1 END AS is_deleted
+                   CASE WHEN {deleted_missing} THEN 0 ELSE 1 END AS is_deleted
             FROM jobs j
             LEFT JOIN job_enrichments je
               ON je.tenant_id = j.tenant_id
              AND je.job_id = j.job_id
             LEFT JOIN jobctrl_deleted_jobs d
-              ON d.job_url = j.url
+              ON {deleted_join}
              AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
             WHERE j.tenant_id = ?
               AND jh_normalize_identity(COALESCE(j.title, '')) = ?
@@ -1108,15 +1144,20 @@ class SqliteJobRepository:
     # ------------------------------------------------------------------
 
     def _load_resolved(self, identity: ResolvedJobIdentity) -> Job | None:
+        deleted_join = deleted_jobs_join_to_jobs(
+            self._conn,
+            deleted_alias="d",
+            jobs_alias="j",
+        )
         row = self._conn.execute(
-            """
+            f"""
             SELECT j.tenant_id, j.job_id, j.url,
                    j.title, j.salary, j.description, j.location,
                    j.site, j.strategy, j.discovered_at,
                    d.deleted_at, d.reason
             FROM jobs j
             LEFT JOIN jobctrl_deleted_jobs d
-              ON d.job_url = j.url
+              ON {deleted_join}
              AND (
                     d.restored_at IS NULL
                  OR julianday(d.restored_at) <= julianday(d.deleted_at)
@@ -1167,31 +1208,52 @@ class SqliteJobRepository:
         the URL. This keeps the two sources of truth consistent on
         every save.
         """
+        (
+            identity_columns,
+            identity_placeholders,
+            identity_values,
+            conflict_target,
+        ) = deleted_jobs_reference_values(
+            self._conn,
+            tenant_id=str(job.tenant_id),
+            job_id=str(identity.job_id),
+            job_url=identity.storage_url.value,
+        )
         if job.deleted_at is not None:
             self._conn.execute(
-                """
-                INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-                VALUES (?, ?, ?, NULL)
-                ON CONFLICT(job_url) DO UPDATE SET
+                f"""
+                INSERT INTO jobctrl_deleted_jobs (
+                    {identity_columns}, deleted_at, reason, restored_at
+                )
+                VALUES ({identity_placeholders}, ?, ?, NULL)
+                ON CONFLICT({conflict_target}) DO UPDATE SET
                     deleted_at = excluded.deleted_at,
                     reason = excluded.reason,
                     restored_at = NULL
                 """,
                 (
-                    identity.storage_url.value,
+                    *identity_values,
                     job.deleted_at,
                     job.delete_reason,
                 ),
             )
         else:
+            reference_sql, reference_params = (
+                deleted_jobs_reference_predicate(
+                    self._conn,
+                    tenant_id=str(job.tenant_id),
+                    job_id=str(identity.job_id),
+                    job_url=identity.storage_url.value,
+                )
+            )
             # Keep legacy active-save behaviour, but timestamp-aware
             # readers only treat this as restored when the active row
             # is newer than the tombstone.
             self._conn.execute(
                 "UPDATE jobctrl_deleted_jobs SET restored_at = ? "
-                "WHERE job_url = ? "
+                f"WHERE {reference_sql} "
                 "AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
-                (job.discovered_at, identity.storage_url.value),
+                (job.discovered_at, *reference_params),
             )
 
     @staticmethod

@@ -686,7 +686,15 @@ def test_discovery_hygiene_retires_existing_invalid_canonical_ats_rows(
     assert result["retired_jobs"] == 3
     deleted = {
         row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
+        for row in conn.execute(
+            """
+            SELECT jobs.url AS job_url, deleted.reason
+            FROM jobctrl_deleted_jobs AS deleted
+            JOIN jobs
+              ON jobs.tenant_id = deleted.tenant_id
+             AND jobs.job_id = deleted.job_id
+            """
+        ).fetchall()
     }
     assert "https://boards.greenhouse.io/acme/jobs/valid" not in deleted
     assert "missing_description" in deleted["https://boards.greenhouse.io/acme/jobs/empty-description"]
@@ -786,7 +794,15 @@ def test_discovery_hygiene_retires_ashby_business_travel_portugal_rows(
     assert result["retired_jobs"] == 1
     deleted = {
         row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
+        for row in conn.execute(
+            """
+            SELECT jobs.url AS job_url, deleted.reason
+            FROM jobctrl_deleted_jobs AS deleted
+            JOIN jobs
+              ON jobs.tenant_id = deleted.tenant_id
+             AND jobs.job_id = deleted.job_id
+            """
+        ).fetchall()
     }
     assert good_url not in deleted
     assert "title_mismatch" in deleted[bad_url]
@@ -879,7 +895,15 @@ def test_discovery_hygiene_retires_invalid_jobspy_rows(
     assert result["retired_jobs"] == 2
     deleted = {
         row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
+        for row in conn.execute(
+            """
+            SELECT jobs.url AS job_url, deleted.reason
+            FROM jobctrl_deleted_jobs AS deleted
+            JOIN jobs
+              ON jobs.tenant_id = deleted.tenant_id
+             AND jobs.job_id = deleted.job_id
+            """
+        ).fetchall()
     }
     assert "https://www.linkedin.com/jobs/view/valid-head-engineering" not in deleted
     assert "title_mismatch" in deleted["https://www.linkedin.com/jobs/view/head-school-biomedical"]
@@ -989,7 +1013,15 @@ def test_discovery_hygiene_treats_serialized_null_descriptions_as_missing(
     assert result["retired_jobs"] == 3
     deleted = {
         row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
+        for row in conn.execute(
+            """
+            SELECT jobs.url AS job_url, deleted.reason
+            FROM jobctrl_deleted_jobs AS deleted
+            JOIN jobs
+              ON jobs.tenant_id = deleted.tenant_id
+             AND jobs.job_id = deleted.job_id
+            """
+        ).fetchall()
     }
     assert "https://www.linkedin.com/jobs/view/valid-head-engineering" not in deleted
     assert (
@@ -1297,7 +1329,15 @@ def test_discovery_hygiene_applies_to_workday_and_smart_extract_rows(
     assert result["retired_jobs"] == 3
     deleted = {
         row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
+        for row in conn.execute(
+            """
+            SELECT jobs.url AS job_url, deleted.reason
+            FROM jobctrl_deleted_jobs AS deleted
+            JOIN jobs
+              ON jobs.tenant_id = deleted.tenant_id
+             AND jobs.job_id = deleted.job_id
+            """
+        ).fetchall()
     }
     assert "https://acme.wd1.myworkdayjobs.com/jobs/valid-engineering-manager" not in deleted
     assert "https://wellfound.com/jobs/valid-head-engineering" not in deleted

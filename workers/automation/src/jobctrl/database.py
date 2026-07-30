@@ -106,7 +106,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v28 (quarantine references): the current Discovery quarantine authority is
 # keyed by the tenant-scoped stable Job aggregate. URL-era duplicates collapse
 # deterministically while their snapshots and events retain historical facts.
-SCHEMA_VERSION = 28
+# v29 (delete tombstones): soft-delete lifecycle state is keyed by the
+# tenant-scoped stable Job aggregate. URL-era alias tombstones collapse into
+# one current lifecycle projection without changing delete/restore history.
+SCHEMA_VERSION = 29
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -265,6 +268,7 @@ def _schema_migrations() -> tuple[
         (26, ensure_discovery_feedback_references_v26),
         (27, ensure_manual_capture_references_v27),
         (28, ensure_quarantine_references_v28),
+        (29, ensure_deleted_job_references_v29),
     )
 
 
@@ -467,6 +471,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_projection_tables_in_db(conn)
     drop_legacy_apply_runs_tables(conn)
     _run_schema_migrations(conn)
+    ensure_deleted_jobs_table(conn)
 
     return conn
 
@@ -4910,6 +4915,13 @@ def _reassign_discovery_identity_references(
         )
     if _has_quarantine_reference_schema_v28(conn):
         _reassign_quarantine_references_v28(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+    if _has_deleted_job_reference_schema_v29(conn):
+        _reassign_deleted_job_references_v29(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
@@ -16421,6 +16433,590 @@ def _reassign_quarantine_references_v28(
     )
 
 
+_DELETED_JOB_REFERENCE_SCHEMA_VERSION = 29
+_DELETED_JOB_REFERENCE_TABLES = ("jobctrl_deleted_jobs",)
+_DELETED_JOB_PAYLOAD_FIELDS_V29 = (
+    "deleted_at",
+    "reason",
+    "restored_at",
+)
+
+
+def _create_deleted_jobs_table_v29(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    stable_reference: bool,
+) -> None:
+    if stable_reference:
+        conn.execute(
+            f"""
+            CREATE TABLE "{table}" (
+                tenant_id   TEXT NOT NULL DEFAULT 'local',
+                job_id      TEXT NOT NULL,
+                deleted_at  TEXT NOT NULL,
+                reason      TEXT,
+                restored_at TEXT,
+                PRIMARY KEY (tenant_id, job_id),
+                FOREIGN KEY (tenant_id, job_id)
+                    REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+            )
+            """
+        )
+        return
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            job_url     TEXT PRIMARY KEY,
+            deleted_at  TEXT NOT NULL,
+            reason      TEXT,
+            restored_at TEXT,
+            FOREIGN KEY (job_url) REFERENCES jobs(url)
+        )
+        """
+    )
+
+
+def deleted_jobs_reference_column(
+    conn: sqlite3.Connection,
+) -> str:
+    columns = _table_columns(conn, "jobctrl_deleted_jobs")
+    if "job_id" in columns:
+        return "job_id"
+    if "job_url" in columns:
+        return "job_url"
+    raise RuntimeError(
+        "jobctrl_deleted_jobs has no Job identity column"
+    )
+
+
+def deleted_jobs_join_to_jobs(
+    conn: sqlite3.Connection,
+    *,
+    deleted_alias: str,
+    jobs_alias: str,
+) -> str:
+    if (
+        deleted_jobs_reference_column(conn)
+        == "job_id"
+    ):
+        return (
+            f"{deleted_alias}.tenant_id = {jobs_alias}.tenant_id "
+            f"AND {deleted_alias}.job_id = {jobs_alias}.job_id"
+        )
+    return f"{deleted_alias}.job_url = {jobs_alias}.url"
+
+
+def deleted_jobs_join_to_url(
+    conn: sqlite3.Connection,
+    *,
+    deleted_alias: str,
+    tenant_expression: str,
+    job_url_expression: str,
+) -> str:
+    if deleted_jobs_reference_column(conn) == "job_url":
+        return f"{deleted_alias}.job_url = {job_url_expression}"
+
+    direct_url = (
+        "(SELECT lifecycle_job.job_id "
+        "FROM jobs AS lifecycle_job "
+        f"WHERE lifecycle_job.tenant_id = {tenant_expression} "
+        f"AND lifecycle_job.url = {job_url_expression} LIMIT 1)"
+    )
+    alias_columns = _table_columns(conn, "job_identity_aliases")
+    if not {
+        "tenant_id",
+        "alias_kind",
+        "alias_value",
+        "job_id",
+    }.issubset(alias_columns):
+        resolved_job_id = direct_url
+    else:
+        posting_url_alias = (
+            "(SELECT lifecycle_alias.job_id "
+            "FROM job_identity_aliases AS lifecycle_alias "
+            "JOIN jobs AS lifecycle_alias_job "
+            "ON lifecycle_alias_job.tenant_id = lifecycle_alias.tenant_id "
+            "AND lifecycle_alias_job.job_id = lifecycle_alias.job_id "
+            f"WHERE lifecycle_alias.tenant_id = {tenant_expression} "
+            "AND lifecycle_alias.alias_kind = 'posting_url' "
+            f"AND lifecycle_alias.alias_value = {job_url_expression} LIMIT 1)"
+        )
+        # Legacy URL-shaped references stay URL-first. In particular, a
+        # current URL wins over a same-text old alias.
+        resolved_job_id = (
+            f"COALESCE({direct_url}, {posting_url_alias})"
+        )
+    return (
+        f"{deleted_alias}.tenant_id = {tenant_expression} "
+        f"AND {deleted_alias}.job_id = {resolved_job_id}"
+    )
+
+
+def deleted_jobs_missing_reference_sql(
+    conn: sqlite3.Connection,
+    *,
+    deleted_alias: str,
+) -> str:
+    return (
+        f"{deleted_alias}."
+        f"{deleted_jobs_reference_column(conn)} IS NULL"
+    )
+
+
+def deleted_jobs_reference_values(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    job_id: str,
+    job_url: str,
+) -> tuple[str, str, tuple[str, ...], str]:
+    if (
+        deleted_jobs_reference_column(conn)
+        == "job_id"
+    ):
+        return (
+            "tenant_id, job_id",
+            "?, ?",
+            (tenant_id, job_id),
+            "tenant_id, job_id",
+        )
+    return ("job_url", "?", (job_url,), "job_url")
+
+
+def deleted_jobs_reference_predicate(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    job_id: str,
+    job_url: str,
+    deleted_alias: str = "",
+) -> tuple[str, tuple[str, ...]]:
+    prefix = f"{deleted_alias}." if deleted_alias else ""
+    if (
+        deleted_jobs_reference_column(conn)
+        == "job_id"
+    ):
+        return (
+            f"{prefix}tenant_id = ? "
+            f"AND {prefix}job_id = ?",
+            (tenant_id, job_id),
+        )
+    return (f"{prefix}job_url = ?", (job_url,))
+
+
+def _has_deleted_job_reference_schema_v29(
+    conn: sqlite3.Connection,
+) -> bool:
+    table = "jobctrl_deleted_jobs"
+    return (
+        "tenant_id" in _table_columns(conn, table)
+        and "job_id" in _table_columns(conn, table)
+        and "job_url" not in _table_columns(conn, table)
+        and _primary_key_columns(conn, table)
+        == ("tenant_id", "job_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            table,
+            "job_id",
+        )
+    )
+
+
+def ensure_deleted_jobs_table(
+    conn: sqlite3.Connection,
+) -> list[str]:
+    current = _assert_schema_version_supported(conn)
+    stable_reference = (
+        current >= _DELETED_JOB_REFERENCE_SCHEMA_VERSION
+    )
+    if not _table_columns(conn, "jobctrl_deleted_jobs"):
+        _create_deleted_jobs_table_v29(
+            conn,
+            table="jobctrl_deleted_jobs",
+            stable_reference=stable_reference,
+        )
+    if stable_reference:
+        if not _has_deleted_job_reference_schema_v29(conn):
+            raise RuntimeError(
+                "Schema v29 requires stable soft-delete "
+                "tombstone JobId references."
+            )
+    elif (
+        deleted_jobs_reference_column(conn) != "job_url"
+    ):
+        raise RuntimeError(
+            "Pre-v29 soft-delete tombstones require URL references."
+        )
+    return list(_DELETED_JOB_REFERENCE_TABLES)
+
+
+def _deleted_job_candidate_v29(
+    *,
+    tenant_id: str,
+    stable_job_id: str,
+    payload: tuple[Any, ...],
+    tie_breaker: str,
+) -> dict[str, Any]:
+    candidate = {
+        name: value
+        for name, value in zip(
+            _DELETED_JOB_PAYLOAD_FIELDS_V29,
+            payload,
+            strict=True,
+        )
+    }
+    candidate["tenant_id"] = tenant_id
+    candidate["job_id"] = stable_job_id
+    candidate["_tie_breaker"] = tie_breaker
+    return candidate
+
+
+def _deleted_job_timestamp_rank_v29(
+    candidate: dict[str, Any],
+    field: str,
+) -> tuple[tuple[float, str], str]:
+    return (
+        _quarantine_timestamp_rank_v28(
+            candidate.get(field),
+        ),
+        str(candidate["_tie_breaker"]),
+    )
+
+
+def _merge_deleted_job_candidates_v29(
+    candidates: list[dict[str, Any]],
+) -> tuple[Any, ...]:
+    if not candidates:
+        raise RuntimeError(
+            "Soft-delete tombstone merge requires at least one row"
+        )
+    latest_delete = max(
+        candidates,
+        key=lambda candidate: (
+            _deleted_job_timestamp_rank_v29(
+                candidate,
+                "deleted_at",
+            )
+        ),
+    )
+    restore_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.get("restored_at") is not None
+    ]
+    restored_at = None
+    if restore_candidates:
+        latest_restore = max(
+            restore_candidates,
+            key=lambda candidate: (
+                _deleted_job_timestamp_rank_v29(
+                    candidate,
+                    "restored_at",
+                )
+            ),
+        )
+        restored_at = latest_restore.get("restored_at")
+    return (
+        latest_delete["tenant_id"],
+        latest_delete["job_id"],
+        latest_delete["deleted_at"],
+        latest_delete["reason"],
+        restored_at,
+    )
+
+
+def _canonical_deleted_job_rows_v29(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    legacy = (
+        deleted_jobs_reference_column(conn)
+        == "job_url"
+    )
+    rows = conn.execute(
+        (
+            """
+            SELECT job_url, deleted_at, reason, restored_at
+            FROM jobctrl_deleted_jobs
+            ORDER BY job_url
+            """
+            if legacy
+            else """
+            SELECT tenant_id, job_id, deleted_at, reason, restored_at
+            FROM jobctrl_deleted_jobs
+            ORDER BY tenant_id, job_id
+            """
+        )
+    ).fetchall()
+    grouped: dict[
+        tuple[str, str],
+        list[dict[str, Any]],
+    ] = {}
+    for row in rows:
+        values = tuple(row)
+        if legacy:
+            tenant_id = "local"
+            raw_reference = str(values[0])
+            stable_job_id = _resolve_job_reference_value(
+                conn,
+                tenant_id=tenant_id,
+                reference=raw_reference,
+                legacy_url=True,
+            )
+            payload = values[1:]
+        else:
+            tenant_id = str(values[0])
+            raw_reference = str(values[1])
+            stable_job_id = _resolve_job_reference_value(
+                conn,
+                tenant_id=tenant_id,
+                reference=raw_reference,
+                legacy_url=False,
+            )
+            payload = values[2:]
+        if stable_job_id is None:
+            raise RuntimeError(
+                "Soft-delete tombstone reference migration could "
+                f"not resolve {raw_reference!r} for tenant "
+                f"{tenant_id!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        grouped.setdefault(
+            (tenant_id, stable_job_id),
+            [],
+        ).append(
+            _deleted_job_candidate_v29(
+                tenant_id=tenant_id,
+                stable_job_id=stable_job_id,
+                payload=payload,
+                tie_breaker=raw_reference,
+            )
+        )
+    return [
+        _merge_deleted_job_candidates_v29(candidates)
+        for _identity, candidates in sorted(grouped.items())
+    ]
+
+
+def _insert_deleted_job_rows_v29(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    rows: list[tuple[Any, ...]],
+) -> None:
+    conn.executemany(
+        f"""
+        INSERT INTO "{table}" (
+            tenant_id, job_id, deleted_at, reason, restored_at
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+
+
+def ensure_deleted_job_references_v29(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move soft-delete lifecycle authority to stable JobIds."""
+    if conn is None:
+        conn = get_connection()
+    current = _assert_schema_version_supported(conn)
+    if current >= _DELETED_JOB_REFERENCE_SCHEMA_VERSION:
+        return list(_DELETED_JOB_REFERENCE_TABLES)
+    if current != _QUARANTINE_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "Soft-delete tombstone reference migration requires "
+            f"schema v28; found v{current}"
+        )
+
+    conn.execute("SAVEPOINT deleted_job_references_v29")
+    try:
+        if not _table_columns(conn, "jobctrl_deleted_jobs"):
+            _create_deleted_jobs_table_v29(
+                conn,
+                table="jobctrl_deleted_jobs",
+                stable_reference=False,
+            )
+        source_count = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM jobctrl_deleted_jobs"
+            ).fetchone()[0]
+        )
+        canonical_rows = _canonical_deleted_job_rows_v29(conn)
+        expected_count = len(canonical_rows)
+        if expected_count > source_count:
+            raise RuntimeError(
+                "Soft-delete tombstone migration created "
+                "unexpected authority rows"
+            )
+
+        conn.execute(
+            "DROP TABLE IF EXISTS jobctrl_deleted_jobs_v29"
+        )
+        _create_deleted_jobs_table_v29(
+            conn,
+            table="jobctrl_deleted_jobs_v29",
+            stable_reference=True,
+        )
+        _insert_deleted_job_rows_v29(
+            conn,
+            table="jobctrl_deleted_jobs_v29",
+            rows=canonical_rows,
+        )
+        conn.execute('DROP TABLE "jobctrl_deleted_jobs"')
+        conn.execute(
+            'ALTER TABLE "jobctrl_deleted_jobs_v29" '
+            'RENAME TO "jobctrl_deleted_jobs"'
+        )
+        _verify_deleted_job_references_v29(
+            conn,
+            expected_count=expected_count,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_DELETED_JOB_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT deleted_job_references_v29"
+        )
+    except BaseException:
+        conn.execute(
+            "ROLLBACK TO SAVEPOINT deleted_job_references_v29"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT deleted_job_references_v29"
+        )
+        raise
+    return list(_DELETED_JOB_REFERENCE_TABLES)
+
+
+def _verify_deleted_job_references_v29(
+    conn: sqlite3.Connection,
+    *,
+    expected_count: int,
+) -> None:
+    if not _has_deleted_job_reference_schema_v29(conn):
+        raise RuntimeError(
+            "Soft-delete tombstone reference migration did not "
+            "create the stable reference schema"
+        )
+    observed_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM jobctrl_deleted_jobs"
+        ).fetchone()[0]
+    )
+    if observed_count != expected_count:
+        raise RuntimeError(
+            "Soft-delete tombstone reference migration changed "
+            f"authority count: expected {expected_count}, "
+            f"found {observed_count}"
+        )
+    orphan = conn.execute(
+        """
+        SELECT deleted.job_id
+        FROM jobctrl_deleted_jobs AS deleted
+        LEFT JOIN jobs
+          ON jobs.tenant_id = deleted.tenant_id
+         AND jobs.job_id = deleted.job_id
+        WHERE jobs.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise RuntimeError(
+            "Soft-delete tombstone reference migration left an "
+            "unresolved JobId"
+        )
+    for row in conn.execute(
+        "SELECT DISTINCT job_id FROM jobctrl_deleted_jobs"
+    ).fetchall():
+        _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "Soft-delete tombstone reference migration found a "
+            "foreign-key violation"
+        )
+
+
+def _reassign_deleted_job_references_v29(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    if losing_job_id == surviving_job_id:
+        return
+    expected_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM jobctrl_deleted_jobs"
+        ).fetchone()[0]
+    )
+    rows = conn.execute(
+        """
+        SELECT tenant_id, job_id, deleted_at, reason, restored_at
+        FROM jobctrl_deleted_jobs
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    losing_present = any(
+        str(row[1]) == losing_job_id
+        for row in rows
+    )
+    if not losing_present:
+        return
+    surviving_present = any(
+        str(row[1]) == surviving_job_id
+        for row in rows
+    )
+    if not surviving_present:
+        conn.execute(
+            """
+            UPDATE jobctrl_deleted_jobs
+            SET job_id = ?
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (surviving_job_id, tenant_id, losing_job_id),
+        )
+    else:
+        candidates = [
+            _deleted_job_candidate_v29(
+                tenant_id=str(row[0]),
+                stable_job_id=surviving_job_id,
+                payload=tuple(row)[2:],
+                tie_breaker=(
+                    "1:surviving"
+                    if str(row[1]) == surviving_job_id
+                    else "0:losing"
+                ),
+            )
+            for row in rows
+        ]
+        merged = _merge_deleted_job_candidates_v29(candidates)
+        conn.execute(
+            """
+            DELETE FROM jobctrl_deleted_jobs
+            WHERE tenant_id = ? AND job_id IN (?, ?)
+            """,
+            (tenant_id, losing_job_id, surviving_job_id),
+        )
+        _insert_deleted_job_rows_v29(
+            conn,
+            table="jobctrl_deleted_jobs",
+            rows=[merged],
+        )
+        expected_count -= 1
+    _verify_deleted_job_references_v29(
+        conn,
+        expected_count=expected_count,
+    )
+
+
 # ---------------------------------------------------------------------------
 # job_enrichments read fragments — used by every selector / stat that
 # previously read bare ``jobs.full_description`` / ``jobs.application_url``
@@ -17067,25 +17663,33 @@ def resurface_deleted_job(conn: sqlite3.Connection, job_url: str, *, resurfaced_
     Hidden jobs are tracked in a separate table and are intentionally not
     touched here, so a hidden job remains suppressed across discoveries.
     """
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-            job_url TEXT PRIMARY KEY,
-            deleted_at TEXT NOT NULL,
-            reason TEXT,
-            restored_at TEXT,
-            FOREIGN KEY(job_url) REFERENCES jobs(url)
+    ensure_deleted_jobs_table(conn)
+    job_id = _resolve_job_reference_value(
+        conn,
+        tenant_id="local",
+        reference=job_url,
+        legacy_url=True,
+    )
+    if job_id is None:
+        raise RuntimeError(
+            "Cannot resurface an unresolved Job identity."
         )
-        """
+    reference_sql, reference_params = (
+        deleted_jobs_reference_predicate(
+            conn,
+            tenant_id="local",
+            job_id=job_id,
+            job_url=job_url,
+        )
     )
     cursor = conn.execute(
-        """
+        f"""
         UPDATE jobctrl_deleted_jobs
         SET restored_at = ?
-        WHERE job_url = ?
+        WHERE {reference_sql}
           AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))
         """,
-        (resurfaced_at, job_url),
+        (resurfaced_at, *reference_params),
     )
     if cursor.rowcount:
         from jobctrl.state import record_job_event

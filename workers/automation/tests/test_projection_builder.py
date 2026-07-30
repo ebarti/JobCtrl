@@ -18,6 +18,7 @@ from jobctrl.infrastructure.events.watermark import SqliteEventWatermarkReposito
 from jobctrl.infrastructure.projections.projection_builder import (
     PROJECTION_NAME,
     ProjectionBuilder,
+    _job_lifecycle_exclusion_sql,
 )
 from jobctrl.state import record_job_event, utc_now
 
@@ -49,6 +50,153 @@ def _stable_job_id(conn: sqlite3.Connection, url: str) -> str:
     ).fetchone()
     assert row is not None
     return str(row[0])
+
+
+def test_lifecycle_exclusion_resolves_historical_posting_alias(
+    conn: sqlite3.Connection,
+) -> None:
+    canonical_url = "https://example.com/jobs/current"
+    historical_alias = "https://legacy.example.com/jobs/current"
+    _seed_job(conn, canonical_url)
+    job_id = _stable_job_id(conn, canonical_url)
+    conn.execute(
+        """
+        INSERT INTO job_identity_aliases (
+            tenant_id, alias_kind, alias_value, job_id, created_at
+        ) VALUES ('local', 'posting_url', ?, ?, ?)
+        """,
+        (
+            historical_alias,
+            job_id,
+            "2026-07-30T10:00:00+00:00",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO jobctrl_deleted_jobs (
+            tenant_id, job_id, deleted_at, reason, restored_at
+        ) VALUES ('local', ?, ?, 'user delete', NULL)
+        """,
+        (job_id, "2026-07-30T11:00:00+00:00"),
+    )
+    conn.execute(
+        """
+        CREATE TEMP TABLE historical_url_consumers (
+            tenant_id TEXT NOT NULL,
+            job_url TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO historical_url_consumers (tenant_id, job_url)
+        VALUES ('local', ?)
+        """,
+        (historical_alias,),
+    )
+    lifecycle = _job_lifecycle_exclusion_sql(
+        conn,
+        "consumer.job_url",
+        tenant_expression="consumer.tenant_id",
+    )
+    rows = conn.execute(
+        f"""
+        SELECT consumer.job_url
+        FROM historical_url_consumers consumer
+        {lifecycle["join_sql"]}
+        WHERE 1 = 1{lifecycle["where_sql"]}
+        """
+    ).fetchall()
+    assert rows == []
+
+    conn.execute(
+        """
+        UPDATE jobctrl_deleted_jobs
+        SET restored_at = ?
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        ("2026-07-30T12:00:00+00:00", job_id),
+    )
+    rows = conn.execute(
+        f"""
+        SELECT consumer.job_url
+        FROM historical_url_consumers consumer
+        {lifecycle["join_sql"]}
+        WHERE 1 = 1{lifecycle["where_sql"]}
+        """
+    ).fetchall()
+    assert [str(row[0]) for row in rows] == [historical_alias]
+
+
+def test_refresh_reconciles_restored_alias_projection_without_event(
+    conn: sqlite3.Connection,
+) -> None:
+    canonical_url = "https://example.com/jobs/restored-current"
+    historical_alias = "https://legacy.example.com/jobs/restored-current"
+    _seed_job(conn, canonical_url)
+    record_job_event(
+        conn,
+        canonical_url,
+        "discover",
+        "JobDiscovered",
+    )
+    conn.commit()
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
+    builder.refresh()
+
+    job_id = _stable_job_id(conn, canonical_url)
+    conn.execute(
+        """
+        INSERT INTO job_identity_aliases (
+            tenant_id, alias_kind, alias_value, job_id, created_at
+        ) VALUES ('local', 'posting_url', ?, ?, ?)
+        """,
+        (
+            historical_alias,
+            job_id,
+            "2026-07-30T10:00:00+00:00",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO jobctrl_deleted_jobs (
+            tenant_id, job_id, deleted_at, reason, restored_at
+        ) VALUES ('local', ?, ?, 'migrated alias merge', ?)
+        """,
+        (
+            job_id,
+            "2026-07-30T11:00:00+00:00",
+            "2026-07-30T12:00:00+00:00",
+        ),
+    )
+    conn.execute(
+        """
+        UPDATE job_list_projections
+        SET job_id = ?, deleted_at = ?
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (
+            historical_alias,
+            "2026-07-30T11:00:00+00:00",
+            canonical_url,
+        ),
+    )
+    conn.commit()
+
+    builder.refresh()
+
+    rows = conn.execute(
+        """
+        SELECT job_id, deleted_at
+        FROM job_list_projections
+        WHERE tenant_id = 'local'
+        ORDER BY job_id
+        """
+    ).fetchall()
+    assert [
+        (str(row["job_id"]), row["deleted_at"])
+        for row in rows
+    ] == [(canonical_url, None)]
 
 
 def test_initial_watermark_is_zero(conn: sqlite3.Connection) -> None:
@@ -341,19 +489,8 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
         """
     )
 
-    # jobctrl_deleted_jobs / jobctrl_hidden_jobs are owned by the TS
-    # write-model; create them here so the Python builder's _table_exists-guarded
-    # exclusion joins engage.
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-            job_url TEXT PRIMARY KEY,
-            deleted_at TEXT NOT NULL,
-            reason TEXT,
-            restored_at TEXT
-        )
-        """
-    )
+    # jobctrl_hidden_jobs is still owned by the TS write-model. The
+    # worker-owned v29 schema already includes stable soft-delete tombstones.
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS jobctrl_hidden_jobs (
@@ -499,8 +636,15 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
     )
 
     conn.execute(
-        "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at) "
-        "VALUES (?, '2026-07-05T13:00:00Z', 'user delete', NULL)",
+        """
+        INSERT INTO jobctrl_deleted_jobs (
+            tenant_id, job_id, deleted_at, reason, restored_at
+        )
+        SELECT tenant_id, job_id,
+               '2026-07-05T13:00:00Z', 'user delete', NULL
+        FROM jobs
+        WHERE url = ?
+        """,
         (deleted_url,),
     )
     conn.execute(

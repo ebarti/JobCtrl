@@ -6,6 +6,7 @@ import sqlite3
 from typing import Any
 
 from jobctrl.database import (
+    deleted_jobs_reference_column,
     effective_tailoring_min_score,
     ensure_scoring_policy_tables,
     ensure_tailoring_policy_tables,
@@ -230,10 +231,19 @@ def _active_job_filter(
 ) -> str:
     clauses: list[str] = []
     if _table_exists(conn, "jobctrl_deleted_jobs"):
+        deleted_reference = (
+            (
+                f"d.tenant_id = {tenant_expr} "
+                f"AND d.job_id = {job_id_expr}"
+            )
+            if deleted_jobs_reference_column(conn)
+            == "job_id"
+            else f"d.job_url = {job_url_expr}"
+        )
         clauses.append(
             "NOT EXISTS ("
             "SELECT 1 FROM jobctrl_deleted_jobs d "
-            f"WHERE d.job_url = {job_url_expr} "
+            f"WHERE {deleted_reference} "
             "AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
             ")"
         )

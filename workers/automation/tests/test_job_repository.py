@@ -390,8 +390,15 @@ def test_soft_delete_writes_tombstone_row(conn: sqlite3.Connection) -> None:
     assert deleted is not None and deleted.is_deleted
 
     row = conn.execute(
-        "SELECT deleted_at, reason, restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
-        (str(job.job_id),),
+        """
+        SELECT deleted.deleted_at, deleted.reason, deleted.restored_at
+        FROM jobctrl_deleted_jobs AS deleted
+        JOIN jobs
+          ON jobs.tenant_id = deleted.tenant_id
+         AND jobs.job_id = deleted.job_id
+        WHERE jobs.url = ?
+        """,
+        (job.posting_url.value,),
     ).fetchone()
     assert row is not None
     assert row["deleted_at"] == "2026-05-02T00:00:00+00:00"
@@ -437,8 +444,15 @@ def test_restore_clears_tombstone(conn: sqlite3.Connection) -> None:
 
     # Tombstone row carries restored_at (audit history preserved)
     row = conn.execute(
-        "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
-        (str(job.job_id),),
+        """
+        SELECT deleted.restored_at
+        FROM jobctrl_deleted_jobs AS deleted
+        JOIN jobs
+          ON jobs.tenant_id = deleted.tenant_id
+         AND jobs.job_id = deleted.job_id
+        WHERE jobs.url = ?
+        """,
+        (job.posting_url.value,),
     ).fetchone()
     assert row is not None
     assert row["restored_at"] is not None
@@ -458,8 +472,15 @@ def test_resurface_deleted_job_clears_tombstone_and_records_event(conn: sqlite3.
     resurface_deleted_job(conn, str(job.job_id), resurfaced_at="2026-05-03T00:00:00+00:00")
 
     row = conn.execute(
-        "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
-        (str(job.job_id),),
+        """
+        SELECT deleted.restored_at
+        FROM jobctrl_deleted_jobs AS deleted
+        JOIN jobs
+          ON jobs.tenant_id = deleted.tenant_id
+         AND jobs.job_id = deleted.job_id
+        WHERE jobs.url = ?
+        """,
+        (job.posting_url.value,),
     ).fetchone()
     assert row is not None
     assert row["restored_at"] == "2026-05-03T00:00:00+00:00"

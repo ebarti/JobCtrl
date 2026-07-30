@@ -13,6 +13,8 @@ import {
   tableExists,
 } from "../src/db.js";
 
+const LEGACY_TOMBSTONE_SCHEMA_VERSION = 28;
+
 function makeDbWithUserVersion(userVersion: number): { dbPath: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-schema-version-"));
   const dbPath = path.join(dir, "jobs.db");
@@ -63,7 +65,7 @@ describe("schema version guard at DB open", () => {
   });
 
   it("opens the worker-owned schema-v14 artifact registry", () => {
-    expect(SUPPORTED_SCHEMA_VERSION).toBe(28);
+    expect(SUPPORTED_SCHEMA_VERSION).toBe(29);
     const { dbPath, cleanup } = makeDbWithUserVersion(14);
     try {
       openDatabase(dbPath).close();
@@ -89,7 +91,7 @@ describe("schema version guard at DB open", () => {
 
 describe("legacy tombstone table migration", () => {
   it.each(legacyTokens())("renames old %s deleted and hidden tables on writable open", (token) => {
-    const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
+    const { dbPath, cleanup } = makeDbWithUserVersion(LEGACY_TOMBSTONE_SCHEMA_VERSION);
     try {
       const seed = new Database(dbPath);
       seed.exec(`
@@ -168,7 +170,7 @@ describe("legacy tombstone table migration", () => {
   });
 
   it("normalizes tables left behind by an earlier rename-only migration", () => {
-    const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
+    const { dbPath, cleanup } = makeDbWithUserVersion(LEGACY_TOMBSTONE_SCHEMA_VERSION);
     try {
       const seed = new Database(dbPath);
       seed.exec(`
@@ -196,6 +198,142 @@ describe("legacy tombstone table migration", () => {
       expect(tableColumns(seed, "jobctrl_deleted_jobs")).toEqual(expect.arrayContaining(["restored_at"]));
       expect(tableColumns(seed, "jobctrl_hidden_jobs")).toEqual(expect.arrayContaining(["unhidden_at"]));
       seed.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("accepts the worker-owned stable tombstone schema at v29", () => {
+    const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
+    try {
+      const seed = new Database(dbPath);
+      seed.pragma("foreign_keys = ON");
+      seed.exec(`
+        CREATE TABLE jobs (
+          url TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL,
+          job_id TEXT NOT NULL,
+          UNIQUE (tenant_id, job_id)
+        );
+        CREATE TABLE jobctrl_deleted_jobs (
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          job_id TEXT NOT NULL,
+          deleted_at TEXT NOT NULL,
+          reason TEXT,
+          restored_at TEXT,
+          PRIMARY KEY (tenant_id, job_id),
+          FOREIGN KEY (tenant_id, job_id)
+            REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        );
+        CREATE TABLE jobctrl_hidden_jobs (
+          job_url TEXT PRIMARY KEY,
+          hidden_at TEXT NOT NULL,
+          reason TEXT
+        );
+      `);
+      seed.close();
+
+      const db = openDatabase(dbPath);
+      try {
+        expect(tableColumns(db, "jobctrl_deleted_jobs")).toEqual([
+          "tenant_id",
+          "job_id",
+          "deleted_at",
+          "reason",
+          "restored_at",
+        ]);
+        expect(tableColumns(db, "jobctrl_hidden_jobs")).toEqual(
+          expect.arrayContaining(["job_url", "hidden_at", "reason", "unhidden_at"]),
+        );
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("preserves an already-stable tombstone table during an earlier migration replay", () => {
+    const { dbPath, cleanup } = makeDbWithUserVersion(LEGACY_TOMBSTONE_SCHEMA_VERSION);
+    try {
+      const seed = new Database(dbPath);
+      seed.exec(`
+        CREATE TABLE jobctrl_deleted_jobs (
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          job_id TEXT NOT NULL,
+          deleted_at TEXT NOT NULL,
+          reason TEXT,
+          restored_at TEXT,
+          PRIMARY KEY (tenant_id, job_id)
+        );
+      `);
+
+      expect(migrateLegacyJobTables(seed)).toEqual([]);
+      expect(tableColumns(seed, "jobctrl_deleted_jobs")).not.toContain(
+        "job_url",
+      );
+      seed.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("refuses mixed stable and branded URL-era tombstone authorities", () => {
+    const { dbPath, cleanup } = makeDbWithUserVersion(LEGACY_TOMBSTONE_SCHEMA_VERSION);
+    try {
+      const token = "job" + "ctl";
+      const seed = new Database(dbPath);
+      seed.exec(`
+        CREATE TABLE jobctrl_deleted_jobs (
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          job_id TEXT NOT NULL,
+          deleted_at TEXT NOT NULL,
+          reason TEXT,
+          restored_at TEXT,
+          PRIMARY KEY (tenant_id, job_id)
+        );
+        CREATE TABLE ${token}_deleted_jobs (
+          job_url TEXT PRIMARY KEY,
+          deleted_at TEXT NOT NULL,
+          reason TEXT,
+          restored_at TEXT
+        );
+      `);
+
+      expect(() => migrateLegacyJobTables(seed)).toThrow(
+        /Cannot merge URL-era branded soft-delete tables into stable JobId tombstones/,
+      );
+      expect(tableExists(seed, "jobctrl_deleted_jobs")).toBe(true);
+      expect(tableExists(seed, `${token}_deleted_jobs`)).toBe(true);
+      seed.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("refuses a URL-era tombstone table stamped as v29", () => {
+    const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
+    try {
+      const seed = new Database(dbPath);
+      seed.exec(`
+        CREATE TABLE jobctrl_deleted_jobs (
+          job_url TEXT PRIMARY KEY,
+          deleted_at TEXT NOT NULL,
+          reason TEXT,
+          restored_at TEXT
+        );
+      `);
+      seed.close();
+
+      expect(() => openDatabase(dbPath)).toThrow(
+        /requires stable soft-delete tombstone JobId references/,
+      );
+      const probe = new Database(dbPath, { readonly: true });
+      try {
+        expect(tableColumns(probe, "jobctrl_deleted_jobs")).toContain("job_url");
+      } finally {
+        probe.close();
+      }
     } finally {
       cleanup();
     }

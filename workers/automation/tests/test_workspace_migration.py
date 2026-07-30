@@ -196,6 +196,159 @@ def test_legacy_table_migration_normalizes_previously_renamed_tables(tmp_path) -
     )
 
 
+@pytest.mark.parametrize("schema_version", (28, 29))
+def test_workspace_migration_preserves_stable_deleted_table(
+    tmp_path,
+    schema_version: int,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE jobs (
+                url TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                UNIQUE (tenant_id, job_id)
+            );
+            CREATE TABLE jobctrl_deleted_jobs (
+                tenant_id TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                deleted_at TEXT NOT NULL,
+                reason TEXT,
+                restored_at TEXT,
+                PRIMARY KEY (tenant_id, job_id),
+                FOREIGN KEY (tenant_id, job_id)
+                    REFERENCES jobs(tenant_id, job_id)
+                    ON DELETE CASCADE
+            );
+            """
+        )
+        conn.execute(
+            f"PRAGMA user_version = {schema_version}"
+        )
+
+        assert config.migrate_legacy_job_tables(conn) == []
+        assert _table_columns(
+            db_path,
+            "jobctrl_deleted_jobs",
+        ) == {
+            "tenant_id",
+            "job_id",
+            "deleted_at",
+            "reason",
+            "restored_at",
+        }
+    finally:
+        conn.close()
+
+
+def test_pre_v29_workspace_migration_refuses_mixed_deleted_authorities(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    token = _immediate_legacy_token()
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            f"""
+            CREATE TABLE jobctrl_deleted_jobs (
+                tenant_id TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                deleted_at TEXT NOT NULL,
+                reason TEXT,
+                restored_at TEXT,
+                PRIMARY KEY (tenant_id, job_id)
+            );
+            CREATE TABLE {token}_deleted_jobs (
+                job_url TEXT PRIMARY KEY,
+                deleted_at TEXT NOT NULL,
+                reason TEXT,
+                restored_at TEXT
+            );
+            PRAGMA user_version = 28;
+            """
+        )
+
+        with pytest.raises(
+            WorkspaceMigrationError,
+            match="cannot merge URL-era branded soft-delete",
+        ):
+            config.migrate_legacy_job_tables(conn)
+
+        assert {
+            "jobctrl_deleted_jobs",
+            f"{token}_deleted_jobs",
+        }.issubset(_table_names(db_path))
+    finally:
+        conn.close()
+
+
+def test_schema_v29_workspace_migration_refuses_url_era_deleted_table(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE jobctrl_deleted_jobs (
+                job_url TEXT PRIMARY KEY,
+                deleted_at TEXT NOT NULL,
+                reason TEXT,
+                restored_at TEXT
+            );
+            PRAGMA user_version = 29;
+            """
+        )
+
+        with pytest.raises(
+            WorkspaceMigrationError,
+            match="requires stable soft-delete tombstone",
+        ):
+            config.migrate_legacy_job_tables(conn)
+
+        assert "job_url" in _table_columns(
+            db_path,
+            "jobctrl_deleted_jobs",
+        )
+    finally:
+        conn.close()
+
+
+def test_schema_v29_workspace_migration_refuses_branded_deleted_table(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    token = _immediate_legacy_token()
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            f"""
+            CREATE TABLE {token}_deleted_jobs (
+                job_url TEXT PRIMARY KEY,
+                deleted_at TEXT NOT NULL,
+                reason TEXT,
+                restored_at TEXT
+            );
+            PRAGMA user_version = 29;
+            """
+        )
+
+        with pytest.raises(
+            WorkspaceMigrationError,
+            match="cannot merge URL-era branded soft-delete",
+        ):
+            config.migrate_legacy_job_tables(conn)
+
+        assert f"{token}_deleted_jobs" in _table_names(
+            db_path
+        )
+    finally:
+        conn.close()
+
+
 def test_default_workspace_resolution_does_not_inspect_legacy_db_conflicts(
     tmp_path,
     monkeypatch,

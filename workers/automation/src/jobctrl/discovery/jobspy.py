@@ -16,7 +16,14 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from jobctrl import config
-from jobctrl.database import get_connection, init_db, resurface_deleted_job
+from jobctrl.database import (
+    deleted_jobs_join_to_jobs,
+    deleted_jobs_missing_reference_sql,
+    ensure_deleted_jobs_table,
+    get_connection,
+    init_db,
+    resurface_deleted_job,
+)
 from jobctrl.domain.discovery import JobMetadata, PostingUrl, SearchStrategy, Source
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.search_units import (
@@ -828,6 +835,15 @@ def _find_content_duplicate_survivor(
     if incoming_key is None:
         return None
     _ensure_deleted_jobs_table(conn)
+    deleted_join = deleted_jobs_join_to_jobs(
+        conn,
+        deleted_alias="d",
+        jobs_alias="j",
+    )
+    deleted_missing = deleted_jobs_missing_reference_sql(
+        conn,
+        deleted_alias="d",
+    )
     conn.create_function("jh_normalize_identity", 1, normalize_identity_text, deterministic=True)
     self_filter = "" if include_self else "AND j.url != ?"
     params: tuple[object, ...] = (
@@ -841,13 +857,13 @@ def _find_content_duplicate_survivor(
         SELECT j.url, j.title, j.company, j.site,
                j.description AS listing_description,
                COALESCE(je.full_description, j.full_description) AS enriched_description,
-               CASE WHEN d.job_url IS NULL THEN 0 ELSE 1 END AS is_deleted
+               CASE WHEN {deleted_missing} THEN 0 ELSE 1 END AS is_deleted
         FROM jobs j
         LEFT JOIN job_enrichments je
           ON je.tenant_id = j.tenant_id
          AND je.job_id = j.job_id
         LEFT JOIN jobctrl_deleted_jobs d
-          ON d.job_url = j.url
+          ON {deleted_join}
          AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
         WHERE 1 = 1
           {self_filter}
@@ -880,17 +896,7 @@ def _find_content_duplicate_survivor(
 
 
 def _ensure_deleted_jobs_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-            job_url TEXT PRIMARY KEY,
-            deleted_at TEXT NOT NULL,
-            reason TEXT,
-            restored_at TEXT,
-            FOREIGN KEY(job_url) REFERENCES jobs(url)
-        )
-        """
-    )
+    ensure_deleted_jobs_table(conn)
 
 
 def _record_content_duplicate_link(

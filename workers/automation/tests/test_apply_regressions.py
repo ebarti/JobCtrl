@@ -1851,21 +1851,6 @@ def test_dashboard_dry_runs_excludes_soft_deleted_jobs(tmp_path):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
 
-    # ``jobctrl_deleted_jobs`` is created on demand by the discovery
-    # repository.  Create it here so the test seeds a tombstone.
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-            job_url TEXT PRIMARY KEY,
-            deleted_at TEXT NOT NULL,
-            reason TEXT,
-            restored_at TEXT,
-            FOREIGN KEY(job_url) REFERENCES jobs(url)
-        )
-        """
-    )
-    conn.commit()
-
     try:
         # Two jobs, both with a dry-run apply lifecycle.
         for url in (
@@ -1905,9 +1890,18 @@ def test_dashboard_dry_runs_excludes_soft_deleted_jobs(tmp_path):
 
         # Soft-delete the second job.
         conn.execute(
-            "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at) "
-            "VALUES (?, ?)",
-            ("https://example.com/job-deleted", "2026-05-04T13:05:00+00:00"),
+            """
+            INSERT INTO jobctrl_deleted_jobs (
+                tenant_id, job_id, deleted_at
+            )
+            SELECT tenant_id, job_id, ?
+            FROM jobs
+            WHERE url = ?
+            """,
+            (
+                "2026-05-04T13:05:00+00:00",
+                "https://example.com/job-deleted",
+            ),
         )
         conn.commit()
         ProjectionBuilder(conn_factory=lambda: conn).refresh()

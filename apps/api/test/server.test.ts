@@ -2574,6 +2574,395 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("uses stable v29 tombstones for alias delete, restore, reads, events, and purge", async () => {
+    const readyUrl = "https://example.com/jobs/ready";
+    const aliasUrl = "https://legacy.example.com/jobs/ready";
+    const readyJobId = "11111111-1111-4111-8111-111111111111";
+    const setup = new Database(options.dbPath);
+    setup.prepare(
+      "UPDATE jobs SET job_id = ? WHERE tenant_id = 'local' AND url = ?",
+    ).run(readyJobId, readyUrl);
+    setup.exec(`
+      CREATE UNIQUE INDEX idx_jobs_tenant_job_id
+      ON jobs(tenant_id, job_id);
+      CREATE TABLE job_identity_aliases (
+        tenant_id TEXT NOT NULL,
+        alias_kind TEXT NOT NULL,
+        alias_value TEXT NOT NULL,
+        job_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, alias_kind, alias_value),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
+      ALTER TABLE job_stage_states RENAME TO job_stage_states_url_v29_test;
+      CREATE TABLE job_stage_states (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'pending',
+        attempt_count INTEGER DEFAULT 0,
+        max_attempts INTEGER,
+        started_at TEXT,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        duration_ms INTEGER,
+        error_code TEXT,
+        error_message TEXT,
+        retryable INTEGER DEFAULT 1,
+        blocked_by_json TEXT,
+        next_action TEXT,
+        metadata_json TEXT,
+        version INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (tenant_id, job_id, stage),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
+      INSERT INTO job_stage_states (
+        tenant_id, job_id, stage, state, attempt_count, max_attempts,
+        started_at, updated_at, finished_at, duration_ms, error_code,
+        error_message, retryable, blocked_by_json, next_action,
+        metadata_json, version
+      )
+      SELECT jobs.tenant_id, jobs.job_id, legacy.stage, legacy.state,
+             legacy.attempt_count, legacy.max_attempts, legacy.started_at,
+             legacy.updated_at, legacy.finished_at, legacy.duration_ms,
+             legacy.error_code, legacy.error_message, legacy.retryable,
+             legacy.blocked_by_json, legacy.next_action, NULL, 0
+      FROM job_stage_states_url_v29_test legacy
+      JOIN jobs ON jobs.url = legacy.job_url;
+      DROP TABLE job_stage_states_url_v29_test;
+      PRAGMA user_version = 29;
+    `);
+    setup.prepare(
+      `INSERT INTO job_identity_aliases (
+         tenant_id, alias_kind, alias_value, job_id, created_at
+       ) VALUES ('local', 'posting_url', ?, ?, ?)`,
+    ).run(
+      aliasUrl,
+      readyJobId,
+      "2026-07-30T10:00:00+00:00",
+    );
+    setup.close();
+    const app = buildApp(options);
+
+    const workerSchemaDashboard = await app.inject({
+      method: "GET",
+      url: "/v1/dashboard/summary",
+    });
+    expect(
+      workerSchemaDashboard.statusCode,
+      workerSchemaDashboard.body,
+    ).toBe(200);
+
+    const historical = new Database(options.dbPath);
+    historical.prepare(
+      `UPDATE apply_run_projections
+       SET job_id = ?
+       WHERE run_id = 'run-1'`,
+    ).run(aliasUrl);
+    historical.prepare(
+      `INSERT INTO job_events (
+         job_url, stage, event_type, level, message, occurred_at
+       ) VALUES (?, 'apply', 'AliasHistorical', 'info', ?, ?)`,
+    ).run(
+      aliasUrl,
+      "Historical alias event",
+      "2026-07-30T10:01:00+00:00",
+    );
+    historical.close();
+
+    const visibleWorkflow = await app.inject({
+      method: "GET",
+      url: "/v1/workflow-runs",
+    });
+    expect(
+      visibleWorkflow.json().items.map(
+        (run: { runId: string }) => run.runId,
+      ),
+    ).toContain("run-1");
+    const visibleActivity = await app.inject({
+      method: "GET",
+      url: "/v1/debug/activity?eventType=AliasHistorical",
+    });
+    expect(
+      visibleActivity.json().items.map(
+        (event: { eventType: string }) => event.eventType,
+      ),
+    ).toContain("AliasHistorical");
+
+    const deletedByAlias = await app.inject({
+      method: "DELETE",
+      url: `/v1/jobs/${encodeURIComponent(aliasUrl)}`,
+      payload: { reason: "not relevant" },
+    });
+    expect(
+      deletedByAlias.statusCode,
+      deletedByAlias.body,
+    ).toBe(200);
+    expect(deletedByAlias.json()).toMatchObject({
+      ok: true,
+      count: 1,
+      jobKeys: [readyUrl],
+    });
+
+    const deletedProbe = new Database(options.dbPath);
+    const deletedColumns = deletedProbe
+      .prepare("PRAGMA table_info(jobctrl_deleted_jobs)")
+      .all()
+      .map((row) => String((row as { name: unknown }).name));
+    expect(deletedColumns).toEqual([
+      "tenant_id",
+      "job_id",
+      "deleted_at",
+      "reason",
+      "restored_at",
+    ]);
+    expect(
+      deletedProbe.prepare(
+        `SELECT tenant_id, job_id, reason, restored_at
+         FROM jobctrl_deleted_jobs`,
+      ).get(),
+    ).toMatchObject({
+      tenant_id: "local",
+      job_id: readyJobId,
+      reason: "not relevant",
+      restored_at: null,
+    });
+    expect(
+      deletedProbe.prepare(
+        `SELECT job_url
+         FROM job_events
+         WHERE event_type = 'JobDeleted'
+         ORDER BY event_id DESC
+         LIMIT 1`,
+      ).get(),
+    ).toMatchObject({ job_url: readyUrl });
+    deletedProbe.close();
+
+    const active = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?deleted=active",
+    });
+    expect(active.statusCode, active.body).toBe(200);
+    expect(
+      active.json().items.map(
+        (job: { jobKey: string }) => job.jobKey,
+      ),
+    ).not.toContain(readyUrl);
+    const deleted = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?deleted=deleted",
+    });
+    expect(deleted.statusCode, deleted.body).toBe(200);
+    expect(
+      deleted.json().items.map(
+        (job: { jobKey: string }) => job.jobKey,
+      ),
+    ).toContain(readyUrl);
+    const deletedWorkflow = await app.inject({
+      method: "GET",
+      url: "/v1/workflow-runs",
+    });
+    expect(
+      deletedWorkflow.json().items.map(
+        (run: { runId: string }) => run.runId,
+      ),
+    ).not.toContain("run-1");
+    const deletedActivity = await app.inject({
+      method: "GET",
+      url: "/v1/debug/activity?eventType=AliasHistorical",
+    });
+    expect(deletedActivity.json().items).toEqual([]);
+    const deletedDashboard = await app.inject({
+      method: "GET",
+      url: "/v1/dashboard/summary",
+    });
+    expect(deletedDashboard.json().totals.dryRuns).toBe(0);
+    expect(
+      deletedDashboard.json().applyRuns.map(
+        (run: { runId: string }) => run.runId,
+      ),
+    ).not.toContain("run-1");
+
+    const restoredByAlias = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(aliasUrl)}/restore`,
+    });
+    expect(
+      restoredByAlias.statusCode,
+      restoredByAlias.body,
+    ).toBe(200);
+    expect(restoredByAlias.json()).toMatchObject({
+      ok: true,
+      count: 1,
+      jobKeys: [readyUrl],
+    });
+    const restored = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?deleted=active",
+    });
+    expect(
+      restored.json().items.map(
+        (job: { jobKey: string }) => job.jobKey,
+      ),
+    ).toContain(readyUrl);
+    const restoredWorkflow = await app.inject({
+      method: "GET",
+      url: "/v1/workflow-runs",
+    });
+    expect(
+      restoredWorkflow.json().items.map(
+        (run: { runId: string }) => run.runId,
+      ),
+    ).toContain("run-1");
+    const restoredActivity = await app.inject({
+      method: "GET",
+      url: "/v1/debug/activity?eventType=AliasHistorical",
+    });
+    expect(
+      restoredActivity.json().items.map(
+        (event: { eventType: string }) => event.eventType,
+      ),
+    ).toContain("AliasHistorical");
+    const restoredDashboard = await app.inject({
+      method: "GET",
+      url: "/v1/dashboard/summary",
+    });
+    expect(restoredDashboard.json().totals.dryRuns).toBe(1);
+    expect(
+      restoredDashboard.json().applyRuns.map(
+        (run: { runId: string }) => run.runId,
+      ),
+    ).toContain("run-1");
+
+    const deletedByCanonical = await app.inject({
+      method: "DELETE",
+      url: `/v1/jobs/${encodeURIComponent(readyUrl)}`,
+    });
+    expect(
+      deletedByCanonical.statusCode,
+      deletedByCanonical.body,
+    ).toBe(200);
+    const permanent = await app.inject({
+      method: "DELETE",
+      url: `/v1/jobs/${encodeURIComponent(readyUrl)}/permanent`,
+    });
+    expect(permanent.statusCode, permanent.body).toBe(200);
+
+    const purged = new Database(options.dbPath);
+    expect(
+      purged.prepare(
+        `SELECT COUNT(*) AS count
+         FROM jobctrl_deleted_jobs
+         WHERE tenant_id = 'local' AND job_id = ?`,
+      ).get(readyJobId),
+    ).toMatchObject({ count: 0 });
+    expect(
+      purged.prepare(
+        "SELECT COUNT(*) AS count FROM jobs WHERE url = ?",
+      ).get(readyUrl),
+    ).toMatchObject({ count: 0 });
+    purged.close();
+
+    await app.close();
+  });
+
+  it("reconciles a restored stable tombstone without a lifecycle event", async () => {
+    const readyUrl = "https://example.com/jobs/ready";
+    const aliasUrl = "https://legacy.example.com/jobs/restored-ready";
+    const readyJobId = "44444444-4444-4444-8444-444444444444";
+    const setup = new Database(options.dbPath);
+    setup.prepare(
+      "UPDATE jobs SET job_id = ? WHERE tenant_id = 'local' AND url = ?",
+    ).run(readyJobId, readyUrl);
+    setup.exec(`
+      CREATE UNIQUE INDEX idx_jobs_tenant_job_id
+      ON jobs(tenant_id, job_id);
+      CREATE TABLE job_identity_aliases (
+        tenant_id TEXT NOT NULL,
+        alias_kind TEXT NOT NULL,
+        alias_value TEXT NOT NULL,
+        job_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, alias_kind, alias_value),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
+      CREATE TABLE jobctrl_deleted_jobs (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        deleted_at TEXT NOT NULL,
+        reason TEXT,
+        restored_at TEXT,
+        PRIMARY KEY (tenant_id, job_id),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
+      PRAGMA user_version = 29;
+    `);
+    setup.prepare(
+      `INSERT INTO job_identity_aliases (
+         tenant_id, alias_kind, alias_value, job_id, created_at
+       ) VALUES ('local', 'posting_url', ?, ?, ?)`,
+    ).run(
+      aliasUrl,
+      readyJobId,
+      "2026-07-30T10:00:00+00:00",
+    );
+    setup.close();
+    const app = buildApp(options);
+
+    const initial = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?deleted=active",
+    });
+    expect(initial.statusCode, initial.body).toBe(200);
+
+    const stale = new Database(options.dbPath);
+    stale.prepare(
+      `INSERT INTO jobctrl_deleted_jobs (
+         tenant_id, job_id, deleted_at, reason, restored_at
+       ) VALUES ('local', ?, ?, 'migrated alias merge', ?)`,
+    ).run(
+      readyJobId,
+      "2026-07-30T11:00:00+00:00",
+      "2026-07-30T12:00:00+00:00",
+    );
+    stale.prepare(
+      `UPDATE job_list_projections
+       SET job_id = ?, deleted_at = ?
+       WHERE tenant_id = 'local' AND job_id = ?`,
+    ).run(
+      aliasUrl,
+      "2026-07-30T11:00:00+00:00",
+      readyUrl,
+    );
+    stale.close();
+
+    const reconciled = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?deleted=active",
+    });
+    expect(reconciled.statusCode, reconciled.body).toBe(200);
+    expect(
+      reconciled.json().items.map(
+        (job: { jobKey: string }) => job.jobKey,
+      ),
+    ).toContain(readyUrl);
+    const projection = new Database(options.dbPath);
+    expect(
+      projection.prepare(
+        `SELECT deleted_at
+         FROM job_list_projections
+         WHERE tenant_id = 'local' AND job_id = ?`,
+      ).get(readyUrl),
+    ).toMatchObject({ deleted_at: null });
+    projection.close();
+
+    await app.close();
+  });
+
   it("treats stale restores before later deletes as deleted", async () => {
     const db = new Database(options.dbPath);
     db.exec(`
