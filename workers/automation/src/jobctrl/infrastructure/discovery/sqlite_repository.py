@@ -301,7 +301,7 @@ class SqliteJobRepository:
             assert self._search_unit_lease is not None
             self._search_unit_repository.record_accepted_job(
                 self._search_unit_lease,
-                str(persisted_identity.job_id),
+                persisted_identity.job_id,
                 was_new=was_new,
                 accepted_at=job.discovered_at,
             )
@@ -996,7 +996,7 @@ class SqliteJobRepository:
             assert self._search_unit_lease is not None
             self._search_unit_repository.record_accepted_job(
                 self._search_unit_lease,
-                str(job_id),
+                job_id,
                 was_new=was_new,
                 accepted_at=observation.observed_at,
             )
