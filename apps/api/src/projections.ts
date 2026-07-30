@@ -21,6 +21,12 @@
  * materialises it.
  */
 import { PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
+import type {
+  JobCompensationAuditMarketResponse,
+  JobCompensationAuditPostedResponse,
+  MarketCompensationEstimateResponse,
+  PostedCompensationFactResponse,
+} from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { normalizeJobLocation } from "./location-normalization.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
@@ -3163,7 +3169,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const scoreReasoning = score.reasoning || stringField(job.score_reasoning);
   const scoreBreakdownJson = score.breakdown ? JSON.stringify(score.breakdown) : null;
   const scoreKeywordsJson = JSON.stringify(score.keywords);
-  const compensationProjection = buildCompensationProjection(db, jobUrl);
+  const compensationProjection = buildCompensationProjection(db, jobUrl, jobUrl);
 
   const hasCanonicalMaterials = materials.hasCanonicalHistory;
   const tailorPath = hasCanonicalMaterials ? materials.tailorPath : nullableString(job.tailored_resume_path);
@@ -3439,31 +3445,64 @@ interface CompensationProjectionPair {
   auditJson: string;
 }
 
-function buildCompensationProjection(db: SqliteDatabase, jobUrl: string): CompensationProjectionPair {
+export function buildCompensationProjection(
+  db: SqliteDatabase,
+  jobLocator: string,
+  jobId: string,
+): CompensationProjectionPair {
   const posted =
-    getPostedCompensationFact(db, jobUrl) ??
+    getPostedCompensationFact(db, jobLocator) ??
     ({
       ok: true,
       recordStatus: "not_recorded",
-      jobKey: jobUrl,
+      jobKey: jobLocator,
       legacyRawSalary: null,
     } as const);
   const market =
-    getMarketCompensationEstimate(db, jobUrl) ??
+    getMarketCompensationEstimate(db, jobLocator) ??
     ({
       ok: true,
       recordStatus: "not_requested",
-      jobKey: jobUrl,
+      jobKey: jobLocator,
     } as const);
+  const auditPosted = compensationAuditPosted(posted, jobId);
+  const auditMarket = compensationAuditMarket(market, jobId);
   const summary = buildCompensationSummary(posted, market);
   return {
     summaryJson: JSON.stringify(summary),
     auditJson: JSON.stringify({
       projectionVersion: COMPENSATION_PROJECTION_VERSION,
-      posted,
-      market,
+      posted: auditPosted,
+      market: auditMarket,
     }),
   };
+}
+
+function compensationAuditPosted(
+  response: PostedCompensationFactResponse,
+  jobId: string,
+): JobCompensationAuditPostedResponse {
+  if (response.recordStatus === "recorded") {
+    const { jobKey: _jobKey, ...fact } = response.fact;
+    return { ...response, fact: { ...fact, jobId } };
+  }
+  return {
+    ok: true,
+    recordStatus: "not_recorded",
+    jobId,
+    legacyRawSalary: response.legacyRawSalary,
+  };
+}
+
+function compensationAuditMarket(
+  response: MarketCompensationEstimateResponse,
+  jobId: string,
+): JobCompensationAuditMarketResponse {
+  if (response.recordStatus === "recorded") {
+    const { jobKey: _jobKey, ...estimate } = response.estimate;
+    return { ...response, estimate: { ...estimate, jobId } };
+  }
+  return { ok: true, recordStatus: "not_requested", jobId };
 }
 
 function buildCompensationSummary(

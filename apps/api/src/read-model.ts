@@ -1287,13 +1287,48 @@ function parseCompensationSummary(value: string | null): JobCompensationSummary 
   }
 }
 
-function parseCompensationAudit(value: string | null): JobCompensationAudit | null {
+export function parseCompensationAudit(value: string | null): JobCompensationAudit | null {
   if (!value) return null;
   try {
-    return JSON.parse(value) as JobCompensationAudit;
+    const audit: unknown = JSON.parse(value);
+    if (!isCompensationAudit(audit) || containsLegacyJobKey(audit)) return null;
+    return audit;
   } catch {
     return null;
   }
+}
+
+function isCompensationAudit(value: unknown): value is JobCompensationAudit {
+  if (!isRecord(value) || typeof value.projectionVersion !== "number") return false;
+  return isCompensationAuditPosted(value.posted) && isCompensationAuditMarket(value.market);
+}
+
+function isCompensationAuditPosted(value: unknown): boolean {
+  if (!isRecord(value) || value.ok !== true) return false;
+  if (value.recordStatus === "recorded") {
+    return isRecord(value.fact) && typeof value.fact.jobId === "string";
+  }
+  return (
+    value.recordStatus === "not_recorded" &&
+    typeof value.jobId === "string" &&
+    (typeof value.legacyRawSalary === "string" || value.legacyRawSalary === null)
+  );
+}
+
+function isCompensationAuditMarket(value: unknown): boolean {
+  if (!isRecord(value) || value.ok !== true) return false;
+  if (value.recordStatus === "recorded") {
+    return isRecord(value.estimate) && typeof value.estimate.jobId === "string";
+  }
+  return value.recordStatus === "not_requested" && typeof value.jobId === "string";
+}
+
+function containsLegacyJobKey(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsLegacyJobKey);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(
+    ([key, nested]) => key === "jobKey" || containsLegacyJobKey(nested),
+  );
 }
 
 interface JobAuditEventRow extends Record<string, unknown> {

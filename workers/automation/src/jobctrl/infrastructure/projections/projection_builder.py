@@ -1427,8 +1427,9 @@ class ProjectionBuilder:
             job_row, "full_description"
         )
         compensation_summary, compensation_audit = self._build_compensation_projection(
-            job_url,
-            _row_nullable_str(job_row, "salary"),
+            job_id=job_url,
+            job_locator=job_url,
+            legacy_raw_salary=_row_nullable_str(job_row, "salary"),
         )
 
         last_updated_at = _utc_now()
@@ -1932,11 +1933,17 @@ class ProjectionBuilder:
 
     def _build_compensation_projection(
         self,
-        job_url: str,
+        *,
+        job_id: str,
+        job_locator: str,
         legacy_raw_salary: str | None,
     ) -> tuple[str, str]:
-        posted = self._load_posted_compensation(job_url, legacy_raw_salary)
-        market = self._load_market_compensation(job_url)
+        posted = self._load_posted_compensation(
+            job_locator,
+            legacy_raw_salary,
+            job_id,
+        )
+        market = self._load_market_compensation(job_locator, job_id)
         posted_warning_count = (
             len(posted["fact"]["warnings"])
             if posted["recordStatus"] == "recorded" and isinstance(posted.get("fact"), dict)
@@ -2033,8 +2040,9 @@ class ProjectionBuilder:
 
     def _load_posted_compensation(
         self,
-        job_url: str,
+        job_locator: str,
         legacy_raw_salary: str | None,
+        job_id: str,
     ) -> dict[str, Any]:
         try:
             row = self._conn.execute(
@@ -2048,7 +2056,7 @@ class ProjectionBuilder:
                 FROM job_posted_compensation_facts
                 WHERE tenant_id = ? AND job_url = ?
                 """,
-                (str(self._tenant_id), job_url),
+                (str(self._tenant_id), job_locator),
             ).fetchone()
         except sqlite3.OperationalError:
             row = None
@@ -2056,13 +2064,13 @@ class ProjectionBuilder:
             return {
                 "ok": True,
                 "recordStatus": "not_recorded",
-                "jobKey": job_url,
+                "jobId": job_id,
                 "legacyRawSalary": _nullable_text(legacy_raw_salary),
             }
-        fact = _posted_fact_from_row(row)
+        fact = _posted_fact_from_row(row, job_id)
         return {"ok": True, "recordStatus": "recorded", "fact": fact}
 
-    def _load_market_compensation(self, job_url: str) -> dict[str, Any]:
+    def _load_market_compensation(self, job_locator: str, job_id: str) -> dict[str, Any]:
         try:
             row = self._conn.execute(
                 """
@@ -2083,18 +2091,18 @@ class ProjectionBuilder:
                 FROM job_market_compensation_estimates
                 WHERE tenant_id = ? AND job_url = ?
                 """,
-                (str(self._tenant_id), job_url),
+                (str(self._tenant_id), job_locator),
             ).fetchone()
         except sqlite3.OperationalError:
             row = None
         if row is None:
-            return {"ok": True, "recordStatus": "not_requested", "jobKey": job_url}
+            return {"ok": True, "recordStatus": "not_requested", "jobId": job_id}
         if not _row_str(row, "estimator_version").startswith("company-role-reported-compensation-"):
-            return {"ok": True, "recordStatus": "not_requested", "jobKey": job_url}
+            return {"ok": True, "recordStatus": "not_requested", "jobId": job_id}
         estimate_state = _row_str(row, "estimate_state")
         if estimate_state not in MARKET_RECORDED_STATES:
-            return {"ok": True, "recordStatus": "not_requested", "jobKey": job_url}
-        estimate = _market_estimate_from_row(row)
+            return {"ok": True, "recordStatus": "not_requested", "jobId": job_id}
+        estimate = _market_estimate_from_row(row, job_id)
         return {"ok": True, "recordStatus": "recorded", "estimate": estimate}
 
     # ------------------------------------------------------------- joiners
@@ -4131,11 +4139,11 @@ def _row_float(row: object, key: str) -> float:
         return 0.0
 
 
-def _posted_fact_from_row(row: object) -> dict[str, Any]:
+def _posted_fact_from_row(row: object, job_id: str) -> dict[str, Any]:
     warnings = _warnings(_row_str(row, "warnings_json"), POSTED_COMPENSATION_WARNING_MESSAGES)
     base: dict[str, Any] = {
         "tenantId": _row_str(row, "tenant_id"),
-        "jobKey": _row_str(row, "job_url"),
+        "jobId": job_id,
         "sourceField": _row_str(row, "source_field"),
         "legacyRawSalary": _nullable_text(_row_get(row, "legacy_raw_salary")),
         "parserVersion": _row_str(row, "parser_version"),
@@ -4183,13 +4191,13 @@ def _posted_fact_from_row(row: object) -> dict[str, Any]:
     }
 
 
-def _market_estimate_from_row(row: object) -> dict[str, Any]:
+def _market_estimate_from_row(row: object, job_id: str) -> dict[str, Any]:
     sources = _market_sources(_row_str(row, "source_snapshot_json"))
     estimate_state = _row_str(row, "estimate_state")
     confidence_band = _confidence_band(_row_get(row, "confidence_band"))
     base: dict[str, Any] = {
         "tenantId": _row_str(row, "tenant_id"),
-        "jobKey": _row_str(row, "job_url"),
+        "jobId": job_id,
         "estimateState": estimate_state,
         "confidenceBand": confidence_band,
         "confidenceScore": _number(_row_get(row, "confidence_score")),
