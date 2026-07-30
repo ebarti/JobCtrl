@@ -563,12 +563,12 @@
     "jobDetail": {
       "compensation_audit_json": {
         "market": {
-          "jobKey": "https://example.com/jobs/parity-developer-platform",
+          "jobId": "https://example.com/jobs/parity-developer-platform",
           "ok": true,
           "recordStatus": "not_requested"
         },
         "posted": {
-          "jobKey": "https://example.com/jobs/parity-developer-platform",
+          "jobId": "https://example.com/jobs/parity-developer-platform",
           "legacyRawSalary": "EUR 90000-120000/year",
           "ok": true,
           "recordStatus": "not_recorded"

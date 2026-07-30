@@ -2618,8 +2618,8 @@ export interface JobCompensationSummary {
 
 export interface JobCompensationAudit {
   projectionVersion: number;
-  posted: PostedCompensationFactResponse;
-  market: MarketCompensationEstimateResponse;
+  posted: JobCompensationAuditPostedResponse;
+  market: JobCompensationAuditMarketResponse;
 }
 
 export interface JobSummary {
@@ -5022,6 +5022,27 @@ export type PostedCompensationFactResponse =
   | PostedCompensationFactRecordedResponse
   | PostedCompensationFactNotRecordedResponse;
 
+type CompensationAuditJobIdentity<T> = T extends { jobKey: string }
+  ? Omit<T, "jobKey"> & { jobId: string }
+  : T;
+
+export type JobCompensationAuditPostedFact = CompensationAuditJobIdentity<
+  PostedCompensationFact
+>;
+
+export type JobCompensationAuditPostedResponse =
+  | {
+      ok: true;
+      recordStatus: "recorded";
+      fact: JobCompensationAuditPostedFact;
+    }
+  | {
+      ok: true;
+      recordStatus: "not_recorded";
+      jobId: string;
+      legacyRawSalary: string | null;
+    };
+
 export const MARKET_COMPENSATION_ESTIMATE_STATES = [
   "not_requested",
   "unsupported",
@@ -5237,6 +5258,22 @@ export interface MarketCompensationEstimateNotRequestedResponse {
 export type MarketCompensationEstimateResponse =
   | MarketCompensationEstimateRecordedResponse
   | MarketCompensationEstimateNotRequestedResponse;
+
+export type JobCompensationAuditMarketEstimate = CompensationAuditJobIdentity<
+  MarketCompensationEstimate
+>;
+
+export type JobCompensationAuditMarketResponse =
+  | {
+      ok: true;
+      recordStatus: "recorded";
+      estimate: JobCompensationAuditMarketEstimate;
+    }
+  | {
+      ok: true;
+      recordStatus: "not_requested";
+      jobId: string;
+    };
 
 export const QuarantineDecisionSchema = z
   .object({
