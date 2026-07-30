@@ -3628,6 +3628,13 @@ function preparationPickupEligibility(
           AND stale.${staleReference} = jobs.${staleReference === "job_id" ? "job_id" : "url"}
           AND stale.resolved = 0)`
     : "0";
+  const stageReference = jobReferenceColumn(db, "job_stage_states");
+  const stageIdentityJoin = stageReference === "job_id"
+    ? "stage_state.tenant_id = jobs.tenant_id AND stage_state.job_id = jobs.job_id"
+    : "stage_state.job_url = jobs.url";
+  const scoreIdentityJoin = stageReference === "job_id"
+    ? "score_state.tenant_id = jobs.tenant_id AND score_state.job_id = jobs.job_id"
+    : "score_state.job_url = jobs.url";
   const row = db
     .prepare(
       `SELECT
@@ -3647,9 +3654,9 @@ function preparationPickupEligibility(
        LEFT JOIN job_list_projections projections
          ON projections.tenant_id = 'local' AND projections.job_id = jobs.url
        LEFT JOIN job_stage_states stage_state
-         ON stage_state.job_url = jobs.url AND stage_state.stage = ?
+         ON ${stageIdentityJoin} AND stage_state.stage = ?
        LEFT JOIN job_stage_states score_state
-         ON score_state.job_url = jobs.url AND score_state.stage = 'score'
+         ON ${scoreIdentityJoin} AND score_state.stage = 'score'
        WHERE jobs.url = ?
        LIMIT 1`,
     )

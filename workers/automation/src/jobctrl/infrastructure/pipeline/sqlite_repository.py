@@ -33,7 +33,13 @@ from jobctrl.domain.pipeline_types import (
     serialize_stage_state,
 )
 from jobctrl.domain.tenant import TenantId
-from jobctrl.state import reconcile_dependency_blockers, record_job_event, set_stage_state
+from jobctrl.state import (
+    _stage_state_predicate,
+    get_stage_state_job_urls,
+    reconcile_dependency_blockers,
+    record_job_event,
+    set_stage_state,
+)
 
 
 def _json_loads(value: str | None, default: Any) -> Any:
@@ -235,9 +241,17 @@ class SqlitePipelineStateRepository:
     # -- port methods ---------------------------------------------------------
 
     def load(self, tenant_id: TenantId, job_url: str) -> JobPipelineState | None:
+        try:
+            predicate, params = _stage_state_predicate(
+                self._conn,
+                job_url,
+                tenant_id=str(tenant_id),
+            )
+        except ValueError:
+            return None
         rows = self._conn.execute(
-            "SELECT * FROM job_stage_states WHERE job_url = ?",
-            (job_url,),
+            f"SELECT * FROM job_stage_states WHERE {predicate}",
+            params,
         ).fetchall()
         if not rows:
             return None
@@ -315,20 +329,15 @@ class SqlitePipelineStateRepository:
         stage: str,
         state_filter: str | None = None,
     ) -> list[JobPipelineState]:
-        if state_filter:
-            rows = self._conn.execute(
-                "SELECT DISTINCT job_url FROM job_stage_states WHERE stage = ? AND state = ?",
-                (stage, state_filter),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT DISTINCT job_url FROM job_stage_states WHERE stage = ?",
-                (stage,),
-            ).fetchall()
+        job_urls = get_stage_state_job_urls(
+            self._conn,
+            stage=stage,
+            states=(state_filter,) if state_filter else None,
+            tenant_id=str(tenant_id),
+        )
 
         results: list[JobPipelineState] = []
-        for row in rows:
-            job_url = row[0] if not isinstance(row, dict) else row["job_url"]
+        for job_url in job_urls:
             agg = self.load(tenant_id, job_url)
             if agg is not None:
                 results.append(agg)
@@ -338,9 +347,13 @@ class SqlitePipelineStateRepository:
 
     def _existing_state_strings(self, job_url: str) -> dict[str, str]:
         """Return the persisted ``stage -> state`` map for change detection."""
+        predicate, params = _stage_state_predicate(
+            self._conn,
+            job_url,
+        )
         rows = self._conn.execute(
-            "SELECT stage, state FROM job_stage_states WHERE job_url = ?",
-            (job_url,),
+            f"SELECT stage, state FROM job_stage_states WHERE {predicate}",
+            params,
         ).fetchall()
         return {row["stage"]: row["state"] for row in rows}
 

@@ -12,7 +12,14 @@ import type {
   PipelineProjectionCoverage,
   PipelineStageCounts,
 } from "./contracts.js";
-import { allRows, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import {
+  allRows,
+  jobReferenceColumn,
+  jobReferenceJoinToJobs,
+  tableExists,
+  type SqliteDatabase,
+  type SqliteValue,
+} from "./db.js";
 import {
   estimatePipelineEta,
   type PipelineEtaEstimatorInput,
@@ -359,7 +366,11 @@ function materializeExecution(
   const runId = nullableText(row.temporal_run_id);
   if (!runId) return null;
   const memberships = loadMemberships(db, tenantId, row.workflow_id, runId);
-  const stageStates = loadStageStates(db, memberships.map((membership) => membership.job_url));
+  const stageStates = loadStageStates(
+    db,
+    tenantId,
+    memberships.map((membership) => membership.job_url),
+  );
   const preparationWorkflows = loadPreparationWorkflows(db, tenantId, memberships);
   const steps = loadPipelineSteps(db, tenantId, row.workflow_id, runId);
   const current = cohort(
@@ -416,17 +427,29 @@ function loadMemberships(
   );
 }
 
-function loadStageStates(db: SqliteDatabase, jobUrls: string[]): Map<string, Map<string, StageStateRow>> {
+function loadStageStates(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrls: string[],
+): Map<string, Map<string, StageStateRow>> {
   const grouped = new Map<string, Map<string, StageStateRow>>();
   if (jobUrls.length === 0 || !tableExists(db, "job_stage_states")) return grouped;
+  const stableReferences = jobReferenceColumn(db, "job_stage_states") === "job_id";
   for (const group of chunks(jobUrls, 500)) {
     const placeholders = group.map(() => "?").join(", ");
     const rows = allRows<StageStateRow>(
       db,
-      `SELECT job_url, stage, state, duration_ms, finished_at, retryable
-         FROM job_stage_states
-        WHERE job_url IN (${placeholders})`,
-      group,
+      `SELECT ${stableReferences ? "stage_jobs.url" : "states.job_url"} AS job_url,
+              states.stage, states.state,
+              states.duration_ms, states.finished_at, states.retryable
+         FROM job_stage_states states
+         ${stableReferences
+           ? `JOIN jobs stage_jobs
+                ON ${jobReferenceJoinToJobs(db, "job_stage_states", "states", "stage_jobs")}`
+           : ""}
+        WHERE ${stableReferences ? "stage_jobs.tenant_id = ? AND stage_jobs.url" : "states.job_url"}
+              IN (${placeholders})`,
+      stableReferences ? [tenantId, ...group] : group,
     );
     for (const row of rows) {
       const stages = grouped.get(row.job_url) ?? new Map<string, StageStateRow>();
@@ -1174,17 +1197,28 @@ function globalStageCounts(
   const counts = new Map<(typeof OPERATIONAL_STAGES)[number], PipelineStageCounts>();
   for (const stage of OPERATIONAL_STAGES) counts.set(stage, emptyCounts());
   if (!tableExists(db, "job_stage_states")) return counts;
+  const stableReferences = jobReferenceColumn(db, "job_stage_states") === "job_id";
+  const jobUrlExpression = stableReferences ? "stage_jobs.url" : "jss.job_url";
   const excluded = selected.current.members.concat(selected.sweep.members).map((member) => member.job_url);
   const where = ["jss.stage IN ('enrich', 'score', 'tailor', 'cover')"];
   const params: SqliteValue[] = [];
+  if (stableReferences) {
+    where.unshift("stage_jobs.tenant_id = ?");
+    params.push(tenantId);
+  }
   if (excluded.length > 0) {
-    where.push(`jss.job_url NOT IN (${excluded.map(() => "?").join(", ")})`);
+    where.push(`${jobUrlExpression} NOT IN (${excluded.map(() => "?").join(", ")})`);
     params.push(...excluded);
   }
   const rows = allRows<StageStateRow>(
     db,
-    `SELECT jss.job_url, jss.stage, jss.state, jss.duration_ms, jss.finished_at
+    `SELECT ${jobUrlExpression} AS job_url, jss.stage, jss.state,
+            jss.duration_ms, jss.finished_at
        FROM job_stage_states jss
+       ${stableReferences
+         ? `JOIN jobs stage_jobs
+              ON ${jobReferenceJoinToJobs(db, "job_stage_states", "jss", "stage_jobs")}`
+         : ""}
       WHERE ${where.join(" AND ")}`,
     params,
   );
@@ -1203,16 +1237,32 @@ function loadGlobalRetryability(
   selected: SelectedExecution,
 ): GlobalRetryability {
   if (!tableExists(db, "job_stage_states")) return { hasUnboundedRetryableDemand: false };
+  const stableReferences = jobReferenceColumn(db, "job_stage_states") === "job_id";
+  const jobUrlExpression = stableReferences ? "stage_jobs.url" : "states.job_url";
   const excluded = selected.current.members.concat(selected.sweep.members).map((member) => member.job_url);
-  const where = ["stage IN ('enrich', 'score', 'tailor', 'cover')", "state = 'failed'", "retryable = 1"];
+  const where = [
+    "states.stage IN ('enrich', 'score', 'tailor', 'cover')",
+    "states.state = 'failed'",
+    "states.retryable = 1",
+  ];
   const params: SqliteValue[] = [];
+  if (stableReferences) {
+    where.unshift("stage_jobs.tenant_id = ?");
+    params.push(tenantId);
+  }
   if (excluded.length > 0) {
-    where.push(`job_url NOT IN (${excluded.map(() => "?").join(", ")})`);
+    where.push(`${jobUrlExpression} NOT IN (${excluded.map(() => "?").join(", ")})`);
     params.push(...excluded);
   }
   const rows = allRows<{ job_url: string }>(
     db,
-    `SELECT job_url FROM job_stage_states WHERE ${where.join(" AND ")}`,
+    `SELECT ${jobUrlExpression} AS job_url
+       FROM job_stage_states states
+       ${stableReferences
+         ? `JOIN jobs stage_jobs
+              ON ${jobReferenceJoinToJobs(db, "job_stage_states", "states", "stage_jobs")}`
+         : ""}
+      WHERE ${where.join(" AND ")}`,
     params,
   );
   if (rows.length === 0) return { hasUnboundedRetryableDemand: false };
@@ -1905,10 +1955,12 @@ function jobStageSamples(db: SqliteDatabase, stage: string, now: Date): EtaSampl
   if (!tableExists(db, "job_stage_states")) return [];
   const rows = allRows<StageStateRow>(
     db,
-    `SELECT job_url, stage, state, duration_ms, finished_at
-       FROM job_stage_states
-      WHERE stage = ? AND state = 'succeeded' AND duration_ms > 0 AND finished_at IS NOT NULL
-      ORDER BY finished_at DESC
+    `SELECT '' AS job_url, states.stage, states.state,
+            states.duration_ms, states.finished_at
+       FROM job_stage_states states
+      WHERE states.stage = ? AND states.state = 'succeeded'
+        AND states.duration_ms > 0 AND states.finished_at IS NOT NULL
+      ORDER BY states.finished_at DESC
       LIMIT ?`,
     [stage, ETA_SAMPLE_LIMIT],
   );

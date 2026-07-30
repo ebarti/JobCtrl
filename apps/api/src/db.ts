@@ -9,7 +9,7 @@ export type SqliteValue = string | number | bigint | null;
 // writer that stamps ``PRAGMA user_version``; the API only reads it to fail
 // closed on a database written by a newer build. Bump both constants together
 // whenever the schema shape changes.
-export const SUPPORTED_SCHEMA_VERSION = 12;
+export const SUPPORTED_SCHEMA_VERSION = 13;
 
 export class IncompatibleSchemaVersionError extends Error {
   constructor(current: number) {
@@ -129,6 +129,44 @@ export function jobReferenceForUrl(
     throw new Error(`No stable Job identity for ${jobUrl}.`);
   }
   return jobId;
+}
+
+export function jobReferencePredicateForUrl(
+  db: SqliteDatabase,
+  tableName: string,
+  jobUrl: string,
+  tenantId = "local",
+  alias = "",
+): { sql: string; params: SqliteValue[] } {
+  const prefix = alias ? `${alias}.` : "";
+  const referenceColumn = jobReferenceColumn(db, tableName);
+  const reference = jobReferenceForUrl(
+    db,
+    tableName,
+    jobUrl,
+    tenantId,
+  );
+  if (referenceColumn === "job_url") {
+    return {
+      sql: `${prefix}job_url = ?`,
+      params: [reference],
+    };
+  }
+  return {
+    sql: `${prefix}tenant_id = ? AND ${prefix}job_id = ?`,
+    params: [tenantId, reference],
+  };
+}
+
+export function jobReferenceJoinToJobs(
+  db: SqliteDatabase,
+  tableName: string,
+  sourceAlias: string,
+  jobsAlias: string,
+): string {
+  return jobReferenceColumn(db, tableName) === "job_id"
+    ? `${sourceAlias}.tenant_id = ${jobsAlias}.tenant_id AND ${sourceAlias}.job_id = ${jobsAlias}.job_id`
+    : `${sourceAlias}.job_url = ${jobsAlias}.url`;
 }
 
 export function hasCompositeJobIdForeignKey(

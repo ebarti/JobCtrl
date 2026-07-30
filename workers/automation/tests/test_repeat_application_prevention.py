@@ -24,7 +24,7 @@ from jobctrl.domain.apply.repeat_application import (
     repeat_evidence_fingerprint,
 )
 from jobctrl.domain.apply.value_objects import ApplyPrompt
-from jobctrl.state import ensure_job_stage_rows, record_job_event
+from jobctrl.state import ensure_job_stage_rows, get_stage_state_row, record_job_event
 
 PRIOR = "https://jobs.example.test/prior"
 TARGET = "https://careers.example.test/target"
@@ -350,10 +350,7 @@ def test_manual_mark_is_a_user_attested_confirmed_fact_not_a_submission(
     ).fetchall()
     assert [row["event_type"] for row in events] == ["ApplicationManuallyMarked"]
     assert json.loads(events[0]["payload_json"])["source"] == "user_attestation"
-    assert conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-        (PRIOR,),
-    ).fetchone()[0] == "succeeded"
+    assert get_stage_state_row(conn, PRIOR, "apply")["state"] == "succeeded"
     assessment = evaluate_repeat_application(conn, TARGET)
     assert assessment["status"] == "confirmation_required"
     assert assessment["matches"][0]["priorApplication"]["factKind"] == (
@@ -640,10 +637,7 @@ def test_gen_prompt_is_read_only_and_cannot_consume_repeat_override(
         == 0
     )
     assert (
-        conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (TARGET,),
-        ).fetchone()[0]
+        get_stage_state_row(conn, TARGET, "apply")["state"]
         == "pending"
     )
 
@@ -750,7 +744,7 @@ def test_schema_v5_migrates_additively_without_changing_application_facts(
         (PRIOR,),
     ).fetchall()
 
-    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 12
+    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 13
     assert [tuple(row) for row in after] == [tuple(row) for row in before]
     assert "metadata_json" in {
         str(row[1]) for row in migrated.execute("PRAGMA table_info(job_stage_states)").fetchall()

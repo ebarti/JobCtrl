@@ -512,9 +512,12 @@ def test_canonical_ats_scheduler_routes_postings_through_discovery_use_case(
     assert all(str(row["full_description"] or "").strip() for row in enrichments)
     stage_rows = conn.execute(
         """
-        SELECT job_url, state
-        FROM job_stage_states
-        WHERE stage = 'enrich'
+        SELECT jobs.url AS job_url, states.state
+        FROM job_stage_states states
+        JOIN jobs
+          ON jobs.tenant_id = states.tenant_id
+         AND jobs.job_id = states.job_id
+        WHERE states.stage = 'enrich'
         """
     ).fetchall()
     assert {row["job_url"] for row in stage_rows} == expected_urls

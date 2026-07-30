@@ -383,6 +383,34 @@ def _count_pending_approvals(conn: sqlite3.Connection) -> int:
 def _apply_queue_rows(conn: sqlite3.Connection) -> list[Any]:
     if not _table_exists(conn, "job_list_projections") or not _table_exists(conn, "job_stage_states"):
         return []
+    stable_stage_references = (
+        "job_id" in _table_columns(conn, "job_stage_states")
+        and _table_exists(conn, "jobs")
+    )
+    apply_stage_source_sql = (
+        """
+                SELECT s.tenant_id, j.url AS job_url, s.state,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY s.tenant_id, s.job_id
+                           ORDER BY COALESCE(s.updated_at, '') DESC, s.rowid DESC
+                       ) AS row_num
+                FROM job_stage_states s
+                JOIN jobs j
+                  ON j.tenant_id = s.tenant_id
+                 AND j.job_id = s.job_id
+                WHERE s.stage = 'apply'
+        """
+        if stable_stage_references
+        else """
+                SELECT 'local' AS tenant_id, s.job_url, s.state,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY s.job_url
+                           ORDER BY COALESCE(s.updated_at, '') DESC, s.rowid DESC
+                       ) AS row_num
+                FROM job_stage_states s
+                WHERE s.stage = 'apply'
+        """
+    )
     latest_decision_sql, latest_decision_params = _latest_decision_cte(conn)
     latest_apply_run_sql = _latest_apply_run_cte(conn)
     active_clauses, active_params = _active_job_clauses(conn, "jlp")
@@ -392,15 +420,9 @@ def _apply_queue_rows(conn: sqlite3.Connection) -> list[Any]:
         + latest_apply_run_sql
         + f"""
         , latest_digest_apply_stage AS (
-            SELECT job_url, state
+            SELECT tenant_id, job_url, state
             FROM (
-                SELECT job_url, state,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY job_url
-                           ORDER BY COALESCE(updated_at, '') DESC, rowid DESC
-                       ) AS row_num
-                FROM job_stage_states
-                WHERE stage = 'apply'
+                {apply_stage_source_sql}
             )
             WHERE row_num = 1
         )
@@ -418,7 +440,8 @@ def _apply_queue_rows(conn: sqlite3.Connection) -> list[Any]:
                latest_apply_run.result AS apply_run_result
         FROM job_list_projections jlp
         INNER JOIN latest_digest_apply_stage apply_stage
-          ON apply_stage.job_url = jlp.job_id
+          ON apply_stage.tenant_id = jlp.tenant_id
+         AND apply_stage.job_url = jlp.job_id
         LEFT JOIN latest_digest_decision latest_decision
           ON latest_decision.job_key = jlp.job_id
         LEFT JOIN latest_digest_apply_run latest_apply_run

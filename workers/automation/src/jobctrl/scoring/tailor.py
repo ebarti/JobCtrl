@@ -68,6 +68,7 @@ from jobctrl.infrastructure.scoring import (
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.scoring.employer_analysis import build_analyze_use_case
 from jobctrl.state import (
+    _stage_state_predicate,
     ensure_job_stage_rows,
     reconcile_score_eligibility_blockers,
     record_job_event,
@@ -252,8 +253,9 @@ def _mark_cover_pending_after_tailor_success(
         "WHERE url = ?",
         (job_url,),
     )
+    stage_predicate, stage_params = _stage_state_predicate(conn, job_url)
     conn.execute(
-        """
+        f"""
         UPDATE job_stage_states
         SET state = 'pending',
             attempt_count = 0,
@@ -268,9 +270,9 @@ def _mark_cover_pending_after_tailor_success(
             blocked_by_json = '[]',
             next_action = NULL,
             metadata_json = ?
-        WHERE job_url = ? AND stage = 'cover'
+        WHERE {stage_predicate} AND stage = 'cover'
         """,
-        (now, metadata, job_url),
+        (now, metadata, *stage_params),
     )
     record_job_event(
         conn,

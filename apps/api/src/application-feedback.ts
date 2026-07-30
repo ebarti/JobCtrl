@@ -48,6 +48,8 @@ import {
   allRows,
   getRow,
   hasCompositeJobIdForeignKey,
+  jobReferenceColumn,
+  jobReferenceJoinToJobs,
   tableExists,
   type SqliteDatabase,
   type SqliteValue,
@@ -323,6 +325,10 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
   const employerAnalysisJoin = hasEmployerAnalysis
     ? "LEFT JOIN latest_employer_analysis ON latest_employer_analysis.job_url = jlp.job_id"
     : "";
+  const stableStageReferences = jobReferenceColumn(
+    db,
+    "job_stage_states",
+  ) === "job_id";
   const rows = allRows<ReviewQueueRow>(
     db,
     `
@@ -357,15 +363,31 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
       WHERE row_num = 1
     ),
     apply_stage AS (
-      SELECT job_url, state
+      SELECT tenant_id, job_url, state
       FROM (
-        SELECT job_url, state,
+        SELECT ${stableStageReferences ? "stage_jobs.tenant_id" : `'${DEFAULT_TENANT}'`} AS tenant_id,
+               ${stableStageReferences ? "stage_jobs.url" : "stage_state.job_url"} AS job_url,
+               stage_state.state,
                ROW_NUMBER() OVER (
-                 PARTITION BY job_url
-                 ORDER BY COALESCE(updated_at, '') DESC, rowid DESC
+                 PARTITION BY ${
+                   stableStageReferences
+                     ? "stage_state.tenant_id, stage_state.job_id"
+                     : "stage_state.job_url"
+                 }
+                 ORDER BY COALESCE(stage_state.updated_at, '') DESC,
+                          stage_state.rowid DESC
                ) AS row_num
-        FROM job_stage_states
-        WHERE stage = 'apply'
+        FROM job_stage_states stage_state
+        ${stableStageReferences
+          ? `JOIN jobs stage_jobs
+               ON ${jobReferenceJoinToJobs(
+                 db,
+                 "job_stage_states",
+                 "stage_state",
+                 "stage_jobs",
+               )}`
+          : ""}
+        WHERE stage_state.stage = 'apply'
       )
       WHERE row_num = 1
     )
@@ -396,7 +418,9 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
     LEFT JOIN job_detail_projections jdp ON jdp.tenant_id = jlp.tenant_id AND jdp.job_id = jlp.job_id
     LEFT JOIN latest_decision ON latest_decision.job_key = jlp.job_id
     LEFT JOIN latest_apply_run ON latest_apply_run.job_id = jlp.job_id
-    INNER JOIN apply_stage ON apply_stage.job_url = jlp.job_id
+    INNER JOIN apply_stage
+      ON apply_stage.tenant_id = jlp.tenant_id
+     AND apply_stage.job_url = jlp.job_id
     ${employerAnalysisJoin}
     WHERE jlp.tenant_id = ?
       AND jlp.deleted_at IS NULL

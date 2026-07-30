@@ -27,6 +27,8 @@ import {
   hasCompositeJobIdForeignKey,
   jobReferenceColumn,
   jobReferenceForUrl,
+  jobReferenceJoinToJobs,
+  jobReferencePredicateForUrl,
   tableExists,
   type SqliteDatabase,
   type SqliteValue,
@@ -161,6 +163,8 @@ const DEPENDENCY_BLOCKER_MESSAGES: Record<string, Array<{ downstream: string; me
 
 interface BackfillOpts {
   jobUrl: string;
+  tenantId?: string;
+  jobId?: string;
   stage: string;
   attemptCount?: number;
   finishedAt?: string | null;
@@ -181,7 +185,19 @@ interface BackfillOpts {
  */
 function backfillLegacyStageStates(db: SqliteDatabase): void {
   if (!tableExists(db, "jobs") || !tableExists(db, "job_stage_states")) return;
+  const stageJoin = jobReferenceJoinToJobs(
+    db,
+    "job_stage_states",
+    "jss",
+    "j",
+  );
+  const stableStageReferences = jobReferenceColumn(
+    db,
+    "job_stage_states",
+  ) === "job_id";
   const legacyJobs = allRows<{
+    tenant_id: string;
+    job_id: string;
     url: string;
     discovered_at: string | null;
     full_description: string | null;
@@ -197,14 +213,17 @@ function backfillLegacyStageStates(db: SqliteDatabase): void {
     apply_error: string | null;
   }>(
     db,
-    `SELECT j.url, j.discovered_at, j.full_description, j.detail_scraped_at,
+    `SELECT ${stableStageReferences ? "j.tenant_id" : "'local'"} AS tenant_id,
+            ${stableStageReferences ? "j.job_id" : "j.url"} AS job_id,
+            j.url, j.discovered_at,
+            j.full_description, j.detail_scraped_at,
             j.detail_error, j.fit_score,
             j.tailored_resume_path, j.tailor_attempts,
             j.cover_letter_path, j.cover_attempts,
             j.applied_at, j.apply_status, j.apply_error
      FROM jobs j
-     LEFT JOIN job_stage_states jss ON jss.job_url = j.url
-     GROUP BY j.url
+     LEFT JOIN job_stage_states jss ON ${stageJoin}
+     GROUP BY ${stableStageReferences ? "j.tenant_id, j.job_id, " : ""}j.url
      HAVING COUNT(jss.stage) = 0`,
   );
   if (legacyJobs.length === 0) return;
@@ -226,6 +245,8 @@ function backfillLegacyStageStates(db: SqliteDatabase): void {
     allRows<{ name: string }>(db, "PRAGMA table_info(job_stage_states)").map((r) => r.name),
   );
   const allColumnSpecs: Array<[string, (state: string, opts: BackfillOpts) => SqliteValue]> = [
+    ["tenant_id", (_s, o) => o.tenantId ?? "local"],
+    ["job_id", (_s, o) => o.jobId ?? ""],
     ["job_url", (_s, o) => o.jobUrl],
     ["stage", (_s, o) => o.stage],
     ["state", (s) => s],
@@ -255,7 +276,19 @@ function backfillLegacyStageStates(db: SqliteDatabase): void {
     state: string,
     opts: Omit<BackfillOpts, "jobUrl" | "stage"> = {},
   ): void => {
-    const fullOpts: BackfillOpts = { ...opts, jobUrl, stage };
+    const tenantId = opts.tenantId ?? "local";
+    const fullOpts: BackfillOpts = {
+      ...opts,
+      jobUrl,
+      tenantId,
+      jobId: opts.jobId ?? jobReferenceForUrl(
+        db,
+        "job_stage_states",
+        jobUrl,
+        tenantId,
+      ),
+      stage,
+    };
     const values = presentColumns.map(([, fn]) => fn(state, fullOpts));
     insert.run(...values);
   };
@@ -263,6 +296,8 @@ function backfillLegacyStageStates(db: SqliteDatabase): void {
   for (const row of legacyJobs) {
     if (!row.url) continue;
     insertStage(row.url, "discover", "succeeded", {
+      tenantId: row.tenant_id,
+      jobId: row.job_id,
       attemptCount: 1,
       finishedAt: row.discovered_at ?? now,
     });
@@ -376,17 +411,37 @@ function reconcileDependencyBlockers(db: SqliteDatabase): Set<string> {
     columns.has("next_action") ? "next_action = NULL" : null,
     columns.has("metadata_json") ? "metadata_json = NULL" : null,
   ].filter((assignment): assignment is string => Boolean(assignment));
-  const updateSql = `UPDATE job_stage_states SET ${assignments.join(", ")} WHERE job_url = ? AND stage = ?`;
+  const stableReferences = jobReferenceColumn(
+    db,
+    "job_stage_states",
+  ) === "job_id";
+  const updateIdentity = stableReferences
+    ? "tenant_id = ? AND job_id = ?"
+    : "job_url = ?";
+  const updateSql = `UPDATE job_stage_states SET ${assignments.join(", ")} WHERE ${updateIdentity} AND stage = ?`;
   const update = db.prepare(updateSql);
   const now = new Date().toISOString();
 
   for (const [upstream, downstreams] of Object.entries(DEPENDENCY_BLOCKER_MESSAGES)) {
     for (const { downstream, messages } of downstreams) {
       const placeholders = messages.map(() => "?").join(", ");
-      const rows = allRows<{ job_url: string; stage: string }>(
+      const rows = allRows<{
+        job_url: string;
+        tenant_id: string | null;
+        job_id: string | null;
+        stage: string;
+      }>(
         db,
-        `SELECT downstream.job_url, downstream.stage
+        `SELECT ${stableReferences ? "jobs.url" : "downstream.job_url"} AS job_url,
+                ${stableReferences ? "downstream.tenant_id" : "NULL"} AS tenant_id,
+                ${stableReferences ? "downstream.job_id" : "NULL"} AS job_id,
+                downstream.stage
            FROM job_stage_states AS downstream
+           ${stableReferences
+             ? `JOIN jobs
+                  ON jobs.tenant_id = downstream.tenant_id
+                 AND jobs.job_id = downstream.job_id`
+             : ""}
           WHERE downstream.stage = ?
             AND downstream.state = 'blocked'
             AND downstream.error_code = 'BLOCKED'
@@ -394,14 +449,23 @@ function reconcileDependencyBlockers(db: SqliteDatabase): Set<string> {
             AND EXISTS (
               SELECT 1
                 FROM job_stage_states AS upstream
-               WHERE upstream.job_url = downstream.job_url
+               WHERE ${stableReferences
+                 ? "upstream.tenant_id = downstream.tenant_id AND upstream.job_id = downstream.job_id"
+                 : "upstream.job_url = downstream.job_url"}
                  AND upstream.stage = ?
                  AND upstream.state = 'succeeded'
             )`,
         [downstream, ...messages, upstream],
       );
       for (const row of rows) {
-        update.run(...(columns.has("updated_at") ? [now] : []), row.job_url, row.stage);
+        const identityParams: SqliteValue[] = stableReferences
+          ? [row.tenant_id, row.job_id]
+          : [row.job_url];
+        update.run(
+          ...(columns.has("updated_at") ? [now] : []),
+          ...identityParams,
+          row.stage,
+        );
         repairedJobs.add(row.job_url);
       }
     }
@@ -419,14 +483,23 @@ function reconcileObsoleteCoverGenerationConflicts(db: SqliteDatabase): Set<stri
   const columns = new Set(
     allRows<{ name: string }>(db, "PRAGMA table_info(job_stage_states)").map((row) => row.name),
   );
+  const stableReferences = jobReferenceColumn(
+    db,
+    "job_stage_states",
+  ) === "job_id";
+  const stageJobUrl = stableReferences ? "stage_jobs.url" : "s.job_url";
   const rows = allRows<{
     job_url: string;
+    tenant_id: string | null;
+    job_id: string | null;
     error_message: string | null;
     has_cover_letter: number | string | null;
   }>(
     db,
     `
-    SELECT s.job_url,
+    SELECT ${stageJobUrl} AS job_url,
+           ${stableReferences ? "s.tenant_id" : "NULL"} AS tenant_id,
+           ${stableReferences ? "s.job_id" : "NULL"} AS job_id,
            s.error_message,
            EXISTS (
              SELECT 1
@@ -443,12 +516,17 @@ function reconcileObsoleteCoverGenerationConflicts(db: SqliteDatabase): Set<stri
                 AND cover.artifact_type = 'cover_letter'
                 AND cover.status = 'approved'
                 AND COALESCE(TRIM(cover.path), '') != ''
-              WHERE tr.job_url = s.job_url
+              WHERE tr.job_url = ${stageJobUrl}
                 AND tr.artifact_type = 'tailored_resume'
                 AND tr.status = 'approved'
                 AND COALESCE(TRIM(tr.path), '') != ''
            ) AS has_cover_letter
       FROM job_stage_states s
+      ${stableReferences
+        ? `JOIN jobs stage_jobs
+             ON stage_jobs.tenant_id = s.tenant_id
+            AND stage_jobs.job_id = s.job_id`
+        : ""}
      WHERE s.stage = 'cover'
        AND s.state = 'failed'
        AND s.error_code = 'COVER_FAILED'
@@ -463,7 +541,7 @@ function reconcileObsoleteCoverGenerationConflicts(db: SqliteDatabase): Set<stri
                 AND pdf.artifact_type = 'resume_pdf'
                 AND pdf.status = 'approved'
                 AND COALESCE(TRIM(pdf.path), '') != ''
-              WHERE tr.job_url = s.job_url
+              WHERE tr.job_url = ${stageJobUrl}
                 AND tr.artifact_type = 'tailored_resume'
                 AND tr.status = 'approved'
                 AND COALESCE(TRIM(tr.path), '') != ''
@@ -486,7 +564,9 @@ function reconcileObsoleteCoverGenerationConflicts(db: SqliteDatabase): Set<stri
   const update = db.prepare(
     `UPDATE job_stage_states
         SET ${assignments.join(", ")}
-      WHERE job_url = ?
+      WHERE ${stableReferences
+        ? "tenant_id = ? AND job_id = ?"
+        : "job_url = ?"}
         AND stage = 'cover'
         AND state = 'failed'
         AND error_code = 'COVER_FAILED'`,
@@ -509,7 +589,12 @@ function reconcileObsoleteCoverGenerationConflicts(db: SqliteDatabase): Set<stri
         }),
       );
     }
-    update.run(...values, row.job_url);
+    update.run(
+      ...values,
+      ...(stableReferences
+        ? [row.tenant_id, row.job_id]
+        : [row.job_url]),
+    );
     repairedJobs.add(row.job_url);
   }
 
@@ -3064,18 +3149,28 @@ function staleStageProjectionJobs(db: SqliteDatabase, tenantId: string): string[
   if (!tableExists(db, "jobs") || !tableExists(db, "job_stage_states") || !tableExists(db, "job_list_projections")) {
     return [];
   }
+  const stageReference = jobReferenceColumn(db, "job_stage_states");
+  const stageJoin = jobReferenceJoinToJobs(
+    db,
+    "job_stage_states",
+    "s",
+    "j",
+  );
+  const stageIdentity = stageReference === "job_id"
+    ? "s.job_id"
+    : "s.job_url";
 
   const rows = allRows<{ job_id: string }>(
     db,
-    `SELECT DISTINCT s.job_url AS job_id
+    `SELECT DISTINCT j.url AS job_id
        FROM job_stage_states s
        JOIN jobs j
-         ON j.url = s.job_url
+         ON ${stageJoin}
        LEFT JOIN job_list_projections p
          ON p.tenant_id = ?
-        AND p.job_id = s.job_url
-      WHERE s.job_url IS NOT NULL
-        AND TRIM(s.job_url) != ''
+        AND p.job_id = j.url
+      WHERE ${stageIdentity} IS NOT NULL
+        AND TRIM(${stageIdentity}) != ''
         AND (
           p.job_id IS NULL
           OR (
@@ -3128,10 +3223,15 @@ interface NormalizedStage {
 function loadStages(db: SqliteDatabase, jobUrl: string): NormalizedStage[] {
   const explicit = new Map<string, StageRow>();
   if (tableExists(db, "job_stage_states")) {
+    const reference = jobReferencePredicateForUrl(
+      db,
+      "job_stage_states",
+      jobUrl,
+    );
     for (const row of allRows<StageRow>(
       db,
-      "SELECT * FROM job_stage_states WHERE job_url = ?",
-      [jobUrl],
+      `SELECT * FROM job_stage_states WHERE ${reference.sql}`,
+      reference.params,
     )) {
       if (row.stage) explicit.set(String(row.stage), row);
     }

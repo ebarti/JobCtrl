@@ -32,7 +32,13 @@ from jobctrl.apply.dashboard import get_recent_events
 from jobctrl.apply.origins import canonical_http_url
 from jobctrl.database import close_connection, get_connection, init_db
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
+from jobctrl.state import (
+    ensure_job_stage_rows,
+    get_stage_state_row,
+    record_job_event,
+    set_stage_state,
+    utc_now,
+)
 from jobctrl.workflow_specs import StartedWorkflowResult
 
 
@@ -298,11 +304,7 @@ def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
         ).fetchone()
         assert legacy["apply_status"] is None
         # Canonical lock: stage row in 'running'.
-        stage = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
-        ).fetchone()
+        stage = get_stage_state_row(conn, job["url"], "apply")
         assert stage is not None
         assert stage["state"] == "running"
         # ApplyRunStarted event recorded with the same run_id.
@@ -344,10 +346,7 @@ def test_apply_approval_gate_blocks_live_without_approval(tmp_path, monkeypatch)
         )
         prior_event_count = len(get_recent_events())
         assert acquire_job(target_url="https://example.com/job", worker_id=1) is None
-        row = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            ("https://example.com/job",),
-        ).fetchone()
+        row = get_stage_state_row(conn, "https://example.com/job", "apply")
         assert row is None or row["state"] == "pending"
         assert any(
             "Awaiting apply approval" in event
@@ -382,10 +381,7 @@ def test_approval_required_apply_loop_never_runs_browser_for_unapproved_job(
         )
 
         assert (applied, failed) == (0, 0)
-        row = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            ("https://example.com/job",),
-        ).fetchone()
+        row = get_stage_state_row(conn, "https://example.com/job", "apply")
         assert row is None or row["state"] == "pending"
     finally:
         close_connection(db_path)
@@ -1128,11 +1124,7 @@ def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
             "SELECT apply_status, applied_at, apply_task_id FROM jobs WHERE url = ?",
             ("https://example.com/job",),
         ).fetchone()
-        state = conn.execute(
-            "SELECT state, error_code FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
-            ("https://example.com/job",),
-        ).fetchone()
+        state = get_stage_state_row(conn, "https://example.com/job", "apply")
         # Legacy columns stay NULL on the new write path.
         assert row["apply_status"] is None
         assert row["applied_at"] is None
@@ -1180,11 +1172,7 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(
         )
         assert job is not None
         # Sanity: the lock acquired -> Running.
-        before = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
-        ).fetchone()
+        before = get_stage_state_row(conn, job["url"], "apply")
         assert before["state"] == "running"
 
         # Production sequence -- this used to raise ValueError.
@@ -1197,11 +1185,7 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(
 
         # (a) No exception (we got here).
         # (b) Stage row landed on Skipped.
-        after = conn.execute(
-            "SELECT state, error_code FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
-        ).fetchone()
+        after = get_stage_state_row(conn, job["url"], "apply")
         assert after["state"] == "skipped"
         assert after["error_code"] == "DRY_RUN"
 
@@ -1239,20 +1223,12 @@ def test_release_lock_does_not_rewind_running_row(tmp_path, monkeypatch):
             approval_required=False,
         )
         assert job is not None
-        before = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
-        ).fetchone()
+        before = get_stage_state_row(conn, job["url"], "apply")
         assert before["state"] == "running"
 
         release_lock(job["url"], run_ctx=run_ctx)
 
-        after = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
-        ).fetchone()
+        after = get_stage_state_row(conn, job["url"], "apply")
         assert after["state"] == "running"
     finally:
         close_connection(db_path)
@@ -1280,10 +1256,7 @@ def test_apply_recovery_rewinds_before_submit_intent(tmp_path, monkeypatch):
         assert job is not None
         recovered = recover_ambiguous_running_apply()
         assert recovered == 1
-        row = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
-        ).fetchone()
+        row = get_stage_state_row(conn, job["url"], "apply")
         assert row["state"] == "pending"
     finally:
         close_connection(db_path)
@@ -1325,10 +1298,7 @@ def test_apply_recovery_after_submit_intent_needs_verification(tmp_path, monkeyp
 
         recovered = recover_ambiguous_running_apply()
         assert recovered == 1
-        row = conn.execute(
-            "SELECT state, error_code FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
-        ).fetchone()
+        row = get_stage_state_row(conn, job["url"], "apply")
         assert row["state"] == "needs_verification"
         assert row["error_code"] == "APPLY_NEEDS_VERIFICATION"
 
@@ -1350,10 +1320,7 @@ def test_apply_recovery_after_submit_intent_needs_verification(tmp_path, monkeyp
             )
             is None
         )
-        parked = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
-        ).fetchone()
+        parked = get_stage_state_row(conn, job["url"], "apply")
         assert parked["state"] == "needs_verification"
     finally:
         close_connection(db_path)
@@ -1406,11 +1373,7 @@ def test_failed_result_after_submit_intent_parks_without_reclaim(
             run_ctx=run_ctx,
         )
 
-        row = conn.execute(
-            "SELECT state, error_code, retryable, next_action "
-            "FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
-        ).fetchone()
+        row = get_stage_state_row(conn, job["url"], "apply")
         assert row["state"] == "needs_verification"
         assert row["error_code"] == "APPLY_NEEDS_VERIFICATION"
         assert row["retryable"] == 0
@@ -1496,12 +1459,13 @@ def test_acquire_job_concurrent_workers_only_one_succeeds(tmp_path, monkeypatch)
 
         # Exactly one ``running`` row in ``job_stage_states.apply``.
         check_conn = get_connection(db_path)
-        running_count = check_conn.execute(
-            "SELECT COUNT(*) FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply' AND state = 'running'",
-            ("https://example.com/job",),
-        ).fetchone()[0]
-        assert running_count == 1
+        running_row = get_stage_state_row(
+            check_conn,
+            "https://example.com/job",
+            "apply",
+        )
+        assert running_row is not None
+        assert running_row["state"] == "running"
     finally:
         close_connection(db_path)
 

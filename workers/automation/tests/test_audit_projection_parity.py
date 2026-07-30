@@ -126,10 +126,14 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_stage_states (
-                job_url, stage, state, attempt_count, max_attempts, started_at,
+                tenant_id, job_id, stage, state, attempt_count, max_attempts, started_at,
                 updated_at, finished_at, duration_ms, error_code, error_message,
                 retryable, blocked_by_json, next_action
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (
+                'local',
+                (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
             """,
             (
                 job_url,
@@ -360,9 +364,13 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
             conn.execute(
                 """
                 INSERT INTO job_stage_states (
-                    job_url, stage, state, attempt_count, max_attempts,
+                    tenant_id, job_id, stage, state, attempt_count, max_attempts,
                     started_at, updated_at, finished_at, duration_ms, retryable
-                ) VALUES (?, ?, ?, 1, 1, ?, ?, ?, 0, 1)
+                ) VALUES (
+                    'local',
+                    (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+                    ?, ?, 1, 1, ?, ?, ?, 0, 1
+                )
                 """,
                 (
                     agg["url"],
@@ -470,10 +478,14 @@ def _seed_conversion_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> 
             conn.execute(
                 """
                 INSERT INTO job_stage_states (
-                    job_url, stage, state, attempt_count, max_attempts, started_at,
+                    tenant_id, job_id, stage, state, attempt_count, max_attempts, started_at,
                     updated_at, finished_at, duration_ms, error_code, error_message,
                     retryable, blocked_by_json, next_action
-                ) VALUES (?, ?, 'succeeded', 1, ?, ?, ?, ?, 1000, NULL, NULL, 1, NULL, NULL)
+                ) VALUES (
+                    'local',
+                    (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+                    ?, 'succeeded', 1, ?, ?, ?, ?, 1000, NULL, NULL, 1, NULL, NULL
+                )
                 """,
                 (job["url"], stage, max_attempts, job["appliedAt"], job["appliedAt"], job["appliedAt"]),
             )

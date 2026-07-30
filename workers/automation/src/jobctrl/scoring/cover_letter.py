@@ -45,6 +45,7 @@ from jobctrl.infrastructure.materials import (
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.state import (
     ensure_job_stage_rows,
+    get_stage_state_row,
     record_job_event,
     set_stage_state,
     utc_now,
@@ -318,10 +319,7 @@ def cover_letter_by_url(
 
 
 def _cover_stage_succeeded(conn, job_url: str) -> bool:
-    row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'cover'",
-        (job_url,),
-    ).fetchone()
+    row = get_stage_state_row(conn, job_url, "cover")
     if row is None:
         return False
     return str(row["state"] if hasattr(row, "keys") else row[0]) == "succeeded"

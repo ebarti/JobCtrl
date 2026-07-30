@@ -93,6 +93,8 @@ from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.operational_metrics import record_operational_attempt_metric
 from jobctrl.state import (
     ensure_job_stage_rows,
+    get_stage_state_job_urls,
+    get_stage_state_row,
     record_job_artifact,
     record_job_event,
     set_stage_state,
@@ -143,42 +145,28 @@ def _has_active_apply(conn, url: str) -> bool:
     The §4.6 invariant — at most one in-progress apply per JobId —
     is enforced by checking the canonical stage state row.
     """
-    row = conn.execute(
-        "SELECT 1 FROM job_stage_states "
-        "WHERE job_url = ? AND stage = 'apply' AND state = 'running' LIMIT 1",
-        (url,),
-    ).fetchone()
-    return row is not None
+    row = get_stage_state_row(conn, url, "apply")
+    return bool(row is not None and str(row["state"]) == "running")
 
 
 def _has_succeeded_apply(conn, url: str) -> bool:
     """True when the canonical apply stage row is succeeded for ``url``."""
-    row = conn.execute(
-        "SELECT 1 FROM job_stage_states "
-        "WHERE job_url = ? AND stage = 'apply' AND state = 'succeeded' LIMIT 1",
-        (url,),
-    ).fetchone()
-    return row is not None
+    row = get_stage_state_row(conn, url, "apply")
+    return bool(row is not None and str(row["state"]) == "succeeded")
 
 
 def _has_needs_verification_apply(conn, url: str) -> bool:
     """True when a live apply is parked for manual verification."""
-    row = conn.execute(
-        "SELECT 1 FROM job_stage_states "
-        "WHERE job_url = ? AND stage = 'apply' AND state = 'needs_verification' LIMIT 1",
-        (url,),
-    ).fetchone()
-    return row is not None
+    row = get_stage_state_row(conn, url, "apply")
+    return bool(
+        row is not None and str(row["state"]) == "needs_verification"
+    )
 
 
 def _attempt_count_for(conn, url: str) -> int:
     """Return the canonical attempt count from ``job_stage_states.apply``."""
-    row = conn.execute(
-        "SELECT attempt_count FROM job_stage_states "
-        "WHERE job_url = ? AND stage = 'apply' LIMIT 1",
-        (url,),
-    ).fetchone()
-    return int(row[0] or 0) if row else 0
+    row = get_stage_state_row(conn, url, "apply")
+    return int(row["attempt_count"] or 0) if row else 0
 
 
 def _latest_apply_review_decision(conn, *, tenant_id: str, job_key: str) -> dict[str, Any] | None:
@@ -609,7 +597,9 @@ def _apply_candidate_select_parts() -> tuple[str, str]:
     attempts_subquery = (
         "(SELECT COALESCE(jss_a.attempt_count, 0) "
         "FROM job_stage_states jss_a "
-        "WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply' LIMIT 1) AS apply_attempts"
+        "WHERE jss_a.tenant_id = jobs.tenant_id "
+        "AND jss_a.job_id = jobs.job_id "
+        "AND jss_a.stage = 'apply' LIMIT 1) AS apply_attempts"
     )
     columns = (
         f"jobs.url AS url, jobs.title AS title, jobs.site AS site, "
@@ -699,13 +689,16 @@ def acquire_job(
                   AND {_EFFECTIVE_APPLY_TARGET_URL} != ''
                   AND NOT EXISTS (
                       SELECT 1 FROM job_stage_states jss_active
-                      WHERE jss_active.job_url = jobs.url
+                      WHERE jss_active.tenant_id = jobs.tenant_id
+                        AND jss_active.job_id = jobs.job_id
                         AND jss_active.stage = 'apply'
                         AND jss_active.state IN ('running', 'succeeded', 'needs_verification')
                   )
                   AND COALESCE(
                       (SELECT jss_a.attempt_count FROM job_stage_states jss_a
-                       WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply'
+                       WHERE jss_a.tenant_id = jobs.tenant_id
+                         AND jss_a.job_id = jobs.job_id
+                         AND jss_a.stage = 'apply'
                        LIMIT 1), 0
                   ) < ?
                   AND {_EFFECTIVE_FIT_SCORE} >= ?
@@ -849,12 +842,8 @@ def acquire_job(
         # Reset prior retryable terminal state (failed / exhausted /
         # canceled / skipped) back to pending so the §8.5 state machine accepts
         # the pending → running transition.
-        prior_row = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply' LIMIT 1",
-            (url,),
-        ).fetchone()
-        if prior_row is not None and prior_row[0] not in {
+        prior_row = get_stage_state_row(conn, url, "apply")
+        if prior_row is not None and prior_row["state"] not in {
             "pending",
             "running",
             "succeeded",
@@ -1201,13 +1190,13 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
     """Recover apply rows inherited from a prior dead workflow/activity."""
     try:
         conn = get_connection()
-        rows = conn.execute(
-            "SELECT job_url FROM job_stage_states "
-            "WHERE stage = 'apply' AND state = 'running'"
-        ).fetchall()
+        urls = get_stage_state_job_urls(
+            conn,
+            stage="apply",
+            states=("running",),
+        )
         recovered = 0
-        for row in rows:
-            url = str(row["job_url"] if hasattr(row, "keys") else row[0])
+        for url in urls:
             try:
                 run_id, workflow_id = _latest_apply_run_started_identity(conn, url)
                 if not _workflow_terminal_or_gone(conn, workflow_id or run_id):
@@ -1376,15 +1365,13 @@ def reset_failed() -> int:
     jobs reset.
     """
     conn = get_connection()
-    rows = conn.execute(
-        """
-        SELECT job_url FROM job_stage_states
-        WHERE stage = 'apply' AND state IN ('failed', 'exhausted')
-        """
-    ).fetchall()
+    urls = get_stage_state_job_urls(
+        conn,
+        stage="apply",
+        states=("failed", "exhausted"),
+    )
     count = 0
-    for row in rows:
-        url = row["job_url"]
+    for url in urls:
         # Skip jobs that already succeeded on a prior run.
         if _has_succeeded_apply(conn, url):
             continue

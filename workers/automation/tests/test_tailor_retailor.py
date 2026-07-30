@@ -23,7 +23,7 @@ from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.pipeline import _count_pending
-from jobctrl.state import ensure_job_stage_rows, set_stage_state
+from jobctrl.state import ensure_job_stage_rows, get_stage_state_row, set_stage_state
 from jobctrl.scoring.tailor import (
     _build_pdf_renderer,
     _build_llm_policy,
@@ -184,10 +184,7 @@ def test_tailor_job_by_url_does_not_enumerate_unrelated_pending_jobs(tmp_path, m
 
         assert result["status"] == "approved"
         assert calls == [target_url]
-        unrelated_stage = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'tailor'",
-            (unrelated_url,),
-        ).fetchone()
+        unrelated_stage = get_stage_state_row(conn, unrelated_url, "tailor")
         assert unrelated_stage is None
     finally:
         close_connection(db_path)
@@ -258,16 +255,18 @@ def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(
         )
 
         assert result["status"] == "approved"
-        cover = conn.execute(
-            """
-            SELECT state, attempt_count, started_at, finished_at, duration_ms,
-                   error_code, error_message, next_action
-            FROM job_stage_states
-            WHERE job_url = ? AND stage = 'cover'
-            """,
-            (target_url,),
-        ).fetchone()
-        assert dict(cover) == {
+        cover = get_stage_state_row(conn, target_url, "cover")
+        audited_columns = (
+            "state",
+            "attempt_count",
+            "started_at",
+            "finished_at",
+            "duration_ms",
+            "error_code",
+            "error_message",
+            "next_action",
+        )
+        assert {column: cover[column] for column in audited_columns} == {
             "state": "pending",
             "attempt_count": 0,
             "started_at": None,
@@ -390,9 +389,14 @@ def test_tailor_job_by_url_surfaces_blocked_score_eligibility(tmp_path, monkeypa
         rows = conn.execute(
             """
             SELECT stage, state, error_code, error_message, blocked_by_json, next_action
-            FROM job_stage_states
-            WHERE job_url = ? AND stage IN ('tailor', 'cover', 'apply')
-            ORDER BY stage
+            FROM job_stage_states states
+            JOIN jobs
+              ON jobs.tenant_id = states.tenant_id
+             AND jobs.job_id = states.job_id
+            WHERE jobs.tenant_id = 'local'
+              AND jobs.url = ?
+              AND states.stage IN ('tailor', 'cover', 'apply')
+            ORDER BY states.stage
             """,
             (target_url,),
         ).fetchall()

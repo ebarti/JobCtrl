@@ -19,7 +19,7 @@ from jobctrl.domain.pipeline_types import (
 )
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.pipeline.sqlite_repository import SqlitePipelineStateRepository
-from jobctrl.state import ensure_job_stage_rows, set_stage_state
+from jobctrl.state import ensure_job_stage_rows, get_stage_state_row, set_stage_state
 
 
 def _insert_job(conn, url: str = "https://example.com/job") -> None:
@@ -276,11 +276,7 @@ def test_save_event_emission_matches_canonical_helper(db):
         Succeeded(attempt_count=1, finished_at="2026-05-01T00:01:00Z", duration_ms=60000),
     )
     repo.save(agg)
-    repo_row = db.execute(
-        "SELECT state, attempt_count, started_at, finished_at, duration_ms "
-        "FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        ("https://example.com/job",),
-    ).fetchone()
+    repo_row = get_stage_state_row(db, "https://example.com/job", "enrich")
 
     # Path B: identical writes via canonical set_stage_state on a sibling job.
     _insert_job(db, url="https://example.com/twin")
@@ -305,13 +301,27 @@ def test_save_event_emission_matches_canonical_helper(db):
         duration_ms=60000,
     )
     db.commit()
-    twin_row = db.execute(
-        "SELECT state, attempt_count, started_at, finished_at, duration_ms "
-        "FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        ("https://example.com/twin",),
-    ).fetchone()
+    twin_row = get_stage_state_row(db, "https://example.com/twin", "enrich")
 
-    assert dict(repo_row) == dict(twin_row)
+    lifecycle_columns = (
+        "state",
+        "attempt_count",
+        "max_attempts",
+        "started_at",
+        "finished_at",
+        "duration_ms",
+        "error_code",
+        "error_message",
+        "retryable",
+        "blocked_by_json",
+        "next_action",
+        "metadata_json",
+    )
+    assert {
+        column: repo_row[column] for column in lifecycle_columns
+    } == {
+        column: twin_row[column] for column in lifecycle_columns
+    }
 
 
 def test_save_attempts_counter_progresses_across_calls(db):
@@ -432,10 +442,7 @@ def test_set_stage_state_with_expected_version_round_trip(db):
     )
     db.commit()
 
-    row = db.execute(
-        "SELECT state, version FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        ("https://example.com/job",),
-    ).fetchone()
+    row = get_stage_state_row(db, "https://example.com/job", "enrich")
     assert row["state"] == "running"
     assert row["version"] == 1
 
@@ -487,9 +494,6 @@ def test_set_stage_state_expected_version_inserts_when_missing(db):
     )
     db.commit()
 
-    row = db.execute(
-        "SELECT state, version FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        ("https://example.com/fresh",),
-    ).fetchone()
+    row = get_stage_state_row(db, "https://example.com/fresh", "enrich")
     assert row["state"] == "pending"
     assert row["version"] == 1

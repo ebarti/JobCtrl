@@ -46,7 +46,7 @@ from jobctrl.domain.scoring.value_objects import (
     ScoringCriteria,
 )
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
-from jobctrl.state import record_job_event, set_stage_state
+from jobctrl.state import get_stage_state_row, record_job_event, set_stage_state
 
 
 class ScoreVersionConflict(ValueError):
@@ -317,10 +317,7 @@ class SqliteScoreStalenessRepository:
             marker.tenant_id,
             marker.job_id,
         )
-        row = self._conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-            (job_url,),
-        ).fetchone()
+        row = get_stage_state_row(self._conn, job_url, "score")
         state = _row_value(row, "state", 0) if row is not None else None
         if state in (None, "succeeded"):
             set_stage_state(

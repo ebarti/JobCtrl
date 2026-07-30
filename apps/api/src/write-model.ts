@@ -28,6 +28,7 @@ import {
   hasCompositeJobIdForeignKey,
   jobReferenceColumn,
   jobReferenceForUrl,
+  jobReferencePredicateForUrl,
   tableExists,
   type SqliteDatabase,
   type SqliteValue,
@@ -93,10 +94,15 @@ export function validateStageTransition(
   if (!tableExists(db, "job_stage_states")) {
     return;
   }
+  const reference = jobReferencePredicateForUrl(
+    db,
+    "job_stage_states",
+    jobUrl,
+  );
   const row = getRow<{ state?: string }>(
     db,
-    "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
-    [jobUrl, stage],
+    `SELECT state FROM job_stage_states WHERE ${reference.sql} AND stage = ?`,
+    [...reference.params, stage],
   );
   if (!row || !row.state) {
     return; // No existing row — INSERT path, always valid.
@@ -215,10 +221,15 @@ export function queueRetriedJobsForWorkflow(
   const source = workflow.source ?? "bulk_retry_failed";
   const transaction = db.transaction((rows: readonly RetryFailedJobTarget[]) => {
     for (const target of rows) {
+      const reference = jobReferencePredicateForUrl(
+        db,
+        "job_stage_states",
+        target.jobUrl,
+      );
       const current = getRow<{ state?: string }>(
         db,
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
-        [target.jobUrl, target.stage],
+        `SELECT state FROM job_stage_states WHERE ${reference.sql} AND stage = ?`,
+        [...reference.params, target.stage],
       );
       if (current?.state && current.state !== "pending") {
         continue;
@@ -825,7 +836,19 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
   const jobId = identity?.job_id;
   deleteWhere(db, "jobctrl_deleted_jobs", "job_url = ?", [jobUrl]);
   deleteWhere(db, "jobctrl_hidden_jobs", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_stage_states", "job_url = ?", [jobUrl]);
+  if (tableExists(db, "job_stage_states")) {
+    const stageReference = jobReferenceColumn(db, "job_stage_states");
+    if (stageReference === "job_id" && jobId) {
+      deleteWhere(
+        db,
+        "job_stage_states",
+        "tenant_id = ? AND job_id = ?",
+        ["local", jobId],
+      );
+    } else {
+      deleteWhere(db, "job_stage_states", "job_url = ?", [jobUrl]);
+    }
+  }
   deleteWhere(db, "job_events", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_artifacts", "job_url = ?", [jobUrl]);
   deleteScoringJobReferences(db, jobId, jobUrl);
@@ -1245,10 +1268,15 @@ function markScoreStageStale(
     markedAt: string;
   },
 ): void {
+  const stageReference = jobReferencePredicateForUrl(
+    db,
+    "job_stage_states",
+    jobUrl,
+  );
   const current = getRow<{ state?: string }>(
     db,
-    "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-    [jobUrl],
+    `SELECT state FROM job_stage_states WHERE ${stageReference.sql} AND stage = 'score'`,
+    stageReference.params,
   );
   if (!current || current.state === "succeeded") {
     upsertStageState(db, jobUrl, "score", "stale");
@@ -1611,6 +1639,12 @@ function upsertStageState(
     validateStageTransition(db, jobUrl, stage, state);
   }
   const columns = columnNames(db, "job_stage_states");
+  const referenceColumn = jobReferenceColumn(db, "job_stage_states");
+  const reference = jobReferencePredicateForUrl(
+    db,
+    "job_stage_states",
+    jobUrl,
+  );
   const now = new Date().toISOString();
   const updates: Record<string, SqliteValue> = {
     state,
@@ -1635,9 +1669,9 @@ function upsertStageState(
 
   const updateEntries = Object.entries(updates).filter(([name]) => columns.has(name));
   const assignments = updateEntries.map(([name]) => `${name} = ?`).join(", ");
-  const result = db.prepare(`UPDATE job_stage_states SET ${assignments} WHERE job_url = ? AND stage = ?`).run(
+  const result = db.prepare(`UPDATE job_stage_states SET ${assignments} WHERE ${reference.sql} AND stage = ?`).run(
     ...updateEntries.map(([, value]) => value),
-    jobUrl,
+    ...reference.params,
     stage,
   );
   if (result.changes > 0) {
@@ -1645,7 +1679,6 @@ function upsertStageState(
   }
 
   const insert: Record<string, SqliteValue> = {
-    job_url: jobUrl,
     stage,
     state,
     attempt_count: options.attemptCount ?? 0,
@@ -1654,6 +1687,16 @@ function upsertStageState(
     retryable: options.retryable === false ? 0 : 1,
     blocked_by_json: "[]",
   };
+  if (referenceColumn === "job_id") {
+    insert.tenant_id = "local";
+    insert.job_id = jobReferenceForUrl(
+      db,
+      "job_stage_states",
+      jobUrl,
+    );
+  } else {
+    insert.job_url = jobUrl;
+  }
   if (options.finishedAt) {
     insert.finished_at = options.finishedAt;
   }
@@ -1669,10 +1712,15 @@ function getStageState(db: SqliteDatabase, jobUrl: string, stage: Stage): StageS
   if (!tableExists(db, "job_stage_states")) {
     return defaultStage(stage, "pending");
   }
+  const reference = jobReferencePredicateForUrl(
+    db,
+    "job_stage_states",
+    jobUrl,
+  );
   const row = getRow<Record<string, unknown>>(
     db,
-    "SELECT * FROM job_stage_states WHERE job_url = ? AND stage = ? LIMIT 1",
-    [jobUrl, stage],
+    `SELECT * FROM job_stage_states WHERE ${reference.sql} AND stage = ? LIMIT 1`,
+    [...reference.params, stage],
   );
   if (!row) {
     return defaultStage(stage, "pending");
@@ -1698,10 +1746,15 @@ function currentMutableStage(db: SqliteDatabase, jobUrl: string): Stage {
   if (!tableExists(db, "job_stage_states")) {
     return "apply";
   }
+  const reference = jobReferencePredicateForUrl(
+    db,
+    "job_stage_states",
+    jobUrl,
+  );
   const rows = allRows<Record<string, unknown>>(
     db,
-    "SELECT stage, state FROM job_stage_states WHERE job_url = ? ORDER BY rowid",
-    [jobUrl],
+    `SELECT stage, state FROM job_stage_states WHERE ${reference.sql} ORDER BY rowid`,
+    reference.params,
   );
   const active = rows.find((row) => ["queued", "running"].includes(String(row.state ?? "")));
   if (active && STAGES.includes(active.stage as Stage)) {
@@ -1714,10 +1767,15 @@ function currentFailedStage(db: SqliteDatabase, jobUrl: string): Stage | null {
   if (!tableExists(db, "job_stage_states")) {
     return null;
   }
+  const reference = jobReferencePredicateForUrl(
+    db,
+    "job_stage_states",
+    jobUrl,
+  );
   const rows = allRows<{ stage: Stage; state: string; retryable: number | null }>(
     db,
-    "SELECT stage, state, retryable FROM job_stage_states WHERE job_url = ?",
-    [jobUrl],
+    `SELECT stage, state, retryable FROM job_stage_states WHERE ${reference.sql}`,
+    reference.params,
   );
   const failedStages = new Set(
     rows

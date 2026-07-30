@@ -21,6 +21,7 @@ interface Fixture {
   configPath: string;
   db: Database.Database;
   legacyExecutionReferences: boolean;
+  stableStageReferences: boolean;
 }
 
 afterEach(() => {
@@ -31,6 +32,30 @@ afterEach(() => {
 });
 
 describe("pipeline operations read model", () => {
+  it("reads v13 stable JobId stage states through the canonical job URL", () => {
+    const fixture = createFixture({ stableStageReferences: true });
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, {
+      key: "v13-stage-reference",
+      cohort: "observed_this_run",
+      requiredSteps: ["score"],
+    });
+    insertStageState(fixture, "v13-stage-reference", "score", "pending");
+
+    const result = snapshot(fixture);
+    expect(result.execution).toMatchObject({
+      currentExecution: {
+        members: 1,
+        planned: 1,
+        remaining: 1,
+      },
+    });
+    expect(stage(result, "score", "current_execution").currentExecution).toMatchObject({
+      eligible: 1,
+      waiting: 1,
+    });
+  });
+
   it("reads v8 URL memberships while the worker migration is pending", () => {
     const fixture = createFixture({ legacyExecutionReferences: true });
     insertExecution(fixture, { status: "succeeded" });
@@ -1134,7 +1159,10 @@ describe("pipeline operations read model", () => {
 });
 
 function createFixture(
-  options: { legacyExecutionReferences?: boolean } = {},
+  options: {
+    legacyExecutionReferences?: boolean;
+    stableStageReferences?: boolean;
+  } = {},
 ): Fixture {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-pipeline-operations-"));
   const dbPath = path.join(directory, "jobctrl.db");
@@ -1142,9 +1170,16 @@ function createFixture(
   fs.writeFileSync(configPath, JSON.stringify({ daily_budget_usd: 25 }));
   const db = new Database(dbPath);
   const legacyExecutionReferences = options.legacyExecutionReferences === true;
+  const stableStageReferences = options.stableStageReferences === true;
   const executionReferenceColumn = legacyExecutionReferences
     ? "job_url TEXT NOT NULL"
     : "job_id TEXT NOT NULL";
+  const stageReferenceColumns = stableStageReferences
+    ? "tenant_id TEXT NOT NULL, job_id TEXT NOT NULL"
+    : "job_url TEXT NOT NULL";
+  const stagePrimaryKey = stableStageReferences
+    ? "tenant_id, job_id, stage"
+    : "job_url, stage";
   db.exec(`
     CREATE TABLE fixture_jobs (
       url TEXT PRIMARY KEY,
@@ -1155,7 +1190,7 @@ function createFixture(
     CREATE VIEW jobs AS
       SELECT url, tenant_id, job_id FROM fixture_jobs;
     CREATE TABLE job_stage_states (
-      job_url TEXT NOT NULL,
+      ${stageReferenceColumns},
       stage TEXT NOT NULL,
       state TEXT,
       attempt_count INTEGER,
@@ -1168,7 +1203,8 @@ function createFixture(
       error_message TEXT,
       retryable INTEGER,
       blocked_by_json TEXT,
-      next_action TEXT
+      next_action TEXT,
+      PRIMARY KEY (${stagePrimaryKey})
     );
     CREATE TABLE discovery_execution_jobs (
       tenant_id TEXT NOT NULL,
@@ -1226,6 +1262,7 @@ function createFixture(
     configPath,
     db,
     legacyExecutionReferences,
+    stableStageReferences,
   };
   fixtures.push(fixture);
   return fixture;
@@ -1436,11 +1473,20 @@ function insertStageState(
   finishedAt: string | null = null,
   retryable = 0,
 ): void {
+  const jobUrl = `https://private.invalid/${key}`;
+  const referenceColumns = fixture.stableStageReferences
+    ? "tenant_id, job_id"
+    : "job_url";
+  const referencePlaceholders = fixture.stableStageReferences ? "?, ?" : "?";
+  const referenceValues = fixture.stableStageReferences
+    ? ["local", stableJobId(jobUrl)]
+    : [jobUrl];
   fixture.db.prepare(
     `INSERT INTO job_stage_states (
-       job_url, stage, state, attempt_count, max_attempts, updated_at, finished_at, duration_ms, retryable
-     ) VALUES (?, ?, ?, 1, 3, ?, ?, ?, ?)`,
-  ).run(`https://private.invalid/${key}`, stage, state, NOW.toISOString(), finishedAt, durationMs, retryable);
+       ${referenceColumns}, stage, state, attempt_count, max_attempts,
+       updated_at, finished_at, duration_ms, retryable
+     ) VALUES (${referencePlaceholders}, ?, ?, 1, 3, ?, ?, ?, ?)`,
+  ).run(...referenceValues, stage, state, NOW.toISOString(), finishedAt, durationMs, retryable);
 }
 
 function insertStep(

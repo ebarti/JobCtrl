@@ -2113,8 +2113,15 @@ class ProjectionBuilder:
     def _load_stage_projections(self, job_url: str) -> list[StageProjection]:
         try:
             rows = self._conn.execute(
-                "SELECT * FROM job_stage_states WHERE job_url = ?",
-                (job_url,),
+                """
+                SELECT s.*
+                FROM job_stage_states s
+                JOIN jobs j
+                  ON j.tenant_id = s.tenant_id
+                 AND j.job_id = s.job_id
+                WHERE j.tenant_id = ? AND j.url = ?
+                """,
+                (str(self._tenant_id), job_url),
             ).fetchall()
         except sqlite3.OperationalError:
             rows = []
@@ -2696,15 +2703,16 @@ class ProjectionBuilder:
         try:
             rows = self._conn.execute(
                 """
-                SELECT DISTINCT s.job_url AS job_id
+                SELECT DISTINCT j.url AS job_id
                   FROM job_stage_states s
                   JOIN jobs j
-                    ON j.url = s.job_url
+                    ON j.tenant_id = s.tenant_id
+                   AND j.job_id = s.job_id
                   LEFT JOIN job_list_projections p
                     ON p.tenant_id = ?
-                   AND p.job_id = s.job_url
-                 WHERE s.job_url IS NOT NULL
-                   AND TRIM(s.job_url) != ''
+                   AND p.job_id = j.url
+                 WHERE s.job_id IS NOT NULL
+                   AND TRIM(s.job_id) != ''
                    AND (
                      p.job_id IS NULL
                      OR (

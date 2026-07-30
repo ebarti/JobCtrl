@@ -44,7 +44,7 @@ from jobctrl.infrastructure.scoring import (
 )
 from jobctrl.infrastructure.materials import SqliteEmployerAnalysisRepository
 from jobctrl.scoring import scorer as scorer_module
-from jobctrl.state import set_stage_state
+from jobctrl.state import get_stage_state_row, set_stage_state
 
 
 class _ScriptedLlm:
@@ -374,11 +374,7 @@ def test_score_job_by_url_repairs_existing_score_stage_state(
     assert outcome.score is not None
     assert outcome.score.fit_score.value == 8
     assert llm.calls == 0
-    stage_row = conn.execute(
-        "SELECT state, error_code, error_message "
-        "FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-        (url,),
-    ).fetchone()
+    stage_row = get_stage_state_row(conn, url, "score")
     assert stage_row["state"] == "succeeded"
     assert stage_row["error_code"] is None
     assert stage_row["error_message"] is None
@@ -428,9 +424,14 @@ def test_score_job_by_url_syncs_existing_blocked_score_to_downstream_stages(
     rows = conn.execute(
         """
         SELECT stage, state, error_code, error_message
-        FROM job_stage_states
-        WHERE job_url = ? AND stage IN ('tailor', 'cover', 'apply')
-        ORDER BY stage
+        FROM job_stage_states states
+        JOIN jobs
+          ON jobs.tenant_id = states.tenant_id
+         AND jobs.job_id = states.job_id
+        WHERE jobs.tenant_id = 'local'
+          AND jobs.url = ?
+          AND states.stage IN ('tailor', 'cover', 'apply')
+        ORDER BY states.stage
         """,
         (url,),
     ).fetchall()
@@ -639,10 +640,7 @@ def test_run_scoring_persists_via_repository_only(
     assert legacy["scored_at"] is None
 
     # Stage state row reflects success.
-    stage_row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url=? AND stage='score'",
-        (url,),
-    ).fetchone()
+    stage_row = get_stage_state_row(conn, url, "score")
     assert stage_row["state"] == "succeeded"
 
 
@@ -838,11 +836,7 @@ def test_run_scoring_fails_before_llm_when_employer_analysis_fails(
     assert summary["errors"] == 1
     assert analyze.calls == 1
     assert llm.calls == 0
-    stage_row = conn.execute(
-        "SELECT state, error_code, error_message "
-        "FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-        (url,),
-    ).fetchone()
+    stage_row = get_stage_state_row(conn, url, "score")
     assert stage_row["state"] == "failed"
     assert stage_row["error_code"] == "SCORE_FAILED"
     assert "analysis unavailable" in stage_row["error_message"]
@@ -1092,10 +1086,7 @@ def test_run_scoring_records_failure_state_when_llm_returns_garbage(
     assert summary["errors"] == 1
     assert repo.load(LOCAL_TENANT, JobId(url)) is None
 
-    stage_row = conn.execute(
-        "SELECT state, error_message FROM job_stage_states WHERE job_url=? AND stage='score'",
-        (url,),
-    ).fetchone()
+    stage_row = get_stage_state_row(conn, url, "score")
     assert stage_row["state"] == "failed"
     assert "outside" in (stage_row["error_message"] or "").lower()
 
@@ -1154,10 +1145,7 @@ def test_run_scoring_preselects_retrieval_top_k_before_llm(
 
 
 def _score_attempt_count(conn: sqlite3.Connection, url: str) -> int:
-    row = conn.execute(
-        "SELECT attempt_count FROM job_stage_states WHERE job_url=? AND stage='score'",
-        (url,),
-    ).fetchone()
+    row = get_stage_state_row(conn, url, "score")
     return int(row["attempt_count"]) if row is not None else 0
 
 

@@ -133,9 +133,13 @@ def tailoring_current_policy_job_urls(
           ON stale_score.stale_tenant_id = j.tenant_id
          AND stale_score.stale_job_id = j.job_id
         LEFT JOIN job_stage_states score_state
-          ON score_state.job_url = j.url AND score_state.stage = 'score'
+          ON score_state.tenant_id = j.tenant_id
+         AND score_state.job_id = j.job_id
+         AND score_state.stage = 'score'
         LEFT JOIN job_stage_states tailor_state
-          ON tailor_state.job_url = j.url AND tailor_state.stage = 'tailor'
+          ON tailor_state.tenant_id = j.tenant_id
+         AND tailor_state.job_id = j.job_id
+         AND tailor_state.stage = 'tailor'
         LEFT JOIN (
             SELECT m.job_url AS materials_job_url, tr.path AS tailored_resume_path,
                    tr.metadata_json AS tailored_resume_metadata

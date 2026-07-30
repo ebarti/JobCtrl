@@ -7,6 +7,7 @@ from jobctrl.database import close_connection, get_connection, init_db
 from jobctrl.state import (
     ensure_job_stage_rows,
     get_job_stage_states,
+    get_stage_state_row,
     reconcile_dependency_blockers,
     set_stage_state,
 )
@@ -140,10 +141,11 @@ def test_retry_command_resets_stage_state(tmp_path, monkeypatch):
             "SELECT detail_error, detail_scraped_at FROM jobs WHERE url = ?",
             ("https://example.com/job",),
         ).fetchone()
-        state = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-            ("https://example.com/job",),
-        ).fetchone()
+        state = get_stage_state_row(
+            conn,
+            "https://example.com/job",
+            "enrich",
+        )
         assert result.exit_code == 0
         assert row["detail_error"] is None
         assert row["detail_scraped_at"] is None
@@ -239,11 +241,7 @@ def test_score_success_unblocks_tailor_waiting_on_score(tmp_path):
         set_stage_state(conn, job["url"], "score", "succeeded", finished_at="2026-04-29T10:02:00+00:00")
         conn.commit()
 
-        row = conn.execute(
-            "SELECT state, error_code, error_message, retryable "
-            "FROM job_stage_states WHERE job_url = ? AND stage = 'tailor'",
-            (job["url"],),
-        ).fetchone()
+        row = get_stage_state_row(conn, job["url"], "tailor")
         assert row["state"] == "pending"
         assert row["error_code"] is None
         assert row["error_message"] is None
@@ -272,11 +270,7 @@ def test_tailor_success_unblocks_cover_waiting_on_tailor(tmp_path):
         set_stage_state(conn, job["url"], "tailor", "succeeded", finished_at="2026-04-29T10:04:00+00:00")
         conn.commit()
 
-        rows = conn.execute(
-            "SELECT stage, state, error_message FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'cover' ORDER BY stage",
-            (job["url"],),
-        ).fetchall()
+        rows = [get_stage_state_row(conn, job["url"], "cover")]
         assert [(row["stage"], row["state"], row["error_message"]) for row in rows] == [
             ("cover", "pending", None),
         ]
@@ -304,11 +298,7 @@ def test_tailor_success_unblocks_apply_waiting_on_materials(tmp_path):
         set_stage_state(conn, job["url"], "tailor", "succeeded", finished_at="2026-04-29T10:04:00+00:00")
         conn.commit()
 
-        row = conn.execute(
-            "SELECT state, error_code, error_message FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
-        ).fetchone()
+        row = get_stage_state_row(conn, job["url"], "apply")
         assert row["state"] == "pending"
         assert row["error_code"] is None
         assert row["error_message"] is None
@@ -336,11 +326,7 @@ def test_dependency_reconciliation_preserves_unrelated_blockers(tmp_path):
         set_stage_state(conn, job["url"], "score", "succeeded", finished_at="2026-04-29T10:02:00+00:00")
         conn.commit()
 
-        row = conn.execute(
-            "SELECT state, error_code, error_message FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'tailor'",
-            (job["url"],),
-        ).fetchone()
+        row = get_stage_state_row(conn, job["url"], "tailor")
         assert row["state"] == "blocked"
         assert row["error_code"] == "MIN_SCORE"
         assert row["error_message"] == "Fit score is below the tailoring threshold."
@@ -375,11 +361,7 @@ def test_dependency_reconciliation_repairs_existing_stale_rows(tmp_path):
         repaired = reconcile_dependency_blockers(conn)
         conn.commit()
 
-        row = conn.execute(
-            "SELECT state, error_message FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'tailor'",
-            (job["url"],),
-        ).fetchone()
+        row = get_stage_state_row(conn, job["url"], "tailor")
         assert repaired == 1
         assert row["state"] == "pending"
         assert row["error_message"] is None
@@ -414,11 +396,7 @@ def test_dependency_reconciliation_repairs_existing_apply_material_blocker(tmp_p
         repaired = reconcile_dependency_blockers(conn)
         conn.commit()
 
-        row = conn.execute(
-            "SELECT state, error_message FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
-        ).fetchone()
+        row = get_stage_state_row(conn, job["url"], "apply")
         assert repaired == 1
         assert row["state"] == "pending"
         assert row["error_message"] is None

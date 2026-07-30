@@ -13,6 +13,7 @@ from jobctrl.enrichment.detail import (
     scrape_detail_page,
 )
 from jobctrl.infrastructure.network import PublicUrlDecision
+from jobctrl.state import get_stage_state_row
 
 from .politeness_helpers import offline_gateway, offline_session
 
@@ -242,14 +243,7 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
         attempts = json.loads(enrichment["attempts_json"])
         assert attempts[-1]["status"] == "succeeded"
 
-        stage = conn.execute(
-            """
-            SELECT state, metadata_json
-            FROM job_stage_states
-            WHERE job_url = ? AND stage = 'enrich'
-            """,
-            (job_url,),
-        ).fetchone()
+        stage = get_stage_state_row(conn, job_url, "enrich")
         assert stage["state"] == "succeeded"
         assert json.loads(stage["metadata_json"]) == {
             "fallbackSource": "discovery",

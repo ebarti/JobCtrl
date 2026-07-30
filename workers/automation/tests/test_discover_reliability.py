@@ -28,6 +28,7 @@ from jobctrl.discovery.activities import (
 from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
 from jobctrl.enrichment import detail
 from jobctrl.pipeline import runner
+from jobctrl.state import get_stage_state_row
 
 from .politeness_helpers import offline_gateway
 
@@ -508,10 +509,7 @@ def test_scrape_site_batch_isolates_single_job_failure(
         assert stats["error"] == 1
         assert stats["ok"] == 1
 
-        bad_state = conn.execute(
-            "SELECT state, error_code FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-            (bad_url,),
-        ).fetchone()
+        bad_state = get_stage_state_row(conn, bad_url, "enrich")
         assert bad_state["state"] == "failed"
         assert bad_state["error_code"] == "ENRICH_INTERNAL_ERROR"
 
@@ -673,10 +671,7 @@ def test_scrape_site_batch_handoff_error_does_not_break_enrichment(
 
         assert stats["ok"] == 1
         assert stats["error"] == 0
-        state = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-            (url,),
-        ).fetchone()
+        state = get_stage_state_row(conn, url, "enrich")
         assert state["state"] == "succeeded"
     finally:
         close_connection(db_path)

@@ -32,6 +32,7 @@ from jobctrl.infrastructure.network import (
     RobotsCache,
     RunBudgetCounter,
 )
+from jobctrl.state import get_stage_state_row
 
 from .politeness_helpers import (
     AllowAllRobots,
@@ -60,10 +61,7 @@ def _seed_pending(conn: sqlite3.Connection, url: str, site: str = "RemoteOK") ->
 
 def _enrich_stage(conn: sqlite3.Connection, url: str) -> sqlite3.Row:
     conn.row_factory = sqlite3.Row
-    return conn.execute(
-        "SELECT state, error_code, next_action FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        (url,),
-    ).fetchone()
+    return get_stage_state_row(conn, url, "enrich")
 
 
 def _blocked_metric(conn: sqlite3.Connection, url: str) -> sqlite3.Row | None:

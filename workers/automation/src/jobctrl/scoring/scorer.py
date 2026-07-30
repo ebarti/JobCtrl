@@ -67,6 +67,7 @@ from jobctrl.infrastructure.scoring import (
 )
 from jobctrl.state import (
     ensure_job_stage_rows,
+    get_stage_state_row,
     reconcile_score_eligibility_blockers,
     record_job_event,
     set_stage_state,
@@ -743,11 +744,7 @@ def _ensure_existing_score_stage_succeeded(
         return
 
     ensure_job_stage_rows(conn, job_url, discovered_at=job.get("discovered_at"))
-    row = conn.execute(
-        "SELECT state, started_at, attempt_count "
-        "FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-        (job_url,),
-    ).fetchone()
+    row = get_stage_state_row(conn, job_url, "score")
     state = _row_value(row, "state", 0)
     if state == "succeeded":
         _sync_score_eligibility_stage_state(conn, job_url, score)
@@ -882,10 +879,7 @@ def _score_attempt_count(conn: sqlite3.Connection, job_url: str) -> int:
     the ``pending_score`` ``< 5`` cap can engage and stop a permanently-
     failing job from re-billing the LLM on every batch.
     """
-    row = conn.execute(
-        "SELECT attempt_count FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-        (job_url,),
-    ).fetchone()
+    row = get_stage_state_row(conn, job_url, "score")
     return int(_row_value(row, "attempt_count", 0) or 0)
 
 

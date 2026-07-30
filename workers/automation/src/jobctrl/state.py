@@ -141,6 +141,154 @@ def _table_exists(conn, table_name: str) -> bool:
     return row is not None
 
 
+def _stage_state_reference_column(conn) -> str:
+    columns = {
+        str(row[1])
+        for row in conn.execute(
+            "PRAGMA table_info(job_stage_states)"
+        ).fetchall()
+    }
+    if "job_id" in columns:
+        return "job_id"
+    if "job_url" in columns:
+        return "job_url"
+    raise RuntimeError("job_stage_states has no Job identity column")
+
+
+def _stable_stage_identity_for_url(
+    conn,
+    job_url: str,
+    *,
+    tenant_id: str = str(LOCAL_TENANT),
+) -> tuple[str, str]:
+    """Resolve an explicit posting URL without confusing UUID-shaped URLs."""
+    row = conn.execute(
+        """
+        SELECT j.tenant_id, j.job_id
+        FROM jobs j
+        WHERE j.tenant_id = ? AND j.url = ?
+        UNION ALL
+        SELECT a.tenant_id, a.job_id
+        FROM job_identity_aliases a
+        JOIN jobs j
+          ON j.tenant_id = a.tenant_id
+         AND j.job_id = a.job_id
+        WHERE a.tenant_id = ?
+          AND a.alias_kind = 'posting_url'
+          AND a.alias_value = ?
+        LIMIT 1
+        """,
+        (tenant_id, job_url, tenant_id, job_url),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"no stable Job identity for posting URL: {job_url}")
+    return str(row[0]), str(row[1])
+
+
+def _stage_state_reference(
+    conn,
+    job_url: str,
+    *,
+    tenant_id: str = str(LOCAL_TENANT),
+) -> tuple[str, tuple[str, ...]]:
+    if _stage_state_reference_column(conn) == "job_url":
+        return "job_url", (job_url,)
+    resolved_tenant_id, job_id = _stable_stage_identity_for_url(
+        conn,
+        job_url,
+        tenant_id=tenant_id,
+    )
+    return "job_id", (resolved_tenant_id, job_id)
+
+
+def _stage_state_predicate(
+    conn,
+    job_url: str,
+    *,
+    alias: str = "",
+    tenant_id: str = str(LOCAL_TENANT),
+) -> tuple[str, tuple[str, ...]]:
+    prefix = f"{alias}." if alias else ""
+    reference_column, values = _stage_state_reference(
+        conn,
+        job_url,
+        tenant_id=tenant_id,
+    )
+    if reference_column == "job_url":
+        return f"{prefix}job_url = ?", values
+    return (
+        f"{prefix}tenant_id = ? AND {prefix}job_id = ?",
+        values,
+    )
+
+
+def get_stage_state_row(
+    conn,
+    job_url: str,
+    stage: str,
+    *,
+    tenant_id: str = str(LOCAL_TENANT),
+):
+    """Load one canonical stage row through the URL compatibility boundary."""
+    predicate, params = _stage_state_predicate(
+        conn,
+        job_url,
+        tenant_id=tenant_id,
+    )
+    return conn.execute(
+        f"""
+        SELECT *
+        FROM job_stage_states
+        WHERE {predicate} AND stage = ?
+        LIMIT 1
+        """,
+        (*params, stage),
+    ).fetchone()
+
+
+def get_stage_state_job_urls(
+    conn,
+    *,
+    stage: str,
+    states: tuple[str, ...] | None = None,
+    tenant_id: str = str(LOCAL_TENANT),
+) -> list[str]:
+    """Return current storage URLs for stage rows selected by lifecycle state."""
+    reference_column = _stage_state_reference_column(conn)
+    state_filter = ""
+    params: list[Any] = [stage]
+    if states:
+        state_filter = (
+            f" AND s.state IN ({', '.join('?' for _ in states)})"
+        )
+        params.extend(states)
+    if reference_column == "job_url":
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT s.job_url
+            FROM job_stage_states s
+            WHERE s.stage = ?{state_filter}
+            ORDER BY s.job_url
+            """,
+            params,
+        ).fetchall()
+    else:
+        params.insert(0, tenant_id)
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT j.url
+            FROM job_stage_states s
+            JOIN jobs j
+              ON j.tenant_id = s.tenant_id
+             AND j.job_id = s.job_id
+            WHERE s.tenant_id = ? AND s.stage = ?{state_filter}
+            ORDER BY j.url
+            """,
+            params,
+        ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
 def _source_from_discovery_run_id(run_id: str) -> str:
     parts = run_id.split(":")
     if len(parts) >= 3 and parts[0] == "discovery":
@@ -211,15 +359,16 @@ def _validate_stage_transition(conn, job_url: str, stage: str, target_state: str
     the transition is always allowed. If a row exists and the state is
     already the target, the call is idempotent — also allowed.
     """
-    row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
-        (job_url, stage),
-    ).fetchone()
+    row = get_stage_state_row(conn, job_url, stage)
     if row is None:
         # No existing row — this is an INSERT, always valid.
         return
 
-    current_state_str: str = row[0] if not isinstance(row, dict) else row["state"]
+    current_state_str = str(
+        row["state"]
+        if hasattr(row, "keys") and "state" in row.keys()
+        else row[0]
+    )
     if current_state_str == target_state:
         # Idempotent write — same state, always allowed.
         return
@@ -247,18 +396,51 @@ def _validate_stage_transition(conn, job_url: str, stage: str, target_state: str
 def ensure_job_stage_rows(conn, job_url: str, *, discovered_at: str | None = None) -> None:
     """Ensure a row exists for every stage for one job."""
     now = utc_now()
+    reference_column, reference_values = _stage_state_reference(
+        conn,
+        job_url,
+    )
+    if reference_column == "job_url":
+        reference_columns = "job_url"
+        reference_placeholders = "?"
+        reference_predicate = "job_url = ?"
+    else:
+        reference_columns = "tenant_id, job_id"
+        reference_placeholders = "?, ?"
+        reference_predicate = "tenant_id = ? AND job_id = ?"
+    aggregate_version = int(
+        conn.execute(
+            f"""
+            SELECT COALESCE(MAX(version), 0)
+            FROM job_stage_states
+            WHERE {reference_predicate}
+            """,
+            reference_values,
+        ).fetchone()[0]
+    )
     for stage in STAGE_ORDER:
         state = "succeeded" if stage == "discover" else "pending"
         attempt_count = 1 if stage == "discover" and discovered_at else 0
         started_at = discovered_at if stage == "discover" else None
         finished_at = discovered_at if stage == "discover" else None
         conn.execute(
-            """
+            f"""
             INSERT OR IGNORE INTO job_stage_states (
-                job_url, stage, state, attempt_count, max_attempts, started_at, updated_at, finished_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                {reference_columns}, stage, state, attempt_count, max_attempts,
+                started_at, updated_at, finished_at, version
+            ) VALUES ({reference_placeholders}, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (job_url, stage, state, attempt_count, MAX_ATTEMPTS.get(stage), started_at, now, finished_at),
+            (
+                *reference_values,
+                stage,
+                state,
+                attempt_count,
+                MAX_ATTEMPTS.get(stage),
+                started_at,
+                now,
+                finished_at,
+                aggregate_version,
+            ),
         )
 
 
@@ -319,20 +501,39 @@ def set_stage_state(
         if expected_version is not None
         else ""
     )
+    reference_column, reference_values = _stage_state_reference(
+        conn,
+        job_url,
+    )
+    if reference_column == "job_url":
+        reference_columns = "job_url"
+        reference_parameters = ":job_url"
+        conflict_columns = "job_url, stage"
+        reference_bindings: dict[str, Any] = {"job_url": job_url}
+    else:
+        reference_columns = "tenant_id, job_id"
+        reference_parameters = ":tenant_id, :job_id"
+        conflict_columns = "tenant_id, job_id, stage"
+        reference_bindings = {
+            "tenant_id": reference_values[0],
+            "job_id": reference_values[1],
+        }
 
     cur = conn.execute(
         f"""
         INSERT INTO job_stage_states (
-            job_url, stage, state, attempt_count, max_attempts, started_at, updated_at,
+            {reference_columns}, stage, state, attempt_count, max_attempts,
+            started_at, updated_at,
             finished_at, duration_ms, error_code, error_message, retryable,
             blocked_by_json, next_action, metadata_json, version
         ) VALUES (
-            :job_url, :stage, :state, COALESCE(:attempt_count, 0), :max_attempts,
+            {reference_parameters}, :stage, :state,
+            COALESCE(:attempt_count, 0), :max_attempts,
             :started_at, :now, :finished_at, :duration, :error_code, :error_message,
             COALESCE(:retry_value, 1), :blocked_by_json, :next_action, :metadata_json,
             :new_version
         )
-        ON CONFLICT(job_url, stage) DO UPDATE SET
+        ON CONFLICT({conflict_columns}) DO UPDATE SET
             state = excluded.state,
             attempt_count = COALESCE(excluded.attempt_count, job_stage_states.attempt_count),
             max_attempts = COALESCE(excluded.max_attempts, job_stage_states.max_attempts),
@@ -353,7 +554,7 @@ def set_stage_state(
         {version_guard}
         """,
         {
-            "job_url": job_url,
+            **reference_bindings,
             "stage": stage,
             "state": state,
             "attempt_count": attempt_count,
@@ -374,13 +575,8 @@ def set_stage_state(
     )
 
     if expected_version is not None and cur.rowcount == 0:
-        existing = conn.execute(
-            "SELECT version FROM job_stage_states WHERE job_url = ? AND stage = ?",
-            (job_url, stage),
-        ).fetchone()
-        actual = 0 if existing is None else (
-            existing[0] if not isinstance(existing, dict) else existing["version"]
-        )
+        existing = get_stage_state_row(conn, job_url, stage)
+        actual = 0 if existing is None else existing["version"]
         raise OptimisticLockError(job_url, expected_version, actual or 0)
 
     if state == "succeeded":
@@ -410,6 +606,26 @@ def reconcile_dependency_blockers(
         if completed_stage is not None
         else tuple(_DEPENDENCY_BLOCKER_MESSAGES)
     )
+    stable_references = (
+        _stage_state_reference_column(conn) == "job_id"
+    )
+    identity_select = (
+        "jobs.url AS job_url"
+        if stable_references
+        else "downstream.job_url AS job_url"
+    )
+    identity_join = (
+        "JOIN jobs ON jobs.tenant_id = downstream.tenant_id "
+        "AND jobs.job_id = downstream.job_id"
+        if stable_references
+        else ""
+    )
+    same_job = (
+        "upstream.tenant_id = downstream.tenant_id "
+        "AND upstream.job_id = downstream.job_id"
+        if stable_references
+        else "upstream.job_url = downstream.job_url"
+    )
     updated_at = now or utc_now()
     repaired = 0
     for upstream in completed_stages:
@@ -418,13 +634,20 @@ def reconcile_dependency_blockers(
             params: list[Any] = [downstream, *messages]
             job_filter = ""
             if job_url is not None:
-                job_filter = "AND downstream.job_url = ?"
-                params.append(job_url)
+                predicate, job_params = _stage_state_predicate(
+                    conn,
+                    job_url,
+                    alias="downstream",
+                )
+                job_filter = f"AND {predicate}"
+                params.extend(job_params)
             params.append(upstream)
             rows = conn.execute(
                 f"""
-                SELECT downstream.job_url, downstream.stage, downstream.attempt_count
+                SELECT {identity_select}, downstream.stage,
+                       downstream.attempt_count
                   FROM job_stage_states AS downstream
+                  {identity_join}
                  WHERE downstream.stage = ?
                    AND downstream.state = 'blocked'
                    AND downstream.error_code = 'BLOCKED'
@@ -433,7 +656,7 @@ def reconcile_dependency_blockers(
                    AND EXISTS (
                        SELECT 1
                          FROM job_stage_states AS upstream
-                        WHERE upstream.job_url = downstream.job_url
+                        WHERE {same_job}
                           AND upstream.stage = ?
                           AND upstream.state = 'succeeded'
                    )
@@ -485,14 +708,15 @@ def reconcile_score_eligibility_blockers(
     reason = ", ".join(blockers) if blockers else str(eligibility_status or "blocked")
     message = f"{SCORE_ELIGIBILITY_BLOCKED_MESSAGE_PREFIX}: {reason}"
     changed = 0
+    predicate, identity_params = _stage_state_predicate(conn, job_url)
     rows = conn.execute(
         f"""
         SELECT stage, state, attempt_count
           FROM job_stage_states
-         WHERE job_url = ?
+         WHERE {predicate}
            AND stage IN ({", ".join("?" for _ in _SCORE_ELIGIBILITY_DOWNSTREAM_STAGES)})
         """,
-        (job_url, *_SCORE_ELIGIBILITY_DOWNSTREAM_STAGES),
+        (*identity_params, *_SCORE_ELIGIBILITY_DOWNSTREAM_STAGES),
     ).fetchall()
     for row in rows:
         stage = str(row["stage"])
@@ -537,15 +761,16 @@ def reconcile_score_eligibility_blockers(
 
 
 def _clear_score_eligibility_blockers(conn, *, job_url: str, now: str) -> int:
+    predicate, identity_params = _stage_state_predicate(conn, job_url)
     rows = conn.execute(
-        """
+        f"""
         SELECT stage, attempt_count
           FROM job_stage_states
-         WHERE job_url = ?
+         WHERE {predicate}
            AND state = 'blocked'
            AND error_code = ?
         """,
-        (job_url, SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE),
+        (*identity_params, SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE),
     ).fetchall()
     cleared = 0
     for row in rows:
@@ -597,10 +822,7 @@ def _restored_state_after_score_eligibility_cleared(conn, *, job_url: str, stage
 
 
 def _stage_is_succeeded(conn, *, job_url: str, stage: str) -> bool:
-    row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
-        (job_url, stage),
-    ).fetchone()
+    row = get_stage_state_row(conn, job_url, stage)
     return bool(row and str(row["state"]) == "succeeded")
 
 
@@ -784,9 +1006,10 @@ def record_job_artifact(
 
 def _load_explicit_states(conn, job_url: str) -> dict[str, dict[str, Any]]:
     """Load all stage rows from ``job_stage_states`` for one job."""
+    predicate, params = _stage_state_predicate(conn, job_url)
     rows = conn.execute(
-        "SELECT * FROM job_stage_states WHERE job_url = ?",
-        (job_url,),
+        f"SELECT * FROM job_stage_states WHERE {predicate}",
+        params,
     ).fetchall()
     explicit: dict[str, dict[str, Any]] = {}
     for row in rows:

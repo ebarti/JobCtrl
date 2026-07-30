@@ -27,7 +27,7 @@ import pytest
 from jobctrl.database import get_connection, init_db
 from jobctrl.infrastructure.materials import SqliteMaterialsRepository
 from jobctrl.infrastructure.profile import factory as profile_factory
-from jobctrl.state import set_stage_state, ensure_job_stage_rows
+from jobctrl.state import ensure_job_stage_rows, get_stage_state_row, set_stage_state
 
 
 @pytest.fixture()
@@ -111,6 +111,13 @@ def test_failed_to_running_transition_skips_validation(
     production."""
 
     url = "https://example.com/job/1"
+    db.execute(
+        """
+        INSERT INTO jobs (url, title, site, discovered_at)
+        VALUES (?, 'Engineer', 'Example', '2026-01-01T00:00:00+00:00')
+        """,
+        (url,),
+    )
     ensure_job_stage_rows(db, url, discovered_at="2026-01-01T00:00:00+00:00")
     # Seed the row in 'failed' state via the validation bypass — the
     # canonical state machine doesn't permit pending -> failed directly,
@@ -128,8 +135,5 @@ def test_failed_to_running_transition_skips_validation(
 
     # Bypass path: runners pass validate_transition=False and survive.
     set_stage_state(db, url, "tailor", "running", validate_transition=False)
-    row = db.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
-        (url, "tailor"),
-    ).fetchone()
+    row = get_stage_state_row(db, url, "tailor")
     assert row["state"] == "running"

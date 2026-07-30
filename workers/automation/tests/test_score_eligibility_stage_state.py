@@ -36,9 +36,13 @@ def _seed_scored_job(conn: sqlite3.Connection, url: str) -> None:
 def _stage_rows(conn: sqlite3.Connection, url: str) -> dict[str, sqlite3.Row]:
     rows = conn.execute(
         """
-        SELECT stage, state, error_code, error_message, retryable, blocked_by_json
-        FROM job_stage_states
-        WHERE job_url = ?
+        SELECT states.stage, states.state, states.error_code,
+               states.error_message, states.retryable, states.blocked_by_json
+        FROM job_stage_states states
+        JOIN jobs
+          ON jobs.tenant_id = states.tenant_id
+         AND jobs.job_id = states.job_id
+        WHERE jobs.tenant_id = 'local' AND jobs.url = ?
         """,
         (url,),
     ).fetchall()

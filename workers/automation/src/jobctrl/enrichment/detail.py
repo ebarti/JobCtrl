@@ -840,15 +840,16 @@ def _unblock_enrich_stage_if_blocked(conn: sqlite3.Connection, url: str) -> None
     valid, honoring this feature's "a later run re-evaluates robots" promise.
     No-op unless the stage is currently ``blocked``.
     """
-    from jobctrl.state import record_job_event, set_stage_state
+    from jobctrl.state import (
+        get_stage_state_row,
+        record_job_event,
+        set_stage_state,
+    )
 
-    row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        (url,),
-    ).fetchone()
+    row = get_stage_state_row(conn, url, "enrich")
     if row is None:
         return
-    current = row[0] if not isinstance(row, dict) else row["state"]
+    current = row["state"]
     if current != "blocked":
         return
     set_stage_state(conn, url, "enrich", "pending")

@@ -44,7 +44,7 @@ from jobctrl.infrastructure.scoring import (
 )
 from jobctrl.infrastructure.scoring.sqlite_repository import ScoreVersionConflict
 from jobctrl.scoring.eval import build_scoring_governance_report
-from jobctrl.state import set_stage_state
+from jobctrl.state import get_stage_state_row, set_stage_state
 
 
 @pytest.fixture()
@@ -562,10 +562,7 @@ def test_score_correction_marks_comparable_uncorrected_scores_stale_and_resolve_
     assert rows[0]["old_policy_version"] == 1
     assert rows[0]["new_policy_version"] == 2
     assert rows[0]["resolved"] == 0
-    stale_stage = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-        (comparable_url,),
-    ).fetchone()
+    stale_stage = get_stage_state_row(conn, comparable_url, "score")
     assert stale_stage["state"] == "stale"
     stale_event = conn.execute(
         "SELECT event_type FROM job_events WHERE job_url = ? ORDER BY event_id DESC LIMIT 1",

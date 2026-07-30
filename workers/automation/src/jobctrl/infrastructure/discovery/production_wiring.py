@@ -86,7 +86,12 @@ from jobctrl.infrastructure.enrichment import (
     SqliteEnrichmentRepository,
     SqlitePostingSnapshotSetRepository,
 )
-from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state
+from jobctrl.state import (
+    ensure_job_stage_rows,
+    get_stage_state_row,
+    record_job_event,
+    set_stage_state,
+)
 
 
 def utc_now() -> str:
@@ -698,10 +703,7 @@ def _promote_ats_source_description_to_enrichment(
 
     job_url = resolved_job.storage_url.value
     ensure_job_stage_rows(conn, job_url, discovered_at=observed_at)
-    stage_row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        (job_url,),
-    ).fetchone()
+    stage_row = get_stage_state_row(conn, job_url, "enrich")
     stage_state = str(stage_row["state"] or "") if stage_row is not None else ""
     if stage_state != "succeeded":
         if stage_state != "running":

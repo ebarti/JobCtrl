@@ -45,7 +45,7 @@ from jobctrl.preparation.workflow import (
     JobPreparationWorkflow,
     preparation_workflow_id,
 )
-from jobctrl.state import utc_now
+from jobctrl.state import get_stage_state_row, utc_now
 
 log = logging.getLogger(__name__)
 
@@ -651,16 +651,12 @@ def _unselected_work_plan_outcome(
     if row["resume_pdf_path"] and row["cover_pdf_path"]:
         return ("not_eligible", "preparation_already_accounted")
 
-    stage_rows = conn.execute(
-        """
-        SELECT stage, state
-          FROM job_stage_states
-         WHERE job_url = ?
-           AND stage IN ('score', 'tailor', 'cover', 'apply')
-        """,
-        (job_url,),
-    ).fetchall()
-    stage_states = {str(stage_row["stage"]): str(stage_row["state"]) for stage_row in stage_rows}
+    stage_states = {
+        stage: str(stage_row["state"])
+        for stage in ("score", "tailor", "cover", "apply")
+        if (stage_row := get_stage_state_row(conn, job_url, stage))
+        is not None
+    }
     if stage_states.get("apply") == "succeeded":
         return ("not_eligible", "preparation_already_accounted")
     if (

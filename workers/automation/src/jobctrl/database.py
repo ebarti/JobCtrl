@@ -52,7 +52,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v12 (scoring references): score history, staleness markers, and requirement-fit
 # authorities reference ``(tenant_id, job_id)`` with dependent score versions
 # remapped atomically when multiple historical URL aliases collapse.
-SCHEMA_VERSION = 12
+# v13 (stage-state references): the canonical per-stage lifecycle row references
+# ``(tenant_id, job_id)``. Alias collisions keep the most recently updated
+# lifecycle fact while preserving monotonic attempt and optimistic-lock counts.
+SCHEMA_VERSION = 13
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -195,6 +198,7 @@ def _schema_migrations() -> tuple[
         (10, ensure_preparation_references_v10),
         (11, ensure_enrichment_snapshot_references_v11),
         (12, ensure_scoring_references_v12),
+        (13, ensure_stage_state_references_v13),
     )
 
 
@@ -1342,28 +1346,34 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     if conn is None:
         conn = get_connection()
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS job_stage_states (
-            job_url             TEXT NOT NULL,
-            stage               TEXT NOT NULL,
-            state               TEXT NOT NULL DEFAULT 'pending',
-            attempt_count       INTEGER DEFAULT 0,
-            max_attempts        INTEGER,
-            started_at          TEXT,
-            updated_at          TEXT NOT NULL,
-            finished_at         TEXT,
-            duration_ms         INTEGER,
-            error_code          TEXT,
-            error_message       TEXT,
-            retryable           INTEGER DEFAULT 1,
-            blocked_by_json     TEXT,
-            next_action         TEXT,
-            metadata_json       TEXT,
-            version             INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (job_url, stage),
-            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
-        )
-    """)
+    current_schema_version = int(
+        conn.execute("PRAGMA user_version").fetchone()[0]
+    )
+    if current_schema_version >= _STAGE_STATE_REFERENCE_SCHEMA_VERSION:
+        _create_job_stage_states_v13(conn)
+    else:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS job_stage_states (
+                job_url             TEXT NOT NULL,
+                stage               TEXT NOT NULL,
+                state               TEXT NOT NULL DEFAULT 'pending',
+                attempt_count       INTEGER DEFAULT 0,
+                max_attempts        INTEGER,
+                started_at          TEXT,
+                updated_at          TEXT NOT NULL,
+                finished_at         TEXT,
+                duration_ms         INTEGER,
+                error_code          TEXT,
+                error_message       TEXT,
+                retryable           INTEGER DEFAULT 1,
+                blocked_by_json     TEXT,
+                next_action         TEXT,
+                metadata_json       TEXT,
+                version             INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (job_url, stage),
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            )
+        """)
     # Forward-migrate columns added after the initial normalized stage table.
     # This is deliberately additive: existing lifecycle rows and application
     # facts are preserved while API-seeded or older local databases become
@@ -1425,10 +1435,16 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         CREATE INDEX IF NOT EXISTS idx_job_stage_states_stage_state
         ON job_stage_states(stage, state, updated_at DESC)
     """)
-    conn.execute("""
+    stage_reference = (
+        "job_id" if "job_id" in existing_cols else "job_url"
+    )
+    tenant_prefix = "tenant_id, " if stage_reference == "job_id" else ""
+    conn.execute(
+        f"""
         CREATE INDEX IF NOT EXISTS idx_job_stage_states_job
-        ON job_stage_states(job_url, stage)
-    """)
+        ON job_stage_states({tenant_prefix}{stage_reference}, stage)
+        """
+    )
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_job_events_job_time
         ON job_events(job_url, occurred_at DESC, event_id DESC)
@@ -1835,15 +1851,22 @@ def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:
     """
     # Find legacy jobs (any row in ``jobs``) that have NO existing stage
     # rows.  This is the universe to backfill.
+    stage_state_columns = _table_columns(conn, "job_stage_states")
+    stable_stage_references = "job_id" in stage_state_columns
+    stage_join = (
+        "jss.tenant_id = j.tenant_id AND jss.job_id = j.job_id"
+        if stable_stage_references
+        else "jss.job_url = j.url"
+    )
     legacy_jobs = conn.execute(
-        """
+        f"""
         SELECT j.url, j.discovered_at, j.full_description, j.detail_scraped_at,
                j.detail_error, j.fit_score, j.scored_at,
                j.tailored_resume_path, j.tailored_at, j.tailor_attempts,
                j.cover_letter_path, j.cover_letter_at, j.cover_attempts,
                j.applied_at, j.apply_status, j.apply_error
         FROM jobs j
-        LEFT JOIN job_stage_states jss ON jss.job_url = j.url
+        LEFT JOIN job_stage_states jss ON {stage_join}
         GROUP BY j.url
         HAVING COUNT(jss.stage) = 0
         """
@@ -1865,17 +1888,44 @@ def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:
         started_at: str | None = None,
         finished_at: str | None = None,
     ) -> None:
+        if stable_stage_references:
+            identity = conn.execute(
+                """
+                SELECT tenant_id, job_id
+                FROM jobs
+                WHERE url = ?
+                LIMIT 1
+                """,
+                (job_url,),
+            ).fetchone()
+            if identity is None:
+                raise RuntimeError(
+                    "stage-state backfill could not resolve stable identity"
+                )
+            reference_columns = "tenant_id, job_id"
+            reference_values: tuple[Any, ...] = (
+                str(identity[0]),
+                str(identity[1]),
+            )
+            reference_placeholders = "?, ?"
+        else:
+            reference_columns = "job_url"
+            reference_values = (job_url,)
+            reference_placeholders = "?"
         conn.execute(
-            """
+            f"""
             INSERT OR IGNORE INTO job_stage_states (
-                job_url, stage, state, attempt_count, max_attempts,
+                {reference_columns}, stage, state, attempt_count, max_attempts,
                 started_at, updated_at, finished_at, duration_ms,
                 error_code, error_message, retryable, blocked_by_json,
                 next_action, metadata_json, version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, 0)
+            ) VALUES (
+                {reference_placeholders}, ?, ?, ?, ?, ?, ?, ?, NULL,
+                ?, ?, ?, NULL, NULL, NULL, 0
+            )
             """,
             (
-                job_url,
+                *reference_values,
                 stage,
                 state,
                 attempt_count,
@@ -4266,6 +4316,13 @@ def _reassign_discovery_identity_references(
         )
     if _has_scoring_reference_schema_v12(conn):
         _reassign_scoring_references_v12(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+    if _has_stage_state_reference_schema_v13(conn):
+        _reassign_stage_state_references_v13(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
@@ -7887,6 +7944,421 @@ def _reassign_scoring_references_v12(
     )
 
 
+_STAGE_STATE_REFERENCE_SCHEMA_VERSION = 13
+_STAGE_STATE_REFERENCE_TABLES = ("job_stage_states",)
+_STAGE_STATE_VALUE_COLUMNS = (
+    "state",
+    "attempt_count",
+    "max_attempts",
+    "started_at",
+    "updated_at",
+    "finished_at",
+    "duration_ms",
+    "error_code",
+    "error_message",
+    "retryable",
+    "blocked_by_json",
+    "next_action",
+    "metadata_json",
+    "version",
+)
+
+
+def _create_job_stage_states_v13(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str = "job_stage_states",
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            tenant_id          TEXT NOT NULL DEFAULT 'local',
+            job_id             TEXT NOT NULL,
+            stage              TEXT NOT NULL,
+            state              TEXT NOT NULL DEFAULT 'pending',
+            attempt_count      INTEGER DEFAULT 0,
+            max_attempts       INTEGER,
+            started_at         TEXT,
+            updated_at         TEXT NOT NULL,
+            finished_at        TEXT,
+            duration_ms        INTEGER,
+            error_code         TEXT,
+            error_message      TEXT,
+            retryable          INTEGER DEFAULT 1,
+            blocked_by_json    TEXT,
+            next_action        TEXT,
+            metadata_json      TEXT,
+            version            INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (tenant_id, job_id, stage),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_job_stage_state_indexes_v13(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_stage_states_stage_state
+        ON job_stage_states(stage, state, updated_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_stage_states_job
+        ON job_stage_states(tenant_id, job_id, stage)
+        """
+    )
+
+
+def _has_stage_state_reference_schema_v13(
+    conn: sqlite3.Connection,
+) -> bool:
+    return (
+        "job_id" in _table_columns(conn, "job_stage_states")
+        and "job_url" not in _table_columns(conn, "job_stage_states")
+        and _primary_key_columns(conn, "job_stage_states")
+        == ("tenant_id", "job_id", "stage")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "job_stage_states",
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            "job_stage_states",
+            "idx_job_stage_states_stage_state",
+            ("stage", "state", "updated_at"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_stage_states",
+            "idx_job_stage_states_job",
+            ("tenant_id", "job_id", "stage"),
+            unique=False,
+        )
+    )
+
+
+def _stage_state_timestamp_rank(value: Any) -> tuple[float, str]:
+    raw = str(value or "")
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        timestamp = parsed.astimezone(timezone.utc).timestamp()
+    except (OverflowError, ValueError):
+        timestamp = float("-inf")
+    return timestamp, raw
+
+
+def _merge_stage_state_rows_v13(
+    rows: list[tuple[str, int, tuple[Any, ...]]],
+) -> tuple[Any, ...]:
+    """Select one current lifecycle fact without lowering safety counters."""
+    if not rows:
+        raise RuntimeError("stage-state merge requires at least one row")
+    selected_source, selected_rowid, selected_values = max(
+        rows,
+        key=lambda item: (
+            _stage_state_timestamp_rank(
+                item[2][_STAGE_STATE_VALUE_COLUMNS.index("updated_at")]
+            ),
+            int(item[2][_STAGE_STATE_VALUE_COLUMNS.index("version")] or 0),
+            item[0],
+            item[1],
+        ),
+    )
+    del selected_source, selected_rowid
+    merged = list(selected_values)
+    attempt_index = _STAGE_STATE_VALUE_COLUMNS.index("attempt_count")
+    version_index = _STAGE_STATE_VALUE_COLUMNS.index("version")
+    merged[attempt_index] = max(
+        int(values[attempt_index] or 0)
+        for _source, _rowid, values in rows
+    )
+    merged[version_index] = max(
+        int(values[version_index] or 0)
+        for _source, _rowid, values in rows
+    )
+    return tuple(merged)
+
+
+def _normalize_stage_state_aggregate_versions_v13(
+    rows: list[tuple[Any, ...]],
+) -> list[tuple[Any, ...]]:
+    """Keep the optimistic-lock version uniform across every Job aggregate."""
+    version_index = 3 + _STAGE_STATE_VALUE_COLUMNS.index("version")
+    aggregate_versions: dict[tuple[str, str], int] = {}
+    for row in rows:
+        aggregate_key = (str(row[0]), str(row[1]))
+        aggregate_versions[aggregate_key] = max(
+            aggregate_versions.get(aggregate_key, 0),
+            int(row[version_index] or 0),
+        )
+    normalized: list[tuple[Any, ...]] = []
+    for row in rows:
+        values = list(row)
+        values[version_index] = aggregate_versions[
+            (str(row[0]), str(row[1]))
+        ]
+        normalized.append(tuple(values))
+    return normalized
+
+
+def _normalize_persisted_stage_state_versions_v13(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.execute(
+        """
+        UPDATE job_stage_states AS state
+        SET version = (
+            SELECT MAX(peer.version)
+            FROM job_stage_states AS peer
+            WHERE peer.tenant_id = state.tenant_id
+              AND peer.job_id = state.job_id
+        )
+        """
+    )
+
+
+def _canonical_stage_state_rows_v13(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        f"""
+        SELECT rowid, job_url, stage, {", ".join(_STAGE_STATE_VALUE_COLUMNS)}
+        FROM job_stage_states
+        ORDER BY job_url, stage, rowid
+        """
+    ).fetchall()
+    grouped: dict[
+        tuple[str, str, str],
+        list[tuple[str, int, tuple[Any, ...]]],
+    ] = {}
+    for row in rows:
+        job_url = str(row[1])
+        stage = str(row[2])
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id="local",
+            reference=job_url,
+            legacy_url=True,
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "stage-state reference migration could not resolve "
+                f"job_stage_states.job_url={job_url!r}"
+            )
+        grouped.setdefault(
+            ("local", stable_job_id, stage),
+            [],
+        ).append(
+            (
+                job_url,
+                int(row[0]),
+                tuple(row[index] for index in range(3, len(row))),
+            )
+        )
+    return _normalize_stage_state_aggregate_versions_v13(
+        [
+            (
+                tenant_id,
+                job_id,
+                stage,
+                *_merge_stage_state_rows_v13(group_rows),
+            )
+            for (tenant_id, job_id, stage), group_rows in sorted(grouped.items())
+        ]
+    )
+
+
+def ensure_stage_state_references_v13(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move canonical per-stage lifecycle state to stable JobId references."""
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _STAGE_STATE_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _SCORING_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "stage-state reference migration requires scoring schema v12"
+        )
+
+    conn.execute("SAVEPOINT stage_state_references_v13")
+    try:
+        if not _has_scoring_reference_schema_v12(conn):
+            raise RuntimeError(
+                "stage-state reference migration requires the stable "
+                "scoring reference schema"
+            )
+        if _has_stage_state_reference_schema_v13(conn):
+            expected_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM job_stage_states"
+                ).fetchone()[0]
+            )
+            _normalize_persisted_stage_state_versions_v13(conn)
+        else:
+            canonical_rows = _canonical_stage_state_rows_v13(conn)
+            expected_count = len(canonical_rows)
+            conn.execute("DROP TABLE IF EXISTS job_stage_states_v13")
+            _create_job_stage_states_v13(
+                conn,
+                table_name="job_stage_states_v13",
+            )
+            conn.executemany(
+                f"""
+                INSERT INTO job_stage_states_v13 (
+                    tenant_id, job_id, stage,
+                    {", ".join(_STAGE_STATE_VALUE_COLUMNS)}
+                ) VALUES ({", ".join("?" for _ in range(17))})
+                """,
+                canonical_rows,
+            )
+            conn.execute("DROP TABLE job_stage_states")
+            conn.execute(
+                "ALTER TABLE job_stage_states_v13 "
+                "RENAME TO job_stage_states"
+            )
+            _create_job_stage_state_indexes_v13(conn)
+        _verify_stage_state_references_v13(
+            conn,
+            expected_count=expected_count,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_STAGE_STATE_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute("RELEASE SAVEPOINT stage_state_references_v13")
+        conn.commit()
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT stage_state_references_v13")
+        conn.execute("RELEASE SAVEPOINT stage_state_references_v13")
+        raise
+
+    return list(_STAGE_STATE_REFERENCE_TABLES)
+
+
+def _verify_stage_state_references_v13(
+    conn: sqlite3.Connection,
+    *,
+    expected_count: int,
+) -> None:
+    if not _has_stage_state_reference_schema_v13(conn):
+        raise RuntimeError(
+            "stage-state reference migration did not install the "
+            "canonical schema"
+        )
+    observed_count = int(
+        conn.execute("SELECT COUNT(*) FROM job_stage_states").fetchone()[0]
+    )
+    if observed_count != expected_count:
+        raise RuntimeError(
+            "stage-state reference migration changed the canonical row "
+            f"count: expected {expected_count}, found {observed_count}"
+        )
+    orphan = conn.execute(
+        """
+        SELECT state.job_id
+        FROM job_stage_states AS state
+        LEFT JOIN jobs j
+          ON j.tenant_id = state.tenant_id
+         AND j.job_id = state.job_id
+        WHERE j.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise RuntimeError(
+            "stage-state reference migration left an unresolved JobId"
+        )
+    for row in conn.execute(
+        "SELECT DISTINCT job_id FROM job_stage_states"
+    ).fetchall():
+        _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute("PRAGMA foreign_key_check").fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "stage-state reference migration found a foreign-key violation"
+        )
+
+
+def _reassign_stage_state_references_v13(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    """Merge current lifecycle rows for an in-place identity collision."""
+    if losing_job_id == surviving_job_id:
+        return
+    before_count = int(
+        conn.execute("SELECT COUNT(*) FROM job_stage_states").fetchone()[0]
+    )
+    raw_rows = conn.execute(
+        f"""
+        SELECT rowid, job_id, stage, {", ".join(_STAGE_STATE_VALUE_COLUMNS)}
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id, stage, rowid
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    grouped: dict[
+        str,
+        list[tuple[str, int, tuple[Any, ...]]],
+    ] = {}
+    for row in raw_rows:
+        grouped.setdefault(str(row[2]), []).append(
+            (
+                str(row[1]),
+                int(row[0]),
+                tuple(row[index] for index in range(3, len(row))),
+            )
+        )
+    merged_rows = _normalize_stage_state_aggregate_versions_v13(
+        [
+            (
+                tenant_id,
+                surviving_job_id,
+                stage,
+                *_merge_stage_state_rows_v13(stage_rows),
+            )
+            for stage, stage_rows in sorted(grouped.items())
+        ]
+    )
+    conn.execute(
+        """
+        DELETE FROM job_stage_states
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    )
+    conn.executemany(
+        f"""
+        INSERT INTO job_stage_states (
+            tenant_id, job_id, stage,
+            {", ".join(_STAGE_STATE_VALUE_COLUMNS)}
+        ) VALUES ({", ".join("?" for _ in range(17))})
+        """,
+        merged_rows,
+    )
+    expected_count = before_count - len(raw_rows) + len(merged_rows)
+    _verify_stage_state_references_v13(
+        conn,
+        expected_count=expected_count,
+    )
+
+
 # ---------------------------------------------------------------------------
 # job_enrichments read fragments — used by every selector / stat that
 # previously read bare ``jobs.full_description`` / ``jobs.application_url``
@@ -7902,7 +8374,9 @@ _ENRICHMENT_JOIN: str = (
     "LEFT JOIN job_enrichments je "
     "ON je.tenant_id = jobs.tenant_id AND je.job_id = jobs.job_id "
     "LEFT JOIN job_stage_states jss_enrich "
-    "ON jss_enrich.job_url = jobs.url AND jss_enrich.stage = 'enrich'"
+    "ON jss_enrich.tenant_id = jobs.tenant_id "
+    "AND jss_enrich.job_id = jobs.job_id "
+    "AND jss_enrich.stage = 'enrich'"
 )
 
 _EFFECTIVE_FULL_DESCRIPTION: str = "COALESCE(je.full_description, jobs.full_description)"
@@ -8034,13 +8508,17 @@ _READY_TAILORED_RESUME_WITH_PDF: str = (
 
 _LATEST_STAGE_ATTEMPTS_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT job_url AS jss_t_job_url, attempt_count AS jss_t_attempts, state AS jss_t_state "
+    "SELECT tenant_id AS jss_t_tenant_id, job_id AS jss_t_job_id, "
+    "attempt_count AS jss_t_attempts, state AS jss_t_state "
     "FROM job_stage_states WHERE stage = 'tailor'"
-    ") jss_t ON jss_t.jss_t_job_url = jobs.url "
+    ") jss_t ON jss_t.jss_t_tenant_id = jobs.tenant_id "
+    "AND jss_t.jss_t_job_id = jobs.job_id "
     "LEFT JOIN ("
-    "SELECT job_url AS jss_c_job_url, attempt_count AS jss_c_attempts, state AS jss_c_state "
+    "SELECT tenant_id AS jss_c_tenant_id, job_id AS jss_c_job_id, "
+    "attempt_count AS jss_c_attempts, state AS jss_c_state "
     "FROM job_stage_states WHERE stage = 'cover'"
-    ") jss_c ON jss_c.jss_c_job_url = jobs.url"
+    ") jss_c ON jss_c.jss_c_tenant_id = jobs.tenant_id "
+    "AND jss_c.jss_c_job_id = jobs.job_id"
 )
 
 # COALESCE picks the canonical (job_stage_states) counter first, falling
@@ -8059,10 +8537,12 @@ _COVER_NOT_EXHAUSTED: str = "(jss_c.jss_c_state IS NULL OR jss_c.jss_c_state != 
 # ``job_scores``, downstream work requires a succeeded score-stage row.
 _SCORE_DOWNSTREAM_STATE_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT job_url AS jss_s_job_url, state AS jss_s_state, "
+    "SELECT tenant_id AS jss_s_tenant_id, job_id AS jss_s_job_id, "
+    "state AS jss_s_state, "
     "attempt_count AS jss_s_attempts "
     "FROM job_stage_states WHERE stage = 'score'"
-    ") jss_s ON jss_s.jss_s_job_url = jobs.url "
+    ") jss_s ON jss_s.jss_s_tenant_id = jobs.tenant_id "
+    "AND jss_s.jss_s_job_id = jobs.job_id "
     "LEFT JOIN ("
     "SELECT DISTINCT tenant_id AS jss_stale_tenant_id, "
     "job_id AS jss_stale_job_id "
@@ -8395,13 +8875,16 @@ def count_ready_to_apply(
         _ENRICHMENT_NOT_QUARANTINED,
         "NOT EXISTS ("
         "SELECT 1 FROM job_stage_states jss_active "
-        "WHERE jss_active.job_url = jobs.url "
+        "WHERE jss_active.tenant_id = jobs.tenant_id "
+        "AND jss_active.job_id = jobs.job_id "
         "AND jss_active.stage = 'apply' "
         "AND jss_active.state IN ('running', 'succeeded')"
         ")",
         "COALESCE(("
         "SELECT jss_a.attempt_count FROM job_stage_states jss_a "
-        "WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply' LIMIT 1"
+        "WHERE jss_a.tenant_id = jobs.tenant_id "
+        "AND jss_a.job_id = jobs.job_id "
+        "AND jss_a.stage = 'apply' LIMIT 1"
         "), 0) < ?",
         "(ar.ar_status IS NULL OR ar.ar_status NOT IN ('starting', 'in_progress'))",
     ]

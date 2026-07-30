@@ -105,11 +105,11 @@ def _create_representative_v6_pair(
     conn.execute(
         """
         INSERT INTO job_stage_states (
-            job_url, stage, state, attempt_count, updated_at,
+            tenant_id, job_id, stage, state, attempt_count, updated_at,
             metadata_json, version
-        ) VALUES (?, 'score', 'succeeded', 1, ?, '{"fixture":true}', 3)
+        ) VALUES ('local', ?, 'score', 'succeeded', 1, ?, '{"fixture":true}', 3)
         """,
-        (job_url, "2026-07-01T10:06:00+00:00"),
+        (job_id, "2026-07-01T10:06:00+00:00"),
     )
     conn.execute(
         """
@@ -212,6 +212,32 @@ def _create_representative_v6_pair(
 
     raw = sqlite3.connect(db_path)
     try:
+        stage_rows = raw.execute(
+            """
+            SELECT
+                jobs.url,
+                states.stage,
+                states.state,
+                states.attempt_count,
+                states.max_attempts,
+                states.started_at,
+                states.updated_at,
+                states.finished_at,
+                states.duration_ms,
+                states.error_code,
+                states.error_message,
+                states.retryable,
+                states.blocked_by_json,
+                states.next_action,
+                states.metadata_json,
+                states.version
+            FROM job_stage_states AS states
+            JOIN jobs
+              ON jobs.tenant_id = states.tenant_id
+             AND jobs.job_id = states.job_id
+            ORDER BY states.tenant_id, states.job_id, states.stage
+            """
+        ).fetchall()
         score_rows = raw.execute(
             """
             SELECT
@@ -429,6 +455,42 @@ def _create_representative_v6_pair(
                 for row in score_rows
             ),
         )
+        raw.execute("DROP TABLE job_stage_states")
+        raw.execute(
+            """
+            CREATE TABLE job_stage_states (
+                job_url         TEXT NOT NULL,
+                stage           TEXT NOT NULL,
+                state           TEXT NOT NULL DEFAULT 'pending',
+                attempt_count   INTEGER DEFAULT 0,
+                max_attempts    INTEGER,
+                started_at      TEXT,
+                updated_at      TEXT NOT NULL,
+                finished_at     TEXT,
+                duration_ms     INTEGER,
+                error_code      TEXT,
+                error_message   TEXT,
+                retryable       INTEGER DEFAULT 1,
+                blocked_by_json TEXT,
+                next_action     TEXT,
+                metadata_json   TEXT,
+                version         INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (job_url, stage),
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            )
+            """
+        )
+        raw.executemany(
+            """
+            INSERT INTO job_stage_states (
+                job_url, stage, state, attempt_count, max_attempts,
+                started_at, updated_at, finished_at, duration_ms,
+                error_code, error_message, retryable, blocked_by_json,
+                next_action, metadata_json, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            stage_rows,
+        )
         for trigger_name in database_module._STABLE_JOB_IDENTITY_TRIGGER_NAMES:
             raw.execute(f'DROP TRIGGER IF EXISTS "{trigger_name}"')
         raw.execute("DROP INDEX IF EXISTS idx_jobs_tenant_job_id")
@@ -471,6 +533,42 @@ def _reference_snapshot(db_path: Path) -> dict[str, list[tuple[object, ...]]]:
             table: [tuple(row) for row in conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall()]
             for table in REFERENCE_TABLES
         }
+        stage_columns = {
+            str(row[1])
+            for row in conn.execute(
+                "PRAGMA table_info(job_stage_states)"
+            ).fetchall()
+        }
+        if "job_id" in stage_columns:
+            snapshot["job_stage_states"] = [
+                tuple(row)
+                for row in conn.execute(
+                    """
+                    SELECT
+                        jobs.url,
+                        states.stage,
+                        states.state,
+                        states.attempt_count,
+                        states.max_attempts,
+                        states.started_at,
+                        states.updated_at,
+                        states.finished_at,
+                        states.duration_ms,
+                        states.error_code,
+                        states.error_message,
+                        states.retryable,
+                        states.blocked_by_json,
+                        states.next_action,
+                        states.metadata_json,
+                        states.version
+                    FROM job_stage_states AS states
+                    JOIN jobs
+                      ON jobs.tenant_id = states.tenant_id
+                     AND jobs.job_id = states.job_id
+                    ORDER BY states.rowid
+                    """
+                ).fetchall()
+            ]
         execution_columns = {
             str(row[1]) for row in conn.execute("PRAGMA table_info(discovery_execution_jobs)").fetchall()
         }
@@ -568,7 +666,7 @@ def test_v6_jobs_gain_stable_uuid_and_posting_url_alias_once(
     init_db(db_path)
     close_connection(db_path)
 
-    assert _user_version(db_path) == SCHEMA_VERSION == 12
+    assert _user_version(db_path) == SCHEMA_VERSION == 13
     first_ids = _identity_rows(db_path)
     assert [row[0] for row in first_ids] == ["local", "local"]
     for _tenant_id, job_id, _url in first_ids:

@@ -439,9 +439,17 @@ function dashboardWorkSummary(db: SqliteDatabase): DashboardSummary["work"] {
     ? "stage_state.started_at AS stage_started_at, stage_state.updated_at AS stage_updated_at"
     : "NULL AS stage_started_at, NULL AS stage_updated_at";
   const stageJoin = hasStageState
-    ? `LEFT JOIN job_stage_states AS stage_state
-         ON stage_state.job_url = job_list_projections.job_id
-        AND stage_state.stage = job_list_projections.current_substage`
+    ? jobReferenceColumn(db, "job_stage_states") === "job_id"
+      ? `LEFT JOIN jobs AS stage_jobs
+           ON stage_jobs.tenant_id = job_list_projections.tenant_id
+          AND stage_jobs.url = job_list_projections.job_id
+         LEFT JOIN job_stage_states AS stage_state
+           ON stage_state.tenant_id = stage_jobs.tenant_id
+          AND stage_state.job_id = stage_jobs.job_id
+          AND stage_state.stage = job_list_projections.current_substage`
+      : `LEFT JOIN job_stage_states AS stage_state
+           ON stage_state.job_url = job_list_projections.job_id
+          AND stage_state.stage = job_list_projections.current_substage`
     : "";
   const rows = allRows<DashboardWorkRow>(
     db,
