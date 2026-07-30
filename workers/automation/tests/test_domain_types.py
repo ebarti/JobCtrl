@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from jobctrl.domain.tenant import TenantId, LOCAL_TENANT
-from jobctrl.domain.identifiers import JobId, generate_job_id
+from jobctrl.domain.identifiers import JobId, canonical_job_id, generate_job_id
 from jobctrl.domain.pipeline_types import (
     Stage,
     STAGES,
@@ -62,6 +62,28 @@ class TestJobId:
         jid = generate_job_id()
         assert isinstance(jid, str)
         assert len(jid) == 36  # UUID format
+
+    def test_canonical_job_id_accepts_canonical_lowercase_uuid(self) -> None:
+        value = "123e4567-e89b-12d3-a456-426614174000"
+
+        assert canonical_job_id(value) == JobId(value)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "https://example.com/jobs/123",
+            "job-123",
+            "123E4567-E89B-12D3-A456-426614174000",
+            "123e4567e89b12d3a456426614174000",
+            "{123e4567-e89b-12d3-a456-426614174000}",
+            "urn:uuid:123e4567-e89b-12d3-a456-426614174000",
+            "",
+            "not-a-uuid",
+        ],
+    )
+    def test_canonical_job_id_rejects_noncanonical_values(self, value: str) -> None:
+        with pytest.raises(ValueError, match="canonical UUID"):
+            canonical_job_id(value)
 
 
 # ---------------------------------------------------------------------------
