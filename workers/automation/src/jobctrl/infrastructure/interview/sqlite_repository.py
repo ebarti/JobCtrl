@@ -73,7 +73,7 @@ class SqliteInterviewPrepRepository:
         tenant_id: TenantId,
         origin_run_id: str = "",
     ) -> None:
-        job_url = str(prep.job_key)
+        job_url = str(prep.job_id)
         tenant = str(tenant_id)
         if prep.status == "accepted":
             self._conn.execute(
@@ -220,7 +220,7 @@ class SqliteInterviewPrepRepository:
             warnings=tuple(_load_list(row["warnings_json"])),
         )
         return InterviewPrep(
-            job_key=str(row["job_url"]),
+            job_id=str(row["job_url"]),
             generation=int(row["generation"]),
             status=str(row["status"]),  # type: ignore[arg-type]
             generated_at=str(row["generated_at"]),

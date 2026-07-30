@@ -83,7 +83,7 @@ def test_evidence_map_entry_round_trips_to_camel_case_read_model() -> None:
 
 def test_interview_prep_round_trips_and_requires_grounded_star_evidence() -> None:
     prep = InterviewPrep(
-        job_key="job-1",
+        job_id="job-1",
         generation=1,
         status="accepted",
         generated_at="2026-07-05T12:00:00Z",
@@ -110,11 +110,17 @@ def test_interview_prep_round_trips_and_requires_grounded_star_evidence() -> Non
 
     read_model = prep.to_read_model()
 
-    assert read_model["jobKey"] == "job-1"
+    assert read_model["jobId"] == "job-1"
+    assert "jobKey" not in read_model
     assert read_model["gateAudit"]["status"] == "passed"
     assert read_model["items"][0]["kind"] == "star_draft"
     assert read_model["items"][0]["evidenceIds"] == ["evidence-1"]
     assert InterviewPrep.from_dict(read_model).to_read_model() == read_model
+
+    legacy_read_model = dict(read_model)
+    legacy_read_model["jobKey"] = legacy_read_model.pop("jobId")
+    with pytest.raises(KeyError, match="jobId"):
+        InterviewPrep.from_dict(legacy_read_model)
 
     with pytest.raises(ValueError, match="star_draft"):
         InterviewPrepItem(
@@ -133,7 +139,7 @@ def test_interview_prep_has_no_live_assistance_status() -> None:
 
     with pytest.raises(ValueError, match="unknown interview prep status"):
         InterviewPrep(
-            job_key="job-1",
+            job_id="job-1",
             generation=1,
             status="live",  # type: ignore[arg-type]
             generated_at="2026-07-05T12:00:00Z",

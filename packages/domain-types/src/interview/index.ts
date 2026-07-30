@@ -41,7 +41,7 @@ export interface InterviewPrepItem {
 }
 
 export interface InterviewPrep {
-  readonly jobKey: string;
+  readonly jobId: string;
   readonly generation: number;
   readonly status: InterviewPrepStatus;
   readonly generatedAt: string;

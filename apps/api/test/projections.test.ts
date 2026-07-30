@@ -2521,7 +2521,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(detailRes.statusCode, detailRes.body).toBe(200);
         const report = detailRes.json().requirementFitReport;
         expect(report).toMatchObject({
-          jobKey: jobUrl,
+          jobId: jobUrl,
           scoreVersion: 2,
           employerAnalysisGeneration: 2,
           profileSnapshotVersion: 3,
@@ -2537,6 +2537,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             missingHighWeightCount: 0,
           },
         });
+        expect(report).not.toHaveProperty("jobKey");
         expect(report.assessments[0]).toMatchObject({
           requirementId: "r1",
           requirementText: "5+ years Python",

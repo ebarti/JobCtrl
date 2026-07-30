@@ -227,7 +227,7 @@ class GenerateInterviewPrepUseCase:
             warnings=tuple(dict.fromkeys((*gate.warnings, *judge.warnings))),
         )
         prep = InterviewPrep(
-            job_key=str(job_id),
+            job_id=str(job_id),
             generation=generation,
             status="accepted",
             generated_at=generated_at,
@@ -337,7 +337,7 @@ class GenerateInterviewPrepUseCase:
             warnings=warnings,
         )
         prep = InterviewPrep(
-            job_key=str(job_id),
+            job_id=str(job_id),
             generation=generation,
             status="failed",
             generated_at=generated_at,
@@ -361,7 +361,7 @@ class GenerateInterviewPrepUseCase:
                 create_interview_prep_generated(
                     tenant_id,
                     InterviewPrepGeneratedPayload(
-                        job_id=prep.job_key,
+                        job_id=prep.job_id,
                         generation=prep.generation,
                         item_count=len(prep.items),
                         generated_at=prep.generated_at,
@@ -369,7 +369,7 @@ class GenerateInterviewPrepUseCase:
                 )
             )
         except Exception:  # noqa: BLE001
-            log.exception("Failed to publish InterviewPrepGenerated for %s", prep.job_key)
+            log.exception("Failed to publish InterviewPrepGenerated for %s", prep.job_id)
 
     def _publish_failed(self, tenant_id: TenantId, prep: InterviewPrep) -> None:
         if self._publisher is None:
@@ -382,7 +382,7 @@ class GenerateInterviewPrepUseCase:
                 create_interview_prep_failed(
                     tenant_id,
                     InterviewPrepFailedPayload(
-                        job_id=prep.job_key,
+                        job_id=prep.job_id,
                         generation=prep.generation,
                         failed_at=prep.generated_at,
                         reason_count=reason_count,
@@ -390,7 +390,7 @@ class GenerateInterviewPrepUseCase:
                 )
             )
         except Exception:  # noqa: BLE001
-            log.exception("Failed to publish InterviewPrepFailed for %s", prep.job_key)
+            log.exception("Failed to publish InterviewPrepFailed for %s", prep.job_id)
 
 
 def _outcome_from_existing(prep: InterviewPrep) -> InterviewPrepGenerationOutcome:

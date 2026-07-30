@@ -144,8 +144,9 @@ def test_requirement_fit_report_round_trips_through_dict() -> None:
     assert restored == original
     assert restored.assessments[0].fit.evidence_ids == ("ev-platform-leadership",)
     assert restored.assessments[0].tailoring.action == "double_down"
-    assert original.to_read_model() == {
-        "jobKey": "https://example.com/job/1",
+    read_model = original.to_read_model()
+    assert read_model == {
+        "jobId": "https://example.com/job/1",
         "scoreVersion": 3,
         "employerAnalysisGeneration": 2,
         "profileSnapshotVersion": 7,
@@ -195,6 +196,12 @@ def test_requirement_fit_report_round_trips_through_dict() -> None:
             }
         ],
     }
+    assert "jobKey" not in read_model
+
+    legacy_read_model = dict(read_model)
+    legacy_read_model["jobKey"] = legacy_read_model.pop("jobId")
+    with pytest.raises(ValueError, match="RequirementFitReport.job_id"):
+        RequirementFitReport.from_dict(legacy_read_model)
 
 
 def test_requirement_fit_status_requires_evidence_for_matched() -> None:
