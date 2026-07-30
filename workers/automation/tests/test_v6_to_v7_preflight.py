@@ -85,3 +85,57 @@ def test_preflight_rejects_unknown_object_with_allowlisted_index_name(
             assert_v6_migration_preflight(conn)
     finally:
         conn.close()
+
+
+def test_preflight_rejects_unshipped_auxiliary_default_drift(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "auxiliary-drift.db"
+    create_shipped_v6_database(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        heartbeat_ddl = next(
+            ddl for ddl in _V6_AUXILIARY_DDL if "worker_runtime_heartbeats" in ddl
+        )
+        conn.execute(heartbeat_ddl.replace("DEFAULT 2", "DEFAULT 3"))
+
+        with pytest.raises(V6MigrationPreflightError, match="durable-table variant"):
+            assert_v6_migration_preflight(conn)
+    finally:
+        conn.close()
+
+
+def test_preflight_rejects_a_hidden_sqlite_namespace_trigger(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "sqlite-trigger.db"
+    create_shipped_v6_database(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA writable_schema = ON")
+        conn.execute(
+            """
+            INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                "trigger",
+                "sqlite_hidden_trigger",
+                "jobs",
+                0,
+                "CREATE TRIGGER sqlite_hidden_trigger AFTER INSERT ON jobs "
+                "BEGIN UPDATE jobs SET title='tampered' WHERE rowid=NEW.rowid; END",
+            ),
+        )
+        conn.execute("PRAGMA writable_schema = OFF")
+        conn.execute("PRAGMA schema_version = 1001")
+        conn.commit()
+    finally:
+        conn.close()
+
+    reopened = sqlite3.connect(db_path)
+    try:
+        with pytest.raises(V6MigrationPreflightError, match="shipped v6"):
+            assert_v6_migration_preflight(reopened)
+    finally:
+        reopened.close()
