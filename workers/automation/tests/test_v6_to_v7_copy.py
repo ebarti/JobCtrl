@@ -14,6 +14,7 @@ from jobctrl.infrastructure.migrations.v6_to_v7_copy import (
 )
 from jobctrl.infrastructure.migrations.v6_to_v7_preflight import (
     V6MigrationPreflightError,
+    _V6_AUXILIARY_DDL,
 )
 from tests.v6_migration_fixture import (
     create_shipped_v6_database,
@@ -219,6 +220,98 @@ def test_candidate_copy_requires_the_same_persisted_job_ids(tmp_path: Path) -> N
     try:
         with pytest.raises(CandidateCopyError, match="hydrated canonical jobs"):
             copy_direct_and_scalar_tables(source, candidate)
+    finally:
+        source.close()
+        candidate.close()
+
+
+@pytest.mark.parametrize("populated", [False, True])
+def test_candidate_copy_derives_local_tenant_for_optional_lifecycle_tables(
+    tmp_path: Path,
+    populated: bool,
+) -> None:
+    source, candidate = _connections(tmp_path)
+    try:
+        lifecycle_ddl = tuple(
+            ddl
+            for ddl in _V6_AUXILIARY_DDL
+            if "jobctrl_deleted_jobs" in ddl or "jobctrl_hidden_jobs" in ddl
+        )
+        assert len(lifecycle_ddl) == 2
+        for ddl in lifecycle_ddl:
+            source.execute(ddl)
+
+        job_url = str(source.execute("SELECT url FROM jobs").fetchone()[0])
+        job_id = str(candidate.execute("SELECT job_id FROM jobs").fetchone()[0])
+        if populated:
+            source.execute(
+                """
+                INSERT INTO jobctrl_deleted_jobs (
+                    job_url, deleted_at, reason, restored_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    job_url,
+                    "2026-07-30T11:00:00+00:00",
+                    "duplicate",
+                    None,
+                ),
+            )
+            source.execute(
+                """
+                INSERT INTO jobctrl_hidden_jobs (
+                    job_url, hidden_at, reason, unhidden_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    job_url,
+                    "2026-07-30T11:01:00+00:00",
+                    "not relevant",
+                    None,
+                ),
+            )
+
+        copy_direct_and_scalar_tables(source, candidate)
+
+        expected_deleted = (
+            [
+                (
+                    "local",
+                    job_id,
+                    "2026-07-30T11:00:00+00:00",
+                    "duplicate",
+                    None,
+                )
+            ]
+            if populated
+            else []
+        )
+        expected_hidden = (
+            [
+                (
+                    "local",
+                    job_id,
+                    "2026-07-30T11:01:00+00:00",
+                    "not relevant",
+                    None,
+                )
+            ]
+            if populated
+            else []
+        )
+        assert candidate.execute(
+            """
+            SELECT tenant_id, job_id, deleted_at, reason, restored_at
+            FROM jobctrl_deleted_jobs
+            """
+        ).fetchall() == expected_deleted
+        assert candidate.execute(
+            """
+            SELECT tenant_id, job_id, hidden_at, reason, unhidden_at
+            FROM jobctrl_hidden_jobs
+            """
+        ).fetchall() == expected_hidden
+        assert candidate.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         source.close()
         candidate.close()
