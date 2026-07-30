@@ -8,9 +8,23 @@ import sqlite3
 
 from jobctrl.infrastructure.migrations.schema_manifest import schema_dump
 
-_V6_CORE_OBJECT_COUNT = 161
-_V6_CORE_TABLE_COUNT = 86
-_V6_CORE_FINGERPRINT = "1300bd3d3a5c86d385405570d5a703e51fe28df79355435802ec382b31316f7b"
+_V6_CORE_MANIFESTS = frozenset(
+    {
+        (
+            161,
+            86,
+            "1300bd3d3a5c86d385405570d5a703e51fe28df79355435802ec382b31316f7b",
+        ),
+        # A workspace created by v1.3 and upgraded in place through v2.0.8.
+        # Seven additive ALTER TABLE paths preserve different raw CREATE SQL,
+        # and the retired discovery_run_projections table remains present.
+        (
+            162,
+            87,
+            "ac7d39828e3ad9e0dd1983ed21180686b81fab9d62c7a75409e903ae44256e89",
+        ),
+    }
+)
 
 # These are the only durable tables that could be absent from fresh Python v6
 # but present after their v6 owner paths ran.  Execute their shipped DDL in an
@@ -196,6 +210,26 @@ _V6_AUXILIARY_DDL = (
 _V6_AUXILIARY_TABLE_VARIANTS = {
     "jobctrl_deleted_jobs": (
         """CREATE TABLE jobctrl_deleted_jobs (
+            job_url TEXT PRIMARY KEY,
+            deleted_at TEXT NOT NULL,
+            reason TEXT,
+            restored_at TEXT,
+            FOREIGN KEY(job_url) REFERENCES jobs(url)
+        )""",
+        """CREATE TABLE jobctrl_deleted_jobs (
+                job_url TEXT PRIMARY KEY,
+                deleted_at TEXT NOT NULL,
+                reason TEXT,
+                restored_at TEXT,
+                FOREIGN KEY(job_url) REFERENCES jobs(url)
+            )""",
+        """CREATE TABLE jobctrl_deleted_jobs (
+      job_url TEXT PRIMARY KEY,
+      deleted_at TEXT NOT NULL,
+      reason TEXT,
+      restored_at TEXT
+    )""",
+        """CREATE TABLE jobctrl_deleted_jobs (
       job_url TEXT PRIMARY KEY,
       deleted_at TEXT NOT NULL,
       reason TEXT,
@@ -208,9 +242,22 @@ _V6_AUXILIARY_TABLE_VARIANTS = {
       job_url TEXT PRIMARY KEY,
       hidden_at TEXT NOT NULL,
       reason TEXT,
+      unhidden_at TEXT
+    )""",
+        """CREATE TABLE jobctrl_hidden_jobs (
+      job_url TEXT PRIMARY KEY,
+      hidden_at TEXT NOT NULL,
+      reason TEXT,
       unhidden_at TEXT,
       FOREIGN KEY(job_url) REFERENCES jobs(url)
     )""",
+    ),
+    "worker_runtime_heartbeats": (
+        """CREATE TABLE worker_runtime_heartbeats (
+  worker_id TEXT PRIMARY KEY, component TEXT NOT NULL, pid INTEGER NOT NULL,
+  hostname TEXT NOT NULL, app_dir TEXT NOT NULL, db_path TEXT NOT NULL,
+  task_queue TEXT NOT NULL, started_at TEXT NOT NULL, last_seen_at TEXT NOT NULL
+, max_concurrent_activities INTEGER, activity_executor_max_workers INTEGER, active_activity_count INTEGER NOT NULL DEFAULT 0, active_activity_counts_json TEXT NOT NULL DEFAULT '{}', active_activity_details_json TEXT NOT NULL DEFAULT '[]', active_activity_details_total INTEGER NOT NULL DEFAULT 0, active_activity_details_truncated INTEGER NOT NULL DEFAULT 0, activity_duration_summary_json TEXT NOT NULL DEFAULT '{}', task_queue_observation_json TEXT, heartbeat_schema_version INTEGER NOT NULL DEFAULT 1)""",
     ),
 }
 
@@ -226,22 +273,21 @@ def assert_v6_migration_preflight(conn: sqlite3.Connection) -> None:
 
     dump = schema_dump(conn)
     expected_auxiliary = _expected_auxiliary_dump()
-    _assert_auxiliary_tables_exact(dump, expected_auxiliary)
-    auxiliary_names = {
-        name
-        for _object_type, name, table_name, _sql in expected_auxiliary
-        for name in (name, table_name)
-    }
+    admitted_auxiliary_rows = _assert_auxiliary_tables_exact(
+        dump,
+        expected_auxiliary,
+    )
     core_dump = tuple(
         row
         for row in dump
-        if row[1] not in auxiliary_names and row[2] not in auxiliary_names
+        if row not in admitted_auxiliary_rows
     )
-    if (
-        len(core_dump) != _V6_CORE_OBJECT_COUNT
-        or sum(1 for row in core_dump if row[0] == "table") != _V6_CORE_TABLE_COUNT
-        or _schema_fingerprint(core_dump) != _V6_CORE_FINGERPRINT
-    ):
+    observed_manifest = (
+        len(core_dump),
+        sum(1 for row in core_dump if row[0] == "table"),
+        _schema_fingerprint(core_dump),
+    )
+    if observed_manifest not in _V6_CORE_MANIFESTS:
         raise V6MigrationPreflightError(
             "database does not match the admitted shipped v6 migration contract"
         )
@@ -260,7 +306,8 @@ def _expected_auxiliary_dump() -> tuple[tuple[str, str, str, str], ...]:
 def _assert_auxiliary_tables_exact(
     dump: tuple[tuple[str, str, str, str], ...],
     expected: tuple[tuple[str, str, str, str], ...],
-) -> None:
+) -> frozenset[tuple[str, str, str, str]]:
+    admitted: set[tuple[str, str, str, str]] = set()
     table_names = {row[1] for row in expected if row[0] == "table"}
     for table_name in table_names:
         observed = tuple(
@@ -279,6 +326,8 @@ def _assert_auxiliary_tables_exact(
             raise V6MigrationPreflightError(
                 "database has an unsupported v6 optional durable-table variant"
             )
+        admitted.update(observed)
+    return frozenset(admitted)
 
 
 def _schema_rows_for_ddl(
