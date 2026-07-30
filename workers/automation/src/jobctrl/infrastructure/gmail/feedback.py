@@ -26,6 +26,7 @@ DEFAULT_WINDOW_DAYS = 45
 MAX_LIMIT = 100
 MAX_RESULTS_PER_ANCHOR = 20
 MAX_WINDOW_DAYS = 180
+APPLICATION_REVIEW_REFERENCE_SCHEMA_VERSION = 20
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{1,64}")
@@ -247,12 +248,28 @@ def scan_gmail_feedback(
 def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
     """Create the feedback tables with the TypeScript API's table shape."""
 
+    schema_version = int(
+        conn.execute("PRAGMA user_version").fetchone()[0]
+    )
+    stable_review_schema = (
+        schema_version >= APPLICATION_REVIEW_REFERENCE_SCHEMA_VERSION
+    )
+    created_review_reference = (
+        "job_id" if stable_review_schema else "job_key"
+    )
+    review_foreign_key = (
+        """,
+          FOREIGN KEY (tenant_id, job_id)
+            REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_review_schema
+        else ""
+    )
     conn.executescript(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS application_review_decisions (
           tenant_id    TEXT NOT NULL DEFAULT 'local',
           decision_id  TEXT NOT NULL,
-          job_key      TEXT NOT NULL,
+          {created_review_reference} TEXT NOT NULL,
           decision     TEXT NOT NULL,
           reason       TEXT,
           decided_by   TEXT NOT NULL DEFAULT 'user',
@@ -264,9 +281,8 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
           email_recipient TEXT,
           email_attachment_artifact_id TEXT,
           PRIMARY KEY (tenant_id, decision_id)
+          {review_foreign_key}
         );
-        CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
-          ON application_review_decisions(tenant_id, job_key, decided_at DESC);
 
         CREATE TABLE IF NOT EXISTS application_outcomes (
           tenant_id     TEXT NOT NULL DEFAULT 'local',
@@ -342,6 +358,22 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
             "email_recipient": "TEXT",
             "email_attachment_artifact_id": "TEXT",
         },
+    )
+    review_reference = (
+        "job_id"
+        if "job_id" in _columns(conn, "application_review_decisions")
+        else "job_key"
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
+        ON application_review_decisions(
+            tenant_id,
+            %s,
+            decided_at DESC
+        )
+        """
+        % review_reference
     )
 
 

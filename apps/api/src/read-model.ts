@@ -1503,12 +1503,26 @@ function appendReviewDecisionAuditEntries(
   seenReferences: Set<string>,
 ): void {
   if (!tableExists(db, "application_review_decisions")) return;
+  const stableReferences = tableColumnSet(
+    db,
+    "application_review_decisions",
+  ).has("job_id");
+  const jobJoin = stableReferences
+    ? `JOIN jobs review_jobs
+         ON review_jobs.tenant_id = decisions.tenant_id
+        AND review_jobs.job_id = decisions.job_id`
+    : "";
+  const jobPredicate = stableReferences
+    ? "review_jobs.url = ?"
+    : "decisions.job_key = ?";
   const rows = allRows<ApplicationReviewDecisionAuditRow>(
     db,
     `SELECT decision_id, decision, reason, decided_by, decided_at
-       FROM application_review_decisions
-      WHERE tenant_id = ? AND job_key = ?
-      ORDER BY decided_at ASC, decision_id ASC`,
+       FROM application_review_decisions decisions
+       ${jobJoin}
+      WHERE decisions.tenant_id = ?
+        AND ${jobPredicate}
+      ORDER BY decisions.decided_at ASC, decisions.decision_id ASC`,
     [DEFAULT_TENANT, jobId],
   );
   for (const row of rows) {

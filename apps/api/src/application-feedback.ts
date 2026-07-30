@@ -51,6 +51,7 @@ import {
   jobReferenceColumn,
   jobReferenceJoinToJobs,
   jobReferencePredicateForUrl,
+  stableJobIdForUrl,
   tableExists,
   type SqliteDatabase,
   type SqliteValue,
@@ -65,6 +66,7 @@ import { InputError, resolveJobUrl } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
 const DEFAULT_PROFILE_ID = "default";
+const APPLICATION_REVIEW_REFERENCE_SCHEMA_VERSION = 20;
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"];
 const POSITION_PREVIEW_CHAR_LIMIT = 6000;
 const MATERIAL_PREVIEW_CHAR_LIMIT = 4000;
@@ -151,12 +153,48 @@ interface SuggestionRow extends Record<string, unknown> {
   decided_outcome_id: string | null;
 }
 
+type ApplicationReviewReferenceColumn = "job_id" | "job_key";
+
+function applicationReviewReferenceColumn(
+  db: SqliteDatabase,
+): ApplicationReviewReferenceColumn {
+  const columns = tableColumnSet(db, "application_review_decisions");
+  return columns.has("job_id") ? "job_id" : "job_key";
+}
+
+function applicationReviewReferenceForUrl(
+  db: SqliteDatabase,
+  jobUrl: string,
+): string {
+  if (applicationReviewReferenceColumn(db) === "job_key") {
+    return jobUrl;
+  }
+  const jobId = stableJobIdForUrl(db, jobUrl, DEFAULT_TENANT);
+  if (!jobId) {
+    throw new InputError(`No stable Job identity for ${jobUrl}.`);
+  }
+  return jobId;
+}
+
 export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
+  const schemaVersion = db.pragma("user_version", {
+    simple: true,
+  }) as number;
+  const stableReviewSchema =
+    schemaVersion >= APPLICATION_REVIEW_REFERENCE_SCHEMA_VERSION;
+  const createdReviewReference = stableReviewSchema
+    ? "job_id"
+    : "job_key";
+  const reviewForeignKey = stableReviewSchema
+    ? `,
+      FOREIGN KEY (tenant_id, job_id)
+        REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE`
+    : "";
   db.exec(`
     CREATE TABLE IF NOT EXISTS application_review_decisions (
       tenant_id    TEXT NOT NULL DEFAULT 'local',
       decision_id  TEXT NOT NULL,
-      job_key      TEXT NOT NULL,
+      ${createdReviewReference} TEXT NOT NULL,
       decision     TEXT NOT NULL,
       reason       TEXT,
       decided_by   TEXT NOT NULL DEFAULT 'user',
@@ -168,9 +206,8 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
       email_recipient TEXT,
       email_attachment_artifact_id TEXT,
       PRIMARY KEY (tenant_id, decision_id)
+      ${reviewForeignKey}
     );
-    CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
-      ON application_review_decisions(tenant_id, job_key, decided_at DESC);
 
     CREATE TABLE IF NOT EXISTS application_outcomes (
       tenant_id     TEXT NOT NULL DEFAULT 'local',
@@ -235,6 +272,15 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
       ON application_outcome_suggestions(tenant_id, status, created_at DESC);
   `);
   ensureApplicationReviewDecisionColumns(db);
+  const reviewReference = applicationReviewReferenceColumn(db);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
+      ON application_review_decisions(
+        tenant_id,
+        ${reviewReference},
+        decided_at DESC
+      );
+  `);
   ensureApplicationOutcomeColumns(db);
   ensureRepeatApplicationTables(db);
 }
@@ -341,6 +387,16 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
     db,
     "job_stage_states",
   ) === "job_id";
+  const reviewReference = applicationReviewReferenceColumn(db);
+  const stableReviewReferences = reviewReference === "job_id";
+  const reviewJobKeySelect = stableReviewReferences
+    ? "review_jobs.url"
+    : "review_decisions.job_key";
+  const reviewJobsJoin = stableReviewReferences
+    ? `JOIN jobs review_jobs
+         ON review_jobs.tenant_id = review_decisions.tenant_id
+        AND review_jobs.job_id = review_decisions.job_id`
+    : "";
   const rows = allRows<ReviewQueueRow>(
     db,
     `
@@ -349,15 +405,25 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
              materials_generation, profile_version, application_url,
              partial_override_run_id, email_recipient, email_attachment_artifact_id
       FROM (
-        SELECT decision_id, job_key, decision, decided_at,
-               materials_generation, profile_version, application_url,
-               partial_override_run_id, email_recipient, email_attachment_artifact_id,
+        SELECT review_decisions.decision_id,
+               ${reviewJobKeySelect} AS job_key,
+               review_decisions.decision,
+               review_decisions.decided_at,
+               review_decisions.materials_generation,
+               review_decisions.profile_version,
+               review_decisions.application_url,
+               review_decisions.partial_override_run_id,
+               review_decisions.email_recipient,
+               review_decisions.email_attachment_artifact_id,
                ROW_NUMBER() OVER (
-                 PARTITION BY tenant_id, job_key
-                 ORDER BY decided_at DESC, decision_id DESC
+                 PARTITION BY review_decisions.tenant_id,
+                              review_decisions.${reviewReference}
+                 ORDER BY review_decisions.decided_at DESC,
+                          review_decisions.decision_id DESC
                ) AS row_num
-        FROM application_review_decisions
-        WHERE tenant_id = ?
+        FROM application_review_decisions review_decisions
+        ${reviewJobsJoin}
+        WHERE review_decisions.tenant_id = ?
       )
       WHERE row_num = 1
     ),
@@ -549,17 +615,22 @@ export function recordApplyReviewDecision(
     emailRecipient: emailCandidate?.recipient ?? null,
     emailAttachmentArtifactId: emailCandidate?.attachmentArtifactId ?? null,
   };
+  const reviewReference = applicationReviewReferenceColumn(db);
+  const storedJobReference = applicationReviewReferenceForUrl(
+    db,
+    jobUrl,
+  );
 
   db.prepare(
     `INSERT INTO application_review_decisions (
-       tenant_id, decision_id, job_key, decision, reason, decided_by, decided_at,
+       tenant_id, decision_id, ${reviewReference}, decision, reason, decided_by, decided_at,
        materials_generation, profile_version, application_url, partial_override_run_id,
        email_recipient, email_attachment_artifact_id
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     DEFAULT_TENANT,
     decision.decisionId,
-    decision.jobKey,
+    storedJobReference,
     decision.decision,
     decision.reason,
     decision.decidedBy,

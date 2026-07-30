@@ -705,15 +705,23 @@ def test_stale_apply_approval_does_not_consume_repeat_override(
     db_path = tmp_path / "jobs.db"
     conn = _seed_equivalent_repeat(db_path)
     _insert_override(conn, evaluate_repeat_application(conn, TARGET))
+    target_job_id = conn.execute(
+        """
+        SELECT job_id
+        FROM jobs
+        WHERE tenant_id = 'local' AND url = ?
+        """,
+        (TARGET,),
+    ).fetchone()[0]
     conn.execute(
         """
         INSERT INTO application_review_decisions (
-          tenant_id, decision_id, job_key, decision, reason, decided_by, decided_at,
+          tenant_id, decision_id, job_id, decision, reason, decided_by, decided_at,
           materials_generation, profile_version, application_url
         ) VALUES ('local', 'stale-approval', ?, 'approve_submit', 'test', 'qa', ?,
                   0, 1, ?)
         """,
-        (TARGET, NOW, f"{TARGET}/apply"),
+        (target_job_id, NOW, f"{TARGET}/apply"),
     )
     conn.commit()
     monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
@@ -750,7 +758,7 @@ def test_schema_v5_migrates_additively_without_changing_application_facts(
         (PRIOR,),
     ).fetchall()
 
-    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 19
+    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 20
     assert [tuple(row) for row in after] == [tuple(row) for row in before]
     assert "metadata_json" in {
         str(row[1]) for row in migrated.execute("PRAGMA table_info(job_stage_states)").fetchall()

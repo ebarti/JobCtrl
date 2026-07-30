@@ -74,7 +74,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v19 (compensation references): canonical posted compensation facts and market
 # estimates reference the stable Job aggregate. Alias collisions keep the
 # newest recorded fact/estimate with a deterministic survivor tie-break.
-SCHEMA_VERSION = 19
+# v20 (application-review references): every append-only Apply Review decision
+# references the tenant-scoped stable Job aggregate. URL aliases, including
+# UUID-shaped posting URLs, are resolved URL-first without collapsing history.
+SCHEMA_VERSION = 20
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -224,6 +227,7 @@ def _schema_migrations() -> tuple[
         (17, ensure_resume_template_references_v17),
         (18, ensure_interview_prep_references_v18),
         (19, ensure_compensation_references_v19),
+        (20, ensure_application_review_references_v20),
     )
 
 
@@ -351,28 +355,48 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_posted_compensation_tables(conn)
     ensure_market_compensation_tables(conn)
     ensure_state_tables(conn)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS application_review_decisions (
-            tenant_id           TEXT NOT NULL DEFAULT 'local',
-            decision_id         TEXT PRIMARY KEY,
-            job_key             TEXT NOT NULL,
-            decision            TEXT NOT NULL,
-            reason              TEXT,
-            decided_by          TEXT,
-            decided_at          TEXT NOT NULL,
-            materials_generation INTEGER,
-            profile_version     INTEGER,
-            application_url     TEXT,
-            partial_override_run_id TEXT,
-            email_recipient TEXT,
-            email_attachment_artifact_id TEXT
-        )
-    """)
+    if current_version >= _APPLICATION_REVIEW_REFERENCE_SCHEMA_VERSION:
+        if not _table_columns(conn, "application_review_decisions"):
+            _create_application_review_reference_table_v20(
+                conn,
+                table="application_review_decisions",
+            )
+    else:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS application_review_decisions (
+                tenant_id           TEXT NOT NULL DEFAULT 'local',
+                decision_id         TEXT PRIMARY KEY,
+                job_key             TEXT NOT NULL,
+                decision            TEXT NOT NULL,
+                reason              TEXT,
+                decided_by          TEXT,
+                decided_at          TEXT NOT NULL,
+                materials_generation INTEGER,
+                profile_version     INTEGER,
+                application_url     TEXT,
+                partial_override_run_id TEXT,
+                email_recipient TEXT,
+                email_attachment_artifact_id TEXT
+            )
+        """)
     ensure_application_review_decision_columns(conn)
+    application_review_columns = _table_columns(
+        conn,
+        "application_review_decisions",
+    )
+    application_review_reference = (
+        "job_id"
+        if "job_id" in application_review_columns
+        else "job_key"
+    )
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
-        ON application_review_decisions(tenant_id, job_key, decided_at DESC)
-    """)
+        ON application_review_decisions(
+            tenant_id,
+            %s,
+            decided_at DESC
+        )
+    """ % application_review_reference)
     ensure_profile_tables(conn)
     ensure_score_tables(conn)
     ensure_tailoring_policy_tables(conn)
@@ -4630,6 +4654,13 @@ def _reassign_discovery_identity_references(
         )
     if _has_compensation_reference_schema_v19(conn):
         _reassign_compensation_references_v19(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+    if _has_application_review_reference_schema_v20(conn):
+        _reassign_application_review_references_v20(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
@@ -12452,6 +12483,277 @@ def _reassign_compensation_references_v19(
     _verify_compensation_references_v19(
         conn,
         expected_counts=expected_counts,
+    )
+
+
+_APPLICATION_REVIEW_REFERENCE_SCHEMA_VERSION = 20
+_APPLICATION_REVIEW_REFERENCE_TABLE = "application_review_decisions"
+
+
+def _create_application_review_reference_table_v20(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            tenant_id                   TEXT NOT NULL DEFAULT 'local',
+            decision_id                 TEXT NOT NULL,
+            job_id                      TEXT NOT NULL,
+            decision                    TEXT NOT NULL,
+            reason                      TEXT,
+            decided_by                  TEXT DEFAULT 'user',
+            decided_at                  TEXT NOT NULL,
+            materials_generation        INTEGER,
+            profile_version             INTEGER,
+            application_url             TEXT,
+            partial_override_run_id     TEXT,
+            email_recipient             TEXT,
+            email_attachment_artifact_id TEXT,
+            PRIMARY KEY (tenant_id, decision_id),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_application_review_reference_index_v20(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
+        ON application_review_decisions(
+            tenant_id,
+            job_id,
+            decided_at DESC
+        )
+        """
+    )
+
+
+def _has_application_review_reference_schema_v20(
+    conn: sqlite3.Connection,
+) -> bool:
+    table = _APPLICATION_REVIEW_REFERENCE_TABLE
+    return (
+        "job_id" in _table_columns(conn, table)
+        and "job_key" not in _table_columns(conn, table)
+        and _primary_key_columns(conn, table)
+        == ("tenant_id", "decision_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            table,
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            table,
+            "idx_application_review_decisions_job",
+            ("tenant_id", "job_id", "decided_at"),
+            unique=False,
+        )
+    )
+
+
+def _canonical_application_review_rows_v20(
+    conn: sqlite3.Connection,
+) -> tuple[tuple[str, ...], list[tuple[Any, ...]]]:
+    table = _APPLICATION_REVIEW_REFERENCE_TABLE
+    columns = tuple(
+        str(row[1])
+        for row in conn.execute(
+            f'PRAGMA table_info("{table}")'
+        ).fetchall()
+        if str(row[1]) not in {"tenant_id", "job_key"}
+    )
+    select_columns = ", ".join(f'"{column}"' for column in columns)
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, job_key, {select_columns}
+        FROM "{table}"
+        ORDER BY tenant_id, decision_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        legacy_job_key = str(row[1])
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=legacy_job_key,
+            legacy_url=True,
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "application-review reference migration could not resolve "
+                f"application_review_decisions.job_key={legacy_job_key!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        canonical.append((tenant_id, stable_job_id, *tuple(row[2:])))
+    return columns, canonical
+
+
+def ensure_application_review_references_v20(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move append-only Apply Review decisions to stable JobIds."""
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _APPLICATION_REVIEW_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _COMPENSATION_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "application-review reference migration requires compensation "
+            "schema v19"
+        )
+
+    conn.execute("SAVEPOINT application_review_references_v20")
+    try:
+        if not _has_compensation_reference_schema_v19(conn):
+            raise RuntimeError(
+                "application-review reference migration requires the stable "
+                "compensation reference schema"
+            )
+        if _has_application_review_reference_schema_v20(conn):
+            expected_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) "
+                    "FROM application_review_decisions"
+                ).fetchone()[0]
+            )
+        else:
+            columns, rows = _canonical_application_review_rows_v20(conn)
+            conn.execute(
+                "DROP TABLE IF EXISTS application_review_decisions_v20"
+            )
+            _create_application_review_reference_table_v20(
+                conn,
+                table="application_review_decisions_v20",
+            )
+            insert_columns = (
+                "tenant_id, job_id, "
+                + ", ".join(f'"{column}"' for column in columns)
+            )
+            placeholders = ", ".join(
+                "?" for _ in range(len(columns) + 2)
+            )
+            conn.executemany(
+                "INSERT INTO application_review_decisions_v20 "
+                f"({insert_columns}) VALUES ({placeholders})",
+                rows,
+            )
+            conn.execute('DROP TABLE "application_review_decisions"')
+            conn.execute(
+                'ALTER TABLE "application_review_decisions_v20" '
+                'RENAME TO "application_review_decisions"'
+            )
+            _create_application_review_reference_index_v20(conn)
+            expected_count = len(rows)
+        _verify_application_review_references_v20(
+            conn,
+            expected_count=expected_count,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_APPLICATION_REVIEW_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT application_review_references_v20"
+        )
+        conn.commit()
+    except BaseException:
+        conn.execute(
+            "ROLLBACK TO SAVEPOINT application_review_references_v20"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT application_review_references_v20"
+        )
+        raise
+
+    return [_APPLICATION_REVIEW_REFERENCE_TABLE]
+
+
+def _verify_application_review_references_v20(
+    conn: sqlite3.Connection,
+    *,
+    expected_count: int,
+) -> None:
+    if not _has_application_review_reference_schema_v20(conn):
+        raise RuntimeError(
+            "application-review reference migration did not create the "
+            "stable reference schema"
+        )
+    observed_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM application_review_decisions"
+        ).fetchone()[0]
+    )
+    if observed_count != expected_count:
+        raise RuntimeError(
+            "application-review reference migration changed append-only "
+            f"history count: expected {expected_count}, "
+            f"found {observed_count}"
+        )
+    orphan = conn.execute(
+        """
+        SELECT decisions.job_id
+        FROM application_review_decisions AS decisions
+        LEFT JOIN jobs
+          ON jobs.tenant_id = decisions.tenant_id
+         AND jobs.job_id = decisions.job_id
+        WHERE jobs.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise RuntimeError(
+            "application-review reference migration left an unresolved JobId"
+        )
+    for row in conn.execute(
+        "SELECT DISTINCT job_id FROM application_review_decisions"
+    ).fetchall():
+        _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "application-review reference migration found a foreign-key "
+            "violation"
+        )
+
+
+def _reassign_application_review_references_v20(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    if losing_job_id == surviving_job_id:
+        return
+    expected_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM application_review_decisions"
+        ).fetchone()[0]
+    )
+    conn.execute(
+        """
+        UPDATE application_review_decisions
+        SET job_id = ?
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (surviving_job_id, tenant_id, losing_job_id),
+    )
+    _verify_application_review_references_v20(
+        conn,
+        expected_count=expected_count,
     )
 
 

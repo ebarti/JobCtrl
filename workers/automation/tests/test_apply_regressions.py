@@ -170,16 +170,37 @@ def _insert_review_decision(
     application_url: str | None = None,
     partial_override_run_id: str | None = None,
 ) -> None:
+    review_columns = {
+        str(row[1])
+        for row in conn.execute(
+            "PRAGMA table_info(application_review_decisions)"
+        ).fetchall()
+    }
+    reference_column = (
+        "job_id" if "job_id" in review_columns else "job_key"
+    )
+    reference = job_key
+    if reference_column == "job_id":
+        row = conn.execute(
+            """
+            SELECT job_id
+            FROM jobs
+            WHERE tenant_id = 'local' AND url = ?
+            """,
+            (job_key,),
+        ).fetchone()
+        assert row is not None
+        reference = str(row[0])
     conn.execute(
-        """
+        f"""
         INSERT INTO application_review_decisions (
-            tenant_id, decision_id, job_key, decision, reason, decided_by, decided_at,
+            tenant_id, decision_id, {reference_column}, decision, reason, decided_by, decided_at,
             materials_generation, profile_version, application_url, partial_override_run_id
         ) VALUES ('local', ?, ?, ?, 'test', 'pytest', ?, ?, ?, ?, ?)
         """,
         (
             decision_id or f"decision-{decision}-{decided_at}",
-            job_key,
+            reference,
             decision,
             decided_at,
             materials_generation,

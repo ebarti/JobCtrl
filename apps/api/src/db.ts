@@ -9,7 +9,7 @@ export type SqliteValue = string | number | bigint | null;
 // writer that stamps ``PRAGMA user_version``; the API only reads it to fail
 // closed on a database written by a newer build. Bump both constants together
 // whenever the schema shape changes.
-export const SUPPORTED_SCHEMA_VERSION = 19;
+export const SUPPORTED_SCHEMA_VERSION = 20;
 
 export class IncompatibleSchemaVersionError extends Error {
   constructor(current: number) {

@@ -593,6 +593,35 @@ def _latest_decision_cte(conn: sqlite3.Connection) -> tuple[str, list[Any]]:
             """,
             [],
         )
+    stable_references = (
+        "job_id"
+        in _table_columns(conn, "application_review_decisions")
+    )
+    if stable_references:
+        return (
+            """
+            WITH latest_digest_decision AS (
+                SELECT job_key, decision
+                FROM (
+                    SELECT jobs.url AS job_key,
+                           decisions.decision,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY decisions.tenant_id,
+                                            decisions.job_id
+                               ORDER BY decisions.decided_at DESC,
+                                        decisions.decision_id DESC
+                           ) AS row_num
+                    FROM application_review_decisions decisions
+                    JOIN jobs
+                      ON jobs.tenant_id = decisions.tenant_id
+                     AND jobs.job_id = decisions.job_id
+                    WHERE decisions.tenant_id = ?
+                )
+                WHERE row_num = 1
+            )
+            """,
+            [TENANT_ID],
+        )
     return (
         """
         WITH latest_digest_decision AS (

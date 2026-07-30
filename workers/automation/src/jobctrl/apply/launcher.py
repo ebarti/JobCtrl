@@ -79,6 +79,8 @@ from jobctrl.database import (
     _SCORE_DOWNSTREAM_STATE_JOIN,
     _SCORE_CURRENT_FOR_DOWNSTREAM,
     _SCORE_ELIGIBLE_FOR_DOWNSTREAM,
+    _resolve_job_reference_value,
+    _table_columns,
     _order_rows_by_feedback,
     ensure_application_review_decision_columns,
     get_connection,
@@ -171,16 +173,32 @@ def _attempt_count_for(conn, url: str) -> int:
 
 def _latest_apply_review_decision(conn, *, tenant_id: str, job_key: str) -> dict[str, Any] | None:
     ensure_application_review_decision_columns(conn)
+    stable_references = (
+        "job_id"
+        in _table_columns(conn, "application_review_decisions")
+    )
+    reference_column = "job_id" if stable_references else "job_key"
+    reference = job_key
+    if stable_references:
+        resolved = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=job_key,
+            legacy_url=True,
+        )
+        if resolved is None:
+            return None
+        reference = resolved
     row = conn.execute(
-        """
+        f"""
         SELECT decision, materials_generation, profile_version, application_url,
                partial_override_run_id, email_recipient, email_attachment_artifact_id
         FROM application_review_decisions
-        WHERE tenant_id = ? AND job_key = ?
+        WHERE tenant_id = ? AND {reference_column} = ?
         ORDER BY decided_at DESC, decision_id DESC
         LIMIT 1
         """,
-        (tenant_id, job_key),
+        (tenant_id, reference),
     ).fetchone()
     if row is None:
         return None

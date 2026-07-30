@@ -29,6 +29,7 @@ import {
   jobReferenceColumn,
   jobReferenceForUrl,
   jobReferencePredicateForUrl,
+  tableColumnSet,
   tableExists,
   type SqliteDatabase,
   type SqliteValue,
@@ -850,6 +851,11 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
     }
   }
   deleteWhere(db, "job_events", "job_url = ?", [jobUrl]);
+  deleteApplicationReviewDecisionReferences(
+    db,
+    jobId,
+    jobUrl,
+  );
   deleteJobReferences(db, "job_artifacts", jobId, jobUrl);
   deleteScoringJobReferences(db, jobId, jobUrl);
   for (const tableName of [
@@ -1015,6 +1021,34 @@ function deleteScoringJobReferences(
     if (!reference) continue;
     deleteWhere(db, tableName, `${referenceColumn} = ?`, [reference]);
   }
+}
+
+function deleteApplicationReviewDecisionReferences(
+  db: SqliteDatabase,
+  jobId: string | undefined,
+  jobUrl: string,
+): void {
+  if (!tableExists(db, "application_review_decisions")) return;
+  const stableReferences = tableColumnSet(
+    db,
+    "application_review_decisions",
+  ).has("job_id");
+  if (stableReferences) {
+    if (!jobId) return;
+    deleteWhere(
+      db,
+      "application_review_decisions",
+      "tenant_id = ? AND job_id = ?",
+      ["local", jobId],
+    );
+    return;
+  }
+  deleteWhere(
+    db,
+    "application_review_decisions",
+    "tenant_id = ? AND job_key = ?",
+    ["local", jobUrl],
+  );
 }
 
 function deleteJobReferences(

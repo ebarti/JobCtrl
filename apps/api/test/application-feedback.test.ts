@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ensureApplicationFeedbackTables,
   listApplyReviewQueue,
+  recordApplyReviewDecision,
 } from "../src/application-feedback.js";
 import type { ApplyReviewQueueResponse } from "../src/contracts.js";
 import { GmailFeedbackScanError, type GmailFeedbackScanner } from "../src/gmail-feedback-worker.js";
@@ -44,6 +45,78 @@ afterEach(() => {
 });
 
 describe("application feedback API", () => {
+  it("reads stable JobId review decisions through URL-shaped projections", () => {
+    const db = new Database(options.dbPath);
+    ensureApplicationFeedbackTables(db);
+    db.exec(`
+      ALTER TABLE jobs
+        ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local';
+      ALTER TABLE jobs
+        ADD COLUMN job_id TEXT;
+      UPDATE jobs
+      SET job_id = CASE url
+        WHEN '${READY_JOB}' THEN '11111111-1111-4111-8111-111111111111'
+        WHEN '${DRY_RUN_JOB}' THEN '22222222-2222-4222-8222-222222222222'
+        WHEN '${APPLIED_JOB}' THEN '33333333-3333-4333-8333-333333333333'
+        ELSE printf(
+          '44444444-4444-4444-8444-%012d',
+          rowid
+        )
+      END;
+      CREATE UNIQUE INDEX idx_jobs_tenant_job_id
+        ON jobs(tenant_id, job_id);
+      DROP TABLE application_review_decisions;
+      CREATE TABLE application_review_decisions (
+        tenant_id                    TEXT NOT NULL DEFAULT 'local',
+        decision_id                  TEXT NOT NULL,
+        job_id                       TEXT NOT NULL,
+        decision                     TEXT NOT NULL,
+        reason                       TEXT,
+        decided_by                   TEXT DEFAULT 'user',
+        decided_at                   TEXT NOT NULL,
+        materials_generation         INTEGER,
+        profile_version              INTEGER,
+        application_url              TEXT,
+        partial_override_run_id      TEXT,
+        email_recipient              TEXT,
+        email_attachment_artifact_id TEXT,
+        PRIMARY KEY (tenant_id, decision_id),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_application_review_decisions_job
+        ON application_review_decisions(
+          tenant_id,
+          job_id,
+          decided_at DESC
+        );
+    `);
+
+    expect(
+      recordApplyReviewDecision(
+        db,
+        READY_JOB,
+        {
+          decision: "approve_dry_run",
+          reason: "Validate safely first.",
+          decidedBy: "user",
+        },
+      ).decision,
+    ).toMatchObject({
+      jobKey: READY_JOB,
+      decision: "approve_dry_run",
+    });
+    expect(
+      queueItem(listApplyReviewQueue(db), READY_JOB),
+    ).toMatchObject({
+      review: {
+        state: "approved_dry_run",
+        decision: "approve_dry_run",
+      },
+    });
+    db.close();
+  });
+
   it("lists only apply-review eligible jobs with readiness and latest run context", async () => {
     const app = buildApp(options);
 
