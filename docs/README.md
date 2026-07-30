@@ -31,6 +31,19 @@ has one defining page; other pages summarize it briefly and link to that owner.
 - [`user/normal-flows.md`](user/normal-flows.md): the complete supervised daily
   workflow and the web/CLI surfaces for each step.
 
+### Guides
+
+- [`guides/index.md`](guides/index.md): practical guide hub and reading paths.
+- [`guides/local-first-job-search-automation.md`](guides/local-first-job-search-automation.md):
+  local storage, deliberate network boundaries, durable workflows, and user
+  control.
+- [`guides/open-source-job-application-tracker.md`](guides/open-source-job-application-tracker.md):
+  application records, evidence, canonical identity, outcomes, and open-source
+  inspectability.
+- [`guides/resume-tailoring-without-fabrication.md`](guides/resume-tailoring-without-fabrication.md):
+  source authority, candidate selection, rendered validation, and accepted
+  artifact history.
+
 ### The Job-Search Lifecycle
 
 - [`user/candidate-profile.md`](user/candidate-profile.md): canonical candidate

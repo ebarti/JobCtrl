@@ -99,7 +99,7 @@ function canonicalUrlForPage(docPath: string): string {
   return new URL(route.startsWith("/") ? route : `/${route}`, DOCS_SITE_URL).toString();
 }
 
-// One guide, one navigation tree. The first two groups answer the questions a
+// One documentation tree. The first groups answer the questions a
 // new reader asks; contributor, architecture, and reference depth stays
 // available everywhere through collapsed groups. Every route appears once so
 // active-link state and previous/next navigation remain unambiguous.
@@ -115,6 +115,25 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Product Tour", link: "/user/product-tour" },
       { text: "Getting Started", link: "/user/getting-started" },
       { text: "Daily Workflow", link: "/user/normal-flows" },
+    ],
+  },
+  {
+    text: "Guides",
+    collapsed: false,
+    items: [
+      { text: "JobCtrl Guides", link: "/guides/" },
+      {
+        text: "Local-first Job Search Automation",
+        link: "/guides/local-first-job-search-automation",
+      },
+      {
+        text: "Open-source Job Application Tracker",
+        link: "/guides/open-source-job-application-tracker",
+      },
+      {
+        text: "Resume Tailoring Without Fabrication",
+        link: "/guides/resume-tailoring-without-fabrication",
+      },
     ],
   },
   {
