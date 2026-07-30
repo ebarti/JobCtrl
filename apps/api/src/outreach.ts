@@ -38,7 +38,12 @@ import {
 import {
   allRows,
   getRow,
+  hasCompositeJobIdForeignKeyAction,
   jobKeyReferencePredicateForUrl,
+  jobReferenceColumn,
+  jobReferenceForUrl,
+  tableColumnSet,
+  tableIndexColumns,
   tableExists,
   type SqliteDatabase,
   type SqliteValue,
@@ -59,18 +64,28 @@ export class OutreachInputError extends Error {}
 export class OutreachDraftGatesNotPassedError extends Error {}
 
 export function ensureOutreachTables(db: SqliteDatabase): void {
+  const schemaVersion = Number(
+    db.pragma("user_version", { simple: true }),
+  );
+  const stableReferences = schemaVersion >= 25;
+  const referenceColumn = stableReferences ? "job_id" : "job_url";
+  const foreignKey = stableReferences
+    ? `, FOREIGN KEY (tenant_id, job_id)
+         REFERENCES jobs(tenant_id, job_id) ON DELETE RESTRICT`
+    : "";
   db.exec(`
     CREATE TABLE IF NOT EXISTS outreach_threads (
       tenant_id        TEXT NOT NULL DEFAULT 'local',
       thread_id        TEXT NOT NULL,
       contact_id       TEXT NOT NULL,
-      job_url          TEXT,
+      ${referenceColumn} TEXT,
       created_at       TEXT NOT NULL,
       updated_at       TEXT NOT NULL,
       follow_up_due_at TEXT,
       follow_up_basis  TEXT,
       follow_up_state  TEXT NOT NULL DEFAULT 'none',
       PRIMARY KEY (tenant_id, thread_id)
+      ${foreignKey}
     );
     CREATE TABLE IF NOT EXISTS outreach_drafts (
       tenant_id         TEXT NOT NULL DEFAULT 'local',
@@ -98,13 +113,44 @@ export function ensureOutreachTables(db: SqliteDatabase): void {
       logged_at        TEXT NOT NULL,
       PRIMARY KEY (tenant_id, send_log_id)
     );
-    CREATE INDEX IF NOT EXISTS idx_outreach_threads_contact
-      ON outreach_threads(tenant_id, contact_id);
     CREATE INDEX IF NOT EXISTS idx_outreach_drafts_thread
       ON outreach_drafts(tenant_id, thread_id, generation DESC);
     CREATE INDEX IF NOT EXISTS idx_outreach_send_logs_thread
       ON outreach_send_logs(tenant_id, thread_id);
   `);
+  const columns = tableColumnSet(db, "outreach_threads");
+  if (
+    stableReferences
+    && (!columns.has("job_id") || columns.has("job_url"))
+  ) {
+    throw new Error(
+      "Schema v25 requires stable outreach_threads.job_id references.",
+    );
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_outreach_threads_contact
+       ON outreach_threads(tenant_id, contact_id, ${referenceColumn})`,
+  );
+  if (
+    stableReferences
+    && (
+      !hasCompositeJobIdForeignKeyAction(
+        db,
+        "outreach_threads",
+        "job_id",
+        "RESTRICT",
+      )
+      || tableIndexColumns(
+        db,
+        "outreach_threads",
+        "idx_outreach_threads_contact",
+      ).join(",") !== "tenant_id,contact_id,job_id"
+    )
+  ) {
+    throw new Error(
+      "Schema v25 requires the restrictive outreach-thread JobId contract.",
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -597,9 +643,30 @@ type SendLogRow = {
   logged_at: string | null;
 };
 
-const THREAD_COLUMNS =
-  "thread_id, contact_id, job_url, created_at, updated_at, " +
-  "follow_up_due_at, follow_up_basis, follow_up_state";
+function threadColumns(db: SqliteDatabase): string {
+  const stableReferences =
+    jobReferenceColumn(db, "outreach_threads") === "job_id";
+  return [
+    "outreach_threads.thread_id",
+    "outreach_threads.contact_id",
+    stableReferences
+      ? "jobs.url AS job_url"
+      : "outreach_threads.job_url AS job_url",
+    "outreach_threads.created_at",
+    "outreach_threads.updated_at",
+    "outreach_threads.follow_up_due_at",
+    "outreach_threads.follow_up_basis",
+    "outreach_threads.follow_up_state",
+  ].join(", ");
+}
+
+function threadJobJoin(db: SqliteDatabase): string {
+  return jobReferenceColumn(db, "outreach_threads") === "job_id"
+    ? `LEFT JOIN jobs
+         ON jobs.tenant_id = outreach_threads.tenant_id
+        AND jobs.job_id = outreach_threads.job_id`
+    : "";
+}
 
 type DraftRow = {
   draft_id: string;
@@ -628,7 +695,11 @@ function loadThreadRow(db: SqliteDatabase, threadId: string): ThreadRow | null {
   return (
     getRow<ThreadRow>(
       db,
-      `SELECT ${THREAD_COLUMNS} FROM outreach_threads WHERE tenant_id = ? AND thread_id = ?`,
+      `SELECT ${threadColumns(db)}
+         FROM outreach_threads
+         ${threadJobJoin(db)}
+        WHERE outreach_threads.tenant_id = ?
+          AND outreach_threads.thread_id = ?`,
       [TENANT_ID, threadId],
     ) ?? null
   );
@@ -640,19 +711,46 @@ function loadThreadForContact(
   jobId: string | null,
 ): ThreadRow | null {
   const job = (jobId ?? "").trim();
+  const referenceColumn = jobReferenceColumn(
+    db,
+    "outreach_threads",
+  );
   if (job) {
+    let physicalReference: string;
+    try {
+      physicalReference = jobReferenceForUrl(
+        db,
+        "outreach_threads",
+        job,
+        TENANT_ID,
+      );
+    } catch {
+      throw new OutreachInputError(
+        `No stable Job identity exists for ${job}.`,
+      );
+    }
     return (
       getRow<ThreadRow>(
         db,
-        `SELECT ${THREAD_COLUMNS} FROM outreach_threads WHERE tenant_id = ? AND contact_id = ? AND job_url = ?`,
-        [TENANT_ID, contactId, job],
+        `SELECT ${threadColumns(db)}
+           FROM outreach_threads
+           ${threadJobJoin(db)}
+          WHERE outreach_threads.tenant_id = ?
+            AND outreach_threads.contact_id = ?
+            AND outreach_threads.${referenceColumn} = ?`,
+        [TENANT_ID, contactId, physicalReference],
       ) ?? null
     );
   }
   return (
     getRow<ThreadRow>(
       db,
-      `SELECT ${THREAD_COLUMNS} FROM outreach_threads WHERE tenant_id = ? AND contact_id = ? AND job_url IS NULL`,
+      `SELECT ${threadColumns(db)}
+         FROM outreach_threads
+         ${threadJobJoin(db)}
+        WHERE outreach_threads.tenant_id = ?
+          AND outreach_threads.contact_id = ?
+          AND outreach_threads.${referenceColumn} IS NULL`,
       [TENANT_ID, contactId],
     ) ?? null
   );

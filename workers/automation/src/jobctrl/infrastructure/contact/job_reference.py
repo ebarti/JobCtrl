@@ -1,9 +1,10 @@
-"""Compatibility boundary for Contact-owned optional Job links.
+"""Compatibility boundary for Contact and Outreach optional Job links.
 
-Schema v24 stores tenant-scoped stable ``JobId`` values while the Contact
-domain and public DTOs remain URL-shaped until the Phase-4 cutover. Resolution
-is deliberately URL-first so a UUID-shaped posting URL cannot bind to an
-unrelated row whose stable id happens to contain the same text.
+Schemas v24-v25 store tenant-scoped stable ``JobId`` values while the Contact,
+ContactResearch, and Outreach domains and public DTOs remain URL-shaped until
+the Phase-4 cutover. Resolution is deliberately URL-first so a UUID-shaped
+posting URL cannot bind to an unrelated row whose stable id happens to contain
+the same text.
 """
 
 from __future__ import annotations

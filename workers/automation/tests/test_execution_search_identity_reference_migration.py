@@ -261,7 +261,7 @@ def test_v8_execution_and_receipts_migrate_to_stable_job_id_and_reopen(
     init_db(db_path)
     close_connection(db_path)
 
-    assert _user_version(db_path) == SCHEMA_VERSION == 24
+    assert _user_version(db_path) == SCHEMA_VERSION == 25
     assert "job_id" in _columns(db_path, "discovery_execution_jobs")
     assert "job_url" not in _columns(db_path, "discovery_execution_jobs")
     assert "job_id" in _columns(db_path, "discovery_search_unit_jobs")

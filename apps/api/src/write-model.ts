@@ -862,6 +862,7 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
     jobId,
     jobUrl,
   );
+  detachOrDeleteOutreachReferences(db, jobId, jobUrl);
   detachOrDeleteContactReferences(db, jobId, jobUrl);
   deleteJobReferences(db, "job_artifacts", jobId, jobUrl);
   deleteScoringJobReferences(db, jobId, jobUrl);
@@ -918,6 +919,108 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
   ]);
   deleteWhere(db, "discovery_feedback", "job_key = ?", [jobUrl]);
   deleteWhere(db, "jobs", "url = ?", [jobUrl]);
+}
+
+function detachOrDeleteOutreachReferences(
+  db: SqliteDatabase,
+  jobId: string | undefined,
+  jobUrl: string,
+): void {
+  if (!tableExists(db, "outreach_threads")) return;
+  const referenceColumn = jobReferenceColumn(
+    db,
+    "outreach_threads",
+  );
+  const reference =
+    referenceColumn === "job_id" ? jobId : jobUrl;
+  if (!reference) return;
+
+  // A Contact with no employer is owned only by the deleted Job and is purged
+  // by the contact cleanup below. Remove its complete outreach aggregate first
+  // so drafts and user-attested send logs cannot become orphaned. Employer-
+  // scoped contacts survive; their outreach history is retained and detached
+  // from the deleted application.
+  const jobOnlyContactIds: string[] = [];
+  if (tableExists(db, "contacts")) {
+    const contactReferenceColumn = jobReferenceColumn(
+      db,
+      "contacts",
+    );
+    const contactReference =
+      contactReferenceColumn === "job_id" ? jobId : jobUrl;
+    if (contactReference) {
+      for (const row of allRows<{ contact_id: string }>(
+        db,
+        `SELECT contact_id
+           FROM contacts
+          WHERE tenant_id = 'local'
+            AND ${contactReferenceColumn} = ?
+            AND NULLIF(TRIM(COALESCE(employer, '')), '') IS NULL`,
+        [contactReference],
+      )) {
+        jobOnlyContactIds.push(row.contact_id);
+      }
+    }
+  }
+  if (jobOnlyContactIds.length) {
+    const contactPlaceholders = jobOnlyContactIds
+      .map(() => "?")
+      .join(", ");
+    const threadIds = allRows<{ thread_id: string }>(
+      db,
+      `SELECT thread_id
+         FROM outreach_threads
+        WHERE tenant_id = 'local'
+          AND contact_id IN (${contactPlaceholders})`,
+      jobOnlyContactIds,
+    ).map((row) => row.thread_id);
+    if (threadIds.length) {
+      const threadPlaceholders = threadIds
+        .map(() => "?")
+        .join(", ");
+      deleteWhere(
+        db,
+        "outreach_send_logs",
+        `tenant_id = 'local'
+         AND thread_id IN (${threadPlaceholders})`,
+        threadIds,
+      );
+      deleteWhere(
+        db,
+        "outreach_drafts",
+        `tenant_id = 'local'
+         AND thread_id IN (${threadPlaceholders})`,
+        threadIds,
+      );
+      deleteWhere(
+        db,
+        "outreach_threads",
+        `tenant_id = 'local'
+         AND thread_id IN (${threadPlaceholders})`,
+        threadIds,
+      );
+    }
+  }
+  db.prepare(
+    `UPDATE outreach_threads
+        SET ${referenceColumn} = NULL
+      WHERE tenant_id = 'local'
+        AND ${referenceColumn} = ?`,
+  ).run(reference);
+  // These read models remain URL-shaped until Phase 4. Clear the tenant slice
+  // so the next normal refresh rebuilds detached rows and omits purged ones.
+  deleteWhere(
+    db,
+    "outreach_thread_projections",
+    "tenant_id = 'local'",
+    [],
+  );
+  deleteWhere(
+    db,
+    "due_follow_up_projections",
+    "tenant_id = 'local'",
+    [],
+  );
 }
 
 function detachOrDeleteContactReferences(

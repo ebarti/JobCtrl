@@ -2720,14 +2720,26 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     async (request, reply) =>
       withDb(reply, options.dbPath, (db) => {
         const query = OutreachThreadQuerySchema.parse(request.query);
-        return {
-          ok: true,
-          thread: getOutreachThreadForContact(
-            db,
-            decodeRouteParam(request.params.contactId),
-            query.jobId ?? null,
-          ),
-        };
+        try {
+          return {
+            ok: true,
+            thread: getOutreachThreadForContact(
+              db,
+              decodeRouteParam(request.params.contactId),
+              query.jobId ?? null,
+            ),
+          };
+        } catch (error) {
+          if (error instanceof OutreachInputError) {
+            void reply.code(400);
+            return {
+              ok: false,
+              error: "invalid_outreach_job",
+              message: error.message,
+            };
+          }
+          throw error;
+        }
       }),
   );
 
@@ -2745,7 +2757,22 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const contactId = decodeRouteParam(request.params.contactId);
       const jobId = body.jobId ?? null;
       return withWritableDb(reply, options.dbPath, async (db) => {
-        const threadId = findOutreachThreadIdForContact(db, contactId, jobId) ?? randomUUID();
+        let threadId: string;
+        try {
+          threadId =
+            findOutreachThreadIdForContact(db, contactId, jobId)
+            ?? randomUUID();
+        } catch (error) {
+          if (error instanceof OutreachInputError) {
+            void reply.code(400);
+            return {
+              ok: false,
+              error: "invalid_outreach_job",
+              message: error.message,
+            };
+          }
+          throw error;
+        }
         await outreachDraftGenerator(
           {
             threadId,

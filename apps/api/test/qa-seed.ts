@@ -1947,6 +1947,10 @@ function seedDiscoverySources(db: Database.Database): void {
 
 function seedOutreachThread(db: Database.Database): void {
   ensureOutreachTables(db);
+  const outreachReference = jobReferenceColumn(
+    db,
+    "outreach_threads",
+  );
   const threadId = "qa-outreach-hiring-manager";
   const approvedDraftId = "qa-outreach-approved-intro";
   const gateResults = JSON.stringify({
@@ -1987,7 +1991,8 @@ function seedOutreachThread(db: Database.Database): void {
 
   db.prepare(
     `INSERT INTO outreach_threads (
-      tenant_id, thread_id, contact_id, job_url, created_at, updated_at,
+      tenant_id, thread_id, contact_id, ${outreachReference},
+      created_at, updated_at,
       follow_up_due_at, follow_up_basis, follow_up_state
     ) VALUES ('local', ?, 'qa-contact-hiring-manager', NULL, ?, ?, ?, 'manual', 'scheduled')`,
   ).run(

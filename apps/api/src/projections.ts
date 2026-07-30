@@ -5082,6 +5082,8 @@ function rebuildOutreachProjections(db: SqliteDatabase, tenantId: string): void 
   if (!tableExists(db, "outreach_threads") || !tableExists(db, "outreach_drafts")) {
     return;
   }
+  const stableReferences =
+    jobReferenceColumn(db, "outreach_threads") === "job_id";
   const threads = allRows<{
     thread_id: string;
     contact_id: string;
@@ -5090,9 +5092,16 @@ function rebuildOutreachProjections(db: SqliteDatabase, tenantId: string): void 
     updated_at: string | null;
   }>(
     db,
-    `SELECT thread_id, contact_id, job_url, created_at, updated_at
-     FROM outreach_threads
-     WHERE tenant_id = ?`,
+    `SELECT outreach.thread_id, outreach.contact_id,
+            ${stableReferences ? "jobs.url" : "outreach.job_url"} AS job_url,
+            outreach.created_at, outreach.updated_at
+       FROM outreach_threads AS outreach
+       ${stableReferences
+         ? `LEFT JOIN jobs
+              ON jobs.tenant_id = outreach.tenant_id
+             AND jobs.job_id = outreach.job_id`
+         : ""}
+      WHERE outreach.tenant_id = ?`,
     [tenantId],
   );
   const liveIds = new Set<string>();
@@ -5202,6 +5211,8 @@ function rebuildDueFollowUpProjections(db: SqliteDatabase, tenantId: string): vo
   if (!tableExists(db, "outreach_threads")) {
     return;
   }
+  const stableReferences =
+    jobReferenceColumn(db, "outreach_threads") === "job_id";
   const threads = allRows<{
     thread_id: string;
     contact_id: string;
@@ -5213,10 +5224,19 @@ function rebuildDueFollowUpProjections(db: SqliteDatabase, tenantId: string): vo
     updated_at: string | null;
   }>(
     db,
-    `SELECT thread_id, contact_id, job_url, follow_up_due_at, follow_up_basis,
-            follow_up_state, created_at, updated_at
-     FROM outreach_threads
-     WHERE tenant_id = ? AND follow_up_state = 'scheduled'`,
+    `SELECT outreach.thread_id, outreach.contact_id,
+            ${stableReferences ? "jobs.url" : "outreach.job_url"} AS job_url,
+            outreach.follow_up_due_at, outreach.follow_up_basis,
+            outreach.follow_up_state, outreach.created_at,
+            outreach.updated_at
+       FROM outreach_threads AS outreach
+       ${stableReferences
+         ? `LEFT JOIN jobs
+              ON jobs.tenant_id = outreach.tenant_id
+             AND jobs.job_id = outreach.job_id`
+         : ""}
+      WHERE outreach.tenant_id = ?
+        AND outreach.follow_up_state = 'scheduled'`,
     [tenantId],
   );
   const liveIds = new Set<string>();

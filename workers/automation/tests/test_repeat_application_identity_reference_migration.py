@@ -402,7 +402,7 @@ def test_v22_history_migrates_exactly_with_url_first_resolution(
     reopened = init_db(db_path)
     assert reopened.execute("PRAGMA user_version").fetchone()[0] == (
         SCHEMA_VERSION
-    ) == 24
+    ) == 25
     assert database_module._has_repeat_application_reference_schema_v23(
         reopened
     )

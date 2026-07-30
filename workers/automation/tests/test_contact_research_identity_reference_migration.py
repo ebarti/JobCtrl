@@ -10,7 +10,6 @@ import pytest
 
 import jobctrl.database as database_module
 from jobctrl.database import (
-    SCHEMA_VERSION,
     ensure_contact_research_references_v24,
     ensure_contact_tables,
     init_db,
@@ -273,11 +272,7 @@ def test_v23_rows_migrate_exactly_with_url_first_resolution(
         database_module._CONTACT_RESEARCH_REFERENCE_TABLES
     )
 
-    assert (
-        conn.execute("PRAGMA user_version").fetchone()[0]
-        == SCHEMA_VERSION
-        == 24
-    )
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 24
     assert (
         database_module._has_contact_research_reference_schema_v24(
             conn

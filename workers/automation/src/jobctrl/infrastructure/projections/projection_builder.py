@@ -1248,10 +1248,15 @@ class ProjectionBuilder:
         dropped so the rebuild stays a faithful mirror of canonical state.
         """
         tenant = str(self._tenant_id)
+        reference_column = contact_job_reference_column(
+            self._conn,
+            "outreach_threads",
+        )
         try:
             thread_rows = self._conn.execute(
-                """
-                SELECT thread_id, contact_id, job_url, created_at, updated_at
+                f"""
+                SELECT thread_id, contact_id, {reference_column},
+                       created_at, updated_at
                 FROM outreach_threads
                 WHERE tenant_id = ?
                 """,
@@ -1303,7 +1308,12 @@ class ProjectionBuilder:
                     tenant_id=self._tenant_id,
                     thread_id=thread_id,
                     contact_id=str(row[1]),
-                    job_id=row[2],
+                    job_id=public_contact_job_reference(
+                        self._conn,
+                        table="outreach_threads",
+                        tenant_id=self._tenant_id,
+                        physical_reference=row[2],
+                    ),
                     draft_count=len(draft_rows),
                     latest_generation=latest_generation,
                     has_approved_draft=has_approved,
@@ -1333,10 +1343,15 @@ class ProjectionBuilder:
         the currently-scheduled follow-ups. Carries safe references only.
         """
         tenant = str(self._tenant_id)
+        reference_column = contact_job_reference_column(
+            self._conn,
+            "outreach_threads",
+        )
         try:
             rows = self._conn.execute(
-                """
-                SELECT thread_id, contact_id, job_url, follow_up_due_at,
+                f"""
+                SELECT thread_id, contact_id, {reference_column},
+                       follow_up_due_at,
                        follow_up_basis, follow_up_state, created_at, updated_at
                 FROM outreach_threads
                 WHERE tenant_id = ? AND follow_up_state = 'scheduled'
@@ -1354,7 +1369,12 @@ class ProjectionBuilder:
                     tenant_id=self._tenant_id,
                     thread_id=thread_id,
                     contact_id=str(row[1]),
-                    job_id=row[2],
+                    job_id=public_contact_job_reference(
+                        self._conn,
+                        table="outreach_threads",
+                        tenant_id=self._tenant_id,
+                        physical_reference=row[2],
+                    ),
                     due_at=row[3],
                     basis=str(row[4] or ""),
                     state=str(row[5] or "scheduled"),

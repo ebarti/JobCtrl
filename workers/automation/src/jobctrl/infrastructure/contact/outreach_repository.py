@@ -45,6 +45,11 @@ from jobctrl.domain.contact.outreach_gates import (
 from jobctrl.domain.materials.value_objects import ArtifactStatus
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.tenant import TenantId
+from jobctrl.infrastructure.contact.job_reference import (
+    contact_job_reference_column,
+    physical_contact_job_reference,
+    public_contact_job_reference,
+)
 from jobctrl.state import record_job_event
 
 logger = logging.getLogger(__name__)
@@ -57,6 +62,10 @@ class SqliteOutreachThreadRepository:
         self._conn = conn
         self._publisher = publisher
         ensure_contact_tables(self._conn)
+        self._reference_column = contact_job_reference_column(
+            self._conn,
+            "outreach_threads",
+        )
 
     # ------------------------------------------------------------------ load
 
@@ -73,19 +82,27 @@ class SqliteOutreachThreadRepository:
         self, tenant_id: TenantId, contact_id: str, job_id: str | None = None
     ) -> OutreachThread | None:
         if job_id:
+            reference = physical_contact_job_reference(
+                self._conn,
+                table="outreach_threads",
+                tenant_id=tenant_id,
+                public_reference=job_id,
+            )
             row = self._conn.execute(
-                """
+                f"""
                 SELECT * FROM outreach_threads
-                WHERE tenant_id = ? AND contact_id = ? AND job_url = ?
+                WHERE tenant_id = ? AND contact_id = ?
+                  AND {self._reference_column} = ?
                 ORDER BY updated_at DESC LIMIT 1
                 """,
-                (str(tenant_id), str(contact_id), str(job_id)),
+                (str(tenant_id), str(contact_id), str(reference)),
             ).fetchone()
         else:
             row = self._conn.execute(
-                """
+                f"""
                 SELECT * FROM outreach_threads
-                WHERE tenant_id = ? AND contact_id = ? AND job_url IS NULL
+                WHERE tenant_id = ? AND contact_id = ?
+                  AND {self._reference_column} IS NULL
                 ORDER BY updated_at DESC LIMIT 1
                 """,
                 (str(tenant_id), str(contact_id)),
@@ -107,11 +124,17 @@ class SqliteOutreachThreadRepository:
 
     def _row_to_thread(self, tenant_id: TenantId, row: sqlite3.Row) -> OutreachThread:
         thread_id = str(row["thread_id"])
+        physical_reference = row[self._reference_column]
         return OutreachThread(
             tenant_id=tenant_id,
             thread_id=thread_id,
             contact_id=str(row["contact_id"]),
-            job_id=row["job_url"],
+            job_id=public_contact_job_reference(
+                self._conn,
+                table="outreach_threads",
+                tenant_id=tenant_id,
+                physical_reference=physical_reference,
+            ),
             drafts=self._load_drafts(tenant_id, thread_id),
             created_at=str(row["created_at"] or ""),
             updated_at=str(row["updated_at"] or ""),
@@ -195,16 +218,24 @@ class SqliteOutreachThreadRepository:
     def _persist_canonical(self, tenant_id: TenantId, thread: OutreachThread) -> None:
         tenant = str(tenant_id)
         thread_id = str(thread.thread_id)
+        job_reference = physical_contact_job_reference(
+            self._conn,
+            table="outreach_threads",
+            tenant_id=tenant_id,
+            public_reference=thread.job_id,
+        )
         with self._conn:
             self._conn.execute(
-                """
+                f"""
                 INSERT INTO outreach_threads (
-                    tenant_id, thread_id, contact_id, job_url, created_at, updated_at,
+                    tenant_id, thread_id, contact_id, {self._reference_column},
+                    created_at, updated_at,
                     follow_up_due_at, follow_up_basis, follow_up_state
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tenant_id, thread_id) DO UPDATE SET
                     contact_id       = excluded.contact_id,
-                    job_url          = excluded.job_url,
+                    {self._reference_column} =
+                        excluded.{self._reference_column},
                     updated_at       = excluded.updated_at,
                     follow_up_due_at = excluded.follow_up_due_at,
                     follow_up_basis  = excluded.follow_up_basis,
@@ -214,7 +245,7 @@ class SqliteOutreachThreadRepository:
                     tenant,
                     thread_id,
                     thread.contact_id,
-                    thread.job_id,
+                    job_reference,
                     thread.created_at,
                     thread.updated_at,
                     thread.follow_up.due_at,

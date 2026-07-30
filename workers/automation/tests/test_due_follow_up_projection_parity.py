@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -34,10 +35,27 @@ _FIXTURE = (
 def _seed_canonical(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     tenant = fixture["tenantId"]
     for thread in fixture["threads"]:
+        job_url = thread["jobUrl"]
+        job_id = (
+            str(uuid.uuid5(uuid.NAMESPACE_URL, job_url))
+            if job_url
+            else None
+        )
+        if job_url:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO jobs (
+                    url, tenant_id, job_id, title, company,
+                    discovered_at
+                ) VALUES (?, ?, ?, 'Platform Engineer', 'ExampleCo', ?)
+                """,
+                (job_url, tenant, job_id, thread["createdAt"]),
+            )
         conn.execute(
             """
             INSERT INTO outreach_threads (
-                tenant_id, thread_id, contact_id, job_url, created_at, updated_at,
+                tenant_id, thread_id, contact_id, job_id,
+                created_at, updated_at,
                 follow_up_due_at, follow_up_basis, follow_up_state
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -45,7 +63,7 @@ def _seed_canonical(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 tenant,
                 thread["threadId"],
                 thread["contactId"],
-                thread["jobUrl"],
+                job_id,
                 thread["createdAt"],
                 thread["updatedAt"],
                 thread["followUpDueAt"],

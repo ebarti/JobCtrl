@@ -91,7 +91,13 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # facts, research candidates, and the URL-shaped public/read-model boundary stay
 # unchanged. Job deletion is restricted so the explicit permanent-delete path
 # can detach employer-linked records instead of silently erasing them.
-SCHEMA_VERSION = 24
+# v25 (outreach references): optional application links on OutreachThread move
+# to tenant-scoped stable JobIds. Draft and user-attested send histories remain
+# keyed by the thread aggregate, while URL-shaped public/read-model values are
+# resolved at the adapter boundary. Job deletion is restricted so the explicit
+# permanent-delete path can detach preserved outreach history or purge threads
+# whose job-only Contact is removed.
+SCHEMA_VERSION = 25
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -246,6 +252,7 @@ def _schema_migrations() -> tuple[
         (22, ensure_application_feedback_candidate_references_v22),
         (23, ensure_repeat_application_references_v23),
         (24, ensure_contact_research_references_v24),
+        (25, ensure_outreach_references_v25),
     )
 
 
@@ -538,6 +545,39 @@ def _create_contact_research_tasks_table_v24(
     )
 
 
+def _create_outreach_threads_table_v25(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    stable_reference: bool,
+) -> None:
+    reference_column = "job_id" if stable_reference else "job_url"
+    foreign_key = (
+        """,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE RESTRICT"""
+        if stable_reference
+        else ""
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            thread_id           TEXT NOT NULL,
+            contact_id          TEXT NOT NULL,
+            {reference_column}  TEXT,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            follow_up_due_at    TEXT,
+            follow_up_basis     TEXT,
+            follow_up_state     TEXT NOT NULL DEFAULT 'none',
+            PRIMARY KEY (tenant_id, thread_id)
+            {foreign_key}
+        )
+        """
+    )
+
+
 def ensure_contact_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     """Create the Contact & Outreach (ninth bounded context) canonical tables.
 
@@ -559,6 +599,9 @@ def ensure_contact_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     current_version = _assert_schema_version_supported(conn)
     stable_contact_references = (
         current_version >= _CONTACT_RESEARCH_REFERENCE_SCHEMA_VERSION
+    )
+    stable_outreach_references = (
+        current_version >= _OUTREACH_REFERENCE_SCHEMA_VERSION
     )
     if not _table_columns(conn, "contacts"):
         _create_contacts_table_v24(
@@ -606,20 +649,12 @@ def ensure_contact_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             PRIMARY KEY (tenant_id, candidate_id)
         )
     """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS outreach_threads (
-            tenant_id           TEXT NOT NULL DEFAULT 'local',
-            thread_id           TEXT NOT NULL,
-            contact_id          TEXT NOT NULL,
-            job_url             TEXT,
-            created_at          TEXT NOT NULL,
-            updated_at          TEXT NOT NULL,
-            follow_up_due_at    TEXT,
-            follow_up_basis     TEXT,
-            follow_up_state     TEXT NOT NULL DEFAULT 'none',
-            PRIMARY KEY (tenant_id, thread_id)
+    if not _table_columns(conn, "outreach_threads"):
+        _create_outreach_threads_table_v25(
+            conn,
+            table="outreach_threads",
+            stable_reference=stable_outreach_references,
         )
-    """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS outreach_drafts (
             tenant_id           TEXT NOT NULL DEFAULT 'local',
@@ -695,10 +730,24 @@ def ensure_contact_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         CREATE INDEX IF NOT EXISTS idx_contact_candidates_task
         ON contact_candidates(tenant_id, task_id, status)
     """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_outreach_threads_contact
-        ON outreach_threads(tenant_id, contact_id)
-    """)
+    if stable_outreach_references:
+        if (
+            "job_id" not in _table_columns(conn, "outreach_threads")
+            or "job_url" in _table_columns(conn, "outreach_threads")
+        ):
+            raise RuntimeError(
+                "Schema v25 requires stable outreach-thread JobId references."
+            )
+        _create_outreach_reference_indexes_v25(conn)
+        if not _has_outreach_reference_schema_v25(conn):
+            raise RuntimeError(
+                "Schema v25 requires stable outreach-thread JobId references."
+            )
+    else:
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_outreach_threads_contact
+            ON outreach_threads(tenant_id, contact_id)
+        """)
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_outreach_drafts_thread
         ON outreach_drafts(tenant_id, thread_id, generation DESC)
@@ -4792,6 +4841,15 @@ def _reassign_discovery_identity_references(
         )
     if _has_contact_research_reference_schema_v24(conn):
         _reassign_contact_research_references_v24(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+            losing_job_url=losing_job_url,
+            surviving_job_url=surviving_job_url,
+        )
+    if _has_outreach_reference_schema_v25(conn):
+        _reassign_outreach_references_v25(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
@@ -14896,6 +14954,281 @@ def _reassign_contact_research_references_v24(
             (surviving_job_url, tenant_id, losing_job_url),
         )
     _verify_contact_research_references_v24(
+        conn,
+        expected_counts=expected_counts,
+    )
+
+
+_OUTREACH_REFERENCE_SCHEMA_VERSION = 25
+_OUTREACH_REFERENCE_TABLES = ("outreach_threads",)
+_OUTREACH_HISTORY_TABLES = (
+    "outreach_threads",
+    "outreach_drafts",
+    "outreach_send_logs",
+)
+
+
+def _has_outreach_reference_schema_v25(
+    conn: sqlite3.Connection,
+) -> bool:
+    table = "outreach_threads"
+    return (
+        "job_id" in _table_columns(conn, table)
+        and "job_url" not in _table_columns(conn, table)
+        and _primary_key_columns(conn, table)
+        == ("tenant_id", "thread_id")
+        and _has_composite_job_id_foreign_key_action(
+            conn,
+            table=table,
+            reference_column="job_id",
+            on_delete="RESTRICT",
+        )
+        and _has_index(
+            conn,
+            table,
+            "idx_outreach_threads_contact",
+            ("tenant_id", "contact_id", "job_id"),
+            unique=False,
+        )
+    )
+
+
+def _canonical_outreach_thread_rows_v25(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    reference_column = _legacy_or_stable_reference_column(
+        conn,
+        "outreach_threads",
+        stable="job_id",
+        legacy="job_url",
+    )
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, thread_id, contact_id, {reference_column},
+               created_at, updated_at, follow_up_due_at,
+               follow_up_basis, follow_up_state
+        FROM outreach_threads
+        ORDER BY tenant_id, thread_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        values = tuple(row)
+        raw_reference = values[3]
+        stable_job_id: str | None = None
+        if raw_reference is not None:
+            stable_job_id = _resolve_job_reference_value(
+                conn,
+                tenant_id=str(values[0]),
+                reference=str(raw_reference),
+                legacy_url=reference_column == "job_url",
+            )
+            if stable_job_id is None:
+                raise RuntimeError(
+                    "outreach reference migration could not resolve "
+                    f"outreach_threads.{reference_column}="
+                    f"{raw_reference!r} for tenant {values[0]!r}"
+                )
+            _validate_job_uuid(stable_job_id)
+        canonical.append(
+            (
+                values[0],
+                values[1],
+                values[2],
+                stable_job_id,
+                *values[4:],
+            )
+        )
+    return canonical
+
+
+def _create_outreach_reference_indexes_v25(
+    conn: sqlite3.Connection,
+) -> None:
+    if _has_index(
+        conn,
+        "outreach_threads",
+        "idx_outreach_threads_contact",
+        ("tenant_id", "contact_id", "job_id"),
+        unique=False,
+    ):
+        return
+    conn.execute(
+        'DROP INDEX IF EXISTS "idx_outreach_threads_contact"'
+    )
+    conn.execute(
+        """
+        CREATE INDEX idx_outreach_threads_contact
+        ON outreach_threads(tenant_id, contact_id, job_id)
+        """
+    )
+
+
+def ensure_outreach_references_v25(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move optional OutreachThread application links to stable JobIds."""
+    if conn is None:
+        conn = get_connection()
+    current = _assert_schema_version_supported(conn)
+    if current >= _OUTREACH_REFERENCE_SCHEMA_VERSION:
+        return list(_OUTREACH_REFERENCE_TABLES)
+    if current != _CONTACT_RESEARCH_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "outreach reference migration requires schema v24; "
+            f"found v{current}"
+        )
+
+    expected_counts = {
+        table: int(
+            conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0]
+        )
+        for table in _OUTREACH_HISTORY_TABLES
+    }
+    conn.execute("SAVEPOINT outreach_references_v25")
+    try:
+        thread_rows = _canonical_outreach_thread_rows_v25(conn)
+
+        conn.execute("DROP TABLE IF EXISTS outreach_threads_v25")
+        _create_outreach_threads_table_v25(
+            conn,
+            table="outreach_threads_v25",
+            stable_reference=True,
+        )
+        conn.executemany(
+            """
+            INSERT INTO outreach_threads_v25 (
+                tenant_id, thread_id, contact_id, job_id,
+                created_at, updated_at, follow_up_due_at,
+                follow_up_basis, follow_up_state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            thread_rows,
+        )
+
+        conn.execute('DROP TABLE "outreach_threads"')
+        conn.execute(
+            'ALTER TABLE "outreach_threads_v25" '
+            'RENAME TO "outreach_threads"'
+        )
+        _create_outreach_reference_indexes_v25(conn)
+        _verify_outreach_references_v25(
+            conn,
+            expected_counts=expected_counts,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_OUTREACH_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute("RELEASE SAVEPOINT outreach_references_v25")
+    except BaseException:
+        conn.execute(
+            "ROLLBACK TO SAVEPOINT outreach_references_v25"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT outreach_references_v25"
+        )
+        raise
+    return list(_OUTREACH_REFERENCE_TABLES)
+
+
+def _verify_outreach_references_v25(
+    conn: sqlite3.Connection,
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    if not _has_outreach_reference_schema_v25(conn):
+        raise RuntimeError(
+            "outreach reference migration did not create the stable "
+            "reference schema"
+        )
+    for table, expected_count in expected_counts.items():
+        observed_count = int(
+            conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0]
+        )
+        if observed_count != expected_count:
+            raise RuntimeError(
+                "outreach reference migration changed "
+                f"{table} row count: expected {expected_count}, "
+                f"found {observed_count}"
+            )
+    orphan = conn.execute(
+        """
+        SELECT source.job_id
+        FROM outreach_threads AS source
+        LEFT JOIN jobs
+          ON jobs.tenant_id = source.tenant_id
+         AND jobs.job_id = source.job_id
+        WHERE source.job_id IS NOT NULL
+          AND jobs.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise RuntimeError(
+            "outreach reference migration left an unresolved "
+            "JobId in outreach_threads.job_id"
+        )
+    for row in conn.execute(
+        "SELECT DISTINCT job_id FROM outreach_threads "
+        "WHERE job_id IS NOT NULL"
+    ).fetchall():
+        _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "outreach reference migration found a foreign-key violation"
+        )
+
+
+def _reassign_outreach_references_v25(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+    losing_job_url: str,
+    surviving_job_url: str,
+) -> None:
+    if losing_job_id == surviving_job_id:
+        return
+    expected_counts = {
+        table: int(
+            conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0]
+        )
+        for table in _OUTREACH_HISTORY_TABLES
+    }
+    conn.execute(
+        """
+        UPDATE outreach_threads
+        SET job_id = ?
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (surviving_job_id, tenant_id, losing_job_id),
+    )
+    for projection in (
+        "outreach_thread_projections",
+        "due_follow_up_projections",
+    ):
+        if not _table_columns(conn, projection):
+            continue
+        conn.execute(
+            f"""
+            UPDATE "{projection}"
+            SET job_id = ?
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (surviving_job_url, tenant_id, losing_job_url),
+        )
+    _verify_outreach_references_v25(
         conn,
         expected_counts=expected_counts,
     )

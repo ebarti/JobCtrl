@@ -243,7 +243,7 @@ def test_v20_outcomes_migrate_every_alias_uuid_url_and_tenant(
     assert (
         reopened.execute("PRAGMA user_version").fetchone()[0]
         == SCHEMA_VERSION
-        == 24
+        == 25
     )
     assert "job_id" in _columns(reopened, "application_outcomes")
     assert "job_key" not in _columns(reopened, "application_outcomes")

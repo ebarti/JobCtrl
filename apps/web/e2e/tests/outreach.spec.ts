@@ -85,10 +85,18 @@ function ensureOutreachSeedTables(db: Database.Database): void {
     db.pragma("user_version", { simple: true }),
   );
   const stableContactReferences = schemaVersion >= 24;
+  const stableOutreachReferences = schemaVersion >= 25;
   const contactReference = stableContactReferences
     ? "job_id"
     : "job_url";
   const contactForeignKey = stableContactReferences
+    ? `, FOREIGN KEY (tenant_id, job_id)
+         REFERENCES jobs(tenant_id, job_id) ON DELETE RESTRICT`
+    : "";
+  const outreachReference = stableOutreachReferences
+    ? "job_id"
+    : "job_url";
+  const outreachForeignKey = stableOutreachReferences
     ? `, FOREIGN KEY (tenant_id, job_id)
          REFERENCES jobs(tenant_id, job_id) ON DELETE RESTRICT`
     : "";
@@ -155,13 +163,14 @@ function ensureOutreachSeedTables(db: Database.Database): void {
       tenant_id        TEXT NOT NULL DEFAULT 'local',
       thread_id        TEXT NOT NULL,
       contact_id       TEXT NOT NULL,
-      job_url          TEXT,
+      ${outreachReference} TEXT,
       created_at       TEXT NOT NULL,
       updated_at       TEXT NOT NULL,
       follow_up_due_at TEXT,
       follow_up_basis  TEXT,
       follow_up_state  TEXT NOT NULL DEFAULT 'none',
       PRIMARY KEY (tenant_id, thread_id)
+      ${outreachForeignKey}
     );
     CREATE TABLE IF NOT EXISTS outreach_drafts (
       tenant_id         TEXT NOT NULL DEFAULT 'local',
@@ -394,9 +403,20 @@ function seedOutreachPlanner(dbPath: string): void {
       NOW,
     );
 
+    const outreachReference = referenceColumn(
+      db,
+      "outreach_threads",
+      "job_url",
+    );
+    const outreachJobReference = referenceForJobUrl(
+      db,
+      outreachReference,
+      JOB_URL,
+    );
     const insertThread = db.prepare(
       `INSERT INTO outreach_threads (
-         tenant_id, thread_id, contact_id, job_url, created_at, updated_at,
+         tenant_id, thread_id, contact_id, ${outreachReference},
+         created_at, updated_at,
          follow_up_due_at, follow_up_basis, follow_up_state
        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
@@ -413,7 +433,7 @@ function seedOutreachPlanner(dbPath: string): void {
     insertThread.run(
       DUE_THREAD_ID,
       CONTACT_ID,
-      JOB_URL,
+      outreachJobReference,
       NOW,
       NOW,
       PAST_DUE_AT,
@@ -423,7 +443,7 @@ function seedOutreachPlanner(dbPath: string): void {
     insertThread.run(
       FUTURE_THREAD_ID,
       CONTACT_ID,
-      JOB_URL,
+      outreachJobReference,
       NOW,
       NOW,
       FUTURE_DUE_AT,
