@@ -28,6 +28,7 @@ MAX_RESULTS_PER_ANCHOR = 20
 MAX_WINDOW_DAYS = 180
 APPLICATION_REVIEW_REFERENCE_SCHEMA_VERSION = 20
 APPLICATION_OUTCOME_REFERENCE_SCHEMA_VERSION = 21
+APPLICATION_FEEDBACK_CANDIDATE_REFERENCE_SCHEMA_VERSION = 22
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{1,64}")
@@ -278,6 +279,20 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
         if stable_outcome_schema
         else ""
     )
+    stable_candidate_schema = (
+        schema_version
+        >= APPLICATION_FEEDBACK_CANDIDATE_REFERENCE_SCHEMA_VERSION
+    )
+    created_candidate_reference = (
+        "job_id" if stable_candidate_schema else "job_key"
+    )
+    candidate_foreign_key = (
+        """,
+          FOREIGN KEY (tenant_id, job_id)
+            REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_candidate_schema
+        else ""
+    )
     conn.executescript(
         f"""
         CREATE TABLE IF NOT EXISTS application_review_decisions (
@@ -318,7 +333,7 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS application_email_evidence (
           tenant_id            TEXT NOT NULL DEFAULT 'local',
           evidence_id          TEXT NOT NULL,
-          job_key              TEXT NOT NULL,
+          {created_candidate_reference} TEXT NOT NULL,
           provider             TEXT NOT NULL DEFAULT 'gmail',
           provider_message_id  TEXT NOT NULL,
           provider_thread_id   TEXT,
@@ -335,14 +350,13 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
           body_stored_at       TEXT,
           PRIMARY KEY (tenant_id, evidence_id),
           UNIQUE (tenant_id, provider, provider_message_id)
+          {candidate_foreign_key}
         );
-        CREATE INDEX IF NOT EXISTS idx_application_email_evidence_job
-          ON application_email_evidence(tenant_id, job_key, received_at DESC);
 
         CREATE TABLE IF NOT EXISTS application_outcome_suggestions (
           tenant_id          TEXT NOT NULL DEFAULT 'local',
           suggestion_id      TEXT NOT NULL,
-          job_key            TEXT NOT NULL,
+          {created_candidate_reference} TEXT NOT NULL,
           evidence_id        TEXT,
           suggested_kind     TEXT NOT NULL,
           confidence         REAL NOT NULL DEFAULT 0,
@@ -354,9 +368,8 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
           decision_reason    TEXT,
           decided_outcome_id TEXT,
           PRIMARY KEY (tenant_id, suggestion_id)
+          {candidate_foreign_key}
         );
-        CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_job
-          ON application_outcome_suggestions(tenant_id, job_key, status, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_status
           ON application_outcome_suggestions(tenant_id, status, created_at DESC);
         """
@@ -410,6 +423,42 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
         )
         """
         % outcome_reference
+    )
+    evidence_reference = (
+        "job_id"
+        if "job_id" in _columns(conn, "application_email_evidence")
+        else "job_key"
+    )
+    suggestion_reference = (
+        "job_id"
+        if "job_id" in _columns(
+            conn,
+            "application_outcome_suggestions",
+        )
+        else "job_key"
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_application_email_evidence_job
+        ON application_email_evidence(
+            tenant_id,
+            %s,
+            received_at DESC
+        )
+        """
+        % evidence_reference
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_job
+        ON application_outcome_suggestions(
+            tenant_id,
+            %s,
+            status,
+            created_at DESC
+        )
+        """
+        % suggestion_reference
     )
 
 
@@ -503,11 +552,17 @@ def _store_linked_message(
     to_addresses = _email_addresses(_text(full_message.get("to") or metadata.get("to")))
     thread_id = _nullable_text(full_message.get("threadId") or metadata.get("threadId"))
     linked_at_text = _iso(linked_at)
+    reference_column, job_reference = _job_key_reference_for_url(
+        conn,
+        "application_email_evidence",
+        anchor.job_key,
+    )
 
     conn.execute(
-        """
+        f"""
         INSERT INTO application_email_evidence (
-            tenant_id, evidence_id, job_key, provider, provider_message_id,
+            tenant_id, evidence_id, {reference_column}, provider,
+            provider_message_id,
             provider_thread_id, from_address, to_addresses_json, subject, snippet,
             received_at, linked_at, link_confidence, link_signals_json,
             body_text, body_sha256, body_stored_at
@@ -516,7 +571,7 @@ def _store_linked_message(
         (
             TENANT_ID,
             evidence_id,
-            anchor.job_key,
+            job_reference,
             PROVIDER,
             message_id,
             thread_id,
@@ -554,17 +609,23 @@ def _store_suggestion(
         "gmail-suggestion",
         f"{anchor.job_key}|{provider_message_id}|{classification.kind}",
     )
+    reference_column, job_reference = _job_key_reference_for_url(
+        conn,
+        "application_outcome_suggestions",
+        anchor.job_key,
+    )
     cursor = conn.execute(
-        """
+        f"""
         INSERT OR IGNORE INTO application_outcome_suggestions (
-            tenant_id, suggestion_id, job_key, evidence_id, suggested_kind,
+            tenant_id, suggestion_id, {reference_column}, evidence_id,
+            suggested_kind,
             confidence, rationale, status, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             TENANT_ID,
             suggestion_id,
-            anchor.job_key,
+            job_reference,
             evidence_id,
             classification.kind,
             classification.confidence,
@@ -854,6 +915,62 @@ def _utc_now() -> datetime:
 def _stable_id(prefix: str, value: str) -> str:
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
     return f"{prefix}-{digest}"
+
+
+def _job_key_reference_for_url(
+    conn: sqlite3.Connection,
+    table_name: str,
+    job_url: str,
+) -> tuple[str, str]:
+    """Return the table's reference column and URL-owned stored value."""
+
+    columns = _columns(conn, table_name)
+    if "job_key" in columns:
+        return "job_key", job_url
+    if "job_id" not in columns:
+        raise GmailFeedbackError(
+            f"{table_name} has no Job identity column."
+        )
+
+    job_columns = _columns(conn, "jobs")
+    if not {"tenant_id", "job_id", "url"}.issubset(job_columns):
+        raise GmailFeedbackError(
+            "Stable Gmail feedback storage requires tenant-scoped Job "
+            "identities."
+        )
+    direct = conn.execute(
+        """
+        SELECT job_id
+        FROM jobs
+        WHERE tenant_id = ? AND url = ?
+        LIMIT 1
+        """,
+        (TENANT_ID, job_url),
+    ).fetchone()
+    if direct is not None and _text(direct["job_id"]):
+        return "job_id", _text(direct["job_id"])
+
+    if _table_exists(conn, "job_identity_aliases"):
+        alias = conn.execute(
+            """
+            SELECT aliases.job_id
+            FROM job_identity_aliases AS aliases
+            JOIN jobs
+              ON jobs.tenant_id = aliases.tenant_id
+             AND jobs.job_id = aliases.job_id
+            WHERE aliases.tenant_id = ?
+              AND aliases.alias_kind = 'posting_url'
+              AND aliases.alias_value = ?
+            LIMIT 1
+            """,
+            (TENANT_ID, job_url),
+        ).fetchone()
+        if alias is not None and _text(alias["job_id"]):
+            return "job_id", _text(alias["job_id"])
+
+    raise GmailFeedbackError(
+        f"No stable Job identity for {job_url}."
+    )
 
 
 def _bounded_int(value: int, *, minimum: int, maximum: int, default: int) -> int:

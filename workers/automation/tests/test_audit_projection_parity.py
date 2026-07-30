@@ -528,9 +528,23 @@ def _seed_conversion_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> 
         conn.execute(
             """
             INSERT INTO application_outcome_suggestions (
-                tenant_id, suggestion_id, job_key, suggested_kind, confidence, rationale,
+                tenant_id, suggestion_id, job_id, suggested_kind, confidence, rationale,
                 status, created_at, decided_at, decision
-            ) VALUES ('local', ?, ?, 'recruiter_reply', 0.9, '', ?, ?, ?, ?)
+            ) VALUES (
+                'local',
+                ?,
+                (
+                    SELECT job_id FROM jobs
+                    WHERE tenant_id = 'local' AND url = ?
+                ),
+                'recruiter_reply',
+                0.9,
+                '',
+                ?,
+                ?,
+                ?,
+                ?
+            )
             """,
             (
                 suggestion["suggestionId"],

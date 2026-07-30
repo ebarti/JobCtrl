@@ -317,17 +317,19 @@ def test_unconfirmed_sources_do_not_establish_application_history(tmp_path: Path
         )
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS application_outcome_suggestions (
-          tenant_id TEXT NOT NULL, suggestion_id TEXT NOT NULL, job_key TEXT NOT NULL,
-          suggested_kind TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
         INSERT INTO application_outcome_suggestions
-          (tenant_id, suggestion_id, job_key, suggested_kind, status, created_at)
-        VALUES ('local', 'pending-suggestion', ?, 'applied_confirmation', 'pending', ?)
+          (tenant_id, suggestion_id, job_id, suggested_kind, status, created_at)
+        VALUES (
+          'local',
+          'pending-suggestion',
+          (
+            SELECT job_id FROM jobs
+            WHERE tenant_id = 'local' AND url = ?
+          ),
+          'applied_confirmation',
+          'pending',
+          ?
+        )
         """,
         (PRIOR, NOW),
     )
@@ -758,7 +760,7 @@ def test_schema_v5_migrates_additively_without_changing_application_facts(
         (PRIOR,),
     ).fetchall()
 
-    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 21
+    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 22
     assert [tuple(row) for row in after] == [tuple(row) for row in before]
     assert "metadata_json" in {
         str(row[1]) for row in migrated.execute("PRAGMA table_info(job_stage_states)").fetchall()

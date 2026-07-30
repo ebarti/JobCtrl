@@ -1032,6 +1032,8 @@ function deleteApplicationFeedbackReferences(
   for (const tableName of [
     "application_review_decisions",
     "application_outcomes",
+    "application_outcome_suggestions",
+    "application_email_evidence",
   ]) {
     if (!tableExists(db, tableName)) continue;
     const referenceColumn = jobKeyReferenceColumn(db, tableName);

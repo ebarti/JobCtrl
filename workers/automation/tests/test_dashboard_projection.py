@@ -601,13 +601,28 @@ def _record_suggestion(conn: sqlite3.Connection, index: int, status: str) -> Non
     conn.execute(
         """
         INSERT INTO application_outcome_suggestions (
-            tenant_id, suggestion_id, job_key, suggested_kind, confidence, rationale,
+            tenant_id, suggestion_id, job_id, suggested_kind, confidence, rationale,
             status, created_at, decided_at, decision
-        ) VALUES ('local', ?, ?, 'recruiter_reply', 0.9, '', ?, ?, ?, ?)
+        ) VALUES (
+            'local',
+            ?,
+            (
+                SELECT job_id FROM jobs
+                WHERE tenant_id = 'local'
+                ORDER BY url
+                LIMIT 1
+            ),
+            'recruiter_reply',
+            0.9,
+            '',
+            ?,
+            ?,
+            ?,
+            ?
+        )
         """,
         (
             f"suggestion-{index}",
-            f"https://example.com/suggestion-{index}",
             status,
             utc_now(),
             utc_now(),

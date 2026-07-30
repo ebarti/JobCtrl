@@ -72,6 +72,7 @@ const DEFAULT_TENANT = "local";
 const DEFAULT_PROFILE_ID = "default";
 const APPLICATION_REVIEW_REFERENCE_SCHEMA_VERSION = 20;
 const APPLICATION_OUTCOME_REFERENCE_SCHEMA_VERSION = 21;
+const APPLICATION_FEEDBACK_CANDIDATE_REFERENCE_SCHEMA_VERSION = 22;
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"];
 const POSITION_PREVIEW_CHAR_LIMIT = 6000;
 const MATERIAL_PREVIEW_CHAR_LIMIT = 4000;
@@ -205,6 +206,17 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
       FOREIGN KEY (tenant_id, job_id)
         REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE`
     : "";
+  const stableCandidateSchema =
+    schemaVersion >=
+    APPLICATION_FEEDBACK_CANDIDATE_REFERENCE_SCHEMA_VERSION;
+  const createdCandidateReference = stableCandidateSchema
+    ? "job_id"
+    : "job_key";
+  const candidateForeignKey = stableCandidateSchema
+    ? `,
+      FOREIGN KEY (tenant_id, job_id)
+        REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE`
+    : "";
   db.exec(`
     CREATE TABLE IF NOT EXISTS application_review_decisions (
       tenant_id    TEXT NOT NULL DEFAULT 'local',
@@ -244,7 +256,7 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
     CREATE TABLE IF NOT EXISTS application_email_evidence (
       tenant_id            TEXT NOT NULL DEFAULT 'local',
       evidence_id          TEXT NOT NULL,
-      job_key              TEXT NOT NULL,
+      ${createdCandidateReference} TEXT NOT NULL,
       provider             TEXT NOT NULL DEFAULT 'gmail',
       provider_message_id  TEXT NOT NULL,
       provider_thread_id   TEXT,
@@ -261,14 +273,13 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
       body_stored_at       TEXT,
       PRIMARY KEY (tenant_id, evidence_id),
       UNIQUE (tenant_id, provider, provider_message_id)
+      ${candidateForeignKey}
     );
-    CREATE INDEX IF NOT EXISTS idx_application_email_evidence_job
-      ON application_email_evidence(tenant_id, job_key, received_at DESC);
 
     CREATE TABLE IF NOT EXISTS application_outcome_suggestions (
       tenant_id          TEXT NOT NULL DEFAULT 'local',
       suggestion_id      TEXT NOT NULL,
-      job_key            TEXT NOT NULL,
+      ${createdCandidateReference} TEXT NOT NULL,
       evidence_id        TEXT,
       suggested_kind     TEXT NOT NULL,
       confidence         REAL NOT NULL DEFAULT 0,
@@ -280,9 +291,8 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
       decision_reason    TEXT,
       decided_outcome_id TEXT,
       PRIMARY KEY (tenant_id, suggestion_id)
+      ${candidateForeignKey}
     );
-    CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_job
-      ON application_outcome_suggestions(tenant_id, job_key, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_status
       ON application_outcome_suggestions(tenant_id, status, created_at DESC);
   `);
@@ -308,6 +318,29 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
         ${outcomeReference},
         occurred_at DESC,
         recorded_at DESC
+      );
+  `);
+  const evidenceReference = jobKeyReferenceColumn(
+    db,
+    "application_email_evidence",
+  );
+  const suggestionReference = jobKeyReferenceColumn(
+    db,
+    "application_outcome_suggestions",
+  );
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_application_email_evidence_job
+      ON application_email_evidence(
+        tenant_id,
+        ${evidenceReference},
+        received_at DESC
+      );
+    CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_job
+      ON application_outcome_suggestions(
+        tenant_id,
+        ${suggestionReference},
+        status,
+        created_at DESC
       );
   `);
   ensureRepeatApplicationTables(db);
@@ -1018,28 +1051,83 @@ function resolveInterviewPrepGeneration(
 }
 
 function readSuggestions(db: SqliteDatabase, jobKey?: string): OutcomeSuggestion[] {
-  const where = jobKey ? "WHERE tenant_id = ? AND job_key = ?" : "WHERE tenant_id = ?";
-  const params = jobKey ? [DEFAULT_TENANT, jobKey] : [DEFAULT_TENANT];
+  const stableReferences =
+    jobKeyReferenceColumn(
+      db,
+      "application_outcome_suggestions",
+    ) === "job_id";
+  const reference = jobKey
+    ? jobKeyReferencePredicateForUrl(
+        db,
+        "application_outcome_suggestions",
+        jobKey,
+        DEFAULT_TENANT,
+        "suggestions",
+      )
+    : null;
+  const where = reference
+    ? `WHERE ${reference.sql}`
+    : "WHERE suggestions.tenant_id = ?";
+  const params = reference?.params ?? [DEFAULT_TENANT];
+  const identityJoin = stableReferences
+    ? `JOIN jobs
+         ON ${jobKeyReferenceJoinToJobs(
+           db,
+           "application_outcome_suggestions",
+           "suggestions",
+           "jobs",
+         )}`
+    : "";
+  const jobKeySelect = stableReferences
+    ? "jobs.url"
+    : "suggestions.job_key";
   return allRows<SuggestionRow>(
     db,
-    `SELECT suggestion_id, job_key, evidence_id, suggested_kind, confidence,
-            rationale, status, created_at, decided_at, decision_reason,
-            decided_outcome_id
-     FROM application_outcome_suggestions
+    `SELECT suggestions.suggestion_id, ${jobKeySelect} AS job_key,
+            suggestions.evidence_id, suggestions.suggested_kind,
+            suggestions.confidence, suggestions.rationale,
+            suggestions.status, suggestions.created_at,
+            suggestions.decided_at, suggestions.decision_reason,
+            suggestions.decided_outcome_id
+     FROM application_outcome_suggestions AS suggestions
+     ${identityJoin}
      ${where}
-     ORDER BY created_at DESC, suggestion_id DESC`,
+     ORDER BY suggestions.created_at DESC,
+              suggestions.suggestion_id DESC`,
     params,
   ).map(suggestionFromRow);
 }
 
 function getSuggestionRow(db: SqliteDatabase, suggestionId: string): SuggestionRow | undefined {
+  const stableReferences =
+    jobKeyReferenceColumn(
+      db,
+      "application_outcome_suggestions",
+    ) === "job_id";
+  const identityJoin = stableReferences
+    ? `JOIN jobs
+         ON ${jobKeyReferenceJoinToJobs(
+           db,
+           "application_outcome_suggestions",
+           "suggestions",
+           "jobs",
+         )}`
+    : "";
+  const jobKeySelect = stableReferences
+    ? "jobs.url"
+    : "suggestions.job_key";
   return getRow<SuggestionRow>(
     db,
-    `SELECT suggestion_id, job_key, evidence_id, suggested_kind, confidence,
-            rationale, status, created_at, decided_at, decision_reason,
-            decided_outcome_id
-     FROM application_outcome_suggestions
-     WHERE tenant_id = ? AND suggestion_id = ?`,
+    `SELECT suggestions.suggestion_id, ${jobKeySelect} AS job_key,
+            suggestions.evidence_id, suggestions.suggested_kind,
+            suggestions.confidence, suggestions.rationale,
+            suggestions.status, suggestions.created_at,
+            suggestions.decided_at, suggestions.decision_reason,
+            suggestions.decided_outcome_id
+     FROM application_outcome_suggestions AS suggestions
+     ${identityJoin}
+     WHERE suggestions.tenant_id = ?
+       AND suggestions.suggestion_id = ?`,
     [DEFAULT_TENANT, suggestionId],
   );
 }

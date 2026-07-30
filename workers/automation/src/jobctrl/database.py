@@ -80,7 +80,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v21 (application-outcome references): every reviewed application outcome
 # references the tenant-scoped stable Job aggregate. Append-only history and
 # immutable links to Interview Preparation generations remain exact.
-SCHEMA_VERSION = 21
+# v22 (application-feedback candidate references): linked email evidence and
+# pending/decided outcome suggestions reference the same tenant-scoped stable
+# Job aggregate while preserving their evidence and decision links.
+SCHEMA_VERSION = 22
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -232,6 +235,7 @@ def _schema_migrations() -> tuple[
         (19, ensure_compensation_references_v19),
         (20, ensure_application_review_references_v20),
         (21, ensure_application_outcome_references_v21),
+        (22, ensure_application_feedback_candidate_references_v22),
     )
 
 
@@ -402,6 +406,10 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
         )
     """ % application_review_reference)
     _ensure_application_outcome_table_for_version(
+        conn,
+        current_version=current_version,
+    )
+    _ensure_application_feedback_candidate_tables_for_version(
         conn,
         current_version=current_version,
     )
@@ -4676,6 +4684,13 @@ def _reassign_discovery_identity_references(
         )
     if _has_application_outcome_reference_schema_v21(conn):
         _reassign_application_outcome_references_v21(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+    if _has_application_feedback_candidate_schema_v22(conn):
+        _reassign_application_feedback_candidate_references_v22(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
@@ -13140,6 +13155,610 @@ def _reassign_application_outcome_references_v21(
     _verify_application_outcome_references_v21(
         conn,
         expected_count=expected_count,
+    )
+
+
+_APPLICATION_FEEDBACK_CANDIDATE_SCHEMA_VERSION = 22
+_APPLICATION_FEEDBACK_CANDIDATE_TABLES = (
+    "application_email_evidence",
+    "application_outcome_suggestions",
+)
+
+
+def _create_application_email_evidence_table_v22(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    stable_reference: bool,
+) -> None:
+    reference_column = "job_id" if stable_reference else "job_key"
+    foreign_key = (
+        """,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_reference
+        else ""
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            tenant_id            TEXT NOT NULL DEFAULT 'local',
+            evidence_id          TEXT NOT NULL,
+            {reference_column}   TEXT NOT NULL,
+            provider             TEXT NOT NULL DEFAULT 'gmail',
+            provider_message_id  TEXT NOT NULL,
+            provider_thread_id   TEXT,
+            from_address         TEXT,
+            to_addresses_json    TEXT NOT NULL DEFAULT '[]',
+            subject              TEXT,
+            snippet              TEXT,
+            received_at          TEXT,
+            linked_at            TEXT NOT NULL,
+            link_confidence      REAL NOT NULL DEFAULT 0,
+            link_signals_json    TEXT NOT NULL DEFAULT '[]',
+            body_text            TEXT,
+            body_sha256          TEXT,
+            body_stored_at       TEXT,
+            PRIMARY KEY (tenant_id, evidence_id),
+            UNIQUE (tenant_id, provider, provider_message_id)
+            {foreign_key}
+        )
+        """
+    )
+
+
+def _create_application_outcome_suggestion_table_v22(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    stable_reference: bool,
+) -> None:
+    reference_column = "job_id" if stable_reference else "job_key"
+    foreign_key = (
+        """,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_reference
+        else ""
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            tenant_id          TEXT NOT NULL DEFAULT 'local',
+            suggestion_id      TEXT NOT NULL,
+            {reference_column} TEXT NOT NULL,
+            evidence_id        TEXT,
+            suggested_kind     TEXT NOT NULL,
+            confidence         REAL NOT NULL DEFAULT 0,
+            rationale          TEXT NOT NULL DEFAULT '',
+            status             TEXT NOT NULL DEFAULT 'pending',
+            created_at         TEXT NOT NULL,
+            decided_at         TEXT,
+            decision           TEXT,
+            decision_reason    TEXT,
+            decided_outcome_id TEXT,
+            PRIMARY KEY (tenant_id, suggestion_id)
+            {foreign_key}
+        )
+        """
+    )
+
+
+def _create_application_feedback_candidate_indexes_v22(
+    conn: sqlite3.Connection,
+    *,
+    evidence_reference: str,
+    suggestion_reference: str,
+) -> None:
+    indexes = (
+        (
+            "application_email_evidence",
+            "idx_application_email_evidence_job",
+            ("tenant_id", evidence_reference, "received_at"),
+            f"""
+            CREATE INDEX idx_application_email_evidence_job
+            ON application_email_evidence(
+                tenant_id,
+                {evidence_reference},
+                received_at DESC
+            )
+            """,
+        ),
+        (
+            "application_outcome_suggestions",
+            "idx_application_outcome_suggestions_job",
+            (
+                "tenant_id",
+                suggestion_reference,
+                "status",
+                "created_at",
+            ),
+            f"""
+            CREATE INDEX idx_application_outcome_suggestions_job
+            ON application_outcome_suggestions(
+                tenant_id,
+                {suggestion_reference},
+                status,
+                created_at DESC
+            )
+            """,
+        ),
+        (
+            "application_outcome_suggestions",
+            "idx_application_outcome_suggestions_status",
+            ("tenant_id", "status", "created_at"),
+            """
+            CREATE INDEX idx_application_outcome_suggestions_status
+            ON application_outcome_suggestions(
+                tenant_id,
+                status,
+                created_at DESC
+            )
+            """,
+        ),
+    )
+    for table, name, columns, create_sql in indexes:
+        if _has_index(
+            conn,
+            table,
+            name,
+            columns,
+            unique=False,
+        ):
+            continue
+        conn.execute(f'DROP INDEX IF EXISTS "{name}"')
+        conn.execute(create_sql)
+
+
+def _ensure_application_feedback_candidate_tables_for_version(
+    conn: sqlite3.Connection,
+    *,
+    current_version: int,
+) -> None:
+    """Recover missing candidate tables without skipping ordered migration."""
+    stable_reference = (
+        current_version
+        >= _APPLICATION_FEEDBACK_CANDIDATE_SCHEMA_VERSION
+    )
+    if not _table_columns(conn, "application_email_evidence"):
+        _create_application_email_evidence_table_v22(
+            conn,
+            table="application_email_evidence",
+            stable_reference=stable_reference,
+        )
+    if not _table_columns(conn, "application_outcome_suggestions"):
+        _create_application_outcome_suggestion_table_v22(
+            conn,
+            table="application_outcome_suggestions",
+            stable_reference=stable_reference,
+        )
+    evidence_columns = _table_columns(
+        conn,
+        "application_email_evidence",
+    )
+    suggestion_columns = _table_columns(
+        conn,
+        "application_outcome_suggestions",
+    )
+    evidence_reference = (
+        "job_id"
+        if "job_id" in evidence_columns
+        else "job_key"
+        if "job_key" in evidence_columns
+        else None
+    )
+    suggestion_reference = (
+        "job_id"
+        if "job_id" in suggestion_columns
+        else "job_key"
+        if "job_key" in suggestion_columns
+        else None
+    )
+    if evidence_reference is None or suggestion_reference is None:
+        raise RuntimeError(
+            "application feedback candidate table has no Job identity column"
+        )
+    _create_application_feedback_candidate_indexes_v22(
+        conn,
+        evidence_reference=evidence_reference,
+        suggestion_reference=suggestion_reference,
+    )
+    if (
+        current_version
+        >= _APPLICATION_FEEDBACK_CANDIDATE_SCHEMA_VERSION
+        and not _has_application_feedback_candidate_schema_v22(conn)
+    ):
+        raise RuntimeError(
+            "schema v22 requires stable application-feedback candidate "
+            "references"
+        )
+
+
+def _has_unique_index_columns_v22(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    columns: tuple[str, ...],
+) -> bool:
+    for row in conn.execute(
+        f'PRAGMA index_list("{table}")'
+    ).fetchall():
+        if not bool(row[2]):
+            continue
+        name = str(row[1])
+        actual_columns = tuple(
+            str(index_row[2])
+            for index_row in conn.execute(
+                f'PRAGMA index_info("{name}")'
+            ).fetchall()
+        )
+        if actual_columns == columns:
+            return True
+    return False
+
+
+def _has_application_feedback_candidate_schema_v22(
+    conn: sqlite3.Connection,
+) -> bool:
+    evidence = "application_email_evidence"
+    suggestions = "application_outcome_suggestions"
+    return (
+        "job_id" in _table_columns(conn, evidence)
+        and "job_key" not in _table_columns(conn, evidence)
+        and _primary_key_columns(conn, evidence)
+        == ("tenant_id", "evidence_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            evidence,
+            "job_id",
+        )
+        and _has_unique_index_columns_v22(
+            conn,
+            table=evidence,
+            columns=("tenant_id", "provider", "provider_message_id"),
+        )
+        and _has_index(
+            conn,
+            evidence,
+            "idx_application_email_evidence_job",
+            ("tenant_id", "job_id", "received_at"),
+            unique=False,
+        )
+        and "job_id" in _table_columns(conn, suggestions)
+        and "job_key" not in _table_columns(conn, suggestions)
+        and _primary_key_columns(conn, suggestions)
+        == ("tenant_id", "suggestion_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            suggestions,
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            suggestions,
+            "idx_application_outcome_suggestions_job",
+            ("tenant_id", "job_id", "status", "created_at"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            suggestions,
+            "idx_application_outcome_suggestions_status",
+            ("tenant_id", "status", "created_at"),
+            unique=False,
+        )
+    )
+
+
+def _canonical_application_email_evidence_rows_v22(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        """
+        SELECT tenant_id, evidence_id, job_key, provider,
+               provider_message_id, provider_thread_id, from_address,
+               to_addresses_json, subject, snippet, received_at, linked_at,
+               link_confidence, link_signals_json, body_text, body_sha256,
+               body_stored_at
+        FROM application_email_evidence
+        ORDER BY tenant_id, evidence_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        legacy_job_key = str(row[2])
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=legacy_job_key,
+            legacy_url=True,
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "application-feedback candidate migration could not resolve "
+                f"application_email_evidence.job_key={legacy_job_key!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        canonical.append(
+            (
+                tenant_id,
+                str(row[1]),
+                stable_job_id,
+                *tuple(row[3:]),
+            )
+        )
+    return canonical
+
+
+def _canonical_application_outcome_suggestion_rows_v22(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        """
+        SELECT tenant_id, suggestion_id, job_key, evidence_id,
+               suggested_kind, confidence, rationale, status, created_at,
+               decided_at, decision, decision_reason, decided_outcome_id
+        FROM application_outcome_suggestions
+        ORDER BY tenant_id, suggestion_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        legacy_job_key = str(row[2])
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=legacy_job_key,
+            legacy_url=True,
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "application-feedback candidate migration could not resolve "
+                "application_outcome_suggestions."
+                f"job_key={legacy_job_key!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        canonical.append(
+            (
+                tenant_id,
+                str(row[1]),
+                stable_job_id,
+                *tuple(row[3:]),
+            )
+        )
+    return canonical
+
+
+def ensure_application_feedback_candidate_references_v22(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move linked evidence and suggestions to stable JobId references."""
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _APPLICATION_FEEDBACK_CANDIDATE_SCHEMA_VERSION:
+        return []
+    if current != _APPLICATION_OUTCOME_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "application-feedback candidate migration requires "
+            "application-outcome schema v21"
+        )
+
+    conn.execute(
+        "SAVEPOINT application_feedback_candidate_references_v22"
+    )
+    try:
+        if not _has_application_outcome_reference_schema_v21(conn):
+            raise RuntimeError(
+                "application-feedback candidate migration requires the "
+                "stable application-outcome reference schema"
+            )
+        _ensure_application_feedback_candidate_tables_for_version(
+            conn,
+            current_version=current,
+        )
+        expected_counts: dict[str, int] = {}
+        if "job_id" not in _table_columns(
+            conn,
+            "application_email_evidence",
+        ):
+            evidence_rows = (
+                _canonical_application_email_evidence_rows_v22(conn)
+            )
+            conn.execute(
+                "DROP TABLE IF EXISTS application_email_evidence_v22"
+            )
+            _create_application_email_evidence_table_v22(
+                conn,
+                table="application_email_evidence_v22",
+                stable_reference=True,
+            )
+            conn.executemany(
+                """
+                INSERT INTO application_email_evidence_v22 (
+                    tenant_id, evidence_id, job_id, provider,
+                    provider_message_id, provider_thread_id, from_address,
+                    to_addresses_json, subject, snippet, received_at,
+                    linked_at, link_confidence, link_signals_json, body_text,
+                    body_sha256, body_stored_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                evidence_rows,
+            )
+            conn.execute('DROP TABLE "application_email_evidence"')
+            conn.execute(
+                'ALTER TABLE "application_email_evidence_v22" '
+                'RENAME TO "application_email_evidence"'
+            )
+            expected_counts["application_email_evidence"] = len(
+                evidence_rows
+            )
+        else:
+            expected_counts["application_email_evidence"] = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM application_email_evidence"
+                ).fetchone()[0]
+            )
+        if "job_id" not in _table_columns(
+            conn,
+            "application_outcome_suggestions",
+        ):
+            suggestion_rows = (
+                _canonical_application_outcome_suggestion_rows_v22(conn)
+            )
+            conn.execute(
+                "DROP TABLE IF EXISTS "
+                "application_outcome_suggestions_v22"
+            )
+            _create_application_outcome_suggestion_table_v22(
+                conn,
+                table="application_outcome_suggestions_v22",
+                stable_reference=True,
+            )
+            conn.executemany(
+                """
+                INSERT INTO application_outcome_suggestions_v22 (
+                    tenant_id, suggestion_id, job_id, evidence_id,
+                    suggested_kind, confidence, rationale, status,
+                    created_at, decided_at, decision, decision_reason,
+                    decided_outcome_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                suggestion_rows,
+            )
+            conn.execute(
+                'DROP TABLE "application_outcome_suggestions"'
+            )
+            conn.execute(
+                'ALTER TABLE "application_outcome_suggestions_v22" '
+                'RENAME TO "application_outcome_suggestions"'
+            )
+            expected_counts["application_outcome_suggestions"] = len(
+                suggestion_rows
+            )
+        else:
+            expected_counts["application_outcome_suggestions"] = int(
+                conn.execute(
+                    "SELECT COUNT(*) "
+                    "FROM application_outcome_suggestions"
+                ).fetchone()[0]
+            )
+        _create_application_feedback_candidate_indexes_v22(
+            conn,
+            evidence_reference="job_id",
+            suggestion_reference="job_id",
+        )
+        _verify_application_feedback_candidate_references_v22(
+            conn,
+            expected_counts=expected_counts,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_APPLICATION_FEEDBACK_CANDIDATE_SCHEMA_VERSION}"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT "
+            "application_feedback_candidate_references_v22"
+        )
+        conn.commit()
+    except BaseException:
+        conn.execute(
+            "ROLLBACK TO SAVEPOINT "
+            "application_feedback_candidate_references_v22"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT "
+            "application_feedback_candidate_references_v22"
+        )
+        raise
+
+    return list(_APPLICATION_FEEDBACK_CANDIDATE_TABLES)
+
+
+def _verify_application_feedback_candidate_references_v22(
+    conn: sqlite3.Connection,
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    if not _has_application_feedback_candidate_schema_v22(conn):
+        raise RuntimeError(
+            "application-feedback candidate migration did not create the "
+            "stable reference schema"
+        )
+    for table, expected_count in expected_counts.items():
+        observed_count = int(
+            conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0]
+        )
+        if observed_count != expected_count:
+            raise RuntimeError(
+                "application-feedback candidate migration changed "
+                f"{table} history count: expected {expected_count}, "
+                f"found {observed_count}"
+            )
+        orphan = conn.execute(
+            f"""
+            SELECT candidates.job_id
+            FROM "{table}" AS candidates
+            LEFT JOIN jobs
+              ON jobs.tenant_id = candidates.tenant_id
+             AND jobs.job_id = candidates.job_id
+            WHERE jobs.job_id IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if orphan is not None:
+            raise RuntimeError(
+                "application-feedback candidate migration left an "
+                f"unresolved JobId in {table}"
+            )
+        for row in conn.execute(
+            f'SELECT DISTINCT job_id FROM "{table}"'
+        ).fetchall():
+            _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "application-feedback candidate migration found a foreign-key "
+            "violation"
+        )
+
+
+def _reassign_application_feedback_candidate_references_v22(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    if losing_job_id == surviving_job_id:
+        return
+    expected_counts = {
+        table: int(
+            conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0]
+        )
+        for table in _APPLICATION_FEEDBACK_CANDIDATE_TABLES
+    }
+    for table in _APPLICATION_FEEDBACK_CANDIDATE_TABLES:
+        conn.execute(
+            f"""
+            UPDATE "{table}"
+            SET job_id = ?
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (surviving_job_id, tenant_id, losing_job_id),
+        )
+    _verify_application_feedback_candidate_references_v22(
+        conn,
+        expected_counts=expected_counts,
     )
 
 

@@ -243,7 +243,7 @@ def test_v20_outcomes_migrate_every_alias_uuid_url_and_tenant(
     assert (
         reopened.execute("PRAGMA user_version").fetchone()[0]
         == SCHEMA_VERSION
-        == 21
+        == 22
     )
     assert "job_id" in _columns(reopened, "application_outcomes")
     assert "job_key" not in _columns(reopened, "application_outcomes")
@@ -372,7 +372,12 @@ def test_v21_outcome_migration_rolls_back_and_retries(
 
 @pytest.mark.parametrize(
     ("schema_version", "expected_reference"),
-    ((0, "job_key"), (20, "job_key"), (21, "job_id")),
+    (
+        (0, "job_key"),
+        (20, "job_key"),
+        (21, "job_id"),
+        (22, "job_id"),
+    ),
 )
 def test_missing_outcome_table_recovery_is_version_aware(
     schema_version: int,
@@ -399,7 +404,7 @@ def test_missing_outcome_table_recovery_is_version_aware(
     assert (
         {"job_id", "job_key"} - {expected_reference}
     ).isdisjoint(columns)
-    if schema_version == 21:
+    if schema_version >= 21:
         assert (
             database_module
             ._has_application_outcome_reference_schema_v21(conn)

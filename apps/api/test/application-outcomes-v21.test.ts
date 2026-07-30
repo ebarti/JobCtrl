@@ -168,6 +168,7 @@ describe("schema-v21 reviewed application-outcome API compatibility", () => {
     [0, "job_key"],
     [20, "job_key"],
     [21, "job_id"],
+    [22, "job_id"],
   ])(
     "creates the version-aware outcome reference at schema %i",
     (schemaVersion, expectedReference) => {

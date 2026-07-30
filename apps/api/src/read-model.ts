@@ -1602,14 +1602,20 @@ function appendOutcomeSuggestionAuditEntries(
   seenReferences: Set<string>,
 ): void {
   if (!tableExists(db, "application_outcome_suggestions")) return;
+  const reference = jobKeyReferencePredicateForUrl(
+    db,
+    "application_outcome_suggestions",
+    jobId,
+    DEFAULT_TENANT,
+  );
   const rows = allRows<OutcomeSuggestionAuditRow>(
     db,
     `SELECT suggestion_id, suggested_kind, confidence, status, created_at, decided_at,
             decision, decision_reason, decided_outcome_id
        FROM application_outcome_suggestions
-      WHERE tenant_id = ? AND job_key = ?
+      WHERE ${reference.sql}
       ORDER BY created_at ASC, suggestion_id ASC`,
-    [DEFAULT_TENANT, jobId],
+    reference.params,
   );
   for (const row of rows) {
     if (seenReferences.has(`suggestion:${row.suggestion_id}`)) continue;
