@@ -121,8 +121,44 @@ def v29_database(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
             ),
         ),
     )
+    conn.execute(
+        """
+        INSERT INTO job_events (
+            event_id,
+            job_url,
+            stage,
+            event_type,
+            level,
+            occurred_at,
+            payload_json
+        ) VALUES (
+            100,
+            NULL,
+            'workflow',
+            'WorkflowCompleted',
+            'info',
+            '2026-07-30T09:13:00+00:00',
+            '{}'
+        )
+        """
+    )
+    conn.execute("DELETE FROM job_events WHERE event_id = 100")
+    conn.execute(
+        """
+        INSERT INTO event_watermarks (
+            projection_name, last_event_id, updated_at
+        ) VALUES (
+            'operations_projections',
+            100,
+            '2026-07-30T09:14:00+00:00'
+        )
+        """
+    )
     conn.commit()
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 29
+    assert conn.execute(
+        "SELECT seq FROM sqlite_sequence WHERE name = 'job_events'"
+    ).fetchone()[0] == 100
     try:
         yield db_path, conn
     finally:
@@ -204,6 +240,42 @@ def test_v30_migrates_event_identity_without_changing_history(
         "idx_job_events_entity",
     }.issubset(indexes)
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert conn.execute(
+        "SELECT seq FROM sqlite_sequence WHERE name = 'job_events'"
+    ).fetchone()[0] == 100
+    next_event_id = conn.execute(
+        """
+        INSERT INTO job_events (
+            tenant_id,
+            job_id,
+            identity_version,
+            stage,
+            event_type,
+            level,
+            occurred_at,
+            payload_json
+        ) VALUES (
+            'local',
+            NULL,
+            1,
+            'workflow',
+            'WorkflowStarted',
+            'info',
+            '2026-07-30T09:15:00+00:00',
+            '{}'
+        )
+        RETURNING event_id
+        """
+    ).fetchone()[0]
+    assert next_event_id == 101
+    assert conn.execute(
+        """
+        SELECT last_event_id
+        FROM event_watermarks
+        WHERE projection_name = 'operations_projections'
+        """
+    ).fetchone()[0] == 100
+    conn.commit()
 
     # Forward recovery is idempotent and the migrated file reopens exactly.
     assert ensure_job_event_identity_v30(conn) == ["job_events"]
@@ -213,7 +285,7 @@ def test_v30_migrates_event_identity_without_changing_history(
         assert reopened.execute("PRAGMA user_version").fetchone()[0] == 30
         assert reopened.execute(
             "SELECT event_id FROM job_events ORDER BY event_id"
-        ).fetchall() == [(7,), (11,), (15,)]
+        ).fetchall() == [(7,), (11,), (15,), (101,)]
     finally:
         reopened.close()
 

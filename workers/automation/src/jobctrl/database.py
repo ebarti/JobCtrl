@@ -17079,7 +17079,7 @@ def _legacy_event_payload_v30(
 
 def _canonical_job_event_rows_v30(
     conn: sqlite3.Connection,
-) -> tuple[list[tuple[Any, ...]], tuple[int, ...]]:
+) -> tuple[list[tuple[Any, ...]], tuple[int, ...], int]:
     from jobctrl.infrastructure.events.identity_upcast import (
         upcast_event_identity,
     )
@@ -17102,6 +17102,13 @@ def _canonical_job_event_rows_v30(
         ORDER BY event_id
         """
     ).fetchall()
+    sequence_row = conn.execute(
+        """
+        SELECT seq
+        FROM sqlite_sequence
+        WHERE name = 'job_events'
+        """
+    ).fetchone()
     canonical: list[tuple[Any, ...]] = []
     event_ids: list[int] = []
     for row in rows:
@@ -17143,13 +17150,39 @@ def _canonical_job_event_rows_v30(
             )
         )
         event_ids.append(event_id)
-    return canonical, tuple(event_ids)
+    max_event_id = max(event_ids, default=0)
+    sequence_high_water = max(
+        int(sequence_row[0]) if sequence_row is not None else 0,
+        max_event_id,
+    )
+    return canonical, tuple(event_ids), sequence_high_water
+
+
+def _restore_job_event_sequence_v30(
+    conn: sqlite3.Connection,
+    *,
+    sequence_high_water: int,
+) -> None:
+    conn.execute(
+        """
+        DELETE FROM sqlite_sequence
+        WHERE name IN ('job_events', 'job_events_v30')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO sqlite_sequence (name, seq)
+        VALUES ('job_events', ?)
+        """,
+        (sequence_high_water,),
+    )
 
 
 def _verify_job_event_identity_v30(
     conn: sqlite3.Connection,
     *,
     expected_event_ids: tuple[int, ...],
+    expected_sequence_high_water: int,
 ) -> None:
     if not _has_event_identity_schema_v30(conn):
         raise RuntimeError(
@@ -17164,6 +17197,20 @@ def _verify_job_event_identity_v30(
     if observed_event_ids != expected_event_ids:
         raise RuntimeError(
             "Event identity migration changed event ordering or identity"
+        )
+    sequence_row = conn.execute(
+        """
+        SELECT seq
+        FROM sqlite_sequence
+        WHERE name = 'job_events'
+        """
+    ).fetchone()
+    if (
+        sequence_row is None
+        or int(sequence_row[0]) != expected_sequence_high_water
+    ):
+        raise RuntimeError(
+            "Event identity migration changed the event ID high-water"
         )
     invalid_identity_version = conn.execute(
         """
@@ -17236,9 +17283,11 @@ def ensure_job_event_identity_v30(
 
     conn.execute("SAVEPOINT job_event_identity_v30")
     try:
-        canonical_rows, expected_event_ids = _canonical_job_event_rows_v30(
-            conn
-        )
+        (
+            canonical_rows,
+            expected_event_ids,
+            sequence_high_water,
+        ) = _canonical_job_event_rows_v30(conn)
         conn.execute("DROP TABLE IF EXISTS job_events_v30")
         _create_job_events_table_v30(
             conn,
@@ -17268,10 +17317,15 @@ def ensure_job_event_identity_v30(
         conn.execute(
             'ALTER TABLE "job_events_v30" RENAME TO "job_events"'
         )
+        _restore_job_event_sequence_v30(
+            conn,
+            sequence_high_water=sequence_high_water,
+        )
         _create_job_event_indexes_v30(conn)
         _verify_job_event_identity_v30(
             conn,
             expected_event_ids=expected_event_ids,
+            expected_sequence_high_water=sequence_high_water,
         )
         conn.execute(
             f"PRAGMA user_version = "
