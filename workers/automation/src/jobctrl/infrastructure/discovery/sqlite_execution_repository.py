@@ -54,13 +54,12 @@ class SqliteDiscoveryExecutionRepository:
         """
 
         resolved_cohort = validate_cohort_kind(cohort_kind)
-        normalized_job_id = _required_text(job_id, "job_id")
         normalized_family = _optional_text(source_family)
         normalized_source_run_id = _optional_text(source_run_id)
         if resolved_cohort == "observed_this_run" and normalized_family is None:
             raise ValueError("source_family is required for an observed execution job")
         linked = linked_at or datetime.now(timezone.utc).isoformat()
-        stable_job_id = self._resolve_job_id(execution, normalized_job_id)
+        stable_job_id = self._resolve_job_id(execution, job_id)
 
         with self._conn:
             self._conn.execute(
@@ -149,8 +148,7 @@ class SqliteDiscoveryExecutionRepository:
         if resolved_state in {"pending", "not_eligible"} and normalized_workflow_id is not None:
             raise ValueError(f"{resolved_state} work cannot name a preparation workflow")
 
-        normalized_job_id = _required_text(job_id, "job_id")
-        stable_job_id = self._resolve_job_id(execution, normalized_job_id)
+        stable_job_id = self._resolve_job_id(execution, job_id)
         existing = self.get(execution, stable_job_id)
         if existing is None:
             raise KeyError(f"Job is not linked to discovery execution: {stable_job_id}")
@@ -275,8 +273,10 @@ class SqliteDiscoveryExecutionRepository:
         execution: DiscoveryExecutionRef,
         job_reference: JobId,
     ) -> JobId:
-        normalized = _required_text(job_reference, "job_id")
-        stable_job_id = canonical_job_id(normalized)
+        serialized = str(job_reference)
+        if serialized != serialized.strip():
+            raise ValueError("JobId must be a canonical UUID")
+        stable_job_id = canonical_job_id(serialized)
         row = self._conn.execute(
             "SELECT 1 FROM jobs WHERE tenant_id = ? AND job_id = ? LIMIT 1",
             (execution.tenant_id, str(stable_job_id)),
