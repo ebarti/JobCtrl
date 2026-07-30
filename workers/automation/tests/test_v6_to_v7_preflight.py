@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from jobctrl.infrastructure.gmail.feedback import (
+    ensure_application_feedback_tables,
+)
 from jobctrl.infrastructure.migrations.v6_to_v7_preflight import (
     V6MigrationPreflightError,
     _V6_AUXILIARY_DDL,
@@ -253,6 +256,41 @@ def test_preflight_does_not_write_a_supported_v2_0_8_feedback_database(
     conn = sqlite3.connect(db_path)
     try:
         assert_v6_migration_preflight(conn)
+    finally:
+        conn.close()
+
+    assert db_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("with_interview_prep_generation", [False, True])
+def test_preflight_admits_the_python_gmail_feedback_owner_without_writes(
+    tmp_path: Path,
+    with_interview_prep_generation: bool,
+) -> None:
+    db_path = tmp_path / (
+        "python-feedback-with-prep.db"
+        if with_interview_prep_generation
+        else "python-feedback-without-prep.db"
+    )
+    create_shipped_v6_database(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        ensure_application_feedback_tables(conn)
+        if with_interview_prep_generation:
+            conn.execute(
+                "ALTER TABLE application_outcomes "
+                "ADD COLUMN interview_prep_generation INTEGER"
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    before = db_path.read_bytes()
+    conn = sqlite3.connect(db_path)
+    try:
+        before_changes = conn.total_changes
+        assert_v6_migration_preflight(conn)
+        assert conn.total_changes == before_changes
     finally:
         conn.close()
 
