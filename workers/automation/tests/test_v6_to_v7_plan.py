@@ -16,7 +16,10 @@ from jobctrl.infrastructure.migrations.v6_to_v7_plan import (
     table_plan,
     target_tables,
 )
-from jobctrl.infrastructure.migrations.v6_to_v7_preflight import _V6_AUXILIARY_DDL
+from jobctrl.infrastructure.migrations.v6_to_v7_preflight import (
+    _V6_AUXILIARY_DDL,
+    _V6_AUXILIARY_TABLE_VARIANTS,
+)
 from tests.v6_migration_fixture import (
     create_shipped_v6_database,
     create_supported_upgrade_history_v6_database,
@@ -81,15 +84,6 @@ def test_registry_covers_all_admitted_source_and_target_tables_and_columns(
             optional.execute(statement)
         optional.commit()
         optional_tables = _tables(optional)
-    assert set(optional_tables) == required_source_tables() | {
-        name
-        for name, plan in TABLE_PLANS.items()
-        if (
-            plan.source_exists
-            and not plan.source_required
-            and plan.disposition is not TableDisposition.RETIRED
-        )
-    }
     _assert_covered(optional_tables, "source")
 
     with sqlite3.connect(tmp_path / "exact-v7.db") as v7:
@@ -97,6 +91,16 @@ def test_registry_covers_all_admitted_source_and_target_tables_and_columns(
         target = _tables(v7)
     assert set(target) == target_tables()
     _assert_covered(target, "target")
+
+
+def test_registry_covers_every_admitted_optional_table_variant() -> None:
+    for table_name, variants in _V6_AUXILIARY_TABLE_VARIANTS.items():
+        for ddl in variants:
+            with sqlite3.connect(":memory:") as conn:
+                conn.executescript(ddl)
+                tables = _tables(conn)
+            assert set(tables) == {table_name}
+            _assert_covered(tables, "source")
 
 
 def test_both_admitted_core_variants_have_the_same_semantic_plan(
@@ -133,7 +137,17 @@ def test_identity_locator_and_sequence_roles_are_not_inferred_from_names() -> No
         is TableDisposition.SCALAR_JOB_ID_REWRITE
     )
     assert not table_plan("jobctrl_hidden_jobs").source_required
-    assert table_plan("application_outcomes").disposition is TableDisposition.NEW_EMPTY
+    for table in (
+        "application_email_evidence",
+        "application_outcome_suggestions",
+        "application_outcomes",
+    ):
+        plan = table_plan(table)
+        assert plan is not None
+        assert plan.disposition is TableDisposition.SCALAR_JOB_ID_REWRITE
+        assert not plan.source_required
+        assert classify_column(table, "job_key", "source") is ColumnRole.LEGACY_URL_IDENTITY
+        assert classify_column(table, "job_id", "target") is ColumnRole.JOB_ID
     assert (
         classify_column("apply_run_projections", "job_id", "source")
         is ColumnRole.UNCHANGED_SCHEMA_URL_IDENTITY
@@ -157,3 +171,34 @@ def test_identity_locator_and_sequence_roles_are_not_inferred_from_names() -> No
         is ColumnRole.SEQUENCE_OWNED
     )
     assert table_plan("discovery_run_projections").disposition is TableDisposition.RETIRED
+
+
+def test_transformation_sensitive_columns_are_explicitly_classified() -> None:
+    structured = ColumnRole.STRUCTURED_REFERENCE
+    assert classify_column("job_events", "job_url", "source") is ColumnRole.LEGACY_URL_IDENTITY
+    assert classify_column("job_events", "payload_json", "source") is structured
+    assert classify_column("job_events", "payload_json", "target") is structured
+    assert classify_column("job_events", "entity_ref", "source") is structured
+    assert classify_column("job_events", "entity_ref", "target") is structured
+    assert classify_column("discovery_quarantine_entries", "job_key", "source") is structured
+    assert classify_column("discovery_quarantine_entries", "job_id", "source") is structured
+    assert (
+        classify_column("discovery_quarantine_entries", "job_id", "target")
+        is ColumnRole.JOB_ID
+    )
+    assert classify_column("preparation_work_items", "idempotency_key", "source") is structured
+    assert classify_column("preparation_work_items", "idempotency_key", "target") is structured
+    assert classify_column("evidence_usage_projections", "projection_id", "source") is structured
+    assert classify_column("evidence_usage_projections", "projection_id", "target") is structured
+    assert classify_column("evidence_usage_projections", "payload_json", "source") is structured
+    assert classify_column("workflow_run_projections", "input_summary_json", "target") is structured
+    assert classify_column("workflow_run_projections", "events_json", "source") is structured
+    assert classify_column("jobctrl_deleted_jobs", "tenant_id", "target") is ColumnRole.DERIVED
+    assert classify_column("jobctrl_hidden_jobs", "tenant_id", "target") is ColumnRole.DERIVED
+
+
+def test_registry_rejects_unknown_tables_and_columns() -> None:
+    assert table_plan("future_job_projection") is None
+    assert classify_column("future_job_projection", "job_id", "source") is None
+    assert classify_column("jobs", "future_job_id", "source") is None
+    assert classify_column("jobs", "future_job_id", "target") is None
