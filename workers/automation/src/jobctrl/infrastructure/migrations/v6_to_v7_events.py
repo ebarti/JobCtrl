@@ -124,22 +124,41 @@ def create_v7_job_event_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         CREATE INDEX idx_job_events_job_time
-        ON job_events(tenant_id, job_id, occurred_at DESC, event_id DESC)
+        ON job_events(
+            tenant_id,
+            job_id,
+            occurred_at DESC,
+            event_id DESC
+        )
         """
-    )
-    conn.execute(
-        "CREATE INDEX idx_job_events_tenant_eid ON job_events(tenant_id, event_id)"
     )
     conn.execute(
         """
         CREATE INDEX idx_job_events_stage_time
-        ON job_events(tenant_id, stage, occurred_at DESC, event_id DESC)
+        ON job_events(
+            tenant_id,
+            stage,
+            occurred_at DESC,
+            event_id DESC
+        )
         """
     )
     conn.execute(
         """
         CREATE INDEX idx_job_events_entity
-        ON job_events(tenant_id, entity_kind, entity_ref, occurred_at DESC, event_id DESC)
+        ON job_events(
+            tenant_id,
+            entity_kind,
+            entity_ref,
+            occurred_at DESC,
+            event_id DESC
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX idx_job_events_tenant_eid
+        ON job_events(tenant_id, event_id)
         """
     )
 

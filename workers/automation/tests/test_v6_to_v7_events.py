@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from jobctrl.infrastructure.migrations import v6_to_v7_events as events
+from jobctrl.infrastructure.migrations.schema_manifest import schema_dump
+from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
 from jobctrl.infrastructure.migrations.v6_to_v7_identity import transform_v6_root_identity
 from tests.v6_migration_fixture import create_shipped_v6_database
 
@@ -220,6 +222,26 @@ def test_invalid_event_root_reference_rolls_back_without_data_loss(
             "SELECT seq FROM sqlite_sequence WHERE name = 'job_events'"
         ).fetchone() == before_sequence
     finally:
+        conn.close()
+
+
+def test_event_rebuild_matches_the_exact_v7_schema_objects(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    create_shipped_v6_database(db_path)
+    conn = sqlite3.connect(db_path)
+    canonical = sqlite3.connect(":memory:")
+    try:
+        transform_v6_root_identity(conn)
+        events.transform_v6_job_events(conn)
+        create_exact_v7_schema(canonical)
+
+        assert tuple(
+            row for row in schema_dump(conn) if row[2] == "job_events"
+        ) == tuple(
+            row for row in schema_dump(canonical) if row[2] == "job_events"
+        )
+    finally:
+        canonical.close()
         conn.close()
 
 
