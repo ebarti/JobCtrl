@@ -68,6 +68,7 @@ import { InputError } from "./write-model.js";
 const DEFAULT_TENANT = "local";
 const DISCOVERY_FEEDBACK_REFERENCE_SCHEMA_VERSION = 26;
 const MANUAL_CAPTURE_REFERENCE_SCHEMA_VERSION = 27;
+const QUARANTINE_REFERENCE_SCHEMA_VERSION = 28;
 export const EXTENSION_MANUAL_CAPTURE_SOURCE_ID = "manual_capture:extension";
 const EXTENSION_MANUAL_CAPTURE_REASON: ManualActionReasonValue = "browser_extension_capture";
 const DEFAULT_DISCOVERY_SETTINGS: DiscoverySettings = {
@@ -174,6 +175,7 @@ interface PreviewObservationRow extends Record<string, unknown> {
 interface QuarantineEntryRow extends Record<string, unknown> {
   job_id: string;
   job_key: string;
+  canonical_job_url: string;
   title: string;
   company: string;
   source_id: string;
@@ -249,6 +251,8 @@ export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
     schemaVersion >= DISCOVERY_FEEDBACK_REFERENCE_SCHEMA_VERSION;
   const stableManualCaptureReferences =
     schemaVersion >= MANUAL_CAPTURE_REFERENCE_SCHEMA_VERSION;
+  const stableQuarantineReferences =
+    schemaVersion >= QUARANTINE_REFERENCE_SCHEMA_VERSION;
   db.exec(`
     CREATE TABLE IF NOT EXISTS discovery_settings (
       tenant_id          TEXT PRIMARY KEY,
@@ -282,24 +286,6 @@ export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
       discovered_at            TEXT NOT NULL,
       PRIMARY KEY (tenant_id, candidate_id)
     );
-    CREATE TABLE IF NOT EXISTS discovery_quarantine_entries (
-      tenant_id        TEXT NOT NULL DEFAULT 'local',
-      job_id           TEXT NOT NULL,
-      job_key          TEXT NOT NULL,
-      title            TEXT NOT NULL DEFAULT '',
-      company          TEXT NOT NULL DEFAULT '',
-      source_id        TEXT NOT NULL,
-      posting_url      TEXT,
-      reason           TEXT NOT NULL,
-      confidence       REAL,
-      snapshot_version INTEGER,
-      captured_at      TEXT,
-      notice_text      TEXT,
-      status           TEXT NOT NULL DEFAULT 'pending',
-      decision_reason  TEXT,
-      decided_at       TEXT,
-      PRIMARY KEY (tenant_id, job_key)
-    );
     CREATE TABLE IF NOT EXISTS role_match_feedback_suggestions (
       tenant_id       TEXT NOT NULL DEFAULT 'local',
       suggestion_id   TEXT NOT NULL,
@@ -319,6 +305,84 @@ export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
       PRIMARY KEY (tenant_id, suggestion_id)
     );
   `);
+  if (!tableExists(db, "discovery_quarantine_entries")) {
+    const identityColumns = stableQuarantineReferences
+      ? "job_id TEXT NOT NULL"
+      : `job_id TEXT NOT NULL,
+        job_key TEXT NOT NULL`;
+    const primaryKey = stableQuarantineReferences
+      ? "PRIMARY KEY (tenant_id, job_id)"
+      : "PRIMARY KEY (tenant_id, job_key)";
+    const foreignKey = stableQuarantineReferences
+      ? `,
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE`
+      : "";
+    db.exec(`
+      CREATE TABLE discovery_quarantine_entries (
+        tenant_id        TEXT NOT NULL DEFAULT 'local',
+        ${identityColumns},
+        title            TEXT NOT NULL DEFAULT '',
+        company          TEXT NOT NULL DEFAULT '',
+        source_id        TEXT NOT NULL,
+        posting_url      TEXT,
+        reason           TEXT NOT NULL,
+        confidence       REAL,
+        snapshot_version INTEGER,
+        captured_at      TEXT,
+        notice_text      TEXT,
+        status           TEXT NOT NULL DEFAULT 'pending',
+        decision_reason  TEXT,
+        decided_at       TEXT,
+        ${primaryKey}
+        ${foreignKey}
+      );
+    `);
+  }
+  const quarantineColumns = tableColumnSet(
+    db,
+    "discovery_quarantine_entries",
+  );
+  if (
+    stableQuarantineReferences
+    && (
+      !quarantineColumns.has("job_id")
+      || quarantineColumns.has("job_key")
+    )
+  ) {
+    throw new Error(
+      "Schema v28 requires stable Discovery quarantine JobId references.",
+    );
+  }
+  if (stableQuarantineReferences) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_discovery_quarantine_status
+      ON discovery_quarantine_entries(
+        tenant_id,
+        status,
+        captured_at
+      );
+    `);
+    if (
+      !hasCompositeJobIdForeignKey(
+        db,
+        "discovery_quarantine_entries",
+      )
+      || tableIndexColumns(
+        db,
+        "discovery_quarantine_entries",
+        "idx_discovery_quarantine_status",
+      ).join(",") !== "tenant_id,status,captured_at"
+      || primaryKeyColumns(
+        db,
+        "discovery_quarantine_entries",
+      ).join(",") !== "tenant_id,job_id"
+    ) {
+      throw new Error(
+        "Schema v28 requires the stable Discovery quarantine JobId contract.",
+      );
+    }
+  }
   if (!tableExists(db, "manual_capture_queue")) {
     const referenceColumn = stableManualCaptureReferences
       ? "job_id"
@@ -1062,13 +1126,22 @@ export function rejectSourceLocatorCandidate(
 
 export function listQuarantine(db: SqliteDatabase): QuarantineListResponse {
   ensureDiscoveryControlTables(db);
+  const reference = quarantineReferenceProjection(db);
   const rows = allRows<QuarantineEntryRow>(
     db,
-    `SELECT job_id, job_key, title, company, source_id, posting_url, reason,
-            confidence, snapshot_version, captured_at, notice_text
-     FROM discovery_quarantine_entries
-     WHERE tenant_id = ? AND status = 'pending'
-     ORDER BY captured_at DESC, job_key ASC`,
+    `SELECT ${reference.urlSql} AS job_id,
+            ${reference.urlSql} AS job_key,
+            ${reference.eventUrlSql} AS canonical_job_url,
+            quarantine.title, quarantine.company,
+            quarantine.source_id, quarantine.posting_url,
+            quarantine.reason, quarantine.confidence,
+            quarantine.snapshot_version, quarantine.captured_at,
+            quarantine.notice_text
+     FROM discovery_quarantine_entries AS quarantine
+     ${reference.joinSql}
+     WHERE quarantine.tenant_id = ?
+       AND quarantine.status = 'pending'
+     ORDER BY quarantine.captured_at DESC, job_key ASC`,
     [DEFAULT_TENANT],
   );
   return {
@@ -1096,34 +1169,64 @@ export function decideQuarantineEntry(
 ): QuarantineDecisionResponse {
   ensureDiscoveryControlTables(db);
   const now = new Date().toISOString();
+  const reference = quarantineReferenceProjection(db);
+  let storedReference: string;
+  try {
+    storedReference = quarantineReferenceForUrl(
+      db,
+      jobKey,
+    );
+  } catch {
+    throw new InputError(
+      `No stable Job identity for ${jobKey}.`,
+    );
+  }
   const row = getRow<QuarantineEntryRow>(
     db,
-    `SELECT job_id, job_key, title, company, source_id, posting_url, reason,
-            confidence, snapshot_version, captured_at, notice_text
-     FROM discovery_quarantine_entries
-     WHERE tenant_id = ? AND job_key = ? AND status = 'pending'`,
-    [DEFAULT_TENANT, jobKey],
+    `SELECT ${reference.urlSql} AS job_id,
+            ${reference.urlSql} AS job_key,
+            ${reference.eventUrlSql} AS canonical_job_url,
+            quarantine.title, quarantine.company,
+            quarantine.source_id, quarantine.posting_url,
+            quarantine.reason, quarantine.confidence,
+            quarantine.snapshot_version, quarantine.captured_at,
+            quarantine.notice_text
+     FROM discovery_quarantine_entries AS quarantine
+     ${reference.joinSql}
+     WHERE quarantine.tenant_id = ?
+       AND quarantine.${reference.column} = ?
+       AND quarantine.status = 'pending'`,
+    [DEFAULT_TENANT, storedReference],
   );
   if (!row) {
     throw new InputError(`Quarantine entry ${jobKey} was not found.`);
   }
-  db.prepare(
-    `UPDATE discovery_quarantine_entries
-     SET status = ?, decision_reason = ?, decided_at = ?
-     WHERE tenant_id = ? AND job_key = ?`,
-  ).run(decision.decision, decision.reason ?? null, now, DEFAULT_TENANT, jobKey);
-  recordEvent(db, {
-    eventType: "DiscoveryFeedbackRecorded",
-    jobUrl: row.job_id || row.job_key,
-    message: "Discovery quarantine decision recorded.",
-    payload: {
-      feedbackId: `feedback-${crypto.randomUUID()}`,
-      jobId: row.job_id || row.job_key,
-      sourceId: row.source_id,
-      kind: decision.decision === "approve" ? "useful" : "irrelevant",
-      recordedAt: now,
-    },
+  const persistDecision = db.transaction(() => {
+    db.prepare(
+      `UPDATE discovery_quarantine_entries
+       SET status = ?, decision_reason = ?, decided_at = ?
+       WHERE tenant_id = ? AND ${reference.column} = ?`,
+    ).run(
+      decision.decision,
+      decision.reason ?? null,
+      now,
+      DEFAULT_TENANT,
+      storedReference,
+    );
+    recordEvent(db, {
+      eventType: "DiscoveryFeedbackRecorded",
+      jobUrl: row.canonical_job_url,
+      message: "Discovery quarantine decision recorded.",
+      payload: {
+        feedbackId: `feedback-${crypto.randomUUID()}`,
+        jobId: row.job_key,
+        sourceId: row.source_id,
+        kind: decision.decision === "approve" ? "useful" : "irrelevant",
+        recordedAt: now,
+      },
+    });
   });
+  persistDecision();
   return { ok: true, jobKey, decision: decision.decision, recordedAt: now };
 }
 
@@ -1397,6 +1500,74 @@ function primaryKeyColumns(
     .filter((row) => row.pk > 0)
     .sort((left, right) => left.pk - right.pk)
     .map((row) => row.name);
+}
+
+function quarantineReferenceProjection(
+  db: SqliteDatabase,
+): {
+  column: "job_id" | "job_key";
+  urlSql: string;
+  eventUrlSql: string;
+  joinSql: string;
+} {
+  const columns = tableColumnSet(
+    db,
+    "discovery_quarantine_entries",
+  );
+  if (columns.has("job_key")) {
+    return {
+      column: "job_key",
+      urlSql: "quarantine.job_key",
+      eventUrlSql: "quarantine.job_key",
+      joinSql: "",
+    };
+  }
+  return {
+    column: "job_id",
+    urlSql: `COALESCE(
+      NULLIF(TRIM(quarantine.posting_url), ''),
+      jobs.url
+    )`,
+    eventUrlSql: "jobs.url",
+    joinSql: `JOIN jobs
+      ON jobs.tenant_id = quarantine.tenant_id
+     AND jobs.job_id = quarantine.job_id`,
+  };
+}
+
+function quarantineReferenceForUrl(
+  db: SqliteDatabase,
+  jobUrl: string,
+): string {
+  const projection = quarantineReferenceProjection(db);
+  if (projection.column === "job_key") {
+    return jobUrl;
+  }
+  const exactPendingRows = db
+    .prepare(
+      `SELECT job_id
+       FROM discovery_quarantine_entries
+       WHERE tenant_id = ?
+         AND status = 'pending'
+         AND NULLIF(TRIM(posting_url), '') = ?
+       ORDER BY job_id
+       LIMIT 2`,
+    )
+    .all(DEFAULT_TENANT, jobUrl) as Array<{ job_id: string }>;
+  if (exactPendingRows.length === 1) {
+    return exactPendingRows[0]!.job_id;
+  }
+  if (exactPendingRows.length > 1) {
+    throw new Error(
+      `Ambiguous Discovery quarantine identity for ${jobUrl}.`,
+    );
+  }
+  return jobKeyReferenceForUrl(
+    db,
+    "discovery_quarantine_entries",
+    jobUrl,
+    DEFAULT_TENANT,
+  );
 }
 
 function manualCaptureReferenceProjection(

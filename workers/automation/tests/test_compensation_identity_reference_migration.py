@@ -210,7 +210,7 @@ def test_v18_compensation_migrates_alias_winners_and_uuid_urls(
     assert (
         reopened.execute("PRAGMA user_version").fetchone()[0]
         == SCHEMA_VERSION
-        == 27
+        == 28
     )
     for table in database_module._COMPENSATION_REFERENCE_TABLES:
         assert "job_id" in _columns(reopened, table)

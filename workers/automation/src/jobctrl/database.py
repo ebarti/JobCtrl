@@ -103,7 +103,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v27 (manual-capture references): imported manual-capture queue rows point at
 # the tenant-scoped stable Job aggregate. Pending captures remain unlinked, and
 # workflow/API results continue to expose the posting URL until Phase 4.
-SCHEMA_VERSION = 27
+# v28 (quarantine references): the current Discovery quarantine authority is
+# keyed by the tenant-scoped stable Job aggregate. URL-era duplicates collapse
+# deterministically while their snapshots and events retain historical facts.
+SCHEMA_VERSION = 28
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -261,6 +264,7 @@ def _schema_migrations() -> tuple[
         (25, ensure_outreach_references_v25),
         (26, ensure_discovery_feedback_references_v26),
         (27, ensure_manual_capture_references_v27),
+        (28, ensure_quarantine_references_v28),
     )
 
 
@@ -3735,6 +3739,9 @@ def ensure_discovery_control_tables(conn: sqlite3.Connection | None = None) -> l
     stable_manual_capture_references = (
         current_version >= _MANUAL_CAPTURE_REFERENCE_SCHEMA_VERSION
     )
+    stable_quarantine_references = (
+        current_version >= _QUARANTINE_REFERENCE_SCHEMA_VERSION
+    )
 
     conn.execute(
         """
@@ -3770,28 +3777,31 @@ def ensure_discovery_control_tables(conn: sqlite3.Connection | None = None) -> l
         )
         """
     )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS discovery_quarantine_entries (
-            tenant_id        TEXT NOT NULL DEFAULT 'local',
-            job_id           TEXT NOT NULL,
-            job_key          TEXT NOT NULL,
-            title            TEXT NOT NULL DEFAULT '',
-            company          TEXT NOT NULL DEFAULT '',
-            source_id        TEXT NOT NULL,
-            posting_url      TEXT,
-            reason           TEXT NOT NULL,
-            confidence       REAL,
-            snapshot_version INTEGER,
-            captured_at      TEXT,
-            notice_text      TEXT,
-            status           TEXT NOT NULL DEFAULT 'pending',
-            decision_reason  TEXT,
-            decided_at       TEXT,
-            PRIMARY KEY (tenant_id, job_key)
+    if not _table_columns(conn, "discovery_quarantine_entries"):
+        _create_quarantine_table_v28(
+            conn,
+            table="discovery_quarantine_entries",
+            stable_reference=stable_quarantine_references,
         )
-        """
-    )
+    if stable_quarantine_references:
+        quarantine_columns = _table_columns(
+            conn,
+            "discovery_quarantine_entries",
+        )
+        if (
+            "job_id" not in quarantine_columns
+            or "job_key" in quarantine_columns
+        ):
+            raise RuntimeError(
+                "Schema v28 requires stable Discovery quarantine "
+                "JobId references."
+            )
+        _create_quarantine_reference_index_v28(conn)
+        if not _has_quarantine_reference_schema_v28(conn):
+            raise RuntimeError(
+                "Schema v28 requires the stable Discovery quarantine "
+                "JobId contract."
+            )
     if not _table_columns(conn, "manual_capture_queue"):
         _create_manual_capture_queue_table_v27(
             conn,
@@ -4893,6 +4903,13 @@ def _reassign_discovery_identity_references(
         )
     if _has_manual_capture_reference_schema_v27(conn):
         _reassign_manual_capture_references_v27(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+    if _has_quarantine_reference_schema_v28(conn):
+        _reassign_quarantine_references_v28(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
@@ -15846,6 +15863,559 @@ def _reassign_manual_capture_references_v27(
         (surviving_job_id, tenant_id, losing_job_id),
     )
     _verify_manual_capture_references_v27(
+        conn,
+        expected_count=expected_count,
+    )
+
+
+_QUARANTINE_REFERENCE_SCHEMA_VERSION = 28
+_QUARANTINE_REFERENCE_TABLES = ("discovery_quarantine_entries",)
+_QUARANTINE_PAYLOAD_FIELDS_V28 = (
+    "title",
+    "company",
+    "source_id",
+    "posting_url",
+    "reason",
+    "confidence",
+    "snapshot_version",
+    "captured_at",
+    "notice_text",
+    "status",
+    "decision_reason",
+    "decided_at",
+)
+
+
+def _create_quarantine_table_v28(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    stable_reference: bool,
+) -> None:
+    identity_columns = (
+        "job_id TEXT NOT NULL"
+        if stable_reference
+        else "job_id TEXT NOT NULL,\n            job_key TEXT NOT NULL"
+    )
+    primary_key = (
+        "PRIMARY KEY (tenant_id, job_id)"
+        if stable_reference
+        else "PRIMARY KEY (tenant_id, job_key)"
+    )
+    foreign_key = (
+        """,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_reference
+        else ""
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            tenant_id        TEXT NOT NULL DEFAULT 'local',
+            {identity_columns},
+            title            TEXT NOT NULL DEFAULT '',
+            company          TEXT NOT NULL DEFAULT '',
+            source_id        TEXT NOT NULL,
+            posting_url      TEXT,
+            reason           TEXT NOT NULL,
+            confidence       REAL,
+            snapshot_version INTEGER,
+            captured_at      TEXT,
+            notice_text      TEXT,
+            status           TEXT NOT NULL DEFAULT 'pending',
+            decision_reason  TEXT,
+            decided_at       TEXT,
+            {primary_key}
+            {foreign_key}
+        )
+        """
+    )
+
+
+def _create_quarantine_reference_index_v28(
+    conn: sqlite3.Connection,
+) -> None:
+    if _has_index(
+        conn,
+        "discovery_quarantine_entries",
+        "idx_discovery_quarantine_status",
+        ("tenant_id", "status", "captured_at"),
+        unique=False,
+    ):
+        return
+    conn.execute(
+        'DROP INDEX IF EXISTS "idx_discovery_quarantine_status"'
+    )
+    conn.execute(
+        """
+        CREATE INDEX idx_discovery_quarantine_status
+        ON discovery_quarantine_entries(
+            tenant_id,
+            status,
+            captured_at
+        )
+        """
+    )
+
+
+def _has_quarantine_reference_schema_v28(
+    conn: sqlite3.Connection,
+) -> bool:
+    table = "discovery_quarantine_entries"
+    return (
+        "job_id" in _table_columns(conn, table)
+        and "job_key" not in _table_columns(conn, table)
+        and _primary_key_columns(conn, table)
+        == ("tenant_id", "job_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            table,
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            table,
+            "idx_discovery_quarantine_status",
+            ("tenant_id", "status", "captured_at"),
+            unique=False,
+        )
+    )
+
+
+def _quarantine_timestamp_rank_v28(
+    value: Any,
+) -> tuple[float, str]:
+    raw = str(value or "")
+    if not raw:
+        return (float("-inf"), "")
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        timestamp = parsed.astimezone(timezone.utc).timestamp()
+    except ValueError:
+        return (float("-inf"), raw)
+    return (timestamp, raw)
+
+
+def _quarantine_candidate_v28(
+    *,
+    tenant_id: Any,
+    stable_job_id: str,
+    payload: tuple[Any, ...],
+    tie_breaker: str,
+) -> dict[str, Any]:
+    candidate = {
+        name: value
+        for name, value in zip(
+            _QUARANTINE_PAYLOAD_FIELDS_V28,
+            payload,
+            strict=True,
+        )
+    }
+    candidate["tenant_id"] = tenant_id
+    candidate["job_id"] = stable_job_id
+    candidate["_tie_breaker"] = tie_breaker
+    return candidate
+
+
+def _quarantine_evidence_rank_v28(
+    candidate: dict[str, Any],
+) -> tuple[tuple[float, str], int, str]:
+    snapshot_version = candidate.get("snapshot_version")
+    return (
+        _quarantine_timestamp_rank_v28(
+            candidate.get("captured_at"),
+        ),
+        int(snapshot_version)
+        if isinstance(snapshot_version, int)
+        else -1,
+        str(candidate["_tie_breaker"]),
+    )
+
+
+def _quarantine_decision_rank_v28(
+    candidate: dict[str, Any],
+) -> tuple[tuple[float, str], str]:
+    return (
+        _quarantine_timestamp_rank_v28(
+            candidate.get("decided_at"),
+        ),
+        str(candidate["_tie_breaker"]),
+    )
+
+
+def _merge_quarantine_candidates_v28(
+    candidates: list[dict[str, Any]],
+) -> tuple[Any, ...]:
+    if not candidates:
+        raise RuntimeError(
+            "Discovery quarantine merge requires at least one row"
+        )
+    winner = max(candidates, key=_quarantine_evidence_rank_v28)
+    decision_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.get("decided_at") is not None
+        or candidate.get("decision_reason") is not None
+    ]
+    decision_reason = winner.get("decision_reason")
+    decided_at = winner.get("decided_at")
+    if decision_candidates and (
+        str(winner.get("status")) == "pending"
+        or (
+            decision_reason is None
+            and decided_at is None
+        )
+    ):
+        latest_decision = max(
+            decision_candidates,
+            key=_quarantine_decision_rank_v28,
+        )
+        decision_reason = latest_decision.get("decision_reason")
+        decided_at = latest_decision.get("decided_at")
+    return (
+        winner["tenant_id"],
+        winner["job_id"],
+        winner["title"],
+        winner["company"],
+        winner["source_id"],
+        winner["posting_url"],
+        winner["reason"],
+        winner["confidence"],
+        winner["snapshot_version"],
+        winner["captured_at"],
+        winner["notice_text"],
+        winner["status"],
+        decision_reason,
+        decided_at,
+    )
+
+
+def _canonical_quarantine_rows_v28(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    legacy = "job_key" in _table_columns(
+        conn,
+        "discovery_quarantine_entries",
+    )
+    identity_columns = (
+        "job_id, job_key"
+        if legacy
+        else "job_id"
+    )
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, {identity_columns},
+               title, company, source_id, posting_url, reason,
+               confidence, snapshot_version, captured_at,
+               notice_text, status, decision_reason, decided_at
+        FROM discovery_quarantine_entries
+        ORDER BY tenant_id, job_id
+        """
+    ).fetchall()
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        values = tuple(row)
+        tenant_id = str(values[0])
+        raw_job_id = str(values[1])
+        if legacy:
+            raw_job_key = str(values[2])
+            resolved_job_id = _resolve_job_reference_value(
+                conn,
+                tenant_id=tenant_id,
+                reference=raw_job_id,
+                legacy_url=True,
+            )
+            resolved_job_key = _resolve_job_reference_value(
+                conn,
+                tenant_id=tenant_id,
+                reference=raw_job_key,
+                legacy_url=True,
+            )
+            if (
+                resolved_job_id is None
+                or resolved_job_key is None
+            ):
+                raise RuntimeError(
+                    "Discovery quarantine reference migration could "
+                    "not resolve both URL-era identity columns for "
+                    f"tenant {tenant_id!r}: job_id={raw_job_id!r}, "
+                    f"job_key={raw_job_key!r}"
+                )
+            if resolved_job_id != resolved_job_key:
+                raise RuntimeError(
+                    "Discovery quarantine reference migration found "
+                    "conflicting URL-era identity columns for tenant "
+                    f"{tenant_id!r}: job_id={raw_job_id!r}, "
+                    f"job_key={raw_job_key!r}"
+                )
+            stable_job_id = resolved_job_id
+            payload = values[3:]
+            tie_breaker = raw_job_key
+        else:
+            stable_job_id = _resolve_job_reference_value(
+                conn,
+                tenant_id=tenant_id,
+                reference=raw_job_id,
+                legacy_url=False,
+            )
+            if stable_job_id is None:
+                raise RuntimeError(
+                    "Discovery quarantine reference migration could "
+                    "not resolve discovery_quarantine_entries.job_id="
+                    f"{raw_job_id!r} for tenant {tenant_id!r}"
+                )
+            payload = values[2:]
+            tie_breaker = raw_job_id
+        _validate_job_uuid(stable_job_id)
+        grouped.setdefault(
+            (tenant_id, stable_job_id),
+            [],
+        ).append(
+            _quarantine_candidate_v28(
+                tenant_id=tenant_id,
+                stable_job_id=stable_job_id,
+                payload=payload,
+                tie_breaker=tie_breaker,
+            )
+        )
+    return [
+        _merge_quarantine_candidates_v28(candidates)
+        for _identity, candidates in sorted(grouped.items())
+    ]
+
+
+def _insert_quarantine_rows_v28(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    rows: list[tuple[Any, ...]],
+) -> None:
+    conn.executemany(
+        f"""
+        INSERT INTO "{table}" (
+            tenant_id, job_id, title, company, source_id,
+            posting_url, reason, confidence, snapshot_version,
+            captured_at, notice_text, status, decision_reason,
+            decided_at
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
+        """,
+        rows,
+    )
+
+
+def ensure_quarantine_references_v28(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move the current Discovery quarantine authority to stable JobIds."""
+    if conn is None:
+        conn = get_connection()
+    current = _assert_schema_version_supported(conn)
+    if current >= _QUARANTINE_REFERENCE_SCHEMA_VERSION:
+        return list(_QUARANTINE_REFERENCE_TABLES)
+    if current != _MANUAL_CAPTURE_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "Discovery quarantine reference migration requires "
+            f"schema v27; found v{current}"
+        )
+
+    conn.execute("SAVEPOINT quarantine_references_v28")
+    try:
+        if not _table_columns(
+            conn,
+            "discovery_quarantine_entries",
+        ):
+            _create_quarantine_table_v28(
+                conn,
+                table="discovery_quarantine_entries",
+                stable_reference=False,
+            )
+        source_count = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM "
+                "discovery_quarantine_entries"
+            ).fetchone()[0]
+        )
+        quarantine_rows = _canonical_quarantine_rows_v28(conn)
+        expected_count = len(quarantine_rows)
+        if expected_count > source_count:
+            raise RuntimeError(
+                "Discovery quarantine reference migration created "
+                "unexpected authority rows"
+            )
+
+        conn.execute(
+            "DROP TABLE IF EXISTS "
+            "discovery_quarantine_entries_v28"
+        )
+        _create_quarantine_table_v28(
+            conn,
+            table="discovery_quarantine_entries_v28",
+            stable_reference=True,
+        )
+        _insert_quarantine_rows_v28(
+            conn,
+            table="discovery_quarantine_entries_v28",
+            rows=quarantine_rows,
+        )
+
+        conn.execute(
+            'DROP TABLE "discovery_quarantine_entries"'
+        )
+        conn.execute(
+            'ALTER TABLE "discovery_quarantine_entries_v28" '
+            'RENAME TO "discovery_quarantine_entries"'
+        )
+        _create_quarantine_reference_index_v28(conn)
+        _verify_quarantine_references_v28(
+            conn,
+            expected_count=expected_count,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_QUARANTINE_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT quarantine_references_v28"
+        )
+    except BaseException:
+        conn.execute(
+            "ROLLBACK TO SAVEPOINT quarantine_references_v28"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT quarantine_references_v28"
+        )
+        raise
+    return list(_QUARANTINE_REFERENCE_TABLES)
+
+
+def _verify_quarantine_references_v28(
+    conn: sqlite3.Connection,
+    *,
+    expected_count: int,
+) -> None:
+    if not _has_quarantine_reference_schema_v28(conn):
+        raise RuntimeError(
+            "Discovery quarantine reference migration did not "
+            "create the stable reference schema"
+        )
+    observed_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM discovery_quarantine_entries"
+        ).fetchone()[0]
+    )
+    if observed_count != expected_count:
+        raise RuntimeError(
+            "Discovery quarantine reference migration changed "
+            f"authority count: expected {expected_count}, "
+            f"found {observed_count}"
+        )
+    orphan = conn.execute(
+        """
+        SELECT quarantine.job_id
+        FROM discovery_quarantine_entries AS quarantine
+        LEFT JOIN jobs
+          ON jobs.tenant_id = quarantine.tenant_id
+         AND jobs.job_id = quarantine.job_id
+        WHERE jobs.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise RuntimeError(
+            "Discovery quarantine reference migration left an "
+            "unresolved JobId"
+        )
+    for row in conn.execute(
+        "SELECT DISTINCT job_id "
+        "FROM discovery_quarantine_entries"
+    ).fetchall():
+        _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "Discovery quarantine reference migration found a "
+            "foreign-key violation"
+        )
+
+
+def _reassign_quarantine_references_v28(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    if losing_job_id == surviving_job_id:
+        return
+    expected_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM discovery_quarantine_entries"
+        ).fetchone()[0]
+    )
+    rows = conn.execute(
+        """
+        SELECT tenant_id, job_id, title, company, source_id,
+               posting_url, reason, confidence, snapshot_version,
+               captured_at, notice_text, status, decision_reason,
+               decided_at
+        FROM discovery_quarantine_entries
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    losing_present = any(str(row[1]) == losing_job_id for row in rows)
+    if not losing_present:
+        return
+    surviving_present = any(
+        str(row[1]) == surviving_job_id
+        for row in rows
+    )
+    if not surviving_present:
+        conn.execute(
+            """
+            UPDATE discovery_quarantine_entries
+            SET job_id = ?
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (surviving_job_id, tenant_id, losing_job_id),
+        )
+    else:
+        candidates = [
+            _quarantine_candidate_v28(
+                tenant_id=row[0],
+                stable_job_id=surviving_job_id,
+                payload=tuple(row)[2:],
+                tie_breaker=(
+                    "1:surviving"
+                    if str(row[1]) == surviving_job_id
+                    else "0:losing"
+                ),
+            )
+            for row in rows
+        ]
+        merged = _merge_quarantine_candidates_v28(candidates)
+        conn.execute(
+            """
+            DELETE FROM discovery_quarantine_entries
+            WHERE tenant_id = ? AND job_id IN (?, ?)
+            """,
+            (tenant_id, losing_job_id, surviving_job_id),
+        )
+        _insert_quarantine_rows_v28(
+            conn,
+            table="discovery_quarantine_entries",
+            rows=[merged],
+        )
+        expected_count -= 1
+    _verify_quarantine_references_v28(
         conn,
         expected_count=expected_count,
     )

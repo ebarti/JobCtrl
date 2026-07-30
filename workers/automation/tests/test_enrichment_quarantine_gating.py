@@ -375,6 +375,23 @@ def test_snapshot_captured_event_records_confidence_and_quarantine(
     assert payload["confidence"] == "low"
     assert payload["quarantine_reason"] == "low_confidence_extraction"
     assert payload["quarantined"] is True
+    quarantine = conn.execute(
+        """
+        SELECT quarantine.job_id AS quarantine_job_id,
+               quarantine.posting_url,
+               jobs.job_id AS stable_job_id
+        FROM discovery_quarantine_entries AS quarantine
+        JOIN jobs
+          ON jobs.tenant_id = quarantine.tenant_id
+         AND jobs.job_id = quarantine.job_id
+        WHERE jobs.url = ?
+        """,
+        (url,),
+    ).fetchone()
+    assert quarantine is not None
+    assert quarantine["quarantine_job_id"] == quarantine["stable_job_id"]
+    assert quarantine["posting_url"] == url
+    assert quarantine["quarantine_job_id"] != url
 
 
 def test_no_snapshot_backlog_job_is_never_gated_from_any_selector(

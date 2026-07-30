@@ -922,11 +922,7 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
   deleteWhere(db, "artifact_list_projections", "job_id = ?", [jobUrl]);
   deleteWhere(db, "job_detail_projections", "job_id = ?", [jobUrl]);
   deleteWhere(db, "job_list_projections", "job_id = ?", [jobUrl]);
-  deleteWhere(db, "discovery_quarantine_entries", "job_id = ? OR job_key = ? OR posting_url = ?", [
-    jobUrl,
-    jobUrl,
-    jobUrl,
-  ]);
+  deleteQuarantineReferences(db, jobId, jobUrl);
   deleteWhere(db, "jobs", "url = ?", [jobUrl]);
 }
 
@@ -1298,6 +1294,36 @@ function deleteManualCaptureReferences(
     "manual_capture_queue",
     `tenant_id = ? AND ${referenceColumn} = ?`,
     ["local", reference],
+  );
+}
+
+function deleteQuarantineReferences(
+  db: SqliteDatabase,
+  jobId: string | undefined,
+  jobUrl: string,
+): void {
+  if (!tableExists(db, "discovery_quarantine_entries")) {
+    return;
+  }
+  const columns = tableColumnSet(
+    db,
+    "discovery_quarantine_entries",
+  );
+  if (columns.has("job_key")) {
+    deleteWhere(
+      db,
+      "discovery_quarantine_entries",
+      "job_id = ? OR job_key = ? OR posting_url = ?",
+      [jobUrl, jobUrl, jobUrl],
+    );
+    return;
+  }
+  if (!jobId) return;
+  deleteWhere(
+    db,
+    "discovery_quarantine_entries",
+    "tenant_id = ? AND job_id = ?",
+    ["local", jobId],
   );
 }
 

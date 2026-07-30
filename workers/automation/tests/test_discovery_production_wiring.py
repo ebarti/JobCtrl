@@ -33,6 +33,7 @@ from jobctrl.enrichment.detail import _record_posting_snapshot_from_cascade
 from jobctrl.infrastructure.discovery.production_wiring import (
     ManualCaptureImport,
     _posting_acceptance_policy,
+    _upsert_quarantine_entry,
     build_discovery_acceptance_report,
     import_manual_capture_item,
     retire_invalid_canonical_ats_jobs,
@@ -1125,11 +1126,70 @@ def test_acceptance_report_scoring_handoff_is_tenant_scoped(
         """,
         (shared_job_id,),
     )
+    conn.execute(
+        """
+        INSERT INTO discovery_quarantine_entries (
+            tenant_id, job_id, title, company, source_id,
+            posting_url, reason, confidence, snapshot_version,
+            captured_at, notice_text, status
+        ) VALUES (
+            'other-tenant', ?, 'Foreign quarantine', 'ExampleCo',
+            'source:foreign', 'https://example.com/jobs/foreign-handoff',
+            'unknown_active_state', 0.4, 1,
+            '2026-07-29T10:02:00+00:00', NULL, 'pending'
+        )
+        """,
+        (shared_job_id,),
+    )
     conn.commit()
 
     report = build_discovery_acceptance_report(conn)
 
     assert report.scoring_handoff_count == 1
+
+
+def test_quarantine_upsert_stores_stable_job_identity(
+    conn: sqlite3.Connection,
+) -> None:
+    job_url = "https://example.com/jobs/quarantine-write"
+    stable_job_id = str(uuid.uuid4())
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, tenant_id, job_id, title, discovered_at
+        ) VALUES (?, 'local', ?, 'Engineering Manager', ?)
+        """,
+        (
+            job_url,
+            stable_job_id,
+            "2026-07-29T10:00:00+00:00",
+        ),
+    )
+    _upsert_quarantine_entry(
+        conn,
+        job_url=job_url,
+        source_id="source:stable",
+        reason="unknown_active_state",
+        confidence=0.4,
+        snapshot_version=2,
+        captured_at="2026-07-29T10:02:00+00:00",
+        title="Engineering Manager",
+        posting_url=job_url,
+        notice_text="Review current evidence.",
+    )
+
+    row = conn.execute(
+        """
+        SELECT job_id, posting_url, source_id, status
+        FROM discovery_quarantine_entries
+        """
+    ).fetchone()
+    assert tuple(row) == (
+        stable_job_id,
+        job_url,
+        "source:stable",
+        "pending",
+    )
 
 
 def test_discovery_hygiene_applies_to_workday_and_smart_extract_rows(

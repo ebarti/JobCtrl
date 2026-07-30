@@ -10,7 +10,6 @@ import pytest
 
 import jobctrl.database as database_module
 from jobctrl.database import (
-    SCHEMA_VERSION,
     ensure_discovery_control_tables,
     ensure_manual_capture_references_v27,
     init_db,
@@ -248,11 +247,7 @@ def test_v26_rows_migrate_exactly_with_url_first_resolution(
         database_module._MANUAL_CAPTURE_REFERENCE_TABLES
     )
 
-    assert (
-        conn.execute("PRAGMA user_version").fetchone()[0]
-        == SCHEMA_VERSION
-        == 27
-    )
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 27
     assert (
         database_module
         ._has_manual_capture_reference_schema_v27(conn)

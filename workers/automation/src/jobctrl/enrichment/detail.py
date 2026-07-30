@@ -1661,14 +1661,45 @@ def _record_posting_snapshot_from_cascade(
             )
         if quarantine_reason is not QuarantineReason.NONE:
             ensure_discovery_control_tables(conn)
+            legacy_quarantine_reference = (
+                "job_key"
+                in db_module._table_columns(
+                    conn,
+                    "discovery_quarantine_entries",
+                )
+            )
+            if legacy_quarantine_reference:
+                identity_columns = "job_id, job_key"
+                identity_placeholders = "?, ?"
+                identity_values = (url, url)
+                conflict_column = "job_key"
+            else:
+                stable_job_id = db_module._resolve_job_reference_value(
+                    conn,
+                    tenant_id=str(LOCAL_TENANT),
+                    reference=url,
+                    legacy_url=True,
+                )
+                if stable_job_id is None:
+                    raise RuntimeError(
+                        "Enrichment quarantine write could not "
+                        "resolve its stable JobId."
+                    )
+                identity_columns = "job_id"
+                identity_placeholders = "?"
+                identity_values = (stable_job_id,)
+                conflict_column = "job_id"
             conn.execute(
-                """
+                f"""
                 INSERT INTO discovery_quarantine_entries (
-                    tenant_id, job_id, job_key, title, company, source_id,
+                    tenant_id, {identity_columns}, title, company, source_id,
                     posting_url, reason, confidence, snapshot_version,
                     captured_at, notice_text, status
-                ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, 'pending')
-                ON CONFLICT(tenant_id, job_key) DO UPDATE SET
+                ) VALUES (
+                    ?, {identity_placeholders}, ?, '', ?, ?, ?, ?, ?, ?, ?,
+                    'pending'
+                )
+                ON CONFLICT(tenant_id, {conflict_column}) DO UPDATE SET
                     title = excluded.title,
                     source_id = excluded.source_id,
                     posting_url = excluded.posting_url,
@@ -1681,8 +1712,7 @@ def _record_posting_snapshot_from_cascade(
                 """,
                 (
                     str(LOCAL_TENANT),
-                    url,
-                    url,
+                    *identity_values,
                     title,
                     resolved_source_id,
                     url,

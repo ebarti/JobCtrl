@@ -254,7 +254,7 @@ def test_v16_template_references_migrate_aliases_and_uuid_urls(
     assert (
         reopened.execute("PRAGMA user_version").fetchone()[0]
         == SCHEMA_VERSION
-        == 27
+        == 28
     )
     for table in database_module._RESUME_TEMPLATE_REFERENCE_TABLES:
         assert "job_id" in _columns(reopened, table)

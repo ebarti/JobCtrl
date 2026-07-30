@@ -1092,7 +1092,7 @@ def import_manual_capture_item(
     if outcome.ok and quarantine_reason and quarantine_reason != QuarantineReason.NONE.value:
         _upsert_quarantine_entry(
             conn,
-            job_id=captured_url,
+            job_url=captured_url,
             source_id=str(source_id),
             reason=quarantine_reason,
             confidence=None,
@@ -1239,16 +1239,26 @@ def build_discovery_acceptance_report(
         "SELECT COUNT(*) FROM source_quality_stats WHERE tenant_id = ?",
         (tenant,),
     )
+    quarantine_job_reference = (
+        "j.url"
+        if "job_key" in _table_columns(
+            conn,
+            "discovery_quarantine_entries",
+        )
+        else "j.job_id"
+    )
     scoring_handoff_count = _scalar_int(
         conn,
-        """
+        f"""
         SELECT COUNT(*)
         FROM jobs j
         JOIN job_enrichments e
           ON e.tenant_id = j.tenant_id
          AND e.job_id = j.job_id
         LEFT JOIN discovery_quarantine_entries q
-          ON q.tenant_id = ? AND q.job_id = j.url AND q.status = 'pending'
+          ON q.tenant_id = ?
+         AND q.job_id = {quarantine_job_reference}
+         AND q.status = 'pending'
         WHERE j.tenant_id = ?
           AND e.current_status = 'enriched'
           AND j.fit_score IS NULL
@@ -2132,7 +2142,7 @@ def manual_capture_content(capture: ManualCaptureImport) -> str:
 def _upsert_quarantine_entry(
     conn: sqlite3.Connection,
     *,
-    job_id: str,
+    job_url: str,
     source_id: str,
     reason: str,
     confidence: float | None,
@@ -2142,14 +2152,43 @@ def _upsert_quarantine_entry(
     posting_url: str,
     notice_text: str,
 ) -> None:
+    legacy_reference = "job_key" in _table_columns(
+        conn,
+        "discovery_quarantine_entries",
+    )
+    if legacy_reference:
+        identity_columns = "job_id, job_key"
+        identity_placeholders = "?, ?"
+        identity_values = (job_url, job_url)
+        conflict_column = "job_key"
+    else:
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=str(LOCAL_TENANT),
+            reference=job_url,
+            legacy_url=True,
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "Discovery quarantine write could not resolve its "
+                "stable JobId."
+            )
+        identity_columns = "job_id"
+        identity_placeholders = "?"
+        identity_values = (stable_job_id,)
+        conflict_column = "job_id"
     conn.execute(
-        """
+        f"""
         INSERT INTO discovery_quarantine_entries (
-            tenant_id, job_id, job_key, title, company, source_id, posting_url,
+            tenant_id, {identity_columns}, title, company,
+            source_id, posting_url,
             reason, confidence, snapshot_version, captured_at, notice_text,
             status
-        ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, 'pending')
-        ON CONFLICT(tenant_id, job_key) DO UPDATE SET
+        ) VALUES (
+            ?, {identity_placeholders}, ?, '', ?, ?, ?, ?, ?, ?, ?,
+            'pending'
+        )
+        ON CONFLICT(tenant_id, {conflict_column}) DO UPDATE SET
             title = excluded.title,
             source_id = excluded.source_id,
             posting_url = excluded.posting_url,
@@ -2162,8 +2201,7 @@ def _upsert_quarantine_entry(
         """,
         (
             str(LOCAL_TENANT),
-            job_id,
-            job_id,
+            *identity_values,
             title,
             source_id,
             posting_url,
