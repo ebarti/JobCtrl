@@ -38,8 +38,12 @@ def test_every_workflow_declares_an_identity_cutover_policy():
         assert policy.workflow_type == definition.name
         if policy.blocks_cutover_when_open:
             assert policy.identity_fields
+            assert "dispatch_registry" in policy.inventory_sources
+            assert "workflow_start_event" in policy.inventory_sources
+            assert "workflow_run_projection" in policy.inventory_sources
         else:
             assert policy.identity_fields == ()
+            assert policy.inventory_sources == ()
 
 
 def test_registry_activities_are_temporal_activity_definitions():
