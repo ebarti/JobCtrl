@@ -841,16 +841,22 @@ function resolveInterviewPrepGeneration(
   if (!tableExists(db, "job_interview_prep")) {
     throw new InputError("Interview prep generation not found.");
   }
+  const reference = jobReferencePredicateForUrl(
+    db,
+    "job_interview_prep",
+    jobUrl,
+    DEFAULT_TENANT,
+  );
   const row = getRow<{ generation: number }>(
     db,
     `SELECT generation
        FROM job_interview_prep
       WHERE tenant_id = ?
-        AND job_url = ?
+        AND ${reference.sql}
         AND generation = ?
         AND status IN ('accepted', 'superseded')
       LIMIT 1`,
-    [DEFAULT_TENANT, jobUrl, generation],
+    [DEFAULT_TENANT, ...reference.params, generation],
   );
   if (!row) {
     throw new InputError("Interview prep generation not found.");

@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from jobctrl.database import close_connection, get_connection, init_db
+from jobctrl.database import close_connection, init_db
 from jobctrl.domain.events import (
     InterviewPrepGeneratedPayload,
     create_interview_prep_generated,
@@ -30,6 +30,9 @@ from jobctrl.interview.activities import (
     InterviewPrepEventRecorder,
     generate_interview_prep_activity,
 )
+
+TEST_JOB_URL = "https://example.test/job/1"
+TEST_JOB_ID = "11111111-1111-4111-8111-111111111111"
 
 
 class _FakeLlm:
@@ -365,8 +368,8 @@ def test_retry_with_same_origin_run_reuses_completed_generation(tmp_path: Path) 
         assert retry.prep.generation == 1
         assert len(llm.calls) == 2
         row_count = conn.execute(
-            "SELECT COUNT(*) FROM job_interview_prep WHERE job_url = ?",
-            ("https://example.test/job/1",),
+            "SELECT COUNT(*) FROM job_interview_prep WHERE job_id = ?",
+            (TEST_JOB_ID,),
         ).fetchone()[0]
         assert row_count == 1
         assert [event.event_type for event in publisher.events] == ["InterviewPrepGenerated"]
@@ -497,13 +500,22 @@ async def test_generate_activity_offloads_generation_and_heartbeats(
 
 def _init_conn(tmp_path: Path):
     db_path = tmp_path / "jobs.db"
-    init_db(db_path)
-    return get_connection(db_path)
+    conn = init_db(db_path)
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, tenant_id, job_id, title, company, discovered_at
+        ) VALUES (?, 'local', ?, 'Backend Engineer', 'ExampleCo', ?)
+        """,
+        (TEST_JOB_URL, TEST_JOB_ID, "2026-07-29T10:00:00+00:00"),
+    )
+    conn.commit()
+    return conn
 
 
 def _job() -> dict[str, Any]:
     return {
-        "url": "https://example.test/job/1",
+        "url": TEST_JOB_URL,
         "title": "Backend Engineer",
         "company": "ExampleCo",
     }

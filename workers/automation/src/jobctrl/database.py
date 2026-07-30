@@ -67,7 +67,11 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # Identity collapse preserves and deterministically renumbers complete histories.
 # v17 (resume-template references): the mutable per-job assignment and every
 # render-only refresh attempt reference the tenant-scoped stable Job aggregate.
-SCHEMA_VERSION = 17
+# v18 (interview-preparation references): complete preparation histories and
+# their child audit rows reference the stable Job aggregate. Any immutable
+# application-outcome link to a preparation generation is remapped alongside
+# alias-history renumbering while its legacy URL key remains unchanged.
+SCHEMA_VERSION = 18
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -215,6 +219,7 @@ def _schema_migrations() -> tuple[
         (15, ensure_materials_references_v15),
         (16, ensure_employer_analysis_references_v16),
         (17, ensure_resume_template_references_v17),
+        (18, ensure_interview_prep_references_v18),
     )
 
 
@@ -3197,24 +3202,55 @@ def ensure_bullet_provenance_tables(conn: sqlite3.Connection | None = None) -> l
     return ["job_bullet_provenance"]
 
 
-def ensure_interview_prep_tables(conn: sqlite3.Connection | None = None) -> list[str]:
-    """Create Interview Preparation canonical generation tables.
+_INTERVIEW_PREP_REFERENCE_SCHEMA_VERSION = 18
 
-    Interview prep is generated material, not a projection. Rows are versioned by
-    ``(job_url, generation)`` so a failed regenerate can be audited without
-    destroying the last accepted prep. Prompt/raw profile/job payloads are not
-    stored here; rows keep only the accepted/failed gate audit and item
-    provenance needed for later read-model projection.
-    """
-    if conn is None:
-        conn = get_connection()
 
+def _create_interview_prep_tables(
+    conn: sqlite3.Connection,
+    *,
+    prep_table: str,
+    items_table: str,
+    reference_column: str,
+) -> None:
+    stable_reference = reference_column == "job_id"
+    parent_primary_key = (
+        f"tenant_id, {reference_column}, generation"
+        if stable_reference
+        else f"{reference_column}, generation"
+    )
+    item_primary_key = (
+        f"tenant_id, {reference_column}, generation, item_id"
+        if stable_reference
+        else f"{reference_column}, generation, item_id"
+    )
+    job_foreign_key = (
+        f""",
+            FOREIGN KEY (tenant_id, {reference_column})
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_reference
+        else f""",
+            FOREIGN KEY ({reference_column})
+                REFERENCES jobs(url) ON DELETE CASCADE"""
+    )
+    parent_foreign_key = (
+        f""",
+            FOREIGN KEY (tenant_id, {reference_column}, generation)
+                REFERENCES {prep_table}(
+                    tenant_id, {reference_column}, generation
+                ) ON DELETE CASCADE"""
+        if stable_reference
+        else f""",
+            FOREIGN KEY ({reference_column}, generation)
+                REFERENCES {prep_table}(
+                    {reference_column}, generation
+                ) ON DELETE CASCADE"""
+    )
     conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS job_interview_prep (
-            job_url                    TEXT NOT NULL,
-            generation                 INTEGER NOT NULL,
+        f"""
+        CREATE TABLE IF NOT EXISTS {prep_table} (
             tenant_id                  TEXT NOT NULL DEFAULT 'local',
+            {reference_column}         TEXT NOT NULL,
+            generation                 INTEGER NOT NULL,
             status                     TEXT NOT NULL,
             model                      TEXT,
             generated_at               TEXT NOT NULL,
@@ -3225,23 +3261,18 @@ def ensure_interview_prep_tables(conn: sqlite3.Connection | None = None) -> list
             warnings_json              TEXT NOT NULL DEFAULT '[]',
             failure_reason             TEXT NOT NULL DEFAULT '',
             origin_run_id              TEXT NOT NULL DEFAULT '',
-            PRIMARY KEY (job_url, generation),
-            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            PRIMARY KEY ({parent_primary_key})
+            {job_foreign_key}
         )
         """
     )
-    prep_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_interview_prep)").fetchall()}
-    if "origin_run_id" not in prep_cols:
-        conn.execute(
-            "ALTER TABLE job_interview_prep ADD COLUMN origin_run_id TEXT NOT NULL DEFAULT ''"
-        )
     conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS job_interview_prep_items (
-            job_url                    TEXT NOT NULL,
+        f"""
+        CREATE TABLE IF NOT EXISTS {items_table} (
+            tenant_id                  TEXT NOT NULL DEFAULT 'local',
+            {reference_column}         TEXT NOT NULL,
             generation                 INTEGER NOT NULL,
             item_id                    TEXT NOT NULL,
-            tenant_id                  TEXT NOT NULL DEFAULT 'local',
             kind                       TEXT NOT NULL,
             title                      TEXT NOT NULL,
             generated_text             TEXT NOT NULL,
@@ -3253,16 +3284,24 @@ def ensure_interview_prep_tables(conn: sqlite3.Connection | None = None) -> list
             grounding_audit_json       TEXT NOT NULL DEFAULT '[]',
             warnings_json              TEXT NOT NULL DEFAULT '[]',
             position                   INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (job_url, generation, item_id),
-            FOREIGN KEY (job_url, generation)
-                REFERENCES job_interview_prep(job_url, generation) ON DELETE CASCADE
+            PRIMARY KEY ({item_primary_key})
+            {parent_foreign_key}
         )
         """
     )
+
+
+def _create_interview_prep_indexes(
+    conn: sqlite3.Connection,
+    *,
+    reference_column: str,
+) -> None:
     conn.execute(
-        """
+        f"""
         CREATE INDEX IF NOT EXISTS idx_job_interview_prep_tenant_job_gen
-        ON job_interview_prep(tenant_id, job_url, generation DESC)
+        ON job_interview_prep(
+            tenant_id, {reference_column}, generation DESC
+        )
         """
     )
     conn.execute(
@@ -3272,9 +3311,11 @@ def ensure_interview_prep_tables(conn: sqlite3.Connection | None = None) -> list
         """
     )
     conn.execute(
-        """
+        f"""
         CREATE INDEX IF NOT EXISTS idx_job_interview_prep_origin_run
-        ON job_interview_prep(tenant_id, job_url, origin_run_id)
+        ON job_interview_prep(
+            tenant_id, {reference_column}, origin_run_id
+        )
         """
     )
     conn.execute(
@@ -3282,6 +3323,48 @@ def ensure_interview_prep_tables(conn: sqlite3.Connection | None = None) -> list
         CREATE INDEX IF NOT EXISTS idx_job_interview_prep_items_tenant_kind
         ON job_interview_prep_items(tenant_id, kind, position)
         """
+    )
+
+
+def ensure_interview_prep_tables(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Create Interview Preparation canonical generation tables.
+
+    Interview prep is generated material, not a projection. Rows are versioned by
+    ``(job_url, generation)`` so a failed regenerate can be audited without
+    destroying the last accepted prep. Prompt/raw profile/job payloads are not
+    stored here; rows keep only the accepted/failed gate audit and item
+    provenance needed for later read-model projection.
+    """
+    if conn is None:
+        conn = get_connection()
+    current_schema_version = _assert_schema_version_supported(conn)
+    prep_columns = _table_columns(conn, "job_interview_prep")
+    reference_column = (
+        "job_id"
+        if "job_id" in prep_columns
+        or (
+            not prep_columns
+            and current_schema_version
+            >= _INTERVIEW_PREP_REFERENCE_SCHEMA_VERSION
+        )
+        else "job_url"
+    )
+    _create_interview_prep_tables(
+        conn,
+        prep_table="job_interview_prep",
+        items_table="job_interview_prep_items",
+        reference_column=reference_column,
+    )
+    prep_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_interview_prep)").fetchall()}
+    if "origin_run_id" not in prep_cols:
+        conn.execute(
+            "ALTER TABLE job_interview_prep ADD COLUMN origin_run_id TEXT NOT NULL DEFAULT ''"
+        )
+    _create_interview_prep_indexes(
+        conn,
+        reference_column=reference_column,
     )
     conn.commit()
     return ["job_interview_prep", "job_interview_prep_items"]
@@ -4526,6 +4609,21 @@ def _reassign_discovery_identity_references(
             surviving_job_id=surviving_job_id,
             material_generation_map=material_generation_map,
         )
+    if _has_interview_prep_reference_schema_v18(conn):
+        _reassign_interview_prep_references_v18(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+            losing_job_url=losing_job_url,
+            surviving_job_url=surviving_job_url,
+        )
+        _reassign_application_outcome_job_keys_v18(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_url=losing_job_url,
+            surviving_job_url=surviving_job_url,
+        )
     if _has_scoring_reference_schema_v12(conn):
         _reassign_scoring_references_v12(
             conn,
@@ -4550,6 +4648,8 @@ def _reassign_discovery_identity_references(
             losing_job_id=losing_job_id,
             surviving_job_id=surviving_job_id,
         )
+
+
 def _reassign_enrichment_snapshot_references_v11(
     conn: sqlite3.Connection,
     *,
@@ -11066,6 +11166,741 @@ def _reassign_resume_template_references_v17(
         conn,
         expected_counts=expected_counts,
     )
+
+
+_INTERVIEW_PREP_REFERENCE_TABLES = (
+    "job_interview_prep",
+    "job_interview_prep_items",
+)
+
+
+def _has_interview_prep_parent_foreign_key_v18(
+    conn: sqlite3.Connection,
+) -> bool:
+    groups: dict[int, set[tuple[str, str]]] = {}
+    cascades: dict[int, bool] = {}
+    for row in conn.execute(
+        'PRAGMA foreign_key_list("job_interview_prep_items")'
+    ).fetchall():
+        if str(row[2]) != "job_interview_prep":
+            continue
+        foreign_key_id = int(row[0])
+        groups.setdefault(foreign_key_id, set()).add(
+            (str(row[3]), str(row[4]))
+        )
+        cascades[foreign_key_id] = str(row[6]).upper() == "CASCADE"
+    expected = {
+        ("tenant_id", "tenant_id"),
+        ("job_id", "job_id"),
+        ("generation", "generation"),
+    }
+    return any(
+        columns == expected and cascades.get(foreign_key_id, False)
+        for foreign_key_id, columns in groups.items()
+    )
+
+
+def _has_interview_prep_reference_schema_v18(
+    conn: sqlite3.Connection,
+) -> bool:
+    return (
+        "job_id" in _table_columns(conn, "job_interview_prep")
+        and "job_url" not in _table_columns(conn, "job_interview_prep")
+        and _primary_key_columns(conn, "job_interview_prep")
+        == ("tenant_id", "job_id", "generation")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "job_interview_prep",
+            "job_id",
+        )
+        and "job_id"
+        in _table_columns(conn, "job_interview_prep_items")
+        and "job_url"
+        not in _table_columns(conn, "job_interview_prep_items")
+        and _primary_key_columns(conn, "job_interview_prep_items")
+        == ("tenant_id", "job_id", "generation", "item_id")
+        and _has_interview_prep_parent_foreign_key_v18(conn)
+        and _has_index(
+            conn,
+            "job_interview_prep",
+            "idx_job_interview_prep_tenant_job_gen",
+            ("tenant_id", "job_id", "generation"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_interview_prep",
+            "idx_job_interview_prep_tenant_status",
+            ("tenant_id", "status", "generated_at"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_interview_prep",
+            "idx_job_interview_prep_origin_run",
+            ("tenant_id", "job_id", "origin_run_id"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_interview_prep_items",
+            "idx_job_interview_prep_items_tenant_kind",
+            ("tenant_id", "kind", "position"),
+            unique=False,
+        )
+    )
+
+
+def _merge_interview_prep_histories_v18(
+    history: list[tuple[str, int, tuple[Any, ...]]],
+) -> list[tuple[str, int, tuple[Any, ...]]]:
+    """Interleave prep histories without reversing either source history."""
+    by_reference: dict[
+        str,
+        list[tuple[str, int, tuple[Any, ...]]],
+    ] = {}
+    for entry in history:
+        by_reference.setdefault(entry[0], []).append(entry)
+    for entries in by_reference.values():
+        entries.sort(key=lambda entry: entry[1])
+
+    offsets = {reference: 0 for reference in by_reference}
+    merged: list[tuple[str, int, tuple[Any, ...]]] = []
+    while len(merged) < len(history):
+        eligible = [
+            entries[offsets[reference]]
+            for reference, entries in by_reference.items()
+            if offsets[reference] < len(entries)
+        ]
+        selected = min(
+            eligible,
+            key=lambda entry: (
+                str(entry[2][2]),
+                entry[0],
+                entry[1],
+            ),
+        )
+        merged.append(selected)
+        offsets[selected[0]] += 1
+    return merged
+
+
+def _latest_accepted_interview_prep_key_v18(
+    history: list[tuple[str, int, tuple[Any, ...]]],
+    *,
+    preferred_reference: str,
+) -> tuple[str, int] | None:
+    accepted = [
+        entry
+        for entry in history
+        if str(entry[2][0]) == "accepted"
+    ]
+    if not accepted:
+        return None
+    selected = max(
+        accepted,
+        key=lambda entry: (
+            str(entry[2][2]),
+            entry[0] == preferred_reference,
+            entry[0],
+            entry[1],
+        ),
+    )
+    return selected[0], selected[1]
+
+
+def _canonical_interview_prep_rows_v18(
+    conn: sqlite3.Connection,
+) -> tuple[
+    list[tuple[Any, ...]],
+    dict[tuple[str, str, int], int],
+]:
+    rows = conn.execute(
+        """
+        SELECT tenant_id, job_url, generation, status, model, generated_at,
+               gate_status, fabrication_findings_json,
+               grounding_findings_json, judge_verdict, warnings_json,
+               failure_reason, origin_run_id
+        FROM job_interview_prep
+        ORDER BY tenant_id, job_url, generation
+        """
+    ).fetchall()
+    grouped: dict[
+        tuple[str, str],
+        list[tuple[str, int, tuple[Any, ...]]],
+    ] = {}
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        old_generation = int(row[2])
+        if old_generation <= 0:
+            raise RuntimeError(
+                "interview-prep reference migration found a non-positive "
+                "generation"
+            )
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=True,
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "interview-prep reference migration could not resolve "
+                f"job_interview_prep.job_url={raw_reference!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        grouped.setdefault((tenant_id, stable_job_id), []).append(
+            (
+                raw_reference,
+                old_generation,
+                tuple(row[3:]),
+            )
+        )
+
+    canonical: list[tuple[Any, ...]] = []
+    generation_map: dict[tuple[str, str, int], int] = {}
+    for (tenant_id, stable_job_id), history in sorted(grouped.items()):
+        ordered = _merge_interview_prep_histories_v18(history)
+        storage_row = conn.execute(
+            """
+            SELECT url
+            FROM jobs
+            WHERE tenant_id = ? AND job_id = ?
+            LIMIT 1
+            """,
+            (tenant_id, stable_job_id),
+        ).fetchone()
+        preferred_reference = (
+            str(storage_row[0])
+            if storage_row is not None
+            else ""
+        )
+        latest_accepted = _latest_accepted_interview_prep_key_v18(
+            ordered,
+            preferred_reference=preferred_reference,
+        )
+        for index, (
+            raw_reference,
+            old_generation,
+            values,
+        ) in enumerate(ordered):
+            new_generation = index + 1
+            generation_map[
+                (tenant_id, raw_reference, old_generation)
+            ] = new_generation
+            normalized = list(values)
+            if (
+                str(normalized[0]) == "accepted"
+                and (raw_reference, old_generation) != latest_accepted
+            ):
+                normalized[0] = "superseded"
+            canonical.append(
+                (
+                    tenant_id,
+                    stable_job_id,
+                    new_generation,
+                    *normalized,
+                )
+            )
+    return canonical, generation_map
+
+
+def _canonical_interview_prep_item_rows_v18(
+    conn: sqlite3.Connection,
+    *,
+    generation_map: dict[tuple[str, str, int], int],
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        """
+        SELECT tenant_id, job_url, generation, item_id, kind, title,
+               generated_text, evidence_ids_json, requirement_ids_json,
+               source_text_json, transform_type, control,
+               grounding_audit_json, warnings_json, position
+        FROM job_interview_prep_items
+        ORDER BY tenant_id, job_url, generation, position, item_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        old_generation = int(row[2])
+        new_generation = generation_map.get(
+            (tenant_id, raw_reference, old_generation)
+        )
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=True,
+        )
+        if new_generation is None or stable_job_id is None:
+            raise RuntimeError(
+                "interview-prep reference migration found an item without "
+                "its parent generation"
+            )
+        canonical.append(
+            (
+                tenant_id,
+                stable_job_id,
+                new_generation,
+                *tuple(row[3:]),
+            )
+        )
+    return canonical
+
+
+def _remap_application_outcome_interview_prep_generations_v18(
+    conn: sqlite3.Connection,
+    *,
+    generation_map: dict[tuple[str, str, int], int],
+) -> None:
+    """Preserve immutable outcome-to-preparation links during renumbering.
+
+    Application outcomes remain URL-keyed until their own identity-reference
+    migration. Only the linked preparation generation is rewritten here, using
+    the exact source URL/JobId that owned the generation before histories were
+    merged.
+    """
+    columns = _table_columns(conn, "application_outcomes")
+    required = {
+        "tenant_id",
+        "outcome_id",
+        "job_key",
+        "interview_prep_generation",
+    }
+    if not required.issubset(columns):
+        return
+
+    rows = conn.execute(
+        """
+        SELECT tenant_id, outcome_id, job_key,
+               interview_prep_generation
+        FROM application_outcomes
+        WHERE interview_prep_generation IS NOT NULL
+        ORDER BY tenant_id, outcome_id
+        """
+    ).fetchall()
+    for row in rows:
+        tenant_id = str(row[0])
+        outcome_id = str(row[1])
+        job_key = str(row[2])
+        old_generation = int(row[3])
+        new_generation = generation_map.get(
+            (tenant_id, job_key, old_generation)
+        )
+        if new_generation is None:
+            continue
+        updated = conn.execute(
+            """
+            UPDATE application_outcomes
+            SET interview_prep_generation = ?
+            WHERE tenant_id = ?
+              AND outcome_id = ?
+              AND job_key = ?
+              AND interview_prep_generation = ?
+            """,
+            (
+                new_generation,
+                tenant_id,
+                outcome_id,
+                job_key,
+                old_generation,
+            ),
+        )
+        if updated.rowcount != 1:
+            raise RuntimeError(
+                "interview-prep reference migration could not preserve "
+                f"application outcome {outcome_id!r}"
+            )
+
+
+def _reassign_application_outcome_job_keys_v18(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_url: str,
+    surviving_job_url: str,
+) -> None:
+    """Keep legacy URL-keyed outcomes reachable after a URL collision.
+
+    The outcome family remains URL-shaped until its later stable-reference
+    migration. Repointing only the legacy value to the surviving storage URL
+    preserves that compatibility contract and allows the v7 collision cleanup
+    to remove the losing alias without orphaning outcome reads.
+    """
+    columns = _table_columns(conn, "application_outcomes")
+    if not {"tenant_id", "job_key"}.issubset(columns):
+        return
+    conn.execute(
+        """
+        UPDATE application_outcomes
+        SET job_key = ?
+        WHERE tenant_id = ? AND job_key = ?
+        """,
+        (surviving_job_url, tenant_id, losing_job_url),
+    )
+
+
+def ensure_interview_prep_references_v18(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move Interview Preparation histories to stable JobId references."""
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _INTERVIEW_PREP_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _RESUME_TEMPLATE_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "interview-prep reference migration requires resume-template "
+            "schema v17"
+        )
+
+    conn.execute("SAVEPOINT interview_prep_references_v18")
+    try:
+        if not _has_resume_template_reference_schema_v17(conn):
+            raise RuntimeError(
+                "interview-prep reference migration requires the stable "
+                "resume-template reference schema"
+            )
+        before_counts = {
+            table: int(
+                conn.execute(
+                    f'SELECT COUNT(*) FROM "{table}"'
+                ).fetchone()[0]
+            )
+            for table in _INTERVIEW_PREP_REFERENCE_TABLES
+        }
+
+        if not _has_interview_prep_reference_schema_v18(conn):
+            (
+                prep_rows,
+                generation_map,
+            ) = _canonical_interview_prep_rows_v18(conn)
+            item_rows = _canonical_interview_prep_item_rows_v18(
+                conn,
+                generation_map=generation_map,
+            )
+            for table in (
+                "job_interview_prep_items_v18",
+                "job_interview_prep_v18",
+            ):
+                conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+            _create_interview_prep_tables(
+                conn,
+                prep_table="job_interview_prep_v18",
+                items_table="job_interview_prep_items_v18",
+                reference_column="job_id",
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_interview_prep_v18 (
+                    tenant_id, job_id, generation, status, model,
+                    generated_at, gate_status,
+                    fabrication_findings_json,
+                    grounding_findings_json, judge_verdict,
+                    warnings_json, failure_reason, origin_run_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                prep_rows,
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_interview_prep_items_v18 (
+                    tenant_id, job_id, generation, item_id, kind, title,
+                    generated_text, evidence_ids_json,
+                    requirement_ids_json, source_text_json,
+                    transform_type, control, grounding_audit_json,
+                    warnings_json, position
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                item_rows,
+            )
+            conn.execute('DROP TABLE "job_interview_prep_items"')
+            conn.execute('DROP TABLE "job_interview_prep"')
+            conn.execute(
+                'ALTER TABLE "job_interview_prep_v18" '
+                'RENAME TO "job_interview_prep"'
+            )
+            conn.execute(
+                'ALTER TABLE "job_interview_prep_items_v18" '
+                'RENAME TO "job_interview_prep_items"'
+            )
+            _create_interview_prep_indexes(
+                conn,
+                reference_column="job_id",
+            )
+            _remap_application_outcome_interview_prep_generations_v18(
+                conn,
+                generation_map=generation_map,
+            )
+
+        _verify_interview_prep_references_v18(
+            conn,
+            expected_counts=before_counts,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_INTERVIEW_PREP_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT interview_prep_references_v18"
+        )
+        conn.commit()
+    except BaseException:
+        conn.execute(
+            "ROLLBACK TO SAVEPOINT interview_prep_references_v18"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT interview_prep_references_v18"
+        )
+        raise
+
+    return list(_INTERVIEW_PREP_REFERENCE_TABLES)
+
+
+def _verify_interview_prep_references_v18(
+    conn: sqlite3.Connection,
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    if not _has_interview_prep_reference_schema_v18(conn):
+        raise RuntimeError(
+            "interview-prep reference migration did not create the stable "
+            "reference schema"
+        )
+    for table, expected_count in expected_counts.items():
+        observed_count = int(
+            conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        )
+        if observed_count != expected_count:
+            raise RuntimeError(
+                "interview-prep reference migration changed row count for "
+                f"{table}: expected {expected_count}, found {observed_count}"
+            )
+    orphan_parent = conn.execute(
+        """
+        SELECT prep.job_id
+        FROM job_interview_prep AS prep
+        LEFT JOIN jobs
+          ON jobs.tenant_id = prep.tenant_id
+         AND jobs.job_id = prep.job_id
+        WHERE jobs.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan_parent is not None:
+        raise RuntimeError(
+            "interview-prep reference migration left an unresolved JobId"
+        )
+    orphan_item = conn.execute(
+        """
+        SELECT item.job_id
+        FROM job_interview_prep_items AS item
+        LEFT JOIN job_interview_prep AS prep
+          ON prep.tenant_id = item.tenant_id
+         AND prep.job_id = item.job_id
+         AND prep.generation = item.generation
+        WHERE prep.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan_item is not None:
+        raise RuntimeError(
+            "interview-prep reference migration left an item without its "
+            "parent generation"
+        )
+    multiple_accepted = conn.execute(
+        """
+        SELECT tenant_id, job_id
+        FROM job_interview_prep
+        WHERE status = 'accepted'
+        GROUP BY tenant_id, job_id
+        HAVING COUNT(*) > 1
+        LIMIT 1
+        """
+    ).fetchone()
+    if multiple_accepted is not None:
+        raise RuntimeError(
+            "interview-prep reference migration left multiple accepted "
+            "generations for one job"
+        )
+    for table in _INTERVIEW_PREP_REFERENCE_TABLES:
+        for row in conn.execute(
+            f'SELECT DISTINCT job_id FROM "{table}"'
+        ).fetchall():
+            _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "interview-prep reference migration found a foreign-key "
+            "violation"
+        )
+
+
+def _reassign_interview_prep_references_v18(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+    losing_job_url: str,
+    surviving_job_url: str,
+) -> dict[tuple[str, int], int]:
+    """Merge complete Interview Preparation histories during identity collapse."""
+    if losing_job_id == surviving_job_id:
+        return {}
+    before_counts = {
+        table: int(
+            conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        )
+        for table in _INTERVIEW_PREP_REFERENCE_TABLES
+    }
+    parent_rows = conn.execute(
+        """
+        SELECT job_id, generation, status, model, generated_at,
+               gate_status, fabrication_findings_json,
+               grounding_findings_json, judge_verdict, warnings_json,
+               failure_reason, origin_run_id
+        FROM job_interview_prep
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id, generation
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    if not parent_rows:
+        return {}
+
+    history = [
+        (
+            str(row[0]),
+            int(row[1]),
+            tuple(row[2:]),
+        )
+        for row in parent_rows
+    ]
+    ordered = _merge_interview_prep_histories_v18(history)
+    latest_accepted = _latest_accepted_interview_prep_key_v18(
+        ordered,
+        preferred_reference=surviving_job_id,
+    )
+    generation_map: dict[tuple[str, int], int] = {}
+    canonical_parents: list[tuple[Any, ...]] = []
+    for index, (
+        old_job_id,
+        old_generation,
+        values,
+    ) in enumerate(ordered):
+        new_generation = index + 1
+        generation_map[(old_job_id, old_generation)] = new_generation
+        normalized = list(values)
+        if (
+            str(normalized[0]) == "accepted"
+            and (old_job_id, old_generation) != latest_accepted
+        ):
+            normalized[0] = "superseded"
+        canonical_parents.append(
+            (
+                tenant_id,
+                surviving_job_id,
+                new_generation,
+                *normalized,
+            )
+        )
+
+    item_source = conn.execute(
+        """
+        SELECT job_id, generation, item_id, kind, title, generated_text,
+               evidence_ids_json, requirement_ids_json, source_text_json,
+               transform_type, control, grounding_audit_json,
+               warnings_json, position
+        FROM job_interview_prep_items
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id, generation, position, item_id
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    canonical_items: list[tuple[Any, ...]] = []
+    for row in item_source:
+        mapped = generation_map.get((str(row[0]), int(row[1])))
+        if mapped is None:
+            raise RuntimeError(
+                "interview-prep identity collapse found an item without "
+                "its parent generation"
+            )
+        canonical_items.append(
+            (
+                tenant_id,
+                surviving_job_id,
+                mapped,
+                *tuple(row[2:]),
+            )
+        )
+
+    conn.execute(
+        """
+        DELETE FROM job_interview_prep_items
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    )
+    conn.execute(
+        """
+        DELETE FROM job_interview_prep
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_interview_prep (
+            tenant_id, job_id, generation, status, model, generated_at,
+            gate_status, fabrication_findings_json,
+            grounding_findings_json, judge_verdict, warnings_json,
+            failure_reason, origin_run_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        canonical_parents,
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_interview_prep_items (
+            tenant_id, job_id, generation, item_id, kind, title,
+            generated_text, evidence_ids_json, requirement_ids_json,
+            source_text_json, transform_type, control,
+            grounding_audit_json, warnings_json, position
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        canonical_items,
+    )
+    _remap_application_outcome_interview_prep_generations_v18(
+        conn,
+        generation_map={
+            (
+                tenant_id,
+                (
+                    losing_job_url
+                    if old_job_id == losing_job_id
+                    else surviving_job_url
+                ),
+                old_generation,
+            ): new_generation
+            for (
+                old_job_id,
+                old_generation,
+            ), new_generation in generation_map.items()
+        },
+    )
+    _verify_interview_prep_references_v18(
+        conn,
+        expected_counts=before_counts,
+    )
+    return generation_map
 
 
 # ---------------------------------------------------------------------------

@@ -278,13 +278,13 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_interview_prep (
-                job_url, generation, tenant_id, status, model, generated_at,
+                job_id, generation, tenant_id, status, model, generated_at,
                 gate_status, fabrication_findings_json, grounding_findings_json,
                 judge_verdict, warnings_json, failure_reason
             ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                job_url,
+                job_id,
                 prep["generation"],
                 prep["status"],
                 prep["model"],
@@ -301,14 +301,14 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_interview_prep_items (
-                job_url, generation, item_id, tenant_id, kind, title,
+                job_id, generation, item_id, tenant_id, kind, title,
                 generated_text, evidence_ids_json, requirement_ids_json,
                 source_text_json, transform_type, control, grounding_audit_json,
                 warnings_json, position
             ) VALUES (?, ?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                job_url,
+                job_id,
                 item["generation"],
                 item["item_id"],
                 item["kind"],

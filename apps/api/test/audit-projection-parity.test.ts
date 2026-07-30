@@ -99,6 +99,11 @@ interface Fixture {
 }
 
 const fixture = JSON.parse(fs.readFileSync(FIXTURE_PATH, "utf8")) as Fixture;
+const PRIMARY_JOB_ID = "11111111-1111-4111-8111-111111111111";
+
+function fixtureJobId(index: number): string {
+  return `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+}
 
 function withTempDb(): { dbPath: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-audit-parity-"));
@@ -115,6 +120,8 @@ function seedSchema(dbPath: string): void {
   db.exec(`
     CREATE TABLE jobs (
       url TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT,
       title TEXT,
       company TEXT,
       salary TEXT,
@@ -139,7 +146,8 @@ function seedSchema(dbPath: string): void {
       applied_at TEXT,
       apply_status TEXT,
       apply_error TEXT,
-      apply_attempts INTEGER DEFAULT 0
+      apply_attempts INTEGER DEFAULT 0,
+      UNIQUE (tenant_id, job_id)
     );
     CREATE TABLE job_events (
       event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -267,9 +275,9 @@ function seedSchema(dbPath: string): void {
       PRIMARY KEY (job_url, generation, bullet_id)
     );
     CREATE TABLE job_interview_prep (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
       tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT NOT NULL,
+      generation INTEGER NOT NULL,
       status TEXT NOT NULL,
       model TEXT,
       generated_at TEXT NOT NULL,
@@ -279,13 +287,13 @@ function seedSchema(dbPath: string): void {
       judge_verdict TEXT,
       warnings_json TEXT NOT NULL DEFAULT '[]',
       failure_reason TEXT NOT NULL DEFAULT '',
-      PRIMARY KEY (job_url, generation)
+      PRIMARY KEY (tenant_id, job_id, generation)
     );
     CREATE TABLE job_interview_prep_items (
-      job_url TEXT NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT NOT NULL,
       generation INTEGER NOT NULL,
       item_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
       kind TEXT NOT NULL,
       title TEXT NOT NULL,
       generated_text TEXT NOT NULL,
@@ -297,7 +305,7 @@ function seedSchema(dbPath: string): void {
       grounding_audit_json TEXT NOT NULL DEFAULT '[]',
       warnings_json TEXT NOT NULL DEFAULT '[]',
       position INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (job_url, generation, item_id)
+      PRIMARY KEY (tenant_id, job_id, generation, item_id)
     );
     CREATE TABLE jobctrl_hidden_jobs (
       job_url TEXT PRIMARY KEY,
@@ -345,14 +353,15 @@ function seedRows(dbPath: string): void {
   const jobUrl = fixture.job.url;
   db.prepare(
     `INSERT INTO jobs (
-       url, title, company, site, strategy, location, salary, description,
+       url, tenant_id, job_id, title, company, site, strategy, location, salary, description,
        full_description, application_url, apply_status, applied_at,
        score_reasoning, discovered_at
-     ) VALUES (@url, @title, @company, @site, @strategy, @location, @salary, @description,
+     ) VALUES (@url, 'local', @job_id, @title, @company, @site, @strategy, @location, @salary, @description,
        @full_description, @application_url, @apply_status, @applied_at,
        @score_reasoning, @discovered_at)`,
   ).run({
     url: jobUrl,
+    job_id: PRIMARY_JOB_ID,
     title: fixture.job.title,
     company: fixture.job.company,
     site: fixture.job.site,
@@ -452,27 +461,27 @@ function seedRows(dbPath: string): void {
   }
   const insertInterviewPrep = db.prepare(
     `INSERT INTO job_interview_prep (
-       job_url, generation, tenant_id, status, model, generated_at, gate_status,
+       tenant_id, job_id, generation, status, model, generated_at, gate_status,
        fabrication_findings_json, grounding_findings_json, judge_verdict,
        warnings_json, failure_reason
-     ) VALUES (@job_url, @generation, 'local', @status, @model, @generated_at, @gate_status,
+     ) VALUES ('local', @job_id, @generation, @status, @model, @generated_at, @gate_status,
        @fabrication_findings_json, @grounding_findings_json, @judge_verdict,
        @warnings_json, @failure_reason)`,
   );
   for (const prep of fixture.rows.jobInterviewPrep) {
-    insertInterviewPrep.run({ job_url: jobUrl, ...prep });
+    insertInterviewPrep.run({ job_id: PRIMARY_JOB_ID, ...prep });
   }
   const insertInterviewPrepItem = db.prepare(
     `INSERT INTO job_interview_prep_items (
-       job_url, generation, item_id, tenant_id, kind, title, generated_text,
+       tenant_id, job_id, generation, item_id, kind, title, generated_text,
        evidence_ids_json, requirement_ids_json, source_text_json, transform_type,
        control, grounding_audit_json, warnings_json, position
-     ) VALUES (@job_url, @generation, @item_id, 'local', @kind, @title, @generated_text,
+     ) VALUES ('local', @job_id, @generation, @item_id, @kind, @title, @generated_text,
        @evidence_ids_json, @requirement_ids_json, @source_text_json, @transform_type,
        @control, @grounding_audit_json, @warnings_json, @position)`,
   );
   for (const item of fixture.rows.jobInterviewPrepItems) {
-    insertInterviewPrepItem.run({ job_url: jobUrl, ...item });
+    insertInterviewPrepItem.run({ job_id: PRIMARY_JOB_ID, ...item });
   }
   db.prepare(
     `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
@@ -483,9 +492,9 @@ function seedRows(dbPath: string): void {
   // (the job_list/job_detail assertions target the primary job). See the fixture
   // `dashboardAggregateJobs` notes for the two divergences they cover.
   const insertAggJob = db.prepare(
-    `INSERT INTO jobs (url, title, company, site, strategy, location,
+    `INSERT INTO jobs (url, tenant_id, job_id, title, company, site, strategy, location,
        apply_status, applied_at, tailored_resume_path, discovered_at)
-     VALUES (@url, @title, @company, @site, @strategy, @location,
+     VALUES (@url, 'local', @job_id, @title, @company, @site, @strategy, @location,
        @apply_status, @applied_at, @tailored_resume_path, @discovered_at)`,
   );
   const insertAggStage = db.prepare(
@@ -502,9 +511,10 @@ function seedRows(dbPath: string): void {
     `INSERT INTO jobctrl_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
      VALUES (?, ?, 'parity', NULL)`,
   );
-  for (const agg of fixture.dashboardAggregateJobs) {
+  for (const [index, agg] of fixture.dashboardAggregateJobs.entries()) {
     insertAggJob.run({
       url: agg.url,
+      job_id: fixtureJobId(index + 2),
       title: agg.title,
       company: agg.company,
       site: agg.site,
@@ -552,8 +562,13 @@ function seedRows(dbPath: string): void {
     ["apply", 3],
   ];
   const insertConversionJob = db.prepare(
-    `INSERT INTO jobs (url, title, site, fit_score, apply_status, applied_at, discovered_at)
-     VALUES (@url, @title, @site, @fit_score, 'applied', @applied_at, @discovered_at)`,
+    `INSERT INTO jobs (
+       url, tenant_id, job_id, title, site, fit_score, apply_status,
+       applied_at, discovered_at
+     ) VALUES (
+       @url, 'local', @job_id, @title, @site, @fit_score, 'applied',
+       @applied_at, @discovered_at
+     )`,
   );
   const insertConversionStage = db.prepare(
     `INSERT INTO job_stage_states (
@@ -561,9 +576,10 @@ function seedRows(dbPath: string): void {
        finished_at, duration_ms, retryable
      ) VALUES (@job_url, @stage, 'succeeded', 1, @max_attempts, @at, @at, @at, 1000, 1)`,
   );
-  for (const job of fixture.rows.conversionJobs) {
+  for (const [index, job] of fixture.rows.conversionJobs.entries()) {
     insertConversionJob.run({
       url: job.url,
+      job_id: fixtureJobId(index + 100),
       title: job.title,
       site: job.site,
       fit_score: job.fitScore,

@@ -1860,7 +1860,7 @@ interface RequirementFitItemRow extends Record<string, unknown> {
 }
 
 interface InterviewPrepRow extends Record<string, unknown> {
-  job_url: string;
+  job_reference: string;
   generation: number;
   status: string;
   model: string | null;
@@ -2157,16 +2157,38 @@ function loadInterviewPrepJson(
 ): string | null {
   if (!tableExists(db, "job_interview_prep")) return null;
   if (!tableExists(db, "job_interview_prep_items")) return null;
+  const prepReference = jobReferenceColumn(
+    db,
+    "job_interview_prep",
+  );
+  const itemReference = jobReferenceColumn(
+    db,
+    "job_interview_prep_items",
+  );
+  const prepReferenceValue = jobReferenceForUrl(
+    db,
+    "job_interview_prep",
+    jobUrl,
+    tenantId,
+  );
+  const itemReferenceValue = jobReferenceForUrl(
+    db,
+    "job_interview_prep_items",
+    jobUrl,
+    tenantId,
+  );
   const row = getRow<InterviewPrepRow>(
     db,
-    `SELECT job_url, generation, status, model, generated_at, gate_status,
+    `SELECT ${prepReference} AS job_reference,
+            generation, status, model, generated_at, gate_status,
             fabrication_findings_json, grounding_findings_json, judge_verdict,
             warnings_json
        FROM job_interview_prep
-      WHERE tenant_id = ? AND job_url = ? AND status = 'accepted'
+      WHERE tenant_id = ? AND ${prepReference} = ?
+        AND status = 'accepted'
       ORDER BY generation DESC
       LIMIT 1`,
-    [tenantId, jobUrl],
+    [tenantId, prepReferenceValue],
   );
   if (!row) return null;
   const generation = Number(row.generation);
@@ -2176,12 +2198,12 @@ function loadInterviewPrepJson(
             requirement_ids_json, source_text_json, transform_type, control,
             grounding_audit_json, warnings_json, position
        FROM job_interview_prep_items
-      WHERE tenant_id = ? AND job_url = ? AND generation = ?
+      WHERE tenant_id = ? AND ${itemReference} = ? AND generation = ?
       ORDER BY position ASC, item_id ASC`,
-    [tenantId, jobUrl, generation],
+    [tenantId, itemReferenceValue, generation],
   );
   const readModel = {
-    jobKey: row.job_url,
+    jobKey: jobUrl,
     generation,
     status: row.status,
     generatedAt: row.generated_at,
