@@ -149,6 +149,10 @@ def test_identity_locator_and_sequence_roles_are_not_inferred_from_names() -> No
     )
     assert table_plan("job_locators").disposition is TableDisposition.STRUCTURED_REWRITE
     assert (
+        table_plan("dashboard_projections").disposition
+        is TableDisposition.STRUCTURED_REWRITE
+    )
+    assert (
         table_plan("jobctrl_hidden_jobs").disposition
         is TableDisposition.SCALAR_JOB_ID_REWRITE
     )
