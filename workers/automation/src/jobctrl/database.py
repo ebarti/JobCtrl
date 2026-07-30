@@ -8,6 +8,8 @@ This module also owns the apply-agent observability tables used for
 persistent run and event telemetry.
 """
 
+from __future__ import annotations
+
 import json
 import sqlite3
 import threading
@@ -15,12 +17,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
+from jobctrl.config import DB_PATH, DEFAULTS
+from jobctrl.infrastructure.migrations.schema_manifest import (
+    EXACT_V7_MANIFEST,
+    SchemaManifestError,
+    assert_exact_manifest,
+    schema_dump,
+)
 
-# Schema version stamped into the SQLite ``user_version`` header. The ensure_*
-# helpers below are additive and idempotent, so this is a lightweight
-# forward-incompatibility guard (refuse a DB written by a newer build), not a
-# migration framework. Bump it only when the schema shape changes.
+# Schema version stamped into the SQLite ``user_version`` header. Runtime opens
+# only this exact schema and refuses databases written by newer code. The only
+# supported upgrade is the explicit stopped-runtime v6-to-v7 cutover.
 #
 # v2 (Contact & Outreach): generic ``entity_kind``/``entity_ref`` columns on
 # ``job_events`` so contact-only events carry honest identity without
@@ -35,11 +42,17 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # replay-idempotent receipts for caller-filtered provider results.
 # v6 (repeat-application prevention): evidence-bound confirmations,
 # one-attempt consumption, and immutable protection audit records.
-SCHEMA_VERSION = 6
+# v7 replaces URL-shaped storage identity with canonical ``(tenant_id,
+# job_id)`` keys. Posting URLs remain unique locators, never aggregate identity.
+SCHEMA_VERSION = 7
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
     """Raised when the database was written by a newer build than this code."""
+
+
+class SchemaMigrationRequiredError(RuntimeError):
+    """Raised when a stopped-runtime v6 cutover has not been run."""
 
 
 # Thread-local connection storage — each thread gets its own connection
@@ -47,7 +60,11 @@ class IncompatibleSchemaVersionError(RuntimeError):
 _local = threading.local()
 
 
-def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
+def get_connection(
+    db_path: Path | str | None = None,
+    *,
+    enable_wal: bool = True,
+) -> sqlite3.Connection:
     """Get a thread-local cached SQLite connection with WAL mode enabled.
 
     Each thread gets its own connection (required for SQLite thread safety).
@@ -73,8 +90,9 @@ def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
             pass
 
     conn = sqlite3.connect(path, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=10000")
+    if enable_wal:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=10000")
     conn.row_factory = sqlite3.Row
     _local.connections[path] = conn
     return conn
@@ -142,169 +160,83 @@ def _resolve_backup_destination(source: Path, output: Path | str | None) -> Path
     return target_dir / f"jobctrl-{timestamp}.db"
 
 
-def _ensure_schema_version(conn: sqlite3.Connection) -> int:
-    """Stamp ``PRAGMA user_version`` as a lightweight schema guard.
-
-    Databases created before this guard report ``user_version == 0`` and are
-    adopted by stamping ``SCHEMA_VERSION``; an equal version is a no-op. A
-    database whose version is newer than this build fails closed with
-    ``IncompatibleSchemaVersionError`` -- the caller (``init_db``) invokes this
-    before any table creation or migration, so a stale build never runs its
-    potentially destructive ``ensure_*`` migrations against a forward-migrated
-    file, and is never silently downgraded.
-    """
+def _assert_schema_version_supported(
+    conn: sqlite3.Connection,
+    *,
+    supported_version: int = SCHEMA_VERSION,
+) -> int:
+    """Refuse a database written by a newer build before schema writes."""
     current = int(conn.execute("PRAGMA user_version").fetchone()[0])
-    if current > SCHEMA_VERSION:
+    if current > supported_version:
         raise IncompatibleSchemaVersionError(
             f"database was written by a newer JobCtrl build "
-            f"(schema version {current} > code schema version {SCHEMA_VERSION}); "
+            f"(schema version {current} > code schema version {supported_version}); "
             f"upgrade JobCtrl or restore a compatible backup ('jobctrl backup')."
         )
-    if current < SCHEMA_VERSION:
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    return current
+
+
+def create_exact_v7_database(
+    db_path: Path | str | None = None,
+) -> sqlite3.Connection:
+    """Create a brand-new database directly from the exact v7 schema."""
+    path = Path(db_path or DB_PATH)
+    if path.exists():
+        raise FileExistsError(
+            f"exact v7 creation requires a missing database path, found {path}"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = get_connection(path)
+    try:
+        if schema_dump(conn):
+            raise SchemaManifestError("fresh v7 creation found pre-existing schema")
+
+        from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
+
+        create_exact_v7_schema(conn)
         conn.commit()
-    return SCHEMA_VERSION
+        return conn
+    except BaseException:
+        close_connection(path)
+        for created_path in (
+            path,
+            Path(f"{path}-wal"),
+            Path(f"{path}-shm"),
+            Path(f"{path}-journal"),
+        ):
+            created_path.unlink(missing_ok=True)
+        raise
+
+
+def open_exact_v7_database(
+    db_path: Path | str | None = None,
+) -> sqlite3.Connection:
+    """Open an existing exact-v7 database without performing any writes."""
+    path = Path(db_path or DB_PATH)
+    if not path.exists():
+        raise FileNotFoundError(f"No database to open at {path}")
+    conn = get_connection(path, enable_wal=False)
+    current_version = _assert_schema_version_supported(conn)
+    if current_version == 6:
+        raise SchemaMigrationRequiredError(
+            "JobCtrl database is schema v6. Stop JobCtrl, take the paired "
+            "backup, then run `jobctrl migrate` before starting the runtime."
+        )
+    if current_version != SCHEMA_VERSION:
+        raise SchemaMigrationRequiredError(
+            "JobCtrl can only open the exact schema v7 at runtime; "
+            f"found schema version {current_version}."
+        )
+    assert_exact_manifest(conn, EXACT_V7_MANIFEST)
+    return conn
 
 
 def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
-    """Create the full jobs table with all columns from every pipeline stage.
-
-    This is idempotent -- safe to call on every startup. Uses CREATE TABLE IF NOT EXISTS
-    so it won't destroy existing data.
-
-    Schema columns by stage:
-      - Discovery:  url, title, company, salary, description, location, site, strategy, discovered_at
-      - Enrichment: full_description, application_url, detail_scraped_at, detail_error
-      - Scoring:    fit_score, score_reasoning, scored_at
-      - Tailoring:  tailored_resume_path, tailored_at, tailor_attempts
-      - Cover:      cover_letter_path, cover_letter_at, cover_attempts
-      - Apply:      applied_at, apply_status, apply_error, apply_attempts,
-                   agent_id, last_attempted_at, apply_duration_ms, apply_task_id,
-                   verification_confidence
-
-    Args:
-        db_path: Override the default DB_PATH.
-
-    Returns:
-        sqlite3.Connection with the schema initialized.
-    """
-    path = db_path or DB_PATH
-
-    # Ensure parent directory exists
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-
-    conn = get_connection(path)
-    _ensure_schema_version(conn)
-    migrate_legacy_job_tables(conn)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS llm_spend (
-            day           TEXT PRIMARY KEY,
-            input_tokens  INTEGER NOT NULL DEFAULT 0,
-            output_tokens INTEGER NOT NULL DEFAULT 0,
-            estimated_usd REAL NOT NULL DEFAULT 0
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS jobs (
-            -- Discovery stage (smart_extract / job_search)
-            url                   TEXT PRIMARY KEY,
-            title                 TEXT,
-            company               TEXT,
-            salary                TEXT,
-            description           TEXT,
-            location              TEXT,
-            site                  TEXT,
-            strategy              TEXT,
-            discovered_at         TEXT,
-
-            -- Enrichment stage (detail_scraper)
-            full_description      TEXT,
-            application_url       TEXT,
-            detail_scraped_at     TEXT,
-            detail_error          TEXT,
-
-            -- Scoring stage (job_scorer)
-            fit_score             INTEGER,
-            score_reasoning       TEXT,
-            scored_at             TEXT,
-
-            -- Tailoring stage (resume tailor)
-            tailored_resume_path  TEXT,
-            tailored_at           TEXT,
-            tailor_attempts       INTEGER DEFAULT 0,
-
-            -- Cover letter stage
-            cover_letter_path     TEXT,
-            cover_letter_at       TEXT,
-            cover_attempts        INTEGER DEFAULT 0,
-
-            -- Application stage
-            applied_at            TEXT,
-            apply_status          TEXT,
-            apply_error           TEXT,
-            apply_attempts        INTEGER DEFAULT 0,
-            agent_id              TEXT,
-            last_attempted_at     TEXT,
-            apply_duration_ms     INTEGER,
-            apply_task_id         TEXT,
-            verification_confidence TEXT
-        )
-    """)
-    conn.commit()
-
-    # Run migrations for any columns added after initial schema
-    ensure_columns(conn)
-    ensure_posted_compensation_tables(conn)
-    ensure_market_compensation_tables(conn)
-    ensure_state_tables(conn)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS application_review_decisions (
-            tenant_id           TEXT NOT NULL DEFAULT 'local',
-            decision_id         TEXT PRIMARY KEY,
-            job_key             TEXT NOT NULL,
-            decision            TEXT NOT NULL,
-            reason              TEXT,
-            decided_by          TEXT,
-            decided_at          TEXT NOT NULL,
-            materials_generation INTEGER,
-            profile_version     INTEGER,
-            application_url     TEXT,
-            partial_override_run_id TEXT,
-            email_recipient TEXT,
-            email_attachment_artifact_id TEXT
-        )
-    """)
-    ensure_application_review_decision_columns(conn)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
-        ON application_review_decisions(tenant_id, job_key, decided_at DESC)
-    """)
-    ensure_profile_tables(conn)
-    ensure_score_tables(conn)
-    ensure_tailoring_policy_tables(conn)
-    ensure_materials_tables(conn)
-    ensure_resume_template_tables(conn)
-    ensure_employer_analysis_tables(conn)
-    ensure_bullet_provenance_tables(conn)
-    ensure_interview_prep_tables(conn)
-    ensure_preparation_work_item_tables(conn)
-    ensure_enrichment_tables(conn)
-    ensure_posting_snapshot_tables(conn)
-    ensure_discovery_run_tables(conn)
-    ensure_operational_metric_tables(conn)
-    ensure_source_observation_tables(conn)
-    from jobctrl.domain.apply.repeat_application import ensure_repeat_application_tables
-
-    ensure_repeat_application_tables(conn)
-    ensure_discovery_execution_tables(conn)
-    ensure_discovery_search_unit_tables(conn)
-    ensure_discovery_control_tables(conn)
-    ensure_discovery_settings_tables(conn)
-    ensure_contact_tables(conn)
-    ensure_projection_tables_in_db(conn)
-    drop_legacy_apply_runs_tables(conn)
-
-    return conn
+    """Create a missing v7 database or read-only validate an existing one."""
+    path = Path(db_path or DB_PATH)
+    if not path.exists():
+        return create_exact_v7_database(path)
+    return open_exact_v7_database(path)
 
 
 def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> list[str]:
