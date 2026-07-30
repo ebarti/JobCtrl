@@ -304,6 +304,14 @@ def _column_bindings(
             and target_column in _CANDIDATE_PROFILE_V6_DEFAULTS
         ):
             source_column = None
+        elif (
+            table == "application_outcomes"
+            and target_column == "interview_prep_generation"
+        ):
+            # The exact admitted Python Gmail-owner v6 DDL predates this
+            # nullable target column. Its absence means no generation was
+            # recorded, not a value to infer during candidate copying.
+            source_column = None
         else:
             raise CandidateCopyError(
                 f"candidate copy cannot bind {table}.{target_column}"
@@ -372,6 +380,8 @@ def _bound_value(
             and target_column in _CANDIDATE_PROFILE_V6_DEFAULTS
         ):
             return _CANDIDATE_PROFILE_V6_DEFAULTS[target_column]
+        if table == "application_outcomes" and target_column == "interview_prep_generation":
+            return None
         raise CandidateCopyError(
             f"candidate copy has no value source for {table}.{target_column}"
         )
