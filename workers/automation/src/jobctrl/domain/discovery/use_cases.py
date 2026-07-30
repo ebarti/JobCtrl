@@ -59,7 +59,11 @@ from jobctrl.domain.events import (
     create_job_restored,
     create_job_source_observed,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import (
+    JobId,
+    canonical_job_id,
+    generate_job_id,
+)
 from jobctrl.domain.job_content_identity import is_genuine_employer_identity
 from jobctrl.domain.ports.discovery import (
     ContentOwnerMatch,
@@ -234,6 +238,7 @@ class DiscoverJobsUseCase:
         run_id_factory: object | None = None,
         clock: object | None = None,
         observation_id_factory: Callable[[], str] | None = None,
+        job_id_factory: Callable[[], JobId] | None = None,
         republish_canonical_identity: bool = False,
     ) -> None:
         self._repository = repository
@@ -243,6 +248,7 @@ class DiscoverJobsUseCase:
         self._run_id_factory = run_id_factory or (lambda: f"run:{uuid.uuid4().hex}")
         self._clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
         self._observation_id_factory = observation_id_factory or (lambda: f"obs:{uuid.uuid4().hex}")
+        self._job_id_factory = job_id_factory or generate_job_id
         self._republish_canonical_identity = republish_canonical_identity
 
     def execute(
@@ -318,8 +324,9 @@ class DiscoverJobsUseCase:
         if owner_id is None:
             acceptance = self._acceptance_policy(posting)
             if not acceptance.accepted:
+                rejected_job_id = canonical_job_id(str(self._job_id_factory()))
                 return self._policy_rejected_decision(
-                    job_id=JobId(identity.canonical_url or posting.posting_url.value),
+                    job_id=rejected_job_id,
                     observation_id=observation_id,
                     confidence=identity.confidence,
                     acceptance=acceptance,
@@ -355,7 +362,10 @@ class DiscoverJobsUseCase:
         observed_at: str,
     ) -> DiscoveryDecision:
         canonical_posting_url = PostingUrl(value=identity.canonical_url)
-        job_id = JobId(canonical_posting_url.value)
+        try:
+            job_id = canonical_job_id(str(self._job_id_factory()))
+        except ValueError as exc:
+            raise ValueError("job_id_factory must return a canonical UUID JobId") from exc
         job = Job.discover(
             tenant_id=tenant_id,
             job_id=job_id,
@@ -373,7 +383,17 @@ class DiscoverJobsUseCase:
             result="new_job",
             confidence=identity.confidence,
         ):
-            self._repository.save(job)
+            persisted_job_id = self._repository.save(job)
+            if persisted_job_id != job_id:
+                return self._observe_existing_job(
+                    tenant_id=tenant_id,
+                    posting=posting,
+                    identity=identity,
+                    owner_id=persisted_job_id,
+                    run_id=run_id,
+                    observation_id=observation_id,
+                    observed_at=observed_at,
+                )
             self._repository.set_canonical_identity(tenant_id, job_id, identity)
             self._repository.attach_source_observation(
                 tenant_id,
@@ -451,7 +471,12 @@ class DiscoverJobsUseCase:
         content_matched = content_match is not None
         observed_url = identity.canonical_url or posting.posting_url.value
         normalized_observed = normalize_observed_url(observed_url)
-        is_distinct_url = normalized_observed != normalize_observed_url(str(owner_id)) and normalized_observed != ""
+        existing = self._repository.load(tenant_id, owner_id)
+        if existing is None:
+            raise LookupError(f"Canonical owner disappeared before observation: {owner_id!r}")
+        is_distinct_url = (
+            normalized_observed != normalize_observed_url(existing.posting_url.value) and normalized_observed != ""
+        )
 
         if not content_matched and identity.confidence < MIN_AUTO_MERGE_CONFIDENCE and is_distinct_url:
             with dedupe_span(
@@ -497,7 +522,6 @@ class DiscoverJobsUseCase:
             result="observed" if acceptance.accepted else "policy_rejected",
             confidence=identity.confidence,
         ):
-            existing = self._repository.load(tenant_id, owner_id)
             if existing is not None:
                 if self._republish_canonical_identity:
                     stored_identity = self._repository.load_canonical_identity(
@@ -729,7 +753,7 @@ class DiscoverJobsUseCase:
                 DuplicateJobLinkRejectedPayload(
                     duplicate_link_id=f"dup:{uuid.uuid4().hex}",
                     job_id=str(owner_id),
-                    candidate_job_id=candidate_url,
+                    candidate_posting_url=candidate_url,
                     reason=reason,
                     rejected_at=rejected_at,
                 ),

@@ -24,6 +24,9 @@ from jobctrl.infrastructure.discovery.ats_adapters import (
 from jobctrl.infrastructure.discovery.sqlite_repository import (
     SqliteJobRepository,
 )
+from jobctrl.infrastructure.discovery.sqlite_identity_resolver import (
+    SqliteJobIdentityResolver,
+)
 from jobctrl.infrastructure.discovery.sqlite_execution_repository import (
     SqliteDiscoveryExecutionRepository,
 )
@@ -62,6 +65,7 @@ __all__ = [
     "SqliteDiscoveryExecutionRepository",
     "SqliteDiscoverySearchUnitCheckpointStore",
     "SqliteDiscoverySearchUnitRepository",
+    "SqliteJobIdentityResolver",
     "SqliteJobRepository",
     "StaleDiscoverySearchUnitLease",
     "WorkdayBoardAdapter",
