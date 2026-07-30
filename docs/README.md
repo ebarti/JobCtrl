@@ -43,6 +43,15 @@ has one defining page; other pages summarize it briefly and link to that owner.
 - [`guides/resume-tailoring-without-fabrication.md`](guides/resume-tailoring-without-fabrication.md):
   source authority, candidate selection, rendered validation, and accepted
   artifact history.
+- [`guides/evidence-based-job-fit-scoring.md`](guides/evidence-based-job-fit-scoring.md):
+  applicant-side requirement evidence, deterministic score resolution,
+  confidence, eligibility, and corrections.
+- [`guides/at-most-once-job-application-submission.md`](guides/at-most-once-job-application-submission.md):
+  binding approval, durable submit intent, ambiguity, and manual browser
+  submission.
+- [`guides/temporal-workflows-desktop-app.md`](guides/temporal-workflows-desktop-app.md):
+  durable local orchestration, workflow identity, retries, projections, and
+  recovery.
 
 ### The Job-Search Lifecycle
 

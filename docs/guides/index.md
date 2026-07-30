@@ -20,6 +20,18 @@ product or architecture page for exact behavior and current limits.
   explains why a job description is context rather than candidate evidence,
   and how JobCtrl validates the resume it actually renders.
 
+## For Inspectable Automation
+
+- [Evidence-based Job Fit Scoring](evidence-based-job-fit-scoring.md) separates
+  fit, confidence, and eligibility and shows how requirement evidence becomes a
+  versioned decision.
+- [At-most-once Job Application Submission](at-most-once-job-application-submission.md)
+  explains why ambiguous employer-facing work stops for verification instead
+  of retrying blindly.
+- [Temporal Workflows In A Desktop App](temporal-workflows-desktop-app.md)
+  explains how local workflow history makes long-running work recoverable,
+  cancelable, and visible.
+
 ## See It Before Installing
 
 Explore the [synthetic live demo](https://demo.jobctrl.dev), take the

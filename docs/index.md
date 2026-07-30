@@ -57,3 +57,18 @@ features:
     link: /user/product-tour#runs
     linkText: See run history
 ---
+
+## Practical JobCtrl Guides
+
+- [Local-first job search automation](/guides/local-first-job-search-automation)
+  — what stays local, what uses the network, and why durable workflows matter.
+- [Open-source job application tracking](/guides/open-source-job-application-tracker)
+  — connect jobs, evidence, materials, applications, and outcomes.
+- [Resume tailoring without fabrication](/guides/resume-tailoring-without-fabrication)
+  — keep the posting as context and the Candidate Profile as evidence.
+- [Evidence-based job fit scoring](/guides/evidence-based-job-fit-scoring)
+  — inspect requirement fit, confidence, eligibility, and corrections.
+- [At-most-once application submission](/guides/at-most-once-job-application-submission)
+  — stop ambiguous employer-facing work from becoming a blind retry.
+- [Temporal workflows in a desktop app](/guides/temporal-workflows-desktop-app)
+  — make long-running local automation recoverable and visible.

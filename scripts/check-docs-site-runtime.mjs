@@ -46,6 +46,21 @@ const PAGES = [
     visualSelector: null,
     images: false,
   },
+  {
+    path: "/guides/evidence-based-job-fit-scoring",
+    visualSelector: null,
+    images: false,
+  },
+  {
+    path: "/guides/at-most-once-job-application-submission",
+    visualSelector: ".mermaid svg",
+    images: false,
+  },
+  {
+    path: "/guides/temporal-workflows-desktop-app",
+    visualSelector: null,
+    images: false,
+  },
   { path: "/architecture/", visualSelector: ".system-topology", images: false },
   { path: "/developer/", visualSelector: null, images: false },
   {
@@ -117,6 +132,9 @@ const SOCIAL_METADATA_ROUTES = new Set([
   "/guides/local-first-job-search-automation",
   "/guides/open-source-job-application-tracker",
   "/guides/resume-tailoring-without-fabrication",
+  "/guides/evidence-based-job-fit-scoring",
+  "/guides/at-most-once-job-application-submission",
+  "/guides/temporal-workflows-desktop-app",
   "/architecture/",
   "/developer/",
   "/user/apply",
@@ -448,7 +466,10 @@ async function assertHomepageSearchIdentity(page) {
     website?.alternateName !== "jobctrl.dev" ||
     website?.url !== "https://jobctrl.dev/" ||
     software?.name !== "JobCtrl" ||
-    software?.applicationSubCategory !== "Job search automation"
+    software?.applicationSubCategory !== "Job search automation" ||
+    software?.offers?.["@type"] !== "Offer" ||
+    software?.offers?.price !== "0" ||
+    software?.offers?.priceCurrency !== "USD"
   ) {
     fail(`/: homepage search identity is incomplete (${JSON.stringify(identity)})`);
   } else {

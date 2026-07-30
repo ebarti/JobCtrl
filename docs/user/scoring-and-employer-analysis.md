@@ -9,6 +9,8 @@ a versioned Candidate Profile. It produces an applicant-side fit score,
 confidence, blockers, gaps, and requirement-level evidence for your own triage.
 Discovery owns how the employer analysis is generated and which perspectives
 participate; this page owns how that accepted input becomes a fit decision.
+For a shorter conceptual introduction, read
+[Evidence-based Job Fit Scoring](../guides/evidence-based-job-fit-scoring.md).
 
 ## How The Score Is Calculated
 
