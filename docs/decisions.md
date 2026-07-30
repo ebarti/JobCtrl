@@ -2141,8 +2141,9 @@ tenant-scoped identity of a job. Posting and application URLs are external
 locators; content and duplicate observations are explicit deduplication
 evidence rather than identity. Canonical storage, cross-context references,
 events, projections, API contracts, and routes move to `JobId`. A guarded
-compatibility boundary may resolve an existing posting URL during migration,
-but must not emit URL-shaped identity for new reads or writes.
+locator boundary may resolve a posting URL during the one forward migration or
+an explicit user/API/import lookup, but current repositories and contracts must
+not inspect legacy schema shapes or emit URL-shaped identity.
 
 JobCtrl unifies its existing score-correction calibration anchors, approved
 role-match title exclusions, and structured tailoring-review feedback through
@@ -2174,9 +2175,14 @@ Rationale:
 
 Consequences:
 
-- the SQLite cutover requires a transactional, schema-versioned migration with
-  exact referential-count fixtures, authoritative Temporal quiescence, immutable
-  event upcasting, and paired SQLite/Temporal reopen/rollback proof;
+- the locally installed application advances once from shipped schema v6 to
+  exact schema v7: stop the old runtime, require old-identity workflows to be
+  idle, take a paired SQLite/Temporal backup, run one transactional migration,
+  verify it, and start only the v7 runtime;
+- review PR boundaries never create schema versions or mixed-version runtime
+  modes; historical event upcasting runs only inside the migration, and current
+  repositories perform no dual reads, dual writes, legacy-column fallback, or
+  runtime table-shape detection;
 - `Source.board`, `Employer.name`, and normalized scoring keywords become
   separately persisted canonical fields;
 - Discover, JobPreparation, and Apply use one run-history and cancellation

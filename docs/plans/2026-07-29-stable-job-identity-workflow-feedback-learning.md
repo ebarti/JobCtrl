@@ -2,8 +2,9 @@
 
 - **Date:** 2026-07-29
 - **Status:** Accepted — implementation in progress
-- **Delivery shape:** Small stacked PRs; intermediate phases are not released
-  independently.
+- **Delivery shape:** Small stacked review PRs assembled into one release. PR
+  boundaries are not database versions, and intermediate branches are not
+  installed independently.
 - **Goal:** Finish the remaining identity and projection cleanup, give Discover,
   preparation, and Apply one coherent run experience, replace broad realtime
   invalidation where exact patches are possible, and let JobCtrl learn from
@@ -42,14 +43,16 @@ caused an outcome.
 
 1. `JobId` is generated once and never changes when a posting URL changes, an
    application URL is added, or another source observes the same job.
-2. A posting URL remains unique per tenant and resolves as a bounded legacy
-   alias during migration, but new writes, foreign keys, events, projections,
-   API DTOs, and routes use `JobId`.
+2. A posting URL remains unique per tenant and may resolve through the
+   canonical locator/alias relation at an explicit user, API, or import
+   boundary. New writes, foreign keys, events, projections, API DTOs, and
+   internal routes use `JobId`.
 3. The schema migration is transactional, idempotent, and covered by the backup
    and schema-version guard. It preserves every canonical row, reference,
    accepted artifact, score version, event, and workflow association.
-   `PRAGMA user_version` advances only after migration and referential
-   verification succeed in the same commit.
+   The shipped schema advances exactly once from v6 to v7 after migration and
+   referential verification succeed in the same commit. Review PRs do not
+   increment it.
 4. Projection builders read canonical aggregate tables only. They do not fall
    back to legacy nullable columns or synthesize artifacts without a
    `job_artifacts` row.
@@ -58,9 +61,11 @@ caused an outcome.
    label.
 6. Normalized scoring keywords are stored per score version and indexed. Search
    and aggregation return the keyword version that produced the visible score.
-7. Historical domain events remain immutable. A versioned identity upcaster
-   resolves legacy URL values from both event columns and payload fields through
-   the canonical alias map before either runtime rebuilds a projection.
+7. Historical domain event facts remain immutable. The v6-to-v7 migration uses
+   one deterministic identity upcaster to replace URL ownership in event
+   columns and root payload identity fields. The current runtime and projection
+   builders accept only the migrated stable-ID event shape; the upcaster is not
+   a runtime compatibility path.
 
 ### Workflow and realtime parity
 
@@ -123,68 +128,41 @@ caused an outcome.
 - Record this accepted plan, requirements, and architecture decision.
 - Resolve `JobId` as an opaque UUID and feedback learning as
   recommendation-first and human-approved.
-- Define rollback, compatibility, and cumulative QA boundaries before changing
+- Define rollback, exact cutover, and cumulative QA boundaries before changing
   persisted user data.
 
-### Phase 1 — migration runner and stable identity introduction
+### Phase 1 — one exact v6-to-v7 identity cutover
 
-- Replace pre-migration schema stamping with an explicit versioned runner that
-  stamps only after DDL, backfill, count, and foreign-key verification succeed.
-- Add `job_id` plus a tenant-scoped URL alias map and backfill every existing job
-  exactly once without changing read/write behavior yet.
-- Add migration fixtures with representative references and prove failed
-  migration retry, forward reopen, and paired pre-upgrade restore.
+- Replace pre-migration schema stamping with one forward migration owned by the
+  local upgrade path. It accepts shipped schema v6, creates the exact v7 shape,
+  backfills it, verifies counts/references/foreign keys, and stamps v7 only
+  after success.
+- Rebuild the canonical jobs relation around `(tenant_id, job_id)`, retain
+  posting/application URLs as locators, and migrate every job-owned table,
+  durable event, workflow input/idempotency key, API DTO, and projection key in
+  the same release cutover.
+- Generate UUIDs for existing and new jobs. Resolve a URL only at migration or
+  an explicit user/API/import locator boundary; downstream repositories receive
+  `JobId` and never inspect old table shapes.
+- Stop the local JobCtrl process tree before migration, require no in-flight
+  workflow that carries the old identity contract, take the paired
+  `jobctrl.db`/`temporal.db` backup, migrate, verify, and then start the new
+  runtime. There is no rolling or mixed-version mode.
+- Migrate historical event identity with the shared deterministic upcaster,
+  then require current Python and TypeScript writers/readers to use the exact
+  stable-ID event schema.
+- Add representative v6 fixtures and prove failed migration retry, exact
+  row/reference preservation, fresh v7 creation, forward reopen, and paired
+  pre-upgrade restore.
 
-### Phase 2 — canonical repository compatibility
-
-- Teach the canonical Job repository and shared identity resolver to read/write
-  stable IDs while accepting a URL only at the bounded compatibility input.
-- Generate UUIDs for new jobs, return stable IDs from deduplication lookups, and
-  preserve posting URLs as locators.
-- Keep downstream URL-keyed table families unchanged behind the resolver so
-  this slice is independently reversible.
-
-### Phase 3 — table-family reference migrations
-
-- Migrate references as separate stacked PRs with before/after count and reopen
-  fixtures:
-  1. discovery observations, dedup identity, search-unit receipts, and
-     preparation/orchestration state;
-  2. enrichment, scoring, materials, artifacts, and stage state;
-  3. Apply review, outcomes, repeat-application evidence, contacts, outreach,
-     tombstones, and remaining job-owned authorities.
-- Rebuild the canonical jobs relation with `(tenant_id, job_id)` identity and a
-  unique posting URL only after every authority family resolves stable IDs.
-
-### Phase 4 — event and projection identity cutover
-
-- Require a registry-derived quiescent migration preflight across every
-  workflow whose deterministic ID or serialized input carries job identity.
-  Authoritative Temporal queries must report no such open execution—including
-  Discover, `JobPreparation`, Apply, `JobPipeline`, `InterviewPrep`,
-  `ContactResearch`, and `CompensationRefresh`—and durable search-unit or
-  preparation ownership must be terminal. The migration never derives this
-  decision from a possibly stale projection alone.
-- Add upgrade/restart fixtures showing that legacy URL-based workflow IDs and
-  inputs, plus preparation idempotency keys, cannot coexist with new UUID-based
-  executions. Registry parity makes a newly added URL-bearing workflow fail the
-  cutover test until it defines a drain or upcast path. A non-terminal legacy
-  execution blocks cutover rather than allowing a dual start.
-- Emit stable IDs in new events and add one shared versioned upcast contract for
-  historical URL values in both event columns and payloads.
-- Rebuild Python and TypeScript projections from pre-cutover event fixtures and
-  prove neither runtime can reintroduce URL-shaped identity.
-- Cut API DTOs, routes, workflow inputs, and projection keys to stable `JobId`;
-  retain URL resolution only at the compatibility input.
-
-### Phase 5 — canonical projection and field cleanup
+### Phase 2 — canonical projection and field cleanup
 
 - Remove projection fallbacks to legacy `jobs.*` status, score, application,
   and artifact columns.
 - Remove phantom PDF synthesis; expose only database-backed artifacts.
 - Persist and project `Source.board` and `Employer.name` independently.
 
-### Phase 6 — searchable scoring keywords
+### Phase 3 — searchable scoring keywords
 
 - Normalize latest-score keywords into a versioned relation with tenant, job,
   score-version, normalized keyword, and display text.
@@ -193,7 +171,7 @@ caused an outcome.
 - Remove free-text reasoning parsing after the migration fixture proves
   equivalent canonical coverage.
 
-### Phase 7 — workflow-run parity
+### Phase 4 — workflow-run parity
 
 - Give Discover, `JobPreparation`, and Apply rows consistent labels, related-job
   context where applicable, timelines, actions, and cancel behavior.
@@ -202,14 +180,14 @@ caused an outcome.
 - Cover accepted, canceling, canceled, already-terminal, worker-unavailable, and
   refresh-after-cancel states.
 
-### Phase 8 — targeted realtime patches
+### Phase 5 — targeted realtime patches
 
 - Add exact job, artifact, dashboard, and workflow-run patch handlers.
 - Keep query keys tenant-first and retain a documented invalidation fallback for
   payloads that cannot support a truthful patch.
 - Extend registry-derived event parity and patch/rollback tests.
 
-### Phase 9 — feedback ledger and recommendations
+### Phase 6 — feedback ledger and recommendations
 
 - Define one typed read contract over existing score-correction anchors,
   discovery feedback, approved role-match suggestions, and tailoring feedback;
@@ -230,7 +208,7 @@ caused an outcome.
   contradictory, privacy, deduplication, correction, deletion, and rollback
   fixtures before its recommendations can be accepted.
 
-### Phase 10 — review, accept, reject, and apply
+### Phase 7 — review, accept, reject, and apply
 
 - Add a local review surface for pending recommendations.
 - Accepting creates a new versioned policy/preference revision and records the
@@ -254,12 +232,14 @@ caused an outcome.
   durable-owner, and referential-count preflights pass and a consistent paired
   SQLite/Temporal snapshot exists. A failed transaction leaves the prior schema
   untouched.
-- The application refuses an unsupported schema in both the TypeScript API and
-  Python worker; neither side performs a partial compatibility write.
-- The migration runner verifies the current version before DDL and stamps the
-  new version only after all DDL, backfills, count checks, and foreign-key checks
-  pass. A failed attempt therefore remains retryable at the prior version.
-- Each migration fixture records before/after counts and canonical references.
+- The Python upgrade owner accepts shipped v6 only long enough to run the one
+  v6-to-v7 transaction. Afterward, both the TypeScript API and Python worker
+  require exact v7 and neither inspects old columns, performs a partial
+  compatibility write, or invokes the historical event upcaster.
+- The migration verifies v6 before DDL and stamps v7 only after all DDL,
+  backfills, count checks, and foreign-key checks pass. A failed attempt
+  therefore remains retryable at v6. Fresh installs create exact v7 directly.
+- The migration fixture records before/after counts and canonical references.
   Rollback tests restore and reopen the exact pre-cutover SQLite/Temporal pair
   with the previous release; forward-recovery tests reopen the migrated pair
   with the current release and retain IDs.
@@ -272,8 +252,10 @@ caused an outcome.
 This is Tier 3 because it changes persisted identity, private feedback
 boundaries, and workflow controls.
 
-- Intermediate PRs run focused schema/repository, API, frontend, and workflow
-  tests plus one independent review.
+- Intermediate PRs are review slices of one unreleased cumulative build. They
+  do not introduce schema versions or runtime compatibility modes. Each runs
+  focused schema/repository, API, frontend, or workflow tests plus one
+  independent review.
 - The final cumulative branch updates canonical documentation and runs the
   cross-stack checks, migration/reopen fixtures, projection parity, workflow
   cancellation product path, realtime patch tests, feedback privacy tests, and
@@ -287,13 +269,12 @@ boundaries, and workflow controls.
    artifact, event, stage state, outcome, or workflow reference.
 2. Existing schema data migrates with exact canonical row/reference counts and
    reopens successfully through both the Python worker and TypeScript API.
-3. The registry-derived cutover preflight refuses to start while any
-   authoritative URL-bearing workflow or durable unit is active, and
-   upgrade/restart fixtures prove no legacy/new workflow identity can
-   dual-start.
-4. A full Python and TypeScript projection rebuild from pre-cutover immutable
-   events resolves every event-column and payload URL through the upcaster and
-   emits only stable IDs.
+3. The local upgrade refuses to migrate while an old-identity workflow is
+   active, and upgrade/restart fixtures prove the stopped v6 runtime is backed
+   up and replaced by one exact v7 runtime.
+4. The v6-to-v7 migration resolves every historical event-column and root
+   payload URL through the migration-only upcaster; current Python and
+   TypeScript projection rebuilds consume only stable IDs.
 5. Job projections contain no URL-shaped identity, legacy-column fallback, or
    synthetic artifact row.
 6. Source and employer filters operate independently, and scoring-keyword search
