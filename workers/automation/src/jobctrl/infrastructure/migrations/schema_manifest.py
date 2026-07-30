@@ -39,11 +39,43 @@ def schema_dump(conn: sqlite3.Connection) -> tuple[tuple[str, str, str, str], ..
         """
         SELECT type, name, tbl_name, COALESCE(sql, '')
         FROM sqlite_master
-        WHERE name NOT LIKE 'sqlite_%'
         ORDER BY type, name
         """
     ).fetchall()
-    return tuple(tuple(str(value) for value in row) for row in rows)
+    dump = tuple(tuple(str(value) for value in row) for row in rows)
+    return tuple(row for row in dump if not _is_sqlite_owned_schema_row(row))
+
+
+def _is_sqlite_owned_schema_row(row: tuple[str, str, str, str]) -> bool:
+    """Ignore only exact inert objects created internally by SQLite."""
+    object_type, name, table_name, sql = row
+    if (
+        object_type == "index"
+        and name.startswith("sqlite_autoindex_")
+        and table_name
+        and sql == ""
+    ):
+        return True
+    return row in {
+        (
+            "table",
+            "sqlite_sequence",
+            "sqlite_sequence",
+            "CREATE TABLE sqlite_sequence(name,seq)",
+        ),
+        (
+            "table",
+            "sqlite_stat1",
+            "sqlite_stat1",
+            "CREATE TABLE sqlite_stat1(tbl,idx,stat)",
+        ),
+        (
+            "table",
+            "sqlite_stat4",
+            "sqlite_stat4",
+            "CREATE TABLE sqlite_stat4(tbl,idx,neq,nlt,ndlt,sample)",
+        ),
+    }
 
 
 def schema_manifest(conn: sqlite3.Connection, *, version: int) -> SchemaManifest:
