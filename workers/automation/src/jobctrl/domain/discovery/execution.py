@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from jobctrl.domain.identifiers import JobId
+
 
 DiscoveryExecutionCohortKind = Literal["observed_this_run", "existing_backlog"]
 DiscoveryExecutionWorkPlanState = Literal["pending", "planned", "not_eligible", "failed"]
@@ -69,7 +71,7 @@ class DiscoveryExecutionJob:
     """One job's immutable membership and decided work plan in an execution."""
 
     execution: DiscoveryExecutionRef
-    job_url: str
+    job_id: JobId
     cohort_kind: DiscoveryExecutionCohortKind
     source_family: str | None
     source_run_id: str | None

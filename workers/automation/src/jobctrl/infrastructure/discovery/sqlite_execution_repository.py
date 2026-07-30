@@ -6,7 +6,6 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
-from jobctrl.database import ensure_discovery_execution_tables
 from jobctrl.domain.discovery.execution import (
     DiscoveryExecutionCohortKind,
     DiscoveryExecutionJob,
@@ -18,12 +17,16 @@ from jobctrl.domain.discovery.execution import (
     validate_safe_reason_code,
     validate_work_plan_state,
 )
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 
 
 _SELECT_COLUMNS = """
-    tenant_id, discover_workflow_id, discover_run_id, job_url, cohort_kind,
-    source_family, source_run_id, preparation_workflow_id, work_plan_state,
-    required_steps_json, work_plan_reason, linked_at
+    execution.tenant_id, execution.discover_workflow_id,
+    execution.discover_run_id, execution.job_id, execution.cohort_kind,
+    execution.source_family, execution.source_run_id,
+    execution.preparation_workflow_id, execution.work_plan_state,
+    execution.required_steps_json, execution.work_plan_reason,
+    execution.linked_at
 """
 
 
@@ -32,12 +35,11 @@ class SqliteDiscoveryExecutionRepository:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        ensure_discovery_execution_tables(conn)
 
     def link_job(
         self,
         execution: DiscoveryExecutionRef,
-        job_url: str,
+        job_id: JobId,
         *,
         cohort_kind: DiscoveryExecutionCohortKind,
         source_family: str | None = None,
@@ -52,22 +54,25 @@ class SqliteDiscoveryExecutionRepository:
         """
 
         resolved_cohort = validate_cohort_kind(cohort_kind)
-        normalized_job_url = _required_text(job_url, "job_url")
+        normalized_job_id = _required_text(job_id, "job_id")
         normalized_family = _optional_text(source_family)
         normalized_source_run_id = _optional_text(source_run_id)
         if resolved_cohort == "observed_this_run" and normalized_family is None:
             raise ValueError("source_family is required for an observed execution job")
         linked = linked_at or datetime.now(timezone.utc).isoformat()
+        stable_job_id = self._resolve_job_id(execution, normalized_job_id)
 
         with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO discovery_execution_jobs (
-                    tenant_id, discover_workflow_id, discover_run_id, job_url,
+                    tenant_id, discover_workflow_id, discover_run_id, job_id,
                     cohort_kind, source_family, source_run_id, work_plan_state,
                     linked_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-                ON CONFLICT (tenant_id, discover_workflow_id, discover_run_id, job_url)
+                ON CONFLICT (
+                    tenant_id, discover_workflow_id, discover_run_id, job_id
+                )
                 DO UPDATE SET
                     cohort_kind = CASE
                         WHEN excluded.cohort_kind = 'observed_this_run'
@@ -93,7 +98,7 @@ class SqliteDiscoveryExecutionRepository:
                     execution.tenant_id,
                     execution.workflow_id,
                     execution.temporal_run_id,
-                    normalized_job_url,
+                    stable_job_id,
                     resolved_cohort,
                     normalized_family,
                     normalized_source_run_id,
@@ -101,7 +106,7 @@ class SqliteDiscoveryExecutionRepository:
                 ),
             )
 
-        result = self.get(execution, normalized_job_url)
+        result = self.get(execution, stable_job_id)
         if result is None:  # pragma: no cover - defensive database invariant
             raise RuntimeError("discovery execution job link was not persisted")
         return result
@@ -109,7 +114,7 @@ class SqliteDiscoveryExecutionRepository:
     def set_work_plan(
         self,
         execution: DiscoveryExecutionRef,
-        job_url: str,
+        job_id: JobId,
         *,
         state: DiscoveryExecutionWorkPlanState,
         required_steps: list[str] | tuple[str, ...] | None = None,
@@ -144,10 +149,11 @@ class SqliteDiscoveryExecutionRepository:
         if resolved_state in {"pending", "not_eligible"} and normalized_workflow_id is not None:
             raise ValueError(f"{resolved_state} work cannot name a preparation workflow")
 
-        normalized_job_url = _required_text(job_url, "job_url")
-        existing = self.get(execution, normalized_job_url)
+        normalized_job_id = _required_text(job_id, "job_id")
+        stable_job_id = self._resolve_job_id(execution, normalized_job_id)
+        existing = self.get(execution, stable_job_id)
         if existing is None:
-            raise KeyError(f"Job is not linked to discovery execution: {normalized_job_url}")
+            raise KeyError(f"Job is not linked to discovery execution: {stable_job_id}")
 
         desired_steps_json = (
             json.dumps(list(normalized_steps), separators=(",", ":"))
@@ -188,7 +194,7 @@ class SqliteDiscoveryExecutionRepository:
                  WHERE tenant_id = ?
                    AND discover_workflow_id = ?
                    AND discover_run_id = ?
-                   AND job_url = ?
+                   AND job_id = ?
                    AND work_plan_state IN ('pending', 'failed')
                 """,
                 (
@@ -199,11 +205,11 @@ class SqliteDiscoveryExecutionRepository:
                     execution.tenant_id,
                     execution.workflow_id,
                     execution.temporal_run_id,
-                    normalized_job_url,
+                    stable_job_id,
                 ),
             )
             if updated.rowcount != 1:
-                concurrent = self.get(execution, normalized_job_url)
+                concurrent = self.get(execution, stable_job_id)
                 if concurrent is not None and (
                     concurrent.work_plan_state,
                     concurrent.required_steps,
@@ -218,26 +224,34 @@ class SqliteDiscoveryExecutionRepository:
                     return concurrent
                 raise RuntimeError("discovery execution work plan changed concurrently")
 
-        result = self.get(execution, normalized_job_url)
+        result = self.get(execution, stable_job_id)
         if result is None:  # pragma: no cover - defensive database invariant
             raise RuntimeError("discovery execution work plan was not persisted")
         return result
 
-    def get(self, execution: DiscoveryExecutionRef, job_url: str) -> DiscoveryExecutionJob | None:
+    def get(
+        self,
+        execution: DiscoveryExecutionRef,
+        job_id: JobId,
+    ) -> DiscoveryExecutionJob | None:
+        try:
+            stable_job_id = self._resolve_job_id(execution, job_id)
+        except KeyError:
+            return None
         row = self._conn.execute(
             f"""
             SELECT {_SELECT_COLUMNS}
-              FROM discovery_execution_jobs
-             WHERE tenant_id = ?
-               AND discover_workflow_id = ?
-               AND discover_run_id = ?
-               AND job_url = ?
+              FROM discovery_execution_jobs AS execution
+             WHERE execution.tenant_id = ?
+               AND execution.discover_workflow_id = ?
+               AND execution.discover_run_id = ?
+               AND execution.job_id = ?
             """,
             (
                 execution.tenant_id,
                 execution.workflow_id,
                 execution.temporal_run_id,
-                job_url,
+                stable_job_id,
             ),
         ).fetchone()
         return _row_to_execution_job(row) if row is not None else None
@@ -246,15 +260,30 @@ class SqliteDiscoveryExecutionRepository:
         rows = self._conn.execute(
             f"""
             SELECT {_SELECT_COLUMNS}
-              FROM discovery_execution_jobs
-             WHERE tenant_id = ?
-               AND discover_workflow_id = ?
-               AND discover_run_id = ?
-             ORDER BY job_url
+              FROM discovery_execution_jobs AS execution
+             WHERE execution.tenant_id = ?
+               AND execution.discover_workflow_id = ?
+               AND execution.discover_run_id = ?
+             ORDER BY execution.job_id
             """,
             (execution.tenant_id, execution.workflow_id, execution.temporal_run_id),
         ).fetchall()
         return [_row_to_execution_job(row) for row in rows]
+
+    def _resolve_job_id(
+        self,
+        execution: DiscoveryExecutionRef,
+        job_reference: JobId,
+    ) -> JobId:
+        normalized = _required_text(job_reference, "job_id")
+        stable_job_id = canonical_job_id(normalized)
+        row = self._conn.execute(
+            "SELECT 1 FROM jobs WHERE tenant_id = ? AND job_id = ? LIMIT 1",
+            (execution.tenant_id, str(stable_job_id)),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"No stable Job identity for discovery execution member: {stable_job_id}")
+        return stable_job_id
 
 
 def _row_to_execution_job(row: sqlite3.Row | tuple[object, ...]) -> DiscoveryExecutionJob:
@@ -272,7 +301,7 @@ def _row_to_execution_job(row: sqlite3.Row | tuple[object, ...]) -> DiscoveryExe
             workflow_id=str(row[1]),
             temporal_run_id=str(row[2]),
         ),
-        job_url=str(row[3]),
+        job_id=JobId(str(row[3])),
         cohort_kind=validate_cohort_kind(str(row[4])),
         source_family=_optional_text(row[5]),
         source_run_id=_optional_text(row[6]),
