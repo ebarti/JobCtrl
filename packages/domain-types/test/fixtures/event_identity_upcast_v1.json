@@ -1,0 +1,260 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "tenantId": "local",
+      "jobId": "11111111-1111-4111-8111-111111111111",
+      "postingUrl": "https://jobs.example/a"
+    },
+    {
+      "tenantId": "local",
+      "jobId": "22222222-2222-4222-8222-222222222222",
+      "postingUrl": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "tenantId": "local",
+      "jobId": "33333333-3333-4333-8333-333333333333",
+      "postingUrl": "https://jobs.example/c",
+      "aliases": [
+        "https://old.example/c",
+        "https://jobs.example/conflict"
+      ]
+    },
+    {
+      "tenantId": "other",
+      "jobId": "44444444-4444-4444-8444-444444444444",
+      "postingUrl": "https://jobs.example/a"
+    },
+    {
+      "tenantId": "local",
+      "jobId": "55555555-5555-4555-8555-555555555555",
+      "postingUrl": "https://jobs.example/conflict"
+    }
+  ],
+  "cases": [
+    {
+      "name": "legacy column and nested payload fields",
+      "tenantId": "local",
+      "eventJobReference": "https://jobs.example/a",
+      "payload": {
+        "tenantId": "local",
+        "jobUrl": "https://jobs.example/a",
+        "nested": {
+          "job_key": "https://old.example/c"
+        },
+        "jobUrls": [
+          "https://jobs.example/a",
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "applicationUrl": "https://apply.example/a",
+        "postingUrl": "https://jobs.example/a"
+      },
+      "expected": {
+        "jobId": "11111111-1111-4111-8111-111111111111",
+        "referencedJobIds": [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222",
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "payload": {
+          "tenantId": "local",
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "nested": {
+            "job_id": "33333333-3333-4333-8333-333333333333"
+          },
+          "jobIds": [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222"
+          ],
+          "applicationUrl": "https://apply.example/a",
+          "postingUrl": "https://jobs.example/a"
+        }
+      }
+    },
+    {
+      "name": "stable values and locator fields",
+      "tenantId": "local",
+      "eventJobReference": "22222222-2222-4222-8222-222222222222",
+      "payload": {
+        "jobId": "22222222-2222-4222-8222-222222222222",
+        "job_ids": [
+          "22222222-2222-4222-8222-222222222222",
+          null
+        ],
+        "application_url": "https://apply.example/b",
+        "canonicalUrl": "11111111-1111-4111-8111-111111111111"
+      },
+      "expected": {
+        "jobId": "22222222-2222-4222-8222-222222222222",
+        "referencedJobIds": [
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "payload": {
+          "jobId": "22222222-2222-4222-8222-222222222222",
+          "job_ids": [
+            "22222222-2222-4222-8222-222222222222",
+            null
+          ],
+          "application_url": "https://apply.example/b",
+          "canonicalUrl": "11111111-1111-4111-8111-111111111111"
+        }
+      }
+    },
+    {
+      "name": "uuid shaped posting URL is resolved URL first",
+      "tenantId": "local",
+      "eventJobReference": "11111111-1111-4111-8111-111111111111",
+      "payload": {
+        "jobKey": "11111111-1111-4111-8111-111111111111"
+      },
+      "expected": {
+        "jobId": "22222222-2222-4222-8222-222222222222",
+        "referencedJobIds": [
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "payload": {
+          "jobId": "22222222-2222-4222-8222-222222222222"
+        }
+      }
+    },
+    {
+      "name": "nullable optional job identity",
+      "tenantId": "local",
+      "eventJobReference": null,
+      "payload": {
+        "jobId": null,
+        "job_ids": [
+          null
+        ]
+      },
+      "expected": {
+        "jobId": null,
+        "referencedJobIds": [],
+        "payload": {
+          "jobId": null,
+          "job_ids": [
+            null
+          ]
+        }
+      }
+    },
+    {
+      "name": "resolution is tenant scoped",
+      "tenantId": "other",
+      "eventJobReference": "https://jobs.example/a",
+      "payload": {
+        "jobUrl": "https://jobs.example/a"
+      },
+      "expected": {
+        "jobId": "44444444-4444-4444-8444-444444444444",
+        "referencedJobIds": [
+          "44444444-4444-4444-8444-444444444444"
+        ],
+        "payload": {
+          "jobId": "44444444-4444-4444-8444-444444444444"
+        }
+      }
+    },
+    {
+      "name": "direct URL and alias disagreement fails closed",
+      "tenantId": "local",
+      "eventJobReference": "https://jobs.example/conflict",
+      "payload": {},
+      "expectedError": "event_job_identity_conflict"
+    },
+    {
+      "name": "event column and root payload disagreement fails closed",
+      "tenantId": "local",
+      "eventJobReference": "https://jobs.example/a",
+      "payload": {
+        "jobUrl": "https://jobs.example/c"
+      },
+      "expectedError": "event_job_identity_conflict"
+    },
+    {
+      "name": "conflicting payload identity fields fail closed",
+      "tenantId": "local",
+      "eventJobReference": null,
+      "payload": {
+        "jobUrl": "https://jobs.example/a",
+        "jobId": "22222222-2222-4222-8222-222222222222"
+      },
+      "expectedError": "event_job_identity_conflict"
+    },
+    {
+      "name": "unresolved identity fails closed",
+      "tenantId": "local",
+      "eventJobReference": "https://missing.example/job",
+      "payload": {},
+      "expectedError": "event_job_identity_unresolved"
+    },
+    {
+      "name": "malformed identity collection fails closed",
+      "tenantId": "local",
+      "eventJobReference": null,
+      "payload": {
+        "jobUrls": [
+          "https://jobs.example/a",
+          42
+        ]
+      },
+      "expectedError": "event_job_identity_invalid"
+    },
+    {
+      "name": "null root payload fails closed",
+      "tenantId": "local",
+      "eventJobReference": null,
+      "payload": null,
+      "expectedError": "event_job_identity_invalid"
+    },
+    {
+      "name": "array root payload fails closed",
+      "tenantId": "local",
+      "eventJobReference": null,
+      "payload": [
+        [
+          "jobId",
+          null
+        ]
+      ],
+      "expectedError": "event_job_identity_invalid"
+    },
+    {
+      "name": "scalar root payload fails closed",
+      "tenantId": "local",
+      "eventJobReference": null,
+      "payload": "text",
+      "expectedError": "event_job_identity_invalid"
+    },
+    {
+      "name": "prototype named fields remain ordinary payload data",
+      "tenantId": "local",
+      "eventJobReference": null,
+      "payload": {
+        "constructor": {
+          "jobUrl": "https://jobs.example/a"
+        },
+        "toString": "unchanged",
+        "__proto__": {
+          "job_url": "https://jobs.example/c"
+        }
+      },
+      "expected": {
+        "jobId": null,
+        "referencedJobIds": [
+          "11111111-1111-4111-8111-111111111111",
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "payload": {
+          "constructor": {
+            "jobId": "11111111-1111-4111-8111-111111111111"
+          },
+          "toString": "unchanged",
+          "__proto__": {
+            "job_id": "33333333-3333-4333-8333-333333333333"
+          }
+        }
+      }
+    }
+  ]
+}
