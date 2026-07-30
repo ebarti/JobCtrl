@@ -83,6 +83,69 @@ _V6_AUXILIARY_DDL = (
             updated_at                  TEXT NOT NULL,
             PRIMARY KEY (tenant_id, discover_workflow_id, discover_run_id)
         )""",
+    # v2.0.8's TypeScript feedback owner creates these exact tables lazily.
+    # `application_outcomes` may additionally have the later ALTER TABLE
+    # column listed below; the evidence and suggestion tables have one shipped
+    # raw definition each.
+    """CREATE TABLE application_outcomes (
+      tenant_id     TEXT NOT NULL DEFAULT 'local',
+      outcome_id    TEXT NOT NULL,
+      job_key       TEXT NOT NULL,
+      kind          TEXT NOT NULL,
+      source        TEXT NOT NULL,
+      note          TEXT,
+      occurred_at   TEXT NOT NULL,
+      recorded_at   TEXT NOT NULL,
+      suggestion_id TEXT,
+      evidence_id   TEXT,
+      created_by    TEXT NOT NULL DEFAULT 'user',
+      PRIMARY KEY (tenant_id, outcome_id)
+    )""",
+    """CREATE INDEX idx_application_outcomes_job
+      ON application_outcomes(tenant_id, job_key, occurred_at DESC, recorded_at DESC)""",
+    """CREATE TABLE application_email_evidence (
+      tenant_id            TEXT NOT NULL DEFAULT 'local',
+      evidence_id          TEXT NOT NULL,
+      job_key              TEXT NOT NULL,
+      provider             TEXT NOT NULL DEFAULT 'gmail',
+      provider_message_id  TEXT NOT NULL,
+      provider_thread_id   TEXT,
+      from_address         TEXT,
+      to_addresses_json    TEXT NOT NULL DEFAULT '[]',
+      subject              TEXT,
+      snippet              TEXT,
+      received_at          TEXT,
+      linked_at            TEXT NOT NULL,
+      link_confidence      REAL NOT NULL DEFAULT 0,
+      link_signals_json    TEXT NOT NULL DEFAULT '[]',
+      body_text            TEXT,
+      body_sha256          TEXT,
+      body_stored_at       TEXT,
+      PRIMARY KEY (tenant_id, evidence_id),
+      UNIQUE (tenant_id, provider, provider_message_id)
+    )""",
+    """CREATE INDEX idx_application_email_evidence_job
+      ON application_email_evidence(tenant_id, job_key, received_at DESC)""",
+    """CREATE TABLE application_outcome_suggestions (
+      tenant_id          TEXT NOT NULL DEFAULT 'local',
+      suggestion_id      TEXT NOT NULL,
+      job_key            TEXT NOT NULL,
+      evidence_id        TEXT,
+      suggested_kind     TEXT NOT NULL,
+      confidence         REAL NOT NULL DEFAULT 0,
+      rationale          TEXT NOT NULL DEFAULT '',
+      status             TEXT NOT NULL DEFAULT 'pending',
+      created_at         TEXT NOT NULL,
+      decided_at         TEXT,
+      decision           TEXT,
+      decision_reason    TEXT,
+      decided_outcome_id TEXT,
+      PRIMARY KEY (tenant_id, suggestion_id)
+    )""",
+    """CREATE INDEX idx_application_outcome_suggestions_job
+      ON application_outcome_suggestions(tenant_id, job_key, status, created_at DESC)""",
+    """CREATE INDEX idx_application_outcome_suggestions_status
+      ON application_outcome_suggestions(tenant_id, status, created_at DESC)""",
     """CREATE TABLE role_match_feedback_suggestions (
       tenant_id       TEXT NOT NULL DEFAULT 'local',
       suggestion_id   TEXT NOT NULL,
@@ -259,6 +322,28 @@ _V6_AUXILIARY_TABLE_VARIANTS = {
   task_queue TEXT NOT NULL, started_at TEXT NOT NULL, last_seen_at TEXT NOT NULL
 , max_concurrent_activities INTEGER, activity_executor_max_workers INTEGER, active_activity_count INTEGER NOT NULL DEFAULT 0, active_activity_counts_json TEXT NOT NULL DEFAULT '{}', active_activity_details_json TEXT NOT NULL DEFAULT '[]', active_activity_details_total INTEGER NOT NULL DEFAULT 0, active_activity_details_truncated INTEGER NOT NULL DEFAULT 0, activity_duration_summary_json TEXT NOT NULL DEFAULT '{}', task_queue_observation_json TEXT, heartbeat_schema_version INTEGER NOT NULL DEFAULT 1)""",
     ),
+    "application_outcomes": (
+        # The TypeScript owner first creates the baseline table and index, then
+        # its column guard applies this ALTER TABLE. Keeping the operation
+        # sequence preserves SQLite's raw CREATE SQL exactly.
+        """CREATE TABLE application_outcomes (
+      tenant_id     TEXT NOT NULL DEFAULT 'local',
+      outcome_id    TEXT NOT NULL,
+      job_key       TEXT NOT NULL,
+      kind          TEXT NOT NULL,
+      source        TEXT NOT NULL,
+      note          TEXT,
+      occurred_at   TEXT NOT NULL,
+      recorded_at   TEXT NOT NULL,
+      suggestion_id TEXT,
+      evidence_id   TEXT,
+      created_by    TEXT NOT NULL DEFAULT 'user',
+      PRIMARY KEY (tenant_id, outcome_id)
+    );
+    CREATE INDEX idx_application_outcomes_job
+      ON application_outcomes(tenant_id, job_key, occurred_at DESC, recorded_at DESC);
+    ALTER TABLE application_outcomes ADD COLUMN interview_prep_generation INTEGER""",
+    ),
 }
 
 
@@ -335,7 +420,7 @@ def _schema_rows_for_ddl(
 ) -> tuple[tuple[str, str, str, str], ...]:
     reference = sqlite3.connect(":memory:")
     try:
-        reference.execute(ddl)
+        reference.executescript(ddl)
         return schema_dump(reference)
     finally:
         reference.close()

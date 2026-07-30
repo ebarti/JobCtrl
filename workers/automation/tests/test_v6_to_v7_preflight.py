@@ -18,6 +18,93 @@ from tests.v6_migration_fixture import (
     create_supported_upgrade_history_v6_database,
 )
 
+# Exact SQLite inventory produced by v2.0.8's TypeScript
+# `ensureApplicationFeedbackTables` owner. SQLite omits `IF NOT EXISTS` from
+# sqlite_master.sql, so the source fixture intentionally uses the persisted
+# DDL rather than the TypeScript input statements.
+_V2_0_8_APPLICATION_OUTCOMES_DDL = """CREATE TABLE application_outcomes (
+      tenant_id     TEXT NOT NULL DEFAULT 'local',
+      outcome_id    TEXT NOT NULL,
+      job_key       TEXT NOT NULL,
+      kind          TEXT NOT NULL,
+      source        TEXT NOT NULL,
+      note          TEXT,
+      occurred_at   TEXT NOT NULL,
+      recorded_at   TEXT NOT NULL,
+      suggestion_id TEXT,
+      evidence_id   TEXT,
+      created_by    TEXT NOT NULL DEFAULT 'user',
+      PRIMARY KEY (tenant_id, outcome_id)
+    );
+    CREATE INDEX idx_application_outcomes_job
+      ON application_outcomes(tenant_id, job_key, occurred_at DESC, recorded_at DESC);"""
+
+_V2_0_8_APPLICATION_EMAIL_EVIDENCE_DDL = """CREATE TABLE application_email_evidence (
+      tenant_id            TEXT NOT NULL DEFAULT 'local',
+      evidence_id          TEXT NOT NULL,
+      job_key              TEXT NOT NULL,
+      provider             TEXT NOT NULL DEFAULT 'gmail',
+      provider_message_id  TEXT NOT NULL,
+      provider_thread_id   TEXT,
+      from_address         TEXT,
+      to_addresses_json    TEXT NOT NULL DEFAULT '[]',
+      subject              TEXT,
+      snippet              TEXT,
+      received_at          TEXT,
+      linked_at            TEXT NOT NULL,
+      link_confidence      REAL NOT NULL DEFAULT 0,
+      link_signals_json    TEXT NOT NULL DEFAULT '[]',
+      body_text            TEXT,
+      body_sha256          TEXT,
+      body_stored_at       TEXT,
+      PRIMARY KEY (tenant_id, evidence_id),
+      UNIQUE (tenant_id, provider, provider_message_id)
+    );
+    CREATE INDEX idx_application_email_evidence_job
+      ON application_email_evidence(tenant_id, job_key, received_at DESC);"""
+
+_V2_0_8_APPLICATION_OUTCOME_SUGGESTIONS_DDL = """CREATE TABLE application_outcome_suggestions (
+      tenant_id          TEXT NOT NULL DEFAULT 'local',
+      suggestion_id      TEXT NOT NULL,
+      job_key            TEXT NOT NULL,
+      evidence_id        TEXT,
+      suggested_kind     TEXT NOT NULL,
+      confidence         REAL NOT NULL DEFAULT 0,
+      rationale          TEXT NOT NULL DEFAULT '',
+      status             TEXT NOT NULL DEFAULT 'pending',
+      created_at         TEXT NOT NULL,
+      decided_at         TEXT,
+      decision           TEXT,
+      decision_reason    TEXT,
+      decided_outcome_id TEXT,
+      PRIMARY KEY (tenant_id, suggestion_id)
+    );
+    CREATE INDEX idx_application_outcome_suggestions_job
+      ON application_outcome_suggestions(tenant_id, job_key, status, created_at DESC);
+    CREATE INDEX idx_application_outcome_suggestions_status
+      ON application_outcome_suggestions(tenant_id, status, created_at DESC);"""
+
+
+def _install_v2_0_8_application_feedback(
+    conn: sqlite3.Connection,
+    *,
+    with_interview_prep_generation: bool = False,
+) -> None:
+    conn.executescript(
+        "\n".join(
+            (
+                _V2_0_8_APPLICATION_OUTCOMES_DDL,
+                _V2_0_8_APPLICATION_EMAIL_EVIDENCE_DDL,
+                _V2_0_8_APPLICATION_OUTCOME_SUGGESTIONS_DDL,
+            )
+        )
+    )
+    if with_interview_prep_generation:
+        # This is the exact v2.0.8 TypeScript column guard sequence.
+        conn.execute(
+            "ALTER TABLE application_outcomes ADD COLUMN interview_prep_generation INTEGER"
+        )
+
 
 def test_self_contained_shipped_v6_fixture_passes_preflight(tmp_path: Path) -> None:
     db_path = tmp_path / "jobctrl.db"
@@ -55,14 +142,121 @@ def test_preflight_admits_only_exact_named_optional_v6_tables(
         for table_name, variants in _V6_AUXILIARY_TABLE_VARIANTS.items():
             conn.execute(f'DROP TABLE "{table_name}"')
             for variant in variants:
-                conn.execute(variant)
+                conn.executescript(variant)
                 assert_v6_migration_preflight(conn)
                 conn.execute(f'DROP TABLE "{table_name}"')
-            conn.execute(variants[-1])
+            conn.executescript(variants[-1])
 
         assert_v6_migration_preflight(conn)
     finally:
         conn.close()
+
+
+def test_preflight_admits_v2_0_8_outcomes_without_interview_prep_generation(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "v2.0.8-outcomes-without-prep.db"
+    create_shipped_v6_database(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(_V2_0_8_APPLICATION_OUTCOMES_DDL)
+
+        assert_v6_migration_preflight(conn)
+    finally:
+        conn.close()
+
+
+def test_preflight_admits_v2_0_8_outcomes_with_interview_prep_generation(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "v2.0.8-outcomes-with-prep.db"
+    create_shipped_v6_database(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(_V2_0_8_APPLICATION_OUTCOMES_DDL)
+        conn.execute("ALTER TABLE application_outcomes ADD COLUMN interview_prep_generation INTEGER")
+
+        assert_v6_migration_preflight(conn)
+    finally:
+        conn.close()
+
+
+def test_preflight_admits_v2_0_8_email_evidence_and_outcome_suggestions(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "v2.0.8-feedback-evidence-and-suggestions.db"
+    create_shipped_v6_database(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(_V2_0_8_APPLICATION_EMAIL_EVIDENCE_DDL)
+        conn.executescript(_V2_0_8_APPLICATION_OUTCOME_SUGGESTIONS_DDL)
+
+        assert_v6_migration_preflight(conn)
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    ("ddl", "description"),
+    (
+        (
+            _V2_0_8_APPLICATION_EMAIL_EVIDENCE_DDL.replace(
+                "DEFAULT 'gmail'",
+                "DEFAULT 'outlook'",
+                1,
+            ),
+            "email-evidence table default",
+        ),
+        (
+            _V2_0_8_APPLICATION_OUTCOME_SUGGESTIONS_DDL.replace(
+                "status, created_at DESC);",
+                "status, created_at ASC);",
+                1,
+            ),
+            "outcome-suggestion index ordering",
+        ),
+    ),
+)
+def test_preflight_rejects_v2_0_8_feedback_schema_drift(
+    tmp_path: Path,
+    ddl: str,
+    description: str,
+) -> None:
+    db_path = tmp_path / f"v2.0.8-feedback-{description}.db"
+    create_shipped_v6_database(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(ddl)
+
+        with pytest.raises(V6MigrationPreflightError, match="durable-table variant"):
+            assert_v6_migration_preflight(conn)
+    finally:
+        conn.close()
+
+
+def test_preflight_does_not_write_a_supported_v2_0_8_feedback_database(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "v2.0.8-feedback-no-writes.db"
+    create_shipped_v6_database(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        _install_v2_0_8_application_feedback(
+            conn,
+            with_interview_prep_generation=True,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    before = db_path.read_bytes()
+    conn = sqlite3.connect(db_path)
+    try:
+        assert_v6_migration_preflight(conn)
+    finally:
+        conn.close()
+
+    assert db_path.read_bytes() == before
 
 
 def test_preflight_rejects_unknown_object_with_allowlisted_index_name(
