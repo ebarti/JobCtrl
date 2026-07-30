@@ -242,7 +242,7 @@ def test_v15_employer_analysis_migrates_alias_histories_and_uuid_urls(
     assert (
         reopened.execute("PRAGMA user_version").fetchone()[0]
         == SCHEMA_VERSION
-        == 25
+        == 26
     )
     for table in database_module._EMPLOYER_ANALYSIS_REFERENCE_TABLES:
         assert "job_id" in _columns(reopened, table)

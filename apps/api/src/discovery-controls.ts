@@ -50,7 +50,12 @@ import {
 import {
   allRows,
   getRow,
+  hasCompositeJobIdForeignKey,
+  jobKeyReferenceColumn,
+  jobKeyReferenceForUrl,
   jobReferenceColumn,
+  tableColumnSet,
+  tableIndexColumns,
   tableExists,
   type SqliteDatabase,
   type SqliteValue,
@@ -61,6 +66,7 @@ import { refreshProjections } from "./projections.js";
 import { InputError } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
+const DISCOVERY_FEEDBACK_REFERENCE_SCHEMA_VERSION = 26;
 export const EXTENSION_MANUAL_CAPTURE_SOURCE_ID = "manual_capture:extension";
 const EXTENSION_MANUAL_CAPTURE_REASON: ManualActionReasonValue = "browser_extension_capture";
 const DEFAULT_DISCOVERY_SETTINGS: DiscoverySettings = {
@@ -235,6 +241,11 @@ interface CandidateProfileTargetRow extends Record<string, unknown> {
 type CandidateProfileTargetColumn = "experience_target_locations" | "personal_city" | "personal_country";
 
 export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
+  const schemaVersion = Number(
+    db.pragma("user_version", { simple: true }),
+  );
+  const stableFeedbackReferences =
+    schemaVersion >= DISCOVERY_FEEDBACK_REFERENCE_SCHEMA_VERSION;
   db.exec(`
     CREATE TABLE IF NOT EXISTS discovery_settings (
       tenant_id          TEXT PRIMARY KEY,
@@ -306,16 +317,6 @@ export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
       job_key                       TEXT,
       PRIMARY KEY (tenant_id, item_id)
     );
-    CREATE TABLE IF NOT EXISTS discovery_feedback (
-      tenant_id   TEXT NOT NULL DEFAULT 'local',
-      feedback_id TEXT NOT NULL,
-      job_key     TEXT NOT NULL,
-      source_id   TEXT,
-      kind        TEXT NOT NULL,
-      note        TEXT,
-      recorded_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, feedback_id)
-    );
     CREATE TABLE IF NOT EXISTS role_match_feedback_suggestions (
       tenant_id       TEXT NOT NULL DEFAULT 'local',
       suggestion_id   TEXT NOT NULL,
@@ -335,6 +336,69 @@ export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
       PRIMARY KEY (tenant_id, suggestion_id)
     );
   `);
+  if (!tableExists(db, "discovery_feedback")) {
+    const referenceColumn = stableFeedbackReferences
+      ? "job_id"
+      : "job_key";
+    const foreignKey = stableFeedbackReferences
+      ? `,
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE`
+      : "";
+    db.exec(`
+      CREATE TABLE discovery_feedback (
+        tenant_id          TEXT NOT NULL DEFAULT 'local',
+        feedback_id        TEXT NOT NULL,
+        ${referenceColumn} TEXT NOT NULL,
+        source_id          TEXT,
+        kind               TEXT NOT NULL,
+        note               TEXT,
+        recorded_at        TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, feedback_id)
+        ${foreignKey}
+      );
+    `);
+  }
+  const feedbackColumns = tableColumnSet(
+    db,
+    "discovery_feedback",
+  );
+  if (
+    stableFeedbackReferences
+    && (
+      !feedbackColumns.has("job_id")
+      || feedbackColumns.has("job_key")
+    )
+  ) {
+    throw new Error(
+      "Schema v26 requires stable discovery_feedback.job_id references.",
+    );
+  }
+  if (stableFeedbackReferences) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_discovery_feedback_job
+      ON discovery_feedback(tenant_id, job_id, recorded_at);
+    `);
+    if (
+      !hasCompositeJobIdForeignKey(
+        db,
+        "discovery_feedback",
+      )
+      || tableIndexColumns(
+        db,
+        "discovery_feedback",
+        "idx_discovery_feedback_job",
+      ).join(",") !== "tenant_id,job_id,recorded_at"
+      || primaryKeyColumns(
+        db,
+        "discovery_feedback",
+      ).join(",") !== "tenant_id,feedback_id"
+    ) {
+      throw new Error(
+        "Schema v26 requires the stable discovery-feedback JobId contract.",
+      );
+    }
+  }
 }
 
 export function readDiscoverySettings(
@@ -1205,14 +1269,32 @@ export function recordDiscoveryFeedback(
   ensureDiscoveryControlTables(db);
   const now = new Date().toISOString();
   const feedbackId = `feedback-${crypto.randomUUID()}`;
+  const referenceColumn = jobKeyReferenceColumn(
+    db,
+    "discovery_feedback",
+  );
+  let reference: string;
+  try {
+    reference = jobKeyReferenceForUrl(
+      db,
+      "discovery_feedback",
+      input.jobKey,
+      DEFAULT_TENANT,
+    );
+  } catch {
+    throw new InputError(
+      `No stable Job identity for ${input.jobKey}.`,
+    );
+  }
   db.prepare(
     `INSERT INTO discovery_feedback (
-       tenant_id, feedback_id, job_key, source_id, kind, note, recorded_at
+       tenant_id, feedback_id, ${referenceColumn},
+       source_id, kind, note, recorded_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     DEFAULT_TENANT,
     feedbackId,
-    input.jobKey,
+    reference,
     input.sourceId ?? null,
     input.kind,
     input.note ?? null,
@@ -1238,6 +1320,20 @@ export function recordDiscoveryFeedback(
     kind: input.kind,
     recordedAt: now,
   };
+}
+
+function primaryKeyColumns(
+  db: SqliteDatabase,
+  tableName: string,
+): string[] {
+  return (
+    db
+      .prepare(`PRAGMA table_info("${tableName.replaceAll('"', '""')}")`)
+      .all() as Array<{ name: string; pk: number }>
+  )
+    .filter((row) => row.pk > 0)
+    .sort((left, right) => left.pk - right.pk)
+    .map((row) => row.name);
 }
 
 export function listRoleMatchFeedbackSuggestions(

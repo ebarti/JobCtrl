@@ -177,7 +177,7 @@ def test_v9_preparation_references_migrate_to_stable_job_ids_and_reopen(
     init_db(db_path)
     close_connection(db_path)
 
-    assert _user_version(db_path) == SCHEMA_VERSION == 25
+    assert _user_version(db_path) == SCHEMA_VERSION == 26
     check = sqlite3.connect(db_path)
     try:
         rows = check.execute(

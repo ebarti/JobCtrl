@@ -862,6 +862,11 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
     jobId,
     jobUrl,
   );
+  deleteDiscoveryFeedbackReferences(
+    db,
+    jobId,
+    jobUrl,
+  );
   detachOrDeleteOutreachReferences(db, jobId, jobUrl);
   detachOrDeleteContactReferences(db, jobId, jobUrl);
   deleteJobReferences(db, "job_artifacts", jobId, jobUrl);
@@ -917,7 +922,6 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
     jobUrl,
     jobUrl,
   ]);
-  deleteWhere(db, "discovery_feedback", "job_key = ?", [jobUrl]);
   deleteWhere(db, "jobs", "url = ?", [jobUrl]);
 }
 
@@ -1248,6 +1252,27 @@ function deleteApplicationFeedbackReferences(
       ["local", reference],
     );
   }
+}
+
+function deleteDiscoveryFeedbackReferences(
+  db: SqliteDatabase,
+  jobId: string | undefined,
+  jobUrl: string,
+): void {
+  if (!tableExists(db, "discovery_feedback")) return;
+  const referenceColumn = jobKeyReferenceColumn(
+    db,
+    "discovery_feedback",
+  );
+  const reference =
+    referenceColumn === "job_id" ? jobId : jobUrl;
+  if (!reference) return;
+  deleteWhere(
+    db,
+    "discovery_feedback",
+    `tenant_id = ? AND ${referenceColumn} = ?`,
+    ["local", reference],
+  );
 }
 
 function deleteRepeatApplicationReferences(

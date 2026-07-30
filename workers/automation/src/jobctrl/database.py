@@ -97,7 +97,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # resolved at the adapter boundary. Job deletion is restricted so the explicit
 # permanent-delete path can detach preserved outreach history or purge threads
 # whose job-only Contact is removed.
-SCHEMA_VERSION = 25
+# v26 (discovery-feedback references): user-authored Discovery feedback points
+# at the tenant-scoped stable Job aggregate. The URL-shaped API/event contract
+# remains unchanged, and private free-form notes stay only in canonical storage.
+SCHEMA_VERSION = 26
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -253,6 +256,7 @@ def _schema_migrations() -> tuple[
         (23, ensure_repeat_application_references_v23),
         (24, ensure_contact_research_references_v24),
         (25, ensure_outreach_references_v25),
+        (26, ensure_discovery_feedback_references_v26),
     )
 
 
@@ -3720,6 +3724,10 @@ def ensure_discovery_control_tables(conn: sqlite3.Connection | None = None) -> l
     """
     if conn is None:
         conn = get_connection()
+    current_version = _assert_schema_version_supported(conn)
+    stable_feedback_references = (
+        current_version >= _DISCOVERY_FEEDBACK_REFERENCE_SCHEMA_VERSION
+    )
 
     conn.execute(
         """
@@ -3801,20 +3809,31 @@ def ensure_discovery_control_tables(conn: sqlite3.Connection | None = None) -> l
         )
         """
     )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS discovery_feedback (
-            tenant_id   TEXT NOT NULL DEFAULT 'local',
-            feedback_id TEXT NOT NULL,
-            job_key     TEXT NOT NULL,
-            source_id   TEXT,
-            kind        TEXT NOT NULL,
-            note        TEXT,
-            recorded_at TEXT NOT NULL,
-            PRIMARY KEY (tenant_id, feedback_id)
+    if not _table_columns(conn, "discovery_feedback"):
+        _create_discovery_feedback_table_v26(
+            conn,
+            table="discovery_feedback",
+            stable_reference=stable_feedback_references,
         )
-        """
-    )
+    if stable_feedback_references:
+        feedback_columns = _table_columns(
+            conn,
+            "discovery_feedback",
+        )
+        if (
+            "job_id" not in feedback_columns
+            or "job_key" in feedback_columns
+        ):
+            raise RuntimeError(
+                "Schema v26 requires stable discovery-feedback "
+                "JobId references."
+            )
+        _create_discovery_feedback_reference_index_v26(conn)
+        if not _has_discovery_feedback_reference_schema_v26(conn):
+            raise RuntimeError(
+                "Schema v26 requires the stable discovery-feedback "
+                "JobId contract."
+            )
     conn.commit()
     return [
         "source_registry_entries",
@@ -4856,6 +4875,13 @@ def _reassign_discovery_identity_references(
             surviving_job_id=surviving_job_id,
             losing_job_url=losing_job_url,
             surviving_job_url=surviving_job_url,
+        )
+    if _has_discovery_feedback_reference_schema_v26(conn):
+        _reassign_discovery_feedback_references_v26(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
         )
     if _has_scoring_reference_schema_v12(conn):
         _reassign_scoring_references_v12(
@@ -15231,6 +15257,286 @@ def _reassign_outreach_references_v25(
     _verify_outreach_references_v25(
         conn,
         expected_counts=expected_counts,
+    )
+
+
+_DISCOVERY_FEEDBACK_REFERENCE_SCHEMA_VERSION = 26
+_DISCOVERY_FEEDBACK_REFERENCE_TABLES = ("discovery_feedback",)
+
+
+def _create_discovery_feedback_table_v26(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    stable_reference: bool,
+) -> None:
+    reference_column = "job_id" if stable_reference else "job_key"
+    foreign_key = (
+        """,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_reference
+        else ""
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            tenant_id         TEXT NOT NULL DEFAULT 'local',
+            feedback_id       TEXT NOT NULL,
+            {reference_column} TEXT NOT NULL,
+            source_id         TEXT,
+            kind              TEXT NOT NULL,
+            note              TEXT,
+            recorded_at       TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, feedback_id)
+            {foreign_key}
+        )
+        """
+    )
+
+
+def _create_discovery_feedback_reference_index_v26(
+    conn: sqlite3.Connection,
+) -> None:
+    if _has_index(
+        conn,
+        "discovery_feedback",
+        "idx_discovery_feedback_job",
+        ("tenant_id", "job_id", "recorded_at"),
+        unique=False,
+    ):
+        return
+    conn.execute(
+        'DROP INDEX IF EXISTS "idx_discovery_feedback_job"'
+    )
+    conn.execute(
+        """
+        CREATE INDEX idx_discovery_feedback_job
+        ON discovery_feedback(tenant_id, job_id, recorded_at)
+        """
+    )
+
+
+def _has_discovery_feedback_reference_schema_v26(
+    conn: sqlite3.Connection,
+) -> bool:
+    table = "discovery_feedback"
+    return (
+        "job_id" in _table_columns(conn, table)
+        and "job_key" not in _table_columns(conn, table)
+        and _primary_key_columns(conn, table)
+        == ("tenant_id", "feedback_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            table,
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            table,
+            "idx_discovery_feedback_job",
+            ("tenant_id", "job_id", "recorded_at"),
+            unique=False,
+        )
+    )
+
+
+def _canonical_discovery_feedback_rows_v26(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    reference_column = _legacy_or_stable_reference_column(
+        conn,
+        "discovery_feedback",
+        stable="job_id",
+        legacy="job_key",
+    )
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, feedback_id, {reference_column},
+               source_id, kind, note, recorded_at
+        FROM discovery_feedback
+        ORDER BY tenant_id, feedback_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        values = tuple(row)
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=str(values[0]),
+            reference=str(values[2]),
+            legacy_url=reference_column == "job_key",
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "discovery-feedback reference migration could not "
+                f"resolve discovery_feedback.{reference_column}="
+                f"{values[2]!r} for tenant {values[0]!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        canonical.append(
+            (
+                values[0],
+                values[1],
+                stable_job_id,
+                *values[3:],
+            )
+        )
+    return canonical
+
+
+def ensure_discovery_feedback_references_v26(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move user-authored Discovery feedback links to stable JobIds."""
+    if conn is None:
+        conn = get_connection()
+    current = _assert_schema_version_supported(conn)
+    if current >= _DISCOVERY_FEEDBACK_REFERENCE_SCHEMA_VERSION:
+        return list(_DISCOVERY_FEEDBACK_REFERENCE_TABLES)
+    if current != _OUTREACH_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "discovery-feedback reference migration requires schema v25; "
+            f"found v{current}"
+        )
+
+    conn.execute("SAVEPOINT discovery_feedback_references_v26")
+    try:
+        if not _table_columns(conn, "discovery_feedback"):
+            _create_discovery_feedback_table_v26(
+                conn,
+                table="discovery_feedback",
+                stable_reference=False,
+            )
+        expected_count = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM discovery_feedback"
+            ).fetchone()[0]
+        )
+        feedback_rows = _canonical_discovery_feedback_rows_v26(
+            conn
+        )
+
+        conn.execute("DROP TABLE IF EXISTS discovery_feedback_v26")
+        _create_discovery_feedback_table_v26(
+            conn,
+            table="discovery_feedback_v26",
+            stable_reference=True,
+        )
+        conn.executemany(
+            """
+            INSERT INTO discovery_feedback_v26 (
+                tenant_id, feedback_id, job_id, source_id,
+                kind, note, recorded_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            feedback_rows,
+        )
+
+        conn.execute('DROP TABLE "discovery_feedback"')
+        conn.execute(
+            'ALTER TABLE "discovery_feedback_v26" '
+            'RENAME TO "discovery_feedback"'
+        )
+        _create_discovery_feedback_reference_index_v26(conn)
+        _verify_discovery_feedback_references_v26(
+            conn,
+            expected_count=expected_count,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_DISCOVERY_FEEDBACK_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT discovery_feedback_references_v26"
+        )
+    except BaseException:
+        conn.execute(
+            "ROLLBACK TO SAVEPOINT "
+            "discovery_feedback_references_v26"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT discovery_feedback_references_v26"
+        )
+        raise
+    return list(_DISCOVERY_FEEDBACK_REFERENCE_TABLES)
+
+
+def _verify_discovery_feedback_references_v26(
+    conn: sqlite3.Connection,
+    *,
+    expected_count: int,
+) -> None:
+    if not _has_discovery_feedback_reference_schema_v26(conn):
+        raise RuntimeError(
+            "discovery-feedback reference migration did not create "
+            "the stable reference schema"
+        )
+    observed_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM discovery_feedback"
+        ).fetchone()[0]
+    )
+    if observed_count != expected_count:
+        raise RuntimeError(
+            "discovery-feedback reference migration changed row count: "
+            f"expected {expected_count}, found {observed_count}"
+        )
+    orphan = conn.execute(
+        """
+        SELECT feedback.job_id
+        FROM discovery_feedback AS feedback
+        LEFT JOIN jobs
+          ON jobs.tenant_id = feedback.tenant_id
+         AND jobs.job_id = feedback.job_id
+        WHERE jobs.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise RuntimeError(
+            "discovery-feedback reference migration left an "
+            "unresolved JobId"
+        )
+    for row in conn.execute(
+        "SELECT DISTINCT job_id FROM discovery_feedback"
+    ).fetchall():
+        _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "discovery-feedback reference migration found a "
+            "foreign-key violation"
+        )
+
+
+def _reassign_discovery_feedback_references_v26(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    if losing_job_id == surviving_job_id:
+        return
+    expected_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM discovery_feedback"
+        ).fetchone()[0]
+    )
+    conn.execute(
+        """
+        UPDATE discovery_feedback
+        SET job_id = ?
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (surviving_job_id, tenant_id, losing_job_id),
+    )
+    _verify_discovery_feedback_references_v26(
+        conn,
+        expected_count=expected_count,
     )
 
 
