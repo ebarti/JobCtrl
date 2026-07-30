@@ -8,6 +8,7 @@ two lists below; no other wiring is required.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from jobctrl.apply.activities import apply_activity
@@ -65,6 +66,78 @@ WORKFLOWS: list[type] = [
     DurabilityProbeWorkflow,
 ]
 
+
+@dataclass(frozen=True)
+class WorkflowIdentityCutoverPolicy:
+    """How one registered workflow participates in the JobId cutover.
+
+    ``identity_fields`` names serialized URL/identity-bearing fields or the
+    durable job-work relationship that requires the execution to drain. An
+    empty tuple is an explicit declaration that the workflow is unrelated to
+    job identity; it is never an implicit default.
+    """
+
+    workflow_type: str
+    blocks_cutover_when_open: bool
+    identity_fields: tuple[str, ...]
+
+
+WORKFLOW_IDENTITY_CUTOVER_POLICIES: dict[
+    type,
+    WorkflowIdentityCutoverPolicy,
+] = {
+    DiscoverWorkflow: WorkflowIdentityCutoverPolicy(
+        workflow_type="DiscoverWorkflow",
+        blocks_cutover_when_open=True,
+        identity_fields=("durable_discovery_work",),
+    ),
+    JobPipelineWorkflow: WorkflowIdentityCutoverPolicy(
+        workflow_type="JobPipelineWorkflow",
+        blocks_cutover_when_open=True,
+        identity_fields=("job_url", "job_urls"),
+    ),
+    JobPreparationWorkflow: WorkflowIdentityCutoverPolicy(
+        workflow_type="JobPreparationWorkflow",
+        blocks_cutover_when_open=True,
+        identity_fields=("job_url", "idempotency_key"),
+    ),
+    ApplyWorkflow: WorkflowIdentityCutoverPolicy(
+        workflow_type="ApplyWorkflow",
+        blocks_cutover_when_open=True,
+        identity_fields=("job_url", "workflow_id"),
+    ),
+    ManualCaptureImportWorkflow: WorkflowIdentityCutoverPolicy(
+        workflow_type="ManualCaptureImportWorkflow",
+        blocks_cutover_when_open=True,
+        identity_fields=("captured_url", "durable_capture_item"),
+    ),
+    ProfileImportWorkflow: WorkflowIdentityCutoverPolicy(
+        workflow_type="ProfileImportWorkflow",
+        blocks_cutover_when_open=False,
+        identity_fields=(),
+    ),
+    CompensationRefreshWorkflow: WorkflowIdentityCutoverPolicy(
+        workflow_type="CompensationRefreshWorkflow",
+        blocks_cutover_when_open=True,
+        identity_fields=("job_url",),
+    ),
+    InterviewPrepWorkflow: WorkflowIdentityCutoverPolicy(
+        workflow_type="InterviewPrepWorkflow",
+        blocks_cutover_when_open=True,
+        identity_fields=("job_url", "workflow_id"),
+    ),
+    ContactResearchWorkflow: WorkflowIdentityCutoverPolicy(
+        workflow_type="ContactResearchWorkflow",
+        blocks_cutover_when_open=True,
+        identity_fields=("job_url",),
+    ),
+    DurabilityProbeWorkflow: WorkflowIdentityCutoverPolicy(
+        workflow_type="DurabilityProbeWorkflow",
+        blocks_cutover_when_open=False,
+        identity_fields=(),
+    ),
+}
+
 ACTIVITIES: list[Callable[..., Any]] = [
     plan_discovery_sources,
     discovery_source_family_activity,
@@ -90,4 +163,9 @@ ACTIVITIES: list[Callable[..., Any]] = [
     record_workflow_outcome,
 ]
 
-__all__ = ["ACTIVITIES", "WORKFLOWS"]
+__all__ = [
+    "ACTIVITIES",
+    "WORKFLOWS",
+    "WORKFLOW_IDENTITY_CUTOVER_POLICIES",
+    "WorkflowIdentityCutoverPolicy",
+]

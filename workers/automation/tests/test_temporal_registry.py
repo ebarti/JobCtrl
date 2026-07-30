@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from jobctrl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
+from jobctrl.infrastructure.temporal.registry import (
+    ACTIVITIES,
+    WORKFLOWS,
+    WORKFLOW_IDENTITY_CUTOVER_POLICIES,
+)
 
 
 def test_registry_exports_non_empty_workflows_and_activities():
@@ -17,6 +21,25 @@ def test_registry_workflows_are_temporal_workflow_definitions():
             f"{workflow_cls.__name__} is in WORKFLOWS but is missing the "
             "@workflow.defn decorator."
         )
+
+
+def test_every_workflow_declares_an_identity_cutover_policy():
+    assert set(WORKFLOW_IDENTITY_CUTOVER_POLICIES) == set(WORKFLOWS)
+    workflow_types = [
+        policy.workflow_type
+        for policy in WORKFLOW_IDENTITY_CUTOVER_POLICIES.values()
+    ]
+    assert len(workflow_types) == len(set(workflow_types))
+    for workflow_cls, policy in WORKFLOW_IDENTITY_CUTOVER_POLICIES.items():
+        definition = getattr(
+            workflow_cls,
+            "__temporal_workflow_definition",
+        )
+        assert policy.workflow_type == definition.name
+        if policy.blocks_cutover_when_open:
+            assert policy.identity_fields
+        else:
+            assert policy.identity_fields == ()
 
 
 def test_registry_activities_are_temporal_activity_definitions():
