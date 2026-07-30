@@ -18,6 +18,9 @@ from jobctrl.infrastructure.migrations.v6_to_v7_plan import (
     TableDisposition,
     classify_column,
 )
+from jobctrl.infrastructure.migrations.v6_to_v7_preflight import (
+    assert_v6_migration_preflight,
+)
 
 
 class CandidateCopyError(RuntimeError):
@@ -102,6 +105,7 @@ def copy_direct_and_scalar_tables(
     Requiring its completed job rows here prevents copied references from being
     detached from the canonical aggregate.
     """
+    assert_v6_migration_preflight(source)
     assert_exact_manifest(candidate, EXACT_V7_MANIFEST)
     job_ids = build_job_id_map(source, candidate)
     _validate_source_inventory(source)
