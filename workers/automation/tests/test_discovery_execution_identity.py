@@ -119,6 +119,31 @@ def test_execution_membership_rejects_url_shaped_and_unknown_identity(
     ).fetchone()[0] == 0
 
 
+@pytest.mark.parametrize(
+    "job_id",
+    [
+        JobId(" 498fe0a9-6615-4b4d-b8fd-6cbb978f6ec6"),
+        JobId("498fe0a9-6615-4b4d-b8fd-6cbb978f6ec6 "),
+    ],
+)
+def test_execution_membership_rejects_whitespace_wrapped_identity(
+    execution_db,
+    job_id: JobId,
+) -> None:
+    repository = SqliteDiscoveryExecutionRepository(execution_db)
+
+    with pytest.raises(ValueError, match="canonical UUID"):
+        repository.link_job(
+            _execution(),
+            job_id,
+            cohort_kind="existing_backlog",
+        )
+
+    assert execution_db.execute(
+        "SELECT COUNT(*) FROM discovery_execution_jobs"
+    ).fetchone()[0] == 0
+
+
 def test_execution_membership_cannot_cross_tenants(execution_db) -> None:
     job_id = JobId("498fe0a9-6615-4b4d-b8fd-6cbb978f6ec6")
     _insert_job(execution_db, job_id, tenant_id="tenant-a")
@@ -134,3 +159,54 @@ def test_execution_membership_cannot_cross_tenants(execution_db) -> None:
     assert execution_db.execute(
         "SELECT COUNT(*) FROM discovery_execution_jobs"
     ).fetchone()[0] == 0
+
+
+def test_work_plan_retry_is_exact_and_memberships_order_by_job_id(
+    execution_db,
+) -> None:
+    first_id = JobId("00000000-0000-4000-8000-000000000001")
+    second_id = JobId("00000000-0000-4000-8000-000000000002")
+    _insert_job(execution_db, second_id)
+    _insert_job(execution_db, first_id)
+    repository = SqliteDiscoveryExecutionRepository(execution_db)
+    execution = _execution()
+    repository.link_job(
+        execution,
+        second_id,
+        cohort_kind="existing_backlog",
+    )
+    repository.link_job(
+        execution,
+        first_id,
+        cohort_kind="existing_backlog",
+    )
+
+    planned = repository.set_work_plan(
+        execution,
+        first_id,
+        state="planned",
+        required_steps=["score", "tailor"],
+        preparation_workflow_id="prep-first",
+    )
+    replay = repository.set_work_plan(
+        execution,
+        first_id,
+        state="planned",
+        required_steps=["score", "tailor"],
+        preparation_workflow_id="prep-first",
+    )
+
+    assert replay == planned
+    assert planned.required_steps == ("score", "tailor")
+    assert [
+        membership.job_id
+        for membership in repository.list_for_execution(execution)
+    ] == [first_id, second_id]
+    with pytest.raises(ValueError, match="immutable"):
+        repository.set_work_plan(
+            execution,
+            first_id,
+            state="planned",
+            required_steps=["score"],
+            preparation_workflow_id="prep-first",
+        )
