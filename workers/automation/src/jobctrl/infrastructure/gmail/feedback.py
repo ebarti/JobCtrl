@@ -27,6 +27,7 @@ MAX_LIMIT = 100
 MAX_RESULTS_PER_ANCHOR = 20
 MAX_WINDOW_DAYS = 180
 APPLICATION_REVIEW_REFERENCE_SCHEMA_VERSION = 20
+APPLICATION_OUTCOME_REFERENCE_SCHEMA_VERSION = 21
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{1,64}")
@@ -264,6 +265,19 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
         if stable_review_schema
         else ""
     )
+    stable_outcome_schema = (
+        schema_version >= APPLICATION_OUTCOME_REFERENCE_SCHEMA_VERSION
+    )
+    created_outcome_reference = (
+        "job_id" if stable_outcome_schema else "job_key"
+    )
+    outcome_foreign_key = (
+        """,
+          FOREIGN KEY (tenant_id, job_id)
+            REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_outcome_schema
+        else ""
+    )
     conn.executescript(
         f"""
         CREATE TABLE IF NOT EXISTS application_review_decisions (
@@ -287,7 +301,7 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS application_outcomes (
           tenant_id     TEXT NOT NULL DEFAULT 'local',
           outcome_id    TEXT NOT NULL,
-          job_key       TEXT NOT NULL,
+          {created_outcome_reference} TEXT NOT NULL,
           kind          TEXT NOT NULL,
           source        TEXT NOT NULL,
           note          TEXT,
@@ -296,10 +310,10 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
           suggestion_id TEXT,
           evidence_id   TEXT,
           created_by    TEXT NOT NULL DEFAULT 'user',
+          interview_prep_generation INTEGER,
           PRIMARY KEY (tenant_id, outcome_id)
+          {outcome_foreign_key}
         );
-        CREATE INDEX IF NOT EXISTS idx_application_outcomes_job
-          ON application_outcomes(tenant_id, job_key, occurred_at DESC, recorded_at DESC);
 
         CREATE TABLE IF NOT EXISTS application_email_evidence (
           tenant_id            TEXT NOT NULL DEFAULT 'local',
@@ -374,6 +388,28 @@ def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
         )
         """
         % review_reference
+    )
+    _ensure_columns(
+        conn,
+        "application_outcomes",
+        {"interview_prep_generation": "INTEGER"},
+    )
+    outcome_reference = (
+        "job_id"
+        if "job_id" in _columns(conn, "application_outcomes")
+        else "job_key"
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_application_outcomes_job
+        ON application_outcomes(
+            tenant_id,
+            %s,
+            occurred_at DESC,
+            recorded_at DESC
+        )
+        """
+        % outcome_reference
     )
 
 
@@ -678,12 +714,20 @@ def _outcome_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
     title_expr = _column_expr(columns, "title", prefix="j")
     company_expr = _first_column_expr(columns, ["company", "site", "employer"], prefix="j")
     application_url_expr = _column_expr(columns, "application_url", prefix="j")
+    outcome_columns = _columns(conn, "application_outcomes")
+    stable_references = "job_id" in outcome_columns
+    outcome_job_key = "j.url" if stable_references else "o.job_key"
+    identity_join = (
+        "j.tenant_id = o.tenant_id AND j.job_id = o.job_id"
+        if stable_references
+        else "j.url = o.job_key"
+    )
     rows = conn.execute(
         f"""
-        SELECT o.job_key AS job_key, {title_expr} AS title, {company_expr} AS company,
+        SELECT {outcome_job_key} AS job_key, {title_expr} AS title, {company_expr} AS company,
                {application_url_expr} AS application_url, o.occurred_at AS anchor_at
         FROM application_outcomes o
-        LEFT JOIN jobs j ON j.url = o.job_key
+        LEFT JOIN jobs j ON {identity_join}
         WHERE o.tenant_id = ?
           AND o.kind IN (
             'applied_confirmation', 'recruiter_reply', 'interview',

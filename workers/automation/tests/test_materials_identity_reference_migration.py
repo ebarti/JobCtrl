@@ -293,7 +293,7 @@ def test_v14_materials_migrate_alias_histories_and_uuid_shaped_urls(
     close_connection(db_path)
 
     reopened = init_db(db_path)
-    assert reopened.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 20
+    assert reopened.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 21
     for table in database_module._MATERIALS_REFERENCE_TABLES:
         assert "job_id" in _columns(reopened, table)
         assert "job_url" not in _columns(reopened, table)

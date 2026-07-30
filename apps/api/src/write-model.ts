@@ -26,6 +26,7 @@ import {
   allRows,
   getRow,
   hasCompositeJobIdForeignKey,
+  jobKeyReferenceColumn,
   jobReferenceColumn,
   jobReferenceForUrl,
   jobReferencePredicateForUrl,
@@ -851,7 +852,7 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
     }
   }
   deleteWhere(db, "job_events", "job_url = ?", [jobUrl]);
-  deleteApplicationReviewDecisionReferences(
+  deleteApplicationFeedbackReferences(
     db,
     jobId,
     jobUrl,
@@ -1023,32 +1024,26 @@ function deleteScoringJobReferences(
   }
 }
 
-function deleteApplicationReviewDecisionReferences(
+function deleteApplicationFeedbackReferences(
   db: SqliteDatabase,
   jobId: string | undefined,
   jobUrl: string,
 ): void {
-  if (!tableExists(db, "application_review_decisions")) return;
-  const stableReferences = tableColumnSet(
-    db,
+  for (const tableName of [
     "application_review_decisions",
-  ).has("job_id");
-  if (stableReferences) {
-    if (!jobId) return;
+    "application_outcomes",
+  ]) {
+    if (!tableExists(db, tableName)) continue;
+    const referenceColumn = jobKeyReferenceColumn(db, tableName);
+    const reference = referenceColumn === "job_id" ? jobId : jobUrl;
+    if (!reference) continue;
     deleteWhere(
       db,
-      "application_review_decisions",
-      "tenant_id = ? AND job_id = ?",
-      ["local", jobId],
+      tableName,
+      `tenant_id = ? AND ${referenceColumn} = ?`,
+      ["local", reference],
     );
-    return;
   }
-  deleteWhere(
-    db,
-    "application_review_decisions",
-    "tenant_id = ? AND job_key = ?",
-    ["local", jobUrl],
-  );
 }
 
 function deleteJobReferences(

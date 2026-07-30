@@ -2746,15 +2746,23 @@ class ProjectionBuilder:
 
     def _has_application_outcome_kind(self, job_url: str, kind: str) -> bool:
         try:
+            reference_sql, reference_params = (
+                _job_key_reference_predicate_for_url(
+                    self._conn,
+                    "application_outcomes",
+                    job_url,
+                    tenant_id=str(self._tenant_id),
+                )
+            )
             row = self._conn.execute(
-                """
+                f"""
                 SELECT COUNT(*) AS c
                 FROM application_outcomes
-                WHERE tenant_id = ? AND job_key = ? AND kind = ?
+                WHERE {reference_sql} AND kind = ?
                 """,
-                (str(self._tenant_id), job_url, kind),
+                (*reference_params, kind),
             ).fetchone()
-        except sqlite3.OperationalError:
+        except (sqlite3.OperationalError, ValueError):
             return False
         return int(_row_nullable_int(row, "c") or 0) > 0
 
@@ -3395,8 +3403,32 @@ class ProjectionBuilder:
 
     def _load_outcomes_by_job(self) -> dict[str, tuple[dict[str, str | None], ...]]:
         try:
+            stable_references = _has_column(
+                self._conn,
+                "application_outcomes",
+                "job_id",
+            )
+            job_key_select = (
+                "jobs.url" if stable_references else "outcomes.job_key"
+            )
+            identity_join = (
+                """
+                JOIN jobs
+                  ON jobs.tenant_id = outcomes.tenant_id
+                 AND jobs.job_id = outcomes.job_id
+                """
+                if stable_references
+                else ""
+            )
             rows = self._conn.execute(
-                "SELECT job_key, kind, occurred_at FROM application_outcomes WHERE tenant_id = ?",
+                f"""
+                SELECT {job_key_select} AS job_key,
+                       outcomes.kind,
+                       outcomes.occurred_at
+                FROM application_outcomes AS outcomes
+                {identity_join}
+                WHERE outcomes.tenant_id = ?
+                """,
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
@@ -4248,6 +4280,47 @@ def _job_reference_predicate_for_url(
     prefix = f"{alias}." if alias else ""
     if not _has_column(conn, table_name, "job_id"):
         return f"{prefix}job_url = ?", (job_url,)
+    row = conn.execute(
+        """
+        SELECT j.tenant_id, j.job_id
+        FROM jobs j
+        WHERE j.tenant_id = ? AND j.url = ?
+        UNION ALL
+        SELECT alias.tenant_id, alias.job_id
+        FROM job_identity_aliases alias
+        JOIN jobs j
+          ON j.tenant_id = alias.tenant_id
+         AND j.job_id = alias.job_id
+        WHERE alias.tenant_id = ?
+          AND alias.alias_kind = 'posting_url'
+          AND alias.alias_value = ?
+        LIMIT 1
+        """,
+        (tenant_id, job_url, tenant_id, job_url),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"no stable Job identity for posting URL: {job_url}")
+    return f"{prefix}tenant_id = ? AND {prefix}job_id = ?", (
+        str(row[0]),
+        str(row[1]),
+    )
+
+
+def _job_key_reference_predicate_for_url(
+    conn: sqlite3.Connection,
+    table_name: str,
+    job_url: str,
+    *,
+    tenant_id: str,
+    alias: str = "",
+) -> tuple[str, tuple[str, ...]]:
+    """Resolve a URL for tables whose legacy reference is ``job_key``."""
+    prefix = f"{alias}." if alias else ""
+    if not _has_column(conn, table_name, "job_id"):
+        return (
+            f"{prefix}tenant_id = ? AND {prefix}job_key = ?",
+            (tenant_id, job_url),
+        )
     row = conn.execute(
         """
         SELECT j.tenant_id, j.job_id

@@ -76,6 +76,8 @@ import {
   allRows,
   getRow,
   hasCompositeJobIdForeignKey,
+  jobKeyReferenceColumn,
+  jobKeyReferencePredicateForUrl,
   jobReferenceColumn,
   tableColumnSet,
   tableExists,
@@ -797,6 +799,10 @@ const FOLLOW_UP_STOP_OUTCOMES = new Set([
 function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
   if (!tableExists(db, "application_outcomes")) return 0;
   const cutoff = new Date(now.getTime() - DIGEST_FOLLOW_UP_THRESHOLD_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const outcomeReference = jobKeyReferenceColumn(
+    db,
+    "application_outcomes",
+  );
   const rows = allRows<{
     job_key: string;
     kind: string;
@@ -804,10 +810,10 @@ function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
     recorded_at: string | null;
   }>(
     db,
-    `SELECT job_key, kind, occurred_at, recorded_at
+    `SELECT ${outcomeReference} AS job_key, kind, occurred_at, recorded_at
        FROM application_outcomes
       WHERE tenant_id = ?
-      ORDER BY job_key ASC, occurred_at ASC, recorded_at ASC`,
+      ORDER BY ${outcomeReference} ASC, occurred_at ASC, recorded_at ASC`,
     [DEFAULT_TENANT],
   );
   const byJob = new Map<string, { appliedAt: string | null; lastActivityAt: string | null; stopped: boolean }>();
@@ -1552,13 +1558,19 @@ function appendApplicationOutcomeAuditEntries(
   seenReferences: Set<string>,
 ): void {
   if (!tableExists(db, "application_outcomes")) return;
+  const reference = jobKeyReferencePredicateForUrl(
+    db,
+    "application_outcomes",
+    jobId,
+    DEFAULT_TENANT,
+  );
   const rows = allRows<ApplicationOutcomeAuditRow>(
     db,
     `SELECT outcome_id, kind, source, note, occurred_at, recorded_at, suggestion_id, evidence_id
        FROM application_outcomes
-      WHERE tenant_id = ? AND job_key = ?
+      WHERE ${reference.sql}
       ORDER BY occurred_at ASC, recorded_at ASC, outcome_id ASC`,
-    [DEFAULT_TENANT, jobId],
+    reference.params,
   );
   for (const row of rows) {
     if (seenReferences.has(`outcome:${row.outcome_id}`)) continue;

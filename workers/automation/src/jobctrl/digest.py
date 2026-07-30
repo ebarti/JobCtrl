@@ -773,12 +773,18 @@ def _count_follow_ups_due(conn: sqlite3.Connection, *, now: datetime) -> int:
     if not _table_exists(conn, "application_outcomes"):
         return 0
     cutoff = _format_utc_timestamp(now - timedelta(days=FOLLOW_UP_THRESHOLD_DAYS))
+    outcome_reference = (
+        "job_id"
+        if "job_id" in _table_columns(conn, "application_outcomes")
+        else "job_key"
+    )
     rows = conn.execute(
-        """
-        SELECT job_key, kind, occurred_at, recorded_at
+        f"""
+        SELECT {outcome_reference} AS job_key,
+               kind, occurred_at, recorded_at
         FROM application_outcomes
         WHERE tenant_id = ?
-        ORDER BY job_key ASC, occurred_at ASC, recorded_at ASC
+        ORDER BY {outcome_reference} ASC, occurred_at ASC, recorded_at ASC
         """,
         (TENANT_ID,),
     ).fetchall()

@@ -196,7 +196,7 @@ def _create_representative_v6_pair(
     conn.execute(
         """
         INSERT INTO application_outcomes (
-            tenant_id, outcome_id, job_key, kind, source, note,
+            tenant_id, outcome_id, job_id, kind, source, note,
             occurred_at, recorded_at, created_by
         ) VALUES (
             'local', 'outcome-fixture', ?, 'interview', 'user',
@@ -204,7 +204,7 @@ def _create_representative_v6_pair(
         )
         """,
         (
-            job_url,
+            job_id,
             "2026-07-02T10:00:00+00:00",
             "2026-07-02T10:01:00+00:00",
         ),
@@ -313,6 +313,58 @@ def _create_representative_v6_pair(
              AND jobs.job_id = execution.job_id
             """
         ).fetchall()
+        outcome_rows = raw.execute(
+            """
+            SELECT
+                outcomes.tenant_id,
+                outcomes.outcome_id,
+                jobs.url,
+                outcomes.kind,
+                outcomes.source,
+                outcomes.note,
+                outcomes.occurred_at,
+                outcomes.recorded_at,
+                outcomes.suggestion_id,
+                outcomes.evidence_id,
+                outcomes.created_by,
+                outcomes.interview_prep_generation
+            FROM application_outcomes AS outcomes
+            JOIN jobs
+              ON jobs.tenant_id = outcomes.tenant_id
+             AND jobs.job_id = outcomes.job_id
+            ORDER BY outcomes.tenant_id, outcomes.outcome_id
+            """
+        ).fetchall()
+        raw.execute("DROP TABLE application_outcomes")
+        raw.executescript(
+            """
+            CREATE TABLE application_outcomes (
+                tenant_id                 TEXT NOT NULL DEFAULT 'local',
+                outcome_id                TEXT NOT NULL,
+                job_key                   TEXT NOT NULL,
+                kind                      TEXT NOT NULL,
+                source                    TEXT NOT NULL,
+                note                      TEXT,
+                occurred_at               TEXT NOT NULL,
+                recorded_at               TEXT NOT NULL,
+                suggestion_id             TEXT,
+                evidence_id               TEXT,
+                created_by                TEXT NOT NULL DEFAULT 'user',
+                interview_prep_generation INTEGER,
+                PRIMARY KEY (tenant_id, outcome_id)
+            );
+            """
+        )
+        raw.executemany(
+            """
+            INSERT INTO application_outcomes (
+                tenant_id, outcome_id, job_key, kind, source, note,
+                occurred_at, recorded_at, suggestion_id, evidence_id,
+                created_by, interview_prep_generation
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            outcome_rows,
+        )
         raw.execute("DROP TABLE discovery_execution_jobs")
         raw.execute("DROP TABLE discovery_search_unit_jobs")
         raw.executescript(
@@ -703,6 +755,52 @@ def _reference_snapshot(db_path: Path) -> dict[str, list[tuple[object, ...]]]:
                     """
                 ).fetchall()
             ]
+        outcome_columns = {
+            str(row[1])
+            for row in conn.execute(
+                "PRAGMA table_info(application_outcomes)"
+            ).fetchall()
+        }
+        if "job_id" in outcome_columns:
+            snapshot["application_outcomes"] = [
+                tuple(row)
+                for row in conn.execute(
+                    """
+                    SELECT
+                        outcomes.tenant_id,
+                        outcomes.outcome_id,
+                        jobs.url,
+                        outcomes.kind,
+                        outcomes.source,
+                        outcomes.note,
+                        outcomes.occurred_at,
+                        outcomes.recorded_at,
+                        outcomes.suggestion_id,
+                        outcomes.evidence_id,
+                        outcomes.created_by,
+                        outcomes.interview_prep_generation
+                    FROM application_outcomes AS outcomes
+                    JOIN jobs
+                      ON jobs.tenant_id = outcomes.tenant_id
+                     AND jobs.job_id = outcomes.job_id
+                    ORDER BY outcomes.tenant_id, outcomes.outcome_id
+                    """
+                ).fetchall()
+            ]
+        else:
+            snapshot["application_outcomes"] = [
+                tuple(row)
+                for row in conn.execute(
+                    """
+                    SELECT
+                        tenant_id, outcome_id, job_key, kind, source, note,
+                        occurred_at, recorded_at, suggestion_id, evidence_id,
+                        created_by, interview_prep_generation
+                    FROM application_outcomes
+                    ORDER BY tenant_id, outcome_id
+                    """
+                ).fetchall()
+            ]
         snapshot["jobs"] = [
             tuple(row)
             for row in conn.execute(
@@ -743,7 +841,7 @@ def test_v6_jobs_gain_stable_uuid_and_posting_url_alias_once(
     init_db(db_path)
     close_connection(db_path)
 
-    assert _user_version(db_path) == SCHEMA_VERSION == 20
+    assert _user_version(db_path) == SCHEMA_VERSION == 21
     first_ids = _identity_rows(db_path)
     assert [row[0] for row in first_ids] == ["local", "local"]
     for _tenant_id, job_id, _url in first_ids:

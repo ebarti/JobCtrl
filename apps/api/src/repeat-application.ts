@@ -15,6 +15,8 @@ import {
   allRows,
   getRow,
   hasCompositeJobIdForeignKey,
+  jobKeyReferenceColumn,
+  jobKeyReferenceJoinToJobs,
   tableExists,
   type SqliteDatabase,
 } from "./db.js";
@@ -355,16 +357,32 @@ function confirmedApplicationFacts(db: SqliteDatabase): ConfirmedFactRow[] {
     );
   }
   if (tableExists(db, "application_outcomes")) {
+    const stableOutcomeReferences =
+      jobKeyReferenceColumn(db, "application_outcomes") === "job_id";
+    const outcomeJobKey = stableOutcomeReferences
+      ? "jobs.url"
+      : "outcomes.job_key";
+    const outcomeIdentityJoin = stableOutcomeReferences
+      ? `JOIN jobs
+           ON ${jobKeyReferenceJoinToJobs(
+             db,
+             "application_outcomes",
+             "outcomes",
+             "jobs",
+           )}`
+      : "";
     facts.push(
       ...allRows<ConfirmedFactRow>(
         db,
-        `SELECT job_key,
+        `SELECT ${outcomeJobKey} AS job_key,
                 'applied_confirmation' AS fact_kind,
-                'outcome:' || outcome_id AS fact_id,
-                occurred_at AS confirmed_at,
+                'outcome:' || outcomes.outcome_id AS fact_id,
+                outcomes.occurred_at AS confirmed_at,
                 20 AS priority
-           FROM application_outcomes
-          WHERE tenant_id = ? AND kind = 'applied_confirmation'`,
+           FROM application_outcomes AS outcomes
+           ${outcomeIdentityJoin}
+          WHERE outcomes.tenant_id = ?
+            AND outcomes.kind = 'applied_confirmation'`,
         [DEFAULT_TENANT],
       ),
     );

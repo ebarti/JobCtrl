@@ -499,11 +499,23 @@ def _seed_conversion_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> 
             )
     for outcome in rows["applicationOutcomes"]:
         conn.execute(
-            """
-            INSERT INTO application_outcomes (
-                tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at
-            ) VALUES ('local', ?, ?, ?, 'manual', ?, ?)
-            """,
+                """
+                INSERT INTO application_outcomes (
+                    tenant_id, outcome_id, job_id, kind, source,
+                    occurred_at, recorded_at
+                ) VALUES (
+                    'local',
+                    ?,
+                    (
+                        SELECT job_id FROM jobs
+                        WHERE tenant_id = 'local' AND url = ?
+                    ),
+                    ?,
+                    'manual',
+                    ?,
+                    ?
+                )
+                """,
             (
                 outcome["outcomeId"],
                 outcome["jobKey"],

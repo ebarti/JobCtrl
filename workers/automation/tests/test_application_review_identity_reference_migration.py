@@ -204,7 +204,7 @@ def test_v19_review_decisions_migrate_every_alias_and_uuid_url(
     assert (
         reopened.execute("PRAGMA user_version").fetchone()[0]
         == SCHEMA_VERSION
-        == 20
+        == 21
     )
     assert "job_id" in _columns(
         reopened,

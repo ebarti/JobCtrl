@@ -49,6 +49,7 @@ def _discovered_job(posting_url: str, job_id: JobId) -> Job:
 def _downgrade_interview_prep_references_to_v17(
     conn: sqlite3.Connection,
 ) -> None:
+    conn.execute("DROP TABLE application_outcomes")
     conn.execute("DROP TABLE job_interview_prep_items")
     conn.execute("DROP TABLE job_interview_prep")
     conn.executescript(
@@ -108,6 +109,17 @@ def _downgrade_interview_prep_references_to_v17(
             ON job_interview_prep_items(
                 tenant_id, kind, position
             );
+        CREATE TABLE application_outcomes (
+            tenant_id                 TEXT NOT NULL DEFAULT 'local',
+            outcome_id                TEXT NOT NULL,
+            job_key                   TEXT NOT NULL,
+            kind                      TEXT NOT NULL,
+            source                    TEXT NOT NULL,
+            occurred_at               TEXT NOT NULL,
+            recorded_at               TEXT NOT NULL,
+            interview_prep_generation INTEGER,
+            PRIMARY KEY (tenant_id, outcome_id)
+        );
         """
     )
     conn.execute(f"PRAGMA user_version = {PREVIOUS_SCHEMA_VERSION}")
@@ -188,17 +200,31 @@ def _insert_outcome_link(
         )
         """
     )
+    columns = _columns(conn, "application_outcomes")
+    reference_column = "job_id" if "job_id" in columns else "job_key"
+    reference = job_key
+    if reference_column == "job_id":
+        row = conn.execute(
+            """
+            SELECT job_id
+            FROM jobs
+            WHERE tenant_id = ? AND url = ?
+            """,
+            (tenant_id, job_key),
+        ).fetchone()
+        assert row is not None
+        reference = str(row[0])
     conn.execute(
-        """
+        f"""
         INSERT INTO application_outcomes (
-            tenant_id, outcome_id, job_key, kind, source, occurred_at,
+            tenant_id, outcome_id, {reference_column}, kind, source, occurred_at,
             recorded_at, interview_prep_generation
         ) VALUES (?, ?, ?, 'interview', 'manual', ?, ?, ?)
         """,
         (
             tenant_id,
             outcome_id,
-            job_key,
+            reference,
             "2026-07-29T11:00:00+00:00",
             "2026-07-29T11:00:00+00:00",
             generation,
@@ -297,7 +323,7 @@ def test_v17_interview_prep_migrates_alias_histories_and_uuid_urls(
     assert (
         reopened.execute("PRAGMA user_version").fetchone()[0]
         == SCHEMA_VERSION
-        == 20
+        == 21
     )
     for table in database_module._INTERVIEW_PREP_REFERENCE_TABLES:
         assert "job_id" in _columns(reopened, table)
@@ -347,15 +373,15 @@ def test_v17_interview_prep_migrates_alias_histories_and_uuid_urls(
         tuple(row)
         for row in reopened.execute(
             """
-            SELECT outcome_id, job_key, interview_prep_generation
+            SELECT outcome_id, job_id, interview_prep_generation
             FROM application_outcomes
             ORDER BY outcome_id
             """
         ).fetchall()
     ] == [
-        ("outcome-current", current_url, 2),
-        ("outcome-original", original_url, 1),
-        ("outcome-uuid-url", uuid_shaped_url, 1),
+        ("outcome-current", str(stable_job_id), 2),
+        ("outcome-original", str(stable_job_id), 1),
+        ("outcome-uuid-url", str(uuid_url_owner), 1),
     ]
     repository = SqliteInterviewPrepRepository(reopened)
     latest = repository.load_latest(
@@ -646,19 +672,19 @@ def test_runtime_interview_prep_merge_preserves_histories_and_tenant(
         tuple(row)
         for row in conn.execute(
             """
-            SELECT tenant_id, outcome_id, job_key,
+            SELECT tenant_id, outcome_id, job_id,
                    interview_prep_generation
             FROM application_outcomes
             ORDER BY tenant_id, outcome_id
             """
         ).fetchall()
     ] == [
-        ("local", "outcome-losing", surviving_url, 1),
-        ("local", "outcome-surviving", surviving_url, 2),
+        ("local", "outcome-losing", str(surviving_id), 1),
+        ("local", "outcome-surviving", str(surviving_id), 2),
         (
             "tenant-b",
             "outcome-other-tenant",
-            "https://tenant-b.example/jobs/stable",
+            str(other_tenant_job_id),
             1,
         ),
     ]
@@ -678,13 +704,9 @@ def test_runtime_interview_prep_merge_preserves_histories_and_tenant(
             """
             SELECT outcome.outcome_id, prep.origin_run_id
             FROM application_outcomes AS outcome
-            JOIN job_identity_aliases AS alias
-              ON alias.tenant_id = outcome.tenant_id
-             AND alias.alias_kind = 'posting_url'
-             AND alias.alias_value = outcome.job_key
             JOIN job_interview_prep AS prep
               ON prep.tenant_id = outcome.tenant_id
-             AND prep.job_id = alias.job_id
+             AND prep.job_id = outcome.job_id
              AND prep.generation =
                  outcome.interview_prep_generation
             WHERE outcome.tenant_id = 'local'
@@ -776,22 +798,19 @@ def test_real_url_collision_keeps_outcome_link_reachable(
     }
     outcome = conn.execute(
         """
-        SELECT job_key, interview_prep_generation
+        SELECT job_id, interview_prep_generation
         FROM application_outcomes
         WHERE outcome_id = 'outcome-losing-url'
         """
     ).fetchone()
-    assert tuple(outcome) == (canonical_url, 1)
+    assert tuple(outcome) == (job_ids[canonical_url], 1)
     linked = conn.execute(
         """
         SELECT prep.origin_run_id
         FROM application_outcomes AS outcome
-        JOIN jobs
-          ON jobs.tenant_id = outcome.tenant_id
-         AND jobs.url = outcome.job_key
         JOIN job_interview_prep AS prep
-          ON prep.tenant_id = jobs.tenant_id
-         AND prep.job_id = jobs.job_id
+          ON prep.tenant_id = outcome.tenant_id
+         AND prep.job_id = outcome.job_id
          AND prep.generation = outcome.interview_prep_generation
         WHERE outcome.outcome_id = 'outcome-losing-url'
         """

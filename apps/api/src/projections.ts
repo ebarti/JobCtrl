@@ -25,6 +25,9 @@ import {
   allRows,
   getRow,
   hasCompositeJobIdForeignKey,
+  jobKeyReferenceColumn,
+  jobKeyReferenceJoinToJobs,
+  jobKeyReferencePredicateForUrl,
   jobReferenceColumn,
   jobReferenceForUrl,
   jobReferenceJoinToJobs,
@@ -4240,9 +4243,26 @@ function hasAnyKind(outcomes: readonly OutcomeFact[], target: Set<string>): bool
 function loadOutcomesByJob(db: SqliteDatabase, tenantId: string): Map<string, OutcomeFact[]> {
   const result = new Map<string, OutcomeFact[]>();
   if (!tableExists(db, "application_outcomes")) return result;
+  const stableReferences =
+    jobKeyReferenceColumn(db, "application_outcomes") === "job_id";
+  const jobKeySelect = stableReferences
+    ? "jobs.url"
+    : "outcomes.job_key";
+  const identityJoin = stableReferences
+    ? `JOIN jobs
+         ON ${jobKeyReferenceJoinToJobs(
+           db,
+           "application_outcomes",
+           "outcomes",
+           "jobs",
+         )}`
+    : "";
   const rows = allRows<{ job_key: string; kind: string; occurred_at: string | null }>(
     db,
-    "SELECT job_key, kind, occurred_at FROM application_outcomes WHERE tenant_id = ?",
+    `SELECT ${jobKeySelect} AS job_key, outcomes.kind, outcomes.occurred_at
+       FROM application_outcomes AS outcomes
+       ${identityJoin}
+      WHERE outcomes.tenant_id = ?`,
     [tenantId],
   );
   for (const row of rows) {
@@ -5811,10 +5831,18 @@ function hasApplicationOutcomeKind(
   kind: string,
 ): boolean {
   if (!tableExists(db, "application_outcomes")) return false;
+  const reference = jobKeyReferencePredicateForUrl(
+    db,
+    "application_outcomes",
+    jobUrl,
+    tenantId,
+  );
   const row = getRow<{ c: number }>(
     db,
-    "SELECT COUNT(*) AS c FROM application_outcomes WHERE tenant_id = ? AND job_key = ? AND kind = ?",
-    [tenantId, jobUrl, kind],
+    `SELECT COUNT(*) AS c
+       FROM application_outcomes
+      WHERE ${reference.sql} AND kind = ?`,
+    [...reference.params, kind],
   );
   return Number(row?.c ?? 0) > 0;
 }

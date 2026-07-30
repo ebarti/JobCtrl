@@ -356,13 +356,31 @@ def _confirmed_application_facts(conn) -> list[dict[str, Any]]:
         ).fetchall():
             facts.append(dict(row))
     if _table_exists(conn, "application_outcomes"):
-        for row in conn.execute(
+        stable_outcome_references = (
+            "job_id" in _table_columns(conn, "application_outcomes")
+        )
+        outcome_job_key = (
+            "jobs.url" if stable_outcome_references else "outcomes.job_key"
+        )
+        outcome_identity_join = (
             """
-            SELECT job_key, 'applied_confirmation' AS fact_kind,
-                   'outcome:' || outcome_id AS fact_id,
-                   occurred_at AS confirmed_at, 20 AS priority
-              FROM application_outcomes
-             WHERE tenant_id = ? AND kind = 'applied_confirmation'
+            JOIN jobs
+              ON jobs.tenant_id = outcomes.tenant_id
+             AND jobs.job_id = outcomes.job_id
+            """
+            if stable_outcome_references
+            else ""
+        )
+        for row in conn.execute(
+            f"""
+            SELECT {outcome_job_key} AS job_key,
+                   'applied_confirmation' AS fact_kind,
+                   'outcome:' || outcomes.outcome_id AS fact_id,
+                   outcomes.occurred_at AS confirmed_at, 20 AS priority
+              FROM application_outcomes AS outcomes
+              {outcome_identity_join}
+             WHERE outcomes.tenant_id = ?
+               AND outcomes.kind = 'applied_confirmation'
             """,
             (LOCAL_TENANT,),
         ).fetchall():
@@ -665,6 +683,15 @@ def _table_exists(conn, table_name: str) -> bool:
         ).fetchone()
         is not None
     )
+
+
+def _table_columns(conn, table_name: str) -> set[str]:
+    return {
+        str(row[1])
+        for row in conn.execute(
+            f'PRAGMA table_info("{table_name}")'
+        ).fetchall()
+    }
 
 
 def _compact_json(value: Any) -> str:

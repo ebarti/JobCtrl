@@ -9,7 +9,7 @@ export type SqliteValue = string | number | bigint | null;
 // writer that stamps ``PRAGMA user_version``; the API only reads it to fail
 // closed on a database written by a newer build. Bump both constants together
 // whenever the schema shape changes.
-export const SUPPORTED_SCHEMA_VERSION = 20;
+export const SUPPORTED_SCHEMA_VERSION = 21;
 
 export class IncompatibleSchemaVersionError extends Error {
   constructor(current: number) {
@@ -71,6 +71,7 @@ export function tableExists(db: SqliteDatabase, tableName: string): boolean {
 }
 
 export type JobReferenceColumn = "job_id" | "job_url";
+export type JobKeyReferenceColumn = "job_id" | "job_key";
 
 export function tableColumnSet(db: SqliteDatabase, tableName: string): Set<string> {
   if (!tableExists(db, tableName)) return new Set();
@@ -167,6 +168,62 @@ export function jobReferenceJoinToJobs(
   return jobReferenceColumn(db, tableName) === "job_id"
     ? `${sourceAlias}.tenant_id = ${jobsAlias}.tenant_id AND ${sourceAlias}.job_id = ${jobsAlias}.job_id`
     : `${sourceAlias}.job_url = ${jobsAlias}.url`;
+}
+
+export function jobKeyReferenceColumn(
+  db: SqliteDatabase,
+  tableName: string,
+): JobKeyReferenceColumn {
+  const columns = tableColumnSet(db, tableName);
+  if (columns.has("job_id")) return "job_id";
+  if (columns.has("job_key")) return "job_key";
+  throw new Error(`${tableName} has no Job identity column.`);
+}
+
+export function jobKeyReferenceForUrl(
+  db: SqliteDatabase,
+  tableName: string,
+  jobUrl: string,
+  tenantId = "local",
+): string {
+  if (jobKeyReferenceColumn(db, tableName) === "job_key") return jobUrl;
+  const jobId = stableJobIdForUrl(db, jobUrl, tenantId);
+  if (!jobId) {
+    throw new Error(`No stable Job identity for ${jobUrl}.`);
+  }
+  return jobId;
+}
+
+export function jobKeyReferencePredicateForUrl(
+  db: SqliteDatabase,
+  tableName: string,
+  jobUrl: string,
+  tenantId = "local",
+  alias = "",
+): { sql: string; params: SqliteValue[] } {
+  const prefix = alias ? `${alias}.` : "";
+  const referenceColumn = jobKeyReferenceColumn(db, tableName);
+  const reference = jobKeyReferenceForUrl(
+    db,
+    tableName,
+    jobUrl,
+    tenantId,
+  );
+  return {
+    sql: `${prefix}tenant_id = ? AND ${prefix}${referenceColumn} = ?`,
+    params: [tenantId, reference],
+  };
+}
+
+export function jobKeyReferenceJoinToJobs(
+  db: SqliteDatabase,
+  tableName: string,
+  sourceAlias: string,
+  jobsAlias: string,
+): string {
+  return jobKeyReferenceColumn(db, tableName) === "job_id"
+    ? `${sourceAlias}.tenant_id = ${jobsAlias}.tenant_id AND ${sourceAlias}.job_id = ${jobsAlias}.job_id`
+    : `${sourceAlias}.tenant_id = ${jobsAlias}.tenant_id AND ${sourceAlias}.job_key = ${jobsAlias}.url`;
 }
 
 export function hasCompositeJobIdForeignKey(

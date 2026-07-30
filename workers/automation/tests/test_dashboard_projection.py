@@ -497,8 +497,19 @@ def _record_outcome(
     conn.execute(
         """
         INSERT INTO application_outcomes (
-            tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at
-        ) VALUES ('local', ?, ?, ?, 'manual', ?, ?)
+            tenant_id, outcome_id, job_id, kind, source, occurred_at, recorded_at
+        ) VALUES (
+            'local',
+            ?,
+            (
+                SELECT job_id FROM jobs
+                WHERE tenant_id = 'local' AND url = ?
+            ),
+            ?,
+            'manual',
+            ?,
+            ?
+        )
         """,
         (f"outcome-{url}-{kind}", url, kind, at, at),
     )

@@ -35,7 +35,14 @@ import {
   OUTREACH_DRAFT_STATUSES,
   OUTREACH_SEND_CHANNELS,
 } from "./contracts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import {
+  allRows,
+  getRow,
+  jobKeyReferencePredicateForUrl,
+  tableExists,
+  type SqliteDatabase,
+  type SqliteValue,
+} from "./db.js";
 import { refreshOutreachProjections, refreshProjections } from "./projections.js";
 
 // Conservative follow-up cadence (plan §16 res. 5), mirrored from the Python
@@ -525,14 +532,20 @@ function latestApplicationSubmittedAt(db: SqliteDatabase, thread: ThreadRow): st
     return "";
   }
   if (tableExists(db, "application_outcomes")) {
+    const reference = jobKeyReferencePredicateForUrl(
+      db,
+      "application_outcomes",
+      jobUrl,
+      TENANT_ID,
+    );
     const outcome = getRow<{ occurred_at: string | null }>(
       db,
       `SELECT occurred_at
        FROM application_outcomes
-       WHERE tenant_id = ? AND job_key = ? AND kind = 'applied_confirmation'
+       WHERE ${reference.sql} AND kind = 'applied_confirmation'
        ORDER BY occurred_at DESC, recorded_at DESC
        LIMIT 1`,
-      [TENANT_ID, jobUrl],
+      reference.params,
     );
     if (outcome?.occurred_at) {
       return outcome.occurred_at;

@@ -77,7 +77,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v20 (application-review references): every append-only Apply Review decision
 # references the tenant-scoped stable Job aggregate. URL aliases, including
 # UUID-shaped posting URLs, are resolved URL-first without collapsing history.
-SCHEMA_VERSION = 20
+# v21 (application-outcome references): every reviewed application outcome
+# references the tenant-scoped stable Job aggregate. Append-only history and
+# immutable links to Interview Preparation generations remain exact.
+SCHEMA_VERSION = 21
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -228,6 +231,7 @@ def _schema_migrations() -> tuple[
         (18, ensure_interview_prep_references_v18),
         (19, ensure_compensation_references_v19),
         (20, ensure_application_review_references_v20),
+        (21, ensure_application_outcome_references_v21),
     )
 
 
@@ -397,6 +401,10 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
             decided_at DESC
         )
     """ % application_review_reference)
+    _ensure_application_outcome_table_for_version(
+        conn,
+        current_version=current_version,
+    )
     ensure_profile_tables(conn)
     ensure_score_tables(conn)
     ensure_tailoring_policy_tables(conn)
@@ -4661,6 +4669,13 @@ def _reassign_discovery_identity_references(
         )
     if _has_application_review_reference_schema_v20(conn):
         _reassign_application_review_references_v20(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+    if _has_application_outcome_reference_schema_v21(conn):
+        _reassign_application_outcome_references_v21(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
@@ -11500,24 +11515,30 @@ def _remap_application_outcome_interview_prep_generations_v18(
 ) -> None:
     """Preserve immutable outcome-to-preparation links during renumbering.
 
-    Application outcomes remain URL-keyed until their own identity-reference
-    migration. Only the linked preparation generation is rewritten here, using
-    the exact source URL/JobId that owned the generation before histories were
-    merged.
+    The outcome reference may be the legacy URL-shaped ``job_key`` or the
+    stable ``job_id`` introduced in schema v21. Only the linked preparation
+    generation is rewritten, using the exact source reference that owned the
+    generation before histories were merged.
     """
     columns = _table_columns(conn, "application_outcomes")
+    reference_column = (
+        "job_id"
+        if "job_id" in columns
+        else "job_key"
+        if "job_key" in columns
+        else None
+    )
     required = {
         "tenant_id",
         "outcome_id",
-        "job_key",
         "interview_prep_generation",
     }
-    if not required.issubset(columns):
+    if reference_column is None or not required.issubset(columns):
         return
 
     rows = conn.execute(
-        """
-        SELECT tenant_id, outcome_id, job_key,
+        f"""
+        SELECT tenant_id, outcome_id, {reference_column},
                interview_prep_generation
         FROM application_outcomes
         WHERE interview_prep_generation IS NOT NULL
@@ -11535,12 +11556,12 @@ def _remap_application_outcome_interview_prep_generations_v18(
         if new_generation is None:
             continue
         updated = conn.execute(
-            """
+            f"""
             UPDATE application_outcomes
             SET interview_prep_generation = ?
             WHERE tenant_id = ?
               AND outcome_id = ?
-              AND job_key = ?
+              AND {reference_column} = ?
               AND interview_prep_generation = ?
             """,
             (
@@ -11923,19 +11944,23 @@ def _reassign_interview_prep_references_v18(
     _remap_application_outcome_interview_prep_generations_v18(
         conn,
         generation_map={
-            (
-                tenant_id,
-                (
-                    losing_job_url
-                    if old_job_id == losing_job_id
-                    else surviving_job_url
-                ),
-                old_generation,
-            ): new_generation
+            key: new_generation
             for (
                 old_job_id,
                 old_generation,
             ), new_generation in generation_map.items()
+            for key in (
+                (tenant_id, old_job_id, old_generation),
+                (
+                    tenant_id,
+                    (
+                        losing_job_url
+                        if old_job_id == losing_job_id
+                        else surviving_job_url
+                    ),
+                    old_generation,
+                ),
+            )
         },
     )
     _verify_interview_prep_references_v18(
@@ -12752,6 +12777,367 @@ def _reassign_application_review_references_v20(
         (surviving_job_id, tenant_id, losing_job_id),
     )
     _verify_application_review_references_v20(
+        conn,
+        expected_count=expected_count,
+    )
+
+
+_APPLICATION_OUTCOME_REFERENCE_SCHEMA_VERSION = 21
+_APPLICATION_OUTCOME_REFERENCE_TABLE = "application_outcomes"
+
+
+def _create_application_outcome_table_v21(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    stable_reference: bool,
+) -> None:
+    reference_column = "job_id" if stable_reference else "job_key"
+    foreign_key = (
+        """,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_reference
+        else ""
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            tenant_id                TEXT NOT NULL DEFAULT 'local',
+            outcome_id               TEXT NOT NULL,
+            {reference_column}       TEXT NOT NULL,
+            kind                     TEXT NOT NULL,
+            source                   TEXT NOT NULL,
+            note                     TEXT,
+            occurred_at              TEXT NOT NULL,
+            recorded_at              TEXT NOT NULL,
+            suggestion_id            TEXT,
+            evidence_id              TEXT,
+            created_by               TEXT NOT NULL DEFAULT 'user',
+            interview_prep_generation INTEGER,
+            PRIMARY KEY (tenant_id, outcome_id)
+            {foreign_key}
+        )
+        """
+    )
+
+
+def _create_application_outcome_reference_index_v21(
+    conn: sqlite3.Connection,
+    *,
+    reference_column: str,
+) -> None:
+    expected_columns = (
+        "tenant_id",
+        reference_column,
+        "occurred_at",
+        "recorded_at",
+    )
+    if not _has_index(
+        conn,
+        _APPLICATION_OUTCOME_REFERENCE_TABLE,
+        "idx_application_outcomes_job",
+        expected_columns,
+        unique=False,
+    ):
+        conn.execute("DROP INDEX IF EXISTS idx_application_outcomes_job")
+        conn.execute(
+            f"""
+            CREATE INDEX idx_application_outcomes_job
+            ON application_outcomes(
+                tenant_id,
+                {reference_column},
+                occurred_at DESC,
+                recorded_at DESC
+            )
+            """
+        )
+
+
+def _ensure_application_outcome_table_for_version(
+    conn: sqlite3.Connection,
+    *,
+    current_version: int,
+) -> None:
+    """Recover a missing outcome table without skipping ordered migration."""
+    table = _APPLICATION_OUTCOME_REFERENCE_TABLE
+    columns = _table_columns(conn, table)
+    if not columns:
+        _create_application_outcome_table_v21(
+            conn,
+            table=table,
+            stable_reference=(
+                current_version
+                >= _APPLICATION_OUTCOME_REFERENCE_SCHEMA_VERSION
+            ),
+        )
+        columns = _table_columns(conn, table)
+    for column, definition in (
+        ("note", "TEXT"),
+        ("suggestion_id", "TEXT"),
+        ("evidence_id", "TEXT"),
+        ("created_by", "TEXT NOT NULL DEFAULT 'user'"),
+        ("interview_prep_generation", "INTEGER"),
+    ):
+        if column in columns:
+            continue
+        conn.execute(
+            "ALTER TABLE application_outcomes "
+            f"ADD COLUMN {column} {definition}"
+        )
+        columns.add(column)
+    reference_column = (
+        "job_id"
+        if "job_id" in columns
+        else "job_key"
+        if "job_key" in columns
+        else None
+    )
+    if reference_column is None:
+        raise RuntimeError(
+            "application_outcomes has no Job identity column"
+        )
+    _create_application_outcome_reference_index_v21(
+        conn,
+        reference_column=reference_column,
+    )
+    if (
+        current_version >= _APPLICATION_OUTCOME_REFERENCE_SCHEMA_VERSION
+        and not _has_application_outcome_reference_schema_v21(conn)
+    ):
+        raise RuntimeError(
+            "schema v21 requires stable application-outcome references"
+        )
+
+
+def _has_application_outcome_reference_schema_v21(
+    conn: sqlite3.Connection,
+) -> bool:
+    table = _APPLICATION_OUTCOME_REFERENCE_TABLE
+    return (
+        "job_id" in _table_columns(conn, table)
+        and "job_key" not in _table_columns(conn, table)
+        and _primary_key_columns(conn, table)
+        == ("tenant_id", "outcome_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            table,
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            table,
+            "idx_application_outcomes_job",
+            (
+                "tenant_id",
+                "job_id",
+                "occurred_at",
+                "recorded_at",
+            ),
+            unique=False,
+        )
+    )
+
+
+def _canonical_application_outcome_rows_v21(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        """
+        SELECT tenant_id, outcome_id, job_key, kind, source, note,
+               occurred_at, recorded_at, suggestion_id, evidence_id,
+               created_by, interview_prep_generation
+        FROM application_outcomes
+        ORDER BY tenant_id, outcome_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        legacy_job_key = str(row[2])
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=legacy_job_key,
+            legacy_url=True,
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "application-outcome reference migration could not resolve "
+                f"application_outcomes.job_key={legacy_job_key!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        canonical.append(
+            (
+                tenant_id,
+                str(row[1]),
+                stable_job_id,
+                *tuple(row[3:]),
+            )
+        )
+    return canonical
+
+
+def ensure_application_outcome_references_v21(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move reviewed application outcomes to stable JobId references."""
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _APPLICATION_OUTCOME_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _APPLICATION_REVIEW_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "application-outcome reference migration requires "
+            "application-review schema v20"
+        )
+
+    conn.execute("SAVEPOINT application_outcome_references_v21")
+    try:
+        if not _has_application_review_reference_schema_v20(conn):
+            raise RuntimeError(
+                "application-outcome reference migration requires the "
+                "stable application-review reference schema"
+            )
+        _ensure_application_outcome_table_for_version(
+            conn,
+            current_version=current,
+        )
+        if _has_application_outcome_reference_schema_v21(conn):
+            expected_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM application_outcomes"
+                ).fetchone()[0]
+            )
+        else:
+            rows = _canonical_application_outcome_rows_v21(conn)
+            conn.execute(
+                "DROP TABLE IF EXISTS application_outcomes_v21"
+            )
+            _create_application_outcome_table_v21(
+                conn,
+                table="application_outcomes_v21",
+                stable_reference=True,
+            )
+            conn.executemany(
+                """
+                INSERT INTO application_outcomes_v21 (
+                    tenant_id, outcome_id, job_id, kind, source, note,
+                    occurred_at, recorded_at, suggestion_id, evidence_id,
+                    created_by, interview_prep_generation
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            conn.execute('DROP TABLE "application_outcomes"')
+            conn.execute(
+                'ALTER TABLE "application_outcomes_v21" '
+                'RENAME TO "application_outcomes"'
+            )
+            _create_application_outcome_reference_index_v21(
+                conn,
+                reference_column="job_id",
+            )
+            expected_count = len(rows)
+        _verify_application_outcome_references_v21(
+            conn,
+            expected_count=expected_count,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_APPLICATION_OUTCOME_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT application_outcome_references_v21"
+        )
+        conn.commit()
+    except BaseException:
+        conn.execute(
+            "ROLLBACK TO SAVEPOINT application_outcome_references_v21"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT application_outcome_references_v21"
+        )
+        raise
+
+    return [_APPLICATION_OUTCOME_REFERENCE_TABLE]
+
+
+def _verify_application_outcome_references_v21(
+    conn: sqlite3.Connection,
+    *,
+    expected_count: int,
+) -> None:
+    if not _has_application_outcome_reference_schema_v21(conn):
+        raise RuntimeError(
+            "application-outcome reference migration did not create the "
+            "stable reference schema"
+        )
+    observed_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM application_outcomes"
+        ).fetchone()[0]
+    )
+    if observed_count != expected_count:
+        raise RuntimeError(
+            "application-outcome reference migration changed append-only "
+            f"history count: expected {expected_count}, "
+            f"found {observed_count}"
+        )
+    orphan = conn.execute(
+        """
+        SELECT outcomes.job_id
+        FROM application_outcomes AS outcomes
+        LEFT JOIN jobs
+          ON jobs.tenant_id = outcomes.tenant_id
+         AND jobs.job_id = outcomes.job_id
+        WHERE jobs.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise RuntimeError(
+            "application-outcome reference migration left an unresolved JobId"
+        )
+    for row in conn.execute(
+        "SELECT DISTINCT job_id FROM application_outcomes"
+    ).fetchall():
+        _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "application-outcome reference migration found a foreign-key "
+            "violation"
+        )
+
+
+def _reassign_application_outcome_references_v21(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    if losing_job_id == surviving_job_id:
+        return
+    expected_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM application_outcomes"
+        ).fetchone()[0]
+    )
+    conn.execute(
+        """
+        UPDATE application_outcomes
+        SET job_id = ?
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (surviving_job_id, tenant_id, losing_job_id),
+    )
+    _verify_application_outcome_references_v21(
         conn,
         expected_count=expected_count,
     )

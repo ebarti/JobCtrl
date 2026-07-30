@@ -48,6 +48,10 @@ import {
   allRows,
   getRow,
   hasCompositeJobIdForeignKey,
+  jobKeyReferenceColumn,
+  jobKeyReferenceForUrl,
+  jobKeyReferenceJoinToJobs,
+  jobKeyReferencePredicateForUrl,
   jobReferenceColumn,
   jobReferenceJoinToJobs,
   jobReferencePredicateForUrl,
@@ -67,6 +71,7 @@ import { InputError, resolveJobUrl } from "./write-model.js";
 const DEFAULT_TENANT = "local";
 const DEFAULT_PROFILE_ID = "default";
 const APPLICATION_REVIEW_REFERENCE_SCHEMA_VERSION = 20;
+const APPLICATION_OUTCOME_REFERENCE_SCHEMA_VERSION = 21;
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"];
 const POSITION_PREVIEW_CHAR_LIMIT = 6000;
 const MATERIAL_PREVIEW_CHAR_LIMIT = 4000;
@@ -190,6 +195,16 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
       FOREIGN KEY (tenant_id, job_id)
         REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE`
     : "";
+  const stableOutcomeSchema =
+    schemaVersion >= APPLICATION_OUTCOME_REFERENCE_SCHEMA_VERSION;
+  const createdOutcomeReference = stableOutcomeSchema
+    ? "job_id"
+    : "job_key";
+  const outcomeForeignKey = stableOutcomeSchema
+    ? `,
+      FOREIGN KEY (tenant_id, job_id)
+        REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE`
+    : "";
   db.exec(`
     CREATE TABLE IF NOT EXISTS application_review_decisions (
       tenant_id    TEXT NOT NULL DEFAULT 'local',
@@ -212,7 +227,7 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
     CREATE TABLE IF NOT EXISTS application_outcomes (
       tenant_id     TEXT NOT NULL DEFAULT 'local',
       outcome_id    TEXT NOT NULL,
-      job_key       TEXT NOT NULL,
+      ${createdOutcomeReference} TEXT NOT NULL,
       kind          TEXT NOT NULL,
       source        TEXT NOT NULL,
       note          TEXT,
@@ -221,10 +236,10 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
       suggestion_id TEXT,
       evidence_id   TEXT,
       created_by    TEXT NOT NULL DEFAULT 'user',
+      interview_prep_generation INTEGER,
       PRIMARY KEY (tenant_id, outcome_id)
+      ${outcomeForeignKey}
     );
-    CREATE INDEX IF NOT EXISTS idx_application_outcomes_job
-      ON application_outcomes(tenant_id, job_key, occurred_at DESC, recorded_at DESC);
 
     CREATE TABLE IF NOT EXISTS application_email_evidence (
       tenant_id            TEXT NOT NULL DEFAULT 'local',
@@ -282,6 +297,19 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
       );
   `);
   ensureApplicationOutcomeColumns(db);
+  const outcomeReference = jobKeyReferenceColumn(
+    db,
+    "application_outcomes",
+  );
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_application_outcomes_job
+      ON application_outcomes(
+        tenant_id,
+        ${outcomeReference},
+        occurred_at DESC,
+        recorded_at DESC
+      );
+  `);
   ensureRepeatApplicationTables(db);
 }
 
@@ -835,13 +863,19 @@ function insertOutcome(
 
   db.prepare(
     `INSERT INTO application_outcomes (
-       tenant_id, outcome_id, job_key, kind, source, note, occurred_at,
+       tenant_id, outcome_id, ${jobKeyReferenceColumn(db, "application_outcomes")},
+       kind, source, note, occurred_at,
        recorded_at, suggestion_id, evidence_id, interview_prep_generation, created_by
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     DEFAULT_TENANT,
     outcome.outcomeId,
-    outcome.jobKey,
+    jobKeyReferenceForUrl(
+      db,
+      "application_outcomes",
+      outcome.jobKey,
+      DEFAULT_TENANT,
+    ),
     outcome.kind,
     outcome.source,
     outcome.note,
@@ -876,26 +910,74 @@ function insertOutcome(
 }
 
 function readOutcomes(db: SqliteDatabase, jobKey?: string): ApplicationOutcome[] {
-  const where = jobKey ? "WHERE tenant_id = ? AND job_key = ?" : "WHERE tenant_id = ?";
-  const params = jobKey ? [DEFAULT_TENANT, jobKey] : [DEFAULT_TENANT];
+  const stableReferences =
+    jobKeyReferenceColumn(db, "application_outcomes") === "job_id";
+  const reference = jobKey
+    ? jobKeyReferencePredicateForUrl(
+        db,
+        "application_outcomes",
+        jobKey,
+        DEFAULT_TENANT,
+        "outcomes",
+      )
+    : null;
+  const where = reference
+    ? `WHERE ${reference.sql}`
+    : "WHERE outcomes.tenant_id = ?";
+  const params = reference?.params ?? [DEFAULT_TENANT];
+  const identityJoin = stableReferences
+    ? `JOIN jobs
+         ON ${jobKeyReferenceJoinToJobs(
+           db,
+           "application_outcomes",
+           "outcomes",
+           "jobs",
+         )}`
+    : "";
+  const jobKeySelect = stableReferences
+    ? "jobs.url"
+    : "outcomes.job_key";
   return allRows<OutcomeRow>(
     db,
-    `SELECT outcome_id, job_key, kind, source, note, occurred_at,
-            recorded_at, suggestion_id, evidence_id, interview_prep_generation
-     FROM application_outcomes
+    `SELECT outcomes.outcome_id, ${jobKeySelect} AS job_key,
+            outcomes.kind, outcomes.source, outcomes.note,
+            outcomes.occurred_at, outcomes.recorded_at,
+            outcomes.suggestion_id, outcomes.evidence_id,
+            outcomes.interview_prep_generation
+     FROM application_outcomes AS outcomes
+     ${identityJoin}
      ${where}
-     ORDER BY occurred_at DESC, recorded_at DESC, outcome_id DESC`,
+     ORDER BY outcomes.occurred_at DESC, outcomes.recorded_at DESC,
+              outcomes.outcome_id DESC`,
     params,
   ).map(outcomeFromRow);
 }
 
 function readOutcome(db: SqliteDatabase, outcomeId: string): ApplicationOutcome | null {
+  const stableReferences =
+    jobKeyReferenceColumn(db, "application_outcomes") === "job_id";
+  const identityJoin = stableReferences
+    ? `JOIN jobs
+         ON ${jobKeyReferenceJoinToJobs(
+           db,
+           "application_outcomes",
+           "outcomes",
+           "jobs",
+         )}`
+    : "";
+  const jobKeySelect = stableReferences
+    ? "jobs.url"
+    : "outcomes.job_key";
   const row = getRow<OutcomeRow>(
     db,
-    `SELECT outcome_id, job_key, kind, source, note, occurred_at,
-            recorded_at, suggestion_id, evidence_id, interview_prep_generation
-     FROM application_outcomes
-     WHERE tenant_id = ? AND outcome_id = ?`,
+    `SELECT outcomes.outcome_id, ${jobKeySelect} AS job_key,
+            outcomes.kind, outcomes.source, outcomes.note,
+            outcomes.occurred_at, outcomes.recorded_at,
+            outcomes.suggestion_id, outcomes.evidence_id,
+            outcomes.interview_prep_generation
+     FROM application_outcomes AS outcomes
+     ${identityJoin}
+     WHERE outcomes.tenant_id = ? AND outcomes.outcome_id = ?`,
     [DEFAULT_TENANT, outcomeId],
   );
   return row ? outcomeFromRow(row) : null;
