@@ -10,9 +10,13 @@ from typing import Any
 from temporalio import activity
 
 from jobctrl.database import get_connection, load_job_with_enrichment
+from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.interview import GenerateInterviewPrepUseCase
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
+from jobctrl.infrastructure.discovery.sqlite_identity_resolver import (
+    SqliteJobIdentityResolver,
+)
 from jobctrl.infrastructure.llm import LlmAdapter, get_llm_adapter
 from jobctrl.infrastructure.profile import get_profile_repository
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
@@ -288,6 +292,12 @@ def _load_accepted_materials(
     tenant_id: TenantId,
     job_url: str,
 ) -> tuple[dict[str, Any], ...]:
+    identity = SqliteJobIdentityResolver(conn).resolve_by_posting_url(
+        tenant_id,
+        PostingUrl(job_url),
+    )
+    if identity is None:
+        return ()
     try:
         rows = conn.execute(
             """
@@ -295,15 +305,20 @@ def _load_accepted_materials(
                    requirement_ids_json, generated_text, position
             FROM job_bullet_provenance
             WHERE tenant_id = ?
-              AND job_url = ?
+              AND job_id = ?
               AND generation = (
                 SELECT MAX(generation)
                 FROM job_bullet_provenance
-                WHERE tenant_id = ? AND job_url = ?
+                WHERE tenant_id = ? AND job_id = ?
               )
             ORDER BY position, bullet_id
             """,
-            (str(tenant_id), job_url, str(tenant_id), job_url),
+            (
+                str(tenant_id),
+                str(identity.job_id),
+                str(tenant_id),
+                str(identity.job_id),
+            ),
         ).fetchall()
     except sqlite3.OperationalError:
         return ()

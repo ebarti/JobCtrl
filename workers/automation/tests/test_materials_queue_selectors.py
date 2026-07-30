@@ -45,6 +45,15 @@ def _seed_job(conn: sqlite3.Connection, url: str, fit_score: int = 9) -> str:
     return url
 
 
+def _stable_job_id(conn: sqlite3.Connection, url: str) -> str:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+        (url,),
+    ).fetchone()
+    assert row is not None
+    return str(row[0])
+
+
 def _make_resume_artifact(path: str = "/tmp/r.txt") -> Artifact:
     return Artifact.create(
         type=ArtifactType.TAILORED_RESUME,
@@ -542,8 +551,11 @@ def test_reset_tailor_clears_rejected_attempt_artifacts(
 
     # Materials artifacts for the latest generation must be gone.
     artifact_count = conn.execute(
-        "SELECT COUNT(*) FROM job_materials_artifacts WHERE job_url = ?",
-        (url,),
+        """
+        SELECT COUNT(*) FROM job_materials_artifacts
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (_stable_job_id(conn, url),),
     ).fetchone()[0]
     assert artifact_count == 0
 
@@ -575,8 +587,11 @@ def test_reset_tailor_preserves_approved_materials_until_replacement(
     pending_after = {row["url"] for row in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)}
     assert url not in pending_after
     artifact_count = conn.execute(
-        "SELECT COUNT(*) FROM job_materials_artifacts WHERE job_url = ?",
-        (url,),
+        """
+        SELECT COUNT(*) FROM job_materials_artifacts
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (_stable_job_id(conn, url),),
     ).fetchone()[0]
     assert artifact_count == 1
 
@@ -607,8 +622,11 @@ def test_reset_cover_clears_only_failed_cover_artifacts(conn: sqlite3.Connection
     reset_job_stage(conn, url, "cover")
 
     rows = conn.execute(
-        "SELECT artifact_type FROM job_materials_artifacts WHERE job_url = ?",
-        (url,),
+        """
+        SELECT artifact_type FROM job_materials_artifacts
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (_stable_job_id(conn, url),),
     ).fetchall()
     types = {row[0] for row in rows}
     assert "tailored_resume" in types
@@ -643,8 +661,11 @@ def test_reset_cover_preserves_approved_cover_until_replacement(
     reset_job_stage(conn, url, "cover")
 
     rows = conn.execute(
-        "SELECT artifact_type FROM job_materials_artifacts WHERE job_url = ?",
-        (url,),
+        """
+        SELECT artifact_type FROM job_materials_artifacts
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (_stable_job_id(conn, url),),
     ).fetchall()
     types = {row[0] for row in rows}
     assert "tailored_resume" in types

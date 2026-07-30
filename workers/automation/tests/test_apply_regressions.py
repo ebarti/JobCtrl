@@ -213,8 +213,12 @@ def _seed_current_apply_binding(
     conn.execute(
         """
         INSERT OR REPLACE INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at
-        ) VALUES (?, ?, 'local', 'approved', ?, ?)
+            tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES (
+            'local',
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            ?, 'approved', ?, ?
+        )
         """,
         (job_key, generation, now, now),
     )
@@ -225,9 +229,13 @@ def _seed_current_apply_binding(
         conn.execute(
             """
             INSERT OR REPLACE INTO job_materials_artifacts (
-                job_url, generation, artifact_type, artifact_id, status, path,
-                render_format, created_at
-            ) VALUES (?, ?, ?, ?, 'approved', ?, 'text', ?)
+                tenant_id, job_id, generation, artifact_type, artifact_id,
+                status, path, render_format, created_at
+            ) VALUES (
+                'local',
+                (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+                ?, ?, ?, 'approved', ?, 'text', ?
+            )
             """,
             (job_key, generation, artifact_type, artifact_id, path, now),
         )

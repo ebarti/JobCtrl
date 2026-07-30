@@ -852,8 +852,14 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
   deleteWhere(db, "job_events", "job_url = ?", [jobUrl]);
   deleteJobReferences(db, "job_artifacts", jobId, jobUrl);
   deleteScoringJobReferences(db, jobId, jobUrl);
-  deleteWhere(db, "job_materials_artifacts", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_materials", "job_url = ?", [jobUrl]);
+  for (const tableName of [
+    "job_bullet_provenance",
+    "job_material_layout_boxes",
+    "job_materials_artifacts",
+    "job_materials",
+  ]) {
+    deleteJobReferences(db, tableName, jobId, jobUrl);
+  }
   deleteEnrichmentJobReferences(db, jobId, jobUrl);
   deletePreparationJobReferences(db, jobId, jobUrl);
   if (jobId) {

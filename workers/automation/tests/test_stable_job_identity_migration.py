@@ -81,8 +81,8 @@ def _create_representative_v6_pair(
         """
         INSERT INTO jobs (
             url, title, company, site, discovered_at, fit_score,
-            score_reasoning, scored_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            score_reasoning, scored_at, tailored_resume_path, tailored_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             job_url,
@@ -93,6 +93,8 @@ def _create_representative_v6_pair(
             8,
             "Synthetic reference score",
             "2026-07-01T10:05:00+00:00",
+            "/tmp/reference-resume.txt",
+            "2026-07-01T10:07:00+00:00",
         ),
     )
     job_id = str(
@@ -741,7 +743,7 @@ def test_v6_jobs_gain_stable_uuid_and_posting_url_alias_once(
     init_db(db_path)
     close_connection(db_path)
 
-    assert _user_version(db_path) == SCHEMA_VERSION == 14
+    assert _user_version(db_path) == SCHEMA_VERSION == 15
     first_ids = _identity_rows(db_path)
     assert [row[0] for row in first_ids] == ["local", "local"]
     for _tenant_id, job_id, _url in first_ids:
@@ -1424,6 +1426,17 @@ def test_representative_v6_references_and_paired_snapshot_restore(
     assert identities[0][0] == "local"
     assert identities[0][2] == job_url
     assert uuid.UUID(identities[0][1]).version == 4
+    migrated = sqlite3.connect(db_path)
+    try:
+        material_reference = migrated.execute(
+            """
+            SELECT tenant_id, job_id, generation
+            FROM job_materials
+            """
+        ).fetchone()
+        assert material_reference == ("local", identities[0][1], 1)
+    finally:
+        migrated.close()
 
     temporal = sqlite3.connect(temporal_path)
     try:

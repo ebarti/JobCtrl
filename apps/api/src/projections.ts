@@ -487,7 +487,25 @@ function reconcileObsoleteCoverGenerationConflicts(db: SqliteDatabase): Set<stri
     db,
     "job_stage_states",
   ) === "job_id";
+  const stableMaterialReferences = jobReferenceColumn(
+    db,
+    "job_materials_artifacts",
+  ) === "job_id";
+  if (stableMaterialReferences && !stableReferences) {
+    throw new Error(
+      "Stable material references require stable job_stage_states references.",
+    );
+  }
   const stageJobUrl = stableReferences ? "stage_jobs.url" : "s.job_url";
+  const materialStageMatch = stableMaterialReferences
+    ? "tr.tenant_id = s.tenant_id AND tr.job_id = s.job_id"
+    : `tr.job_url = ${stageJobUrl}`;
+  const materialArtifactJoin = stableMaterialReferences
+    ? "pdf.tenant_id = tr.tenant_id AND pdf.job_id = tr.job_id"
+    : "pdf.job_url = tr.job_url";
+  const materialCoverJoin = stableMaterialReferences
+    ? "cover.tenant_id = tr.tenant_id AND cover.job_id = tr.job_id"
+    : "cover.job_url = tr.job_url";
   const rows = allRows<{
     job_url: string;
     tenant_id: string | null;
@@ -505,18 +523,18 @@ function reconcileObsoleteCoverGenerationConflicts(db: SqliteDatabase): Set<stri
              SELECT 1
                FROM job_materials_artifacts tr
                JOIN job_materials_artifacts pdf
-                 ON pdf.job_url = tr.job_url
+                 ON ${materialArtifactJoin}
                 AND pdf.generation = tr.generation
                 AND pdf.artifact_type = 'resume_pdf'
                 AND pdf.status = 'approved'
                 AND COALESCE(TRIM(pdf.path), '') != ''
                JOIN job_materials_artifacts cover
-                 ON cover.job_url = tr.job_url
+                 ON ${materialCoverJoin}
                 AND cover.generation = tr.generation
                 AND cover.artifact_type = 'cover_letter'
                 AND cover.status = 'approved'
                 AND COALESCE(TRIM(cover.path), '') != ''
-              WHERE tr.job_url = ${stageJobUrl}
+              WHERE ${materialStageMatch}
                 AND tr.artifact_type = 'tailored_resume'
                 AND tr.status = 'approved'
                 AND COALESCE(TRIM(tr.path), '') != ''
@@ -536,12 +554,12 @@ function reconcileObsoleteCoverGenerationConflicts(db: SqliteDatabase): Set<stri
              SELECT 1
                FROM job_materials_artifacts tr
                JOIN job_materials_artifacts pdf
-                 ON pdf.job_url = tr.job_url
+                 ON ${materialArtifactJoin}
                 AND pdf.generation = tr.generation
                 AND pdf.artifact_type = 'resume_pdf'
                 AND pdf.status = 'approved'
                 AND COALESCE(TRIM(pdf.path), '') != ''
-              WHERE tr.job_url = ${stageJobUrl}
+              WHERE ${materialStageMatch}
                 AND tr.artifact_type = 'tailored_resume'
                 AND tr.status = 'approved'
                 AND COALESCE(TRIM(tr.path), '') != ''
@@ -1527,24 +1545,29 @@ function loadLatestMaterials(db: SqliteDatabase, jobUrl: string): MaterialsLates
   if (!tableExists(db, "job_materials") || !tableExists(db, "job_materials_artifacts")) {
     return empty;
   }
+  const artifactReference = jobReferencePredicateForUrl(
+    db,
+    "job_materials_artifacts",
+    jobUrl,
+  );
   const hasCanonicalHistory = Boolean(
     getRow<{ c: number }>(
       db,
       `SELECT COUNT(*) AS c
          FROM job_materials_artifacts
-        WHERE job_url = ?
+        WHERE ${artifactReference.sql}
           AND artifact_type IN ('tailored_resume', 'cover_letter', 'resume_pdf', 'cover_letter_pdf')`,
-      [jobUrl],
+      artifactReference.params,
     )?.c,
   );
   const generationRow = getRow<{ max_generation: number }>(
     db,
     `SELECT MAX(generation) AS max_generation
        FROM job_materials_artifacts
-      WHERE job_url = ?
+      WHERE ${artifactReference.sql}
         AND status = 'approved'
         AND artifact_type IN ('tailored_resume', 'cover_letter', 'resume_pdf', 'cover_letter_pdf')`,
-    [jobUrl],
+    artifactReference.params,
   );
   const generation = generationRow ? generationRow.max_generation : null;
   if (generation === null || generation === undefined) {
@@ -1553,8 +1576,8 @@ function loadLatestMaterials(db: SqliteDatabase, jobUrl: string): MaterialsLates
   const artifacts = allRows<{ artifact_type: string; path: string; created_at: string | null }>(
     db,
     `SELECT artifact_type, path, created_at FROM job_materials_artifacts
-     WHERE job_url = ? AND generation = ? AND status = 'approved'`,
-    [jobUrl, Number(generation)],
+     WHERE ${artifactReference.sql} AND generation = ? AND status = 'approved'`,
+    [...artifactReference.params, Number(generation)],
   );
   const latest: MaterialsLatest = { ...empty, hasCanonicalHistory, generation: Number(generation) };
   for (const a of artifacts) {
@@ -1592,11 +1615,24 @@ function loadMaterialAnalytics(db: SqliteDatabase, jobUrl: string): MaterialAnal
   }
   const hasMaterialMetadata = tableExists(db, "job_materials") && hasColumn(db, "job_materials", "metadata_json");
   const materialMetadataSelect = hasMaterialMetadata ? "m.metadata_json AS material_metadata_json" : "NULL AS material_metadata_json";
+  const stableReferences = jobReferenceColumn(
+    db,
+    "job_materials_artifacts",
+  ) === "job_id";
   const materialMetadataJoin = hasMaterialMetadata
     ? `LEFT JOIN job_materials m
-             ON m.job_url = a.job_url
+             ON ${stableReferences
+               ? "m.tenant_id = a.tenant_id AND m.job_id = a.job_id"
+               : "m.job_url = a.job_url"}
             AND m.generation = a.generation`
     : "";
+  const artifactReference = jobReferencePredicateForUrl(
+    db,
+    "job_materials_artifacts",
+    jobUrl,
+    "local",
+    "a",
+  );
   const row = getRow<{
     artifact_id: string | null;
     generation: number | null;
@@ -1607,7 +1643,7 @@ function loadMaterialAnalytics(db: SqliteDatabase, jobUrl: string): MaterialAnal
     `SELECT a.artifact_id, a.generation, a.metadata_json, ${materialMetadataSelect}
        FROM job_materials_artifacts a
        ${materialMetadataJoin}
-      WHERE a.job_url = ?
+      WHERE ${artifactReference.sql}
         AND a.status = 'approved'
         AND a.artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
       ORDER BY COALESCE(a.generation, -1) DESC,
@@ -1620,7 +1656,7 @@ function loadMaterialAnalytics(db: SqliteDatabase, jobUrl: string): MaterialAnal
                a.created_at DESC,
                a.rowid DESC
       LIMIT 1`,
-    [jobUrl],
+    artifactReference.params,
   );
   const metadataJsons = [row?.metadata_json ?? null, row?.material_metadata_json ?? null];
   const current = mergeMaterialAnalytics(metadataJsons);
@@ -1662,20 +1698,33 @@ function loadBaseMaterialMetadata(db: SqliteDatabase, jobUrl: string, metadataJs
     tableExists(db, "job_materials") &&
     hasColumn(db, "job_materials", "metadata_json")
   ) {
+    const materialReference = jobReferencePredicateForUrl(
+      db,
+      "job_materials",
+      jobUrl,
+    );
     const row = getRow<{ metadata_json: string | null }>(
       db,
-      "SELECT metadata_json FROM job_materials WHERE job_url = ? AND generation = ? LIMIT 1",
-      [jobUrl, references.baseGeneration],
+      `SELECT metadata_json
+         FROM job_materials
+        WHERE ${materialReference.sql} AND generation = ?
+        LIMIT 1`,
+      [...materialReference.params, references.baseGeneration],
     );
     metadata.push(row?.metadata_json ?? null);
   }
   if (references.baseGeneration !== null) {
+    const artifactReference = jobReferencePredicateForUrl(
+      db,
+      "job_materials_artifacts",
+      jobUrl,
+    );
     metadata.push(
       ...allRows<{ metadata_json: string | null }>(
         db,
         `SELECT metadata_json
            FROM job_materials_artifacts
-          WHERE job_url = ?
+          WHERE ${artifactReference.sql}
             AND generation = ?
             AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
           ORDER BY CASE artifact_type
@@ -1685,18 +1734,23 @@ function loadBaseMaterialMetadata(db: SqliteDatabase, jobUrl: string, metadataJs
                      ELSE 3
                    END,
                    rowid DESC`,
-        [jobUrl, references.baseGeneration],
+        [...artifactReference.params, references.baseGeneration],
       ).map((row) => row.metadata_json),
     );
   }
   if (references.baseArtifactIds.length > 0) {
+    const artifactReference = jobReferencePredicateForUrl(
+      db,
+      "job_materials_artifacts",
+      jobUrl,
+    );
     const placeholders = references.baseArtifactIds.map(() => "?").join(", ");
     metadata.push(
       ...allRows<{ metadata_json: string | null }>(
         db,
         `SELECT metadata_json
            FROM job_materials_artifacts
-          WHERE job_url = ?
+          WHERE ${artifactReference.sql}
             AND artifact_id IN (${placeholders})
           ORDER BY COALESCE(generation, -1) DESC,
                    CASE artifact_type
@@ -1706,7 +1760,7 @@ function loadBaseMaterialMetadata(db: SqliteDatabase, jobUrl: string, metadataJs
                      ELSE 3
                    END,
                    rowid DESC`,
-        [jobUrl, ...references.baseArtifactIds],
+        [...artifactReference.params, ...references.baseArtifactIds],
       ).map((row) => row.metadata_json),
     );
   }
@@ -2217,12 +2271,18 @@ function loadBulletProvenanceByArtifact(
 ): Map<string, string> {
   const result = new Map<string, string>();
   if (!tableExists(db, "job_bullet_provenance")) return result;
+  const provenanceReference = jobReferencePredicateForUrl(
+    db,
+    "job_bullet_provenance",
+    jobUrl,
+    tenantId,
+  );
   const rows = allRows<BulletProvenanceRow>(
     db,
     `SELECT * FROM job_bullet_provenance
-      WHERE job_url = ? AND tenant_id = ?
+      WHERE tenant_id = ? AND ${provenanceReference.sql}
       ORDER BY generation, position, bullet_id`,
-    [jobUrl, tenantId],
+    [tenantId, ...provenanceReference.params],
   );
   if (rows.length === 0) return result;
   const byArtifact = new Map<string, Record<string, unknown>[]>();
@@ -2268,14 +2328,20 @@ function loadProvenanceAuxByArtifact(
   const coverage = new Map<string, string>();
   const voice = new Map<string, string>();
   if (!tableExists(db, "job_bullet_provenance")) return { coverage, voice };
+  const provenanceReference = jobReferencePredicateForUrl(
+    db,
+    "job_bullet_provenance",
+    jobUrl,
+    tenantId,
+  );
   let rows: Array<{ artifact_id: string; coverage_json: string | null; voice_json: string | null }> = [];
   try {
     rows = allRows<{ artifact_id: string; coverage_json: string | null; voice_json: string | null }>(
       db,
       `SELECT artifact_id, coverage_json, voice_json FROM job_bullet_provenance
-        WHERE job_url = ? AND tenant_id = ?
+        WHERE tenant_id = ? AND ${provenanceReference.sql}
         ORDER BY generation, position, bullet_id`,
-      [jobUrl, tenantId],
+      [tenantId, ...provenanceReference.params],
     );
   } catch {
     // Columns predate Phase 3 (a DB written before this migration ran) — no aux data.
@@ -2519,11 +2585,26 @@ function attachResumeUsages(
   entries: Map<string, EvidenceMapEntryPayload>,
 ): void {
   if (!tableExists(db, "job_bullet_provenance")) return;
-  const jobMetadata = jobMetadataJoinSql(db, "provenance.job_url");
-  const lifecycle = jobLifecycleExclusionSql(db, "provenance.job_url");
+  const stableReferences = jobReferenceColumn(
+    db,
+    "job_bullet_provenance",
+  ) === "job_id";
+  const jobUrlExpression = stableReferences
+    ? "provenance_jobs.url"
+    : "provenance.job_url";
+  const identityJoin = stableReferences
+    ? ` JOIN jobs AS provenance_jobs
+           ON provenance_jobs.tenant_id = provenance.tenant_id
+          AND provenance_jobs.job_id = provenance.job_id`
+    : "";
+  const jobMetadata = jobMetadataJoinSql(db, jobUrlExpression);
+  const lifecycle = jobLifecycleExclusionSql(db, jobUrlExpression);
+  const latestIdentityMatch = stableReferences
+    ? "latest.job_id = provenance.job_id"
+    : "latest.job_url = provenance.job_url";
   const rows = allRows<BulletProvenanceRow & { job_title: string | null; employer: string | null }>(
     db,
-    `SELECT provenance.job_url, provenance.artifact_id, provenance.generation,
+    `SELECT ${jobUrlExpression} AS job_url, provenance.artifact_id, provenance.generation,
             provenance.bullet_id, provenance.section, provenance.source_id,
             provenance.evidence_ids_json, provenance.requirement_ids_json,
             provenance.matched_keywords_json, provenance.transform_type,
@@ -2531,15 +2612,16 @@ function attachResumeUsages(
             provenance.position, provenance.created_at,
             ${jobMetadata.selectSql}
        FROM job_bullet_provenance AS provenance
+       ${identityJoin}
        ${jobMetadata.joinSql}${lifecycle.joinSql}
       WHERE provenance.tenant_id = ?${lifecycle.whereSql}
         AND provenance.generation = (
           SELECT MAX(latest.generation)
             FROM job_bullet_provenance AS latest
            WHERE latest.tenant_id = provenance.tenant_id
-             AND latest.job_url = provenance.job_url
+             AND ${latestIdentityMatch}
         )
-      ORDER BY provenance.job_url, provenance.position, provenance.bullet_id`,
+      ORDER BY ${jobUrlExpression}, provenance.position, provenance.bullet_id`,
     [tenantId],
   );
   for (const row of rows) {
@@ -3121,15 +3203,28 @@ function staleArtifactMetadataProjectionJobs(db: SqliteDatabase, tenantId: strin
     return [];
   }
 
+  const materialJoin = jobReferenceJoinToJobs(
+    db,
+    "job_materials_artifacts",
+    "a",
+    "j",
+  );
+  const stableMaterialReferences = jobReferenceColumn(
+    db,
+    "job_materials_artifacts",
+  ) === "job_id";
   const rows = allRows<{ job_id: string }>(
     db,
-    `SELECT DISTINCT a.job_url AS job_id
+    `SELECT DISTINCT j.url AS job_id
        FROM job_materials_artifacts a
+       JOIN jobs j
+         ON ${materialJoin}
        LEFT JOIN artifact_list_projections p
          ON p.tenant_id = ?
-        AND p.job_id = a.job_url
+        AND p.job_id = j.url
         AND p.artifact_id = COALESCE(NULLIF(a.artifact_id, ''), a.artifact_type || ':' || a.path)
-      WHERE a.artifact_type IN ('tailored_resume', 'tailored_resume_txt')
+      WHERE ${stableMaterialReferences ? "a.tenant_id = ? AND" : ""}
+        a.artifact_type IN ('tailored_resume', 'tailored_resume_txt')
         AND a.path IS NOT NULL
         AND TRIM(a.path) != ''
         AND a.metadata_json IS NOT NULL
@@ -3140,7 +3235,7 @@ function staleArtifactMetadataProjectionJobs(db: SqliteDatabase, tenantId: strin
           OR p.metadata_json IS NULL
           OR TRIM(p.metadata_json) != TRIM(a.metadata_json)
         )`,
-    [tenantId],
+    stableMaterialReferences ? [tenantId, tenantId] : [tenantId],
   );
   return rows.map((row) => row.job_id).filter(Boolean);
 }
@@ -3544,6 +3639,12 @@ function loadLayoutBoxesByArtifact(
 ): Map<string, string> {
   const result = new Map<string, string>();
   if (!tableExists(db, "job_material_layout_boxes")) return result;
+  const layoutReference = jobReferencePredicateForUrl(
+    db,
+    "job_material_layout_boxes",
+    jobUrl,
+    tenantId,
+  );
   const rows = allRows<{
     artifact_id: string;
     semantic_id: string;
@@ -3559,9 +3660,9 @@ function loadLayoutBoxesByArtifact(
     `SELECT artifact_id, semantic_id, page_number, line_number, text_excerpt,
             left_pct, top_pct, width_pct, height_pct
        FROM job_material_layout_boxes
-      WHERE tenant_id = ? AND job_url = ?
+      WHERE tenant_id = ? AND ${layoutReference.sql}
       ORDER BY artifact_id, page_number, box_index`,
-    [tenantId, jobUrl],
+    [tenantId, ...layoutReference.params],
   );
   const byArtifact = new Map<string, Array<Record<string, unknown>>>();
   for (const row of rows) {
@@ -3835,6 +3936,11 @@ function collectArtifacts(
     const metadataSelect = hasColumn(db, "job_materials_artifacts", "metadata_json")
       ? "metadata_json"
       : "NULL AS metadata_json";
+    const materialArtifactReference = jobReferencePredicateForUrl(
+      db,
+      "job_materials_artifacts",
+      jobUrl,
+    );
     const rows = allRows<{
       artifact_id: string;
       artifact_type: string;
@@ -3847,8 +3953,8 @@ function collectArtifacts(
     }>(
       db,
       `SELECT artifact_id, artifact_type, status, path, created_at, size_bytes, generation, ${metadataSelect}
-       FROM job_materials_artifacts WHERE job_url = ?`,
-      [jobUrl],
+       FROM job_materials_artifacts WHERE ${materialArtifactReference.sql}`,
+      materialArtifactReference.params,
     );
     for (const row of rows) {
       if (!row.path) continue;

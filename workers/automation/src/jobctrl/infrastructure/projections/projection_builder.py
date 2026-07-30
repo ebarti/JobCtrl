@@ -1745,24 +1745,28 @@ class ProjectionBuilder:
     def _attach_resume_usages(self, entries: dict[str, dict[str, Any]]) -> None:
         if not _table_exists(self._conn, "job_bullet_provenance"):
             return
-        job_metadata = _job_metadata_join_sql(self._conn, "provenance.job_url")
-        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "provenance.job_url")
+        job_metadata = _job_metadata_join_sql(self._conn, "identity.url")
+        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "identity.url")
         rows = self._conn.execute(
             f"""
-            SELECT provenance.job_url, provenance.artifact_id, provenance.generation,
+            SELECT identity.url AS job_url, provenance.artifact_id,
+                   provenance.generation,
                    provenance.bullet_id, provenance.generated_text, provenance.created_at,
                    provenance.evidence_ids_json,
                    {job_metadata['select_sql']}
               FROM job_bullet_provenance AS provenance
+              JOIN jobs AS identity
+                ON identity.tenant_id = provenance.tenant_id
+               AND identity.job_id = provenance.job_id
               {job_metadata['join_sql']}{lifecycle['join_sql']}
              WHERE provenance.tenant_id = ?{lifecycle['where_sql']}
                AND provenance.generation = (
                  SELECT MAX(latest.generation)
                    FROM job_bullet_provenance AS latest
                   WHERE latest.tenant_id = provenance.tenant_id
-                    AND latest.job_url = provenance.job_url
+                    AND latest.job_id = provenance.job_id
                )
-             ORDER BY provenance.job_url, provenance.position, provenance.bullet_id
+             ORDER BY identity.url, provenance.position, provenance.bullet_id
             """,
             (str(self._tenant_id),),
         ).fetchall()
@@ -2208,46 +2212,30 @@ class ProjectionBuilder:
 
     def _load_latest_materials(self, job_url: str) -> dict:
         try:
+            material_predicate, material_params = (
+                _job_reference_predicate_for_url(
+                    self._conn,
+                    "job_materials_artifacts",
+                    job_url,
+                )
+            )
             generation_row = self._conn.execute(
-                """
+                f"""
                 SELECT MAX(generation)
                 FROM job_materials_artifacts
-                WHERE job_url = ?
+                WHERE {material_predicate}
                   AND status = 'approved'
                   AND artifact_type IN (
                     'tailored_resume',
                     'cover_letter',
                     'resume_pdf',
                     'cover_letter_pdf'
-                  )
+                )
                 """,
-                (job_url,),
+                material_params,
             ).fetchone()
         except sqlite3.OperationalError:
-            try:
-                row = self._conn.execute(
-                    """
-                    SELECT artifact_id, generation, metadata_json,
-                           NULL AS material_metadata_json
-                    FROM job_materials_artifacts
-                    WHERE job_url = ?
-                      AND status = 'approved'
-                      AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
-                    ORDER BY COALESCE(generation, -1) DESC,
-                             CASE artifact_type
-                               WHEN 'tailored_resume' THEN 0
-                               WHEN 'tailored_resume_txt' THEN 1
-                               WHEN 'resume_pdf' THEN 2
-                               ELSE 3
-                             END,
-                             created_at DESC,
-                             rowid DESC
-                    LIMIT 1
-                    """,
-                    (job_url,),
-                ).fetchone()
-            except sqlite3.OperationalError:
-                return {}
+            return {}
         if generation_row is None:
             return {}
         max_generation = generation_row[0]
@@ -2255,12 +2243,13 @@ class ProjectionBuilder:
             return {}
         try:
             artifact_rows = self._conn.execute(
-                """
+                f"""
                 SELECT artifact_type, path, status, created_at
                 FROM job_materials_artifacts
-                WHERE job_url = ? AND generation = ? AND status = 'approved'
+                WHERE {material_predicate}
+                  AND generation = ? AND status = 'approved'
                 """,
-                (job_url, int(max_generation)),
+                (*material_params, int(max_generation)),
             ).fetchall()
         except sqlite3.OperationalError:
             return {}
@@ -2284,15 +2273,57 @@ class ProjectionBuilder:
 
     def _load_material_analytics(self, job_url: str) -> dict[str, object]:
         try:
+            artifact_predicate, artifact_params = (
+                _job_reference_predicate_for_url(
+                    self._conn,
+                    "job_materials_artifacts",
+                    job_url,
+                    alias="a",
+                )
+            )
+            has_material_metadata = (
+                _table_exists(self._conn, "job_materials")
+                and _has_column(
+                    self._conn,
+                    "job_materials",
+                    "metadata_json",
+                )
+            )
+            stable_references = _has_column(
+                self._conn,
+                "job_materials_artifacts",
+                "job_id",
+            )
+            material_metadata_select = (
+                "m.metadata_json AS material_metadata_json"
+                if has_material_metadata
+                else "NULL AS material_metadata_json"
+            )
+            material_metadata_join = (
+                (
+                    """
+                    LEFT JOIN job_materials m
+                      ON m.tenant_id = a.tenant_id
+                     AND m.job_id = a.job_id
+                     AND m.generation = a.generation
+                    """
+                    if stable_references
+                    else """
+                    LEFT JOIN job_materials m
+                      ON m.job_url = a.job_url
+                     AND m.generation = a.generation
+                    """
+                )
+                if has_material_metadata
+                else ""
+            )
             row = self._conn.execute(
-                """
+                f"""
                 SELECT a.artifact_id, a.generation, a.metadata_json,
-                       m.metadata_json AS material_metadata_json
+                       {material_metadata_select}
                 FROM job_materials_artifacts a
-                LEFT JOIN job_materials m
-                  ON m.job_url = a.job_url
-                 AND m.generation = a.generation
-                WHERE a.job_url = ?
+                {material_metadata_join}
+                WHERE {artifact_predicate}
                   AND a.status = 'approved'
                   AND a.artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
                 ORDER BY COALESCE(a.generation, -1) DESC,
@@ -2306,33 +2337,10 @@ class ProjectionBuilder:
                          a.rowid DESC
                 LIMIT 1
                 """,
-                (job_url,),
+                artifact_params,
             ).fetchone()
         except sqlite3.OperationalError:
-            try:
-                row = self._conn.execute(
-                    """
-                    SELECT artifact_id, generation, metadata_json,
-                           NULL AS material_metadata_json
-                    FROM job_materials_artifacts
-                    WHERE job_url = ?
-                      AND status = 'approved'
-                      AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
-                    ORDER BY COALESCE(generation, -1) DESC,
-                             CASE artifact_type
-                               WHEN 'tailored_resume' THEN 0
-                               WHEN 'tailored_resume_txt' THEN 1
-                               WHEN 'resume_pdf' THEN 2
-                               ELSE 3
-                             END,
-                             created_at DESC,
-                             rowid DESC
-                    LIMIT 1
-                    """,
-                    (job_url,),
-                ).fetchone()
-            except sqlite3.OperationalError:
-                return {}
+            return {}
         metadata_jsons = [
             _row_nullable_str(row, "metadata_json"),
             _row_nullable_str(row, "material_metadata_json"),
@@ -2353,24 +2361,38 @@ class ProjectionBuilder:
         metadata: list[str | None] = []
         if base_generation is not None:
             try:
+                material_predicate, material_params = (
+                    _job_reference_predicate_for_url(
+                        self._conn,
+                        "job_materials",
+                        job_url,
+                    )
+                )
                 row = self._conn.execute(
-                    """
+                    f"""
                     SELECT metadata_json
                     FROM job_materials
-                    WHERE job_url = ? AND generation = ?
+                    WHERE {material_predicate} AND generation = ?
                     LIMIT 1
                     """,
-                    (job_url, base_generation),
+                    (*material_params, base_generation),
                 ).fetchone()
             except sqlite3.OperationalError:
                 row = None
             metadata.append(_row_nullable_str(row, "metadata_json"))
             try:
+                artifact_predicate, artifact_params = (
+                    _job_reference_predicate_for_url(
+                        self._conn,
+                        "job_materials_artifacts",
+                        job_url,
+                    )
+                )
                 rows = self._conn.execute(
-                    """
+                    f"""
                     SELECT metadata_json
                     FROM job_materials_artifacts
-                    WHERE job_url = ?
+                    WHERE {artifact_predicate}
                       AND generation = ?
                       AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
                     ORDER BY CASE artifact_type
@@ -2381,7 +2403,7 @@ class ProjectionBuilder:
                              END,
                              rowid DESC
                     """,
-                    (job_url, base_generation),
+                    (*artifact_params, base_generation),
                 ).fetchall()
             except sqlite3.OperationalError:
                 rows = []
@@ -2389,11 +2411,18 @@ class ProjectionBuilder:
         if base_artifact_ids:
             placeholders = ", ".join("?" for _ in base_artifact_ids)
             try:
+                artifact_predicate, artifact_params = (
+                    _job_reference_predicate_for_url(
+                        self._conn,
+                        "job_materials_artifacts",
+                        job_url,
+                    )
+                )
                 rows = self._conn.execute(
                     f"""
                     SELECT metadata_json
                     FROM job_materials_artifacts
-                    WHERE job_url = ?
+                    WHERE {artifact_predicate}
                       AND artifact_id IN ({placeholders})
                     ORDER BY COALESCE(generation, -1) DESC,
                              CASE artifact_type
@@ -2404,7 +2433,7 @@ class ProjectionBuilder:
                              END,
                              rowid DESC
                     """,
-                    (job_url, *base_artifact_ids),
+                    (*artifact_params, *base_artifact_ids),
                 ).fetchall()
             except sqlite3.OperationalError:
                 rows = []
@@ -2498,14 +2527,21 @@ class ProjectionBuilder:
 
         empty = _ProvenanceProjection(provenance={}, coverage={}, voice={})
         try:
+            provenance_predicate, provenance_params = (
+                _job_reference_predicate_for_url(
+                    self._conn,
+                    "job_bullet_provenance",
+                    job_url,
+                )
+            )
             generation_rows = self._conn.execute(
-                """
+                f"""
                 SELECT DISTINCT generation
                 FROM job_bullet_provenance
-                WHERE job_url = ? AND tenant_id = ?
+                WHERE {provenance_predicate}
                 ORDER BY generation
                 """,
-                (job_url, str(self._tenant_id)),
+                provenance_params,
             ).fetchall()
         except sqlite3.OperationalError:
             return empty
@@ -2515,10 +2551,11 @@ class ProjectionBuilder:
         provenance: dict[str, str] = {}
         coverage_by_artifact: dict[str, str] = {}
         voice_by_artifact: dict[str, str] = {}
+        stable_job_id = JobId(str(provenance_params[-1]))
         for row in generation_rows:
             record = repository.load(
                 self._tenant_id,
-                JobId(job_url),
+                stable_job_id,
                 generation=int(row["generation"]),
             )
             if record is None or record.is_empty:
@@ -2848,14 +2885,21 @@ class ProjectionBuilder:
         artifacts: list[dict] = []
         seen: set[tuple[str, str]] = set()
         try:
+            material_predicate, material_params = (
+                _job_reference_predicate_for_url(
+                    self._conn,
+                    "job_materials_artifacts",
+                    job_url,
+                )
+            )
             for row in self._conn.execute(
-                """
+                f"""
                 SELECT artifact_id, artifact_type, status, path, created_at,
                        size_bytes, generation, metadata_json
                 FROM job_materials_artifacts
-                WHERE job_url = ?
+                WHERE {material_predicate}
                 """,
-                (job_url,),
+                material_params,
             ).fetchall():
                 local_path = _row_nullable_str(row, "path") or ""
                 atype = _row_nullable_str(row, "artifact_type") or ""
@@ -2921,15 +2965,22 @@ class ProjectionBuilder:
 
     def _load_layout_boxes_by_artifact(self, job_url: str) -> dict[str, str]:
         try:
+            layout_predicate, layout_params = (
+                _job_reference_predicate_for_url(
+                    self._conn,
+                    "job_material_layout_boxes",
+                    job_url,
+                )
+            )
             rows = self._conn.execute(
-                """
+                f"""
                 SELECT artifact_id, semantic_id, page_number, line_number,
                        text_excerpt, left_pct, top_pct, width_pct, height_pct
                 FROM job_material_layout_boxes
-                WHERE job_url = ? AND tenant_id = ?
+                WHERE {layout_predicate}
                 ORDER BY artifact_id, page_number, box_index
                 """,
-                (job_url, str(self._tenant_id)),
+                layout_params,
             ).fetchall()
         except sqlite3.OperationalError:
             return {}
@@ -4128,10 +4179,12 @@ def _job_reference_predicate_for_url(
     job_url: str,
     *,
     tenant_id: str = str(LOCAL_TENANT),
+    alias: str = "",
 ) -> tuple[str, tuple[str, ...]]:
     """Resolve one explicit posting URL for legacy or stable table shapes."""
+    prefix = f"{alias}." if alias else ""
     if not _has_column(conn, table_name, "job_id"):
-        return "job_url = ?", (job_url,)
+        return f"{prefix}job_url = ?", (job_url,)
     row = conn.execute(
         """
         SELECT j.tenant_id, j.job_id
@@ -4152,7 +4205,7 @@ def _job_reference_predicate_for_url(
     ).fetchone()
     if row is None:
         raise ValueError(f"no stable Job identity for posting URL: {job_url}")
-    return "tenant_id = ? AND job_id = ?", (
+    return f"{prefix}tenant_id = ? AND {prefix}job_id = ?", (
         str(row[0]),
         str(row[1]),
     )

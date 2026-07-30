@@ -1501,10 +1501,15 @@ def conn(tmp_path) -> Iterator[sqlite3.Connection]:
 
 def _seed_materials_generation(connection: sqlite3.Connection, generation: int, *, ts: str) -> None:
     """Insert the ``job_materials`` FK parent row for a generation."""
+    job_id = connection.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+        (JOB_URL,),
+    ).fetchone()[0]
     connection.execute(
-        "INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at) "
-        "VALUES (?, ?, 'local', 'complete', ?, ?)",
-        (JOB_URL, generation, ts, ts),
+        "INSERT INTO job_materials "
+        "(tenant_id, job_id, generation, status, created_at, updated_at) "
+        "VALUES ('local', ?, ?, 'complete', ?, ?)",
+        (job_id, generation, ts, ts),
     )
     connection.commit()
 

@@ -95,9 +95,9 @@ def tailoring_current_policy_job_urls(
     )
     limit_sql, limit_params = _limit_filter(limit)
     effective_tailor_path = (
-        "((lm.materials_job_url IS NOT NULL AND lm.tailored_resume_path IS NOT NULL "
+        "((lm.materials_job_id IS NOT NULL AND lm.tailored_resume_path IS NOT NULL "
         "AND lm.tailored_resume_path != '') "
-        "OR (lm.materials_job_url IS NULL AND j.tailored_resume_path IS NOT NULL "
+        "OR (lm.materials_job_id IS NULL AND j.tailored_resume_path IS NOT NULL "
         "AND j.tailored_resume_path != ''))"
     )
 
@@ -141,24 +141,30 @@ def tailoring_current_policy_job_urls(
          AND tailor_state.job_id = j.job_id
          AND tailor_state.stage = 'tailor'
         LEFT JOIN (
-            SELECT m.job_url AS materials_job_url, tr.path AS tailored_resume_path,
+            SELECT m.tenant_id AS materials_tenant_id,
+                   m.job_id AS materials_job_id,
+                   tr.path AS tailored_resume_path,
                    tr.metadata_json AS tailored_resume_metadata
             FROM job_materials m
             INNER JOIN (
-                SELECT job_url, MAX(generation) AS max_generation
+                SELECT tenant_id, job_id, MAX(generation) AS max_generation
                 FROM job_materials
                 WHERE tenant_id = ?
-                GROUP BY job_url
+                GROUP BY tenant_id, job_id
             ) latest
-              ON latest.job_url = m.job_url AND latest.max_generation = m.generation
+              ON latest.tenant_id = m.tenant_id
+             AND latest.job_id = m.job_id
+             AND latest.max_generation = m.generation
             LEFT JOIN job_materials_artifacts tr
-              ON tr.job_url = m.job_url
+              ON tr.tenant_id = m.tenant_id
+             AND tr.job_id = m.job_id
              AND tr.generation = m.generation
              AND tr.artifact_type = 'tailored_resume'
              AND tr.status = 'approved'
              AND tr.superseded_at IS NULL
             WHERE m.tenant_id = ?
-        ) lm ON lm.materials_job_url = j.url
+        ) lm ON lm.materials_tenant_id = j.tenant_id
+            AND lm.materials_job_id = j.job_id
         WHERE COALESCE(je.full_description, j.full_description) IS NOT NULL
           {active_sql}
           {requested_sql}

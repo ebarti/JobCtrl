@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from pathlib import Path
 
 import pytest
 
-from jobctrl.database import ensure_materials_tables
+from jobctrl.database import ensure_materials_tables, init_db
 from jobctrl.infrastructure.materials.resume_html_migration import (
     build_legacy_resume_html,
     migrate_legacy_resume_pdfs,
@@ -118,6 +119,70 @@ def test_migrate_legacy_resume_pdfs_updates_artifact_and_layout_boxes(tmp_path: 
     assert (tmp_path / "resume.legacy-latex.pdf").read_bytes() == b"%PDF legacy"
     layout_count = db.execute("SELECT COUNT(*) FROM job_material_layout_boxes WHERE artifact_id = 'artifact-1'").fetchone()[0]
     assert layout_count == 1
+
+
+def test_migrate_resume_pdfs_selects_stable_material_by_posting_url_alias(
+    tmp_path: Path,
+) -> None:
+    db = init_db(tmp_path / "jobctrl.db")
+    db.row_factory = sqlite3.Row
+    job_id = str(uuid.uuid4())
+    storage_url = "https://storage.example/jobs/original"
+    posting_url = "https://posting.example/jobs/current"
+    now = "2026-07-29T10:00:00+00:00"
+    pdf_path = tmp_path / "resume.pdf"
+    pdf_path.write_bytes(b"%PDF legacy")
+    pdf_path.with_suffix(".txt").write_text(
+        "Jordan Candidate\njordan@example.com\n",
+        encoding="utf-8",
+    )
+    db.execute(
+        """
+        INSERT INTO jobs (
+            url, tenant_id, job_id, title, company, discovered_at
+        ) VALUES (?, 'local', ?, 'Platform Engineer', 'Example', ?)
+        """,
+        (storage_url, job_id, now),
+    )
+    db.execute(
+        """
+        INSERT INTO job_identity_aliases (
+            tenant_id, alias_kind, alias_value, job_id, created_at, retired_at
+        ) VALUES ('local', 'posting_url', ?, ?, ?, NULL)
+        """,
+        (posting_url, job_id, now),
+    )
+    db.execute(
+        """
+        INSERT INTO job_materials (
+            tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES ('local', ?, 1, 'resume_approved', ?, ?)
+        """,
+        (job_id, now, now),
+    )
+    db.execute(
+        """
+        INSERT INTO job_materials_artifacts (
+            tenant_id, job_id, generation, artifact_type, artifact_id, status,
+            path, render_format, size_bytes, metadata_json, created_at
+        ) VALUES (
+            'local', ?, 1, 'resume_pdf', 'artifact-1', 'approved', ?,
+            'latex_pdf', ?, '{}', ?
+        )
+        """,
+        (job_id, str(pdf_path), pdf_path.stat().st_size, now),
+    )
+    db.commit()
+
+    results = migrate_legacy_resume_pdfs(
+        db,
+        dry_run=True,
+        job_url=posting_url,
+    )
+
+    assert [(result.artifact_id, result.status) for result in results] == [
+        ("artifact-1", "would_migrate")
+    ]
 
 
 def test_force_refresh_reprints_existing_html_resume_without_replacing_legacy_backup(tmp_path: Path) -> None:

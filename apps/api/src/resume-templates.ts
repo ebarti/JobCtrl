@@ -27,7 +27,17 @@ import {
   ResumeTemplateLayoutSchema,
   ResumeTemplateThemeSchema,
 } from "./contracts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import {
+  allRows,
+  getRow,
+  jobReferenceColumn,
+  jobReferenceForUrl,
+  jobReferenceJoinToJobs,
+  jobReferencePredicateForUrl,
+  tableExists,
+  type SqliteDatabase,
+  type SqliteValue,
+} from "./db.js";
 import { defaultResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 
 const DEFAULT_TENANT = "local";
@@ -555,7 +565,7 @@ export function resolveCurrentResumeArtifactIdForOpen(
   if (!tableExists(db, "job_materials_artifacts")) return artifactId;
   const columns = tableColumnSet(db, "job_materials_artifacts");
   if (
-    !columns.includes("job_url") ||
+    (!columns.includes("job_url") && !columns.includes("job_id")) ||
     !columns.includes("artifact_type") ||
     !columns.includes("artifact_id") ||
     !columns.includes("generation")
@@ -568,9 +578,20 @@ export function resolveCurrentResumeArtifactIdForOpen(
     generation: number | string | null;
   }>(
     db,
-    `SELECT job_url, artifact_type, generation
-       FROM job_materials_artifacts
-      WHERE artifact_id = ?`,
+    jobReferenceColumn(db, "job_materials_artifacts") === "job_id"
+      ? `SELECT jobs.url AS job_url, artifacts.artifact_type, artifacts.generation
+           FROM job_materials_artifacts AS artifacts
+           JOIN jobs
+             ON ${jobReferenceJoinToJobs(
+               db,
+               "job_materials_artifacts",
+               "artifacts",
+               "jobs",
+             )}
+          WHERE artifacts.artifact_id = ?`
+      : `SELECT job_url, artifact_type, generation
+           FROM job_materials_artifacts
+          WHERE artifact_id = ?`,
     [artifactId],
   );
   if (!row || (row.artifact_type !== "tailored_resume" && row.artifact_type !== "resume_pdf")) {
@@ -585,16 +606,22 @@ export function resolveCurrentResumeArtifactIdForOpen(
   const orderBy = columns.includes("created_at")
     ? "generation DESC, datetime(created_at) DESC, artifact_id DESC"
     : "generation DESC, artifact_id DESC";
+  const artifactReference = jobReferencePredicateForUrl(
+    db,
+    "job_materials_artifacts",
+    row.job_url,
+    DEFAULT_TENANT,
+  );
   const latest = getRow<{ artifact_id: string }>(
     db,
     `SELECT artifact_id
        FROM job_materials_artifacts
-      WHERE job_url = ?
+      WHERE ${artifactReference.sql}
         AND artifact_type = ?
         ${statusWhere}
       ORDER BY ${orderBy}
       LIMIT 1`,
-    [row.job_url, row.artifact_type],
+    [...artifactReference.params, row.artifact_type],
   );
   return latest?.artifact_id ?? artifactId;
 }
@@ -842,18 +869,23 @@ function latestResumeMaterial(
     columns.includes("metadata_json") ? "metadata_json" : "NULL AS metadata_json",
     columns.includes("created_at") ? "created_at" : "NULL AS created_at",
   ].join(", ");
-  const jobColumn = columns.includes("job_url") ? "job_url" : columns.includes("job_id") ? "job_id" : null;
-  if (!jobColumn) return null;
+  if (!columns.includes("job_url") && !columns.includes("job_id")) return null;
+  const artifactReference = jobReferencePredicateForUrl(
+    db,
+    "job_materials_artifacts",
+    jobKey,
+    DEFAULT_TENANT,
+  );
   const statusWhere = columns.includes("status") ? "AND COALESCE(status, 'approved') IN ('approved', 'active')" : "";
   const rows = allRows<MaterialArtifactRow>(
     db,
     `SELECT ${selectColumns}
        FROM job_materials_artifacts
-      WHERE ${jobColumn} = ?
+      WHERE ${artifactReference.sql}
         AND artifact_type IN ('tailored_resume', 'resume_pdf')
         ${statusWhere}
       ORDER BY generation DESC, CASE artifact_type WHEN 'resume_pdf' THEN 0 ELSE 1 END`,
-    [jobKey],
+    artifactReference.params,
   );
   const generation = rows[0]?.generation === undefined ? null : Number(rows[0].generation);
   if (!generation) return null;
@@ -1041,9 +1073,8 @@ function persistRenderOnlyRefresh(
   renderPdf({ htmlPath, pdfPath });
 
   insertDynamicRow(db, "job_materials", {
-    job_url: jobKey,
+    ...materialIdentityValues(db, "job_materials", jobKey),
     generation,
-    tenant_id: DEFAULT_TENANT,
     status: "resume_approved",
     created_at: now,
     updated_at: now,
@@ -1056,7 +1087,7 @@ function persistRenderOnlyRefresh(
     }),
   });
   insertDynamicRow(db, "job_materials_artifacts", {
-    job_url: jobKey,
+    ...materialIdentityValues(db, "job_materials_artifacts", jobKey),
     generation,
     artifact_type: "tailored_resume",
     artifact_id: textArtifactId,
@@ -1073,7 +1104,7 @@ function persistRenderOnlyRefresh(
     superseded_at: null,
   });
   insertDynamicRow(db, "job_materials_artifacts", {
-    job_url: jobKey,
+    ...materialIdentityValues(db, "job_materials_artifacts", jobKey),
     generation,
     artifact_type: "resume_pdf",
     artifact_id: pdfArtifactId,
@@ -1099,10 +1130,18 @@ function nextMaterialGeneration(db: SqliteDatabase, jobKey: string): number {
   const values: number[] = [];
   for (const table of ["job_materials", "job_materials_artifacts"]) {
     if (!tableExists(db, table)) continue;
+    const materialReference = jobReferencePredicateForUrl(
+      db,
+      table,
+      jobKey,
+      DEFAULT_TENANT,
+    );
     const row = getRow<{ max_generation: number | null }>(
       db,
-      `SELECT MAX(generation) AS max_generation FROM ${table} WHERE ${table === "job_materials" ? "job_url" : "job_url"} = ?`,
-      [jobKey],
+      `SELECT MAX(generation) AS max_generation
+         FROM ${table}
+        WHERE ${materialReference.sql}`,
+      materialReference.params,
     );
     if (row?.max_generation !== null && row?.max_generation !== undefined) values.push(Number(row.max_generation));
   }
@@ -1118,16 +1157,22 @@ function replaceLayoutBoxes(
   createdAt: string,
 ): void {
   if (!tableExists(db, "job_material_layout_boxes")) return;
+  const layoutReference = jobReferencePredicateForUrl(
+    db,
+    "job_material_layout_boxes",
+    jobKey,
+    DEFAULT_TENANT,
+  );
   db.prepare(
-    "DELETE FROM job_material_layout_boxes WHERE job_url = ? AND generation = ? AND artifact_id = ?",
-  ).run(jobKey, generation, artifactId);
+    `DELETE FROM job_material_layout_boxes
+      WHERE ${layoutReference.sql} AND generation = ? AND artifact_id = ?`,
+  ).run(...layoutReference.params, generation, artifactId);
   for (const [index, box] of boxes.entries()) {
     insertDynamicRow(db, "job_material_layout_boxes", {
-      job_url: jobKey,
+      ...materialIdentityValues(db, "job_material_layout_boxes", jobKey),
       generation,
       artifact_id: artifactId,
       box_index: index,
-      tenant_id: DEFAULT_TENANT,
       semantic_id: box.semanticId,
       page_number: box.pageNumber,
       line_number: box.lineNumber,
@@ -1275,6 +1320,23 @@ function insertDynamicRow(
   db.prepare(
     `INSERT OR REPLACE INTO ${tableName} (${columns.join(", ")}) VALUES (${placeholders})`,
   ).run(...columns.map((column) => values[column] ?? null));
+}
+
+function materialIdentityValues(
+  db: SqliteDatabase,
+  tableName: string,
+  jobKey: string,
+): Record<string, SqliteValue> {
+  const referenceColumn = jobReferenceColumn(db, tableName);
+  return {
+    tenant_id: DEFAULT_TENANT,
+    [referenceColumn]: jobReferenceForUrl(
+      db,
+      tableName,
+      jobKey,
+      DEFAULT_TENANT,
+    ),
+  };
 }
 
 function tableColumnSet(db: SqliteDatabase, tableName: string): string[] {

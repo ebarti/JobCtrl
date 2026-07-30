@@ -66,6 +66,15 @@ def _seed_job(conn: sqlite3.Connection, url: str = "https://example.com/job/1") 
     return url
 
 
+def _stable_job_id(conn: sqlite3.Connection, url: str) -> JobId:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+        (url,),
+    ).fetchone()
+    assert row is not None
+    return JobId(str(row[0]))
+
+
 def _make_artifact(
     artifact_type: ArtifactType,
     *,
@@ -277,7 +286,7 @@ def test_approved_cover_refresh_supersedes_stale_pdf_and_projects_pending_pdf(
     assert loaded.cover_letter_pdf is not None
     assert loaded.cover_letter_pdf.status is ArtifactStatus.SUPERSEDED
     assert loaded.status == "cover_letter_ready"
-    assert repo.list_pending_pdf(LOCAL_TENANT) == [JobId(url)]
+    assert repo.list_pending_pdf(LOCAL_TENANT) == [_stable_job_id(conn, url)]
     pending_pdf = get_jobs_by_stage(conn, stage="pending_pdf", limit=0)
     assert [row["url"] for row in pending_pdf] == [url]
     assert pending_pdf[0]["cover_letter_path"] == str(new_cover_path)
@@ -398,9 +407,9 @@ def test_save_persists_resume_layout_boxes_outside_artifact_metadata(
         """
         SELECT metadata_json
         FROM job_materials_artifacts
-        WHERE job_url = ? AND artifact_id = ?
+        WHERE tenant_id = 'local' AND job_id = ? AND artifact_id = ?
         """,
-        (url, pdf.artifact_id),
+        (str(_stable_job_id(conn, url)), pdf.artifact_id),
     ).fetchone()
     assert artifact_row is not None
     assert json.loads(artifact_row["metadata_json"]) == {"layout_source": "html_resume_dom"}
@@ -410,9 +419,9 @@ def test_save_persists_resume_layout_boxes_outside_artifact_metadata(
         SELECT semantic_id, page_number, line_number, text_excerpt,
                left_pct, top_pct, width_pct, height_pct, audit_target_json
         FROM job_material_layout_boxes
-        WHERE job_url = ? AND artifact_id = ?
+        WHERE tenant_id = 'local' AND job_id = ? AND artifact_id = ?
         """,
-        (url, pdf.artifact_id),
+        (str(_stable_job_id(conn, url)), pdf.artifact_id),
     ).fetchall()
     assert len(rows) == 1
     row = rows[0]
@@ -446,25 +455,26 @@ def test_loads_resume_review_promoted_generation_without_deleting_prior_material
     edited_resume.write_text("edited resume", encoding="utf-8")
     edited_pdf.write_text("%PDF edited", encoding="utf-8")
     now = "2026-06-24T10:00:00+00:00"
+    stable_job_id = str(_stable_job_id(conn, url))
 
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at,
+            tenant_id, job_id, generation, status, created_at, updated_at,
             last_validation_json, last_verdict_json, metadata_json
-        ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}', '{}', '{}')
+        ) VALUES ('local', ?, 1, 'resume_approved', ?, ?, '{}', '{}', '{}')
         """,
-        (url, now, now),
+        (stable_job_id, now, now),
     )
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at,
+            tenant_id, job_id, generation, status, created_at, updated_at,
             last_validation_json, last_verdict_json, metadata_json
-        ) VALUES (?, 2, 'local', 'resume_approved', ?, ?, ?, ?, ?)
+        ) VALUES ('local', ?, 2, 'resume_approved', ?, ?, ?, ?, ?)
         """,
         (
-            url,
+            stable_job_id,
             now,
             now,
             json.dumps({"passed": True, "errors": [], "warnings": []}),
@@ -482,13 +492,13 @@ def test_loads_resume_review_promoted_generation_without_deleting_prior_material
     conn.executemany(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
+            tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
             render_format, size_bytes, metadata_json, created_at, superseded_at
-        ) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)
+        ) VALUES ('local', ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)
         """,
         [
             (
-                url,
+                stable_job_id,
                 1,
                 "tailored_resume",
                 "base-resume",
@@ -499,7 +509,7 @@ def test_loads_resume_review_promoted_generation_without_deleting_prior_material
                 now,
             ),
             (
-                url,
+                stable_job_id,
                 1,
                 "resume_pdf",
                 "base-pdf",
@@ -510,7 +520,7 @@ def test_loads_resume_review_promoted_generation_without_deleting_prior_material
                 now,
             ),
             (
-                url,
+                stable_job_id,
                 2,
                 "tailored_resume",
                 "edited-resume",
@@ -521,7 +531,7 @@ def test_loads_resume_review_promoted_generation_without_deleting_prior_material
                 now,
             ),
             (
-                url,
+                stable_job_id,
                 2,
                 "resume_pdf",
                 "edited-pdf",
@@ -542,14 +552,14 @@ def test_loads_resume_review_promoted_generation_without_deleting_prior_material
     conn.execute(
         """
         INSERT INTO job_material_layout_boxes (
-            job_url, generation, artifact_id, box_index, tenant_id,
+            tenant_id, job_id, generation, artifact_id, box_index,
             semantic_id, page_number, line_number, text_excerpt,
             left_pct, top_pct, width_pct, height_pct, audit_target_json, created_at
-        ) VALUES (?, 2, 'edited-pdf', 0, 'local',
+        ) VALUES ('local', ?, 2, 'edited-pdf', 0,
                   'edited:line:1', 1, 1, 'edited resume',
                   10, 8, 80, 1.7, '{}', ?)
         """,
-        (url, now),
+        (stable_job_id, now),
     )
     conn.commit()
 
@@ -567,19 +577,20 @@ def test_loads_resume_review_promoted_generation_without_deleting_prior_material
         """
         SELECT status
         FROM job_materials_artifacts
-        WHERE job_url = ? AND generation = 1
+        WHERE tenant_id = 'local' AND job_id = ? AND generation = 1
         ORDER BY artifact_type
         """,
-        (url,),
+        (stable_job_id,),
     ).fetchall()
     assert [row["status"] for row in prior_statuses] == ["approved", "approved"]
     box = conn.execute(
         """
         SELECT semantic_id, line_number, text_excerpt
         FROM job_material_layout_boxes
-        WHERE job_url = ? AND generation = 2 AND artifact_id = 'edited-pdf'
+        WHERE tenant_id = 'local' AND job_id = ?
+          AND generation = 2 AND artifact_id = 'edited-pdf'
         """,
-        (url,),
+        (stable_job_id,),
     ).fetchone()
     assert dict(box) == {
         "semantic_id": "edited:line:1",
@@ -641,7 +652,7 @@ def test_list_pending_tailor_returns_jobs_without_materials(conn: sqlite3.Connec
     repo.save(_approved(url_done))
 
     pending = repo.list_pending_tailor(LOCAL_TENANT, min_score=7)
-    assert pending == [JobId(url_pending)]
+    assert pending == [_stable_job_id(conn, url_pending)]
 
 
 def test_list_pending_tailor_excludes_score_five_by_default(conn: sqlite3.Connection) -> None:
@@ -651,8 +662,8 @@ def test_list_pending_tailor_excludes_score_five_by_default(conn: sqlite3.Connec
 
     pending = repo.list_pending_tailor(LOCAL_TENANT, min_score=5)
 
-    assert JobId(url_low) not in pending
-    assert JobId(url_ok) in pending
+    assert _stable_job_id(conn, url_low) not in pending
+    assert _stable_job_id(conn, url_ok) in pending
 
 
 def test_list_pending_tailor_excludes_blocked_scores(conn: sqlite3.Connection) -> None:
@@ -663,8 +674,8 @@ def test_list_pending_tailor_excludes_blocked_scores(conn: sqlite3.Connection) -
 
     pending = repo.list_pending_tailor(LOCAL_TENANT, min_score=7)
 
-    assert JobId(url_allowed) in pending
-    assert JobId(url_blocked) not in pending
+    assert _stable_job_id(conn, url_allowed) in pending
+    assert _stable_job_id(conn, url_blocked) not in pending
 
 
 def test_list_pending_tailor_with_retailor_includes_already_done(conn: sqlite3.Connection) -> None:
@@ -673,7 +684,7 @@ def test_list_pending_tailor_with_retailor_includes_already_done(conn: sqlite3.C
     repo.save(_approved(url_done))
 
     retailor_pending = repo.list_pending_tailor(LOCAL_TENANT, min_score=7, retailor=True)
-    assert JobId(url_done) in retailor_pending
+    assert _stable_job_id(conn, url_done) in retailor_pending
 
 
 def test_list_pending_tailor_excludes_prior_approved_when_latest_generation_rejected(
@@ -686,7 +697,7 @@ def test_list_pending_tailor_excludes_prior_approved_when_latest_generation_reje
 
     pending = repo.list_pending_tailor(LOCAL_TENANT, min_score=7)
 
-    assert JobId(url_done) not in pending
+    assert _stable_job_id(conn, url_done) not in pending
 
 
 def test_list_pending_cover_returns_only_jobs_with_resume_no_cover(
@@ -706,7 +717,7 @@ def test_list_pending_cover_returns_only_jobs_with_resume_no_cover(
     repo.save(full)
 
     pending = repo.list_pending_cover(LOCAL_TENANT, min_score=7)
-    assert pending == [JobId(url_resume_only)]
+    assert pending == [_stable_job_id(conn, url_resume_only)]
 
 
 def test_list_pending_cover_uses_prior_approved_generation_when_latest_rejected(
@@ -719,7 +730,7 @@ def test_list_pending_cover_uses_prior_approved_generation_when_latest_rejected(
 
     pending = repo.list_pending_cover(LOCAL_TENANT, min_score=7)
 
-    assert pending == [JobId(url)]
+    assert pending == [_stable_job_id(conn, url)]
 
 
 def test_list_pending_cover_excludes_score_five_by_default(conn: sqlite3.Connection) -> None:
@@ -731,8 +742,8 @@ def test_list_pending_cover_excludes_score_five_by_default(conn: sqlite3.Connect
 
     pending = repo.list_pending_cover(LOCAL_TENANT, min_score=5)
 
-    assert JobId(url_low) not in pending
-    assert JobId(url_ok) in pending
+    assert _stable_job_id(conn, url_low) not in pending
+    assert _stable_job_id(conn, url_ok) in pending
 
 
 def test_list_pending_cover_excludes_blocked_scores(conn: sqlite3.Connection) -> None:
@@ -745,8 +756,8 @@ def test_list_pending_cover_excludes_blocked_scores(conn: sqlite3.Connection) ->
 
     pending = repo.list_pending_cover(LOCAL_TENANT, min_score=7)
 
-    assert JobId(url_allowed) in pending
-    assert JobId(url_blocked) not in pending
+    assert _stable_job_id(conn, url_allowed) in pending
+    assert _stable_job_id(conn, url_blocked) not in pending
 
 
 def test_list_pending_pdf_returns_jobs_missing_a_pdf(conn: sqlite3.Connection) -> None:
@@ -755,7 +766,7 @@ def test_list_pending_pdf_returns_jobs_missing_a_pdf(conn: sqlite3.Connection) -
     materials = _approved(url)
     repo.save(materials)
     pending = repo.list_pending_pdf(LOCAL_TENANT)
-    assert pending == [JobId(url)]
+    assert pending == [_stable_job_id(conn, url)]
 
 
 def test_list_by_status_returns_aggregates_with_matching_artifact_status(
@@ -766,7 +777,7 @@ def test_list_by_status_returns_aggregates_with_matching_artifact_status(
     repo.save(_approved(url))
     matches = repo.list_by_status(LOCAL_TENANT, ArtifactStatus.APPROVED)
     assert len(matches) == 1
-    assert str(matches[0].job_id) == url
+    assert matches[0].job_id == _stable_job_id(conn, url)
 
 
 def test_suppress_active_artifacts_hides_without_deleting_history(conn: sqlite3.Connection) -> None:
@@ -786,11 +797,16 @@ def test_suppress_active_artifacts_hides_without_deleting_history(conn: sqlite3.
     assert suppressed.tailored_resume.status is ArtifactStatus.SUPPRESSED
     assert suppressed.tailored_resume.metadata["suppression"]["reason"] == "threshold_raised"
     row_count = conn.execute(
-        "SELECT COUNT(*) FROM job_materials_artifacts WHERE job_url = ?",
-        (url,),
+        """
+        SELECT COUNT(*) FROM job_materials_artifacts
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (str(_stable_job_id(conn, url)),),
     ).fetchone()[0]
     assert row_count == 2
-    assert repo.list_pending_tailor(LOCAL_TENANT, min_score=7) == [JobId(url)]
+    assert repo.list_pending_tailor(LOCAL_TENANT, min_score=7) == [
+        _stable_job_id(conn, url)
+    ]
 
 
 def test_suppress_backfilled_legacy_job_makes_selectors_treat_paths_inactive(
@@ -994,7 +1010,13 @@ def test_backfill_is_idempotent(tmp_path: Path) -> None:
     ensure_materials_tables(conn)  # second call is a no-op
 
     count = conn.execute(
-        "SELECT COUNT(*) FROM job_materials WHERE job_url = ?",
+        """
+        SELECT COUNT(*) FROM job_materials
+        WHERE tenant_id = 'local' AND job_id = (
+            SELECT job_id FROM jobs
+            WHERE tenant_id = 'local' AND url = ?
+        )
+        """,
         ("https://example.com/legacy",),
     ).fetchone()[0]
     assert count == 1

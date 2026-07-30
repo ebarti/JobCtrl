@@ -59,6 +59,12 @@ def _insert_job(
         ),
     )
     if ready:
+        job_id = str(
+            conn.execute(
+                "SELECT job_id FROM jobs WHERE url = ?",
+                (url,),
+            ).fetchone()[0]
+        )
         conn.execute(
             """
             INSERT OR REPLACE INTO candidate_profiles (
@@ -70,10 +76,10 @@ def _insert_job(
         conn.execute(
             """
             INSERT INTO job_materials (
-              job_url, generation, tenant_id, status, created_at, updated_at
-            ) VALUES (?, 1, 'local', 'approved', ?, ?)
+              tenant_id, job_id, generation, status, created_at, updated_at
+            ) VALUES ('local', ?, 1, 'approved', ?, ?)
             """,
-            (url, NOW, NOW),
+            (job_id, NOW, NOW),
         )
         for artifact_type, artifact_id, path in (
             ("tailored_resume", f"resume-{url}", "/tmp/repeat-resume.txt"),
@@ -82,11 +88,11 @@ def _insert_job(
             conn.execute(
                 """
                 INSERT INTO job_materials_artifacts (
-                  job_url, generation, artifact_type, artifact_id, status, path,
-                  render_format, created_at
-                ) VALUES (?, 1, ?, ?, 'approved', ?, 'text', ?)
+                  tenant_id, job_id, generation, artifact_type, artifact_id,
+                  status, path, render_format, created_at
+                ) VALUES ('local', ?, 1, ?, ?, 'approved', ?, 'text', ?)
                 """,
-                (url, artifact_type, artifact_id, path, NOW),
+                (job_id, artifact_type, artifact_id, path, NOW),
             )
         ensure_job_stage_rows(conn, url)
     conn.commit()
@@ -744,7 +750,7 @@ def test_schema_v5_migrates_additively_without_changing_application_facts(
         (PRIOR,),
     ).fetchall()
 
-    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 14
+    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 15
     assert [tuple(row) for row in after] == [tuple(row) for row in before]
     assert "metadata_json" in {
         str(row[1]) for row in migrated.execute("PRAGMA table_info(job_stage_states)").fetchall()

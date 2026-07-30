@@ -864,7 +864,7 @@ def _load_tailor_eligible_job_by_url(
     row = conn.execute(
         f"""
         SELECT jobs.*, js.js_fit_score AS js_fit_score,
-               jm.jm_job_url AS jm_job_url,
+               jm.jm_job_id AS jm_job_id,
                jm.jm_tailored_path AS jm_tailored_path,
                jm.jm_tailored_at AS jm_tailored_at,
                jm.jm_cover_path AS jm_cover_path,
@@ -896,12 +896,12 @@ def _promote_tailor_job_row(row: sqlite3.Row) -> dict:
     js_value = record.pop("js_fit_score", None)
     if js_value is not None:
         record["fit_score"] = js_value
-    jm_job_url = record.pop("jm_job_url", None)
+    jm_job_id = record.pop("jm_job_id", None)
     jm_tailored = record.pop("jm_tailored_path", None)
     jm_tailored_at = record.pop("jm_tailored_at", None)
     jm_cover = record.pop("jm_cover_path", None)
     jm_cover_at = record.pop("jm_cover_at", None)
-    if jm_job_url is not None:
+    if jm_job_id is not None:
         record["tailored_resume_path"] = jm_tailored
         record["tailored_at"] = jm_tailored_at
         record["cover_letter_path"] = jm_cover

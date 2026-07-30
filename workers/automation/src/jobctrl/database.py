@@ -58,7 +58,11 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v14 (artifact registry references): generic per-job artifact registrations
 # reference ``(tenant_id, job_id)``. Alias collisions retain one current row per
 # registry key using the same last-write-wins rule as runtime artifact upserts.
-SCHEMA_VERSION = 14
+# v15 (materials references): generated-material generations, their artifact
+# slots, PDF layout audit boxes, and bullet provenance reference the stable Job
+# aggregate. Alias histories are deterministically interleaved and renumbered
+# together so no generation or dependent audit row is discarded.
+SCHEMA_VERSION = 15
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -203,6 +207,7 @@ def _schema_migrations() -> tuple[
         (12, ensure_scoring_references_v12),
         (13, ensure_stage_state_references_v13),
         (14, ensure_artifact_registry_references_v14),
+        (15, ensure_materials_references_v15),
     )
 
 
@@ -2445,7 +2450,8 @@ def ensure_materials_tables(conn: sqlite3.Connection | None = None) -> list[str]
     See ddd-target.md §4.5 / §7.2. Two tables form the persistence side
     of the Phase-6 :class:`MaterialsSet` aggregate:
 
-      * ``job_materials`` — one row per ``(job_url, generation)`` aggregate.
+      * ``job_materials`` — one row per tenant-scoped stable
+        ``(job_id, generation)`` aggregate.
       * ``job_materials_artifacts`` — one row per artifact slot per
         aggregate (``tailored_resume``, ``cover_letter``, ``resume_pdf``,
         ``cover_letter_pdf``).
@@ -2467,107 +2473,148 @@ def ensure_materials_tables(conn: sqlite3.Connection | None = None) -> list[str]
     if conn is None:
         conn = get_connection()
 
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS job_materials (
-            job_url             TEXT NOT NULL,
-            generation          INTEGER NOT NULL,
-            tenant_id           TEXT NOT NULL DEFAULT 'local',
-            status              TEXT NOT NULL,
-            created_at          TEXT NOT NULL,
-            updated_at          TEXT NOT NULL,
-            last_validation_json TEXT,
-            last_verdict_json    TEXT,
-            metadata_json       TEXT,
-            PRIMARY KEY (job_url, generation),
-            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+    current_schema_version = _assert_schema_version_supported(conn)
+    if current_schema_version >= _MATERIALS_REFERENCE_SCHEMA_VERSION:
+        _create_materials_tables_v15(conn)
+        _create_materials_indexes_v15(conn)
+    else:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS job_materials (
+                job_url             TEXT NOT NULL,
+                generation          INTEGER NOT NULL,
+                tenant_id           TEXT NOT NULL DEFAULT 'local',
+                status              TEXT NOT NULL,
+                created_at          TEXT NOT NULL,
+                updated_at          TEXT NOT NULL,
+                last_validation_json TEXT,
+                last_verdict_json    TEXT,
+                metadata_json       TEXT,
+                PRIMARY KEY (job_url, generation),
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            )
+            """
         )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS job_materials_artifacts (
-            job_url             TEXT NOT NULL,
-            generation          INTEGER NOT NULL,
-            artifact_type       TEXT NOT NULL,
-            artifact_id         TEXT NOT NULL,
-            status              TEXT NOT NULL,
-            path                TEXT NOT NULL,
-            render_format       TEXT NOT NULL,
-            size_bytes          INTEGER,
-            metadata_json       TEXT,
-            created_at          TEXT NOT NULL,
-            superseded_at       TEXT,
-            PRIMARY KEY (job_url, generation, artifact_type),
-            FOREIGN KEY (job_url, generation) REFERENCES job_materials(job_url, generation)
-                ON DELETE CASCADE
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS job_materials_artifacts (
+                job_url             TEXT NOT NULL,
+                generation          INTEGER NOT NULL,
+                artifact_type       TEXT NOT NULL,
+                artifact_id         TEXT NOT NULL,
+                status              TEXT NOT NULL,
+                path                TEXT NOT NULL,
+                render_format       TEXT NOT NULL,
+                size_bytes          INTEGER,
+                metadata_json       TEXT,
+                created_at          TEXT NOT NULL,
+                superseded_at       TEXT,
+                PRIMARY KEY (job_url, generation, artifact_type),
+                FOREIGN KEY (job_url, generation)
+                    REFERENCES job_materials(job_url, generation)
+                    ON DELETE CASCADE
+            )
+            """
         )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS job_material_layout_boxes (
-            job_url             TEXT NOT NULL,
-            generation          INTEGER NOT NULL,
-            artifact_id         TEXT NOT NULL,
-            box_index           INTEGER NOT NULL,
-            tenant_id           TEXT NOT NULL DEFAULT 'local',
-            semantic_id         TEXT NOT NULL,
-            page_number         INTEGER NOT NULL,
-            line_number         INTEGER,
-            text_excerpt        TEXT NOT NULL,
-            left_pct            REAL NOT NULL,
-            top_pct             REAL NOT NULL,
-            width_pct           REAL NOT NULL,
-            height_pct          REAL NOT NULL,
-            audit_target_json   TEXT NOT NULL DEFAULT '{}',
-            created_at          TEXT NOT NULL,
-            PRIMARY KEY (job_url, generation, artifact_id, box_index),
-            FOREIGN KEY (job_url, generation) REFERENCES job_materials(job_url, generation)
-                ON DELETE CASCADE
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS job_material_layout_boxes (
+                job_url             TEXT NOT NULL,
+                generation          INTEGER NOT NULL,
+                artifact_id         TEXT NOT NULL,
+                box_index           INTEGER NOT NULL,
+                tenant_id           TEXT NOT NULL DEFAULT 'local',
+                semantic_id         TEXT NOT NULL,
+                page_number         INTEGER NOT NULL,
+                line_number         INTEGER,
+                text_excerpt        TEXT NOT NULL,
+                left_pct            REAL NOT NULL,
+                top_pct             REAL NOT NULL,
+                width_pct           REAL NOT NULL,
+                height_pct          REAL NOT NULL,
+                audit_target_json   TEXT NOT NULL DEFAULT '{}',
+                created_at          TEXT NOT NULL,
+                PRIMARY KEY (
+                    job_url, generation, artifact_id, box_index
+                ),
+                FOREIGN KEY (job_url, generation)
+                    REFERENCES job_materials(job_url, generation)
+                    ON DELETE CASCADE
+            )
+            """
         )
-        """
-    )
-    # Indexes for the queue selectors (mirror the §7.2 read fragments).
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_job_materials_tenant_job_gen
-        ON job_materials(tenant_id, job_url, generation DESC)
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_job_materials_artifacts_status
-        ON job_materials_artifacts(artifact_type, status, created_at DESC)
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_job_material_layout_boxes_artifact
-        ON job_material_layout_boxes(tenant_id, artifact_id, page_number, box_index)
-        """
-    )
+        # Indexes for the queue selectors (mirror the §7.2 read fragments).
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_job_materials_tenant_job_gen
+            ON job_materials(tenant_id, job_url, generation DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_job_materials_artifacts_status
+            ON job_materials_artifacts(
+                artifact_type, status, created_at DESC
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_job_material_layout_boxes_artifact
+            ON job_material_layout_boxes(
+                tenant_id, artifact_id, page_number, box_index
+            )
+            """
+        )
 
-    # Idempotent backfill from the legacy ``jobs`` columns. Fires only
-    # when ``job_materials`` is empty.
-    backfill_count = conn.execute("SELECT COUNT(*) FROM job_materials").fetchone()[0]
-    if backfill_count == 0:
-        legacy_rows = conn.execute(
-            """
-            SELECT url, tailored_resume_path, tailored_at,
-                   cover_letter_path, cover_letter_at
-            FROM jobs
-            WHERE tailored_resume_path IS NOT NULL
-              AND tailored_resume_path != ''
-            """
-        ).fetchall()
-        if legacy_rows:
-            now = datetime.now(timezone.utc).isoformat()
-            for row in legacy_rows:
-                _backfill_one_materials_row(conn, row, now)
+    _backfill_legacy_materials_if_empty(conn)
 
     conn.commit()
     return ["job_materials", "job_materials_artifacts", "job_material_layout_boxes"]
+
+
+def _backfill_legacy_materials_if_empty(
+    conn: sqlite3.Connection,
+) -> None:
+    """Backfill legacy paths once their owning job identity is available."""
+    backfill_count = conn.execute("SELECT COUNT(*) FROM job_materials").fetchone()[0]
+    if backfill_count != 0:
+        return
+
+    stable_schema = "job_id" in _table_columns(conn, "job_materials")
+    jobs_columns = _table_columns(conn, "jobs")
+    stable_jobs = {"tenant_id", "job_id"} <= jobs_columns
+    if stable_schema and not stable_jobs:
+        # A paired pre-v7 recovery snapshot can contain the newer material
+        # table shape while the jobs authority has been restored to v6.
+        # The ordered v15 migration retries this after stable identity exists.
+        return
+
+    legacy_rows = conn.execute(
+        """
+        SELECT tenant_id, job_id, url,
+               tailored_resume_path, tailored_at,
+               cover_letter_path, cover_letter_at
+        FROM jobs
+        WHERE tailored_resume_path IS NOT NULL
+          AND tailored_resume_path != ''
+        """
+        if stable_schema
+        else """
+        SELECT 'local' AS tenant_id, NULL AS job_id, url,
+               tailored_resume_path, tailored_at,
+               cover_letter_path, cover_letter_at
+        FROM jobs
+        WHERE tailored_resume_path IS NOT NULL
+          AND tailored_resume_path != ''
+        """
+    ).fetchall()
+    if not legacy_rows:
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+    for row in legacy_rows:
+        _backfill_one_materials_row(conn, row, now)
 
 
 def ensure_resume_template_tables(conn: sqlite3.Connection | None = None) -> list[str]:
@@ -2745,7 +2792,9 @@ def _backfill_one_materials_row(
     import os
     import uuid as _uuid
 
-    url = row["url"]
+    tenant_id = str(row["tenant_id"] or "local")
+    url = str(row["url"])
+    job_id = str(row["job_id"] or "")
     tailor_path = row["tailored_resume_path"]
     tailor_at = row["tailored_at"] or now
     cover_path = row["cover_letter_path"]
@@ -2772,22 +2821,44 @@ def _backfill_one_materials_row(
     if resume_pdf and cover_pdf and cover_path:
         status = "complete"
 
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO job_materials (
-            job_url, generation, tenant_id, status,
-            created_at, updated_at,
-            last_validation_json, last_verdict_json, metadata_json
-        ) VALUES (?, 1, 'local', ?, ?, ?, NULL, NULL, ?)
-        """,
-        (
-            url,
-            status,
-            tailor_at,
-            cover_at if cover_path else tailor_at,
-            json.dumps({"backfilled": True}, sort_keys=True),
-        ),
-    )
+    stable_schema = "job_id" in _table_columns(conn, "job_materials")
+    if stable_schema:
+        _validate_job_uuid(job_id)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO job_materials (
+                tenant_id, job_id, generation, status,
+                created_at, updated_at,
+                last_validation_json, last_verdict_json, metadata_json
+            ) VALUES (?, ?, 1, ?, ?, ?, NULL, NULL, ?)
+            """,
+            (
+                tenant_id,
+                job_id,
+                status,
+                tailor_at,
+                cover_at if cover_path else tailor_at,
+                json.dumps({"backfilled": True}, sort_keys=True),
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO job_materials (
+                job_url, generation, tenant_id, status,
+                created_at, updated_at,
+                last_validation_json, last_verdict_json, metadata_json
+            ) VALUES (?, 1, ?, ?, ?, ?, NULL, NULL, ?)
+            """,
+            (
+                url,
+                tenant_id,
+                status,
+                tailor_at,
+                cover_at if cover_path else tailor_at,
+                json.dumps({"backfilled": True}, sort_keys=True),
+            ),
+        )
 
     def _size(path: str | None) -> int | None:
         if not path:
@@ -2808,25 +2879,47 @@ def _backfill_one_materials_row(
         artifacts.append(("cover_letter_pdf", cover_pdf, "html_pdf", _size(cover_pdf), cover_at))
 
     for artifact_type, path, render_format, size, created in artifacts:
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO job_materials_artifacts (
-                job_url, generation, artifact_type, artifact_id,
-                status, path, render_format, size_bytes,
-                metadata_json, created_at, superseded_at
-            ) VALUES (?, 1, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)
-            """,
-            (
-                url,
-                artifact_type,
-                _uuid.uuid4().hex,
-                path,
-                render_format,
-                size,
-                json.dumps({"backfilled": True}, sort_keys=True),
-                created,
-            ),
-        )
+        if stable_schema:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO job_materials_artifacts (
+                    tenant_id, job_id, generation, artifact_type,
+                    artifact_id, status, path, render_format, size_bytes,
+                    metadata_json, created_at, superseded_at
+                ) VALUES (?, ?, 1, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    tenant_id,
+                    job_id,
+                    artifact_type,
+                    _uuid.uuid4().hex,
+                    path,
+                    render_format,
+                    size,
+                    json.dumps({"backfilled": True}, sort_keys=True),
+                    created,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO job_materials_artifacts (
+                    job_url, generation, artifact_type, artifact_id,
+                    status, path, render_format, size_bytes,
+                    metadata_json, created_at, superseded_at
+                ) VALUES (?, 1, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    url,
+                    artifact_type,
+                    _uuid.uuid4().hex,
+                    path,
+                    render_format,
+                    size,
+                    json.dumps({"backfilled": True}, sort_keys=True),
+                    created,
+                ),
+            )
 
 
 def ensure_employer_analysis_tables(conn: sqlite3.Connection | None = None) -> list[str]:
@@ -2951,7 +3044,8 @@ def ensure_bullet_provenance_tables(conn: sqlite3.Connection | None = None) -> l
     audit data is stored as CANONICAL ROWS — never inside an artifact
     ``metadata_json`` blob:
 
-      * ``job_bullet_provenance`` — one row per ``(job_url, generation, bullet_id)``.
+      * ``job_bullet_provenance`` — one row per tenant-scoped stable
+        ``(job_id, generation, bullet_id)``.
         Bound to the ``job_materials`` generation it explains and to the specific
         ``artifact_id`` (the tailored resume) it was computed against. FK ids
         (``evidence_ids_json`` / ``requirement_ids_json``) reference real profile
@@ -2967,33 +3061,38 @@ def ensure_bullet_provenance_tables(conn: sqlite3.Connection | None = None) -> l
     if conn is None:
         conn = get_connection()
 
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS job_bullet_provenance (
-            job_url             TEXT NOT NULL,
-            generation          INTEGER NOT NULL,
-            bullet_id           TEXT NOT NULL,
-            tenant_id           TEXT NOT NULL DEFAULT 'local',
-            artifact_id         TEXT NOT NULL,
-            section             TEXT NOT NULL,
-            source_id           TEXT,
-            evidence_ids_json   TEXT NOT NULL DEFAULT '[]',
-            requirement_ids_json TEXT NOT NULL DEFAULT '[]',
-            matched_keywords_json TEXT NOT NULL DEFAULT '[]',
-            transform_type      TEXT NOT NULL,
-            control             TEXT NOT NULL,
-            rationale           TEXT NOT NULL DEFAULT '',
-            generated_text      TEXT NOT NULL,
-            position            INTEGER NOT NULL DEFAULT 0,
-            created_at          TEXT NOT NULL,
-            coverage_json       TEXT,
-            voice_json          TEXT,
-            PRIMARY KEY (job_url, generation, bullet_id),
-            FOREIGN KEY (job_url, generation)
-                REFERENCES job_materials(job_url, generation) ON DELETE CASCADE
+    current_schema_version = _assert_schema_version_supported(conn)
+    if current_schema_version >= _MATERIALS_REFERENCE_SCHEMA_VERSION:
+        _create_bullet_provenance_v15(conn)
+    else:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS job_bullet_provenance (
+                job_url             TEXT NOT NULL,
+                generation          INTEGER NOT NULL,
+                bullet_id           TEXT NOT NULL,
+                tenant_id           TEXT NOT NULL DEFAULT 'local',
+                artifact_id         TEXT NOT NULL,
+                section             TEXT NOT NULL,
+                source_id           TEXT,
+                evidence_ids_json   TEXT NOT NULL DEFAULT '[]',
+                requirement_ids_json TEXT NOT NULL DEFAULT '[]',
+                matched_keywords_json TEXT NOT NULL DEFAULT '[]',
+                transform_type      TEXT NOT NULL,
+                control             TEXT NOT NULL,
+                rationale           TEXT NOT NULL DEFAULT '',
+                generated_text      TEXT NOT NULL,
+                position            INTEGER NOT NULL DEFAULT 0,
+                created_at          TEXT NOT NULL,
+                coverage_json       TEXT,
+                voice_json          TEXT,
+                PRIMARY KEY (job_url, generation, bullet_id),
+                FOREIGN KEY (job_url, generation)
+                    REFERENCES job_materials(job_url, generation)
+                    ON DELETE CASCADE
+            )
+            """
         )
-        """
-    )
     # Phase 3: generation-time keyword coverage (GROUND-06) + voice-pass audit
     # (VOICE-02) are set-level facts stored alongside the bullets they were
     # computed against. They are denormalised onto every row of the generation
@@ -3008,10 +3107,17 @@ def ensure_bullet_provenance_tables(conn: sqlite3.Connection | None = None) -> l
     if "voice_json" not in existing_cols:
         conn.execute("ALTER TABLE job_bullet_provenance ADD COLUMN voice_json TEXT")
     # Selector for the read path: latest generation's rows for a job/artifact.
+    reference_column = (
+        "job_id"
+        if "job_id" in _table_columns(conn, "job_bullet_provenance")
+        else "job_url"
+    )
     conn.execute(
-        """
+        f"""
         CREATE INDEX IF NOT EXISTS idx_job_bullet_provenance_tenant_job_gen
-        ON job_bullet_provenance(tenant_id, job_url, generation DESC)
+        ON job_bullet_provenance(
+            tenant_id, {reference_column}, generation DESC
+        )
         """
     )
     conn.execute(
@@ -4341,6 +4447,13 @@ def _reassign_discovery_identity_references(
         )
     if _has_artifact_registry_reference_schema_v14(conn):
         _reassign_artifact_registry_references_v14(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+    if _has_materials_reference_schema_v15(conn):
+        _reassign_materials_references_v15(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
@@ -8723,6 +8836,920 @@ def _reassign_artifact_registry_references_v14(
     )
 
 
+_MATERIALS_REFERENCE_SCHEMA_VERSION = 15
+_MATERIALS_REFERENCE_TABLES = (
+    "job_materials",
+    "job_materials_artifacts",
+    "job_material_layout_boxes",
+    "job_bullet_provenance",
+)
+
+
+def _create_materials_tables_v15(
+    conn: sqlite3.Connection,
+    *,
+    materials_table: str = "job_materials",
+    artifacts_table: str = "job_materials_artifacts",
+    layout_table: str = "job_material_layout_boxes",
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {materials_table} (
+            tenant_id            TEXT NOT NULL DEFAULT 'local',
+            job_id               TEXT NOT NULL,
+            generation           INTEGER NOT NULL CHECK(generation > 0),
+            status               TEXT NOT NULL,
+            created_at           TEXT NOT NULL,
+            updated_at           TEXT NOT NULL,
+            last_validation_json TEXT,
+            last_verdict_json    TEXT,
+            metadata_json        TEXT,
+            PRIMARY KEY (tenant_id, job_id, generation),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {artifacts_table} (
+            tenant_id      TEXT NOT NULL DEFAULT 'local',
+            job_id         TEXT NOT NULL,
+            generation     INTEGER NOT NULL CHECK(generation > 0),
+            artifact_type  TEXT NOT NULL,
+            artifact_id    TEXT NOT NULL,
+            status         TEXT NOT NULL,
+            path           TEXT NOT NULL,
+            render_format  TEXT NOT NULL,
+            size_bytes     INTEGER,
+            metadata_json  TEXT,
+            created_at     TEXT NOT NULL,
+            superseded_at  TEXT,
+            PRIMARY KEY (
+                tenant_id, job_id, generation, artifact_type
+            ),
+            FOREIGN KEY (tenant_id, job_id, generation)
+                REFERENCES {materials_table}(
+                    tenant_id, job_id, generation
+                ) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {layout_table} (
+            tenant_id         TEXT NOT NULL DEFAULT 'local',
+            job_id            TEXT NOT NULL,
+            generation        INTEGER NOT NULL CHECK(generation > 0),
+            artifact_id       TEXT NOT NULL,
+            box_index         INTEGER NOT NULL,
+            semantic_id       TEXT NOT NULL,
+            page_number       INTEGER NOT NULL,
+            line_number       INTEGER,
+            text_excerpt      TEXT NOT NULL,
+            left_pct          REAL NOT NULL,
+            top_pct           REAL NOT NULL,
+            width_pct         REAL NOT NULL,
+            height_pct        REAL NOT NULL,
+            audit_target_json TEXT NOT NULL DEFAULT '{{}}',
+            created_at        TEXT NOT NULL,
+            PRIMARY KEY (
+                tenant_id, job_id, generation, artifact_id, box_index
+            ),
+            FOREIGN KEY (tenant_id, job_id, generation)
+                REFERENCES {materials_table}(
+                    tenant_id, job_id, generation
+                ) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_bullet_provenance_v15(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str = "job_bullet_provenance",
+    materials_table: str = "job_materials",
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            tenant_id               TEXT NOT NULL DEFAULT 'local',
+            job_id                  TEXT NOT NULL,
+            generation              INTEGER NOT NULL CHECK(generation > 0),
+            bullet_id               TEXT NOT NULL,
+            artifact_id             TEXT NOT NULL,
+            section                 TEXT NOT NULL,
+            source_id               TEXT,
+            evidence_ids_json       TEXT NOT NULL DEFAULT '[]',
+            requirement_ids_json    TEXT NOT NULL DEFAULT '[]',
+            matched_keywords_json   TEXT NOT NULL DEFAULT '[]',
+            transform_type          TEXT NOT NULL,
+            control                 TEXT NOT NULL,
+            rationale               TEXT NOT NULL DEFAULT '',
+            generated_text          TEXT NOT NULL,
+            position                INTEGER NOT NULL DEFAULT 0,
+            created_at              TEXT NOT NULL,
+            coverage_json           TEXT,
+            voice_json              TEXT,
+            PRIMARY KEY (
+                tenant_id, job_id, generation, bullet_id
+            ),
+            FOREIGN KEY (tenant_id, job_id, generation)
+                REFERENCES {materials_table}(
+                    tenant_id, job_id, generation
+                ) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_materials_indexes_v15(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_materials_tenant_job_gen
+        ON job_materials(tenant_id, job_id, generation DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_materials_artifacts_status
+        ON job_materials_artifacts(
+            artifact_type, status, created_at DESC
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_material_layout_boxes_artifact
+        ON job_material_layout_boxes(
+            tenant_id, artifact_id, page_number, box_index
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_bullet_provenance_tenant_job_gen
+        ON job_bullet_provenance(tenant_id, job_id, generation DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_bullet_provenance_artifact
+        ON job_bullet_provenance(tenant_id, artifact_id)
+        """
+    )
+
+
+def _has_materials_reference_schema_v15(
+    conn: sqlite3.Connection,
+) -> bool:
+    return (
+        "job_id" in _table_columns(conn, "job_materials")
+        and "job_url" not in _table_columns(conn, "job_materials")
+        and _primary_key_columns(conn, "job_materials")
+        == ("tenant_id", "job_id", "generation")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "job_materials",
+            "job_id",
+        )
+        and "job_id" in _table_columns(
+            conn,
+            "job_materials_artifacts",
+        )
+        and "job_url" not in _table_columns(
+            conn,
+            "job_materials_artifacts",
+        )
+        and _primary_key_columns(conn, "job_materials_artifacts")
+        == ("tenant_id", "job_id", "generation", "artifact_type")
+        and _has_composite_foreign_key(
+            conn,
+            "job_materials_artifacts",
+            "job_materials",
+            {
+                ("tenant_id", "tenant_id"),
+                ("job_id", "job_id"),
+                ("generation", "generation"),
+            },
+            on_delete="CASCADE",
+        )
+        and "job_id" in _table_columns(
+            conn,
+            "job_material_layout_boxes",
+        )
+        and "job_url" not in _table_columns(
+            conn,
+            "job_material_layout_boxes",
+        )
+        and _primary_key_columns(conn, "job_material_layout_boxes")
+        == (
+            "tenant_id",
+            "job_id",
+            "generation",
+            "artifact_id",
+            "box_index",
+        )
+        and _has_composite_foreign_key(
+            conn,
+            "job_material_layout_boxes",
+            "job_materials",
+            {
+                ("tenant_id", "tenant_id"),
+                ("job_id", "job_id"),
+                ("generation", "generation"),
+            },
+            on_delete="CASCADE",
+        )
+        and "job_id" in _table_columns(
+            conn,
+            "job_bullet_provenance",
+        )
+        and "job_url" not in _table_columns(
+            conn,
+            "job_bullet_provenance",
+        )
+        and _primary_key_columns(conn, "job_bullet_provenance")
+        == ("tenant_id", "job_id", "generation", "bullet_id")
+        and _has_composite_foreign_key(
+            conn,
+            "job_bullet_provenance",
+            "job_materials",
+            {
+                ("tenant_id", "tenant_id"),
+                ("job_id", "job_id"),
+                ("generation", "generation"),
+            },
+            on_delete="CASCADE",
+        )
+        and _has_index(
+            conn,
+            "job_materials",
+            "idx_job_materials_tenant_job_gen",
+            ("tenant_id", "job_id", "generation"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_materials_artifacts",
+            "idx_job_materials_artifacts_status",
+            ("artifact_type", "status", "created_at"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_material_layout_boxes",
+            "idx_job_material_layout_boxes_artifact",
+            ("tenant_id", "artifact_id", "page_number", "box_index"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_bullet_provenance",
+            "idx_job_bullet_provenance_tenant_job_gen",
+            ("tenant_id", "job_id", "generation"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_bullet_provenance",
+            "idx_job_bullet_provenance_artifact",
+            ("tenant_id", "artifact_id"),
+            unique=False,
+        )
+    )
+
+
+def _merge_material_histories_preserving_generation_order_v15(
+    history: list[tuple[str, int, tuple[Any, ...]]],
+) -> list[tuple[str, int, tuple[Any, ...]]]:
+    """Interleave URL-alias histories without reversing either history."""
+    by_reference: dict[str, list[tuple[str, int, tuple[Any, ...]]]] = {}
+    for entry in history:
+        by_reference.setdefault(entry[0], []).append(entry)
+    for entries in by_reference.values():
+        entries.sort(key=lambda entry: entry[1])
+
+    offsets = {reference: 0 for reference in by_reference}
+    merged: list[tuple[str, int, tuple[Any, ...]]] = []
+    while len(merged) < len(history):
+        eligible = [
+            entries[offsets[reference]]
+            for reference, entries in by_reference.items()
+            if offsets[reference] < len(entries)
+        ]
+        selected = min(
+            eligible,
+            key=lambda entry: (
+                str(entry[2][1]),
+                entry[0],
+                entry[1],
+            ),
+        )
+        merged.append(selected)
+        offsets[selected[0]] += 1
+    return merged
+
+
+def _canonical_material_rows_v15(
+    conn: sqlite3.Connection,
+) -> tuple[
+    list[tuple[Any, ...]],
+    dict[tuple[str, str, int], int],
+]:
+    rows = conn.execute(
+        """
+        SELECT tenant_id, job_url, generation, status, created_at, updated_at,
+               last_validation_json, last_verdict_json, metadata_json
+        FROM job_materials
+        ORDER BY tenant_id, job_url, generation
+        """
+    ).fetchall()
+    grouped: dict[
+        tuple[str, str],
+        list[tuple[str, int, tuple[Any, ...]]],
+    ] = {}
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        old_generation = int(row[2])
+        if old_generation <= 0:
+            raise RuntimeError(
+                "materials reference migration found a non-positive "
+                "generation"
+            )
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=True,
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "materials reference migration could not resolve "
+                f"job_materials.job_url={raw_reference!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        grouped.setdefault((tenant_id, stable_job_id), []).append(
+            (
+                raw_reference,
+                old_generation,
+                tuple(row[3:]),
+            )
+        )
+
+    canonical: list[tuple[Any, ...]] = []
+    generation_map: dict[tuple[str, str, int], int] = {}
+    for (tenant_id, stable_job_id), history in sorted(grouped.items()):
+        ordered = _merge_material_histories_preserving_generation_order_v15(
+            history
+        )
+        for new_generation, (
+            raw_reference,
+            old_generation,
+            values,
+        ) in enumerate(ordered, start=1):
+            generation_map[
+                (tenant_id, raw_reference, old_generation)
+            ] = new_generation
+            canonical.append(
+                (
+                    tenant_id,
+                    stable_job_id,
+                    new_generation,
+                    *values,
+                )
+            )
+    return canonical, generation_map
+
+
+def _canonical_material_artifact_rows_v15(
+    conn: sqlite3.Connection,
+    *,
+    generation_map: dict[tuple[str, str, int], int],
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        """
+        SELECT m.tenant_id, artifact.job_url, artifact.generation,
+               artifact.artifact_type, artifact.artifact_id,
+               artifact.status, artifact.path, artifact.render_format,
+               artifact.size_bytes, artifact.metadata_json,
+               artifact.created_at, artifact.superseded_at
+        FROM job_materials_artifacts AS artifact
+        JOIN job_materials AS m
+          ON m.job_url = artifact.job_url
+         AND m.generation = artifact.generation
+        ORDER BY m.tenant_id, artifact.job_url, artifact.generation,
+                 artifact.artifact_type
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        old_generation = int(row[2])
+        new_generation = generation_map.get(
+            (tenant_id, raw_reference, old_generation)
+        )
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=True,
+        )
+        if new_generation is None or stable_job_id is None:
+            raise RuntimeError(
+                "materials reference migration found an artifact without "
+                "its material generation"
+            )
+        canonical.append(
+            (
+                tenant_id,
+                stable_job_id,
+                new_generation,
+                *tuple(row[3:]),
+            )
+        )
+    return canonical
+
+
+def _canonical_material_layout_rows_v15(
+    conn: sqlite3.Connection,
+    *,
+    generation_map: dict[tuple[str, str, int], int],
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        """
+        SELECT tenant_id, job_url, generation, artifact_id, box_index,
+               semantic_id, page_number, line_number, text_excerpt,
+               left_pct, top_pct, width_pct, height_pct,
+               audit_target_json, created_at
+        FROM job_material_layout_boxes
+        ORDER BY tenant_id, job_url, generation, artifact_id, box_index
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        old_generation = int(row[2])
+        new_generation = generation_map.get(
+            (tenant_id, raw_reference, old_generation)
+        )
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=True,
+        )
+        if new_generation is None or stable_job_id is None:
+            raise RuntimeError(
+                "materials reference migration found a layout box without "
+                "its material generation"
+            )
+        canonical.append(
+            (
+                tenant_id,
+                stable_job_id,
+                new_generation,
+                *tuple(row[3:]),
+            )
+        )
+    return canonical
+
+
+def _canonical_bullet_provenance_rows_v15(
+    conn: sqlite3.Connection,
+    *,
+    generation_map: dict[tuple[str, str, int], int],
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        """
+        SELECT tenant_id, job_url, generation, bullet_id, artifact_id,
+               section, source_id, evidence_ids_json,
+               requirement_ids_json, matched_keywords_json,
+               transform_type, control, rationale, generated_text,
+               position, created_at, coverage_json, voice_json
+        FROM job_bullet_provenance
+        ORDER BY tenant_id, job_url, generation, bullet_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        old_generation = int(row[2])
+        new_generation = generation_map.get(
+            (tenant_id, raw_reference, old_generation)
+        )
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=True,
+        )
+        if new_generation is None or stable_job_id is None:
+            raise RuntimeError(
+                "materials reference migration found bullet provenance "
+                "without its material generation"
+            )
+        canonical.append(
+            (
+                tenant_id,
+                stable_job_id,
+                new_generation,
+                *tuple(row[3:]),
+            )
+        )
+    return canonical
+
+
+def ensure_materials_references_v15(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move generated-material authorities to stable JobId references."""
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _MATERIALS_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _ARTIFACT_REGISTRY_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "materials reference migration requires artifact-registry "
+            "schema v14"
+        )
+
+    conn.execute("SAVEPOINT materials_references_v15")
+    try:
+        if not _has_artifact_registry_reference_schema_v14(conn):
+            raise RuntimeError(
+                "materials reference migration requires the stable "
+                "artifact-registry reference schema"
+            )
+        _backfill_legacy_materials_if_empty(conn)
+        before_counts = {
+            table: int(
+                conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            )
+            for table in _MATERIALS_REFERENCE_TABLES
+        }
+
+        if not _has_materials_reference_schema_v15(conn):
+            (
+                material_rows,
+                generation_map,
+            ) = _canonical_material_rows_v15(conn)
+            artifact_rows = _canonical_material_artifact_rows_v15(
+                conn,
+                generation_map=generation_map,
+            )
+            layout_rows = _canonical_material_layout_rows_v15(
+                conn,
+                generation_map=generation_map,
+            )
+            provenance_rows = _canonical_bullet_provenance_rows_v15(
+                conn,
+                generation_map=generation_map,
+            )
+
+            for table in (
+                "job_bullet_provenance_v15",
+                "job_material_layout_boxes_v15",
+                "job_materials_artifacts_v15",
+                "job_materials_v15",
+            ):
+                conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+            _create_materials_tables_v15(
+                conn,
+                materials_table="job_materials_v15",
+                artifacts_table="job_materials_artifacts_v15",
+                layout_table="job_material_layout_boxes_v15",
+            )
+            _create_bullet_provenance_v15(
+                conn,
+                table_name="job_bullet_provenance_v15",
+                materials_table="job_materials_v15",
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_materials_v15 (
+                    tenant_id, job_id, generation, status,
+                    created_at, updated_at, last_validation_json,
+                    last_verdict_json, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                material_rows,
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_materials_artifacts_v15 (
+                    tenant_id, job_id, generation, artifact_type,
+                    artifact_id, status, path, render_format, size_bytes,
+                    metadata_json, created_at, superseded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                artifact_rows,
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_material_layout_boxes_v15 (
+                    tenant_id, job_id, generation, artifact_id, box_index,
+                    semantic_id, page_number, line_number, text_excerpt,
+                    left_pct, top_pct, width_pct, height_pct,
+                    audit_target_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                layout_rows,
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_bullet_provenance_v15 (
+                    tenant_id, job_id, generation, bullet_id, artifact_id,
+                    section, source_id, evidence_ids_json,
+                    requirement_ids_json, matched_keywords_json,
+                    transform_type, control, rationale, generated_text,
+                    position, created_at, coverage_json, voice_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                provenance_rows,
+            )
+
+            for table in (
+                "job_bullet_provenance",
+                "job_material_layout_boxes",
+                "job_materials_artifacts",
+                "job_materials",
+            ):
+                conn.execute(f'DROP TABLE "{table}"')
+            for table in (
+                "job_materials",
+                "job_materials_artifacts",
+                "job_material_layout_boxes",
+                "job_bullet_provenance",
+            ):
+                conn.execute(
+                    f'ALTER TABLE "{table}_v15" RENAME TO "{table}"'
+                )
+            _create_materials_indexes_v15(conn)
+
+        _verify_materials_references_v15(
+            conn,
+            expected_counts=before_counts,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_MATERIALS_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute("RELEASE SAVEPOINT materials_references_v15")
+        conn.commit()
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT materials_references_v15")
+        conn.execute("RELEASE SAVEPOINT materials_references_v15")
+        raise
+
+    return list(_MATERIALS_REFERENCE_TABLES)
+
+
+def _verify_materials_references_v15(
+    conn: sqlite3.Connection,
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    if not _has_materials_reference_schema_v15(conn):
+        raise RuntimeError(
+            "materials reference migration did not install the canonical "
+            "schema"
+        )
+    for table, expected_count in expected_counts.items():
+        observed_count = int(
+            conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        )
+        if observed_count != expected_count:
+            raise RuntimeError(
+                "materials reference migration changed the canonical "
+                f"{table} row count: expected {expected_count}, "
+                f"found {observed_count}"
+            )
+    orphan = conn.execute(
+        """
+        SELECT materials.job_id
+        FROM job_materials AS materials
+        LEFT JOIN jobs j
+          ON j.tenant_id = materials.tenant_id
+         AND j.job_id = materials.job_id
+        WHERE j.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise RuntimeError(
+            "materials reference migration left an unresolved JobId"
+        )
+    for table in _MATERIALS_REFERENCE_TABLES:
+        for row in conn.execute(
+            f'SELECT DISTINCT job_id FROM "{table}"'
+        ).fetchall():
+            _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute("PRAGMA foreign_key_check").fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "materials reference migration found a foreign-key violation"
+        )
+
+
+def _reassign_materials_references_v15(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    """Merge complete material histories during stable Job identity collapse."""
+    if losing_job_id == surviving_job_id:
+        return
+    before_counts = {
+        table: int(
+            conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        )
+        for table in _MATERIALS_REFERENCE_TABLES
+    }
+    parent_rows = conn.execute(
+        """
+        SELECT job_id, generation, status, created_at, updated_at,
+               last_validation_json, last_verdict_json, metadata_json
+        FROM job_materials
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id, generation
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    if not parent_rows:
+        return
+
+    history = [
+        (
+            str(row[0]),
+            int(row[1]),
+            tuple(row[2:]),
+        )
+        for row in parent_rows
+    ]
+    ordered = _merge_material_histories_preserving_generation_order_v15(
+        history
+    )
+    generation_map: dict[tuple[str, int], int] = {}
+    material_rows: list[tuple[Any, ...]] = []
+    for new_generation, (
+        old_job_id,
+        old_generation,
+        values,
+    ) in enumerate(ordered, start=1):
+        generation_map[(old_job_id, old_generation)] = new_generation
+        material_rows.append(
+            (
+                tenant_id,
+                surviving_job_id,
+                new_generation,
+                *values,
+            )
+        )
+
+    artifact_source = conn.execute(
+        """
+        SELECT job_id, generation, artifact_type, artifact_id, status, path,
+               render_format, size_bytes, metadata_json, created_at,
+               superseded_at
+        FROM job_materials_artifacts
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id, generation, artifact_type
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    layout_source = conn.execute(
+        """
+        SELECT job_id, generation, artifact_id, box_index, semantic_id,
+               page_number, line_number, text_excerpt, left_pct, top_pct,
+               width_pct, height_pct, audit_target_json, created_at
+        FROM job_material_layout_boxes
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id, generation, artifact_id, box_index
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    provenance_source = conn.execute(
+        """
+        SELECT job_id, generation, bullet_id, artifact_id, section, source_id,
+               evidence_ids_json, requirement_ids_json,
+               matched_keywords_json, transform_type, control, rationale,
+               generated_text, position, created_at, coverage_json, voice_json
+        FROM job_bullet_provenance
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id, generation, bullet_id
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+
+    def _new_generation(row: sqlite3.Row) -> int:
+        mapped = generation_map.get((str(row[0]), int(row[1])))
+        if mapped is None:
+            raise RuntimeError(
+                "materials identity collapse found a dependent row without "
+                "its material generation"
+            )
+        return mapped
+
+    artifact_rows = [
+        (
+            tenant_id,
+            surviving_job_id,
+            _new_generation(row),
+            *tuple(row[2:]),
+        )
+        for row in artifact_source
+    ]
+    layout_rows = [
+        (
+            tenant_id,
+            surviving_job_id,
+            _new_generation(row),
+            *tuple(row[2:]),
+        )
+        for row in layout_source
+    ]
+    provenance_rows = [
+        (
+            tenant_id,
+            surviving_job_id,
+            _new_generation(row),
+            *tuple(row[2:]),
+        )
+        for row in provenance_source
+    ]
+
+    for table in (
+        "job_bullet_provenance",
+        "job_material_layout_boxes",
+        "job_materials_artifacts",
+        "job_materials",
+    ):
+        conn.execute(
+            f"""
+            DELETE FROM {table}
+            WHERE tenant_id = ? AND job_id IN (?, ?)
+            """,
+            (tenant_id, losing_job_id, surviving_job_id),
+        )
+    conn.executemany(
+        """
+        INSERT INTO job_materials (
+            tenant_id, job_id, generation, status, created_at, updated_at,
+            last_validation_json, last_verdict_json, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        material_rows,
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_materials_artifacts (
+            tenant_id, job_id, generation, artifact_type, artifact_id,
+            status, path, render_format, size_bytes, metadata_json,
+            created_at, superseded_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        artifact_rows,
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_material_layout_boxes (
+            tenant_id, job_id, generation, artifact_id, box_index,
+            semantic_id, page_number, line_number, text_excerpt,
+            left_pct, top_pct, width_pct, height_pct, audit_target_json,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        layout_rows,
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_bullet_provenance (
+            tenant_id, job_id, generation, bullet_id, artifact_id,
+            section, source_id, evidence_ids_json, requirement_ids_json,
+            matched_keywords_json, transform_type, control, rationale,
+            generated_text, position, created_at, coverage_json, voice_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        provenance_rows,
+    )
+    _verify_materials_references_v15(
+        conn,
+        expected_counts=before_counts,
+    )
+
+
 # ---------------------------------------------------------------------------
 # job_enrichments read fragments — used by every selector / stat that
 # previously read bare ``jobs.full_description`` / ``jobs.application_url``
@@ -8798,7 +9825,7 @@ _ENRICHMENT_NOT_QUARANTINED: str = (
 # job_materials read fragments — used by the queue selectors that
 # previously read bare ``jobs.tailored_resume_path`` / ``cover_letter_path``.
 # After Phase 6 the canonical artifact paths live in ``job_materials_artifacts``
-# (latest generation per ``job_url``); the legacy ``jobs.*_path`` columns
+# (latest generation per stable JobId); the legacy ``jobs.*_path`` columns
 # stay as read-only fallback for historical rows that have no canonical
 # materials row. Once ``job_materials`` exists, approved artifacts are the
 # only active paths; suppressed artifacts must not fall through to legacy
@@ -8809,50 +9836,58 @@ _ENRICHMENT_NOT_QUARANTINED: str = (
 # cover-letter artifact paths under fixed aliases.
 _LATEST_MATERIALS_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT history.job_url AS jm_job_url, latest.max_generation AS jm_generation, "
+    "SELECT history.tenant_id AS jm_tenant_id, "
+    "history.job_id AS jm_job_id, latest.max_generation AS jm_generation, "
     "m.status AS jm_status, "
     "tr.path AS jm_tailored_path, tr.created_at AS jm_tailored_at, "
     "cl.path AS jm_cover_path, cl.created_at AS jm_cover_at, "
     "rpdf.path AS jm_resume_pdf_path, rpdf.artifact_id AS jm_resume_pdf_artifact_id, "
     "cpdf.path AS jm_cover_pdf_path "
-    "FROM (SELECT DISTINCT job_url FROM job_materials) history "
+    "FROM (SELECT DISTINCT tenant_id, job_id FROM job_materials) history "
     "LEFT JOIN ("
-    "SELECT job_url, MAX(generation) AS max_generation "
+    "SELECT tenant_id, job_id, MAX(generation) AS max_generation "
     "FROM job_materials_artifacts "
     "WHERE status = 'approved' "
     "AND artifact_type IN ('tailored_resume', 'cover_letter', 'resume_pdf', 'cover_letter_pdf') "
-    "GROUP BY job_url"
-    ") latest ON latest.job_url = history.job_url "
+    "GROUP BY tenant_id, job_id"
+    ") latest ON latest.tenant_id = history.tenant_id "
+    "AND latest.job_id = history.job_id "
     "LEFT JOIN job_materials m "
-    "ON m.job_url = history.job_url AND m.generation = latest.max_generation "
+    "ON m.tenant_id = history.tenant_id AND m.job_id = history.job_id "
+    "AND m.generation = latest.max_generation "
     "LEFT JOIN job_materials_artifacts tr "
-    "ON tr.job_url = history.job_url AND tr.generation = latest.max_generation "
+    "ON tr.tenant_id = history.tenant_id AND tr.job_id = history.job_id "
+    "AND tr.generation = latest.max_generation "
     "AND tr.artifact_type = 'tailored_resume' AND tr.status = 'approved' "
     "LEFT JOIN job_materials_artifacts cl "
-    "ON cl.job_url = history.job_url AND cl.generation = latest.max_generation "
+    "ON cl.tenant_id = history.tenant_id AND cl.job_id = history.job_id "
+    "AND cl.generation = latest.max_generation "
     "AND cl.artifact_type = 'cover_letter' AND cl.status = 'approved' "
     "LEFT JOIN job_materials_artifacts rpdf "
-    "ON rpdf.job_url = history.job_url AND rpdf.generation = latest.max_generation "
+    "ON rpdf.tenant_id = history.tenant_id AND rpdf.job_id = history.job_id "
+    "AND rpdf.generation = latest.max_generation "
     "AND rpdf.artifact_type = 'resume_pdf' AND rpdf.status = 'approved' "
     "LEFT JOIN job_materials_artifacts cpdf "
-    "ON cpdf.job_url = history.job_url AND cpdf.generation = latest.max_generation "
+    "ON cpdf.tenant_id = history.tenant_id AND cpdf.job_id = history.job_id "
+    "AND cpdf.generation = latest.max_generation "
     "AND cpdf.artifact_type = 'cover_letter_pdf' AND cpdf.status = 'approved'"
-    ") jm ON jm.jm_job_url = jobs.url"
+    ") jm ON jm.jm_tenant_id = jobs.tenant_id "
+    "AND jm.jm_job_id = jobs.job_id"
 )
 
 _EFFECTIVE_TAILOR_PATH: str = (
-    "CASE WHEN jm.jm_job_url IS NOT NULL THEN jm.jm_tailored_path "
+    "CASE WHEN jm.jm_job_id IS NOT NULL THEN jm.jm_tailored_path "
     "ELSE jobs.tailored_resume_path END"
 )
 _EFFECTIVE_COVER_PATH: str = (
-    "CASE WHEN jm.jm_job_url IS NOT NULL THEN jm.jm_cover_path "
+    "CASE WHEN jm.jm_job_id IS NOT NULL THEN jm.jm_cover_path "
     "ELSE jobs.cover_letter_path END"
 )
 _READY_TAILORED_RESUME_WITH_PDF: str = (
-    "((jm.jm_job_url IS NOT NULL "
+    "((jm.jm_job_id IS NOT NULL "
     "AND jm.jm_tailored_path IS NOT NULL AND jm.jm_tailored_path != '' "
     "AND jm.jm_resume_pdf_path IS NOT NULL AND jm.jm_resume_pdf_path != '') "
-    "OR (jm.jm_job_url IS NULL "
+    "OR (jm.jm_job_id IS NULL "
     "AND jobs.tailored_resume_path IS NOT NULL AND jobs.tailored_resume_path != ''))"
 )
 
@@ -9613,7 +10648,7 @@ def get_jobs_by_stage(
     # round-trip through the repository.
     query = (
         f"SELECT jobs.*, js.js_fit_score AS js_fit_score, "
-        f"jm.jm_job_url AS jm_job_url, "
+        f"jm.jm_job_id AS jm_job_id, "
         f"jm.jm_tailored_path AS jm_tailored_path, "
         f"jm.jm_tailored_at AS jm_tailored_at, "
         f"jm.jm_cover_path AS jm_cover_path, "
@@ -9665,12 +10700,12 @@ def get_jobs_by_stage(
         js_value = record.pop("js_fit_score", None)
         if js_value is not None:
             record["fit_score"] = js_value
-        jm_job_url = record.pop("jm_job_url", None)
+        jm_job_id = record.pop("jm_job_id", None)
         jm_tailored = record.pop("jm_tailored_path", None)
         jm_tailored_at = record.pop("jm_tailored_at", None)
         jm_cover = record.pop("jm_cover_path", None)
         jm_cover_at = record.pop("jm_cover_at", None)
-        if jm_job_url is not None:
+        if jm_job_id is not None:
             record["tailored_resume_path"] = jm_tailored
             record["tailored_at"] = jm_tailored_at
             record["cover_letter_path"] = jm_cover

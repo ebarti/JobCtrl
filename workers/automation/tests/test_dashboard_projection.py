@@ -34,11 +34,17 @@ def _seed_job(conn: sqlite3.Connection, url: str, *, site: str = "ExampleCo") ->
     conn.commit()
 
 
+def _job_id(conn: sqlite3.Connection, url: str) -> str:
+    return str(
+        conn.execute(
+            "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+            (url,),
+        ).fetchone()[0]
+    )
+
+
 def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> None:
-    job_id = conn.execute(
-        "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
-        (url,),
-    ).fetchone()[0]
+    job_id = _job_id(conn, url)
     conn.execute(
         """
         INSERT INTO posting_snapshot_sets (
@@ -201,28 +207,30 @@ def test_artifact_projection_preserves_material_metadata(conn: sqlite3.Connectio
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-        ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}')
+            tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+        ) VALUES ('local', ?, 1, 'resume_approved', ?, ?, '{}')
         """,
-        (url, utc_now(), utc_now()),
+        (_job_id(conn, url), utc_now(), utc_now()),
     )
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
-            render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'tailored_resume', 'artifact-1', 'approved', ?, 'text', 12, ?, ?)
+            tenant_id, job_id, generation, artifact_type, artifact_id,
+            status, path, render_format, size_bytes, metadata_json, created_at
+        ) VALUES ('local', ?, 1, 'tailored_resume', 'artifact-1',
+                  'approved', ?, 'text', 12, ?, ?)
         """,
-        (url, "/tmp/resume.txt", json.dumps(metadata), utc_now()),
+        (_job_id(conn, url), "/tmp/resume.txt", json.dumps(metadata), utc_now()),
     )
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
-            render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'resume_pdf', 'artifact-pdf', 'approved', ?, 'pdf', 120, '{}', ?)
+            tenant_id, job_id, generation, artifact_type, artifact_id,
+            status, path, render_format, size_bytes, metadata_json, created_at
+        ) VALUES ('local', ?, 1, 'resume_pdf', 'artifact-pdf',
+                  'approved', ?, 'pdf', 120, '{}', ?)
         """,
-        (url, "/tmp/resume.pdf", utc_now()),
+        (_job_id(conn, url), "/tmp/resume.pdf", utc_now()),
     )
     record_job_event(conn, url, "tailor", "MaterialsGenerated")
     conn.commit()
@@ -255,30 +263,32 @@ def test_artifact_projection_includes_resume_layout_boxes(conn: sqlite3.Connecti
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-        ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}')
+            tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+        ) VALUES ('local', ?, 1, 'resume_approved', ?, ?, '{}')
         """,
-        (url, now, now),
+        (_job_id(conn, url), now, now),
     )
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
-            render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'resume_pdf', 'artifact-pdf', 'approved', ?, 'html_pdf', 120, '{}', ?)
+            tenant_id, job_id, generation, artifact_type, artifact_id,
+            status, path, render_format, size_bytes, metadata_json, created_at
+        ) VALUES ('local', ?, 1, 'resume_pdf', 'artifact-pdf',
+                  'approved', ?, 'html_pdf', 120, '{}', ?)
         """,
-        (url, "/tmp/resume.pdf", now),
+        (_job_id(conn, url), "/tmp/resume.pdf", now),
     )
     conn.execute(
         """
         INSERT INTO job_material_layout_boxes (
-            job_url, generation, artifact_id, box_index, tenant_id,
+            tenant_id, job_id, generation, artifact_id, box_index,
             semantic_id, page_number, line_number, text_excerpt,
             left_pct, top_pct, width_pct, height_pct, audit_target_json,
             created_at
-        ) VALUES (?, 1, 'artifact-pdf', 0, 'local', ?, 1, 6, ?, 12.5, 24.0, 62.0, 2.4, '{}', ?)
+        ) VALUES ('local', ?, 1, 'artifact-pdf', 0, ?, 1, 6, ?,
+                  12.5, 24.0, 62.0, 2.4, '{}', ?)
         """,
-        (url, "experience:acme:bullet:1", "Cut latency.", now),
+        (_job_id(conn, url), "experience:acme:bullet:1", "Cut latency.", now),
     )
     record_job_event(conn, url, "tailor", "PdfRendered")
     conn.commit()
@@ -515,20 +525,21 @@ def _record_material_metadata(
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-        ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}')
+            tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+        ) VALUES ('local', ?, 1, 'resume_approved', ?, ?, '{}')
         """,
-        (url, utc_now(), utc_now()),
+        (_job_id(conn, url), utc_now(), utc_now()),
     )
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
-            render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?, ?)
+            tenant_id, job_id, generation, artifact_type, artifact_id,
+            status, path, render_format, size_bytes, metadata_json, created_at
+        ) VALUES ('local', ?, 1, 'tailored_resume', ?, 'approved', ?,
+                  'text', 12, ?, ?)
         """,
         (
-            url,
+            _job_id(conn, url),
             f"resume-{url}",
             f"/tmp/{url.rsplit('/', 1)[-1]}.txt",
             json.dumps(metadata),
@@ -541,11 +552,11 @@ def _record_replacement_material_metadata(conn: sqlite3.Connection, url: str) ->
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-        ) VALUES (?, 2, 'local', 'resume_approved', ?, ?, ?)
+            tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+        ) VALUES ('local', ?, 2, 'resume_approved', ?, ?, ?)
         """,
         (
-            url,
+            _job_id(conn, url),
             utc_now(),
             utc_now(),
             json.dumps({"source": "resume_review_draft", "base_generation": 1}),
@@ -554,12 +565,13 @@ def _record_replacement_material_metadata(conn: sqlite3.Connection, url: str) ->
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
-            render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 2, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?, ?)
+            tenant_id, job_id, generation, artifact_type, artifact_id,
+            status, path, render_format, size_bytes, metadata_json, created_at
+        ) VALUES ('local', ?, 2, 'tailored_resume', ?, 'approved', ?,
+                  'text', 12, ?, ?)
         """,
         (
-            url,
+            _job_id(conn, url),
             f"replacement-{url}",
             f"/tmp/{url.rsplit('/', 1)[-1]}-replacement.txt",
             json.dumps(
@@ -804,8 +816,11 @@ def test_outcome_conversion_uses_artifact_metadata_without_parent_material_table
             template_name="Compatibility resume",
             policy_version=7,
         )
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
     conn.execute("DROP TABLE job_materials")
     conn.commit()
+    conn.execute("PRAGMA foreign_keys = ON")
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
     row = _dashboard(conn)

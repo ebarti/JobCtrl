@@ -849,12 +849,13 @@ def _material_generation_completed_stage(conn, job_url: str, stage: str) -> int 
     else:
         return None
 
+    tenant_id, job_id = _stable_stage_identity_for_url(conn, job_url)
     placeholders = ", ".join("?" for _ in required_artifacts)
     row = conn.execute(
         f"""
         SELECT generation
         FROM job_materials_artifacts
-        WHERE job_url = ?
+        WHERE tenant_id = ? AND job_id = ?
           AND status = 'approved'
           AND artifact_type IN ({placeholders})
         GROUP BY generation
@@ -862,7 +863,12 @@ def _material_generation_completed_stage(conn, job_url: str, stage: str) -> int 
         ORDER BY generation DESC
         LIMIT 1
         """,
-        (job_url, *required_artifacts, len(required_artifacts)),
+        (
+            tenant_id,
+            job_id,
+            *required_artifacts,
+            len(required_artifacts),
+        ),
     ).fetchone()
     if row is None:
         return None
@@ -1122,16 +1128,18 @@ def _reset_enrichment_aggregate(conn, job_url: str) -> None:
 
 
 def _resettable_material_generation(conn, job_url: str, stage: str) -> int | None:
+    tenant_id, job_id = _stable_stage_identity_for_url(conn, job_url)
     if stage == "tailor":
         row = conn.execute(
             """
             SELECT m.generation
             FROM job_materials m
-            WHERE m.job_url = ?
+            WHERE m.tenant_id = ? AND m.job_id = ?
               AND NOT EXISTS (
                 SELECT 1
                 FROM job_materials_artifacts a
-                WHERE a.job_url = m.job_url
+                WHERE a.tenant_id = m.tenant_id
+                  AND a.job_id = m.job_id
                   AND a.generation = m.generation
                   AND a.artifact_type = 'tailored_resume'
                   AND a.status = 'approved'
@@ -1139,18 +1147,19 @@ def _resettable_material_generation(conn, job_url: str, stage: str) -> int | Non
             ORDER BY m.generation DESC
             LIMIT 1
             """,
-            (job_url,),
+            (tenant_id, job_id),
         ).fetchone()
     elif stage == "cover":
         row = conn.execute(
             """
             SELECT m.generation
             FROM job_materials m
-            WHERE m.job_url = ?
+            WHERE m.tenant_id = ? AND m.job_id = ?
               AND EXISTS (
                 SELECT 1
                 FROM job_materials_artifacts a
-                WHERE a.job_url = m.job_url
+                WHERE a.tenant_id = m.tenant_id
+                  AND a.job_id = m.job_id
                   AND a.generation = m.generation
                   AND a.artifact_type = 'tailored_resume'
                   AND a.status = 'approved'
@@ -1158,7 +1167,8 @@ def _resettable_material_generation(conn, job_url: str, stage: str) -> int | Non
               AND NOT EXISTS (
                 SELECT 1
                 FROM job_materials_artifacts a
-                WHERE a.job_url = m.job_url
+                WHERE a.tenant_id = m.tenant_id
+                  AND a.job_id = m.job_id
                   AND a.generation = m.generation
                   AND a.artifact_type = 'cover_letter'
                   AND a.status = 'approved'
@@ -1166,7 +1176,7 @@ def _resettable_material_generation(conn, job_url: str, stage: str) -> int | Non
             ORDER BY m.generation DESC
             LIMIT 1
             """,
-            (job_url,),
+            (tenant_id, job_id),
         ).fetchone()
     else:
         return None
@@ -1208,16 +1218,24 @@ def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
         return
 
     placeholders = ", ".join("?" for _ in targets)
+    tenant_id, job_id = _stable_stage_identity_for_url(conn, job_url)
     conn.execute(
         f"DELETE FROM job_materials_artifacts "
-        f"WHERE job_url = ? AND generation = ? AND artifact_type IN ({placeholders})",
-        (job_url, generation, *targets),
+        f"WHERE tenant_id = ? AND job_id = ? "
+        f"AND generation = ? AND artifact_type IN ({placeholders})",
+        (tenant_id, job_id, generation, *targets),
     )
     if new_status is not None:
         conn.execute(
             "UPDATE job_materials SET status = ?, updated_at = ? "
-            "WHERE job_url = ? AND generation = ?",
-            (new_status, utc_now(), job_url, generation),
+            "WHERE tenant_id = ? AND job_id = ? AND generation = ?",
+            (
+                new_status,
+                utc_now(),
+                tenant_id,
+                job_id,
+                generation,
+            ),
         )
 
 

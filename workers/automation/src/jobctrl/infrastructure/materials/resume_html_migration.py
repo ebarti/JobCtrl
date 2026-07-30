@@ -294,20 +294,71 @@ def migrate_legacy_resume_pdfs(
     conn.row_factory = sqlite3.Row
     params: list[object] = []
     where = [
-        "artifact_type = 'resume_pdf'",
-        "status = 'approved'",
+        "artifact.artifact_type = 'resume_pdf'",
+        "artifact.status = 'approved'",
     ]
+    artifact_columns = {
+        str(row[1])
+        for row in conn.execute(
+            "PRAGMA table_info(job_materials_artifacts)"
+        ).fetchall()
+    }
+    stable_references = "job_id" in artifact_columns
     if not force:
-        where.append("COALESCE(render_format, '') != 'html_pdf'")
+        where.append("COALESCE(artifact.render_format, '') != 'html_pdf'")
     if job_url:
-        where.append("job_url = ?")
-        params.append(job_url)
-    sql = f"""
-        SELECT job_url, generation, artifact_id, path, render_format, metadata_json
-        FROM job_materials_artifacts
-        WHERE {' AND '.join(where)}
-        ORDER BY created_at DESC
-    """
+        if stable_references:
+            where.append(
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM (
+                        SELECT tenant_id, job_id
+                        FROM jobs
+                        WHERE url = ?
+                        UNION
+                        SELECT tenant_id, job_id
+                        FROM job_identity_aliases
+                        WHERE alias_kind = 'posting_url'
+                          AND alias_value = ?
+                    ) AS selected_job
+                    WHERE selected_job.tenant_id = artifact.tenant_id
+                      AND selected_job.job_id = artifact.job_id
+                )
+                """
+            )
+            params.extend((job_url, job_url))
+        else:
+            where.append("artifact.job_url = ?")
+            params.append(job_url)
+    if stable_references:
+        sql = f"""
+            SELECT artifact.tenant_id, artifact.job_id AS job_reference,
+                   'job_id' AS reference_column, jobs.url AS job_url,
+                   artifact.generation, artifact.artifact_id, artifact.path,
+                   artifact.render_format, artifact.metadata_json
+            FROM job_materials_artifacts AS artifact
+            JOIN jobs
+              ON jobs.tenant_id = artifact.tenant_id
+             AND jobs.job_id = artifact.job_id
+            WHERE {' AND '.join(where)}
+            ORDER BY artifact.created_at DESC
+        """
+    else:
+        sql = f"""
+            SELECT material.tenant_id,
+                   artifact.job_url AS job_reference,
+                   'job_url' AS reference_column,
+                   artifact.job_url AS job_url,
+                   artifact.generation, artifact.artifact_id, artifact.path,
+                   artifact.render_format, artifact.metadata_json
+            FROM job_materials_artifacts AS artifact
+            JOIN job_materials AS material
+              ON material.job_url = artifact.job_url
+             AND material.generation = artifact.generation
+            WHERE {' AND '.join(where)}
+            ORDER BY artifact.created_at DESC
+        """
     if limit is not None:
         sql += " LIMIT ?"
         params.append(limit)
@@ -394,33 +445,56 @@ def _migrate_one(
             if backup_path.exists():
                 metadata["legacy_pdf_backup_path"] = str(backup_path)
         size_bytes = os.path.getsize(pdf_path)
+        reference_column = str(row["reference_column"])
+        if reference_column not in {"job_id", "job_url"}:
+            raise RuntimeError(
+                f"unsupported material Job reference: {reference_column}"
+            )
+        job_reference = str(row["job_reference"])
+        artifact_predicate = (
+            "tenant_id = ? AND job_id = ?"
+            if reference_column == "job_id"
+            else "job_url = ?"
+        )
+        artifact_params = (
+            (row["tenant_id"], job_reference)
+            if reference_column == "job_id"
+            else (job_reference,)
+        )
         conn.execute(
-            """
+            f"""
             UPDATE job_materials_artifacts
             SET render_format = 'html_pdf',
                 size_bytes = ?,
                 metadata_json = ?
-            WHERE job_url = ?
-              AND generation = ?
+            WHERE {artifact_predicate} AND generation = ?
               AND artifact_type = 'resume_pdf'
             """,
             (
                 size_bytes,
                 json.dumps(metadata, sort_keys=True),
-                row["job_url"],
+                *artifact_params,
                 row["generation"],
             ),
         )
         conn.execute(
-            """
+            f"""
             DELETE FROM job_material_layout_boxes
-            WHERE job_url = ? AND generation = ? AND artifact_id = ?
+            WHERE tenant_id = ? AND {reference_column} = ?
+              AND generation = ? AND artifact_id = ?
             """,
-            (row["job_url"], row["generation"], artifact_id),
+            (
+                row["tenant_id"],
+                job_reference,
+                row["generation"],
+                artifact_id,
+            ),
         )
         _insert_layout_boxes(
             conn,
-            job_url=str(row["job_url"]),
+            tenant_id=str(row["tenant_id"]),
+            reference_column=reference_column,
+            job_reference=job_reference,
             generation=int(row["generation"]),
             artifact_id=artifact_id,
             layout_boxes=layout_boxes,
@@ -470,24 +544,31 @@ def _validate_pdf_output(path: Path) -> None:
 def _insert_layout_boxes(
     conn: sqlite3.Connection,
     *,
-    job_url: str,
+    tenant_id: str,
+    reference_column: str,
+    job_reference: str,
     generation: int,
     artifact_id: str,
     layout_boxes: Iterable[LayoutBox],
     created_at: str,
 ) -> None:
+    if reference_column not in {"job_id", "job_url"}:
+        raise RuntimeError(
+            f"unsupported material Job reference: {reference_column}"
+        )
     for index, box in enumerate(layout_boxes):
         conn.execute(
-            """
+            f"""
             INSERT INTO job_material_layout_boxes (
-                job_url, generation, artifact_id, box_index, tenant_id,
+                tenant_id, {reference_column}, generation, artifact_id, box_index,
                 semantic_id, page_number, line_number, text_excerpt,
                 left_pct, top_pct, width_pct, height_pct,
                 audit_target_json, created_at
-            ) VALUES (?, ?, ?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{{}}', ?)
             """,
             (
-                job_url,
+                tenant_id,
+                job_reference,
                 generation,
                 artifact_id,
                 index,

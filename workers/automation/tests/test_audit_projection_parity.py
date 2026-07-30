@@ -97,6 +97,12 @@ def conn(fixture: dict[str, Any], tmp_path: Path) -> Iterator[sqlite3.Connection
 def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     """Seed the canonical rows exactly as the Python repositories write them."""
     job_url = fixture["job"]["url"]
+    job_id = str(
+        conn.execute(
+            "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+            (job_url,),
+        ).fetchone()[0]
+    )
     rows = fixture["rows"]
 
     for score in rows["jobScores"]:
@@ -210,21 +216,23 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     created_at = fixture["job"]["createdAt"]
     conn.execute(
         """
-        INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
-        VALUES (?, ?, 'local', 'complete', ?, ?)
+        INSERT INTO job_materials (
+            tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES ('local', ?, ?, 'complete', ?, ?)
         """,
-        (job_url, generation, created_at, created_at),
+        (job_id, generation, created_at, created_at),
     )
     for artifact in rows["artifacts"]:
         conn.execute(
             """
             INSERT INTO job_materials_artifacts (
-                job_url, generation, artifact_type, artifact_id, status, path,
-                render_format, size_bytes, metadata_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                tenant_id, job_id, generation, artifact_type, artifact_id,
+                status, path, render_format, size_bytes, metadata_json,
+                created_at
+            ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                job_url,
+                job_id,
                 generation,
                 artifact["artifact_type"],
                 artifact["artifact_id"],
@@ -240,14 +248,14 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_bullet_provenance (
-                job_url, generation, bullet_id, tenant_id, artifact_id, section,
+                tenant_id, job_id, generation, bullet_id, artifact_id, section,
                 source_id, evidence_ids_json, requirement_ids_json,
                 matched_keywords_json, transform_type, control, rationale,
                 generated_text, position, created_at, coverage_json, voice_json
-            ) VALUES (?, ?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                job_url,
+                job_id,
                 bullet["generation"],
                 bullet["bullet_id"],
                 bullet["artifact_id"],
@@ -596,13 +604,20 @@ def test_python_builder_projects_historical_artifact_generation_coverage_rows(
         """,
         (job_url, created_1),
     )
+    job_id = str(
+        conn.execute(
+            "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+            (job_url,),
+        ).fetchone()[0]
+    )
     for generation, created_at in ((1, created_1), (2, created_2)):
         conn.execute(
             """
-            INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
-            VALUES (?, ?, 'local', 'complete', ?, ?)
+            INSERT INTO job_materials (
+                tenant_id, job_id, generation, status, created_at, updated_at
+            ) VALUES ('local', ?, ?, 'complete', ?, ?)
             """,
-            (job_url, generation, created_at, created_at),
+            (job_id, generation, created_at, created_at),
         )
     artifacts = [
         (1, "tailored_resume", "resume-v1", "/tmp/historical-resume-v1.txt", "text", created_1),
@@ -613,11 +628,12 @@ def test_python_builder_projects_historical_artifact_generation_coverage_rows(
         conn.execute(
             """
             INSERT INTO job_materials_artifacts (
-                job_url, generation, artifact_type, artifact_id, status, path,
-                render_format, size_bytes, metadata_json, created_at
-            ) VALUES (?, ?, ?, ?, 'approved', ?, ?, 10, '{}', ?)
+                tenant_id, job_id, generation, artifact_type, artifact_id,
+                status, path, render_format, size_bytes, metadata_json,
+                created_at
+            ) VALUES ('local', ?, ?, ?, ?, 'approved', ?, ?, 10, '{}', ?)
             """,
-            (job_url, generation, artifact_type, artifact_id, path, render_format, created_at),
+            (job_id, generation, artifact_type, artifact_id, path, render_format, created_at),
         )
     coverage_v1 = {
         "computed_against": "rendered_text",
@@ -658,15 +674,15 @@ def test_python_builder_projects_historical_artifact_generation_coverage_rows(
         conn.execute(
             """
             INSERT INTO job_bullet_provenance (
-                job_url, generation, bullet_id, tenant_id, artifact_id, section,
+                tenant_id, job_id, generation, bullet_id, artifact_id, section,
                 source_id, evidence_ids_json, requirement_ids_json,
                 matched_keywords_json, transform_type, control, rationale,
                 generated_text, position, created_at, coverage_json, voice_json
-            ) VALUES (?, ?, ?, 'local', ?, 'experience', ?, '[]', '[]', ?, 'voice',
+            ) VALUES ('local', ?, ?, ?, ?, 'experience', ?, '[]', '[]', ?, 'voice',
                 'rephrase_allowed', 'Voiced bullet.', 'Generated text.', 0, ?, ?, ?)
             """,
             (
-                job_url,
+                job_id,
                 generation,
                 bullet_id,
                 artifact_id,

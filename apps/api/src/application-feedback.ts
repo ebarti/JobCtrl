@@ -1114,10 +1114,17 @@ function currentApplicationUrl(db: SqliteDatabase, jobKey: string): string | nul
 
 function latestMaterialsGeneration(db: SqliteDatabase, jobKey: string): number | null {
   if (!tableExists(db, "job_materials")) return null;
+  const reference = jobReferencePredicateForUrl(
+    db,
+    "job_materials",
+    jobKey,
+  );
   const row = getRow<{ generation: number | null }>(
     db,
-    "SELECT MAX(generation) AS generation FROM job_materials WHERE job_url = ?",
-    [jobKey],
+    `SELECT MAX(generation) AS generation
+       FROM job_materials
+      WHERE ${reference.sql}`,
+    reference.params,
   );
   return nullableNumber(row?.generation);
 }
@@ -1580,6 +1587,11 @@ function requirementsWithTailoredResumeCoverage(
       requirementWithFitAssessment(requirement, fitByRequirement.get(requirement.id), emptyRequirementCoverage()),
     );
   }
+  const provenanceReference = jobReferencePredicateForUrl(
+    db,
+    "job_bullet_provenance",
+    jobKey,
+  );
   const requirementIds = new Set(requirements.map((requirement) => requirement.id));
   const rows = allRows<{
     generated_text: string;
@@ -1588,11 +1600,10 @@ function requirementsWithTailoredResumeCoverage(
     db,
     `SELECT generated_text, requirement_ids_json
        FROM job_bullet_provenance
-      WHERE tenant_id = ?
-        AND job_url = ?
+      WHERE ${provenanceReference.sql}
         AND artifact_id = ?
       ORDER BY position, bullet_id`,
-    [DEFAULT_TENANT, jobKey, resumeTextArtifactId],
+    [...provenanceReference.params, resumeTextArtifactId],
   );
   if (!rows.length) {
     return requirements.map((requirement) =>
@@ -2145,6 +2156,11 @@ function failedRequirementLedAuditForJob(
   const placeholders = artifactTypes.map(() => "?").join(", ");
   const columns = tableColumnSet(db, "job_materials_artifacts");
   const metadataSelect = columns.has("metadata_json") ? "metadata_json" : "NULL AS metadata_json";
+  const artifactReference = jobReferencePredicateForUrl(
+    db,
+    "job_materials_artifacts",
+    jobKey,
+  );
   const rows = allRows<{
     artifact_id: string | null;
     created_at: string | null;
@@ -2155,14 +2171,14 @@ function failedRequirementLedAuditForJob(
     db,
     `SELECT artifact_id, path, generation, created_at, ${metadataSelect}
        FROM job_materials_artifacts
-      WHERE job_url = ?
+      WHERE ${artifactReference.sql}
         AND artifact_type IN (${placeholders})
         AND status = 'rejected'
         AND metadata_json IS NOT NULL
         AND metadata_json != ''
       ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, rowid DESC
       LIMIT 8`,
-    [jobKey, ...artifactTypes],
+    [...artifactReference.params, ...artifactTypes],
   );
   for (const [index, row] of rows.entries()) {
     const audit = parseRequirementLedAuditMetadata(row.metadata_json);
@@ -2268,15 +2284,19 @@ function provenanceRowsForCandidate(
   jobKey: string,
   candidate: MaterialArtifactCandidate,
 ): Array<{ requirement_ids_json: string }> {
+  const provenanceReference = jobReferencePredicateForUrl(
+    db,
+    "job_bullet_provenance",
+    jobKey,
+  );
   const rowsByArtifact = candidate.artifactId
     ? allRows<{ requirement_ids_json: string }>(
         db,
         `SELECT requirement_ids_json
            FROM job_bullet_provenance
-          WHERE tenant_id = ?
-            AND job_url = ?
+          WHERE ${provenanceReference.sql}
             AND artifact_id = ?`,
-        [DEFAULT_TENANT, jobKey, candidate.artifactId],
+        [...provenanceReference.params, candidate.artifactId],
       )
     : [];
   if (rowsByArtifact.length || candidate.generation === null) {
@@ -2286,10 +2306,9 @@ function provenanceRowsForCandidate(
     db,
     `SELECT requirement_ids_json
        FROM job_bullet_provenance
-      WHERE tenant_id = ?
-        AND job_url = ?
+      WHERE ${provenanceReference.sql}
         AND generation = ?`,
-    [DEFAULT_TENANT, jobKey, candidate.generation],
+    [...provenanceReference.params, candidate.generation],
   );
 }
 
@@ -2626,6 +2645,11 @@ function materialArtifactCandidates(
   if (tableExists(db, "job_materials_artifacts")) {
     const columns = tableColumnSet(db, "job_materials_artifacts");
     const metadataSelect = columns.has("metadata_json") ? "metadata_json" : "NULL AS metadata_json";
+    const materialReference = jobReferencePredicateForUrl(
+      db,
+      "job_materials_artifacts",
+      jobKey,
+    );
     const rows = allRows<{
       artifact_id: string | null;
       created_at: string | null;
@@ -2637,14 +2661,14 @@ function materialArtifactCandidates(
       db,
       `SELECT artifact_id, path, generation, created_at, status, ${metadataSelect}
        FROM job_materials_artifacts
-       WHERE job_url = ?
+       WHERE ${materialReference.sql}
          AND artifact_type IN (${placeholders})
          AND COALESCE(status, 'approved') IN ('approved', 'active', 'candidate')
          AND path IS NOT NULL
          AND path != ''
        ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, rowid DESC
        LIMIT 16`,
-      [jobKey, ...artifactTypes],
+      [...materialReference.params, ...artifactTypes],
     );
     for (const [index, row] of rows.entries()) {
       const reviewRequired = row.status === "candidate" && isReviewRequiredMaterialMetadata(row.metadata_json);

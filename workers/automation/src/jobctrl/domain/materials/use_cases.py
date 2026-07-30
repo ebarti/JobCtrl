@@ -1573,10 +1573,8 @@ class TailorResumeUseCase:
         employer_analysis: EmployerAnalysis | None = None,
         requirement_fit_report: "RequirementFitReport | None" = None,
     ) -> TailorOutcome:
-        job_id = JobId(str(job["url"]))
-        scoring_job_id = JobId(
-            str(job.get("job_id") or job["url"])
-        )
+        job_id = JobId(str(job.get("job_id") or job["url"]))
+        scoring_job_id = job_id
         # D-20: run/reuse the canonical employer analysis as the front-half
         # sub-step of tailor (cache-backed, so a re-tailor reuses it). The
         # analysis drives keyword selection in ``build_tailoring_plan``.
@@ -3438,7 +3436,8 @@ class GenerateCoverLetterUseCase:
         validation_mode: str = "normal",
         tenant_id: TenantId = LOCAL_TENANT,
     ) -> CoverLetterOutcome:
-        job_id = JobId(str(job["url"]))
+        job_id = JobId(str(job.get("job_id") or job["url"]))
+        analysis_job_id = JobId(str(job["url"]))
         materials = _load_current_approved_materials(self._repository, tenant_id, job_id)
         if materials is None:
             return CoverLetterOutcome(
@@ -3479,7 +3478,10 @@ class GenerateCoverLetterUseCase:
                 error=f"Could not read tailored resume {resume_path}: {exc}",
             )
 
-        target_skill_terms = self._load_target_skill_terms(tenant_id, job_id)
+        target_skill_terms = self._load_target_skill_terms(
+            tenant_id,
+            analysis_job_id,
+        )
         letter, validation, findings = self._run_attempts(
             job=job,
             resume_text=resume_text,

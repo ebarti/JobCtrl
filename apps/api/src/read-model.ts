@@ -77,6 +77,7 @@ import {
   getRow,
   hasCompositeJobIdForeignKey,
   jobReferenceColumn,
+  tableColumnSet,
   tableExists,
   type SqliteDatabase,
   type SqliteValue,
@@ -1035,21 +1036,39 @@ function countOutdatedTailoredArtifacts(
   }
   const activeJobs = activeJobUrlSet(db);
   if (activeJobs.size === 0) return 0;
+  const materialReference = jobReferenceColumn(
+    db,
+    "job_materials_artifacts",
+  );
+  const stableMaterials = materialReference === "job_id";
+  const tenantScopedMaterials = tableColumnSet(
+    db,
+    "job_materials_artifacts",
+  ).has("tenant_id");
   const rows = allRows<{ job_url: string; metadata_json: string | null }>(
     db,
     `WITH latest AS (
-       SELECT job_url, MAX(generation) AS max_generation
+       SELECT ${tenantScopedMaterials ? "tenant_id, " : ""}${materialReference},
+              MAX(generation) AS max_generation
        FROM job_materials_artifacts
-       WHERE status = 'approved'
+       WHERE ${tenantScopedMaterials ? "tenant_id = ? AND " : ""}status = 'approved'
          AND artifact_type = 'tailored_resume'
-       GROUP BY job_url
+       GROUP BY ${tenantScopedMaterials ? "tenant_id, " : ""}${materialReference}
      )
-     SELECT a.job_url, a.metadata_json
+     SELECT ${stableMaterials ? "jobs.url" : "a.job_url"} AS job_url,
+            a.metadata_json
        FROM job_materials_artifacts a
-       JOIN latest ON latest.job_url = a.job_url AND latest.max_generation = a.generation
-      WHERE a.artifact_type = 'tailored_resume'
+       JOIN latest
+         ON ${tenantScopedMaterials ? "latest.tenant_id = a.tenant_id AND " : ""}
+            latest.${materialReference} = a.${materialReference}
+        AND latest.max_generation = a.generation
+       ${stableMaterials
+         ? "JOIN jobs ON jobs.tenant_id = a.tenant_id AND jobs.job_id = a.job_id"
+         : ""}
+      WHERE ${tenantScopedMaterials ? "a.tenant_id = ? AND " : ""}
+        a.artifact_type = 'tailored_resume'
         AND a.status = 'approved'`,
-    [],
+    tenantScopedMaterials ? [tenantId, tenantId] : [],
   );
   return rows.filter((row) => {
     if (!activeJobs.has(row.job_url)) return false;

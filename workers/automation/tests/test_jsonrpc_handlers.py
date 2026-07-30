@@ -1192,7 +1192,12 @@ def test_retailor_job_duplicate_dispatch_uses_existing_workflow_without_duplicat
     _seed_tailoring_policy(conn, version=3)
     _seed_tailored_artifact(conn, job_url, policy_version=3)
     before = conn.execute(
-        "SELECT COUNT(*), COUNT(DISTINCT artifact_id) FROM job_materials_artifacts WHERE job_url = ?",
+        """
+        SELECT COUNT(*), COUNT(DISTINCT artifact_id)
+        FROM job_materials_artifacts
+        WHERE tenant_id = 'local'
+          AND job_id = (SELECT job_id FROM jobs WHERE url = ?)
+        """,
         (job_url,),
     ).fetchone()
     seen: list[WorkflowStartSpec] = []
@@ -1227,7 +1232,12 @@ def test_retailor_job_duplicate_dispatch_uses_existing_workflow_without_duplicat
     assert seen[0].id_conflict_policy is WorkflowIDConflictPolicy.USE_EXISTING
     assert seen[1].id_conflict_policy is WorkflowIDConflictPolicy.USE_EXISTING
     after = conn.execute(
-        "SELECT COUNT(*), COUNT(DISTINCT artifact_id) FROM job_materials_artifacts WHERE job_url = ?",
+        """
+        SELECT COUNT(*), COUNT(DISTINCT artifact_id)
+        FROM job_materials_artifacts
+        WHERE tenant_id = 'local'
+          AND job_id = (SELECT job_id FROM jobs WHERE url = ?)
+        """,
         (job_url,),
     ).fetchone()
     assert tuple(before) == (1, 1)
@@ -1742,8 +1752,10 @@ def _seed_tailored_artifact(conn, url: str, *, policy_version: int) -> None:
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-        ) VALUES (?, 1, 'local', 'resume_approved',
+            tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+        ) VALUES ('local',
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            1, 'resume_approved',
             '2026-05-26T10:00:00+00:00', '2026-05-26T10:00:00+00:00', '{}')
         """,
         (url,),
@@ -1751,9 +1763,12 @@ def _seed_tailored_artifact(conn, url: str, *, policy_version: int) -> None:
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
-            render_format, size_bytes, metadata_json, created_at, superseded_at
-        ) VALUES (?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?,
+            tenant_id, job_id, generation, artifact_type, artifact_id,
+            status, path, render_format, size_bytes, metadata_json,
+            created_at, superseded_at
+        ) VALUES ('local',
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?,
             '2026-05-26T10:00:00+00:00', NULL)
         """,
         (

@@ -41,6 +41,15 @@ def _seed_job(conn: sqlite3.Connection, url: str) -> None:
     conn.commit()
 
 
+def _stable_job_id(conn: sqlite3.Connection, url: str) -> str:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+        (url,),
+    ).fetchone()
+    assert row is not None
+    return str(row[0])
+
+
 def test_initial_watermark_is_zero(conn: sqlite3.Connection) -> None:
     repo = SqliteEventWatermarkRepository(conn)
     assert repo.get(PROJECTION_NAME) == 0
@@ -104,6 +113,7 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
 ) -> None:
     job_url = "https://example.com/evidence-map"
     _seed_job(conn, job_url)
+    stable_job_id = _stable_job_id(conn, job_url)
     conn.execute(
         """
         INSERT INTO candidate_profile_experience_entries (
@@ -146,31 +156,31 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at
-        ) VALUES (?, 1, 'local', 'complete',
+            tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES ('local', ?, 1, 'complete',
                   '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')
         """,
-        (job_url,),
+        (stable_job_id,),
     )
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
+            tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
             render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'tailored_resume', 'artifact-resume-1', 'approved',
+        ) VALUES ('local', ?, 1, 'tailored_resume', 'artifact-resume-1', 'approved',
                   '/tmp/resume.txt', 'text', 12, '{}', '2026-07-05T12:05:00Z')
         """,
-        (job_url,),
+        (stable_job_id,),
     )
     conn.execute(
         """
         INSERT INTO job_bullet_provenance (
-            job_url, generation, bullet_id, tenant_id, artifact_id, section,
+            tenant_id, job_id, generation, bullet_id, artifact_id, section,
             source_id, evidence_ids_json, requirement_ids_json,
             matched_keywords_json, transform_type, control, rationale,
             generated_text, position, created_at, coverage_json
         ) VALUES (
-            ?, 1, 'experience:exp-platform#0', 'local', 'artifact-resume-1',
+            'local', ?, 1, 'experience:exp-platform#0', 'artifact-resume-1',
             'experience', 'exp-platform', '["ev_platform"]',
             '["req-platform"]', '["latency"]', 'reframe',
             'rephrase_allowed', 'Used profile evidence.',
@@ -179,7 +189,7 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
             '{"covered":["Python"],"declared":[],"missing":["Kubernetes"]}'
         )
         """,
-        (job_url,),
+        (stable_job_id,),
     )
     conn.execute(
         """
@@ -371,34 +381,35 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
             """,
             (job_url, title, site, utc_now(), job_url),
         )
+        stable_job_id = _stable_job_id(conn, job_url)
         conn.execute(
             """
             INSERT INTO job_materials (
-                job_url, generation, tenant_id, status, created_at, updated_at
-            ) VALUES (?, 1, 'local', 'complete',
+                tenant_id, job_id, generation, status, created_at, updated_at
+            ) VALUES ('local', ?, 1, 'complete',
                       '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')
             """,
-            (job_url,),
+            (stable_job_id,),
         )
         conn.execute(
             """
             INSERT INTO job_materials_artifacts (
-                job_url, generation, artifact_type, artifact_id, status, path,
+                tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
                 render_format, size_bytes, metadata_json, created_at
-            ) VALUES (?, 1, 'tailored_resume', ?, 'approved',
+            ) VALUES ('local', ?, 1, 'tailored_resume', ?, 'approved',
                       '/tmp/resume.txt', 'text', 12, '{}', '2026-07-05T12:05:00Z')
             """,
-            (job_url, artifact_id),
+            (stable_job_id, artifact_id),
         )
         conn.execute(
             """
             INSERT INTO job_bullet_provenance (
-                job_url, generation, bullet_id, tenant_id, artifact_id, section,
+                tenant_id, job_id, generation, bullet_id, artifact_id, section,
                 source_id, evidence_ids_json, requirement_ids_json,
                 matched_keywords_json, transform_type, control, rationale,
                 generated_text, position, created_at, coverage_json
             ) VALUES (
-                ?, 1, 'experience:exp-platform#0', 'local', ?,
+                'local', ?, 1, 'experience:exp-platform#0', ?,
                 'experience', 'exp-platform', '["ev_platform"]',
                 '["req-platform"]', '["latency"]', 'reframe',
                 'rephrase_allowed', 'Used profile evidence.',
@@ -406,7 +417,7 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
                 '{"covered":["Python"],"declared":[],"missing":["Kubernetes"]}'
             )
             """,
-            (job_url, artifact_id, generated_text, created_at),
+            (stable_job_id, artifact_id, generated_text, created_at),
         )
         conn.execute(
             """

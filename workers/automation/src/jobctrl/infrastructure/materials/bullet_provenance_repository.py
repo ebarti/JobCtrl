@@ -18,11 +18,15 @@ import json
 import sqlite3
 
 from jobctrl.database import ensure_bullet_provenance_tables
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.discovery.value_objects import PostingUrl
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.coverage_audit import KeywordCoverage
 from jobctrl.domain.materials.provenance import BulletProvenance, BulletProvenanceSet
 from jobctrl.domain.materials.voice import VoicePassRecord
 from jobctrl.domain.tenant import TenantId
+from jobctrl.infrastructure.discovery.sqlite_identity_resolver import (
+    SqliteJobIdentityResolver,
+)
 from jobctrl.infrastructure.materials.unit_of_work import SqliteUnitOfWork
 
 
@@ -42,8 +46,36 @@ class SqliteBulletProvenanceRepository:
     ) -> None:
         self._conn = conn
         self._unit_of_work = unit_of_work
+        self._identity_resolver = SqliteJobIdentityResolver(conn)
         # Idempotent — safe if init_db already ran; keeps test setup minimal.
         ensure_bullet_provenance_tables(conn)
+
+    def _resolve_job_id(
+        self,
+        tenant_id: TenantId,
+        reference: JobId,
+    ) -> JobId | None:
+        raw_reference = str(reference or "").strip()
+        if not raw_reference:
+            raise ValueError("job_id must be non-empty")
+        try:
+            stable_candidate = canonical_job_id(raw_reference)
+        except ValueError:
+            stable_candidate = None
+        identity = (
+            self._identity_resolver.resolve_by_job_id(
+                tenant_id,
+                stable_candidate,
+            )
+            if stable_candidate is not None
+            else None
+        )
+        if identity is None:
+            identity = self._identity_resolver.resolve_by_posting_url(
+                tenant_id,
+                PostingUrl(raw_reference),
+            )
+        return identity.job_id if identity is not None else None
 
     # ------------------------------------------------------------------ read
 
@@ -54,13 +86,16 @@ class SqliteBulletProvenanceRepository:
         *,
         generation: int | None = None,
     ) -> BulletProvenanceSet | None:
+        stable_job_id = self._resolve_job_id(tenant_id, job_id)
+        if stable_job_id is None:
+            return None
         if generation is None:
             gen_row = self._conn.execute(
                 """
                 SELECT MAX(generation) FROM job_bullet_provenance
-                WHERE job_url = ? AND tenant_id = ?
+                WHERE tenant_id = ? AND job_id = ?
                 """,
-                (str(job_id), str(tenant_id)),
+                (str(tenant_id), str(stable_job_id)),
             ).fetchone()
             current = gen_row[0] if gen_row is not None else None
             if current is None:
@@ -70,10 +105,10 @@ class SqliteBulletProvenanceRepository:
         rows = self._conn.execute(
             """
             SELECT * FROM job_bullet_provenance
-            WHERE job_url = ? AND tenant_id = ? AND generation = ?
+            WHERE tenant_id = ? AND job_id = ? AND generation = ?
             ORDER BY position, bullet_id
             """,
-            (str(job_id), str(tenant_id), int(generation)),
+            (str(tenant_id), str(stable_job_id), int(generation)),
         ).fetchall()
         if not rows:
             return None
@@ -90,7 +125,7 @@ class SqliteBulletProvenanceRepository:
         voice = VoicePassRecord.from_dict(_load_json(_row_value(first, "voice_json")))
         return BulletProvenanceSet(
             tenant_id=tenant_id,
-            job_id=job_id,
+            job_id=stable_job_id,
             generation=int(generation),
             artifact_id=str(first["artifact_id"]),
             bullets=bullets,
@@ -112,7 +147,15 @@ class SqliteBulletProvenanceRepository:
         if provenance.is_empty:
             return
 
-        job_url = str(provenance.job_id)
+        stable_job_id = self._resolve_job_id(
+            provenance.tenant_id,
+            provenance.job_id,
+        )
+        if stable_job_id is None:
+            raise ValueError(
+                "no stable Job identity for bullet provenance "
+                f"reference: {provenance.job_id}"
+            )
         tenant = str(provenance.tenant_id)
         generation = provenance.generation
 
@@ -122,24 +165,25 @@ class SqliteBulletProvenanceRepository:
         voice_json = _dump_json(provenance.voice_to_read_model())
 
         self._conn.execute(
-            "DELETE FROM job_bullet_provenance WHERE job_url = ? AND tenant_id = ? AND generation = ?",
-            (job_url, tenant, generation),
+            "DELETE FROM job_bullet_provenance "
+            "WHERE tenant_id = ? AND job_id = ? AND generation = ?",
+            (tenant, str(stable_job_id), generation),
         )
         for position, bullet in enumerate(provenance.bullets):
             self._conn.execute(
                 """
                 INSERT INTO job_bullet_provenance (
-                    job_url, generation, bullet_id, tenant_id, artifact_id,
+                    tenant_id, job_id, generation, bullet_id, artifact_id,
                     section, source_id, evidence_ids_json, requirement_ids_json,
                     matched_keywords_json, transform_type, control, rationale,
                     generated_text, position, created_at, coverage_json, voice_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    job_url,
+                    tenant,
+                    str(stable_job_id),
                     generation,
                     bullet.bullet_id,
-                    tenant,
                     provenance.artifact_id,
                     bullet.section,
                     bullet.source_id,
