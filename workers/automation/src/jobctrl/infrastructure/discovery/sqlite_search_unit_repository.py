@@ -15,7 +15,6 @@ from jobstreaming import (
     SearchCheckpoint,
 )
 
-from jobctrl.database import ensure_discovery_search_unit_tables
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.search_units import (
     DiscoverySearchSpec,
@@ -25,6 +24,7 @@ from jobctrl.domain.discovery.search_units import (
     validate_search_unit_state,
     validate_unit_id,
 )
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 
 
 _SAFE_ERROR_IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
@@ -37,7 +37,7 @@ _SELECT_UNIT = """
            u.last_error_retryable, u.reset_checkpoint,
            u.reset_checkpoint_after_revision,
            u.created_at, u.updated_at, u.completed_at,
-           COUNT(j.job_url) AS accepted_jobs,
+           COUNT(j.job_id) AS accepted_jobs,
            COALESCE(SUM(j.was_new), 0) AS new_jobs
       FROM discovery_search_units u
       LEFT JOIN discovery_search_unit_jobs j
@@ -71,7 +71,6 @@ class SqliteDiscoverySearchUnitRepository:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        ensure_discovery_search_unit_tables(conn)
 
     def plan_units(
         self,
@@ -409,34 +408,32 @@ class SqliteDiscoverySearchUnitRepository:
     def record_accepted_job(
         self,
         lease: DiscoverySearchUnitLease,
-        job_url: str,
+        job_id: JobId,
         *,
         was_new: bool,
         accepted_at: str | None = None,
     ) -> None:
         """Record an idempotent accepted-job receipt under the current fence."""
 
-        normalized_url = job_url.strip()
-        if not normalized_url:
-            raise ValueError("job_url must be non-empty")
+        stable_job_id = str(canonical_job_id(str(job_id)))
         with self._conn:
             self.fence_write(lease)
             self._conn.execute(
                 """
                 INSERT INTO discovery_search_unit_jobs (
                     tenant_id, discover_workflow_id, discover_run_id,
-                    unit_id, job_url, was_new, accepted_at
+                    unit_id, job_id, was_new, accepted_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (
                     tenant_id, discover_workflow_id, discover_run_id,
-                    unit_id, job_url
+                    unit_id, job_id
                 ) DO UPDATE SET
                     was_new = MAX(discovery_search_unit_jobs.was_new, excluded.was_new)
                 """,
                 (
                     *_execution_params(lease.execution),
                     lease.unit_id,
-                    normalized_url,
+                    stable_job_id,
                     int(was_new),
                     accepted_at or _utc_now(),
                 ),
