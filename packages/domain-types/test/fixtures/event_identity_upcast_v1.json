@@ -139,6 +139,23 @@
       }
     },
     {
+      "name": "pipeline scope is not a job identity",
+      "tenantId": "local",
+      "eventJobReference": null,
+      "payload": {
+        "jobId": "pipeline",
+        "workflowId": "pipeline-score-1"
+      },
+      "expected": {
+        "jobId": null,
+        "referencedJobIds": [],
+        "payload": {
+          "jobId": "pipeline",
+          "workflowId": "pipeline-score-1"
+        }
+      }
+    },
+    {
       "name": "resolution is tenant scoped",
       "tenantId": "other",
       "eventJobReference": "https://jobs.example/a",

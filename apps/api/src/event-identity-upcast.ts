@@ -29,6 +29,7 @@ const ROOT_PRIMARY_FIELDS = [
   "survivingJobId",
   "surviving_job_id",
 ] as const;
+const NON_JOB_SCOPE_REFERENCES = new Set(["pipeline"]);
 
 export class EventIdentityUpcastError extends Error {
   readonly code: string;
@@ -78,7 +79,10 @@ export function upcastEventIdentity(
   const rootJobIds = new Set(
     ROOT_PRIMARY_FIELDS
       .map((key) => payload[key])
-      .filter((value): value is string => typeof value === "string"),
+      .filter(
+        (value): value is string =>
+          typeof value === "string" && !NON_JOB_SCOPE_REFERENCES.has(value),
+      ),
   );
   const primaryJobIds = new Set(rootJobIds);
   if (columnJobId !== null) primaryJobIds.add(columnJobId);
@@ -155,6 +159,10 @@ function upcastSingleReference(
   if (value === null) return null;
   if (typeof value !== "string") {
     throw new EventIdentityUpcastError("event_job_identity_invalid");
+  }
+  const normalized = value.trim();
+  if (NON_JOB_SCOPE_REFERENCES.has(normalized)) {
+    return normalized;
   }
   const jobId = resolveReference(db, tenantId, value);
   referenced.add(jobId);
@@ -286,11 +294,17 @@ function inferablePayloadJobIds(value: unknown): Set<string> {
   if (!isRecord(value)) return inferred;
 
   for (const [key, item] of Object.entries(value)) {
-    if ((key === "jobId" || key === "job_id") && typeof item === "string") {
+    if (
+      (key === "jobId" || key === "job_id")
+      && typeof item === "string"
+      && !NON_JOB_SCOPE_REFERENCES.has(item)
+    ) {
       inferred.add(item);
     } else if ((key === "jobIds" || key === "job_ids") && Array.isArray(item)) {
       for (const entry of item) {
-        if (typeof entry === "string") inferred.add(entry);
+        if (typeof entry === "string" && !NON_JOB_SCOPE_REFERENCES.has(entry)) {
+          inferred.add(entry);
+        }
       }
     } else if (
       ![

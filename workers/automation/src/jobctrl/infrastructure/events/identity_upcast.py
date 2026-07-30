@@ -40,6 +40,7 @@ _ROOT_PRIMARY_FIELDS = (
     "survivingJobId",
     "surviving_job_id",
 )
+_NON_JOB_SCOPE_REFERENCES = frozenset({"pipeline"})
 
 
 class EventIdentityUpcastError(RuntimeError):
@@ -99,6 +100,7 @@ def upcast_event_identity(
         value
         for key in _ROOT_PRIMARY_FIELDS
         if isinstance((value := transformed.get(key)), str)
+        and value not in _NON_JOB_SCOPE_REFERENCES
     }
     primary_job_ids = set(root_job_ids)
     if column_job_id is not None:
@@ -186,6 +188,9 @@ def _upcast_single_reference(
         return None
     if not isinstance(value, str):
         raise EventIdentityUpcastError("event_job_identity_invalid")
+    normalized = value.strip()
+    if normalized in _NON_JOB_SCOPE_REFERENCES:
+        return normalized
     job_id = _resolve_reference(
         conn,
         tenant_id=tenant_id,
@@ -315,10 +320,19 @@ def _inferable_payload_job_ids(value: Any) -> set[str]:
 
     inferred = set()
     for key, item in value.items():
-        if key in {"jobId", "job_id"} and isinstance(item, str):
+        if (
+            key in {"jobId", "job_id"}
+            and isinstance(item, str)
+            and item not in _NON_JOB_SCOPE_REFERENCES
+        ):
             inferred.add(item)
         elif key in {"jobIds", "job_ids"} and isinstance(item, list):
-            inferred.update(entry for entry in item if isinstance(entry, str))
+            inferred.update(
+                entry
+                for entry in item
+                if isinstance(entry, str)
+                and entry not in _NON_JOB_SCOPE_REFERENCES
+            )
         elif key not in {
             "candidateJobId",
             "candidate_job_id",
