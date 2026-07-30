@@ -33,9 +33,22 @@ class InventoryFingerprint:
 
 
 @dataclass(frozen=True)
+class InventoryProofIdentity:
+    """Stable proof generation and exact Temporal authority binding."""
+
+    proof_id: str
+    fence_blocked_at: str
+    temporal_namespace: str
+    temporal_namespace_id: str
+    authority_workflow_id: str
+    authority_run_id: str
+
+
+@dataclass(frozen=True)
 class InventoryProofObservation:
     state: str
     detail: str | None = None
+    identity: InventoryProofIdentity | None = None
 
     @property
     def valid(self) -> bool:
@@ -56,10 +69,12 @@ def validate_identity_cutover_inventory_proof(
         return InventoryProofObservation("proof_table_missing")
     row = conn.execute(
         f"""
-        SELECT proof_version, fence_blocked_at,
+        SELECT proof_version, proof_id, fence_blocked_at,
                registry_inventory_digest, registry_entry_count,
                worker_inventory_digest, worker_entry_count,
-               worker_quiescent_at
+               worker_quiescent_at, temporal_namespace,
+               temporal_namespace_id, authority_workflow_id,
+               authority_run_id
         FROM {INVENTORY_PROOF_TABLE}
         WHERE control_key = ?
         """,
@@ -74,23 +89,50 @@ def validate_identity_cutover_inventory_proof(
             "proof_version_unsupported",
             str(proof_version),
         )
-    if str(row[1] or "") != fence_blocked_at:
+    proof_id = str(row[1] or "").strip()
+    if not proof_id:
+        return InventoryProofObservation("proof_identity_missing")
+    if str(row[2] or "") != fence_blocked_at:
         return InventoryProofObservation("proof_fence_epoch_mismatch")
-    if not str(row[6] or "").strip():
+    if not str(row[7] or "").strip():
         return InventoryProofObservation("worker_quiescence_unproven")
 
+    temporal_namespace = str(row[8] or "").strip()
+    temporal_namespace_id = str(row[9] or "").strip()
+    authority_workflow_id = str(row[10] or "").strip()
+    authority_run_id = str(row[11] or "").strip()
+    if not all(
+        (
+            temporal_namespace,
+            temporal_namespace_id,
+            authority_workflow_id,
+            authority_run_id,
+        )
+    ):
+        return InventoryProofObservation("temporal_authority_unproven")
+
     registry = registry_inventory_fingerprint(conn)
-    if str(row[2] or "") != registry.digest or _integer(row[3]) != registry.entry_count:
+    if str(row[3] or "") != registry.digest or _integer(row[4]) != registry.entry_count:
         return InventoryProofObservation("registry_inventory_changed")
 
     worker = worker_inventory_fingerprint(conn)
-    if str(row[4] or "") != worker.digest or _integer(row[5]) != worker.entry_count:
+    if str(row[5] or "") != worker.digest or _integer(row[6]) != worker.entry_count:
         return InventoryProofObservation("worker_inventory_changed")
 
     live_worker = _live_local_worker(conn)
     if live_worker is not None:
         return InventoryProofObservation("worker_process_live", live_worker)
-    return InventoryProofObservation("valid")
+    return InventoryProofObservation(
+        "valid",
+        identity=InventoryProofIdentity(
+            proof_id=proof_id,
+            fence_blocked_at=fence_blocked_at,
+            temporal_namespace=temporal_namespace,
+            temporal_namespace_id=temporal_namespace_id,
+            authority_workflow_id=authority_workflow_id,
+            authority_run_id=authority_run_id,
+        ),
+    )
 
 
 def registry_inventory_fingerprint(
@@ -216,6 +258,7 @@ __all__ = [
     "INVENTORY_PROOF_TABLE",
     "INVENTORY_PROOF_VERSION",
     "InventoryFingerprint",
+    "InventoryProofIdentity",
     "InventoryProofObservation",
     "registry_inventory_fingerprint",
     "validate_identity_cutover_inventory_proof",

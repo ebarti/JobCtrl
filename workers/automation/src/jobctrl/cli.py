@@ -10,7 +10,7 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 import httpx
 import typer
@@ -2263,13 +2263,6 @@ def worker(
     ),
 ) -> None:
     """Run the long-lived JobCtrl Temporal worker."""
-    _bootstrap()
-
-    # Verify the browser this worker needs is installed before we connect to
-    # Temporal and start accepting activities — a missing binary must surface
-    # here, not two hours into a Discover run.
-    _preflight_browsers_or_exit()
-
     from jobctrl.infrastructure.temporal import (
         JOBCTRL_TASK_QUEUE,
         build_worker,
@@ -2285,6 +2278,13 @@ def worker(
         write_worker_heartbeat,
     )
     queue = task_queue or JOBCTRL_TASK_QUEUE
+
+    def _prepare() -> None:
+        _bootstrap()
+        # Verify the browser this worker needs is installed before we connect
+        # to Temporal and start accepting activities — a missing binary must
+        # surface here, not two hours into a Discover run.
+        _preflight_browsers_or_exit()
 
     async def _run() -> None:
         client = await get_temporal_client()
@@ -2360,11 +2360,43 @@ def worker(
     from jobctrl.infrastructure.observability import shutdown_otel
 
     try:
-        asyncio.run(_run())
+        asyncio.run(
+            _run_worker_with_dispatch_lease(
+                _run,
+                db_path=current_runtime_identity().db_path,
+                prepare_worker=_prepare,
+            )
+        )
     finally:
         # Flush any in-flight spans so the BatchSpanProcessor doesn't drop
         # them on Ctrl-C.
         shutdown_otel()
+
+
+async def _run_worker_with_dispatch_lease(
+    run_worker: Callable[[], Awaitable[None]],
+    *,
+    db_path: Path | str,
+    prepare_worker: Callable[[], None] | None = None,
+) -> None:
+    """Hold the shared process fence for the complete worker lifetime."""
+
+    from jobctrl.infrastructure.temporal.workflow_dispatch_control import (
+        WorkflowDispatchFencedError,
+        workflow_dispatch_read_lock,
+        workflow_dispatches_blocked,
+    )
+
+    async with workflow_dispatch_read_lock(
+        db_path=db_path,
+    ):
+        if workflow_dispatches_blocked(db_path):
+            raise WorkflowDispatchFencedError(
+                "worker startup is blocked for the stable JobId cutover"
+            )
+        if prepare_worker is not None:
+            prepare_worker()
+        await run_worker()
 
 
 async def _worker_heartbeat_loop(

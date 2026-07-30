@@ -9,10 +9,13 @@ import pytest
 
 from jobctrl.database import close_connection, init_db
 from jobctrl.infrastructure.temporal.workflow_dispatch_control import (
+    IdentityCutoverLeaseError,
     UnregisteredWorkflowDispatchError,
     WorkflowDispatchFencedError,
+    identity_cutover_exclusive_lease,
     reserve_workflow_dispatch,
     set_workflow_dispatches_blocked,
+    workflow_dispatch_read_lock,
     workflow_dispatches_blocked,
 )
 from jobctrl.pipeline.workflow import JobPipelineWorkflow
@@ -167,6 +170,54 @@ async def test_exclusive_gate_waits_for_inflight_reserved_start(
     await dispatch_task
     assert await fence_task is True
     assert workflow_dispatches_blocked(db_path) is True
+
+
+@pytest.mark.asyncio
+async def test_cutover_lease_requires_blocked_dispatch_gate(
+    db_path: Path,
+) -> None:
+    with pytest.raises(
+        IdentityCutoverLeaseError,
+        match="must be blocked",
+    ):
+        async with identity_cutover_exclusive_lease(
+            db_path=db_path,
+        ):
+            pytest.fail("an open dispatch gate must not yield a cutover lease")
+
+
+@pytest.mark.asyncio
+async def test_cutover_lease_excludes_worker_runtime_for_full_lifetime(
+    db_path: Path,
+) -> None:
+    set_workflow_dispatches_blocked(
+        blocked=True,
+        reason="identity-cutover",
+        db_path=db_path,
+    )
+    runtime_entered = asyncio.Event()
+
+    async def _enter_runtime() -> None:
+        async with workflow_dispatch_read_lock(
+            db_path=db_path,
+        ):
+            runtime_entered.set()
+
+    async with identity_cutover_exclusive_lease(
+        db_path=db_path,
+    ) as lease:
+        lease.assert_active(db_path=db_path)
+        runtime_task = asyncio.create_task(_enter_runtime())
+        await asyncio.sleep(0.1)
+        assert runtime_entered.is_set() is False
+
+    with pytest.raises(
+        IdentityCutoverLeaseError,
+        match="no longer active",
+    ):
+        lease.assert_active(db_path=db_path)
+    await runtime_task
+    assert runtime_entered.is_set() is True
 
 
 @pytest.mark.asyncio

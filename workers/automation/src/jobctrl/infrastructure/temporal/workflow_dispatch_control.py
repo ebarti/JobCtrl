@@ -5,8 +5,9 @@ contacting Temporal. A shared filesystem lock covers that reservation and the
 remote start call. Cutover orchestration takes the corresponding exclusive
 lock before blocking starts, so it cannot race an in-flight dispatch.
 
-Temporal-owned schedules do not pass through this boundary; cutover
-orchestration must pause them separately before it blocks direct dispatch.
+Temporal-owned schedules do not pass through direct reservations; cutover
+activation blocks direct dispatch and pauses those schedules while holding the
+same exclusive fence.
 The durable launch inventory deliberately treats client errors as uncertain: Temporal
 may have accepted a start even when the response was lost. A later preflight
 must reconcile every reserved, uncertain, or dispatched launch with an exact
@@ -48,6 +49,10 @@ class UnregisteredWorkflowDispatchError(RuntimeError):
     """Raised when a workflow has no explicit identity-cutover policy."""
 
 
+class IdentityCutoverLeaseError(RuntimeError):
+    """Raised when cutover work does not own the exclusive process fence."""
+
+
 @dataclass
 class WorkflowDispatchReservation:
     launch_id: str
@@ -66,6 +71,29 @@ class WorkflowDispatchReservation:
         )
         self.temporal_run_id = str(run_id) if run_id else None
         self.dispatch_confirmed = True
+
+
+@dataclass
+class IdentityCutoverLease:
+    """Exclusive process fence retained through preflight and migration."""
+
+    db_path: Path
+    lease_id: str
+    _active: bool = True
+
+    def assert_active(
+        self,
+        *,
+        db_path: Path | str,
+    ) -> None:
+        if not self._active:
+            raise IdentityCutoverLeaseError(
+                "identity cutover lease is no longer active"
+            )
+        if self.db_path.resolve() != Path(db_path).resolve():
+            raise IdentityCutoverLeaseError(
+                "identity cutover lease belongs to a different database"
+            )
 
 
 def ensure_workflow_dispatch_control_tables(
@@ -101,21 +129,53 @@ def ensure_workflow_dispatch_control_tables(
         CREATE TABLE IF NOT EXISTS workflow_identity_cutover_inventory_proof (
             control_key                TEXT PRIMARY KEY,
             proof_version              INTEGER NOT NULL,
+            proof_id                   TEXT NOT NULL,
             fence_blocked_at            TEXT NOT NULL,
             registry_inventory_digest  TEXT NOT NULL,
             registry_entry_count       INTEGER NOT NULL,
             worker_inventory_digest    TEXT NOT NULL,
             worker_entry_count         INTEGER NOT NULL,
             worker_quiescent_at         TEXT NOT NULL,
+            temporal_namespace          TEXT NOT NULL,
+            temporal_namespace_id       TEXT NOT NULL,
+            authority_workflow_id       TEXT NOT NULL,
+            authority_run_id            TEXT NOT NULL,
             created_at                  TEXT NOT NULL
         );
         """
     )
+    _ensure_identity_cutover_proof_columns(conn)
     return (
         "workflow_dispatch_control",
         "workflow_dispatch_registry",
         "workflow_identity_cutover_inventory_proof",
     )
+
+
+def _ensure_identity_cutover_proof_columns(
+    conn: sqlite3.Connection,
+) -> None:
+    columns = {
+        str(row[1])
+        for row in conn.execute(
+            """
+            PRAGMA table_info(workflow_identity_cutover_inventory_proof)
+            """
+        ).fetchall()
+    }
+    additions = {
+        "proof_id": "TEXT NOT NULL DEFAULT ''",
+        "temporal_namespace": "TEXT NOT NULL DEFAULT ''",
+        "temporal_namespace_id": "TEXT NOT NULL DEFAULT ''",
+        "authority_workflow_id": "TEXT NOT NULL DEFAULT ''",
+        "authority_run_id": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, declaration in additions.items():
+        if column not in columns:
+            conn.execute(
+                "ALTER TABLE workflow_identity_cutover_inventory_proof "
+                f"ADD COLUMN {column} {declaration}"
+            )
 
 
 @asynccontextmanager
@@ -133,6 +193,38 @@ async def workflow_dispatch_read_lock(
     try:
         yield resolved_path
     finally:
+        _release_lock(lock_fd)
+
+
+@asynccontextmanager
+async def identity_cutover_exclusive_lease(
+    *,
+    db_path: Path | str | None = None,
+) -> AsyncIterator[IdentityCutoverLease]:
+    """Own the process fence continuously through preflight and migration.
+
+    Direct dispatches and supported worker processes hold the shared side.
+    Acquiring this lease therefore proves those processes have drained and
+    prevents their restart until the migration transaction is complete.
+    """
+
+    resolved_path = _resolve_db_path(db_path)
+    lock_fd = await _acquire_lock_async(
+        _lock_path(resolved_path),
+        fcntl.LOCK_EX,
+    )
+    lease = IdentityCutoverLease(
+        db_path=resolved_path,
+        lease_id=uuid.uuid4().hex,
+    )
+    try:
+        if not workflow_dispatches_blocked(resolved_path):
+            raise IdentityCutoverLeaseError(
+                "workflow dispatches must be blocked before cutover lease acquisition"
+            )
+        yield lease
+    finally:
+        lease._active = False
         _release_lock(lock_fd)
 
 
@@ -464,11 +556,14 @@ def _utc_now() -> str:
 
 
 __all__ = [
+    "IdentityCutoverLease",
+    "IdentityCutoverLeaseError",
     "UnregisteredWorkflowDispatchError",
     "WorkflowDispatchReservation",
     "WorkflowDispatchFencedError",
     "activate_workflow_dispatch_fence",
     "ensure_workflow_dispatch_control_tables",
+    "identity_cutover_exclusive_lease",
     "reserve_workflow_dispatch",
     "set_workflow_dispatches_blocked",
     "workflow_dispatch_read_lock",
