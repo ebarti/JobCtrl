@@ -30,6 +30,22 @@ const { chromium } = require("@playwright/test");
 
 const PAGES = [
   { path: "/", visualSelector: null, images: false },
+  { path: "/guides/", visualSelector: null, images: false },
+  {
+    path: "/guides/local-first-job-search-automation",
+    visualSelector: null,
+    images: false,
+  },
+  {
+    path: "/guides/open-source-job-application-tracker",
+    visualSelector: null,
+    images: false,
+  },
+  {
+    path: "/guides/resume-tailoring-without-fabrication",
+    visualSelector: null,
+    images: false,
+  },
   { path: "/architecture/", visualSelector: ".system-topology", images: false },
   { path: "/developer/", visualSelector: null, images: false },
   {
@@ -97,6 +113,10 @@ const PAGES = [
 const SOCIAL_METADATA_ROUTES = new Set([
   "/",
   "/comparison",
+  "/guides/",
+  "/guides/local-first-job-search-automation",
+  "/guides/open-source-job-application-tracker",
+  "/guides/resume-tailoring-without-fabrication",
   "/architecture/",
   "/developer/",
   "/user/apply",

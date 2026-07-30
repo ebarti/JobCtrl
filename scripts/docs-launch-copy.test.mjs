@@ -131,6 +131,19 @@ test("priority public pages have distinct search descriptions", async () => {
     ["docs/user/apply.md", "Review JobCtrl's supervised application controls"],
     ["docs/architecture/index.md", "Explore JobCtrl's local-first architecture"],
     ["docs/developer/README.md", "Start contributing to JobCtrl"],
+    ["docs/guides/index.md", "Read practical JobCtrl guides"],
+    [
+      "docs/guides/local-first-job-search-automation.md",
+      "Learn how local-first job search automation",
+    ],
+    [
+      "docs/guides/open-source-job-application-tracker.md",
+      "See how an open-source job application tracker",
+    ],
+    [
+      "docs/guides/resume-tailoring-without-fabrication.md",
+      "Understand how JobCtrl tailors a resume",
+    ],
   ]);
   const observed = new Set();
 
@@ -141,6 +154,54 @@ test("priority public pages have distinct search descriptions", async () => {
     assert.match(description, new RegExp(`^${expectedPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
     assert.ok(!observed.has(description), `${path} must not reuse another priority description`);
     observed.add(description);
+  }
+});
+
+test("search-intent guides are substantive and route readers to canonical owners", async () => {
+  const guideContracts = [
+    {
+      path: "docs/guides/local-first-job-search-automation.md",
+      heading: "# Local-first Job Search Automation",
+      owners: [
+        "../user/data-and-safety.md",
+        "../architecture/runtime.md",
+        "../user/apply.md",
+      ],
+    },
+    {
+      path: "docs/guides/open-source-job-application-tracker.md",
+      heading: "# Open-source Job Application Tracker",
+      owners: [
+        "../user/normal-flows.md",
+        "../user/outcomes-and-feedback.md",
+        "../user/apply.md",
+      ],
+    },
+    {
+      path: "docs/guides/resume-tailoring-without-fabrication.md",
+      heading: "# Resume Tailoring Without Fabrication",
+      owners: [
+        "../architecture/tailoring.md",
+        "../user/candidate-profile.md",
+        "../user/materials-and-tailoring.md",
+      ],
+    },
+  ];
+
+  for (const contract of guideContracts) {
+    const document = await read(contract.path);
+    assert.match(document, new RegExp(`^${contract.heading}$`, "m"));
+    assert.ok(document.length >= 5_000, `${contract.path} must remain substantive`);
+    assert.ok(
+      (document.match(/^## /gm) ?? []).length >= 5,
+      `${contract.path} must retain a useful reader journey`,
+    );
+    for (const owner of contract.owners) {
+      assert.ok(
+        document.includes(`](${owner}`),
+        `${contract.path} must link to ${owner}`,
+      );
+    }
   }
 });
 
