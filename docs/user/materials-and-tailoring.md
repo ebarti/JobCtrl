@@ -1,3 +1,7 @@
+---
+description: "Learn how JobCtrl creates truthful, job-specific resumes and cover letters with provenance, fabrication gates, validation, repair, and human approval."
+---
+
 # Materials & Tailoring
 
 Materials are the job-specific resumes, cover letters, PDFs, and related review

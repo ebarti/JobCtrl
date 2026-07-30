@@ -47,6 +47,7 @@ const PAGES = [
     visualSelector: ".jh-daily-journey",
     images: true,
   },
+  { path: "/user/getting-started", visualSelector: null, images: false },
   { path: "/user/product-tour", visualSelector: null, images: true },
   {
     path: "/user/data-and-safety",
@@ -95,9 +96,16 @@ const PAGES = [
 
 const SOCIAL_METADATA_ROUTES = new Set([
   "/",
+  "/comparison",
   "/architecture/",
   "/developer/",
   "/user/apply",
+  "/user/data-and-safety",
+  "/user/getting-started",
+  "/user/materials-and-tailoring",
+  "/user/normal-flows",
+  "/user/product-tour",
+  "/user/scoring-and-employer-analysis",
 ]);
 const SOCIAL_IMAGE_URL = "https://jobctrl.dev/assets/brand/social-preview.png";
 const SOCIAL_IMAGE_ALT =
@@ -107,6 +115,7 @@ const DOCS_GOOGLE_TAG_MEASUREMENT_ID = "G-KB495KG6MS";
 const DOCS_GOOGLE_TAG_SCRIPT_ID = "jobctrl-docs-google-analytics";
 const DOCS_ANALYTICS_CONSENT_STORAGE_KEY =
   "jobctrl-docs-analytics-consent-v1";
+const observedSocialDescriptions = new Map();
 
 const LIFECYCLE_EXPLANATION_CONTRACTS = [
   {
@@ -344,6 +353,7 @@ async function assertSocialMetadata(page, route) {
       description: values('meta[name="description"]')[0],
       canonical: values('link[rel="canonical"]', "href"),
       ogType: values('meta[property="og:type"]'),
+      ogSiteName: values('meta[property="og:site_name"]'),
       ogUrl: values('meta[property="og:url"]'),
       ogTitle: values('meta[property="og:title"]'),
       ogDescription: values('meta[property="og:description"]'),
@@ -362,6 +372,7 @@ async function assertSocialMetadata(page, route) {
   const expected = {
     canonical: [expectedCanonical],
     ogType: ["website"],
+    ogSiteName: ["JobCtrl"],
     ogUrl: [expectedCanonical],
     ogTitle: [metadata.title],
     ogDescription: [metadata.description],
@@ -380,8 +391,48 @@ async function assertSocialMetadata(page, route) {
     .map(([key]) => key);
   if (!metadata.title || !metadata.description || mismatches.length > 0) {
     fail(`${route}: canonical or social metadata is missing, duplicated, or conflicting (${mismatches.join(", ")})`);
+  } else if (observedSocialDescriptions.has(metadata.description)) {
+    fail(
+      `${route}: search description duplicates ${observedSocialDescriptions.get(metadata.description)}`,
+    );
   } else {
+    observedSocialDescriptions.set(metadata.description, route);
     console.log(`ok    ${route} canonical and social metadata`);
+  }
+}
+
+async function assertHomepageSearchIdentity(page) {
+  const identity = await page.evaluate(() => {
+    const element = document.querySelector(
+      'script#jobctrl-structured-data[type="application/ld+json"]',
+    );
+    return {
+      title: document.title,
+      data: element ? JSON.parse(element.textContent ?? "{}") : null,
+    };
+  });
+  const graph = Array.isArray(identity.data?.["@graph"])
+    ? identity.data["@graph"]
+    : [];
+  const organization = graph.find((node) => node?.["@type"] === "Organization");
+  const website = graph.find((node) => node?.["@type"] === "WebSite");
+  const software = graph.find(
+    (node) => node?.["@type"] === "SoftwareApplication",
+  );
+  if (
+    identity.title !== "JobCtrl — Local-first job search automation" ||
+    organization?.name !== "JobCtrl" ||
+    organization?.url !== "https://jobctrl.dev/" ||
+    !organization?.sameAs?.includes("https://github.com/ebarti/JobCtrl") ||
+    website?.name !== "JobCtrl" ||
+    website?.alternateName !== "jobctrl.dev" ||
+    website?.url !== "https://jobctrl.dev/" ||
+    software?.name !== "JobCtrl" ||
+    software?.applicationSubCategory !== "Job search automation"
+  ) {
+    fail(`/: homepage search identity is incomplete (${JSON.stringify(identity)})`);
+  } else {
+    console.log("ok    / homepage search identity");
   }
 }
 
@@ -1043,6 +1094,9 @@ try {
 
     if (SOCIAL_METADATA_ROUTES.has(spec.path)) {
       await assertSocialMetadata(page, spec.path);
+    }
+    if (spec.path === "/") {
+      await assertHomepageSearchIdentity(page);
     }
 
     if (spec.visualSelector) {

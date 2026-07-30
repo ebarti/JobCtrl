@@ -1,3 +1,7 @@
+---
+description: "Start contributing to JobCtrl by locating the owning source boundary, architecture contract, validation commands, and security requirements."
+---
+
 # Contributor Start
 
 This is the shortest path from a fresh checkout to the document that owns the

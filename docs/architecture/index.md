@@ -1,6 +1,7 @@
 ---
 pageClass: jh-visual-doc
 aside: false
+description: "Explore JobCtrl's local-first architecture across the web app, TypeScript API, Python worker, Temporal workflows, SQLite, and external providers."
 ---
 
 # System Overview

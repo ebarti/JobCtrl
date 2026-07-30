@@ -1,3 +1,7 @@
+---
+description: "See how JobCtrl scores job fit from versioned profile evidence, requirement-level assessments, blockers, confidence, and correction history."
+---
+
 # Scoring
 
 Scoring compares Discovery's canonical, evidence-linked employer analysis with

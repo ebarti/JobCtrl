@@ -1,12 +1,66 @@
 import { posix } from "node:path";
-import { defineConfig, type DefaultTheme } from "vitepress";
+import { defineConfig, type DefaultTheme, type HeadConfig } from "vitepress";
 import { withMermaid } from "vitepress-plugin-mermaid";
 
 const REPO_URL = "https://github.com/ebarti/JobCtrl";
 const DOCS_SITE_URL = "https://jobctrl.dev";
+const SITE_NAME = "JobCtrl";
+const SITE_DESCRIPTION =
+  "Run your job search without surrendering your data: local discovery, evidence-backed scoring, truthful tailoring, and supervised apply.";
 const SOCIAL_IMAGE_URL = `${DOCS_SITE_URL}/assets/brand/social-preview.png`;
 const SOCIAL_IMAGE_ALT =
   "JobCtrl: run your job search, keep your data, and inspect key AI-assisted decisions.";
+const ORGANIZATION_ID = `${DOCS_SITE_URL}/#organization`;
+const WEBSITE_ID = `${DOCS_SITE_URL}/#website`;
+const SOFTWARE_ID = `${DOCS_SITE_URL}/#software`;
+const HOME_STRUCTURED_DATA = JSON.stringify({
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": ORGANIZATION_ID,
+      name: SITE_NAME,
+      url: `${DOCS_SITE_URL}/`,
+      logo: `${DOCS_SITE_URL}/assets/brand/app-icon.png`,
+      sameAs: [REPO_URL],
+    },
+    {
+      "@type": "WebSite",
+      "@id": WEBSITE_ID,
+      url: `${DOCS_SITE_URL}/`,
+      name: SITE_NAME,
+      alternateName: "jobctrl.dev",
+      description: SITE_DESCRIPTION,
+      inLanguage: "en",
+      publisher: { "@id": ORGANIZATION_ID },
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": SOFTWARE_ID,
+      name: SITE_NAME,
+      url: `${DOCS_SITE_URL}/`,
+      description: SITE_DESCRIPTION,
+      applicationCategory: "BusinessApplication",
+      applicationSubCategory: "Job search automation",
+      operatingSystem: "macOS 15 or later on Apple silicon",
+      isAccessibleForFree: true,
+      license: "https://www.gnu.org/licenses/agpl-3.0.html",
+      sameAs: [REPO_URL],
+      publisher: { "@id": ORGANIZATION_ID },
+    },
+  ],
+});
+
+function structuredDataHeadForPage(relativePath: string): HeadConfig[] {
+  if (relativePath !== "index.md") return [];
+  return [
+    [
+      "script",
+      { type: "application/ld+json", id: "jobctrl-structured-data" },
+      HOME_STRUCTURED_DATA,
+    ],
+  ];
+}
 
 // Docs that stay in the repository but are not published on the site.
 // docs/README.md is the repo-facing documentation map (GitHub renders it when
@@ -240,9 +294,8 @@ function rewriteEscapingLink(href: string, pageRelativePath: string): string | n
 
 export default withMermaid(
   defineConfig({
-    title: "JobCtrl",
-    description:
-      "Run your job search without surrendering your data: local discovery, evidence-backed scoring, truthful tailoring, and supervised apply.",
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
     sitemap: {
       hostname: DOCS_SITE_URL,
     },
@@ -257,6 +310,7 @@ export default withMermaid(
       return [
         ["link", { rel: "canonical", href: canonicalUrl }],
         ["meta", { property: "og:type", content: "website" }],
+        ["meta", { property: "og:site_name", content: SITE_NAME }],
         ["meta", { property: "og:url", content: canonicalUrl }],
         ["meta", { property: "og:title", content: title }],
         ["meta", { property: "og:description", content: description }],
@@ -269,6 +323,7 @@ export default withMermaid(
         ["meta", { name: "twitter:description", content: description }],
         ["meta", { name: "twitter:image", content: SOCIAL_IMAGE_URL }],
         ["meta", { name: "twitter:image:alt", content: SOCIAL_IMAGE_ALT }],
+        ...structuredDataHeadForPage(pageData.relativePath),
       ];
     },
     srcExclude: [
