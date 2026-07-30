@@ -15,12 +15,21 @@ from temporalio.service import RPCError, RPCStatusCode
 from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
 from jobctrl.browser_capabilities import browser_capability_status
 from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.runtime_identity import (
+    assert_expected_runtime,
+    current_runtime_identity,
+)
 from jobctrl.infrastructure.scoring.criteria_provider import (
     read_apply_approval_required,
     read_apply_concurrency,
     read_auto_apply_enabled,
     read_daily_budget_usd,
     read_min_fit_score,
+)
+from jobctrl.infrastructure.temporal.workflow_dispatch_control import (
+    WorkflowDispatchFencedError,
+    reserve_workflow_dispatch,
+    workflow_dispatches_blocked,
 )
 
 AUTO_APPLY_WORKFLOW_PREFIX = "apply-auto"
@@ -70,8 +79,16 @@ async def reconcile_auto_apply_loop(
     expected_db_path: str | None = None,
 ) -> AutoApplyReconcileResult:
     """Ensure the deterministic continuous apply workflow matches settings."""
+    assert_expected_runtime(expected_db_path=expected_db_path)
+    runtime_db_path = current_runtime_identity().db_path
     settings = read_auto_apply_loop_settings(settings_path)
     workflow_id = auto_apply_workflow_id(tenant_id)
+    if settings.enabled and workflow_dispatches_blocked(
+        runtime_db_path
+    ):
+        raise WorkflowDispatchFencedError(
+            "workflow dispatches are blocked for the stable JobId cutover"
+        )
     running = await _is_workflow_running(client, workflow_id)
     if settings.enabled:
         capability = browser_capability_status("auto-apply-browser")
@@ -104,14 +121,20 @@ async def reconcile_auto_apply_loop(
             continuous=True,
             auto_apply_loop=True,
         )
-        await client.start_workflow(
-            ApplyWorkflow.run,
-            payload,
-            id=workflow_id,
-            task_queue=task_queue,
-            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
-            id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
-        )
+        async with reserve_workflow_dispatch(
+            workflow=ApplyWorkflow,
+            workflow_id=workflow_id,
+            db_path=runtime_db_path,
+        ) as reservation:
+            handle = await client.start_workflow(
+                ApplyWorkflow.run,
+                payload,
+                id=workflow_id,
+                task_queue=task_queue,
+                id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+            )
+            reservation.mark_dispatched(handle)
         return AutoApplyReconcileResult(workflow_id, "started", True)
 
     if running:

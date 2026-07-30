@@ -15,6 +15,7 @@ succeeds.
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,15 +23,17 @@ import pytest
 from temporalio.client import WorkflowExecutionStatus
 from temporalio.service import RPCError, RPCStatusCode
 
+from jobctrl import config
 from jobctrl.cli import _reconcile_workflow_runs
 from jobctrl.database import get_connection
 from jobctrl.domain.rpc.messages import WorkflowStartSpec
 from jobctrl.infrastructure.rpc import workflow_starter as ws
+from jobctrl.infrastructure.runtime_identity import RuntimeIdentityMismatch
+from jobctrl.infrastructure.temporal.workflow_dispatch_control import (
+    WorkflowDispatchFencedError,
+    set_workflow_dispatches_blocked,
+)
 from jobctrl.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
-
-
-class _FakeWorkflow:
-    pass
 
 
 class _FakeDescribe:
@@ -76,7 +79,7 @@ def test_starter_connects_per_call() -> None:
     with patch.object(
         ws, "get_temporal_client", AsyncMock(return_value=fake_client)
     ) as connect_mock:
-        spec = WorkflowStartSpec(workflow=_FakeWorkflow, args=())
+        spec = _registered_spec()
 
         async def _drive() -> None:
             await ws.default_workflow_starter(spec)
@@ -123,13 +126,133 @@ def test_starter_survives_cross_loop_invocation() -> None:
     with patch.object(
         ws, "get_temporal_client", AsyncMock(return_value=fake_client)
     ):
-        spec = WorkflowStartSpec(workflow=_FakeWorkflow, args=())
+        spec = _registered_spec()
 
         # Each asyncio.run owns its own loop — exactly the JSON-RPC dispatch path.
         asyncio.run(ws.default_workflow_starter(spec))
         asyncio.run(ws.default_workflow_starter(spec))
 
     assert fake_client.start_workflow.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_starter_never_contacts_temporal_while_dispatch_is_fenced(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    set_workflow_dispatches_blocked(
+        blocked=True,
+        reason="identity-cutover",
+        db_path=db_path,
+    )
+    fake_client = MagicMock()
+    fake_client.start_workflow = AsyncMock()
+    spec = WorkflowStartSpec(
+        workflow=JobPipelineWorkflow,
+        args=(
+            JobPipelineWorkflowInput(
+                tenant_id="local",
+                stages=["score"],
+                expected_db_path=str(db_path),
+            ),
+        ),
+    )
+
+    with (
+        patch.object(
+            ws,
+            "get_temporal_client",
+            AsyncMock(return_value=fake_client),
+        ) as connect_mock,
+        pytest.raises(
+            WorkflowDispatchFencedError,
+            match="stable JobId cutover",
+        ),
+    ):
+        await ws.default_workflow_starter(spec)
+
+    connect_mock.assert_not_awaited()
+    fake_client.start_workflow.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_starter_rejects_an_alternate_expected_db_before_temporal_contact(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    canonical_db_path = tmp_path / "canonical.db"
+    alternate_db_path = tmp_path / "alternate.db"
+    monkeypatch.setattr(config, "DB_PATH", canonical_db_path)
+    fake_client = MagicMock()
+    fake_client.start_workflow = AsyncMock()
+    spec = WorkflowStartSpec(
+        workflow=JobPipelineWorkflow,
+        args=(
+            JobPipelineWorkflowInput(
+                tenant_id="local",
+                stages=["score"],
+                expected_db_path=str(alternate_db_path),
+            ),
+        ),
+    )
+
+    with (
+        patch.object(
+            ws,
+            "get_temporal_client",
+            AsyncMock(return_value=fake_client),
+        ) as connect_mock,
+        pytest.raises(
+            RuntimeIdentityMismatch,
+            match="Worker runtime mismatch",
+        ),
+    ):
+        await ws.default_workflow_starter(spec)
+
+    connect_mock.assert_not_awaited()
+    fake_client.start_workflow.assert_not_awaited()
+    assert alternate_db_path.exists() is False
+
+
+@pytest.mark.asyncio
+async def test_starter_connector_failure_keeps_an_uncertain_reservation(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    spec = WorkflowStartSpec(
+        workflow=JobPipelineWorkflow,
+        args=(
+            JobPipelineWorkflowInput(
+                tenant_id="local",
+                stages=["score"],
+                expected_db_path=str(db_path),
+            ),
+        ),
+        workflow_id="run-connect-timeout",
+    )
+
+    with (
+        patch.object(
+            ws,
+            "get_temporal_client",
+            AsyncMock(side_effect=TimeoutError("connector timeout")),
+        ),
+        pytest.raises(TimeoutError, match="connector timeout"),
+    ):
+        await ws.default_workflow_starter(spec)
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT workflow_id, temporal_run_id, state
+            FROM workflow_dispatch_registry
+            """
+        ).fetchone()
+    assert row == ("run-connect-timeout", None, "uncertain")
 
 
 @pytest.mark.asyncio
@@ -170,3 +293,15 @@ async def test_dispatch_started_row_is_visible_and_reconciler_terminalizes_not_f
     assert terminalized >= 1
     assert row["status"] == "terminated"
     assert row["error_code"] == "reconciled_not_found"
+
+
+def _registered_spec() -> WorkflowStartSpec:
+    return WorkflowStartSpec(
+        workflow=JobPipelineWorkflow,
+        args=(
+            JobPipelineWorkflowInput(
+                tenant_id="local",
+                stages=["score"],
+            ),
+        ),
+    )

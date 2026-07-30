@@ -31,8 +31,15 @@ from temporalio.client import WorkflowHandle
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
 from jobctrl.domain.rpc.messages import WorkflowStartSpec
+from jobctrl.infrastructure.runtime_identity import (
+    assert_expected_runtime,
+    current_runtime_identity,
+)
 from jobctrl.infrastructure.temporal.client import get_temporal_client
 from jobctrl.infrastructure.temporal.task_queues import JOBCTRL_TASK_QUEUE
+from jobctrl.infrastructure.temporal.workflow_dispatch_control import (
+    reserve_workflow_dispatch,
+)
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +54,6 @@ WorkflowCanceler = Callable[[str], Coroutine[Any, Any, None]]
 
 
 async def default_workflow_starter(spec: WorkflowStartSpec) -> WorkflowHandle:
-    client = await get_temporal_client()
     workflow_id = spec.workflow_id or f"run-{uuid4().hex}"
     # USE_EXISTING makes a double-start of a deterministic id (e.g.
     # ``apply-{jobKey}``) return the already-running handle instead of a
@@ -56,15 +62,26 @@ async def default_workflow_starter(spec: WorkflowStartSpec) -> WorkflowHandle:
     # trigger, so they are safe as global defaults.
     id_conflict_policy = spec.id_conflict_policy or WorkflowIDConflictPolicy.USE_EXISTING
     id_reuse_policy = spec.id_reuse_policy or WorkflowIDReusePolicy.ALLOW_DUPLICATE
-    handle = await client.start_workflow(
-        spec.workflow,
-        *spec.args,
-        id=workflow_id,
-        task_queue=JOBCTRL_TASK_QUEUE,
-        retry_policy=spec.retry_policy,
-        id_conflict_policy=id_conflict_policy,
-        id_reuse_policy=id_reuse_policy,
-    )
+    payload = spec.args[0] if spec.args else None
+    expected_db_path = getattr(payload, "expected_db_path", None)
+    assert_expected_runtime(expected_db_path=expected_db_path)
+    runtime_db_path = current_runtime_identity().db_path
+    async with reserve_workflow_dispatch(
+        workflow=spec.workflow,
+        workflow_id=workflow_id,
+        db_path=runtime_db_path,
+    ) as reservation:
+        client = await get_temporal_client()
+        handle = await client.start_workflow(
+            spec.workflow,
+            *spec.args,
+            id=workflow_id,
+            task_queue=JOBCTRL_TASK_QUEUE,
+            retry_policy=spec.retry_policy,
+            id_conflict_policy=id_conflict_policy,
+            id_reuse_policy=id_reuse_policy,
+        )
+        reservation.mark_dispatched(handle)
     _record_dispatch_started(spec, workflow_id, handle)
     return handle
 

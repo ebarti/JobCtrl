@@ -471,6 +471,11 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_projection_tables_in_db(conn)
     drop_legacy_apply_runs_tables(conn)
     _run_schema_migrations(conn)
+    from jobctrl.infrastructure.temporal.workflow_dispatch_control import (
+        ensure_workflow_dispatch_control_tables,
+    )
+
+    ensure_workflow_dispatch_control_tables(conn)
     ensure_deleted_jobs_table(conn)
 
     return conn

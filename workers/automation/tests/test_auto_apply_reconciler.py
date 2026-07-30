@@ -16,6 +16,10 @@ from jobctrl.apply import auto_apply
 from jobctrl.apply.auto_apply import auto_apply_workflow_id, reconcile_auto_apply_loop
 from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
 from jobctrl.browser_capabilities import BrowserCapabilityStatus
+from jobctrl.infrastructure.temporal.workflow_dispatch_control import (
+    WorkflowDispatchFencedError,
+    set_workflow_dispatches_blocked,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -52,8 +56,10 @@ class _FakeClient:
     def __init__(self) -> None:
         self.handles: dict[str, _FakeHandle] = {}
         self.starts: list[dict[str, Any]] = []
+        self.describes: list[str] = []
 
     def get_workflow_handle(self, workflow_id: str) -> _FakeHandle:
+        self.describes.append(workflow_id)
         return self.handles.get(
             workflow_id,
             _FakeHandle(RPCError("not found", RPCStatusCode.NOT_FOUND, b"")),
@@ -130,15 +136,15 @@ async def test_auto_apply_on_starts_exactly_one_standing_loop(tmp_path, monkeypa
         client,
         task_queue="jobctrl-test",
         settings_path=settings_path,
-        expected_app_dir="/tmp/jobctrl",
-        expected_db_path="/tmp/jobctrl/jobctrl.db",
+        expected_app_dir=str(tmp_path),
+        expected_db_path=str(tmp_path / "jobctrl.db"),
     )
     second = await reconcile_auto_apply_loop(
         client,
         task_queue="jobctrl-test",
         settings_path=settings_path,
-        expected_app_dir="/tmp/jobctrl",
-        expected_db_path="/tmp/jobctrl/jobctrl.db",
+        expected_app_dir=str(tmp_path),
+        expected_db_path=str(tmp_path / "jobctrl.db"),
     )
 
     assert first.action == "started"
@@ -154,11 +160,46 @@ async def test_auto_apply_on_starts_exactly_one_standing_loop(tmp_path, monkeypa
     assert payload.min_score == 9
     assert payload.workers == 3
     assert payload.approval_required is True
-    assert payload.expected_app_dir == "/tmp/jobctrl"
-    assert payload.expected_db_path == "/tmp/jobctrl/jobctrl.db"
+    assert payload.expected_app_dir == str(tmp_path)
+    assert payload.expected_db_path == str(tmp_path / "jobctrl.db")
     assert start["kwargs"]["id"] == auto_apply_workflow_id("local")
     assert start["kwargs"]["id_conflict_policy"] is WorkflowIDConflictPolicy.USE_EXISTING
     assert start["kwargs"]["id_reuse_policy"] is WorkflowIDReusePolicy.ALLOW_DUPLICATE
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_never_starts_while_dispatch_is_fenced(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_path = tmp_path / "config.json"
+    db_path = tmp_path / "jobctrl.db"
+    _write_config_settings(settings_path)
+    _write_discovery_automation_settings(
+        monkeypatch,
+        tmp_path,
+        auto_apply=True,
+    )
+    set_workflow_dispatches_blocked(
+        blocked=True,
+        reason="identity-cutover",
+        db_path=db_path,
+    )
+    client = _FakeClient()
+
+    with pytest.raises(
+        WorkflowDispatchFencedError,
+        match="stable JobId cutover",
+    ):
+        await reconcile_auto_apply_loop(
+            client,
+            task_queue="jobctrl-test",
+            settings_path=settings_path,
+            expected_db_path=str(db_path),
+        )
+
+    assert client.starts == []
+    assert client.describes == []
 
 
 @pytest.mark.asyncio
