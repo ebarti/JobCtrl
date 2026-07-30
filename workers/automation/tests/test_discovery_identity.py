@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -288,33 +290,257 @@ def test_find_canonical_owner_resolves_native_identity_then_canonical_and_observ
     persisted = repo.load(LOCAL_TENANT, job.job_id)
     assert persisted is not None
 
-    assert (
-        repo.find_canonical_owner(
-            LOCAL_TENANT,
-            source_id="greenhouse:acme",
-            source_native_id="123",
-            canonical_url="",
-        )
-        == persisted.job_id
+    native_match = repo.find_canonical_owner(
+        LOCAL_TENANT,
+        source_id="greenhouse:acme",
+        source_native_id="123",
+        canonical_url="",
     )
-    assert (
-        repo.find_canonical_owner(
-            LOCAL_TENANT,
-            source_id="ashby:acme",
-            source_native_id="different",
-            canonical_url="https://boards.greenhouse.io/acme/jobs/123",
-        )
-        == persisted.job_id
+    assert native_match is not None
+    assert native_match.job_id == persisted.job_id
+    assert native_match.basis == "source_native_id_match"
+
+    canonical_match = repo.find_canonical_owner(
+        LOCAL_TENANT,
+        source_id="ashby:acme",
+        source_native_id="different",
+        canonical_url="https://boards.greenhouse.io/acme/jobs/123",
     )
-    assert (
-        repo.find_canonical_owner(
-            LOCAL_TENANT,
-            source_id="ashby:acme",
-            source_native_id="different",
-            canonical_url="https://boards.greenhouse.io/acme/jobs/123?gh_jid=123",
-        )
-        == persisted.job_id
+    assert canonical_match is not None
+    assert canonical_match.job_id == persisted.job_id
+    assert canonical_match.basis == "canonical_url_match"
+
+    observation_match = repo.find_canonical_owner(
+        LOCAL_TENANT,
+        source_id="ashby:acme",
+        source_native_id="different",
+        canonical_url="https://boards.greenhouse.io/acme/jobs/123?gh_jid=123",
     )
+    assert observation_match is not None
+    assert observation_match.job_id == persisted.job_id
+    assert observation_match.basis == "normalized_observation_match"
+
+
+def _concurrent_discovery_claims(
+    tmp_path: Path,
+    postings: tuple[ScrapedJobPosting, ScrapedJobPosting],
+) -> tuple[list[sqlite3.Row], list[sqlite3.Row], list[list[DomainEvent]]]:
+    """Run two independent intake connections past the initial read together."""
+
+    db_path = tmp_path / "concurrent-discovery.db"
+    initialized = init_db(db_path)
+    initialized.close()
+    barrier = threading.Barrier(2)
+
+    class BarrierRepository(SqliteJobRepository):
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            super().__init__(connection)
+            self._waited = False
+
+        def find_canonical_owner(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            result = super().find_canonical_owner(*args, **kwargs)
+            if result is None and not self._waited:
+                self._waited = True
+                barrier.wait(timeout=5)
+            return result
+
+    connections = [
+        sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+        for _ in range(2)
+    ]
+    for connection in connections:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 10000")
+    repositories = [BarrierRepository(connection) for connection in connections]
+    publishers = [RecordingPublisher(), RecordingPublisher()]
+    job_ids = (
+        JobId("3cce0d51-37a9-4b2d-a73d-7843ff268d28"),
+        JobId("1afb2b31-1b6b-4b09-94d4-0bf5702e88de"),
+    )
+    use_cases = [
+        DiscoverJobsUseCase(
+            repository=repositories[index],
+            publisher=publishers[index],
+            clock=lambda: "2026-05-12T00:00:00Z",
+            job_id_factory=lambda index=index: job_ids[index],
+        )
+        for index in range(2)
+    ]
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            list(
+                executor.map(
+                    lambda index: use_cases[index].execute(
+                        tenant_id=LOCAL_TENANT,
+                        postings=[postings[index]],
+                        run_id=f"run-{index}",
+                    ),
+                    range(2),
+                )
+            )
+        check = sqlite3.connect(db_path)
+        check.row_factory = sqlite3.Row
+        try:
+            jobs = check.execute("SELECT job_id, url FROM jobs ORDER BY job_id").fetchall()
+            observations = check.execute(
+                """
+                SELECT job_id, source_id, source_native_id, observed_url
+                FROM job_source_observations
+                ORDER BY source_id, source_native_id
+                """
+            ).fetchall()
+        finally:
+            check.close()
+    finally:
+        for connection in connections:
+            connection.close()
+
+    return jobs, observations, [publisher.events for publisher in publishers]
+
+
+def test_concurrent_source_native_claim_preserves_one_owner_and_native_audit(
+    tmp_path: Path,
+) -> None:
+    jobs, observations, event_batches = _concurrent_discovery_claims(
+        tmp_path,
+        (
+            _posting(
+                canonical_url="https://boards.greenhouse.io/acme/jobs/platform-a",
+                source_id="greenhouse:acme",
+                source_native_id="platform-123",
+            ),
+            _posting(
+                canonical_url="https://boards.greenhouse.io/acme/jobs/platform-b",
+                source_id="greenhouse:acme",
+                source_native_id="platform-123",
+            ),
+        ),
+    )
+
+    assert len(jobs) == 1
+    assert len(observations) == 1
+    assert observations[0]["job_id"] == jobs[0]["job_id"]
+    assert observations[0]["source_native_id"] == "platform-123"
+    events = [event for batch in event_batches for event in batch]
+    assert sum(event.event_type == "JobSourceObserved" for event in events) == 2
+    links = [event for event in events if event.event_type == "DuplicateJobLinked"]
+    assert len(links) == 1
+    assert links[0].payload["surviving_job_id"] == jobs[0]["job_id"]
+    assert links[0].payload["reason"] == "source_native_id_match"
+
+
+def test_concurrent_normalized_observation_claim_preserves_one_owner_without_rehoming(
+    tmp_path: Path,
+) -> None:
+    jobs, observations, event_batches = _concurrent_discovery_claims(
+        tmp_path,
+        (
+            _posting(
+                canonical_url="https://boards.greenhouse.io/acme/jobs/platform?utm_source=one",
+                source_id="broad-board:one",
+                source_native_id="platform-one",
+            ),
+            _posting(
+                canonical_url="https://boards.greenhouse.io/acme/jobs/platform?gh_src=two",
+                source_id="broad-board:two",
+                source_native_id="platform-two",
+            ),
+        ),
+    )
+
+    assert len(jobs) == 1
+    assert len(observations) == 1
+    assert observations[0]["job_id"] == jobs[0]["job_id"]
+    events = [event for batch in event_batches for event in batch]
+    assert sum(event.event_type == "JobSourceObserved" for event in events) == 2
+    # These URLs normalise to the owner's current posting URL, so the second
+    # source is a refresh rather than a distinct duplicate-link audit.
+    assert [event for event in events if event.event_type == "DuplicateJobLinked"] == []
+
+
+def test_duplicate_audit_uses_the_exact_canonical_owner_basis(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        clock=lambda: "2026-05-12T00:00:00Z",
+    )
+    primary_url = "https://boards.greenhouse.io/acme/jobs/platform"
+    canonical_alias = "https://careers.acme.example/jobs/platform"
+    observation_alias = "https://jobs.acme.example/openings/platform"
+
+    use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url=primary_url,
+                source_id="greenhouse:acme",
+                source_native_id="platform-primary",
+            )
+        ],
+        run_id="run-primary",
+    )
+    owner = repo.resolve_by_posting_url(LOCAL_TENANT, PostingUrl(value=primary_url))
+    assert owner is not None
+    repo.set_canonical_identity(
+        LOCAL_TENANT,
+        owner.job_id,
+        CanonicalJobIdentity(
+            canonical_url=canonical_alias,
+            ats_kind=AtsKind.GREENHOUSE,
+            source_native_id="platform-primary",
+            confidence=0.9,
+        ),
+    )
+    use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url=canonical_alias,
+                source_id="ashby:acme",
+                source_native_id="platform-canonical",
+                ats_kind=AtsKind.ASHBY,
+            )
+        ],
+        run_id="run-canonical",
+    )
+    repo.attach_source_observation(
+        LOCAL_TENANT,
+        owner.job_id,
+        JobSourceObservation(
+            source_observation_id="observation-alias",
+            source_id="broad-board:acme",
+            source_native_id="platform-observation",
+            observed_url=observation_alias,
+            run_id="run-observation-seed",
+            observed_at="2026-05-12T00:00:00Z",
+        ),
+    )
+    use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url=f"{observation_alias}?utm_source=feed",
+                source_id="lever:acme",
+                source_native_id="platform-normalized",
+                ats_kind=AtsKind.LEVER,
+            )
+        ],
+        run_id="run-observation",
+    )
+
+    reasons = [
+        row["reason"]
+        for row in conn.execute(
+            "SELECT reason FROM job_duplicate_links ORDER BY linked_at, duplicate_link_id"
+        ).fetchall()
+    ]
+    assert set(reasons) == {"canonical_url_match", "normalized_observation_match"}
 
 
 def test_duplicate_links_are_persisted(conn: sqlite3.Connection) -> None:
@@ -536,10 +762,10 @@ def test_discover_jobs_use_case_observes_existing_job_and_links_duplicate(
     assert len(domain_links) == 1
     assert domain_links[0].surviving_job_id == str(owner.job_id)
     assert duplicate.payload["surviving_job_id"] == str(owner.job_id)
-    assert duplicate.payload["reason"] == "canonical_url_match"
+    assert duplicate.payload["reason"] == "source_native_id_match"
     duplicate_row = conn.execute("SELECT reason FROM job_duplicate_links").fetchone()
     assert duplicate_row is not None
-    assert duplicate_row["reason"] == "canonical_url_match"
+    assert duplicate_row["reason"] == "source_native_id_match"
 
 
 def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
@@ -1397,7 +1623,7 @@ def test_discover_jobs_use_case_prefers_native_identity_over_content_match(
     assert summary.duplicates_linked == 1
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
     link = conn.execute("SELECT reason, confidence FROM job_duplicate_links").fetchone()
-    assert link["reason"] == "canonical_url_match"
+    assert link["reason"] == "source_native_id_match"
     assert link["confidence"] == 0.9
 
 

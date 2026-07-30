@@ -657,12 +657,15 @@ def _promote_ats_source_description_to_enrichment(
         return False
 
     identity = default_canonical_identity(posting)
-    job_id = job_repository.find_canonical_owner(
+    owner_match = job_repository.find_canonical_owner(
         LOCAL_TENANT,
         source_id=posting.source_id,
         source_native_id=identity.source_native_id,
         canonical_url=identity.canonical_url,
-    ) or JobId(identity.canonical_url or posting.posting_url.value)
+    )
+    if owner_match is None:
+        return False
+    job_id = owner_match.job_id
     if job_repository.load(LOCAL_TENANT, job_id) is None:
         return False
 

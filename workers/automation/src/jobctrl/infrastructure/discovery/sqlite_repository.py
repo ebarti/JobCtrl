@@ -66,6 +66,7 @@ from jobctrl.domain.job_content_identity import (
     normalize_identity_text,
 )
 from jobctrl.domain.ports.discovery import (
+    CanonicalOwnerMatch,
     ContentOwnerMatch,
     JobIdentityResolver,
     ResolvedJobIdentity,
@@ -581,6 +582,71 @@ class SqliteJobRepository:
         self._conn.commit()
         return restored
 
+    def claim_new_job(
+        self,
+        job: Job,
+        identity: CanonicalJobIdentity,
+        observation: JobSourceObservation,
+    ) -> CanonicalOwnerMatch | None:
+        """Atomically create ``job`` with its exact identity evidence.
+
+        A posting URL alone is not enough to establish a Job owner: source-native
+        and normalised-observation claims are also unique.  Serialising the
+        complete claim under ``BEGIN IMMEDIATE`` means a competing intake returns
+        the existing owner before any candidate row becomes visible.
+        """
+
+        if self._conn.in_transaction:
+            raise RuntimeError("claim_new_job requires an idle SQLite connection")
+
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._fence_search_unit_write()
+            owner_match = self.find_canonical_owner(
+                job.tenant_id,
+                source_id=observation.source_id,
+                source_native_id=observation.source_native_id,
+                canonical_url=identity.canonical_url,
+            )
+            if owner_match is not None:
+                self._conn.commit()
+                return owner_match
+
+            candidate_job_id = canonical_job_id(str(job.job_id))
+            persisted_identity, was_new = self._insert_or_resolve_winner(
+                job,
+                candidate_job_id,
+            )
+            if not was_new:
+                self._conn.commit()
+                return CanonicalOwnerMatch(
+                    job_id=persisted_identity.job_id,
+                    basis="canonical_url_match",
+                )
+
+            self._sync_tombstone(job, persisted_identity)
+            self._set_canonical_identity(persisted_identity, identity)
+            owner_match = self._attach_source_observation(
+                job.tenant_id,
+                persisted_identity,
+                observation,
+            )
+            if owner_match is not None:
+                self._conn.rollback()
+                return owner_match
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+
+        self._record_observation_side_effects(
+            tenant_id=job.tenant_id,
+            job_id=persisted_identity.job_id,
+            observation=observation,
+            was_new=True,
+        )
+        return None
+
     # ------------------------------------------------------------------
     # PR 2: canonical identity, source observations, duplicate links
     # ------------------------------------------------------------------
@@ -592,7 +658,7 @@ class SqliteJobRepository:
         source_id: str,
         source_native_id: str,
         canonical_url: str,
-    ) -> JobId | None:
+    ) -> CanonicalOwnerMatch | None:
         """Look up the canonical Job for an incoming posting identity.
 
         Resolution order matches the RFC §"Recommended identity checks":
@@ -618,7 +684,10 @@ class SqliteJobRepository:
             if row is not None:
                 job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[0]
                 if job_id:
-                    return JobId(str(job_id))
+                    return CanonicalOwnerMatch(
+                        job_id=JobId(str(job_id)),
+                        basis="source_native_id_match",
+                    )
 
         if canonical_url:
             direct = self._identity_resolver.resolve_by_posting_url(
@@ -626,7 +695,10 @@ class SqliteJobRepository:
                 PostingUrl(value=canonical_url),
             )
             if direct is not None:
-                return direct.job_id
+                return CanonicalOwnerMatch(
+                    job_id=direct.job_id,
+                    basis="canonical_url_match",
+                )
 
             row = self._conn.execute(
                 """
@@ -643,7 +715,10 @@ class SqliteJobRepository:
             if row is not None:
                 job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[0]
                 if job_id:
-                    return JobId(str(job_id))
+                    return CanonicalOwnerMatch(
+                        job_id=JobId(str(job_id)),
+                        basis="canonical_url_match",
+                    )
 
             normalized = normalize_observed_url(canonical_url)
             if normalized:
@@ -663,7 +738,10 @@ class SqliteJobRepository:
                 if row is not None:
                     job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[0]
                     if job_id:
-                        return JobId(str(job_id))
+                        return CanonicalOwnerMatch(
+                            job_id=JobId(str(job_id)),
+                            basis="normalized_observation_match",
+                        )
 
         return None
 
@@ -761,7 +839,7 @@ class SqliteJobRepository:
         tenant_id: TenantId,
         job_id: JobId,
         observation: JobSourceObservation,
-    ) -> None:
+    ) -> CanonicalOwnerMatch | None:
         """Persist or replace an observation row.
 
         Idempotent on ``(tenant_id, source_id, source_native_id)``: if
@@ -772,8 +850,46 @@ class SqliteJobRepository:
         """
 
         identity = self._require_identity(tenant_id, job_id)
+        try:
+            self._fence_search_unit_write()
+            owner_match = self._attach_source_observation(
+                tenant_id,
+                identity,
+                observation,
+            )
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+
+        if owner_match is not None:
+            return owner_match
+        self._record_observation_side_effects(
+            tenant_id=tenant_id,
+            job_id=identity.job_id,
+            observation=observation,
+            was_new=False,
+        )
+        return None
+
+    def _attach_source_observation(
+        self,
+        tenant_id: TenantId,
+        identity: ResolvedJobIdentity,
+        observation: JobSourceObservation,
+    ) -> CanonicalOwnerMatch | None:
+        """Write an observation only when this Job already owns its claims."""
+
+        owner_match = self._find_observation_owner(
+            tenant_id,
+            source_id=observation.source_id,
+            source_native_id=observation.source_native_id,
+            observed_url=observation.observed_url,
+        )
+        if owner_match is not None and owner_match.job_id != identity.job_id:
+            return owner_match
+
         stable_job_id = str(identity.job_id)
-        self._fence_search_unit_write()
         normalized = normalize_observed_url(observation.observed_url)
         updated = self._conn.execute(
             """
@@ -807,6 +923,7 @@ class SqliteJobRepository:
                     source_id = ?,
                     source_native_id = ?,
                     observed_url = ?,
+                    normalized_observed_url = ?,
                     run_id = ?,
                     observed_at = ?
                 WHERE tenant_id = ? AND normalized_observed_url = ?
@@ -817,6 +934,7 @@ class SqliteJobRepository:
                     observation.source_id,
                     observation.source_native_id,
                     observation.observed_url,
+                    normalized,
                     observation.run_id,
                     observation.observed_at,
                     str(tenant_id),
@@ -844,12 +962,22 @@ class SqliteJobRepository:
                     observation.observed_at,
                 ),
             )
+        return None
+
+    def _record_observation_side_effects(
+        self,
+        *,
+        tenant_id: TenantId,
+        job_id: JobId,
+        observation: JobSourceObservation,
+        was_new: bool,
+    ) -> None:
         if self._search_unit_repository is not None:
             assert self._search_unit_lease is not None
             self._search_unit_repository.record_accepted_job(
                 self._search_unit_lease,
-                str(identity.job_id),
-                was_new=False,
+                str(job_id),
+                was_new=was_new,
                 accepted_at=observation.observed_at,
             )
         if self._execution_repository is not None:
@@ -862,13 +990,12 @@ class SqliteJobRepository:
             # updated independently in ``job_source_observations`` on retries.
             self._execution_repository.link_job(
                 self._discovery_execution,
-                stable_job_id,
+                str(job_id),
                 cohort_kind="observed_this_run",
                 source_family=self._source_family,
                 source_run_id=observation.run_id,
                 linked_at=observation.observed_at,
             )
-        self._conn.commit()
 
     def set_canonical_identity(
         self,
@@ -880,6 +1007,14 @@ class SqliteJobRepository:
 
         resolved = self._require_identity(tenant_id, job_id)
         self._fence_search_unit_write()
+        self._set_canonical_identity(resolved, identity)
+        self._conn.commit()
+
+    def _set_canonical_identity(
+        self,
+        resolved: ResolvedJobIdentity,
+        identity: CanonicalJobIdentity,
+    ) -> None:
         self._conn.execute(
             """
             INSERT INTO job_canonical_identities (
@@ -894,7 +1029,7 @@ class SqliteJobRepository:
                 resolved_at = excluded.resolved_at
             """,
             (
-                str(tenant_id),
+                str(resolved.tenant_id),
                 str(resolved.job_id),
                 identity.canonical_url,
                 identity.ats_kind.value,
@@ -903,7 +1038,53 @@ class SqliteJobRepository:
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
-        self._conn.commit()
+
+    def _find_observation_owner(
+        self,
+        tenant_id: TenantId,
+        *,
+        source_id: str,
+        source_native_id: str,
+        observed_url: str,
+    ) -> CanonicalOwnerMatch | None:
+        """Resolve the unique observation claims in the same priority as intake."""
+
+        if source_id and source_native_id:
+            row = self._conn.execute(
+                """
+                SELECT job_id
+                FROM job_source_observations
+                WHERE tenant_id = ? AND source_id = ? AND source_native_id = ?
+                LIMIT 1
+                """,
+                (str(tenant_id), source_id, source_native_id),
+            ).fetchone()
+            if row is not None:
+                job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[0]
+                return CanonicalOwnerMatch(
+                    job_id=JobId(str(job_id)),
+                    basis="source_native_id_match",
+                )
+
+        normalized = normalize_observed_url(observed_url)
+        if not normalized:
+            return None
+        row = self._conn.execute(
+            """
+            SELECT job_id
+            FROM job_source_observations
+            WHERE tenant_id = ? AND normalized_observed_url = ?
+            LIMIT 1
+            """,
+            (str(tenant_id), normalized),
+        ).fetchone()
+        if row is None:
+            return None
+        job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[0]
+        return CanonicalOwnerMatch(
+            job_id=JobId(str(job_id)),
+            basis="normalized_observation_match",
+        )
 
     def record_duplicate_link(
         self,

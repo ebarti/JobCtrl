@@ -66,6 +66,7 @@ from jobctrl.domain.identifiers import (
 )
 from jobctrl.domain.job_content_identity import is_genuine_employer_identity
 from jobctrl.domain.ports.discovery import (
+    CanonicalOwnerMatch,
     ContentOwnerMatch,
     JobRepository,
     ScrapedJobPosting,
@@ -289,11 +290,16 @@ class DiscoverJobsUseCase:
         run_id: str,
     ) -> DiscoveryDecision:
         identity = self._resolver(posting)
-        owner_id = self._repository.find_canonical_owner(
+        canonical_owner_match = self._repository.find_canonical_owner(
             tenant_id,
             source_id=posting.source_id,
             source_native_id=identity.source_native_id,
             canonical_url=identity.canonical_url,
+        )
+        owner_id = (
+            canonical_owner_match.job_id
+            if canonical_owner_match is not None
+            else None
         )
         content_match: ContentOwnerMatch | None = None
         if owner_id is None and is_genuine_employer_identity(posting.source.board):
@@ -345,6 +351,7 @@ class DiscoverJobsUseCase:
             posting=posting,
             identity=identity,
             owner_id=owner_id,
+            canonical_owner_match=canonical_owner_match,
             run_id=run_id,
             observation_id=observation_id,
             observed_at=observed_at,
@@ -383,21 +390,9 @@ class DiscoverJobsUseCase:
             result="new_job",
             confidence=identity.confidence,
         ):
-            persisted_job_id = self._repository.save(job)
-            if persisted_job_id != job_id:
-                return self._observe_existing_job(
-                    tenant_id=tenant_id,
-                    posting=posting,
-                    identity=identity,
-                    owner_id=persisted_job_id,
-                    run_id=run_id,
-                    observation_id=observation_id,
-                    observed_at=observed_at,
-                )
-            self._repository.set_canonical_identity(tenant_id, job_id, identity)
-            self._repository.attach_source_observation(
-                tenant_id,
-                job_id,
+            owner_match = self._repository.claim_new_job(
+                job,
+                identity,
                 JobSourceObservation(
                     source_observation_id=observation_id,
                     source_id=posting.source_id,
@@ -407,6 +402,17 @@ class DiscoverJobsUseCase:
                     observed_at=observed_at,
                 ),
             )
+            if owner_match is not None:
+                return self._observe_existing_job(
+                    tenant_id=tenant_id,
+                    posting=posting,
+                    identity=identity,
+                    owner_id=owner_match.job_id,
+                    canonical_owner_match=owner_match,
+                    run_id=run_id,
+                    observation_id=observation_id,
+                    observed_at=observed_at,
+                )
         self._publisher.publish(
             create_job_discovered(
                 tenant_id,
@@ -463,6 +469,7 @@ class DiscoverJobsUseCase:
         posting: ScrapedJobPosting,
         identity: CanonicalJobIdentity,
         owner_id: JobId,
+        canonical_owner_match: CanonicalOwnerMatch | None = None,
         run_id: str,
         observation_id: str,
         observed_at: str,
@@ -643,7 +650,9 @@ class DiscoverJobsUseCase:
                     link_reason = "content_shingle_match"
                     link_confidence = CONTENT_SHINGLE_MATCH_CONFIDENCE
             else:
-                link_reason = "canonical_url_match" if identity.canonical_url else "source_native_id_match"
+                if canonical_owner_match is None:
+                    raise RuntimeError("canonical owner match is required for exact duplicate audit")
+                link_reason = canonical_owner_match.basis
                 link_confidence = identity.confidence
             link = DuplicateJobLink(
                 duplicate_link_id=duplicate_link_id,

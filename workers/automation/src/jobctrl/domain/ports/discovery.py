@@ -12,7 +12,7 @@ PR 2 ATS adapters (``WorkdayBoardAdapter``, ``GreenhouseBoardAdapter``,
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Protocol
+from typing import Iterable, Literal, Protocol
 
 from jobctrl.domain.discovery.aggregate import Job
 from jobctrl.domain.discovery.identity import (
@@ -73,6 +73,26 @@ class ContentOwnerMatch:
 
     job_id: JobId
     basis: ContentMatchBasis
+
+
+CanonicalOwnerMatchBasis = Literal[
+    "source_native_id_match",
+    "canonical_url_match",
+    "normalized_observation_match",
+]
+
+
+@dataclass(frozen=True)
+class CanonicalOwnerMatch:
+    """An existing Job resolved by an exact discovery identity claim.
+
+    The basis is persisted with duplicate-link audit evidence.  Keeping it at
+    the repository boundary prevents the application layer from guessing which
+    of the exact identity claims won.
+    """
+
+    job_id: JobId
+    basis: CanonicalOwnerMatchBasis
 
 
 @dataclass(frozen=True)
@@ -236,7 +256,7 @@ class JobRepository(JobIdentityResolver, Protocol):
         source_id: str,
         source_native_id: str,
         canonical_url: str,
-    ) -> JobId | None:
+    ) -> CanonicalOwnerMatch | None:
         """Look up the canonical Job that already owns a posting identity.
 
         Resolution order matches the RFC §"Recommended identity checks"
@@ -252,8 +272,23 @@ class JobRepository(JobIdentityResolver, Protocol):
              where one source-native id is missing but the observed URL
              matches an existing observation.
 
-        Returns the surviving ``JobId`` for the first match, or ``None``
-        when the posting is genuinely new.
+        Returns the surviving ``JobId`` and the exact winning claim basis, or
+        ``None`` when the posting is genuinely new.
+        """
+        ...
+
+    def claim_new_job(
+        self,
+        job: Job,
+        identity: CanonicalJobIdentity,
+        observation: JobSourceObservation,
+    ) -> CanonicalOwnerMatch | None:
+        """Atomically create a Job or return the exact owner that won.
+
+        The identity lookup, new Job row, canonical identity, and source
+        observation are one SQLite write transaction.  A competing posting
+        therefore observes the stable owner rather than re-homing evidence to a
+        newly committed candidate Job.
         """
         ...
 
@@ -292,12 +327,14 @@ class JobRepository(JobIdentityResolver, Protocol):
         tenant_id: TenantId,
         job_id: JobId,
         observation: JobSourceObservation,
-    ) -> None:
+    ) -> CanonicalOwnerMatch | None:
         """Persist an observation under an existing canonical Job.
 
         Idempotent on ``(tenant_id, source_id, source_native_id)`` — the
         same source emitting the same posting in a later run REPLACES
-        the previous observation row rather than appending a duplicate.
+        the previous observation row rather than appending a duplicate.  If an
+        exact observation claim belongs to another Job, leaves that evidence in
+        place and returns its stable owner and basis instead of re-homing it.
         """
         ...
 

@@ -2388,7 +2388,7 @@ describe("local TypeScript API", () => {
         tenantId: "local",
         duplicate_link_id: "dup:policy-1",
         job_id: jobUrl,
-        candidate_job_id: candidateUrl,
+        candidate_posting_url: candidateUrl,
         reason: "content_match_policy_rejected: current_policy_mismatch: location_mismatch",
         rejected_at: "2026-04-29T10:06:00+00:00",
       }),
