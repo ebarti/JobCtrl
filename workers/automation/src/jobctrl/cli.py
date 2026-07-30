@@ -2116,44 +2116,108 @@ async def _reconcile_discovery_schedule(client: Any, task_queue: str) -> None:
         ScheduleOverlapPolicy,
         SchedulePolicy,
         ScheduleSpec,
+        ScheduleState,
         ScheduleUpdate,
     )
+    from temporalio.service import RPCError, RPCStatusCode
 
     from jobctrl.config import load_discovery_schedule_settings
     from jobctrl.discovery.workflow import (
         DiscoverWorkflow,
         DiscoverWorkflowInput,
-        discover_workflow_id,
     )
     from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.infrastructure.runtime_identity import (
+        current_runtime_identity,
+    )
+    from jobctrl.infrastructure.temporal.schedule_cutover import (
+        identity_bearing_schedule_policies,
+    )
+    from jobctrl.infrastructure.temporal.workflow_dispatch_control import (
+        workflow_dispatch_read_lock,
+        workflow_dispatches_blocked,
+    )
 
     enabled, cron = load_discovery_schedule_settings()
-    schedule_id = f"jobctrl-discovery-{LOCAL_TENANT}"
-    handle = client.get_schedule_handle(schedule_id)
-    if not enabled:
-        try:
-            await handle.delete()
-        except Exception:
-            log.debug("Discovery schedule %s absent or already deleted", schedule_id, exc_info=True)
-        return
+    policy = identity_bearing_schedule_policies(
+        str(LOCAL_TENANT)
+    )[0]
+    schedule_id = policy.schedule_id
+    async with workflow_dispatch_read_lock(
+        db_path=current_runtime_identity().db_path,
+    ):
+        cutover_blocked = workflow_dispatches_blocked(
+            current_runtime_identity().db_path
+        )
+        handle = client.get_schedule_handle(schedule_id)
+        if not enabled:
+            try:
+                await handle.delete()
+            except RPCError as exc:
+                if exc.status == RPCStatusCode.NOT_FOUND:
+                    return
+                if cutover_blocked:
+                    raise RuntimeError(
+                        "could not prove the identity-bearing Discovery "
+                        "schedule is absent during JobId cutover"
+                    ) from exc
+                log.debug(
+                    "Discovery schedule %s delete failed",
+                    schedule_id,
+                    exc_info=True,
+                )
+            except Exception as exc:
+                if cutover_blocked:
+                    raise RuntimeError(
+                        "could not prove the identity-bearing Discovery "
+                        "schedule is absent during JobId cutover"
+                    ) from exc
+                log.debug(
+                    "Discovery schedule %s absent or already deleted",
+                    schedule_id,
+                    exc_info=True,
+                )
+            return
 
-    schedule = Schedule(
-        action=ScheduleActionStartWorkflow(
-            DiscoverWorkflow.run,
-            DiscoverWorkflowInput(tenant_id=str(LOCAL_TENANT)),
-            id=discover_workflow_id(str(LOCAL_TENANT)),
-            task_queue=task_queue,
-        ),
-        spec=ScheduleSpec(cron_expressions=[cron]),
-        policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
-    )
-    try:
-        await client.create_schedule(schedule_id, schedule)
-    except Exception:
+        schedule = Schedule(
+            action=ScheduleActionStartWorkflow(
+                DiscoverWorkflow.run,
+                DiscoverWorkflowInput(tenant_id=str(LOCAL_TENANT)),
+                id=policy.workflow_id,
+                task_queue=task_queue,
+            ),
+            spec=ScheduleSpec(cron_expressions=[cron]),
+            policy=SchedulePolicy(
+                overlap=ScheduleOverlapPolicy.SKIP
+            ),
+            state=ScheduleState(
+                paused=cutover_blocked,
+                note=(
+                    "Paused for the stable JobId cutover."
+                    if cutover_blocked
+                    else None
+                ),
+            ),
+        )
         try:
-            await handle.update(lambda _input: ScheduleUpdate(schedule))
+            await client.create_schedule(schedule_id, schedule)
         except Exception:
-            log.warning("Discovery schedule %s reconcile failed", schedule_id, exc_info=True)
+            try:
+                await handle.update(
+                    lambda _input: ScheduleUpdate(schedule)
+                )
+            except Exception as update_exc:
+                if cutover_blocked:
+                    raise RuntimeError(
+                        "could not reconcile the identity-bearing "
+                        "Discovery schedule in a paused state during "
+                        "JobId cutover"
+                    ) from update_exc
+                log.warning(
+                    "Discovery schedule %s reconcile failed",
+                    schedule_id,
+                    exc_info=True,
+                )
 
 
 # Truthy spellings accepted by the browser-preflight escape hatch, matching the

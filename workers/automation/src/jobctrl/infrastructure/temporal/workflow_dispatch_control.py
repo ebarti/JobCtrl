@@ -24,12 +24,20 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterator
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    TypeVar,
+)
 
 from jobctrl import config
 
 _CONTROL_KEY = "stable-job-id-cutover"
 _LOCK_SUFFIX = ".workflow-dispatch.lock"
+_FenceResult = TypeVar("_FenceResult")
 
 
 class WorkflowDispatchFencedError(RuntimeError):
@@ -95,6 +103,24 @@ def ensure_workflow_dispatch_control_tables(
 
 
 @asynccontextmanager
+async def workflow_dispatch_read_lock(
+    *,
+    db_path: Path | str | None = None,
+) -> AsyncIterator[Path]:
+    """Hold the shared side of the cutover fence for dispatch-adjacent work."""
+
+    resolved_path = _resolve_db_path(db_path)
+    lock_fd = await _acquire_lock_async(
+        _lock_path(resolved_path),
+        fcntl.LOCK_SH,
+    )
+    try:
+        yield resolved_path
+    finally:
+        _release_lock(lock_fd)
+
+
+@asynccontextmanager
 async def reserve_workflow_dispatch(
     *,
     workflow: type,
@@ -116,13 +142,10 @@ async def reserve_workflow_dispatch(
     resolved_id = str(workflow_id or "").strip()
     if not resolved_id:
         raise ValueError("workflow_id must be non-empty")
-    resolved_path = _resolve_db_path(db_path)
-    lock_fd = await _acquire_lock_async(
-        _lock_path(resolved_path),
-        fcntl.LOCK_SH,
-    )
     reservation: WorkflowDispatchReservation | None = None
-    try:
+    async with workflow_dispatch_read_lock(
+        db_path=db_path,
+    ) as resolved_path:
         reservation = _create_reservation(
             resolved_path,
             workflow_id=resolved_id,
@@ -147,8 +170,6 @@ async def reserve_workflow_dispatch(
                     else "uncertain"
                 ),
             )
-    finally:
-        _release_lock(lock_fd)
 
 
 def set_workflow_dispatches_blocked(
@@ -161,37 +182,41 @@ def set_workflow_dispatches_blocked(
 
     resolved_path = _resolve_db_path(db_path)
     with _locked(_lock_path(resolved_path), fcntl.LOCK_EX):
-        conn = _open_control_connection(resolved_path)
-        try:
-            ensure_workflow_dispatch_control_tables(conn)
-            with conn:
-                if blocked:
-                    conn.execute(
-                        """
-                        INSERT INTO workflow_dispatch_control (
-                            control_key, reason, blocked_at
-                        ) VALUES (?, ?, ?)
-                        ON CONFLICT(control_key) DO UPDATE SET
-                            reason = excluded.reason,
-                            blocked_at = excluded.blocked_at
-                        """,
-                        (
-                            _CONTROL_KEY,
-                            str(reason or ""),
-                            _utc_now(),
-                        ),
-                    )
-                else:
-                    conn.execute(
-                        """
-                        DELETE FROM workflow_dispatch_control
-                        WHERE control_key = ?
-                        """,
-                        (_CONTROL_KEY,),
-                    )
-                return blocked
-        finally:
-            conn.close()
+        _write_workflow_dispatch_gate(
+            resolved_path,
+            blocked=blocked,
+            reason=reason,
+        )
+    return blocked
+
+
+async def activate_workflow_dispatch_fence(
+    *,
+    reason: str,
+    after_blocked: Callable[[], Awaitable[_FenceResult]],
+    db_path: Path | str | None = None,
+) -> _FenceResult:
+    """Block direct dispatch and run schedule fencing under one write lock.
+
+    The durable gate is intentionally left blocked when ``after_blocked``
+    raises. That fail-closed state prevents direct dispatch while an operator
+    retries or abandons the schedule pause.
+    """
+
+    resolved_path = _resolve_db_path(db_path)
+    lock_fd = await _acquire_lock_async(
+        _lock_path(resolved_path),
+        fcntl.LOCK_EX,
+    )
+    try:
+        _write_workflow_dispatch_gate(
+            resolved_path,
+            blocked=True,
+            reason=reason,
+        )
+        return await after_blocked()
+    finally:
+        _release_lock(lock_fd)
 
 
 def workflow_dispatches_blocked(
@@ -262,6 +287,44 @@ def _create_reservation(
         workflow_id=workflow_id,
         workflow_type=workflow_type,
     )
+
+
+def _write_workflow_dispatch_gate(
+    db_path: Path,
+    *,
+    blocked: bool,
+    reason: str,
+) -> None:
+    conn = _open_control_connection(db_path)
+    try:
+        ensure_workflow_dispatch_control_tables(conn)
+        with conn:
+            if blocked:
+                conn.execute(
+                    """
+                    INSERT INTO workflow_dispatch_control (
+                        control_key, reason, blocked_at
+                    ) VALUES (?, ?, ?)
+                    ON CONFLICT(control_key) DO UPDATE SET
+                        reason = excluded.reason,
+                        blocked_at = excluded.blocked_at
+                    """,
+                    (
+                        _CONTROL_KEY,
+                        str(reason or ""),
+                        _utc_now(),
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    DELETE FROM workflow_dispatch_control
+                    WHERE control_key = ?
+                    """,
+                    (_CONTROL_KEY,),
+                )
+    finally:
+        conn.close()
 
 
 def _finish_reservation(
@@ -378,8 +441,10 @@ __all__ = [
     "UnregisteredWorkflowDispatchError",
     "WorkflowDispatchReservation",
     "WorkflowDispatchFencedError",
+    "activate_workflow_dispatch_fence",
     "ensure_workflow_dispatch_control_tables",
     "reserve_workflow_dispatch",
     "set_workflow_dispatches_blocked",
+    "workflow_dispatch_read_lock",
     "workflow_dispatches_blocked",
 ]

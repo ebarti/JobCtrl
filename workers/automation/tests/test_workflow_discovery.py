@@ -13,9 +13,11 @@ import pytest
 from temporalio import activity
 from temporalio.client import ScheduleOverlapPolicy, WorkflowFailureError
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
+from temporalio.service import RPCError, RPCStatusCode
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
+from jobctrl import config
 from jobctrl.cli import _reconcile_discovery_schedule
 from jobctrl.config import DEFAULT_DISCOVERY_SEARCH_CONFIG, load_discovery_schedule_settings
 from jobctrl.domain.discovery.scheduler import DiscoveryRunProgress
@@ -38,6 +40,12 @@ from jobctrl.discovery.workflow import (
     _activity_error_was_cancelled,
 )
 from jobctrl.infrastructure.temporal.finalize import WorkflowOutcomeInput, WorkflowStartedInput
+from jobctrl.infrastructure.temporal.schedule_cutover import (
+    activate_identity_cutover_fence,
+)
+from jobctrl.infrastructure.temporal.workflow_dispatch_control import (
+    set_workflow_dispatches_blocked,
+)
 from jobctrl.llm import SpendBudgetStatus
 from jobctrl.pipeline import runner
 
@@ -1083,16 +1091,40 @@ def test_discovery_schedule_defaults_disabled() -> None:
 
 
 class _FakeScheduleHandle:
-    def __init__(self, *, update_raises: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        delete_outcome: Exception | None = None,
+        delete_raises: bool = False,
+        update_entered: asyncio.Event | None = None,
+        update_release: asyncio.Event | None = None,
+        update_raises: bool = False,
+    ) -> None:
         self.deleted = 0
+        self.delete_outcome = delete_outcome
+        self.delete_raises = delete_raises
+        self.pause_notes: list[str | None] = []
         self.updated = 0
+        self.update_entered = update_entered
+        self.update_release = update_release
         self.update_result = None
         self.update_raises = update_raises
 
     async def delete(self) -> None:
+        if self.delete_outcome is not None:
+            raise self.delete_outcome
+        if self.delete_raises:
+            raise RuntimeError("delete failed")
         self.deleted += 1
 
+    async def pause(self, *, note: str | None = None) -> None:
+        self.pause_notes.append(note)
+
     async def update(self, updater) -> None:
+        if self.update_entered is not None:
+            self.update_entered.set()
+        if self.update_release is not None:
+            await self.update_release.wait()
         if self.update_raises:
             raise RuntimeError("bad persisted schedule")
         self.updated += 1
@@ -1100,8 +1132,23 @@ class _FakeScheduleHandle:
 
 
 class _FakeScheduleClient:
-    def __init__(self, *, create_raises: bool = False, update_raises: bool = False) -> None:
-        self.handle = _FakeScheduleHandle(update_raises=update_raises)
+    def __init__(
+        self,
+        *,
+        create_raises: bool = False,
+        delete_outcome: Exception | None = None,
+        delete_raises: bool = False,
+        update_entered: asyncio.Event | None = None,
+        update_release: asyncio.Event | None = None,
+        update_raises: bool = False,
+    ) -> None:
+        self.handle = _FakeScheduleHandle(
+            delete_outcome=delete_outcome,
+            delete_raises=delete_raises,
+            update_entered=update_entered,
+            update_release=update_release,
+            update_raises=update_raises,
+        )
         self.create_raises = create_raises
         self.created: list[tuple[str, Any]] = []
 
@@ -1146,6 +1193,7 @@ async def test_discovery_schedule_reconcile_creates_skip_overlap_schedule(
     assert schedule.policy.overlap is ScheduleOverlapPolicy.SKIP
     assert schedule.action.id == "discover-local"
     assert schedule.action.task_queue == "jobctrl-test"
+    assert schedule.state.paused is False
 
 
 @pytest.mark.asyncio
@@ -1163,6 +1211,7 @@ async def test_discovery_schedule_reconcile_updates_existing_schedule(
     assert client.handle.updated == 1
     assert client.handle.update_result.schedule.spec.cron_expressions == ["30 6 * * *"]
     assert client.handle.update_result.schedule.policy.overlap is ScheduleOverlapPolicy.SKIP
+    assert client.handle.update_result.schedule.state.paused is False
 
 
 @pytest.mark.asyncio
@@ -1178,3 +1227,190 @@ async def test_discovery_schedule_reconcile_failure_does_not_block_worker_boot(
     await _reconcile_discovery_schedule(client, "jobctrl-test")
 
     assert client.handle.updated == 0
+
+
+@pytest.mark.asyncio
+async def test_discovery_schedule_reconcile_creates_paused_while_cutover_is_blocked(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    monkeypatch.setattr(
+        "jobctrl.config.load_discovery_schedule_settings",
+        lambda: (True, "15 9 * * *"),
+    )
+    set_workflow_dispatches_blocked(
+        blocked=True,
+        reason="identity-cutover",
+        db_path=db_path,
+    )
+    client = _FakeScheduleClient()
+
+    await _reconcile_discovery_schedule(client, "jobctrl-test")
+
+    [(_schedule_id, schedule)] = client.created
+    assert schedule.state.paused is True
+    assert schedule.state.note == "Paused for the stable JobId cutover."
+
+
+@pytest.mark.asyncio
+async def test_discovery_schedule_reconcile_updates_existing_to_paused_during_cutover(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    monkeypatch.setattr(
+        "jobctrl.config.load_discovery_schedule_settings",
+        lambda: (True, "30 6 * * *"),
+    )
+    set_workflow_dispatches_blocked(
+        blocked=True,
+        reason="identity-cutover",
+        db_path=db_path,
+    )
+    client = _FakeScheduleClient(create_raises=True)
+
+    await _reconcile_discovery_schedule(client, "jobctrl-test")
+
+    assert client.handle.updated == 1
+    assert client.handle.update_result.schedule.state.paused is True
+
+
+@pytest.mark.asyncio
+async def test_discovery_schedule_reconcile_fails_closed_when_pause_cannot_be_proven(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    monkeypatch.setattr(
+        "jobctrl.config.load_discovery_schedule_settings",
+        lambda: (True, "30 6 * * *"),
+    )
+    set_workflow_dispatches_blocked(
+        blocked=True,
+        reason="identity-cutover",
+        db_path=db_path,
+    )
+    client = _FakeScheduleClient(
+        create_raises=True,
+        update_raises=True,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="paused state during JobId cutover",
+    ):
+        await _reconcile_discovery_schedule(
+            client,
+            "jobctrl-test",
+        )
+
+
+@pytest.mark.asyncio
+async def test_disabled_discovery_schedule_fails_closed_when_delete_is_uncertain(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    monkeypatch.setattr(
+        "jobctrl.config.load_discovery_schedule_settings",
+        lambda: (False, "0 7 * * *"),
+    )
+    set_workflow_dispatches_blocked(
+        blocked=True,
+        reason="identity-cutover",
+        db_path=db_path,
+    )
+    client = _FakeScheduleClient(delete_raises=True)
+
+    with pytest.raises(
+        RuntimeError,
+        match="schedule is absent during JobId cutover",
+    ):
+        await _reconcile_discovery_schedule(
+            client,
+            "jobctrl-test",
+        )
+
+
+@pytest.mark.asyncio
+async def test_disabled_absent_schedule_is_safe_during_cutover(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    monkeypatch.setattr(
+        "jobctrl.config.load_discovery_schedule_settings",
+        lambda: (False, "0 7 * * *"),
+    )
+    set_workflow_dispatches_blocked(
+        blocked=True,
+        reason="identity-cutover",
+        db_path=db_path,
+    )
+    client = _FakeScheduleClient(
+        delete_outcome=RPCError(
+            "not found",
+            RPCStatusCode.NOT_FOUND,
+            b"",
+        )
+    )
+
+    await _reconcile_discovery_schedule(
+        client,
+        "jobctrl-test",
+    )
+
+    assert client.handle.deleted == 0
+
+
+@pytest.mark.asyncio
+async def test_cutover_gate_waits_for_inflight_schedule_reconciliation(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    monkeypatch.setattr(
+        "jobctrl.config.load_discovery_schedule_settings",
+        lambda: (True, "30 6 * * *"),
+    )
+    update_entered = asyncio.Event()
+    update_release = asyncio.Event()
+    client = _FakeScheduleClient(
+        create_raises=True,
+        update_entered=update_entered,
+        update_release=update_release,
+    )
+
+    reconcile_task = asyncio.create_task(
+        _reconcile_discovery_schedule(
+            client,
+            "jobctrl-test",
+        )
+    )
+    await update_entered.wait()
+    fence_task = asyncio.create_task(
+        activate_identity_cutover_fence(
+            client,
+            db_path=db_path,
+        )
+    )
+    await asyncio.sleep(0.1)
+    assert fence_task.done() is False
+
+    update_release.set()
+    await reconcile_task
+    receipt = await fence_task
+    assert receipt.dispatches_blocked is True
+    assert receipt.paused_schedule_ids == (
+        "jobctrl-discovery-local",
+    )
+    assert client.handle.pause_notes == [
+        "Paused for the stable JobId cutover."
+    ]
