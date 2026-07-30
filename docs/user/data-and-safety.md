@@ -1,3 +1,7 @@
+---
+description: "Understand where JobCtrl stores profiles, jobs, resumes, browser state, and telemetry, and when a user-triggered feature contacts an external service."
+---
+
 <script setup lang="ts">
 import DataBoundaryMap from "../.vitepress/theme/DataBoundaryMap.vue";
 </script>

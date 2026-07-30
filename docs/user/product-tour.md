@@ -1,5 +1,6 @@
 ---
 pageClass: jh-visual-doc jh-product-tour-page jh-outline-page
+description: "Tour JobCtrl's local-first workspace with synthetic screenshots of discovery, scoring, tailoring, review, applications, and durable runs."
 ---
 
 # Product Tour

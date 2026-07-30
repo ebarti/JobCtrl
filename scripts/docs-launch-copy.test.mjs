@@ -97,16 +97,51 @@ test("homepage describes supervised browser and email submission", async () => {
 
 test("public docs emit crawl and social-discovery metadata", async () => {
   const config = await read("docs/.vitepress/config.ts");
+  const homepage = await read("docs/index.md");
   const robots = await read("docs/public/robots.txt");
 
   assert.match(config, /SOCIAL_IMAGE_URL = `\$\{DOCS_SITE_URL\}\/assets\/brand\/social-preview\.png`/);
   assert.match(config, /sitemap:\s*\{\s*hostname: DOCS_SITE_URL,/);
+  assert.match(config, /\["meta", \{ property: "og:site_name", content: SITE_NAME \}\]/);
   assert.match(config, /\["meta", \{ property: "og:image:width", content: "1200" \}\]/);
   assert.match(config, /\["meta", \{ property: "og:image:height", content: "630" \}\]/);
+  assert.match(config, /"@type": "Organization"/);
+  assert.match(config, /"@type": "WebSite"/);
+  assert.match(config, /alternateName: "jobctrl\.dev"/);
+  assert.match(config, /"@type": "SoftwareApplication"/);
+  assert.match(config, /id: "jobctrl-structured-data"/);
+  assert.match(homepage, /title: "JobCtrl — Local-first job search automation"/);
+  assert.match(homepage, /titleTemplate: false/);
   assert.equal(
     robots,
     "User-agent: *\nAllow: /\n\nSitemap: https://jobctrl.dev/sitemap.xml\n",
   );
+});
+
+test("priority public pages have distinct search descriptions", async () => {
+  const descriptions = new Map([
+    ["docs/index.md", "JobCtrl is a local-first job search application"],
+    ["docs/comparison.md", "Compare JobCtrl's local-first, auditable workflow"],
+    ["docs/user/product-tour.md", "Tour JobCtrl's local-first workspace"],
+    ["docs/user/getting-started.md", "Install JobCtrl on Apple-silicon macOS"],
+    ["docs/user/normal-flows.md", "Follow JobCtrl from profile-driven discovery"],
+    ["docs/user/data-and-safety.md", "Understand where JobCtrl stores profiles"],
+    ["docs/user/scoring-and-employer-analysis.md", "See how JobCtrl scores job fit"],
+    ["docs/user/materials-and-tailoring.md", "Learn how JobCtrl creates truthful"],
+    ["docs/user/apply.md", "Review JobCtrl's supervised application controls"],
+    ["docs/architecture/index.md", "Explore JobCtrl's local-first architecture"],
+    ["docs/developer/README.md", "Start contributing to JobCtrl"],
+  ]);
+  const observed = new Set();
+
+  for (const [path, expectedPrefix] of descriptions) {
+    const document = await read(path);
+    const description = document.match(/^description: "([^"]+)"$/m)?.[1];
+    assert.ok(description, `${path} must declare a page-specific description`);
+    assert.match(description, new RegExp(`^${expectedPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    assert.ok(!observed.has(description), `${path} must not reuse another priority description`);
+    observed.add(description);
+  }
 });
 
 test("comparison cites the current pinned AI Job Search discovery source", async () => {

@@ -1,3 +1,7 @@
+---
+description: "Install JobCtrl on Apple-silicon macOS, explore the live demo, configure providers, and run your first private, supervised job-search workflow."
+---
+
 # Getting Started
 
 JobCtrl is a local application: the app, database, settings, and generated

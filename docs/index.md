@@ -1,5 +1,8 @@
 ---
 layout: home
+title: "JobCtrl — Local-first job search automation"
+titleTemplate: false
+description: "JobCtrl is a local-first job search application for private discovery, evidence-based fit scoring, truthful resume tailoring, and supervised applications."
 
 hero:
   name: JobCtrl

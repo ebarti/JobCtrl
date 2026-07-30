@@ -1,5 +1,6 @@
 ---
 pageClass: jh-visual-doc jh-comparison-page
+description: "Compare JobCtrl's local-first, auditable workflow with Career-Ops and AI Job Search across discovery, tailoring, safety, and operations."
 ---
 
 # How JobCtrl Compares

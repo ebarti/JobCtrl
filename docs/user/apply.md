@@ -1,3 +1,7 @@
+---
+description: "Review JobCtrl's supervised application controls: profile-bound answers, dry runs, explicit approval, browser safeguards, Gmail, and at-most-once sending."
+---
+
 <script setup lang="ts">
 import ApplySafetyFlow from "../.vitepress/theme/ApplySafetyFlow.vue";
 </script>

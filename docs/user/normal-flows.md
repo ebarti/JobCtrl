@@ -1,5 +1,6 @@
 ---
 pageClass: jh-visual-doc jh-daily-workflow-page jh-outline-page
+description: "Follow JobCtrl from profile-driven discovery and evidence review through truthful materials, dry runs, approval, and recorded outcomes."
 ---
 
 <script setup lang="ts">
