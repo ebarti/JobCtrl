@@ -65,7 +65,9 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v16 (employer-analysis references): canonical employer-analysis generations
 # plus their per-model drafts and failures reference the stable Job aggregate.
 # Identity collapse preserves and deterministically renumbers complete histories.
-SCHEMA_VERSION = 16
+# v17 (resume-template references): the mutable per-job assignment and every
+# render-only refresh attempt reference the tenant-scoped stable Job aggregate.
+SCHEMA_VERSION = 17
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -212,6 +214,7 @@ def _schema_migrations() -> tuple[
         (14, ensure_artifact_registry_references_v14),
         (15, ensure_materials_references_v15),
         (16, ensure_employer_analysis_references_v16),
+        (17, ensure_resume_template_references_v17),
     )
 
 
@@ -2621,6 +2624,9 @@ def _backfill_legacy_materials_if_empty(
         _backfill_one_materials_row(conn, row, now)
 
 
+_RESUME_TEMPLATE_REFERENCE_SCHEMA_VERSION = 17
+
+
 def ensure_resume_template_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     """Create local resume-template configuration tables.
 
@@ -2630,6 +2636,7 @@ def ensure_resume_template_tables(conn: sqlite3.Connection | None = None) -> lis
     """
     if conn is None:
         conn = get_connection()
+    current_schema_version = _assert_schema_version_supported(conn)
 
     conn.execute(
         """
@@ -2681,15 +2688,37 @@ def ensure_resume_template_tables(conn: sqlite3.Connection | None = None) -> lis
         )
         """
     )
+    assignment_columns = _table_columns(
+        conn,
+        "job_resume_template_assignments",
+    )
+    assignment_reference = (
+        "job_id"
+        if "job_id" in assignment_columns
+        or (
+            not assignment_columns
+            and current_schema_version
+            >= _RESUME_TEMPLATE_REFERENCE_SCHEMA_VERSION
+        )
+        else "job_url"
+    )
+    assignment_foreign_key = (
+        """,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if assignment_reference == "job_id"
+        else ""
+    )
     conn.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS job_resume_template_assignments (
             tenant_id   TEXT NOT NULL DEFAULT 'local',
-            job_url     TEXT NOT NULL,
+            {assignment_reference} TEXT NOT NULL,
             template_id TEXT NOT NULL,
             version_id  TEXT NOT NULL,
             updated_at  TEXT NOT NULL,
-            PRIMARY KEY (tenant_id, job_url)
+            PRIMARY KEY (tenant_id, {assignment_reference})
+            {assignment_foreign_key}
         )
         """
     )
@@ -2699,12 +2728,33 @@ def ensure_resume_template_tables(conn: sqlite3.Connection | None = None) -> lis
         ON job_resume_template_assignments(tenant_id, template_id, version_id)
         """
     )
+    refresh_columns = _table_columns(
+        conn,
+        "resume_template_refresh_attempts",
+    )
+    refresh_reference = (
+        "job_id"
+        if "job_id" in refresh_columns
+        or (
+            not refresh_columns
+            and current_schema_version
+            >= _RESUME_TEMPLATE_REFERENCE_SCHEMA_VERSION
+        )
+        else "job_url"
+    )
+    refresh_foreign_key = (
+        """,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if refresh_reference == "job_id"
+        else ""
+    )
     conn.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS resume_template_refresh_attempts (
             tenant_id           TEXT NOT NULL DEFAULT 'local',
             attempt_id          TEXT NOT NULL,
-            job_url             TEXT NOT NULL,
+            {refresh_reference} TEXT NOT NULL,
             status              TEXT NOT NULL,
             from_generation     INTEGER,
             to_generation       INTEGER,
@@ -2712,17 +2762,20 @@ def ensure_resume_template_tables(conn: sqlite3.Connection | None = None) -> lis
             template_version_id TEXT,
             template_hash       TEXT,
             error_message       TEXT,
-            metadata_json       TEXT NOT NULL DEFAULT '{}',
+            metadata_json       TEXT NOT NULL DEFAULT '{{}}',
             created_at          TEXT NOT NULL,
             completed_at        TEXT,
             PRIMARY KEY (tenant_id, attempt_id)
+            {refresh_foreign_key}
         )
         """
     )
     conn.execute(
-        """
+        f"""
         CREATE INDEX IF NOT EXISTS idx_resume_template_refresh_attempts_job
-        ON resume_template_refresh_attempts(tenant_id, job_url, created_at DESC)
+        ON resume_template_refresh_attempts(
+            tenant_id, {refresh_reference}, created_at DESC
+        )
         """
     )
 
@@ -4457,6 +4510,22 @@ def _reassign_discovery_identity_references(
                 surviving_job_id=surviving_job_id,
             )
         )
+    material_generation_map: dict[tuple[str, int], int] = {}
+    if _has_materials_reference_schema_v15(conn):
+        material_generation_map = _reassign_materials_references_v15(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+    if _has_resume_template_reference_schema_v17(conn):
+        _reassign_resume_template_references_v17(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+            material_generation_map=material_generation_map,
+        )
     if _has_scoring_reference_schema_v12(conn):
         _reassign_scoring_references_v12(
             conn,
@@ -4476,13 +4545,6 @@ def _reassign_discovery_identity_references(
         )
     if _has_artifact_registry_reference_schema_v14(conn):
         _reassign_artifact_registry_references_v14(
-            conn,
-            tenant_id=tenant_id,
-            losing_job_id=losing_job_id,
-            surviving_job_id=surviving_job_id,
-        )
-    if _has_materials_reference_schema_v15(conn):
-        _reassign_materials_references_v15(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
@@ -9467,7 +9529,6 @@ def ensure_materials_references_v15(
                 conn,
                 generation_map=generation_map,
             )
-
             for table in (
                 "job_bullet_provenance_v15",
                 "job_material_layout_boxes_v15",
@@ -9619,10 +9680,10 @@ def _reassign_materials_references_v15(
     tenant_id: str,
     losing_job_id: str,
     surviving_job_id: str,
-) -> None:
+) -> dict[tuple[str, int], int]:
     """Merge complete material histories during stable Job identity collapse."""
     if losing_job_id == surviving_job_id:
-        return
+        return {}
     before_counts = {
         table: int(
             conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
@@ -9640,7 +9701,7 @@ def _reassign_materials_references_v15(
         (tenant_id, losing_job_id, surviving_job_id),
     ).fetchall()
     if not parent_rows:
-        return
+        return {}
 
     history = [
         (
@@ -9800,6 +9861,7 @@ def _reassign_materials_references_v15(
         conn,
         expected_counts=before_counts,
     )
+    return generation_map
 
 
 _EMPLOYER_ANALYSIS_REFERENCE_SCHEMA_VERSION = 16
@@ -10473,6 +10535,537 @@ def _reassign_employer_analysis_references_v16(
         expected_counts=before_counts,
     )
     return generation_map
+
+
+_RESUME_TEMPLATE_REFERENCE_TABLES = (
+    "job_resume_template_assignments",
+    "resume_template_refresh_attempts",
+)
+
+
+def _create_resume_template_reference_tables_v17(
+    conn: sqlite3.Connection,
+    *,
+    assignments_table: str = "job_resume_template_assignments",
+    refresh_attempts_table: str = "resume_template_refresh_attempts",
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {assignments_table} (
+            tenant_id   TEXT NOT NULL DEFAULT 'local',
+            job_id      TEXT NOT NULL,
+            template_id TEXT NOT NULL,
+            version_id  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, job_id),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {refresh_attempts_table} (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            attempt_id          TEXT NOT NULL,
+            job_id              TEXT NOT NULL,
+            status              TEXT NOT NULL,
+            from_generation     INTEGER,
+            to_generation       INTEGER,
+            template_id         TEXT,
+            template_version_id TEXT,
+            template_hash       TEXT,
+            error_message       TEXT,
+            metadata_json       TEXT NOT NULL DEFAULT '{{}}',
+            created_at          TEXT NOT NULL,
+            completed_at        TEXT,
+            PRIMARY KEY (tenant_id, attempt_id),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_resume_template_reference_indexes_v17(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_job_resume_template_assignments_template
+        ON job_resume_template_assignments(
+            tenant_id, template_id, version_id
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_resume_template_refresh_attempts_job
+        ON resume_template_refresh_attempts(
+            tenant_id, job_id, created_at DESC
+        )
+        """
+    )
+
+
+def _has_resume_template_reference_schema_v17(
+    conn: sqlite3.Connection,
+) -> bool:
+    return (
+        "job_id"
+        in _table_columns(
+            conn,
+            "job_resume_template_assignments",
+        )
+        and "job_url"
+        not in _table_columns(
+            conn,
+            "job_resume_template_assignments",
+        )
+        and _primary_key_columns(
+            conn,
+            "job_resume_template_assignments",
+        )
+        == ("tenant_id", "job_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "job_resume_template_assignments",
+            "job_id",
+        )
+        and "job_id"
+        in _table_columns(
+            conn,
+            "resume_template_refresh_attempts",
+        )
+        and "job_url"
+        not in _table_columns(
+            conn,
+            "resume_template_refresh_attempts",
+        )
+        and _primary_key_columns(
+            conn,
+            "resume_template_refresh_attempts",
+        )
+        == ("tenant_id", "attempt_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "resume_template_refresh_attempts",
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            "job_resume_template_assignments",
+            "idx_job_resume_template_assignments_template",
+            ("tenant_id", "template_id", "version_id"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "resume_template_refresh_attempts",
+            "idx_resume_template_refresh_attempts_job",
+            ("tenant_id", "job_id", "created_at"),
+            unique=False,
+        )
+    )
+
+
+def _canonical_resume_template_assignments_v17(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        """
+        SELECT tenant_id, job_url, template_id, version_id, updated_at
+        FROM job_resume_template_assignments
+        ORDER BY tenant_id, job_url
+        """
+    ).fetchall()
+    canonical: dict[tuple[str, str], tuple[Any, ...]] = {}
+    source_order: dict[
+        tuple[str, str],
+        tuple[str, bool, str],
+    ] = {}
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=True,
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "resume-template reference migration could not resolve "
+                f"job_resume_template_assignments.job_url="
+                f"{raw_reference!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        key = (tenant_id, stable_job_id)
+        storage_row = conn.execute(
+            """
+            SELECT url
+            FROM jobs
+            WHERE tenant_id = ? AND job_id = ?
+            LIMIT 1
+            """,
+            (tenant_id, stable_job_id),
+        ).fetchone()
+        storage_url = (
+            str(storage_row[0])
+            if storage_row is not None
+            else ""
+        )
+        candidate_order = (
+            str(row[4]),
+            raw_reference == storage_url,
+            raw_reference,
+        )
+        if key not in canonical or candidate_order > source_order[key]:
+            canonical[key] = (
+                tenant_id,
+                stable_job_id,
+                str(row[2]),
+                str(row[3]),
+                str(row[4]),
+            )
+            source_order[key] = candidate_order
+    return [
+        canonical[key]
+        for key in sorted(canonical)
+    ]
+
+
+def _canonical_resume_template_refresh_attempts_v17(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        """
+        SELECT tenant_id, attempt_id, job_url, status, from_generation,
+               to_generation, template_id, template_version_id,
+               template_hash, error_message, metadata_json, created_at,
+               completed_at
+        FROM resume_template_refresh_attempts
+        ORDER BY tenant_id, attempt_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[2])
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=True,
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "resume-template reference migration could not resolve "
+                f"resume_template_refresh_attempts.job_url="
+                f"{raw_reference!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        canonical.append(
+            (
+                tenant_id,
+                str(row[1]),
+                stable_job_id,
+                *tuple(row[3:]),
+            )
+        )
+    return canonical
+
+
+def ensure_resume_template_references_v17(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move job-owned resume-template configuration to stable JobIds."""
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _RESUME_TEMPLATE_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _EMPLOYER_ANALYSIS_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "resume-template reference migration requires employer-analysis "
+            "schema v16"
+        )
+
+    conn.execute("SAVEPOINT resume_template_references_v17")
+    try:
+        if not _has_employer_analysis_reference_schema_v16(conn):
+            raise RuntimeError(
+                "resume-template reference migration requires the stable "
+                "employer-analysis reference schema"
+            )
+        before_counts = {
+            table: int(
+                conn.execute(
+                    f'SELECT COUNT(*) FROM "{table}"'
+                ).fetchone()[0]
+            )
+            for table in _RESUME_TEMPLATE_REFERENCE_TABLES
+        }
+        expected_counts = dict(before_counts)
+
+        if not _has_resume_template_reference_schema_v17(conn):
+            assignment_rows = (
+                _canonical_resume_template_assignments_v17(conn)
+            )
+            refresh_attempt_rows = (
+                _canonical_resume_template_refresh_attempts_v17(conn)
+            )
+            expected_counts[
+                "job_resume_template_assignments"
+            ] = len(assignment_rows)
+
+            for table in (
+                "job_resume_template_assignments_v17",
+                "resume_template_refresh_attempts_v17",
+            ):
+                conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+            _create_resume_template_reference_tables_v17(
+                conn,
+                assignments_table=(
+                    "job_resume_template_assignments_v17"
+                ),
+                refresh_attempts_table=(
+                    "resume_template_refresh_attempts_v17"
+                ),
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_resume_template_assignments_v17 (
+                    tenant_id, job_id, template_id, version_id, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                assignment_rows,
+            )
+            conn.executemany(
+                """
+                INSERT INTO resume_template_refresh_attempts_v17 (
+                    tenant_id, attempt_id, job_id, status,
+                    from_generation, to_generation, template_id,
+                    template_version_id, template_hash, error_message,
+                    metadata_json, created_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                refresh_attempt_rows,
+            )
+            for table in _RESUME_TEMPLATE_REFERENCE_TABLES:
+                conn.execute(f'DROP TABLE "{table}"')
+            for table in _RESUME_TEMPLATE_REFERENCE_TABLES:
+                conn.execute(
+                    f'ALTER TABLE "{table}_v17" RENAME TO "{table}"'
+                )
+            _create_resume_template_reference_indexes_v17(conn)
+
+        _verify_resume_template_references_v17(
+            conn,
+            expected_counts=expected_counts,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_RESUME_TEMPLATE_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT resume_template_references_v17"
+        )
+        conn.commit()
+    except BaseException:
+        conn.execute(
+            "ROLLBACK TO SAVEPOINT resume_template_references_v17"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT resume_template_references_v17"
+        )
+        raise
+
+    return list(_RESUME_TEMPLATE_REFERENCE_TABLES)
+
+
+def _verify_resume_template_references_v17(
+    conn: sqlite3.Connection,
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    if not _has_resume_template_reference_schema_v17(conn):
+        raise RuntimeError(
+            "resume-template reference migration did not install the "
+            "canonical schema"
+        )
+    for table, expected_count in expected_counts.items():
+        observed_count = int(
+            conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0]
+        )
+        if observed_count != expected_count:
+            raise RuntimeError(
+                "resume-template reference migration changed the "
+                f"{table} row count: expected {expected_count}, "
+                f"found {observed_count}"
+            )
+    for table in _RESUME_TEMPLATE_REFERENCE_TABLES:
+        orphan = conn.execute(
+            f"""
+            SELECT owned.job_id
+            FROM {table} AS owned
+            LEFT JOIN jobs
+              ON jobs.tenant_id = owned.tenant_id
+             AND jobs.job_id = owned.job_id
+            WHERE jobs.job_id IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if orphan is not None:
+            raise RuntimeError(
+                "resume-template reference migration left an "
+                f"unresolved {table}.job_id"
+            )
+        for row in conn.execute(
+            f'SELECT DISTINCT job_id FROM "{table}"'
+        ).fetchall():
+            _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "resume-template reference migration found a foreign-key "
+            "violation"
+        )
+
+
+def _reassign_resume_template_references_v17(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+    material_generation_map: dict[tuple[str, int], int],
+) -> None:
+    """Preserve current template choice and every refresh attempt."""
+    if losing_job_id == surviving_job_id:
+        return
+    before_counts = {
+        table: int(
+            conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        )
+        for table in _RESUME_TEMPLATE_REFERENCE_TABLES
+    }
+    assignments = conn.execute(
+        """
+        SELECT job_id, template_id, version_id, updated_at
+        FROM job_resume_template_assignments
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY updated_at, job_id
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    if assignments:
+        selected = max(
+            assignments,
+            key=lambda row: (
+                str(row[3]),
+                str(row[0]) == surviving_job_id,
+                str(row[0]),
+            ),
+        )
+        conn.execute(
+            """
+            DELETE FROM job_resume_template_assignments
+            WHERE tenant_id = ? AND job_id IN (?, ?)
+            """,
+            (tenant_id, losing_job_id, surviving_job_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_resume_template_assignments (
+                tenant_id, job_id, template_id, version_id, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                tenant_id,
+                surviving_job_id,
+                str(selected[1]),
+                str(selected[2]),
+                str(selected[3]),
+            ),
+        )
+    attempts = conn.execute(
+        """
+        SELECT attempt_id, job_id, from_generation, to_generation
+        FROM resume_template_refresh_attempts
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY attempt_id
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+
+    def _mapped_generation(
+        *,
+        source_job_id: str,
+        attempt_id: str,
+        field: str,
+        value: Any,
+    ) -> int | None:
+        if value is None:
+            return None
+        generation = int(value)
+        if generation <= 0:
+            return generation
+        mapped = material_generation_map.get(
+            (source_job_id, generation)
+        )
+        if mapped is None:
+            raise RuntimeError(
+                "resume-template identity collapse could not preserve "
+                f"refresh attempt {attempt_id!r} {field}={generation} "
+                f"for job_id={source_job_id!r}"
+            )
+        return mapped
+
+    for row in attempts:
+        attempt_id = str(row[0])
+        source_job_id = str(row[1])
+        conn.execute(
+            """
+            UPDATE resume_template_refresh_attempts
+            SET job_id = ?, from_generation = ?, to_generation = ?
+            WHERE tenant_id = ? AND attempt_id = ?
+            """,
+            (
+                surviving_job_id,
+                _mapped_generation(
+                    source_job_id=source_job_id,
+                    attempt_id=attempt_id,
+                    field="from_generation",
+                    value=row[2],
+                ),
+                _mapped_generation(
+                    source_job_id=source_job_id,
+                    attempt_id=attempt_id,
+                    field="to_generation",
+                    value=row[3],
+                ),
+                tenant_id,
+                attempt_id,
+            ),
+        )
+    expected_counts = dict(before_counts)
+    expected_counts["job_resume_template_assignments"] = (
+        before_counts["job_resume_template_assignments"]
+        - len(assignments)
+        + (1 if assignments else 0)
+    )
+    _verify_resume_template_references_v17(
+        conn,
+        expected_counts=expected_counts,
+    )
 
 
 # ---------------------------------------------------------------------------

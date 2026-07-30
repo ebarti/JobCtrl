@@ -860,6 +860,8 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
     "job_employer_analysis_sub_analyses",
     "job_employer_analysis_failures",
     "job_employer_analysis",
+    "resume_template_refresh_attempts",
+    "job_resume_template_assignments",
   ]) {
     deleteJobReferences(db, tableName, jobId, jobUrl);
   }

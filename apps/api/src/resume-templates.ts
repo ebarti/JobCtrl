@@ -91,7 +91,6 @@ interface MaterialArtifactRow extends Record<string, unknown> {
 
 interface RefreshAttemptRow extends Record<string, unknown> {
   attempt_id: string;
-  job_url: string;
   status: string;
   from_generation: number | null;
   to_generation: number | null;
@@ -127,6 +126,39 @@ export const BUILT_IN_RESUME_TEMPLATE_THEME: ResumeTemplateTheme =
 const EMPTY_LAYOUT: ResumeTemplateLayout = ResumeTemplateLayoutSchema.parse({});
 
 export function ensureResumeTemplateTables(db: SqliteDatabase): void {
+  const schemaVersion = db.pragma("user_version", {
+    simple: true,
+  }) as number;
+  const assignmentColumns = tableColumnSet(
+    db,
+    "job_resume_template_assignments",
+  );
+  const assignmentReference =
+    assignmentColumns.includes("job_id") ||
+    (!assignmentColumns.length && schemaVersion >= 17)
+      ? "job_id"
+      : "job_url";
+  const refreshColumns = tableColumnSet(
+    db,
+    "resume_template_refresh_attempts",
+  );
+  const refreshReference =
+    refreshColumns.includes("job_id") ||
+    (!refreshColumns.length && schemaVersion >= 17)
+      ? "job_id"
+      : "job_url";
+  const assignmentForeignKey =
+    assignmentReference === "job_id"
+      ? `,
+      FOREIGN KEY (tenant_id, job_id)
+        REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE`
+      : "";
+  const refreshForeignKey =
+    refreshReference === "job_id"
+      ? `,
+      FOREIGN KEY (tenant_id, job_id)
+        REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE`
+      : "";
   db.exec(`
     CREATE TABLE IF NOT EXISTS resume_templates (
       tenant_id    TEXT NOT NULL DEFAULT 'local',
@@ -166,11 +198,12 @@ export function ensureResumeTemplateTables(db: SqliteDatabase): void {
 
     CREATE TABLE IF NOT EXISTS job_resume_template_assignments (
       tenant_id   TEXT NOT NULL DEFAULT 'local',
-      job_url     TEXT NOT NULL,
+      ${assignmentReference} TEXT NOT NULL,
       template_id TEXT NOT NULL,
       version_id  TEXT NOT NULL,
       updated_at  TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, job_url)
+      PRIMARY KEY (tenant_id, ${assignmentReference})
+      ${assignmentForeignKey}
     );
     CREATE INDEX IF NOT EXISTS idx_job_resume_template_assignments_template
       ON job_resume_template_assignments(tenant_id, template_id, version_id);
@@ -178,7 +211,7 @@ export function ensureResumeTemplateTables(db: SqliteDatabase): void {
     CREATE TABLE IF NOT EXISTS resume_template_refresh_attempts (
       tenant_id           TEXT NOT NULL DEFAULT 'local',
       attempt_id          TEXT NOT NULL,
-      job_url             TEXT NOT NULL,
+      ${refreshReference} TEXT NOT NULL,
       status              TEXT NOT NULL,
       from_generation     INTEGER,
       to_generation       INTEGER,
@@ -190,9 +223,12 @@ export function ensureResumeTemplateTables(db: SqliteDatabase): void {
       created_at          TEXT NOT NULL,
       completed_at        TEXT,
       PRIMARY KEY (tenant_id, attempt_id)
+      ${refreshForeignKey}
     );
     CREATE INDEX IF NOT EXISTS idx_resume_template_refresh_attempts_job
-      ON resume_template_refresh_attempts(tenant_id, job_url, created_at DESC);
+      ON resume_template_refresh_attempts(
+        tenant_id, ${refreshReference}, created_at DESC
+      );
   `);
   seedBuiltInResumeTemplate(db);
 }
@@ -319,14 +355,24 @@ export function setJobResumeTemplateAssignment(
   let overrideTemplate: ResumeTemplateMetadata | null = null;
 
   if (request.templateId === null) {
+    const assignmentReference = jobReferencePredicateForUrl(
+      db,
+      "job_resume_template_assignments",
+      jobKey,
+      DEFAULT_TENANT,
+    );
     db.prepare(
-      "DELETE FROM job_resume_template_assignments WHERE tenant_id = ? AND job_url = ?",
-    ).run(DEFAULT_TENANT, jobKey);
+      `DELETE FROM job_resume_template_assignments
+        WHERE ${assignmentReference.sql}`,
+    ).run(...assignmentReference.params);
   } else if (request.templateId) {
     const effective = resolveTemplateByRequest(db, request.templateId, request.versionId ?? undefined, "job_override");
     insertDynamicRow(db, "job_resume_template_assignments", {
-      tenant_id: DEFAULT_TENANT,
-      job_url: jobKey,
+      ...materialIdentityValues(
+        db,
+        "job_resume_template_assignments",
+        jobKey,
+      ),
       template_id: effective.metadata.templateId,
       version_id: effective.metadata.templateVersionId,
       updated_at: now,
@@ -360,12 +406,18 @@ export function setJobResumeTemplateAssignment(
 export function resolveEffectiveResumeTemplate(db: SqliteDatabase, jobKey?: string | null): EffectiveTemplate {
   ensureResumeTemplateTables(db);
   if (jobKey) {
+    const assignmentReference = jobReferencePredicateForUrl(
+      db,
+      "job_resume_template_assignments",
+      jobKey,
+      DEFAULT_TENANT,
+    );
     const assignment = getRow<AssignmentRow>(
       db,
       `SELECT template_id, version_id, updated_at
          FROM job_resume_template_assignments
-        WHERE tenant_id = ? AND job_url = ?`,
-      [DEFAULT_TENANT, jobKey],
+        WHERE ${assignmentReference.sql}`,
+      assignmentReference.params,
     );
     if (assignment?.template_id && assignment.version_id) {
       return resolveTemplateByRequest(db, assignment.template_id, assignment.version_id, "job_override");
@@ -968,16 +1020,24 @@ function reasonForTemplateState(
 
 function latestRefreshAttempt(db: SqliteDatabase, jobKey: string): ResumeTemplateRefreshAttempt | null {
   if (!tableExists(db, "resume_template_refresh_attempts")) return null;
+  const refreshReference = jobReferencePredicateForUrl(
+    db,
+    "resume_template_refresh_attempts",
+    jobKey,
+    DEFAULT_TENANT,
+  );
   const row = getRow<RefreshAttemptRow>(
     db,
     `SELECT *
        FROM resume_template_refresh_attempts
-      WHERE tenant_id = ? AND job_url = ?
-      ORDER BY created_at DESC, attempt_id DESC
+      WHERE ${refreshReference.sql}
+      ORDER BY created_at DESC,
+               CASE WHEN completed_at IS NULL THEN 1 ELSE 0 END,
+               attempt_id DESC
       LIMIT 1`,
-    [DEFAULT_TENANT, jobKey],
+    refreshReference.params,
   );
-  return row ? refreshAttemptFromRow(row) : null;
+  return row ? refreshAttemptFromRow(row, jobKey) : null;
 }
 
 function recordRefreshAttempt(
@@ -994,9 +1054,12 @@ function recordRefreshAttempt(
   const now = new Date().toISOString();
   const attemptId = `template_refresh_${crypto.randomUUID()}`;
   insertDynamicRow(db, "resume_template_refresh_attempts", {
-    tenant_id: DEFAULT_TENANT,
+    ...materialIdentityValues(
+      db,
+      "resume_template_refresh_attempts",
+      input.jobKey,
+    ),
     attempt_id: attemptId,
-    job_url: input.jobKey,
     status: input.status,
     from_generation: input.fromGeneration,
     to_generation: input.toGeneration,
@@ -1014,14 +1077,17 @@ function recordRefreshAttempt(
     [DEFAULT_TENANT, attemptId],
   );
   if (!row) throw new Error("Template refresh attempt was not persisted.");
-  return refreshAttemptFromRow(row);
+  return refreshAttemptFromRow(row, input.jobKey);
 }
 
-function refreshAttemptFromRow(row: RefreshAttemptRow): ResumeTemplateRefreshAttempt {
+function refreshAttemptFromRow(
+  row: RefreshAttemptRow,
+  jobKey: string,
+): ResumeTemplateRefreshAttempt {
   const status = stringValue(row.status);
   return {
     attemptId: row.attempt_id,
-    jobKey: row.job_url,
+    jobKey,
     status:
       status === "queued" ||
       status === "completed" ||

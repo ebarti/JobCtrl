@@ -17,8 +17,11 @@ import {
   setJobResumeTemplateAssignment,
 } from "../src/resume-templates.js";
 import type { ResumeHtmlPdfRenderer } from "../src/resume-pdf-render.js";
+import { permanentlyDeleteJob } from "../src/write-model.js";
 
 const JOB_KEY = "https://example.com/jobs/template-engineer";
+const JOB_ID = "11111111-1111-4111-8111-111111111111";
+const UUID_URL_OWNER_JOB_ID = "22222222-2222-4222-8222-222222222222";
 const NOW = "2026-06-24T10:00:00.000Z";
 
 // Stand-in for the Playwright HTML-to-PDF subprocess: it renders the exact HTML
@@ -310,7 +313,131 @@ describe("resume template service", () => {
       .get() as { payload_json: string } | undefined;
     expect(failedEvent?.payload_json).toContain("failed");
   });
+
+  it("persists v17 assignments and refresh attempts by stable JobId", () => {
+    upgradeJobFixtureToV17(db);
+    const saved = createResumeTemplateVersion(db, {
+      displayName: "Stable identity template",
+      theme: {
+        ...BUILT_IN_RESUME_TEMPLATE_THEME,
+        fontFamily: "serif",
+      },
+      layout: {},
+    });
+
+    setJobResumeTemplateAssignment(db, JOB_KEY, {
+      templateId: saved.template.templateId,
+      versionId: saved.template.activeVersion.versionId,
+    });
+    const refresh = ensureCurrentResumeTemplateMaterials(
+      db,
+      JOB_KEY,
+      {},
+      renderHtmlToPdf,
+    );
+
+    expect(refresh.status).toBe("completed");
+    expect(refresh.attempt?.jobKey).toBe(JOB_KEY);
+    expect(
+      db.prepare(
+        "SELECT job_id FROM job_resume_template_assignments",
+      ).get(),
+    ).toEqual({ job_id: JOB_ID });
+    expect(
+      db.prepare(
+        "SELECT DISTINCT job_id FROM resume_template_refresh_attempts",
+      ).all(),
+    ).toEqual([{ job_id: JOB_ID }]);
+    expect(
+      db.prepare(
+        "SELECT name FROM pragma_table_info('job_resume_template_assignments')",
+      ).all(),
+    ).toContainEqual({ name: "job_id" });
+  });
+
+  it("assigns a UUID-shaped posting URL to its URL owner", () => {
+    upgradeJobFixtureToV17(db);
+    db.prepare(
+      `INSERT INTO jobs (
+         url, tenant_id, job_id, title, company, discovered_at
+       ) VALUES (?, 'local', ?, 'URL owner', 'Example', ?)`,
+    ).run(JOB_ID, UUID_URL_OWNER_JOB_ID, NOW);
+    const saved = createResumeTemplateVersion(db, {
+      displayName: "Slate serif",
+      theme: {
+        ...BUILT_IN_RESUME_TEMPLATE_THEME,
+        fontFamily: "serif",
+      },
+      layout: {},
+    });
+
+    setJobResumeTemplateAssignment(db, JOB_ID, {
+      templateId: saved.template.templateId,
+      versionId: saved.template.activeVersion.versionId,
+    });
+
+    expect(
+      db.prepare(
+        "SELECT job_id FROM job_resume_template_assignments",
+      ).all(),
+    ).toEqual([{ job_id: UUID_URL_OWNER_JOB_ID }]);
+  });
+
+  it("permanently deletes stable template configuration without FK cascades", () => {
+    upgradeJobFixtureToV17(db);
+    db.pragma("foreign_keys = OFF");
+    const saved = createResumeTemplateVersion(db, {
+      displayName: "Delete template",
+      theme: {
+        ...BUILT_IN_RESUME_TEMPLATE_THEME,
+        fontFamily: "serif",
+      },
+      layout: {},
+    });
+    setJobResumeTemplateAssignment(db, JOB_KEY, {
+      templateId: saved.template.templateId,
+      versionId: saved.template.activeVersion.versionId,
+    });
+    ensureCurrentResumeTemplateMaterials(
+      db,
+      JOB_KEY,
+      {},
+      renderHtmlToPdf,
+    );
+
+    expect(permanentlyDeleteJob(db, JOB_KEY)).toMatchObject({
+      ok: true,
+      count: 1,
+    });
+
+    expect(
+      db.prepare(
+        "SELECT COUNT(*) AS count FROM job_resume_template_assignments",
+      ).get(),
+    ).toEqual({ count: 0 });
+    expect(
+      db.prepare(
+        "SELECT COUNT(*) AS count FROM resume_template_refresh_attempts",
+      ).get(),
+    ).toEqual({ count: 0 });
+  });
 });
+
+function upgradeJobFixtureToV17(database: Database.Database): void {
+  database.exec(`
+    ALTER TABLE jobs
+      ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local';
+    ALTER TABLE jobs ADD COLUMN job_id TEXT;
+  `);
+  database.prepare(
+    "UPDATE jobs SET job_id = ? WHERE url = ?",
+  ).run(JOB_ID, JOB_KEY);
+  database.exec(`
+    CREATE UNIQUE INDEX idx_jobs_tenant_job_id_template_fixture
+      ON jobs(tenant_id, job_id);
+    PRAGMA user_version = 17;
+  `);
+}
 
 function seedDatabase(database: Database.Database): void {
   const resumePath = path.join(tempDir, "resume-v1.txt");

@@ -236,13 +236,30 @@ class SqliteMaterialsRepository:
             raise ValueError(
                 f"no stable Job identity for template reference: {job_id}"
             )
+        assignment_reference = (
+            "job_id"
+            if "job_id"
+            in {
+                str(row[1])
+                for row in self._conn.execute(
+                    "PRAGMA table_info(job_resume_template_assignments)"
+                ).fetchall()
+            }
+            else "job_url"
+        )
+        assignment_value = (
+            str(identity.job_id)
+            if assignment_reference == "job_id"
+            else identity.storage_url.value
+        )
         assignment = self._conn.execute(
-            """
+            f"""
             SELECT template_id, version_id
               FROM job_resume_template_assignments
-             WHERE tenant_id = 'local' AND job_url = ?
+             WHERE tenant_id = 'local'
+               AND {assignment_reference} = ?
             """,
-            (identity.storage_url.value,),
+            (assignment_value,),
         ).fetchone()
         if assignment is not None:
             resolved = self._template_by_id(
