@@ -841,7 +841,7 @@ class RequirementFitReport:
     def from_dict(cls, data: dict[str, Any] | None) -> "RequirementFitReport":
         data = data or {}
         return cls(
-            job_id=str(data.get("job_id", data.get("jobKey", data.get("jobId", ""))) or ""),
+            job_id=str(data.get("job_id", data.get("jobId", "")) or ""),
             score_version=_int_or_default(data.get("score_version", data.get("scoreVersion", 0)), 0),
             employer_analysis_generation=_int_or_default(
                 data.get("employer_analysis_generation", data.get("employerAnalysisGeneration", 0)),
@@ -892,7 +892,7 @@ class RequirementFitReport:
         """Serialise the API/detail DTO for requirement-led fit evidence."""
 
         return {
-            "jobKey": self.job_id,
+            "jobId": self.job_id,
             "scoreVersion": self.score_version,
             "employerAnalysisGeneration": self.employer_analysis_generation,
             "profileSnapshotVersion": self.profile_snapshot_version,

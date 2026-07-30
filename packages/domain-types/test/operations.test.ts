@@ -67,12 +67,73 @@ describe("Operations projection types", () => {
       scoreVersion: listProjection.scoreVersion,
       scoredAt: listProjection.scoredAt,
       stages: [],
-      requirementFitReport: null,
-      interviewPrep: null,
+      requirementFitReport: {
+        jobId: listProjection.jobId,
+        scoreVersion: 2,
+        employerAnalysisGeneration: 1,
+        profileSnapshotVersion: 3,
+        scoringPolicyVersion: 4,
+        formulaVersion: "requirement-fit-v1",
+        resolvedFitScore: 8,
+        fitBand: "strong",
+        confidence: "high",
+        summary: {
+          weightedFit: 0.8,
+          mustHaveCoverage: 1,
+          blockerCount: 0,
+          missingHighWeightCount: 0,
+        },
+        assessments: [
+          {
+            requirementId: "r1",
+            requirementText: "Build Python services",
+            tier: "must_have",
+            weight: 1,
+            jobEvidenceSpan: "Python services",
+            fit: {
+              kind: "matched",
+              evidenceIds: ["evidence-python"],
+              strength: "direct",
+            },
+            contribution: {
+              maxPoints: 10,
+              awardedPoints: 10,
+              weightedImpact: 0.8,
+              rationale: "Direct evidence.",
+            },
+            tailoring: {
+              action: "double_down",
+              priority: 1,
+              allowedEvidenceIds: ["evidence-python"],
+              targetKeywords: ["python"],
+              prohibitedClaims: [],
+              instruction: "Use the existing evidence.",
+            },
+            artifactCoverage: null,
+          },
+        ],
+      },
+      interviewPrep: {
+        jobId: listProjection.jobId,
+        generation: 1,
+        status: "accepted",
+        generatedAt: "2026-05-05T09:30:00+00:00",
+        model: "gpt-test",
+        gateAudit: {
+          status: "passed",
+          fabricationFindings: [],
+          groundingFindings: [],
+          judgeVerdict: "grounded",
+          warnings: [],
+        },
+        items: [],
+      },
       lastUpdatedAt: listProjection.lastUpdatedAt,
     };
 
     expect(listProjection.scoreBreakdown?.technicalFit).toBe(9);
     expect(detailProjection.scoreKeywords).toEqual(["python", "fastapi"]);
+    expect(detailProjection.requirementFitReport?.jobId).toBe(listProjection.jobId);
+    expect(detailProjection.interviewPrep?.jobId).toBe(listProjection.jobId);
   });
 });

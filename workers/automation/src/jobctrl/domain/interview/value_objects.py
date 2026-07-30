@@ -138,7 +138,7 @@ class InterviewPrepItem:
 class InterviewPrep:
     """Generation-versioned prep for one job application."""
 
-    job_key: str
+    job_id: str
     generation: int
     status: InterviewPrepStatus
     generated_at: str
@@ -147,8 +147,8 @@ class InterviewPrep:
     model: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.job_key.strip():
-            raise ValueError("InterviewPrep.job_key must be non-empty")
+        if not self.job_id.strip():
+            raise ValueError("InterviewPrep.job_id must be non-empty")
         if self.generation < 1:
             raise ValueError("InterviewPrep.generation must be >= 1")
         if self.status not in INTERVIEW_PREP_STATUSES:
@@ -167,7 +167,7 @@ class InterviewPrep:
 
     def to_read_model(self) -> dict[str, Any]:
         return {
-            "jobKey": self.job_key,
+            "jobId": self.job_id,
             "generation": self.generation,
             "status": self.status,
             "generatedAt": self.generated_at,
@@ -179,7 +179,7 @@ class InterviewPrep:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "InterviewPrep":
         return cls(
-            job_key=str(data["jobKey"]),
+            job_id=str(data["jobId"]),
             generation=int(data["generation"]),
             status=str(data["status"]),  # type: ignore[arg-type]
             generated_at=str(data["generatedAt"]),

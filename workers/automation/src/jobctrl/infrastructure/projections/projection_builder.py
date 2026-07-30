@@ -2429,7 +2429,10 @@ class ProjectionBuilder:
             return None
         if record is None:
             return None
-        return json.dumps(record.to_read_model(), ensure_ascii=False)
+        read_model = record.to_read_model()
+        read_model.pop("jobKey", None)
+        read_model["jobId"] = job_url
+        return json.dumps(read_model, ensure_ascii=False)
 
     def _load_interview_prep(self, job_url: str) -> str | None:
         """Project the latest accepted interview-prep read shape.
@@ -2447,7 +2450,10 @@ class ProjectionBuilder:
             return None
         if record is None:
             return None
-        return json.dumps(record.to_read_model(), ensure_ascii=False)
+        read_model = record.to_read_model()
+        read_model.pop("jobKey", None)
+        read_model["jobId"] = job_url
+        return json.dumps(read_model, ensure_ascii=False)
 
     def _load_bullet_provenance_by_artifact(self, job_url: str) -> "_ProvenanceProjection":
         """Project provenance + coverage + voice read shapes, keyed by artifact.
