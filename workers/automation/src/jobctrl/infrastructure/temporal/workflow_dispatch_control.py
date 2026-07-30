@@ -70,7 +70,7 @@ class WorkflowDispatchReservation:
 
 def ensure_workflow_dispatch_control_tables(
     conn: sqlite3.Connection,
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     """Create the operational gate and durable launch inventory."""
 
     conn.executescript(
@@ -97,9 +97,25 @@ def ensure_workflow_dispatch_control_tables(
 
         CREATE INDEX IF NOT EXISTS idx_workflow_dispatch_registry_state
         ON workflow_dispatch_registry(state, workflow_type, created_at);
+
+        CREATE TABLE IF NOT EXISTS workflow_identity_cutover_inventory_proof (
+            control_key                TEXT PRIMARY KEY,
+            proof_version              INTEGER NOT NULL,
+            fence_blocked_at            TEXT NOT NULL,
+            registry_inventory_digest  TEXT NOT NULL,
+            registry_entry_count       INTEGER NOT NULL,
+            worker_inventory_digest    TEXT NOT NULL,
+            worker_entry_count         INTEGER NOT NULL,
+            worker_quiescent_at         TEXT NOT NULL,
+            created_at                  TEXT NOT NULL
+        );
         """
     )
-    return ("workflow_dispatch_control", "workflow_dispatch_registry")
+    return (
+        "workflow_dispatch_control",
+        "workflow_dispatch_registry",
+        "workflow_identity_cutover_inventory_proof",
+    )
 
 
 @asynccontextmanager
@@ -299,6 +315,16 @@ def _write_workflow_dispatch_gate(
     try:
         ensure_workflow_dispatch_control_tables(conn)
         with conn:
+            # A proof is bound to one exact fence epoch. Re-activating or
+            # releasing the fence invalidates it before any later preflight can
+            # mistake stale recovery evidence for the current handoff.
+            conn.execute(
+                """
+                DELETE FROM workflow_identity_cutover_inventory_proof
+                WHERE control_key = ?
+                """,
+                (_CONTROL_KEY,),
+            )
             if blocked:
                 conn.execute(
                     """
