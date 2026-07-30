@@ -96,6 +96,17 @@ def _setup(tmp_path: Path):
 
     conn = init_db(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        INSERT INTO jobs (url, tenant_id, job_id)
+        VALUES (
+            'https://job/1',
+            'local',
+            '11111111-1111-4111-8111-111111111111'
+        )
+        """
+    )
+    conn.commit()
     bus = InProcessEventBus()
     ProjectionBuilder(conn_factory=lambda: conn, tenant_id=LOCAL_TENANT).subscribe_to(bus)
     research_repo = SqliteContactResearchTaskRepository(conn, publisher=bus)

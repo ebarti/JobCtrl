@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -30,11 +31,25 @@ _FIXTURE = (
 
 def _seed_canonical(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     tenant = fixture["tenantId"]
+    job_ids = {
+        str(task["jobUrl"]): str(
+            uuid.uuid5(uuid.NAMESPACE_URL, str(task["jobUrl"]))
+        )
+        for task in fixture["tasks"]
+        if task["jobUrl"] is not None
+    }
+    conn.executemany(
+        "INSERT INTO jobs (url, tenant_id, job_id) VALUES (?, ?, ?)",
+        (
+            (job_url, tenant, job_id)
+            for job_url, job_id in job_ids.items()
+        ),
+    )
     for task in fixture["tasks"]:
         conn.execute(
             """
             INSERT INTO contact_research_tasks (
-                tenant_id, task_id, employer, job_url, status, source_attempts_json,
+                tenant_id, task_id, employer, job_id, status, source_attempts_json,
                 started_at, updated_at, needs_review_at, completed_at, failed_at, error_class
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -42,7 +57,7 @@ def _seed_canonical(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 tenant,
                 task["taskId"],
                 task["employer"],
-                task["jobUrl"],
+                job_ids.get(task["jobUrl"]),
                 task["status"],
                 json.dumps(task["sourceAttempts"]),
                 task["startedAt"],

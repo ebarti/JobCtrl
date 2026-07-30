@@ -9,7 +9,7 @@ export type SqliteValue = string | number | bigint | null;
 // writer that stamps ``PRAGMA user_version``; the API only reads it to fail
 // closed on a database written by a newer build. Bump both constants together
 // whenever the schema shape changes.
-export const SUPPORTED_SCHEMA_VERSION = 23;
+export const SUPPORTED_SCHEMA_VERSION = 24;
 
 export class IncompatibleSchemaVersionError extends Error {
   constructor(current: number) {
@@ -79,6 +79,27 @@ export function tableColumnSet(db: SqliteDatabase, tableName: string): Set<strin
     (db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as Array<{ name: string }>)
       .map((row) => row.name),
   );
+}
+
+export function tableIndexColumns(
+  db: SqliteDatabase,
+  tableName: string,
+  indexName: string,
+): string[] {
+  if (!tableExists(db, tableName)) return [];
+  const exists = (
+    db
+      .prepare(`PRAGMA index_list(${quoteIdentifier(tableName)})`)
+      .all() as Array<{ name: string }>
+  ).some((row) => row.name === indexName);
+  if (!exists) return [];
+  return (
+    db
+      .prepare(`PRAGMA index_info(${quoteIdentifier(indexName)})`)
+      .all() as Array<{ seqno: number; name: string }>
+  )
+    .sort((left, right) => left.seqno - right.seqno)
+    .map((row) => row.name);
 }
 
 export function jobReferenceColumn(
@@ -231,6 +252,20 @@ export function hasCompositeJobIdForeignKey(
   tableName: string,
   referenceColumn = "job_id",
 ): boolean {
+  return hasCompositeJobIdForeignKeyAction(
+    db,
+    tableName,
+    referenceColumn,
+    "CASCADE",
+  );
+}
+
+export function hasCompositeJobIdForeignKeyAction(
+  db: SqliteDatabase,
+  tableName: string,
+  referenceColumn: string,
+  onDelete: string,
+): boolean {
   if (!tableExists(db, tableName)) return false;
   const rows = db
     .prepare(`PRAGMA foreign_key_list(${quoteIdentifier(tableName)})`)
@@ -242,20 +277,20 @@ export function hasCompositeJobIdForeignKey(
       on_delete: string;
     }>;
   const groups = new Map<number, Set<string>>();
-  const cascades = new Map<number, boolean>();
+  const actions = new Map<number, string>();
   for (const row of rows) {
     if (row.table !== "jobs") continue;
     const columns = groups.get(row.id) ?? new Set<string>();
     columns.add(`${row.from}:${row.to}`);
     groups.set(row.id, columns);
-    cascades.set(row.id, row.on_delete.toUpperCase() === "CASCADE");
+    actions.set(row.id, row.on_delete.toUpperCase());
   }
   const expected = new Set([
     "tenant_id:tenant_id",
     `${referenceColumn}:job_id`,
   ]);
   return [...groups.entries()].some(([id, columns]) => (
-    cascades.get(id) === true
+    actions.get(id) === onDelete.toUpperCase()
     && columns.size === expected.size
     && [...expected].every((column) => columns.has(column))
   ));

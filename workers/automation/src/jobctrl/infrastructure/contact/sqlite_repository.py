@@ -32,6 +32,11 @@ from jobctrl.domain.contact.value_objects import (
 from jobctrl.domain.identifiers import ContactId
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.tenant import TenantId
+from jobctrl.infrastructure.contact.job_reference import (
+    contact_job_reference_column,
+    physical_contact_job_reference,
+    public_contact_job_reference,
+)
 from jobctrl.state import record_job_event, utc_now
 
 logger = logging.getLogger(__name__)
@@ -44,6 +49,10 @@ class SqliteContactRepository:
         self._conn = conn
         self._publisher = publisher
         ensure_contact_tables(self._conn)
+        self._reference_column = contact_job_reference_column(
+            self._conn,
+            "contacts",
+        )
 
     # ------------------------------------------------------------------
     # Load
@@ -62,7 +71,17 @@ class SqliteContactRepository:
         return self._list(tenant_id, "", ())
 
     def list_for_job(self, tenant_id: TenantId, job_id: str) -> list[Contact]:
-        return self._list(tenant_id, "AND job_url = ?", (job_id,))
+        reference = physical_contact_job_reference(
+            self._conn,
+            table="contacts",
+            tenant_id=tenant_id,
+            public_reference=job_id,
+        )
+        return self._list(
+            tenant_id,
+            f"AND {self._reference_column} = ?",
+            (str(reference),),
+        )
 
     def list_for_employer(self, tenant_id: TenantId, employer: str) -> list[Contact]:
         return self._list(tenant_id, "AND employer = ?", (employer,))
@@ -81,10 +100,19 @@ class SqliteContactRepository:
         return [self._row_to_contact(tenant_id, row) for row in rows]
 
     def _row_to_contact(self, tenant_id: TenantId, row: sqlite3.Row) -> Contact:
+        physical_reference = row[self._reference_column]
         return Contact(
             tenant_id=tenant_id,
             contact_id=ContactId(str(row["contact_id"])),
-            link=ContactLink(employer=row["employer"], job_id=row["job_url"]),
+            link=ContactLink(
+                employer=row["employer"],
+                job_id=public_contact_job_reference(
+                    self._conn,
+                    table="contacts",
+                    tenant_id=tenant_id,
+                    physical_reference=physical_reference,
+                ),
+            ),
             role=_role(row["role"]),
             attributes=self._load_attributes(tenant_id, str(row["contact_id"])),
             created_at=str(row["created_at"] or ""),
@@ -139,16 +167,22 @@ class SqliteContactRepository:
     def _persist_canonical(self, tenant_id: TenantId, contact: Contact) -> None:
         tenant = str(tenant_id)
         contact_id = str(contact.contact_id)
+        job_reference = physical_contact_job_reference(
+            self._conn,
+            table="contacts",
+            tenant_id=tenant_id,
+            public_reference=contact.link.job_id,
+        )
         with self._conn:
             self._conn.execute(
-                """
+                f"""
                 INSERT INTO contacts (
-                    tenant_id, contact_id, employer, job_url, role,
+                    tenant_id, contact_id, employer, {self._reference_column}, role,
                     created_at, updated_at, deleted_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tenant_id, contact_id) DO UPDATE SET
                     employer = excluded.employer,
-                    job_url = excluded.job_url,
+                    {self._reference_column} = excluded.{self._reference_column},
                     role = excluded.role,
                     updated_at = excluded.updated_at,
                     deleted_at = excluded.deleted_at
@@ -157,7 +191,7 @@ class SqliteContactRepository:
                     tenant,
                     contact_id,
                     contact.link.employer,
-                    contact.link.job_id,
+                    job_reference,
                     contact.role.value,
                     contact.created_at,
                     contact.updated_at,

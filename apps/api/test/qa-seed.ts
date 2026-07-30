@@ -6,6 +6,10 @@ import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 
 import { ensureApplicationFeedbackTables } from "../src/application-feedback.js";
+import {
+  jobReferenceColumn,
+  jobReferenceForUrl,
+} from "../src/db.js";
 import { ensureDiscoveryControlTables } from "../src/discovery-controls.js";
 import { ensureOutreachTables } from "../src/outreach.js";
 import { writeProfileConfig } from "../src/profile-store.js";
@@ -1606,15 +1610,21 @@ function seedResumeReviewDraft(db: Database.Database): void {
 }
 
 function seedContacts(db: Database.Database): void {
+  const referenceColumn = jobReferenceColumn(db, "contacts");
+  const jobReference = jobReferenceForUrl(
+    db,
+    "contacts",
+    QA_PLATFORM_JOB_URL,
+  );
   const insertContact = db.prepare(
     `INSERT INTO contacts (
-      tenant_id, contact_id, employer, job_url, role, created_at, updated_at
+      tenant_id, contact_id, employer, ${referenceColumn}, role, created_at, updated_at
     ) VALUES ('local', ?, ?, ?, ?, ?, ?)`,
   );
   insertContact.run(
     "qa-contact-hiring-manager",
     "GitLab",
-    QA_PLATFORM_JOB_URL,
+    jobReference,
     "hiring_manager",
     QA_NOW,
     QA_NOW,
@@ -1622,7 +1632,7 @@ function seedContacts(db: Database.Database): void {
   insertContact.run(
     "qa-contact-recruiter",
     "GitLab",
-    QA_PLATFORM_JOB_URL,
+    jobReference,
     "recruiter",
     QA_NOW,
     QA_NOW,

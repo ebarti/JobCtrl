@@ -4735,6 +4735,8 @@ function rebuildContactProjections(db: SqliteDatabase, tenantId: string): void {
   if (!tableExists(db, "contacts") || !tableExists(db, "contact_attributes")) {
     return;
   }
+  const contactReference = jobReferenceColumn(db, "contacts");
+  const stableContactReferences = contactReference === "job_id";
   const contacts = allRows<{
     contact_id: string;
     employer: string | null;
@@ -4744,9 +4746,15 @@ function rebuildContactProjections(db: SqliteDatabase, tenantId: string): void {
     updated_at: string | null;
   }>(
     db,
-    `SELECT contact_id, employer, job_url, role, created_at, updated_at
+    `SELECT contacts.contact_id, contacts.employer,
+            ${stableContactReferences ? "jobs.url" : "contacts.job_url"} AS job_url,
+            contacts.role, contacts.created_at, contacts.updated_at
      FROM contacts
-     WHERE tenant_id = ? AND deleted_at IS NULL`,
+     ${stableContactReferences
+       ? `LEFT JOIN jobs
+            ON ${jobReferenceJoinToJobs(db, "contacts", "contacts", "jobs")}`
+       : ""}
+     WHERE contacts.tenant_id = ? AND contacts.deleted_at IS NULL`,
     [tenantId],
   );
   const liveIds = new Set<string>();
@@ -4874,6 +4882,11 @@ function rebuildContactResearchProjections(db: SqliteDatabase, tenantId: string)
   if (!tableExists(db, "contact_research_tasks") || !tableExists(db, "contact_candidates")) {
     return;
   }
+  const researchReference = jobReferenceColumn(
+    db,
+    "contact_research_tasks",
+  );
+  const stableResearchReferences = researchReference === "job_id";
   const tasks = allRows<{
     task_id: string;
     employer: string | null;
@@ -4888,10 +4901,30 @@ function rebuildContactResearchProjections(db: SqliteDatabase, tenantId: string)
     error_class: string | null;
   }>(
     db,
-    `SELECT task_id, employer, job_url, status, source_attempts_json,
-            started_at, updated_at, needs_review_at, completed_at, failed_at, error_class
+    `SELECT contact_research_tasks.task_id,
+            contact_research_tasks.employer,
+            ${stableResearchReferences
+              ? "jobs.url"
+              : "contact_research_tasks.job_url"} AS job_url,
+            contact_research_tasks.status,
+            contact_research_tasks.source_attempts_json,
+            contact_research_tasks.started_at,
+            contact_research_tasks.updated_at,
+            contact_research_tasks.needs_review_at,
+            contact_research_tasks.completed_at,
+            contact_research_tasks.failed_at,
+            contact_research_tasks.error_class
      FROM contact_research_tasks
-     WHERE tenant_id = ?`,
+     ${stableResearchReferences
+       ? `LEFT JOIN jobs
+            ON ${jobReferenceJoinToJobs(
+              db,
+              "contact_research_tasks",
+              "contact_research_tasks",
+              "jobs",
+            )}`
+       : ""}
+     WHERE contact_research_tasks.tenant_id = ?`,
     [tenantId],
   );
   const liveIds = new Set<string>();

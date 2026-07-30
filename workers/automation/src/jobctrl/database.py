@@ -86,7 +86,12 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v23 (repeat-application references): evidence-bound override and audit
 # ownership moves to stable target/prior JobIds without rewriting the immutable
 # URL-shaped evidence snapshot or its fingerprint.
-SCHEMA_VERSION = 23
+# v24 (contact and contact-research references): optional application links on
+# Contact and ContactResearchTask move to tenant-scoped stable JobIds. Contact
+# facts, research candidates, and the URL-shaped public/read-model boundary stay
+# unchanged. Job deletion is restricted so the explicit permanent-delete path
+# can detach employer-linked records instead of silently erasing them.
+SCHEMA_VERSION = 24
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -240,6 +245,7 @@ def _schema_migrations() -> tuple[
         (21, ensure_application_outcome_references_v21),
         (22, ensure_application_feedback_candidate_references_v22),
         (23, ensure_repeat_application_references_v23),
+        (24, ensure_contact_research_references_v24),
     )
 
 
@@ -464,6 +470,74 @@ def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> li
     return ensure_projection_tables(conn)
 
 
+def _create_contacts_table_v24(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    stable_reference: bool,
+) -> None:
+    reference_column = "job_id" if stable_reference else "job_url"
+    foreign_key = (
+        """,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE RESTRICT"""
+        if stable_reference
+        else ""
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            contact_id          TEXT NOT NULL,
+            employer            TEXT,
+            {reference_column}  TEXT,
+            role                TEXT NOT NULL DEFAULT 'other',
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            deleted_at          TEXT,
+            PRIMARY KEY (tenant_id, contact_id)
+            {foreign_key}
+        )
+        """
+    )
+
+
+def _create_contact_research_tasks_table_v24(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    stable_reference: bool,
+) -> None:
+    reference_column = "job_id" if stable_reference else "job_url"
+    foreign_key = (
+        """,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE RESTRICT"""
+        if stable_reference
+        else ""
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            tenant_id            TEXT NOT NULL DEFAULT 'local',
+            task_id              TEXT NOT NULL,
+            employer             TEXT,
+            {reference_column}   TEXT,
+            status               TEXT NOT NULL DEFAULT 'queued',
+            source_attempts_json TEXT NOT NULL DEFAULT '[]',
+            started_at           TEXT,
+            updated_at           TEXT NOT NULL,
+            needs_review_at      TEXT,
+            completed_at         TEXT,
+            failed_at            TEXT,
+            error_class          TEXT,
+            PRIMARY KEY (tenant_id, task_id)
+            {foreign_key}
+        )
+        """
+    )
+
+
 def ensure_contact_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     """Create the Contact & Outreach (ninth bounded context) canonical tables.
 
@@ -482,19 +556,16 @@ def ensure_contact_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     if conn is None:
         conn = get_connection()
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS contacts (
-            tenant_id           TEXT NOT NULL DEFAULT 'local',
-            contact_id          TEXT NOT NULL,
-            employer            TEXT,
-            job_url             TEXT,
-            role                TEXT NOT NULL DEFAULT 'other',
-            created_at          TEXT NOT NULL,
-            updated_at          TEXT NOT NULL,
-            deleted_at          TEXT,
-            PRIMARY KEY (tenant_id, contact_id)
+    current_version = _assert_schema_version_supported(conn)
+    stable_contact_references = (
+        current_version >= _CONTACT_RESEARCH_REFERENCE_SCHEMA_VERSION
+    )
+    if not _table_columns(conn, "contacts"):
+        _create_contacts_table_v24(
+            conn,
+            table="contacts",
+            stable_reference=stable_contact_references,
         )
-    """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS contact_attributes (
             tenant_id           TEXT NOT NULL DEFAULT 'local',
@@ -511,23 +582,12 @@ def ensure_contact_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             PRIMARY KEY (tenant_id, attribute_id)
         )
     """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS contact_research_tasks (
-            tenant_id           TEXT NOT NULL DEFAULT 'local',
-            task_id             TEXT NOT NULL,
-            employer            TEXT,
-            job_url             TEXT,
-            status              TEXT NOT NULL DEFAULT 'queued',
-            source_attempts_json TEXT NOT NULL DEFAULT '[]',
-            started_at          TEXT,
-            updated_at          TEXT NOT NULL,
-            needs_review_at     TEXT,
-            completed_at        TEXT,
-            failed_at           TEXT,
-            error_class         TEXT,
-            PRIMARY KEY (tenant_id, task_id)
+    if not _table_columns(conn, "contact_research_tasks"):
+        _create_contact_research_tasks_table_v24(
+            conn,
+            table="contact_research_tasks",
+            stable_reference=stable_contact_references,
         )
-    """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS contact_candidates (
             tenant_id           TEXT NOT NULL DEFAULT 'local',
@@ -590,10 +650,25 @@ def ensure_contact_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             PRIMARY KEY (tenant_id, send_log_id)
         )
     """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_contacts_lookup
-        ON contacts(tenant_id, employer, job_url)
-    """)
+    if stable_contact_references:
+        if (
+            "job_id" not in _table_columns(conn, "contacts")
+            or "job_url" in _table_columns(conn, "contacts")
+            or "job_id"
+            not in _table_columns(conn, "contact_research_tasks")
+            or "job_url"
+            in _table_columns(conn, "contact_research_tasks")
+        ):
+            raise RuntimeError(
+                "Schema v24 requires stable contact and "
+                "contact-research JobId references."
+            )
+        _create_contact_reference_indexes_v24(conn)
+    else:
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_contacts_lookup
+            ON contacts(tenant_id, employer, job_url)
+        """)
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_contact_attributes_contact
         ON contact_attributes(tenant_id, contact_id)
@@ -607,6 +682,14 @@ def ensure_contact_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     if "source_attempts_json" not in research_columns:
         conn.execute(
             "ALTER TABLE contact_research_tasks ADD COLUMN source_attempts_json TEXT NOT NULL DEFAULT '[]'"
+        )
+    if (
+        stable_contact_references
+        and not _has_contact_research_reference_schema_v24(conn)
+    ):
+        raise RuntimeError(
+            "Schema v24 requires stable contact and "
+            "contact-research JobId references."
         )
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_contact_candidates_task
@@ -4706,6 +4789,15 @@ def _reassign_discovery_identity_references(
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
             surviving_job_id=surviving_job_id,
+        )
+    if _has_contact_research_reference_schema_v24(conn):
+        _reassign_contact_research_references_v24(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+            losing_job_url=losing_job_url,
+            surviving_job_url=surviving_job_url,
         )
     if _has_scoring_reference_schema_v12(conn):
         _reassign_scoring_references_v12(
@@ -14386,6 +14478,424 @@ def _reassign_repeat_application_references_v23(
         (surviving_job_id, tenant_id, losing_job_id),
     )
     _verify_repeat_application_references_v23(
+        conn,
+        expected_counts=expected_counts,
+    )
+
+
+_CONTACT_RESEARCH_REFERENCE_SCHEMA_VERSION = 24
+_CONTACT_RESEARCH_REFERENCE_TABLES = (
+    "contacts",
+    "contact_research_tasks",
+)
+_CONTACT_RESEARCH_HISTORY_TABLES = (
+    "contacts",
+    "contact_attributes",
+    "contact_research_tasks",
+    "contact_candidates",
+)
+
+
+def _has_composite_job_id_foreign_key_action(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    reference_column: str,
+    on_delete: str,
+) -> bool:
+    groups: dict[int, set[tuple[str, str]]] = {}
+    actions: dict[int, str] = {}
+    for row in conn.execute(
+        f'PRAGMA foreign_key_list("{table}")'
+    ).fetchall():
+        if str(row[2]) != "jobs":
+            continue
+        foreign_key_id = int(row[0])
+        groups.setdefault(foreign_key_id, set()).add(
+            (str(row[3]), str(row[4]))
+        )
+        actions[foreign_key_id] = str(row[6]).upper()
+    expected = {
+        ("tenant_id", "tenant_id"),
+        (reference_column, "job_id"),
+    }
+    return any(
+        columns == expected
+        and actions.get(foreign_key_id) == on_delete.upper()
+        for foreign_key_id, columns in groups.items()
+    )
+
+
+def _has_contact_research_reference_schema_v24(
+    conn: sqlite3.Connection,
+) -> bool:
+    contacts = "contacts"
+    research = "contact_research_tasks"
+    return (
+        "job_id" in _table_columns(conn, contacts)
+        and "job_url" not in _table_columns(conn, contacts)
+        and _primary_key_columns(conn, contacts)
+        == ("tenant_id", "contact_id")
+        and _has_composite_job_id_foreign_key_action(
+            conn,
+            table=contacts,
+            reference_column="job_id",
+            on_delete="RESTRICT",
+        )
+        and _has_index(
+            conn,
+            contacts,
+            "idx_contacts_lookup",
+            ("tenant_id", "employer", "job_id"),
+            unique=False,
+        )
+        and "job_id" in _table_columns(conn, research)
+        and "job_url" not in _table_columns(conn, research)
+        and _primary_key_columns(conn, research)
+        == ("tenant_id", "task_id")
+        and _has_composite_job_id_foreign_key_action(
+            conn,
+            table=research,
+            reference_column="job_id",
+            on_delete="RESTRICT",
+        )
+        and _has_index(
+            conn,
+            research,
+            "idx_contact_research_tasks_lookup",
+            ("tenant_id", "employer", "job_id"),
+            unique=False,
+        )
+    )
+
+
+def _canonical_contact_rows_v24(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    reference_column = _legacy_or_stable_reference_column(
+        conn,
+        "contacts",
+        stable="job_id",
+        legacy="job_url",
+    )
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, contact_id, employer, {reference_column},
+               role, created_at, updated_at, deleted_at
+        FROM contacts
+        ORDER BY tenant_id, contact_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        values = tuple(row)
+        raw_reference = values[3]
+        stable_job_id: str | None = None
+        if raw_reference is not None:
+            stable_job_id = _resolve_job_reference_value(
+                conn,
+                tenant_id=str(values[0]),
+                reference=str(raw_reference),
+                legacy_url=reference_column == "job_url",
+            )
+            if stable_job_id is None:
+                raise RuntimeError(
+                    "contact reference migration could not resolve "
+                    f"contacts.{reference_column}={raw_reference!r} "
+                    f"for tenant {values[0]!r}"
+                )
+            _validate_job_uuid(stable_job_id)
+        canonical.append(
+            (
+                values[0],
+                values[1],
+                values[2],
+                stable_job_id,
+                values[4],
+                values[5],
+                values[6],
+                values[7],
+            )
+        )
+    return canonical
+
+
+def _canonical_contact_research_rows_v24(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    reference_column = _legacy_or_stable_reference_column(
+        conn,
+        "contact_research_tasks",
+        stable="job_id",
+        legacy="job_url",
+    )
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, task_id, employer, {reference_column}, status,
+               source_attempts_json, started_at, updated_at,
+               needs_review_at, completed_at, failed_at, error_class
+        FROM contact_research_tasks
+        ORDER BY tenant_id, task_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        values = tuple(row)
+        raw_reference = values[3]
+        stable_job_id: str | None = None
+        if raw_reference is not None:
+            stable_job_id = _resolve_job_reference_value(
+                conn,
+                tenant_id=str(values[0]),
+                reference=str(raw_reference),
+                legacy_url=reference_column == "job_url",
+            )
+            if stable_job_id is None:
+                raise RuntimeError(
+                    "contact-research reference migration could not resolve "
+                    "contact_research_tasks."
+                    f"{reference_column}={raw_reference!r} "
+                    f"for tenant {values[0]!r}"
+                )
+            _validate_job_uuid(stable_job_id)
+        canonical.append(
+            (
+                values[0],
+                values[1],
+                values[2],
+                stable_job_id,
+                *values[4:],
+            )
+        )
+    return canonical
+
+
+def _create_contact_reference_indexes_v24(
+    conn: sqlite3.Connection,
+) -> None:
+    indexes = (
+        (
+            "contacts",
+            "idx_contacts_lookup",
+            ("tenant_id", "employer", "job_id"),
+            """
+            CREATE INDEX idx_contacts_lookup
+            ON contacts(tenant_id, employer, job_id)
+            """,
+        ),
+        (
+            "contact_research_tasks",
+            "idx_contact_research_tasks_lookup",
+            ("tenant_id", "employer", "job_id"),
+            """
+            CREATE INDEX idx_contact_research_tasks_lookup
+            ON contact_research_tasks(tenant_id, employer, job_id)
+            """,
+        ),
+    )
+    for table, name, columns, create_sql in indexes:
+        if _has_index(
+            conn,
+            table,
+            name,
+            columns,
+            unique=False,
+        ):
+            continue
+        conn.execute(f'DROP INDEX IF EXISTS "{name}"')
+        conn.execute(create_sql)
+
+
+def ensure_contact_research_references_v24(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move optional Contact and research-task links to stable JobIds."""
+    if conn is None:
+        conn = get_connection()
+    current = _assert_schema_version_supported(conn)
+    if current >= _CONTACT_RESEARCH_REFERENCE_SCHEMA_VERSION:
+        return list(_CONTACT_RESEARCH_REFERENCE_TABLES)
+    if current != _REPEAT_APPLICATION_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "contact reference migration requires schema v23; "
+            f"found v{current}"
+        )
+
+    expected_counts = {
+        table: int(
+            conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0]
+        )
+        for table in _CONTACT_RESEARCH_HISTORY_TABLES
+    }
+    conn.execute("SAVEPOINT contact_research_references_v24")
+    try:
+        contact_rows = _canonical_contact_rows_v24(conn)
+        research_rows = _canonical_contact_research_rows_v24(conn)
+
+        conn.execute("DROP TABLE IF EXISTS contacts_v24")
+        _create_contacts_table_v24(
+            conn,
+            table="contacts_v24",
+            stable_reference=True,
+        )
+        conn.executemany(
+            """
+            INSERT INTO contacts_v24 (
+                tenant_id, contact_id, employer, job_id, role,
+                created_at, updated_at, deleted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            contact_rows,
+        )
+
+        conn.execute(
+            "DROP TABLE IF EXISTS contact_research_tasks_v24"
+        )
+        _create_contact_research_tasks_table_v24(
+            conn,
+            table="contact_research_tasks_v24",
+            stable_reference=True,
+        )
+        conn.executemany(
+            """
+            INSERT INTO contact_research_tasks_v24 (
+                tenant_id, task_id, employer, job_id, status,
+                source_attempts_json, started_at, updated_at,
+                needs_review_at, completed_at, failed_at, error_class
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            research_rows,
+        )
+
+        conn.execute('DROP TABLE "contacts"')
+        conn.execute(
+            'ALTER TABLE "contacts_v24" RENAME TO "contacts"'
+        )
+        conn.execute('DROP TABLE "contact_research_tasks"')
+        conn.execute(
+            'ALTER TABLE "contact_research_tasks_v24" '
+            'RENAME TO "contact_research_tasks"'
+        )
+        _create_contact_reference_indexes_v24(conn)
+        _verify_contact_research_references_v24(
+            conn,
+            expected_counts=expected_counts,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_CONTACT_RESEARCH_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute("RELEASE SAVEPOINT contact_research_references_v24")
+    except BaseException:
+        conn.execute(
+            "ROLLBACK TO SAVEPOINT contact_research_references_v24"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT contact_research_references_v24"
+        )
+        raise
+    return list(_CONTACT_RESEARCH_REFERENCE_TABLES)
+
+
+def _verify_contact_research_references_v24(
+    conn: sqlite3.Connection,
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    if not _has_contact_research_reference_schema_v24(conn):
+        raise RuntimeError(
+            "contact reference migration did not create the stable "
+            "reference schema"
+        )
+    for table, expected_count in expected_counts.items():
+        observed_count = int(
+            conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0]
+        )
+        if observed_count != expected_count:
+            raise RuntimeError(
+                "contact reference migration changed "
+                f"{table} row count: expected {expected_count}, "
+                f"found {observed_count}"
+            )
+    for table in _CONTACT_RESEARCH_REFERENCE_TABLES:
+        orphan = conn.execute(
+            f"""
+            SELECT source.job_id
+            FROM "{table}" AS source
+            LEFT JOIN jobs
+              ON jobs.tenant_id = source.tenant_id
+             AND jobs.job_id = source.job_id
+            WHERE source.job_id IS NOT NULL
+              AND jobs.job_id IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if orphan is not None:
+            raise RuntimeError(
+                "contact reference migration left an unresolved "
+                f"JobId in {table}.job_id"
+            )
+        for row in conn.execute(
+            f'SELECT DISTINCT job_id FROM "{table}" '
+            "WHERE job_id IS NOT NULL"
+        ).fetchall():
+            _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "contact reference migration found a foreign-key violation"
+        )
+
+
+def _reassign_contact_research_references_v24(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+    losing_job_url: str,
+    surviving_job_url: str,
+) -> None:
+    if losing_job_id == surviving_job_id:
+        return
+    expected_counts = {
+        table: int(
+            conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0]
+        )
+        for table in _CONTACT_RESEARCH_HISTORY_TABLES
+    }
+    for table in _CONTACT_RESEARCH_REFERENCE_TABLES:
+        conn.execute(
+            f"""
+            UPDATE "{table}"
+            SET job_id = ?
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (surviving_job_id, tenant_id, losing_job_id),
+        )
+    for projection in (
+        "contact_projections",
+        "contact_research_task_projections",
+    ):
+        if not _table_columns(conn, projection):
+            continue
+        conn.execute(
+            f"""
+            UPDATE "{projection}"
+            SET job_id = ?
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (surviving_job_url, tenant_id, losing_job_url),
+        )
+    _verify_contact_research_references_v24(
         conn,
         expected_counts=expected_counts,
     )

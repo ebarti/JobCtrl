@@ -64,6 +64,10 @@ from jobctrl.domain.operations.projections import (
 )
 from jobctrl.domain.ports.events import EventPublisher, Subscription
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctrl.infrastructure.contact.job_reference import (
+    contact_job_reference_column,
+    public_contact_job_reference,
+)
 from jobctrl.infrastructure.events.watermark import SqliteEventWatermarkRepository
 from jobctrl.infrastructure.projections.location_normalization import (
     normalize_job_location,
@@ -1030,9 +1034,14 @@ class ProjectionBuilder:
         """
         tenant = str(self._tenant_id)
         try:
+            reference_column = contact_job_reference_column(
+                self._conn,
+                "contacts",
+            )
             contact_rows = self._conn.execute(
-                """
-                SELECT contact_id, employer, job_url, role, created_at, updated_at
+                f"""
+                SELECT contact_id, employer, {reference_column}, role,
+                       created_at, updated_at
                 FROM contacts
                 WHERE tenant_id = ? AND deleted_at IS NULL
                 """,
@@ -1081,7 +1090,12 @@ class ProjectionBuilder:
                     tenant_id=self._tenant_id,
                     contact_id=contact_id,
                     employer=row[1],
-                    job_id=row[2],
+                    job_id=public_contact_job_reference(
+                        self._conn,
+                        table="contacts",
+                        tenant_id=self._tenant_id,
+                        physical_reference=row[2],
+                    ),
                     role=str(row[3] or "other"),
                     attribute_count=len(attribute_rows),
                     confirmed_count=confirmed,
@@ -1121,9 +1135,14 @@ class ProjectionBuilder:
         """
         tenant = str(self._tenant_id)
         try:
+            reference_column = contact_job_reference_column(
+                self._conn,
+                "contact_research_tasks",
+            )
             task_rows = self._conn.execute(
-                """
-                SELECT task_id, employer, job_url, status, source_attempts_json,
+                f"""
+                SELECT task_id, employer, {reference_column}, status,
+                       source_attempts_json,
                        started_at, updated_at, needs_review_at, completed_at,
                        failed_at, error_class
                 FROM contact_research_tasks
@@ -1177,7 +1196,12 @@ class ProjectionBuilder:
                     tenant_id=self._tenant_id,
                     task_id=task_id,
                     employer=row[1],
-                    job_id=row[2],
+                    job_id=public_contact_job_reference(
+                        self._conn,
+                        table="contact_research_tasks",
+                        tenant_id=self._tenant_id,
+                        physical_reference=row[2],
+                    ),
                     status=str(row[3] or "queued"),
                     candidate_count=len(candidate_rows),
                     needs_review_count=needs_review,

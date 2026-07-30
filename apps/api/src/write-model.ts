@@ -862,6 +862,7 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
     jobId,
     jobUrl,
   );
+  detachOrDeleteContactReferences(db, jobId, jobUrl);
   deleteJobReferences(db, "job_artifacts", jobId, jobUrl);
   deleteScoringJobReferences(db, jobId, jobUrl);
   for (const tableName of [
@@ -917,6 +918,99 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
   ]);
   deleteWhere(db, "discovery_feedback", "job_key = ?", [jobUrl]);
   deleteWhere(db, "jobs", "url = ?", [jobUrl]);
+}
+
+function detachOrDeleteContactReferences(
+  db: SqliteDatabase,
+  jobId: string | undefined,
+  jobUrl: string,
+): void {
+  if (tableExists(db, "contacts")) {
+    const referenceColumn = jobReferenceColumn(db, "contacts");
+    const reference =
+      referenceColumn === "job_id" ? jobId : jobUrl;
+    if (reference) {
+      deleteWhere(
+        db,
+        "contact_attributes",
+        `tenant_id = 'local'
+         AND contact_id IN (
+           SELECT contact_id
+             FROM contacts
+            WHERE tenant_id = 'local'
+              AND ${referenceColumn} = ?
+              AND NULLIF(TRIM(COALESCE(employer, '')), '') IS NULL
+         )`,
+        [reference],
+      );
+      deleteWhere(
+        db,
+        "contacts",
+        `tenant_id = 'local'
+         AND ${referenceColumn} = ?
+         AND NULLIF(TRIM(COALESCE(employer, '')), '') IS NULL`,
+        [reference],
+      );
+      db.prepare(
+        `UPDATE contacts
+            SET ${referenceColumn} = NULL
+          WHERE tenant_id = 'local'
+            AND ${referenceColumn} = ?`,
+      ).run(reference);
+    }
+  }
+  if (tableExists(db, "contact_research_tasks")) {
+    const referenceColumn = jobReferenceColumn(
+      db,
+      "contact_research_tasks",
+    );
+    const reference =
+      referenceColumn === "job_id" ? jobId : jobUrl;
+    if (reference) {
+      deleteWhere(
+        db,
+        "contact_candidates",
+        `tenant_id = 'local'
+         AND task_id IN (
+           SELECT task_id
+             FROM contact_research_tasks
+            WHERE tenant_id = 'local'
+              AND ${referenceColumn} = ?
+              AND NULLIF(TRIM(COALESCE(employer, '')), '') IS NULL
+         )`,
+        [reference],
+      );
+      deleteWhere(
+        db,
+        "contact_research_tasks",
+        `tenant_id = 'local'
+         AND ${referenceColumn} = ?
+         AND NULLIF(TRIM(COALESCE(employer, '')), '') IS NULL`,
+        [reference],
+      );
+      db.prepare(
+        `UPDATE contact_research_tasks
+            SET ${referenceColumn} = NULL
+          WHERE tenant_id = 'local'
+            AND ${referenceColumn} = ?`,
+      ).run(reference);
+    }
+  }
+  // These projections remain URL-shaped until Phase 4. Clearing the small
+  // local read models makes the next normal refresh rebuild detached rows and
+  // omit purged ones without leaving the deleted posting URL visible.
+  deleteWhere(
+    db,
+    "contact_projections",
+    "tenant_id = 'local'",
+    [],
+  );
+  deleteWhere(
+    db,
+    "contact_research_task_projections",
+    "tenant_id = 'local'",
+    [],
+  );
 }
 
 function deleteEnrichmentJobReferences(

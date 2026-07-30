@@ -33,7 +33,18 @@ import type {
   ContactUpdateRequest,
 } from "./contracts.js";
 import { CONTACT_ROLES } from "@jobctrl/domain-types";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import {
+  allRows,
+  getRow,
+  hasCompositeJobIdForeignKeyAction,
+  jobReferenceColumn,
+  jobReferenceForUrl,
+  tableColumnSet,
+  tableIndexColumns,
+  tableExists,
+  type SqliteDatabase,
+  type SqliteValue,
+} from "./db.js";
 import { refreshProjections } from "./projections.js";
 
 const TENANT_ID = "local";
@@ -57,17 +68,25 @@ interface AttributeSeed {
 }
 
 export function ensureContactTables(db: SqliteDatabase): void {
+  const schemaVersion = Number(db.pragma("user_version", { simple: true }));
+  const stableReferences = schemaVersion >= 24;
+  const referenceColumn = stableReferences ? "job_id" : "job_url";
+  const foreignKey = stableReferences
+    ? `, FOREIGN KEY (tenant_id, job_id)
+         REFERENCES jobs(tenant_id, job_id) ON DELETE RESTRICT`
+    : "";
   db.exec(`
     CREATE TABLE IF NOT EXISTS contacts (
       tenant_id   TEXT NOT NULL DEFAULT 'local',
       contact_id  TEXT NOT NULL,
       employer    TEXT,
-      job_url     TEXT,
+      ${referenceColumn} TEXT,
       role        TEXT NOT NULL DEFAULT 'other',
       created_at  TEXT NOT NULL,
       updated_at  TEXT NOT NULL,
       deleted_at  TEXT,
       PRIMARY KEY (tenant_id, contact_id)
+      ${foreignKey}
     );
     CREATE TABLE IF NOT EXISTS contact_attributes (
       tenant_id      TEXT NOT NULL DEFAULT 'local',
@@ -83,10 +102,42 @@ export function ensureContactTables(db: SqliteDatabase): void {
       recorded_at    TEXT NOT NULL,
       PRIMARY KEY (tenant_id, attribute_id)
     );
-    CREATE INDEX IF NOT EXISTS idx_contacts_lookup ON contacts(tenant_id, employer, job_url);
     CREATE INDEX IF NOT EXISTS idx_contact_attributes_contact
       ON contact_attributes(tenant_id, contact_id);
   `);
+  const columns = tableColumnSet(db, "contacts");
+  if (
+    stableReferences
+    && (!columns.has("job_id") || columns.has("job_url"))
+  ) {
+    throw new Error(
+      "Schema v24 requires stable contacts.job_id references.",
+    );
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_contacts_lookup
+       ON contacts(tenant_id, employer, ${referenceColumn})`,
+  );
+  if (
+    stableReferences
+    && (
+      !hasCompositeJobIdForeignKeyAction(
+        db,
+        "contacts",
+        "job_id",
+        "RESTRICT",
+      )
+      || tableIndexColumns(
+        db,
+        "contacts",
+        "idx_contacts_lookup",
+      ).join(",") !== "tenant_id,employer,job_id"
+    )
+  ) {
+    throw new Error(
+      "Schema v24 requires the restrictive contacts JobId contract.",
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -203,11 +254,7 @@ export function updateContact(
   request: ContactUpdateRequest,
 ): ContactDetail {
   ensureContactTables(db);
-  const existing = getRow<ContactRow>(
-    db,
-    "SELECT * FROM contacts WHERE tenant_id = ? AND contact_id = ? AND deleted_at IS NULL",
-    [TENANT_ID, contactId],
-  );
+  const existing = loadContactRow(db, contactId);
   if (!existing) {
     throw new ContactNotFoundError(`Contact ${contactId} not found`);
   }
@@ -234,10 +281,12 @@ export function updateContact(
   const nextAttributes =
     request.attributes !== undefined ? seedAttributes(request.attributes) : null;
   const transaction = db.transaction(() => {
+    const referenceColumn = jobReferenceColumn(db, "contacts");
+    const referenceValue = physicalJobReference(db, "contacts", jobId);
     db.prepare(
-      `UPDATE contacts SET employer = ?, job_url = ?, role = ?, updated_at = ?
+      `UPDATE contacts SET employer = ?, ${referenceColumn} = ?, role = ?, updated_at = ?
        WHERE tenant_id = ? AND contact_id = ?`,
-    ).run(employer, jobId, role, now, TENANT_ID, contactId);
+    ).run(employer, referenceValue, role, now, TENANT_ID, contactId);
     if (nextAttributes !== null) {
       db.prepare("DELETE FROM contact_attributes WHERE tenant_id = ? AND contact_id = ?").run(
         TENANT_ID,
@@ -493,10 +542,67 @@ function insertContactRow(
     updatedAt: string;
   },
 ): void {
+  const referenceColumn = jobReferenceColumn(db, "contacts");
+  const referenceValue = physicalJobReference(
+    db,
+    "contacts",
+    input.jobId,
+  );
   db.prepare(
-    `INSERT INTO contacts (tenant_id, contact_id, employer, job_url, role, created_at, updated_at, deleted_at)
+    `INSERT INTO contacts (tenant_id, contact_id, employer, ${referenceColumn}, role, created_at, updated_at, deleted_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
-  ).run(TENANT_ID, input.contactId, input.employer, input.jobId, input.role, input.createdAt, input.updatedAt);
+  ).run(
+    TENANT_ID,
+    input.contactId,
+    input.employer,
+    referenceValue,
+    input.role,
+    input.createdAt,
+    input.updatedAt,
+  );
+}
+
+function physicalJobReference(
+  db: SqliteDatabase,
+  tableName: "contacts",
+  jobUrl: string | null,
+): string | null {
+  if (jobUrl === null) {
+    return null;
+  }
+  try {
+    return jobReferenceForUrl(db, tableName, jobUrl, TENANT_ID);
+  } catch {
+    throw new ContactInputError(
+      `No stable Job identity exists for ${jobUrl}.`,
+    );
+  }
+}
+
+function loadContactRow(
+  db: SqliteDatabase,
+  contactId: string,
+): ContactRow | null {
+  const referenceColumn = jobReferenceColumn(db, "contacts");
+  const stableReferences = referenceColumn === "job_id";
+  return (
+    getRow<ContactRow>(
+      db,
+      `SELECT contacts.contact_id, contacts.employer,
+              ${stableReferences ? "jobs.url" : "contacts.job_url"} AS job_url,
+              contacts.role, contacts.created_at, contacts.updated_at
+         FROM contacts
+         ${stableReferences
+           ? `LEFT JOIN jobs
+                ON jobs.tenant_id = contacts.tenant_id
+               AND jobs.job_id = contacts.job_id`
+           : ""}
+        WHERE contacts.tenant_id = ?
+          AND contacts.contact_id = ?
+          AND contacts.deleted_at IS NULL`,
+      [TENANT_ID, contactId],
+    ) ?? null
+  );
 }
 
 interface AttributeRowSeed {

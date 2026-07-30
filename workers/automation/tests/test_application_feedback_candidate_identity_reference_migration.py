@@ -331,7 +331,7 @@ def test_v21_candidates_migrate_every_alias_uuid_url_and_tenant(
     assert (
         reopened.execute("PRAGMA user_version").fetchone()[0]
         == SCHEMA_VERSION
-        == 23
+        == 24
     )
     for table in database_module._APPLICATION_FEEDBACK_CANDIDATE_TABLES:
         assert "job_id" in _columns(reopened, table)

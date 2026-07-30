@@ -37,6 +37,23 @@ _SECRET_EMAIL = "jane@acme.example"
 def _setup(tmp_path: Path) -> tuple[SqliteContactRepository, sqlite3.Connection]:
     conn = init_db(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
+    conn.executemany(
+        """
+        INSERT INTO jobs (url, tenant_id, job_id)
+        VALUES (?, 'local', ?)
+        """,
+        (
+            (
+                "https://job/1",
+                "11111111-1111-4111-8111-111111111111",
+            ),
+            (
+                "https://job/2",
+                "22222222-2222-4222-8222-222222222222",
+            ),
+        ),
+    )
+    conn.commit()
     bus = InProcessEventBus()
     ProjectionBuilder(conn_factory=lambda: conn, tenant_id=LOCAL_TENANT).subscribe_to(bus)
     return SqliteContactRepository(conn, publisher=bus), conn

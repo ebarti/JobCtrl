@@ -35,6 +35,11 @@ from jobctrl.domain.contact.value_objects import (
 )
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.tenant import TenantId
+from jobctrl.infrastructure.contact.job_reference import (
+    contact_job_reference_column,
+    physical_contact_job_reference,
+    public_contact_job_reference,
+)
 from jobctrl.state import record_job_event
 
 logger = logging.getLogger(__name__)
@@ -47,6 +52,10 @@ class SqliteContactResearchTaskRepository:
         self._conn = conn
         self._publisher = publisher
         ensure_contact_tables(self._conn)
+        self._reference_column = contact_job_reference_column(
+            self._conn,
+            "contact_research_tasks",
+        )
 
     # ------------------------------------------------------------------ load
 
@@ -71,10 +80,19 @@ class SqliteContactResearchTaskRepository:
         return [self._row_to_task(tenant_id, row) for row in rows]
 
     def _row_to_task(self, tenant_id: TenantId, row: sqlite3.Row) -> ContactResearchTask:
+        physical_reference = row[self._reference_column]
         return ContactResearchTask(
             tenant_id=tenant_id,
             task_id=str(row["task_id"]),
-            link=ContactLink(employer=row["employer"], job_id=row["job_url"]),
+            link=ContactLink(
+                employer=row["employer"],
+                job_id=public_contact_job_reference(
+                    self._conn,
+                    table="contact_research_tasks",
+                    tenant_id=tenant_id,
+                    physical_reference=physical_reference,
+                ),
+            ),
             status=_status(row["status"]),
             candidates=self._load_candidates(tenant_id, str(row["task_id"])),
             source_attempts=_decode_attempts(row["source_attempts_json"]),
@@ -143,16 +161,22 @@ class SqliteContactResearchTaskRepository:
     def _persist_canonical(self, tenant_id: TenantId, task: ContactResearchTask) -> None:
         tenant = str(tenant_id)
         task_id = str(task.task_id)
+        job_reference = physical_contact_job_reference(
+            self._conn,
+            table="contact_research_tasks",
+            tenant_id=tenant_id,
+            public_reference=task.link.job_id,
+        )
         with self._conn:
             self._conn.execute(
-                """
+                f"""
                 INSERT INTO contact_research_tasks (
-                    tenant_id, task_id, employer, job_url, status, source_attempts_json,
+                    tenant_id, task_id, employer, {self._reference_column}, status, source_attempts_json,
                     started_at, updated_at, needs_review_at, completed_at, failed_at, error_class
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tenant_id, task_id) DO UPDATE SET
                     employer             = excluded.employer,
-                    job_url              = excluded.job_url,
+                    {self._reference_column} = excluded.{self._reference_column},
                     status               = excluded.status,
                     source_attempts_json = excluded.source_attempts_json,
                     started_at           = excluded.started_at,
@@ -166,7 +190,7 @@ class SqliteContactResearchTaskRepository:
                     tenant,
                     task_id,
                     task.link.employer,
-                    task.link.job_id,
+                    job_reference,
                     task.status.value,
                     _encode_attempts(task.source_attempts),
                     task.started_at,

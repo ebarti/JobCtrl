@@ -220,7 +220,7 @@ def test_v7_discovery_references_migrate_to_stable_job_id_and_reopen(
     init_db(db_path)
     close_connection(db_path)
 
-    assert _user_version(db_path) == SCHEMA_VERSION == 23
+    assert _user_version(db_path) == SCHEMA_VERSION == 24
     assert "job_id" in _columns(db_path, "job_source_observations")
     assert "job_url" not in _columns(db_path, "job_source_observations")
     assert "job_id" in _columns(db_path, "job_canonical_identities")

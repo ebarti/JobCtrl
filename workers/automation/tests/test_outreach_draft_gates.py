@@ -146,6 +146,17 @@ def _counter():
 def _setup(tmp_path: Path):
     conn = init_db(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        INSERT INTO jobs (url, tenant_id, job_id)
+        VALUES (
+            'https://job/1',
+            'local',
+            '11111111-1111-4111-8111-111111111111'
+        )
+        """
+    )
+    conn.commit()
     bus = InProcessEventBus()
     contact_repo = SqliteContactRepository(conn, publisher=bus)
     thread_repo = SqliteOutreachThreadRepository(conn, publisher=bus)

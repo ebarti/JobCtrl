@@ -30,6 +30,40 @@ function tableExists(db: Database.Database, table: string): boolean {
   return Boolean(row);
 }
 
+function referenceColumn(
+  db: Database.Database,
+  table: string,
+  legacyColumn: "job_url" | "job_key",
+): "job_id" | "job_url" | "job_key" {
+  const columns = new Set(
+    (
+      db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+        name: string;
+      }>
+    ).map((row) => row.name),
+  );
+  return columns.has("job_id") ? "job_id" : legacyColumn;
+}
+
+function referenceForJobUrl(
+  db: Database.Database,
+  column: "job_id" | "job_url" | "job_key",
+  jobUrl: string,
+): string {
+  if (column !== "job_id") {
+    return jobUrl;
+  }
+  const row = db
+    .prepare(
+      "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+    )
+    .get(jobUrl) as { job_id?: string } | undefined;
+  if (!row?.job_id) {
+    throw new Error(`Missing stable Job identity for ${jobUrl}`);
+  }
+  return row.job_id;
+}
+
 function ensureColumn(
   db: Database.Database,
   table: string,
@@ -47,17 +81,29 @@ function ensureColumn(
 }
 
 function ensureOutreachSeedTables(db: Database.Database): void {
+  const schemaVersion = Number(
+    db.pragma("user_version", { simple: true }),
+  );
+  const stableContactReferences = schemaVersion >= 24;
+  const contactReference = stableContactReferences
+    ? "job_id"
+    : "job_url";
+  const contactForeignKey = stableContactReferences
+    ? `, FOREIGN KEY (tenant_id, job_id)
+         REFERENCES jobs(tenant_id, job_id) ON DELETE RESTRICT`
+    : "";
   db.exec(`
     CREATE TABLE IF NOT EXISTS contacts (
       tenant_id   TEXT NOT NULL DEFAULT 'local',
       contact_id  TEXT NOT NULL,
       employer    TEXT,
-      job_url     TEXT,
+      ${contactReference} TEXT,
       role        TEXT NOT NULL DEFAULT 'other',
       created_at  TEXT NOT NULL,
       updated_at  TEXT NOT NULL,
       deleted_at  TEXT,
       PRIMARY KEY (tenant_id, contact_id)
+      ${contactForeignKey}
     );
     CREATE TABLE IF NOT EXISTS contact_attributes (
       tenant_id      TEXT NOT NULL DEFAULT 'local',
@@ -77,7 +123,7 @@ function ensureOutreachSeedTables(db: Database.Database): void {
       tenant_id            TEXT NOT NULL DEFAULT 'local',
       task_id              TEXT NOT NULL,
       employer             TEXT,
-      job_url              TEXT,
+      ${contactReference}  TEXT,
       status               TEXT NOT NULL DEFAULT 'queued',
       source_attempts_json TEXT NOT NULL DEFAULT '[]',
       started_at           TEXT,
@@ -87,6 +133,7 @@ function ensureOutreachSeedTables(db: Database.Database): void {
       failed_at            TEXT,
       error_class          TEXT,
       PRIMARY KEY (tenant_id, task_id)
+      ${contactForeignKey}
     );
     CREATE TABLE IF NOT EXISTS contact_candidates (
       tenant_id            TEXT NOT NULL DEFAULT 'local',
@@ -225,12 +272,32 @@ function seedOutreachPlanner(dbPath: string): void {
   try {
     ensureOutreachSeedTables(db);
     resetOutreachSeed(db);
+    const contactReference = referenceColumn(
+      db,
+      "contacts",
+      "job_url",
+    );
+    const researchReference = referenceColumn(
+      db,
+      "contact_research_tasks",
+      "job_url",
+    );
+    const contactJobReference = referenceForJobUrl(
+      db,
+      contactReference,
+      JOB_URL,
+    );
+    const researchJobReference = referenceForJobUrl(
+      db,
+      researchReference,
+      JOB_URL,
+    );
 
     db.prepare(
       `INSERT INTO contacts (
-         tenant_id, contact_id, employer, job_url, role, created_at, updated_at, deleted_at
+         tenant_id, contact_id, employer, ${contactReference}, role, created_at, updated_at, deleted_at
        ) VALUES ('local', ?, 'GitLab', ?, 'recruiter', ?, ?, NULL)`,
-    ).run(CONTACT_ID, JOB_URL, NOW, NOW);
+    ).run(CONTACT_ID, contactJobReference, NOW, NOW);
     const insertAttribute = db.prepare(
       `INSERT INTO contact_attributes (
          tenant_id, attribute_id, contact_id, attribute_kind, value_json,
@@ -261,12 +328,12 @@ function seedOutreachPlanner(dbPath: string): void {
 
     db.prepare(
       `INSERT INTO contact_research_tasks (
-         tenant_id, task_id, employer, job_url, status, source_attempts_json,
+         tenant_id, task_id, employer, ${researchReference}, status, source_attempts_json,
          started_at, updated_at, needs_review_at, completed_at, failed_at, error_class
        ) VALUES ('local', ?, 'GitLab', ?, 'needs_review', ?, ?, ?, ?, NULL, NULL, NULL)`,
     ).run(
       TASK_ID,
-      JOB_URL,
+      researchJobReference,
       JSON.stringify([
         {
           sourceKind: "public_web_page",
@@ -453,13 +520,23 @@ function seedOutreachPlanner(dbPath: string): void {
          tenant_id, send_log_id, thread_id, draft_id, channel, sent_at, logged_at
        ) VALUES ('local', 'send-log-e2e-existing', ?, 'draft-e2e-approved', 'email', '2026-07-05', ?)`,
     ).run(CONTACT_THREAD_ID, NOW);
+    const outcomeReference = referenceColumn(
+      db,
+      "application_outcomes",
+      "job_key",
+    );
+    const outcomeJobReference = referenceForJobUrl(
+      db,
+      outcomeReference,
+      JOB_URL,
+    );
     db.prepare(
       `INSERT INTO application_outcomes (
-         tenant_id, outcome_id, job_key, kind, source, note, occurred_at, recorded_at,
+         tenant_id, outcome_id, ${outcomeReference}, kind, source, note, occurred_at, recorded_at,
          suggestion_id, evidence_id, interview_prep_generation, created_by
        ) VALUES ('local', 'outcome-e2e-outreach', ?, 'applied_confirmation', 'e2e_seed',
          NULL, '2026-07-01T12:00:00.000Z', ?, NULL, NULL, NULL, 'e2e')`,
-    ).run(JOB_URL, NOW);
+    ).run(outcomeJobReference, NOW);
 
     // This fixture writes canonical rows directly. Clear the derived read
     // models so the next public API read rematerializes every outreach surface

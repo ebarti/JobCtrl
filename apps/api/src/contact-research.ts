@@ -32,7 +32,18 @@ import type {
 } from "./contracts.js";
 import { CONTACT_ROLES } from "@jobctrl/domain-types";
 import { ensureContactTables, getContactDetail } from "./contacts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import {
+  allRows,
+  getRow,
+  hasCompositeJobIdForeignKeyAction,
+  jobReferenceColumn,
+  jobReferenceForUrl,
+  tableColumnSet,
+  tableIndexColumns,
+  tableExists,
+  type SqliteDatabase,
+  type SqliteValue,
+} from "./db.js";
 import { refreshContactResearchProjections, refreshProjections } from "./projections.js";
 
 const TENANT_ID = "local";
@@ -42,12 +53,19 @@ export class ContactResearchInputError extends Error {}
 
 export function ensureContactResearchTables(db: SqliteDatabase): void {
   ensureContactTables(db);
+  const schemaVersion = Number(db.pragma("user_version", { simple: true }));
+  const stableReferences = schemaVersion >= 24;
+  const referenceColumn = stableReferences ? "job_id" : "job_url";
+  const foreignKey = stableReferences
+    ? `, FOREIGN KEY (tenant_id, job_id)
+         REFERENCES jobs(tenant_id, job_id) ON DELETE RESTRICT`
+    : "";
   db.exec(`
     CREATE TABLE IF NOT EXISTS contact_research_tasks (
       tenant_id            TEXT NOT NULL DEFAULT 'local',
       task_id              TEXT NOT NULL,
       employer             TEXT,
-      job_url              TEXT,
+      ${referenceColumn}    TEXT,
       status               TEXT NOT NULL DEFAULT 'queued',
       source_attempts_json TEXT NOT NULL DEFAULT '[]',
       started_at           TEXT,
@@ -57,6 +75,7 @@ export function ensureContactResearchTables(db: SqliteDatabase): void {
       failed_at            TEXT,
       error_class          TEXT,
       PRIMARY KEY (tenant_id, task_id)
+      ${foreignKey}
     );
     CREATE TABLE IF NOT EXISTS contact_candidates (
       tenant_id            TEXT NOT NULL DEFAULT 'local',
@@ -77,6 +96,39 @@ export function ensureContactResearchTables(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_contact_candidates_task
       ON contact_candidates(tenant_id, task_id, status);
   `);
+  const columns = tableColumnSet(db, "contact_research_tasks");
+  if (
+    stableReferences
+    && (!columns.has("job_id") || columns.has("job_url"))
+  ) {
+    throw new Error(
+      "Schema v24 requires stable contact_research_tasks.job_id references.",
+    );
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_contact_research_tasks_lookup
+       ON contact_research_tasks(tenant_id, employer, ${referenceColumn})`,
+  );
+  if (
+    stableReferences
+    && (
+      !hasCompositeJobIdForeignKeyAction(
+        db,
+        "contact_research_tasks",
+        "job_id",
+        "RESTRICT",
+      )
+      || tableIndexColumns(
+        db,
+        "contact_research_tasks",
+        "idx_contact_research_tasks_lookup",
+      ).join(",") !== "tenant_id,employer,job_id"
+    )
+  ) {
+    throw new Error(
+      "Schema v24 requires the restrictive contact-research JobId contract.",
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -156,12 +208,27 @@ export function createQueuedResearchTask(
 ): ContactResearchTaskSummary {
   ensureContactResearchTables(db);
   const now = new Date().toISOString();
+  const referenceColumn = jobReferenceColumn(
+    db,
+    "contact_research_tasks",
+  );
+  const referenceValue = physicalResearchJobReference(
+    db,
+    input.jobId,
+  );
   db.prepare(
     `INSERT INTO contact_research_tasks (
-       tenant_id, task_id, employer, job_url, status, source_attempts_json, started_at, updated_at
+       tenant_id, task_id, employer, ${referenceColumn}, status, source_attempts_json, started_at, updated_at
      ) VALUES (?, ?, ?, ?, 'queued', '[]', ?, ?)
      ON CONFLICT(tenant_id, task_id) DO NOTHING`,
-  ).run(TENANT_ID, input.taskId, input.employer, input.jobId, now, now);
+  ).run(
+    TENANT_ID,
+    input.taskId,
+    input.employer,
+    referenceValue,
+    now,
+    now,
+  );
   recordEvent(db, {
     jobUrl: input.jobId,
     eventType: "ContactResearchTaskStarted",
@@ -231,10 +298,23 @@ export function confirmContactCandidate(
   const jobId = task.job_url ?? null;
 
   const transaction = db.transaction(() => {
+    const contactReferenceColumn = jobReferenceColumn(db, "contacts");
+    const contactReferenceValue =
+      jobId === null
+        ? null
+        : jobReferenceForUrl(db, "contacts", jobId, TENANT_ID);
     db.prepare(
-      `INSERT INTO contacts (tenant_id, contact_id, employer, job_url, role, created_at, updated_at, deleted_at)
+      `INSERT INTO contacts (tenant_id, contact_id, employer, ${contactReferenceColumn}, role, created_at, updated_at, deleted_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
-    ).run(TENANT_ID, contactId, employer, jobId, contactRole, now, now);
+    ).run(
+      TENANT_ID,
+      contactId,
+      employer,
+      contactReferenceValue,
+      contactRole,
+      now,
+      now,
+    );
     const insertAttr = db.prepare(
       `INSERT INTO contact_attributes (
          tenant_id, attribute_id, contact_id, attribute_kind, value_json,
@@ -369,13 +449,59 @@ type CandidateRow = {
 };
 
 function loadTaskRow(db: SqliteDatabase, taskId: string): TaskRow | null {
+  const referenceColumn = jobReferenceColumn(
+    db,
+    "contact_research_tasks",
+  );
+  const stableReferences = referenceColumn === "job_id";
   return (
     getRow<TaskRow>(
       db,
-      "SELECT * FROM contact_research_tasks WHERE tenant_id = ? AND task_id = ?",
+      `SELECT contact_research_tasks.task_id,
+              contact_research_tasks.employer,
+              ${stableReferences
+                ? "jobs.url"
+                : "contact_research_tasks.job_url"} AS job_url,
+              contact_research_tasks.status,
+              contact_research_tasks.source_attempts_json,
+              contact_research_tasks.started_at,
+              contact_research_tasks.updated_at,
+              contact_research_tasks.needs_review_at,
+              contact_research_tasks.completed_at,
+              contact_research_tasks.failed_at,
+              contact_research_tasks.error_class
+         FROM contact_research_tasks
+         ${stableReferences
+           ? `LEFT JOIN jobs
+                ON jobs.tenant_id = contact_research_tasks.tenant_id
+               AND jobs.job_id = contact_research_tasks.job_id`
+           : ""}
+        WHERE contact_research_tasks.tenant_id = ?
+          AND contact_research_tasks.task_id = ?`,
       [TENANT_ID, taskId],
     ) ?? null
   );
+}
+
+function physicalResearchJobReference(
+  db: SqliteDatabase,
+  jobUrl: string | null,
+): string | null {
+  if (jobUrl === null) {
+    return null;
+  }
+  try {
+    return jobReferenceForUrl(
+      db,
+      "contact_research_tasks",
+      jobUrl,
+      TENANT_ID,
+    );
+  } catch {
+    throw new ContactResearchInputError(
+      `No stable Job identity exists for ${jobUrl}.`,
+    );
+  }
 }
 
 function loadCandidates(db: SqliteDatabase, taskId: string): ContactCandidateDto[] {
