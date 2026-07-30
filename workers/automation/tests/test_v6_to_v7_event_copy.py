@@ -196,6 +196,61 @@ def test_duplicate_link_candidate_locator_remains_historical_root_data(
         candidate.close()
 
 
+def test_pipeline_scope_and_content_duplicate_candidate_are_not_url_identities(
+    tmp_path: Path,
+) -> None:
+    source, candidate, _ = _connections(tmp_path)
+    try:
+        _insert_event(
+            source,
+            event_id=7,
+            job_url=None,
+            payload={"jobId": "pipeline"},
+            entity_kind="pipeline",
+            entity_ref="discover:run-1",
+        )
+        _insert_event(
+            source,
+            event_id=8,
+            job_url=None,
+            event_type="ContentDuplicateCandidateDetected",
+            payload={"candidateJobId": _JOB_URL},
+            entity_kind="duplicate-candidate",
+            entity_ref="observation-1",
+        )
+        source.commit()
+        job_ids = _copy_root(source, candidate)
+
+        copy_job_events(source, candidate, job_ids=job_ids)
+
+        rows = candidate.execute(
+            """
+            SELECT event_id, job_id, payload_json, entity_ref
+            FROM job_events
+            ORDER BY event_id
+            """
+        ).fetchall()
+        assert rows[0] == (
+            7,
+            None,
+            json.dumps({"jobId": "pipeline"}, separators=(",", ":"), sort_keys=True),
+            "discover:run-1",
+        )
+        assert rows[1] == (
+            8,
+            _JOB_ID,
+            json.dumps(
+                {"candidateJobId": _JOB_ID},
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            "observation-1",
+        )
+    finally:
+        source.close()
+        candidate.close()
+
+
 @pytest.mark.parametrize(
     "payload",
     (
