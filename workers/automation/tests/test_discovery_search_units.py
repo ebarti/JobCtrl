@@ -723,7 +723,16 @@ def test_compensation_event_rechecks_fence_after_fact_commit(search_db) -> None:
 
     assert (
         search_db.execute(
-            "SELECT COUNT(*) FROM job_posted_compensation_facts WHERE job_url = ?",
+            """
+            SELECT COUNT(*)
+            FROM job_posted_compensation_facts
+            WHERE tenant_id = 'local'
+              AND job_id = (
+                  SELECT job_id
+                  FROM jobs
+                  WHERE tenant_id = 'local' AND url = ?
+              )
+            """,
             (job_url,),
         ).fetchone()[0]
         == 1

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
@@ -89,6 +90,18 @@ def _seed_job(db_path: Path, url: str = "https://example.com/job/1") -> None:
         (url, "Test job"),
     )
     conn.commit()
+
+
+def _stable_job_id(
+    conn: sqlite3.Connection,
+    job_url: str,
+) -> str:
+    return str(
+        conn.execute(
+            "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+            (job_url,),
+        ).fetchone()[0]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +360,12 @@ def test_refresh_compensation_ignores_company_metric_money(tmp_db: Path) -> None
         """
         SELECT parse_state, source_field, minimum_amount, maximum_amount
         FROM job_posted_compensation_facts
-        WHERE job_url = ?
+        WHERE tenant_id = 'local'
+          AND job_id = (
+              SELECT job_id
+              FROM jobs
+              WHERE tenant_id = 'local' AND url = ?
+          )
         """,
         (selected_url,),
     ).fetchone()
@@ -394,7 +412,12 @@ def test_refresh_compensation_does_not_match_ote_inside_words(tmp_db: Path) -> N
         """
         SELECT parse_state, source_field, minimum_amount, maximum_amount
         FROM job_posted_compensation_facts
-        WHERE job_url = ?
+        WHERE tenant_id = 'local'
+          AND job_id = (
+              SELECT job_id
+              FROM jobs
+              WHERE tenant_id = 'local' AND url = ?
+          )
         """,
         (selected_url,),
     ).fetchone()
@@ -531,17 +554,25 @@ def test_refresh_compensation_core_updates_one_job(tmp_db: Path, tmp_path: Path)
         """
         SELECT parse_state, source_field, minimum_amount, maximum_amount
         FROM job_posted_compensation_facts
-        WHERE job_url = ?
+        WHERE tenant_id = 'local' AND job_id = ?
         """,
-        (selected_url,),
+        (_stable_job_id(conn, selected_url),),
     ).fetchone()
     other_posted = conn.execute(
-        "SELECT parse_state FROM job_posted_compensation_facts WHERE job_url = ?",
-        (other_url,),
+        """
+        SELECT parse_state
+        FROM job_posted_compensation_facts
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (_stable_job_id(conn, other_url),),
     ).fetchone()
     estimate = conn.execute(
-        "SELECT estimate_state, minimum_amount, maximum_amount FROM job_market_compensation_estimates WHERE job_url = ?",
-        (selected_url,),
+        """
+        SELECT estimate_state, minimum_amount, maximum_amount
+        FROM job_market_compensation_estimates
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (_stable_job_id(conn, selected_url),),
     ).fetchone()
     assert selected_posted["parse_state"] == "parsed_range"
     assert selected_posted["source_field"] == "jobs.full_description"
@@ -603,10 +634,24 @@ def test_refresh_compensation_core_updates_all_jobs(tmp_db: Path, tmp_path: Path
     assert result["estimatesRefreshed"] == 2
 
     posted_rows = conn.execute(
-        "SELECT job_url, parse_state FROM job_posted_compensation_facts ORDER BY job_url",
+        """
+        SELECT jobs.url AS job_url, fact.parse_state
+        FROM job_posted_compensation_facts AS fact
+        JOIN jobs
+          ON jobs.tenant_id = fact.tenant_id
+         AND jobs.job_id = fact.job_id
+        ORDER BY jobs.url
+        """,
     ).fetchall()
     estimate_rows = conn.execute(
-        "SELECT job_url, estimate_state FROM job_market_compensation_estimates ORDER BY job_url",
+        """
+        SELECT jobs.url AS job_url, estimate.estimate_state
+        FROM job_market_compensation_estimates AS estimate
+        JOIN jobs
+          ON jobs.tenant_id = estimate.tenant_id
+         AND jobs.job_id = estimate.job_id
+        ORDER BY jobs.url
+        """,
     ).fetchall()
     assert [row["job_url"] for row in posted_rows] == sorted([first_url, second_url])
     assert [row["parse_state"] for row in posted_rows] == ["parsed_range", "parsed_range"]
@@ -669,9 +714,10 @@ def test_refresh_compensation_without_observations_uses_euro_top_tech_and_update
     estimate = conn.execute(
         """
         SELECT estimate_state, minimum_amount, maximum_amount, component, match_scope, source_snapshot_json
-        FROM job_market_compensation_estimates WHERE job_url = ?
+        FROM job_market_compensation_estimates
+        WHERE tenant_id = 'local' AND job_id = ?
         """,
-        (job_url,),
+        (_stable_job_id(conn, job_url),),
     ).fetchone()
     assert estimate["estimate_state"] == "estimated_range"
     assert estimate["minimum_amount"] == 242_000
@@ -791,9 +837,10 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
     estimate = conn.execute(
         """
         SELECT minimum_amount, maximum_amount, source_snapshot_json
-        FROM job_market_compensation_estimates WHERE job_url = ?
+        FROM job_market_compensation_estimates
+        WHERE tenant_id = 'local' AND job_id = ?
         """,
-        (job_url,),
+        (_stable_job_id(conn, job_url),),
     ).fetchone()
     assert estimate["minimum_amount"] == 118_000
     assert estimate["maximum_amount"] == 160_000

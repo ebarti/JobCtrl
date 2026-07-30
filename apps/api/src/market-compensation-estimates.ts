@@ -12,7 +12,13 @@ import type {
   MarketCompensationWarning,
   MarketCompensationWarningCode,
 } from "./contracts.js";
-import { getRow, tableExists, type SqliteDatabase } from "./db.js";
+import {
+  getRow,
+  jobReferenceColumn,
+  jobReferenceForUrl,
+  tableExists,
+  type SqliteDatabase,
+} from "./db.js";
 
 const DEFAULT_TENANT = "local";
 
@@ -203,10 +209,21 @@ export function getMarketCompensationEstimate(
     return notRequested(job);
   }
   const tableColumns = columnsFor(db, "job_market_compensation_estimates");
+  const referenceColumn = jobReferenceColumn(
+    db,
+    "job_market_compensation_estimates",
+  );
+  const reference = jobReferenceForUrl(
+    db,
+    "job_market_compensation_estimates",
+    jobKey,
+    DEFAULT_TENANT,
+  );
   const row = getRow<MarketCompensationEstimateRow>(
     db,
     `
-    SELECT tenant_id, job_url, estimate_state, currency, period, component,
+    SELECT tenant_id, ? AS job_url, estimate_state, currency, period,
+           component,
            minimum_amount, maximum_amount,
            ${columnOrNull(tableColumns, "confidence_interval_minimum_amount")} AS confidence_interval_minimum_amount,
            ${columnOrNull(tableColumns, "confidence_interval_maximum_amount")} AS confidence_interval_maximum_amount,
@@ -224,9 +241,9 @@ export function getMarketCompensationEstimate(
            ${columnOrDefault(tableColumns, "company_tier", "unknown")} AS company_tier,
            ${columnOrDefault(tableColumns, "match_scope", "none")} AS match_scope
     FROM job_market_compensation_estimates
-    WHERE tenant_id = ? AND job_url = ?
+    WHERE tenant_id = ? AND ${referenceColumn} = ?
     `,
-    [DEFAULT_TENANT, jobKey],
+    [jobKey, DEFAULT_TENANT, reference],
   );
   if (!row) {
     return notRequested(job);

@@ -47,6 +47,18 @@ def _seed_job(
     return url
 
 
+def _stable_job_id(
+    conn: sqlite3.Connection,
+    job_url: str,
+) -> str:
+    return str(
+        conn.execute(
+            "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+            (job_url,),
+        ).fetchone()[0]
+    )
+
+
 def _levels() -> ReportedCompensationObservation:
     return ReportedCompensationObservation(
         source_id="levels_fyi",
@@ -193,7 +205,14 @@ def test_repository_does_not_persist_not_requested_marker(conn: sqlite3.Connecti
             )
         )
 
-    row = conn.execute("SELECT * FROM job_market_compensation_estimates WHERE job_url = ?", (job_url,)).fetchone()
+    row = conn.execute(
+        """
+        SELECT *
+        FROM job_market_compensation_estimates
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (_stable_job_id(conn, job_url),),
+    ).fetchone()
     assert row is None
 
 
@@ -215,9 +234,21 @@ def test_backfill_is_idempotent_and_preserves_existing_salary_and_posted_facts(
     assert repo.backfill_from_jobs((_levels(), _glassdoor()), estimated_at="2026-06-19T10:00:00Z") == 1
 
     market_rows = conn.execute(
-        "SELECT * FROM job_market_compensation_estimates WHERE job_url = ?", (job_url,)
+        """
+        SELECT *
+        FROM job_market_compensation_estimates
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (_stable_job_id(conn, job_url),),
     ).fetchall()
-    posted_rows = conn.execute("SELECT * FROM job_posted_compensation_facts WHERE job_url = ?", (job_url,)).fetchall()
+    posted_rows = conn.execute(
+        """
+        SELECT *
+        FROM job_posted_compensation_facts
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (_stable_job_id(conn, job_url),),
+    ).fetchall()
     salary = conn.execute("SELECT salary FROM jobs WHERE url = ?", (job_url,)).fetchone()["salary"]
 
     assert len(market_rows) == 1
@@ -804,9 +835,10 @@ def test_persisted_json_contains_safe_reported_source_fields(conn: sqlite3.Conne
     row = conn.execute(
         """
         SELECT source_snapshot_json, factor_reasons_json, insufficient_reasons_json, warnings_json
-        FROM job_market_compensation_estimates WHERE job_url = ?
+        FROM job_market_compensation_estimates
+        WHERE tenant_id = 'local' AND job_id = ?
         """,
-        (job_url,),
+        (_stable_job_id(conn, job_url),),
     ).fetchone()
     serialized = " ".join(str(row[key]).lower() for key in row.keys())
 
@@ -887,8 +919,12 @@ def test_repository_preserves_public_and_licensed_levels_provenance(conn: sqlite
 
     stored = json.loads(
         conn.execute(
-            "SELECT source_snapshot_json FROM job_market_compensation_estimates WHERE job_url = ?",
-            (job_url,),
+            """
+            SELECT source_snapshot_json
+            FROM job_market_compensation_estimates
+            WHERE tenant_id = 'local' AND job_id = ?
+            """,
+            (_stable_job_id(conn, job_url),),
         ).fetchone()["source_snapshot_json"]
     )
     assert [item["source_provenance"] for item in stored] == ["public", "licensed"]
@@ -900,7 +936,7 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
     conn.execute(
         """
         INSERT INTO job_market_compensation_estimates (
-            tenant_id, job_url, estimate_state, currency, period, component,
+            tenant_id, job_id, estimate_state, currency, period, component,
             minimum_amount, maximum_amount, confidence_band, confidence_score,
             source_count, sample_count, aggregate_bucket, geography_scope,
             occupation_code, occupation_label, seniority_label, source_snapshot_json,
@@ -911,7 +947,7 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
         """,
         (
             "local",
-            job_url,
+            _stable_job_id(conn, job_url),
             "estimated_range",
             "EUR",
             "year",

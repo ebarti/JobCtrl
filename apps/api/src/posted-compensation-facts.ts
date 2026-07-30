@@ -4,7 +4,13 @@ import type {
   PostedCompensationWarning,
   PostedCompensationWarningCode,
 } from "./contracts.js";
-import { getRow, tableExists, type SqliteDatabase } from "./db.js";
+import {
+  getRow,
+  jobReferenceColumn,
+  jobReferenceForUrl,
+  tableExists,
+  type SqliteDatabase,
+} from "./db.js";
 
 const DEFAULT_TENANT = "local";
 
@@ -62,18 +68,29 @@ export function getPostedCompensationFact(
   if (!tableExists(db, "job_posted_compensation_facts")) {
     return notRecorded(job);
   }
+  const referenceColumn = jobReferenceColumn(
+    db,
+    "job_posted_compensation_facts",
+  );
+  const reference = jobReferenceForUrl(
+    db,
+    "job_posted_compensation_facts",
+    jobKey,
+    DEFAULT_TENANT,
+  );
   const row = getRow<PostedCompensationFactRow>(
     db,
     `
-    SELECT tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+    SELECT tenant_id, ? AS job_url, source_field, source_text,
+           legacy_raw_salary,
            parse_state, currency, period, component, minimum_amount,
            maximum_amount, annualized_minimum_amount, annualized_maximum_amount,
            annualization_assumption, confidence, warnings_json, parser_version,
            source_hash, parsed_at
     FROM job_posted_compensation_facts
-    WHERE tenant_id = ? AND job_url = ?
+    WHERE tenant_id = ? AND ${referenceColumn} = ?
     `,
-    [DEFAULT_TENANT, jobKey],
+    [jobKey, DEFAULT_TENANT, reference],
   );
   if (!row) {
     return notRecorded(job);

@@ -71,7 +71,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # their child audit rows reference the stable Job aggregate. Any immutable
 # application-outcome link to a preparation generation is remapped alongside
 # alias-history renumbering while its legacy URL key remains unchanged.
-SCHEMA_VERSION = 18
+# v19 (compensation references): canonical posted compensation facts and market
+# estimates reference the stable Job aggregate. Alias collisions keep the
+# newest recorded fact/estimate with a deterministic survivor tie-break.
+SCHEMA_VERSION = 19
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -220,6 +223,7 @@ def _schema_migrations() -> tuple[
         (16, ensure_employer_analysis_references_v16),
         (17, ensure_resume_template_references_v17),
         (18, ensure_interview_prep_references_v18),
+        (19, ensure_compensation_references_v19),
     )
 
 
@@ -4623,6 +4627,13 @@ def _reassign_discovery_identity_references(
             tenant_id=tenant_id,
             losing_job_url=losing_job_url,
             surviving_job_url=surviving_job_url,
+        )
+    if _has_compensation_reference_schema_v19(conn):
+        _reassign_compensation_references_v19(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
         )
     if _has_scoring_reference_schema_v12(conn):
         _reassign_scoring_references_v12(
@@ -11901,6 +11912,547 @@ def _reassign_interview_prep_references_v18(
         expected_counts=before_counts,
     )
     return generation_map
+
+
+_COMPENSATION_REFERENCE_SCHEMA_VERSION = 19
+_COMPENSATION_REFERENCE_TABLES = (
+    "job_posted_compensation_facts",
+    "job_market_compensation_estimates",
+)
+_COMPENSATION_TIMESTAMP_COLUMNS = {
+    "job_posted_compensation_facts": "parsed_at",
+    "job_market_compensation_estimates": "estimated_at",
+}
+
+
+def _create_compensation_reference_tables_v19(
+    conn: sqlite3.Connection,
+    *,
+    posted_table: str,
+    market_table: str,
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE "{posted_table}" (
+            tenant_id                    TEXT NOT NULL DEFAULT 'local',
+            job_id                       TEXT NOT NULL,
+            source_field                 TEXT NOT NULL DEFAULT 'jobs.salary',
+            source_text                  TEXT,
+            legacy_raw_salary            TEXT,
+            parse_state                  TEXT NOT NULL,
+            currency                     TEXT,
+            period                       TEXT NOT NULL DEFAULT 'unknown',
+            component                    TEXT NOT NULL DEFAULT 'unknown',
+            minimum_amount               INTEGER,
+            maximum_amount               INTEGER,
+            annualized_minimum_amount    INTEGER,
+            annualized_maximum_amount    INTEGER,
+            annualization_assumption     TEXT,
+            confidence                   TEXT NOT NULL DEFAULT 'none',
+            warnings_json                TEXT NOT NULL DEFAULT '[]',
+            parser_version               TEXT NOT NULL,
+            source_hash                  TEXT NOT NULL,
+            parsed_at                    TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, job_id),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE "{market_table}" (
+            tenant_id                          TEXT NOT NULL DEFAULT 'local',
+            job_id                             TEXT NOT NULL,
+            estimate_state                     TEXT NOT NULL CHECK (
+                estimate_state IN (
+                    'unsupported',
+                    'source_unavailable',
+                    'insufficient_evidence',
+                    'estimated_range'
+                )
+            ),
+            currency                           TEXT,
+            period                             TEXT NOT NULL DEFAULT 'year'
+                CHECK (period IN ('year', 'month')),
+            component                          TEXT NOT NULL
+                DEFAULT 'total_compensation'
+                CHECK (
+                    component IN (
+                        'base_salary',
+                        'total_compensation'
+                    )
+                ),
+            minimum_amount                     INTEGER,
+            maximum_amount                     INTEGER,
+            confidence_interval_minimum_amount INTEGER,
+            confidence_interval_maximum_amount INTEGER,
+            confidence_band                    TEXT NOT NULL DEFAULT 'none'
+                CHECK (
+                    confidence_band IN (
+                        'none',
+                        'low',
+                        'medium',
+                        'high'
+                    )
+                ),
+            confidence_score                   REAL NOT NULL DEFAULT 0,
+            source_count                       INTEGER NOT NULL DEFAULT 0,
+            sample_count                       INTEGER,
+            aggregate_bucket                   TEXT,
+            geography_scope                    TEXT,
+            occupation_code                    TEXT,
+            occupation_label                   TEXT,
+            seniority_label                    TEXT,
+            source_snapshot_json               TEXT NOT NULL DEFAULT '[]',
+            factor_reasons_json                TEXT NOT NULL DEFAULT '[]',
+            selected_evidence_json             TEXT NOT NULL DEFAULT '[]',
+            insufficient_reasons_json          TEXT NOT NULL DEFAULT '[]',
+            unsupported_reasons_json           TEXT NOT NULL DEFAULT '[]',
+            source_unavailable_reasons_json    TEXT NOT NULL DEFAULT '[]',
+            warnings_json                      TEXT NOT NULL DEFAULT '[]',
+            estimator_version                  TEXT NOT NULL,
+            estimated_at                       TEXT NOT NULL,
+            company_name                       TEXT,
+            normalized_company                 TEXT,
+            role_title                         TEXT,
+            normalized_role                    TEXT,
+            company_tier                       TEXT NOT NULL DEFAULT 'unknown'
+                CHECK (
+                    company_tier IN (
+                        'tier_1_local',
+                        'tier_2_ambitious',
+                        'tier_3_top_of_market',
+                        'unknown'
+                    )
+                ),
+            match_scope                        TEXT NOT NULL DEFAULT 'none'
+                CHECK (
+                    match_scope IN (
+                        'exact_company_role',
+                        'same_location_role_fallback',
+                        'company_adjacent_role',
+                        'tier_role_fallback',
+                        'market_baseline_fallback',
+                        'none'
+                    )
+                ),
+            PRIMARY KEY (tenant_id, job_id),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_compensation_reference_indexes_v19(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_posted_compensation_parse_state
+        ON job_posted_compensation_facts (tenant_id, parse_state)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_market_compensation_state
+        ON job_market_compensation_estimates (tenant_id, estimate_state)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_market_compensation_company_role
+        ON job_market_compensation_estimates (
+            tenant_id,
+            normalized_company,
+            normalized_role
+        )
+        """
+    )
+
+
+def _has_compensation_reference_schema_v19(
+    conn: sqlite3.Connection,
+) -> bool:
+    return (
+        all(
+            "job_id" in _table_columns(conn, table)
+            and "job_url" not in _table_columns(conn, table)
+            and _primary_key_columns(conn, table)
+            == ("tenant_id", "job_id")
+            and _has_composite_job_id_foreign_key(
+                conn,
+                table,
+                "job_id",
+            )
+            for table in _COMPENSATION_REFERENCE_TABLES
+        )
+        and _has_index(
+            conn,
+            "job_posted_compensation_facts",
+            "idx_job_posted_compensation_parse_state",
+            ("tenant_id", "parse_state"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_market_compensation_estimates",
+            "idx_job_market_compensation_state",
+            ("tenant_id", "estimate_state"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_market_compensation_estimates",
+            "idx_job_market_compensation_company_role",
+            ("tenant_id", "normalized_company", "normalized_role"),
+            unique=False,
+        )
+    )
+
+
+def _canonical_compensation_rows_v19(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    timestamp_column: str,
+) -> tuple[tuple[str, ...], list[tuple[Any, ...]]]:
+    columns = tuple(
+        str(row[1])
+        for row in conn.execute(
+            f'PRAGMA table_info("{table}")'
+        ).fetchall()
+        if str(row[1]) not in {"tenant_id", "job_url"}
+    )
+    timestamp_index = columns.index(timestamp_column)
+    select_columns = ", ".join(f'"{column}"' for column in columns)
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, job_url, {select_columns}
+        FROM "{table}"
+        ORDER BY tenant_id, job_url
+        """
+    ).fetchall()
+    grouped: dict[
+        tuple[str, str],
+        list[tuple[str, tuple[Any, ...]]],
+    ] = {}
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=True,
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "compensation reference migration could not resolve "
+                f"{table}.job_url={raw_reference!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        grouped.setdefault((tenant_id, stable_job_id), []).append(
+            (raw_reference, tuple(row[2:]))
+        )
+
+    canonical: list[tuple[Any, ...]] = []
+    for (tenant_id, stable_job_id), candidates in sorted(grouped.items()):
+        storage_row = conn.execute(
+            """
+            SELECT url
+            FROM jobs
+            WHERE tenant_id = ? AND job_id = ?
+            LIMIT 1
+            """,
+            (tenant_id, stable_job_id),
+        ).fetchone()
+        preferred_reference = (
+            str(storage_row[0])
+            if storage_row is not None
+            else ""
+        )
+        _selected_reference, selected_values = max(
+            candidates,
+            key=lambda candidate: (
+                str(candidate[1][timestamp_index]),
+                candidate[0] == preferred_reference,
+                candidate[0],
+            ),
+        )
+        canonical.append(
+            (tenant_id, stable_job_id, *selected_values)
+        )
+    return columns, canonical
+
+
+def ensure_compensation_references_v19(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move canonical compensation facts and estimates to stable JobIds."""
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _COMPENSATION_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _INTERVIEW_PREP_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "compensation reference migration requires interview-prep "
+            "schema v18"
+        )
+
+    conn.execute("SAVEPOINT compensation_references_v19")
+    try:
+        if not _has_interview_prep_reference_schema_v18(conn):
+            raise RuntimeError(
+                "compensation reference migration requires the stable "
+                "interview-prep reference schema"
+            )
+        if _has_compensation_reference_schema_v19(conn):
+            expected_counts = {
+                table: int(
+                    conn.execute(
+                        f'SELECT COUNT(*) FROM "{table}"'
+                    ).fetchone()[0]
+                )
+                for table in _COMPENSATION_REFERENCE_TABLES
+            }
+        else:
+            posted_columns, posted_rows = (
+                _canonical_compensation_rows_v19(
+                    conn,
+                    table="job_posted_compensation_facts",
+                    timestamp_column="parsed_at",
+                )
+            )
+            market_columns, market_rows = (
+                _canonical_compensation_rows_v19(
+                    conn,
+                    table="job_market_compensation_estimates",
+                    timestamp_column="estimated_at",
+                )
+            )
+            for table in (
+                "job_posted_compensation_facts_v19",
+                "job_market_compensation_estimates_v19",
+            ):
+                conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+            _create_compensation_reference_tables_v19(
+                conn,
+                posted_table="job_posted_compensation_facts_v19",
+                market_table="job_market_compensation_estimates_v19",
+            )
+            for table, columns, rows in (
+                (
+                    "job_posted_compensation_facts_v19",
+                    posted_columns,
+                    posted_rows,
+                ),
+                (
+                    "job_market_compensation_estimates_v19",
+                    market_columns,
+                    market_rows,
+                ),
+            ):
+                insert_columns = (
+                    "tenant_id, job_id, "
+                    + ", ".join(
+                        f'"{column}"' for column in columns
+                    )
+                )
+                placeholders = ", ".join(
+                    "?" for _ in range(len(columns) + 2)
+                )
+                conn.executemany(
+                    f'INSERT INTO "{table}" '
+                    f"({insert_columns}) VALUES ({placeholders})",
+                    rows,
+                )
+            conn.execute(
+                'DROP TABLE "job_posted_compensation_facts"'
+            )
+            conn.execute(
+                'DROP TABLE "job_market_compensation_estimates"'
+            )
+            conn.execute(
+                'ALTER TABLE "job_posted_compensation_facts_v19" '
+                'RENAME TO "job_posted_compensation_facts"'
+            )
+            conn.execute(
+                'ALTER TABLE "job_market_compensation_estimates_v19" '
+                'RENAME TO "job_market_compensation_estimates"'
+            )
+            _create_compensation_reference_indexes_v19(conn)
+            expected_counts = {
+                "job_posted_compensation_facts": len(posted_rows),
+                "job_market_compensation_estimates": len(market_rows),
+            }
+        _verify_compensation_references_v19(
+            conn,
+            expected_counts=expected_counts,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_COMPENSATION_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute("RELEASE SAVEPOINT compensation_references_v19")
+        conn.commit()
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT compensation_references_v19")
+        conn.execute("RELEASE SAVEPOINT compensation_references_v19")
+        raise
+
+    return list(_COMPENSATION_REFERENCE_TABLES)
+
+
+def _verify_compensation_references_v19(
+    conn: sqlite3.Connection,
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    if not _has_compensation_reference_schema_v19(conn):
+        raise RuntimeError(
+            "compensation reference migration did not create the stable "
+            "reference schema"
+        )
+    for table, expected_count in expected_counts.items():
+        observed_count = int(
+            conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0]
+        )
+        if observed_count != expected_count:
+            raise RuntimeError(
+                "compensation reference migration changed canonical row "
+                f"count for {table}: expected {expected_count}, "
+                f"found {observed_count}"
+            )
+        orphan = conn.execute(
+            f"""
+            SELECT authority.job_id
+            FROM "{table}" AS authority
+            LEFT JOIN jobs
+              ON jobs.tenant_id = authority.tenant_id
+             AND jobs.job_id = authority.job_id
+            WHERE jobs.job_id IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if orphan is not None:
+            raise RuntimeError(
+                "compensation reference migration left an unresolved "
+                f"JobId in {table}"
+            )
+        for row in conn.execute(
+            f'SELECT DISTINCT job_id FROM "{table}"'
+        ).fetchall():
+            _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "compensation reference migration found a foreign-key "
+            "violation"
+        )
+
+
+def _merge_compensation_authority_v19(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    timestamp_column: str,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> int:
+    columns = tuple(
+        str(row[1])
+        for row in conn.execute(
+            f'PRAGMA table_info("{table}")'
+        ).fetchall()
+    )
+    job_id_index = columns.index("job_id")
+    timestamp_index = columns.index(timestamp_column)
+    column_sql = ", ".join(f'"{column}"' for column in columns)
+    rows = conn.execute(
+        f"""
+        SELECT {column_sql}
+        FROM "{table}"
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    if not rows:
+        return 0
+    selected = max(
+        rows,
+        key=lambda row: (
+            str(row[timestamp_index]),
+            str(row[job_id_index]) == surviving_job_id,
+            str(row[job_id_index]),
+        ),
+    )
+    canonical = list(selected)
+    canonical[job_id_index] = surviving_job_id
+    conn.execute(
+        f"""
+        DELETE FROM "{table}"
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    )
+    placeholders = ", ".join("?" for _ in columns)
+    conn.execute(
+        f'INSERT INTO "{table}" ({column_sql}) '
+        f"VALUES ({placeholders})",
+        tuple(canonical),
+    )
+    return len(rows)
+
+
+def _reassign_compensation_references_v19(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    if losing_job_id == surviving_job_id:
+        return
+    before_counts = {
+        table: int(
+            conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0]
+        )
+        for table in _COMPENSATION_REFERENCE_TABLES
+    }
+    merged_counts = {
+        table: _merge_compensation_authority_v19(
+            conn,
+            table=table,
+            timestamp_column=_COMPENSATION_TIMESTAMP_COLUMNS[table],
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+        for table in _COMPENSATION_REFERENCE_TABLES
+    }
+    expected_counts = {
+        table: (
+            before_counts[table]
+            - merged_counts[table]
+            + (1 if merged_counts[table] else 0)
+        )
+        for table in _COMPENSATION_REFERENCE_TABLES
+    }
+    _verify_compensation_references_v19(
+        conn,
+        expected_counts=expected_counts,
+    )
 
 
 # ---------------------------------------------------------------------------

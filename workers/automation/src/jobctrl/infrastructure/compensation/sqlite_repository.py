@@ -9,6 +9,9 @@ from typing import Any, Callable
 
 from jobctrl.database import ensure_posted_compensation_tables
 from jobctrl.domain.compensation import PostedCompensationFact, parse_posted_compensation
+from jobctrl.infrastructure.compensation.sqlite_reference import (
+    SqliteCompensationJobReference,
+)
 
 COMPENSATION_SOURCE_RE = re.compile(
     r"\b(?:salary|compensation|pay range|base pay|base salary|wage|remuneration|ote)\b|on[- ]target earnings",
@@ -34,6 +37,10 @@ class SqlitePostedCompensationRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
         ensure_posted_compensation_tables(conn)
+        self._job_reference = SqliteCompensationJobReference(
+            conn,
+            "job_posted_compensation_facts",
+        )
 
     def save_fact(
         self,
@@ -42,16 +49,26 @@ class SqlitePostedCompensationRepository:
         event_idempotency_key: str | None = None,
         event_write_fence: Callable[[], None] | None = None,
     ) -> None:
+        reference = self._job_reference.for_write(
+            fact.tenant_id,
+            fact.job_url,
+        )
+        event_job_url = self._job_reference.storage_url(
+            fact.tenant_id,
+            fact.job_url,
+        )
+        reference_column = self._job_reference.column
         self._conn.execute(
-            """
+            f"""
             INSERT INTO job_posted_compensation_facts (
-                tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+                tenant_id, {reference_column}, source_field, source_text,
+                legacy_raw_salary,
                 parse_state, currency, period, component, minimum_amount,
                 maximum_amount, annualized_minimum_amount, annualized_maximum_amount,
                 annualization_assumption, confidence, warnings_json, parser_version,
                 source_hash, parsed_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+            ON CONFLICT(tenant_id, {reference_column}) DO UPDATE SET
                 source_field                 = excluded.source_field,
                 source_text                  = excluded.source_text,
                 legacy_raw_salary            = excluded.legacy_raw_salary,
@@ -72,7 +89,7 @@ class SqlitePostedCompensationRepository:
             """,
             (
                 fact.tenant_id,
-                fact.job_url,
+                reference,
                 fact.source_field,
                 fact.source_text,
                 fact.legacy_raw_salary,
@@ -97,21 +114,29 @@ class SqlitePostedCompensationRepository:
             event_write_fence()
         self._record_updated_event(
             fact,
+            job_url=event_job_url,
             idempotency_key=event_idempotency_key,
         )
 
     def get_fact(self, tenant_id: str, job_url: str) -> PostedCompensationFact | None:
+        reference = self._job_reference.for_read(
+            tenant_id,
+            job_url,
+        )
+        if reference is None:
+            return None
         row = self._conn.execute(
-            """
-            SELECT tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+            f"""
+            SELECT tenant_id, ? AS job_url, source_field, source_text,
+                   legacy_raw_salary,
                    parse_state, currency, period, component, minimum_amount,
                    maximum_amount, annualized_minimum_amount, annualized_maximum_amount,
                    annualization_assumption, confidence, warnings_json, parser_version,
                    source_hash, parsed_at
             FROM job_posted_compensation_facts
-            WHERE tenant_id = ? AND job_url = ?
+            WHERE tenant_id = ? AND {self._job_reference.column} = ?
             """,
-            (tenant_id, job_url),
+            (job_url, tenant_id, reference),
         ).fetchone()
         return _row_to_fact(row) if row is not None else None
 
@@ -141,7 +166,15 @@ class SqlitePostedCompensationRepository:
         return fact
 
     def backfill_from_legacy_jobs(self, *, tenant_id: str = "local", parsed_at: str | None = None) -> int:
-        rows = self._conn.execute("SELECT url, salary, full_description, description FROM jobs ORDER BY url").fetchall()
+        rows = self._conn.execute(
+            """
+            SELECT url, salary, full_description, description
+            FROM jobs
+            WHERE tenant_id = ?
+            ORDER BY url
+            """,
+            (tenant_id,),
+        ).fetchall()
         for row in rows:
             source_text, source_field = posted_compensation_source_from_job(row)
             self.parse_and_save_job_salary(
@@ -158,6 +191,7 @@ class SqlitePostedCompensationRepository:
         self,
         fact: PostedCompensationFact,
         *,
+        job_url: str,
         idempotency_key: str | None = None,
     ) -> None:
         try:
@@ -165,13 +199,13 @@ class SqlitePostedCompensationRepository:
 
             record_job_event(
                 self._conn,
-                fact.job_url,
+                job_url,
                 "enrich",
                 "CompensationFactsUpdated",
                 message="Posted compensation fact updated",
                 occurred_at=fact.parsed_at,
                 payload={
-                    "jobId": fact.job_url,
+                    "jobId": job_url,
                     "changedSections": ["posted"],
                     "postedRecordStatus": "recorded",
                     "postedParseState": fact.parse_state,

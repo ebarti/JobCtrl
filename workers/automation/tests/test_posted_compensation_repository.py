@@ -30,6 +30,18 @@ def _seed_job(
     return url
 
 
+def _stable_job_id(
+    conn: sqlite3.Connection,
+    job_url: str,
+) -> str:
+    return str(
+        conn.execute(
+            "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+            (job_url,),
+        ).fetchone()[0]
+    )
+
+
 def test_schema_is_created_by_init_db(conn: sqlite3.Connection) -> None:
     row = conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'job_posted_compensation_facts'"
@@ -91,7 +103,14 @@ def test_backfill_is_idempotent_and_preserves_legacy_salary(conn: sqlite3.Connec
     assert repo.backfill_from_legacy_jobs(parsed_at="2026-06-19T10:00:00Z") == 1
     assert repo.backfill_from_legacy_jobs(parsed_at="2026-06-19T10:00:00Z") == 1
 
-    rows = conn.execute("SELECT * FROM job_posted_compensation_facts WHERE job_url = ?", (job_url,)).fetchall()
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM job_posted_compensation_facts
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (_stable_job_id(conn, job_url),),
+    ).fetchall()
     salary = conn.execute("SELECT salary FROM jobs WHERE url = ?", (job_url,)).fetchone()["salary"]
     fact = repo.get_fact("local", job_url)
 
@@ -161,8 +180,12 @@ def test_source_text_is_bounded_in_persistence(conn: sqlite3.Connection) -> None
     repo.backfill_from_legacy_jobs()
     fact = repo.get_fact("local", job_url)
     row = conn.execute(
-        "SELECT warnings_json, source_text FROM job_posted_compensation_facts WHERE job_url = ?",
-        (job_url,),
+        """
+        SELECT warnings_json, source_text
+        FROM job_posted_compensation_facts
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (_stable_job_id(conn, job_url),),
     ).fetchone()
 
     assert fact is not None

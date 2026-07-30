@@ -32,6 +32,9 @@ from jobctrl.infrastructure.compensation.levels_fyi_public import (
     LevelsFyiPublicTarget,
     load_levels_fyi_public_observations,
 )
+from jobctrl.infrastructure.compensation.sqlite_reference import (
+    SqliteCompensationJobReference,
+)
 from jobctrl.domain.compensation import (
     MarketCompensationEstimate,
     MarketConfidenceFactor,
@@ -236,14 +239,32 @@ class SqliteMarketCompensationRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
         ensure_market_compensation_tables(conn)
+        self._job_reference = SqliteCompensationJobReference(
+            conn,
+            "job_market_compensation_estimates",
+        )
+        self._posted_job_reference = SqliteCompensationJobReference(
+            conn,
+            "job_posted_compensation_facts",
+        )
 
     def save_estimate(self, estimate: MarketCompensationEstimate) -> None:
         if estimate.estimate_state == "not_requested":
             raise ValueError("not_requested market estimates are read-side markers and must not be persisted")
+        reference = self._job_reference.for_write(
+            estimate.tenant_id,
+            estimate.job_url,
+        )
+        event_job_url = self._job_reference.storage_url(
+            estimate.tenant_id,
+            estimate.job_url,
+        )
+        reference_column = self._job_reference.column
         self._conn.execute(
-            """
+            f"""
             INSERT INTO job_market_compensation_estimates (
-                tenant_id, job_url, estimate_state, currency, period, component,
+                tenant_id, {reference_column}, estimate_state, currency,
+                period, component,
                 minimum_amount, maximum_amount, confidence_interval_minimum_amount,
                 confidence_interval_maximum_amount, confidence_band, confidence_score,
                 source_count, sample_count, aggregate_bucket, geography_scope,
@@ -252,7 +273,7 @@ class SqliteMarketCompensationRepository:
                 source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
                 company_name, normalized_company, role_title, normalized_role, company_tier, match_scope
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+            ON CONFLICT(tenant_id, {reference_column}) DO UPDATE SET
                 estimate_state                    = excluded.estimate_state,
                 currency                          = excluded.currency,
                 period                            = excluded.period,
@@ -288,7 +309,7 @@ class SqliteMarketCompensationRepository:
             """,
             (
                 estimate.tenant_id,
-                estimate.job_url,
+                reference,
                 estimate.estimate_state,
                 estimate.currency,
                 estimate.period,
@@ -324,12 +345,22 @@ class SqliteMarketCompensationRepository:
             ),
         )
         self._conn.commit()
-        self._record_updated_event(estimate)
+        self._record_updated_event(
+            estimate,
+            job_url=event_job_url,
+        )
 
     def get_estimate(self, tenant_id: str, job_url: str) -> MarketCompensationEstimate | None:
+        reference = self._job_reference.for_read(
+            tenant_id,
+            job_url,
+        )
+        if reference is None:
+            return None
         row = self._conn.execute(
-            """
-            SELECT tenant_id, job_url, estimate_state, currency, period, component,
+            f"""
+            SELECT tenant_id, ? AS job_url, estimate_state, currency,
+                   period, component,
                    minimum_amount, maximum_amount, confidence_interval_minimum_amount,
                    confidence_interval_maximum_amount, confidence_band, confidence_score,
                    source_count, sample_count, aggregate_bucket, geography_scope,
@@ -338,9 +369,9 @@ class SqliteMarketCompensationRepository:
                    source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
                    company_name, normalized_company, role_title, normalized_role, company_tier, match_scope
             FROM job_market_compensation_estimates
-            WHERE tenant_id = ? AND job_url = ?
+            WHERE tenant_id = ? AND {self._job_reference.column} = ?
             """,
-            (tenant_id, job_url),
+            (job_url, tenant_id, reference),
         ).fetchone()
         return _row_to_estimate(row) if row is not None else None
 
@@ -409,10 +440,13 @@ class SqliteMarketCompensationRepository:
         job_url: str | None = None,
     ) -> int:
         posted_observations = self._posted_salary_observations(tenant_id=tenant_id, job_url=job_url)
-        sql = "SELECT url, title, site, company, location FROM jobs"
-        params: list[Any] = []
+        sql = (
+            "SELECT url, title, site, company, location "
+            "FROM jobs WHERE tenant_id = ?"
+        )
+        params: list[Any] = [tenant_id]
         if job_url:
-            sql += " WHERE url = ?"
+            sql += " AND url = ?"
             params.append(job_url)
         sql += " ORDER BY url"
         if limit > 0:
@@ -457,13 +491,19 @@ class SqliteMarketCompensationRepository:
         tenant_id: str,
         job_url: str | None,
     ) -> tuple[ReportedCompensationObservation, ...]:
-        sql = """
-            SELECT f.job_url, j.title, j.company, j.site, j.location,
+        reference_column = self._posted_job_reference.column
+        join_sql = (
+            "j.tenant_id = f.tenant_id AND j.job_id = f.job_id"
+            if reference_column == "job_id"
+            else "j.tenant_id = f.tenant_id AND j.url = f.job_url"
+        )
+        sql = f"""
+            SELECT j.url AS job_url, j.title, j.company, j.site, j.location,
                    f.currency, f.period, f.minimum_amount, f.maximum_amount,
                    f.annualized_minimum_amount, f.annualized_maximum_amount,
                    f.warnings_json, f.source_text, f.parsed_at
             FROM job_posted_compensation_facts f
-            JOIN jobs j ON j.url = f.job_url
+            JOIN jobs j ON {join_sql}
             WHERE f.tenant_id = ?
               AND f.parse_state = 'parsed_range'
               AND (
@@ -475,8 +515,14 @@ class SqliteMarketCompensationRepository:
         """
         params: list[Any] = [tenant_id]
         if job_url:
-            sql += " AND f.job_url = ?"
-            params.append(job_url)
+            reference = self._posted_job_reference.for_read(
+                tenant_id,
+                job_url,
+            )
+            if reference is None:
+                return ()
+            sql += f" AND f.{reference_column} = ?"
+            params.append(reference)
         rows = self._conn.execute(sql, params).fetchall()
         observations: list[ReportedCompensationObservation] = []
         for row in rows:
@@ -526,13 +572,20 @@ class SqliteMarketCompensationRepository:
         return tuple(observations)
 
     def _posted_annualized_range(self, tenant_id: str, job_url: str) -> tuple[int | None, int | None]:
+        reference = self._posted_job_reference.for_read(
+            tenant_id,
+            job_url,
+        )
+        if reference is None:
+            return None, None
         row = self._conn.execute(
-            """
+            f"""
             SELECT annualized_minimum_amount, annualized_maximum_amount
             FROM job_posted_compensation_facts
-            WHERE tenant_id = ? AND job_url = ?
+            WHERE tenant_id = ?
+              AND {self._posted_job_reference.column} = ?
             """,
-            (tenant_id, job_url),
+            (tenant_id, reference),
         ).fetchone()
         if row is None:
             return None, None
@@ -540,19 +593,24 @@ class SqliteMarketCompensationRepository:
             _row_value(row, "annualized_maximum_amount")
         )
 
-    def _record_updated_event(self, estimate: MarketCompensationEstimate) -> None:
+    def _record_updated_event(
+        self,
+        estimate: MarketCompensationEstimate,
+        *,
+        job_url: str,
+    ) -> None:
         try:
             from jobctrl.state import record_job_event
 
             record_job_event(
                 self._conn,
-                estimate.job_url,
+                job_url,
                 "enrich",
                 "CompensationFactsUpdated",
                 message="Market compensation estimate updated",
                 occurred_at=estimate.estimated_at,
                 payload={
-                    "jobId": estimate.job_url,
+                    "jobId": job_url,
                     "changedSections": ["market"],
                     "postedRecordStatus": None,
                     "postedParseState": None,
