@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import sqlite3
 
+from jobctrl.domain.discovery.value_objects import PostingUrl
+from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.ports.events import EventPublisher
+from jobctrl.domain.tenant import TenantId
+from jobctrl.infrastructure.discovery.sqlite_identity_resolver import (
+    SqliteJobIdentityResolver,
+)
 from jobctrl.infrastructure.materials import SqliteEmployerAnalysisRepository
 from jobctrl.infrastructure.setup_probes import analysis_sdk_set_version, enabled_analysis_legs
 from jobctrl.state import record_job_event
@@ -26,9 +32,44 @@ class EmployerAnalyzedEventRecorder:
         if getattr(event, "event_type", None) != "EmployerAnalyzed":
             return
         payload = dict(getattr(event, "payload", {}) or {})
-        job_url = str(payload.get("job_id") or "")
-        if not job_url:
+        raw_reference = str(payload.get("job_id") or "").strip()
+        if not raw_reference:
             return
+        tenant_id = TenantId(str(getattr(event, "tenant_id", "local")))
+        resolver = SqliteJobIdentityResolver(self._conn)
+        identity = resolver.resolve_by_job_id(
+            tenant_id,
+            JobId(raw_reference),
+        )
+        if identity is None:
+            direct = self._conn.execute(
+                """
+                SELECT job_id
+                FROM jobs
+                WHERE tenant_id = ? AND url = ?
+                LIMIT 1
+                """,
+                (str(tenant_id), raw_reference),
+            ).fetchone()
+            if direct is not None and str(direct[0] or "").strip():
+                identity = resolver.resolve_by_job_id(
+                    tenant_id,
+                    JobId(str(direct[0])),
+                )
+        if identity is None:
+            identity = resolver.resolve_by_posting_url(
+                tenant_id,
+                PostingUrl(raw_reference),
+            )
+        job_url = (
+            identity.storage_url.value
+            if identity is not None
+            else raw_reference
+        )
+        # ``job_events`` remains URL-keyed until the Phase-4 event cutover.
+        # Keep the domain event canonical in memory, but persist its legacy
+        # payload and routing key with URL semantics.
+        payload["job_id"] = job_url
         completeness = f"{payload.get('legs_succeeded')}/{payload.get('legs_attempted')}"
         record_job_event(
             self._conn,

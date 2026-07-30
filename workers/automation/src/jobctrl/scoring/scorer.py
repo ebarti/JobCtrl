@@ -931,12 +931,16 @@ def _is_usable_employer_analysis(
 ) -> bool:
     if analysis is None:
         return False
-    job_url = str(job.get("url") or "").strip()
-    if job_url and str(analysis.job_id) != job_url:
+    job_references = {
+        str(reference).strip()
+        for reference in (job.get("job_id"), job.get("url"))
+        if str(reference or "").strip()
+    }
+    if job_references and str(analysis.job_id) not in job_references:
         log.warning(
             "Ignoring employer analysis for %s while scoring %s",
             analysis.job_id,
-            job_url,
+            sorted(job_references),
         )
         return False
     return bool(analysis.canonical.requirements)
@@ -948,10 +952,12 @@ def _load_employer_analysis_for_job(
     tenant_id: TenantId,
     job: dict[str, Any],
 ) -> EmployerAnalysis | None:
-    job_url = str(job.get("url") or "").strip()
-    if not job_url:
+    job_reference = str(
+        job.get("job_id") or job.get("url") or ""
+    ).strip()
+    if not job_reference:
         return None
-    analysis = repository.load(tenant_id, JobId(job_url))
+    analysis = repository.load(tenant_id, JobId(job_reference))
     if not _is_usable_employer_analysis(analysis, job):
         return None
     return analysis

@@ -307,12 +307,19 @@ def _build_requirement_fit_inputs_blob(
 ) -> str:
     if employer_analysis is None:
         return ""
-    job_url = str(job.get("url") or "").strip()
-    if job_url and str(employer_analysis.job_id) != job_url:
+    job_references = {
+        str(reference).strip()
+        for reference in (job.get("job_id"), job.get("url"))
+        if str(reference or "").strip()
+    }
+    if (
+        job_references
+        and str(employer_analysis.job_id) not in job_references
+    ):
         log.warning(
             "Ignoring employer analysis for %s while scoring %s",
             employer_analysis.job_id,
-            job_url,
+            sorted(job_references),
         )
         return ""
 

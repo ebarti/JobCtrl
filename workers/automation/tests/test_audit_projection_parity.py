@@ -163,14 +163,14 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_employer_analysis (
-                job_url, generation, tenant_id, snapshot_hash, prompt_version,
+                job_id, generation, tenant_id, snapshot_hash, prompt_version,
                 sdk_set_version, cache_key, role_framing, inferred_seniority,
                 ideal_candidate_narrative, requirements_json, keywords_json,
                 agreement_json, legs_attempted, legs_succeeded, created_at
             ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                job_url,
+                job_id,
                 row["generation"],
                 row["snapshot_hash"],
                 row["prompt_version"],
@@ -191,20 +191,20 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_employer_analysis_sub_analyses (
-                job_url, generation, model_id, tenant_id, analysis_json
+                job_id, generation, model_id, tenant_id, analysis_json
             ) VALUES (?, ?, ?, 'local', ?)
             """,
-            (job_url, sub["generation"], sub["model_id"], sub["analysis_json"]),
+            (job_id, sub["generation"], sub["model_id"], sub["analysis_json"]),
         )
     for failure in rows["jobEmployerAnalysisFailures"]:
         conn.execute(
             """
             INSERT INTO job_employer_analysis_failures (
-                job_url, generation, model_id, tenant_id, error, raw_output
+                job_id, generation, model_id, tenant_id, error, raw_output
             ) VALUES (?, ?, ?, 'local', ?, ?)
             """,
             (
-                job_url,
+                job_id,
                 failure["generation"],
                 failure["model_id"],
                 failure["error"],

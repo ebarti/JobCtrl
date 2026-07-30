@@ -62,7 +62,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # slots, PDF layout audit boxes, and bullet provenance reference the stable Job
 # aggregate. Alias histories are deterministically interleaved and renumbered
 # together so no generation or dependent audit row is discarded.
-SCHEMA_VERSION = 15
+# v16 (employer-analysis references): canonical employer-analysis generations
+# plus their per-model drafts and failures reference the stable Job aggregate.
+# Identity collapse preserves and deterministically renumbers complete histories.
+SCHEMA_VERSION = 16
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -208,6 +211,7 @@ def _schema_migrations() -> tuple[
         (13, ensure_stage_state_references_v13),
         (14, ensure_artifact_registry_references_v14),
         (15, ensure_materials_references_v15),
+        (16, ensure_employer_analysis_references_v16),
     )
 
 
@@ -2929,12 +2933,12 @@ def ensure_employer_analysis_tables(conn: sqlite3.Connection | None = None) -> l
     and drives downstream tailoring. Per D-09 the analysis is stored as CANONICAL
     ROWS — never inside an artifact ``metadata_json`` blob:
 
-      * ``job_employer_analysis`` — one row per ``(job_url, generation)``. Holds
-        the reconciled canonical analysis (role framing / seniority / narrative
-        / requirements / keywords as structured columns + JSON arrays), the
-        snapshot+version cache key (D-11/D-12), the cross-model agreement signal,
-        and the ``legs_attempted`` / ``legs_succeeded`` ensemble-completeness
-        counters (D-08).
+      * ``job_employer_analysis`` — one row per tenant-scoped stable
+        ``(job_id, generation)``. Holds the reconciled canonical analysis (role
+        framing / seniority / narrative / requirements / keywords as structured
+        columns + JSON arrays), the snapshot+version cache key (D-11/D-12), the
+        cross-model agreement signal, and the ``legs_attempted`` /
+        ``legs_succeeded`` ensemble-completeness counters (D-08).
       * ``job_employer_analysis_sub_analyses`` — one row per per-model draft that
         contributed to the canonical record (D-08 audit trail).
       * ``job_employer_analysis_failures`` — one row per leg that errored /
@@ -2948,6 +2952,16 @@ def ensure_employer_analysis_tables(conn: sqlite3.Connection | None = None) -> l
     """
     if conn is None:
         conn = get_connection()
+
+    current_schema_version = _assert_schema_version_supported(conn)
+    if (
+        current_schema_version
+        >= _EMPLOYER_ANALYSIS_REFERENCE_SCHEMA_VERSION
+    ):
+        _create_employer_analysis_tables_v16(conn)
+        _create_employer_analysis_indexes_v16(conn)
+        conn.commit()
+        return list(_EMPLOYER_ANALYSIS_REFERENCE_TABLES)
 
     conn.execute(
         """
@@ -4431,12 +4445,27 @@ def _reassign_discovery_identity_references(
             losing_job_id=losing_job_id,
             surviving_job_id=surviving_job_id,
         )
+    employer_analysis_generation_map: (
+        dict[tuple[str, int], int] | None
+    ) = None
+    if _has_employer_analysis_reference_schema_v16(conn):
+        employer_analysis_generation_map = (
+            _reassign_employer_analysis_references_v16(
+                conn,
+                tenant_id=tenant_id,
+                losing_job_id=losing_job_id,
+                surviving_job_id=surviving_job_id,
+            )
+        )
     if _has_scoring_reference_schema_v12(conn):
         _reassign_scoring_references_v12(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
             surviving_job_id=surviving_job_id,
+            employer_analysis_generation_map=(
+                employer_analysis_generation_map
+            ),
         )
     if _has_stage_state_reference_schema_v13(conn):
         _reassign_stage_state_references_v13(
@@ -4459,8 +4488,6 @@ def _reassign_discovery_identity_references(
             losing_job_id=losing_job_id,
             surviving_job_id=surviving_job_id,
         )
-
-
 def _reassign_enrichment_snapshot_references_v11(
     conn: sqlite3.Connection,
     *,
@@ -7778,6 +7805,9 @@ def _reassign_scoring_references_v12(
     tenant_id: str,
     losing_job_id: str,
     surviving_job_id: str,
+    employer_analysis_generation_map: (
+        dict[tuple[str, int], int] | None
+    ) = None,
 ) -> None:
     """Merge two stable scoring histories without overwriting either one."""
     if losing_job_id == surviving_job_id:
@@ -7851,18 +7881,40 @@ def _reassign_scoring_references_v12(
     ).fetchall()
     report_rows: list[tuple[Any, ...]] = []
     for row in raw_reports:
-        new_version = version_map.get((str(row[0]), int(row[1])))
+        source_job_id = str(row[0])
+        new_version = version_map.get(
+            (source_job_id, int(row[1]))
+        )
         if new_version is None:
             raise RuntimeError(
                 "URL collision merge found a requirement-fit report "
                 "without its score history"
             )
+        old_analysis_generation = int(row[2])
+        new_analysis_generation = old_analysis_generation
+        if (
+            employer_analysis_generation_map is not None
+            and old_analysis_generation > 0
+        ):
+            mapped_generation = (
+                employer_analysis_generation_map.get(
+                    (source_job_id, old_analysis_generation)
+                )
+            )
+            if mapped_generation is None:
+                raise RuntimeError(
+                    "URL collision merge found a requirement-fit "
+                    "report bound to a missing employer-analysis "
+                    "generation"
+                )
+            new_analysis_generation = mapped_generation
         report_rows.append(
             (
                 tenant_id,
                 surviving_job_id,
                 new_version,
-                *tuple(row[2:]),
+                new_analysis_generation,
+                *tuple(row[3:]),
             )
         )
 
@@ -9748,6 +9800,679 @@ def _reassign_materials_references_v15(
         conn,
         expected_counts=before_counts,
     )
+
+
+_EMPLOYER_ANALYSIS_REFERENCE_SCHEMA_VERSION = 16
+_EMPLOYER_ANALYSIS_REFERENCE_TABLES = (
+    "job_employer_analysis",
+    "job_employer_analysis_sub_analyses",
+    "job_employer_analysis_failures",
+)
+
+
+def _create_employer_analysis_tables_v16(
+    conn: sqlite3.Connection,
+    *,
+    analysis_table: str = "job_employer_analysis",
+    sub_analyses_table: str = "job_employer_analysis_sub_analyses",
+    failures_table: str = "job_employer_analysis_failures",
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {analysis_table} (
+            tenant_id                 TEXT NOT NULL DEFAULT 'local',
+            job_id                    TEXT NOT NULL,
+            generation                INTEGER NOT NULL CHECK(generation > 0),
+            snapshot_hash             TEXT NOT NULL,
+            prompt_version            TEXT NOT NULL,
+            sdk_set_version           TEXT NOT NULL,
+            cache_key                 TEXT NOT NULL,
+            role_framing              TEXT NOT NULL DEFAULT '',
+            inferred_seniority        TEXT NOT NULL DEFAULT '',
+            ideal_candidate_narrative TEXT NOT NULL DEFAULT '',
+            requirements_json         TEXT NOT NULL DEFAULT '[]',
+            keywords_json             TEXT NOT NULL DEFAULT '[]',
+            agreement_json            TEXT NOT NULL DEFAULT '{{}}',
+            eeo_screen_json           TEXT NOT NULL DEFAULT '[]',
+            legs_attempted            INTEGER NOT NULL,
+            legs_succeeded            INTEGER NOT NULL,
+            created_at                TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, job_id, generation),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {sub_analyses_table} (
+            tenant_id    TEXT NOT NULL DEFAULT 'local',
+            job_id       TEXT NOT NULL,
+            generation   INTEGER NOT NULL CHECK(generation > 0),
+            model_id     TEXT NOT NULL,
+            analysis_json TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, job_id, generation, model_id),
+            FOREIGN KEY (tenant_id, job_id, generation)
+                REFERENCES {analysis_table}(
+                    tenant_id, job_id, generation
+                ) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {failures_table} (
+            tenant_id  TEXT NOT NULL DEFAULT 'local',
+            job_id     TEXT NOT NULL,
+            generation INTEGER NOT NULL CHECK(generation > 0),
+            model_id   TEXT NOT NULL,
+            error      TEXT NOT NULL,
+            raw_output TEXT,
+            PRIMARY KEY (tenant_id, job_id, generation, model_id),
+            FOREIGN KEY (tenant_id, job_id, generation)
+                REFERENCES {analysis_table}(
+                    tenant_id, job_id, generation
+                ) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_employer_analysis_indexes_v16(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_employer_analysis_cache_key
+        ON job_employer_analysis(tenant_id, job_id, cache_key)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_employer_analysis_tenant_job_gen
+        ON job_employer_analysis(tenant_id, job_id, generation DESC)
+        """
+    )
+
+
+def _has_employer_analysis_reference_schema_v16(
+    conn: sqlite3.Connection,
+) -> bool:
+    return (
+        "job_id" in _table_columns(conn, "job_employer_analysis")
+        and "job_url" not in _table_columns(
+            conn,
+            "job_employer_analysis",
+        )
+        and _primary_key_columns(conn, "job_employer_analysis")
+        == ("tenant_id", "job_id", "generation")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "job_employer_analysis",
+            "job_id",
+        )
+        and "job_id" in _table_columns(
+            conn,
+            "job_employer_analysis_sub_analyses",
+        )
+        and "job_url" not in _table_columns(
+            conn,
+            "job_employer_analysis_sub_analyses",
+        )
+        and _primary_key_columns(
+            conn,
+            "job_employer_analysis_sub_analyses",
+        )
+        == ("tenant_id", "job_id", "generation", "model_id")
+        and _has_composite_foreign_key(
+            conn,
+            "job_employer_analysis_sub_analyses",
+            "job_employer_analysis",
+            {
+                ("tenant_id", "tenant_id"),
+                ("job_id", "job_id"),
+                ("generation", "generation"),
+            },
+            on_delete="CASCADE",
+        )
+        and "job_id" in _table_columns(
+            conn,
+            "job_employer_analysis_failures",
+        )
+        and "job_url" not in _table_columns(
+            conn,
+            "job_employer_analysis_failures",
+        )
+        and _primary_key_columns(
+            conn,
+            "job_employer_analysis_failures",
+        )
+        == ("tenant_id", "job_id", "generation", "model_id")
+        and _has_composite_foreign_key(
+            conn,
+            "job_employer_analysis_failures",
+            "job_employer_analysis",
+            {
+                ("tenant_id", "tenant_id"),
+                ("job_id", "job_id"),
+                ("generation", "generation"),
+            },
+            on_delete="CASCADE",
+        )
+        and _has_index(
+            conn,
+            "job_employer_analysis",
+            "idx_job_employer_analysis_cache_key",
+            ("tenant_id", "job_id", "cache_key"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_employer_analysis",
+            "idx_job_employer_analysis_tenant_job_gen",
+            ("tenant_id", "job_id", "generation"),
+            unique=False,
+        )
+    )
+
+
+def _merge_employer_analysis_histories_preserving_order_v16(
+    history: list[tuple[str, int, tuple[Any, ...]]],
+) -> list[tuple[str, int, tuple[Any, ...]]]:
+    """Interleave analysis histories without reversing either history."""
+    by_reference: dict[str, list[tuple[str, int, tuple[Any, ...]]]] = {}
+    for entry in history:
+        by_reference.setdefault(entry[0], []).append(entry)
+    for entries in by_reference.values():
+        entries.sort(key=lambda entry: entry[1])
+
+    offsets = {reference: 0 for reference in by_reference}
+    merged: list[tuple[str, int, tuple[Any, ...]]] = []
+    while len(merged) < len(history):
+        eligible = [
+            entries[offsets[reference]]
+            for reference, entries in by_reference.items()
+            if offsets[reference] < len(entries)
+        ]
+        selected = min(
+            eligible,
+            key=lambda entry: (
+                str(entry[2][-1]),
+                entry[0],
+                entry[1],
+            ),
+        )
+        merged.append(selected)
+        offsets[selected[0]] += 1
+    return merged
+
+
+def _canonical_employer_analysis_rows_v16(
+    conn: sqlite3.Connection,
+) -> tuple[
+    list[tuple[Any, ...]],
+    dict[tuple[str, str, int], int],
+]:
+    rows = conn.execute(
+        """
+        SELECT tenant_id, job_url, generation, snapshot_hash,
+               prompt_version, sdk_set_version, cache_key, role_framing,
+               inferred_seniority, ideal_candidate_narrative,
+               requirements_json, keywords_json, agreement_json,
+               eeo_screen_json, legs_attempted, legs_succeeded, created_at
+        FROM job_employer_analysis
+        ORDER BY tenant_id, job_url, generation
+        """
+    ).fetchall()
+    grouped: dict[
+        tuple[str, str],
+        list[tuple[str, int, tuple[Any, ...]]],
+    ] = {}
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        old_generation = int(row[2])
+        if old_generation <= 0:
+            raise RuntimeError(
+                "employer-analysis reference migration found a "
+                "non-positive generation"
+            )
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=True,
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "employer-analysis reference migration could not resolve "
+                f"job_employer_analysis.job_url={raw_reference!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        grouped.setdefault((tenant_id, stable_job_id), []).append(
+            (
+                raw_reference,
+                old_generation,
+                tuple(row[3:]),
+            )
+        )
+
+    canonical: list[tuple[Any, ...]] = []
+    generation_map: dict[tuple[str, str, int], int] = {}
+    for (tenant_id, stable_job_id), history in sorted(grouped.items()):
+        ordered = (
+            _merge_employer_analysis_histories_preserving_order_v16(
+                history
+            )
+        )
+        for new_generation, (
+            raw_reference,
+            old_generation,
+            values,
+        ) in enumerate(ordered, start=1):
+            generation_map[
+                (tenant_id, raw_reference, old_generation)
+            ] = new_generation
+            canonical.append(
+                (
+                    tenant_id,
+                    stable_job_id,
+                    new_generation,
+                    *values,
+                )
+            )
+    return canonical, generation_map
+
+
+def _canonical_employer_analysis_child_rows_v16(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str,
+    value_columns: str,
+    generation_map: dict[tuple[str, str, int], int],
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        f"""
+        SELECT parent.tenant_id, child.job_url, child.generation,
+               {value_columns}
+        FROM {table_name} AS child
+        JOIN job_employer_analysis AS parent
+          ON parent.job_url = child.job_url
+         AND parent.generation = child.generation
+        ORDER BY parent.tenant_id, child.job_url, child.generation,
+                 child.model_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        raw_reference = str(row[1])
+        old_generation = int(row[2])
+        new_generation = generation_map.get(
+            (tenant_id, raw_reference, old_generation)
+        )
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=raw_reference,
+            legacy_url=True,
+        )
+        if new_generation is None or stable_job_id is None:
+            raise RuntimeError(
+                "employer-analysis reference migration found a child "
+                "without its parent generation"
+            )
+        canonical.append(
+            (
+                tenant_id,
+                stable_job_id,
+                new_generation,
+                *tuple(row[3:]),
+            )
+        )
+    return canonical
+
+
+def ensure_employer_analysis_references_v16(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move employer-analysis authorities to stable JobId references."""
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _EMPLOYER_ANALYSIS_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _MATERIALS_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "employer-analysis reference migration requires materials "
+            "schema v15"
+        )
+
+    conn.execute("SAVEPOINT employer_analysis_references_v16")
+    try:
+        if not _has_materials_reference_schema_v15(conn):
+            raise RuntimeError(
+                "employer-analysis reference migration requires the "
+                "stable materials reference schema"
+            )
+        before_counts = {
+            table: int(
+                conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            )
+            for table in _EMPLOYER_ANALYSIS_REFERENCE_TABLES
+        }
+
+        if not _has_employer_analysis_reference_schema_v16(conn):
+            (
+                analysis_rows,
+                generation_map,
+            ) = _canonical_employer_analysis_rows_v16(conn)
+            sub_analysis_rows = (
+                _canonical_employer_analysis_child_rows_v16(
+                    conn,
+                    table_name="job_employer_analysis_sub_analyses",
+                    value_columns="child.model_id, child.analysis_json",
+                    generation_map=generation_map,
+                )
+            )
+            failure_rows = _canonical_employer_analysis_child_rows_v16(
+                conn,
+                table_name="job_employer_analysis_failures",
+                value_columns=(
+                    "child.model_id, child.error, child.raw_output"
+                ),
+                generation_map=generation_map,
+            )
+
+            for table in (
+                "job_employer_analysis_sub_analyses_v16",
+                "job_employer_analysis_failures_v16",
+                "job_employer_analysis_v16",
+            ):
+                conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+            _create_employer_analysis_tables_v16(
+                conn,
+                analysis_table="job_employer_analysis_v16",
+                sub_analyses_table=(
+                    "job_employer_analysis_sub_analyses_v16"
+                ),
+                failures_table="job_employer_analysis_failures_v16",
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_employer_analysis_v16 (
+                    tenant_id, job_id, generation, snapshot_hash,
+                    prompt_version, sdk_set_version, cache_key,
+                    role_framing, inferred_seniority,
+                    ideal_candidate_narrative, requirements_json,
+                    keywords_json, agreement_json, eeo_screen_json,
+                    legs_attempted, legs_succeeded, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                analysis_rows,
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_employer_analysis_sub_analyses_v16 (
+                    tenant_id, job_id, generation, model_id, analysis_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                sub_analysis_rows,
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_employer_analysis_failures_v16 (
+                    tenant_id, job_id, generation, model_id, error,
+                    raw_output
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                failure_rows,
+            )
+
+            for table in (
+                "job_employer_analysis_sub_analyses",
+                "job_employer_analysis_failures",
+                "job_employer_analysis",
+            ):
+                conn.execute(f'DROP TABLE "{table}"')
+            for table in (
+                "job_employer_analysis",
+                "job_employer_analysis_sub_analyses",
+                "job_employer_analysis_failures",
+            ):
+                conn.execute(
+                    f'ALTER TABLE "{table}_v16" RENAME TO "{table}"'
+                )
+            _create_employer_analysis_indexes_v16(conn)
+
+        _verify_employer_analysis_references_v16(
+            conn,
+            expected_counts=before_counts,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_EMPLOYER_ANALYSIS_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT employer_analysis_references_v16"
+        )
+        conn.commit()
+    except BaseException:
+        conn.execute(
+            "ROLLBACK TO SAVEPOINT employer_analysis_references_v16"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT employer_analysis_references_v16"
+        )
+        raise
+
+    return list(_EMPLOYER_ANALYSIS_REFERENCE_TABLES)
+
+
+def _verify_employer_analysis_references_v16(
+    conn: sqlite3.Connection,
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    if not _has_employer_analysis_reference_schema_v16(conn):
+        raise RuntimeError(
+            "employer-analysis reference migration did not install the "
+            "canonical schema"
+        )
+    for table, expected_count in expected_counts.items():
+        observed_count = int(
+            conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        )
+        if observed_count != expected_count:
+            raise RuntimeError(
+                "employer-analysis reference migration changed the "
+                f"{table} row count: expected {expected_count}, "
+                f"found {observed_count}"
+            )
+    orphan = conn.execute(
+        """
+        SELECT analysis.job_id
+        FROM job_employer_analysis AS analysis
+        LEFT JOIN jobs j
+          ON j.tenant_id = analysis.tenant_id
+         AND j.job_id = analysis.job_id
+        WHERE j.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise RuntimeError(
+            "employer-analysis reference migration left an unresolved "
+            "JobId"
+        )
+    for table in _EMPLOYER_ANALYSIS_REFERENCE_TABLES:
+        for row in conn.execute(
+            f'SELECT DISTINCT job_id FROM "{table}"'
+        ).fetchall():
+            _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "employer-analysis reference migration found a foreign-key "
+            "violation"
+        )
+
+
+def _reassign_employer_analysis_references_v16(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> dict[tuple[str, int], int]:
+    """Merge full employer-analysis histories during identity collapse."""
+    if losing_job_id == surviving_job_id:
+        return {}
+    before_counts = {
+        table: int(
+            conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        )
+        for table in _EMPLOYER_ANALYSIS_REFERENCE_TABLES
+    }
+    parent_rows = conn.execute(
+        """
+        SELECT job_id, generation, snapshot_hash, prompt_version,
+               sdk_set_version, cache_key, role_framing,
+               inferred_seniority, ideal_candidate_narrative,
+               requirements_json, keywords_json, agreement_json,
+               eeo_screen_json, legs_attempted, legs_succeeded, created_at
+        FROM job_employer_analysis
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id, generation
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    if not parent_rows:
+        return {}
+
+    history = [
+        (
+            str(row[0]),
+            int(row[1]),
+            tuple(row[2:]),
+        )
+        for row in parent_rows
+    ]
+    ordered = _merge_employer_analysis_histories_preserving_order_v16(
+        history
+    )
+    generation_map: dict[tuple[str, int], int] = {}
+    analysis_rows: list[tuple[Any, ...]] = []
+    for new_generation, (
+        old_job_id,
+        old_generation,
+        values,
+    ) in enumerate(ordered, start=1):
+        generation_map[(old_job_id, old_generation)] = new_generation
+        analysis_rows.append(
+            (
+                tenant_id,
+                surviving_job_id,
+                new_generation,
+                *values,
+            )
+        )
+
+    sub_analysis_source = conn.execute(
+        """
+        SELECT job_id, generation, model_id, analysis_json
+        FROM job_employer_analysis_sub_analyses
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id, generation, model_id
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    failure_source = conn.execute(
+        """
+        SELECT job_id, generation, model_id, error, raw_output
+        FROM job_employer_analysis_failures
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY job_id, generation, model_id
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+
+    def _new_generation(row: sqlite3.Row) -> int:
+        mapped = generation_map.get((str(row[0]), int(row[1])))
+        if mapped is None:
+            raise RuntimeError(
+                "employer-analysis identity collapse found a child "
+                "without its parent generation"
+            )
+        return mapped
+
+    sub_analysis_rows = [
+        (
+            tenant_id,
+            surviving_job_id,
+            _new_generation(row),
+            *tuple(row[2:]),
+        )
+        for row in sub_analysis_source
+    ]
+    failure_rows = [
+        (
+            tenant_id,
+            surviving_job_id,
+            _new_generation(row),
+            *tuple(row[2:]),
+        )
+        for row in failure_source
+    ]
+
+    for table in (
+        "job_employer_analysis_sub_analyses",
+        "job_employer_analysis_failures",
+        "job_employer_analysis",
+    ):
+        conn.execute(
+            f"""
+            DELETE FROM {table}
+            WHERE tenant_id = ? AND job_id IN (?, ?)
+            """,
+            (tenant_id, losing_job_id, surviving_job_id),
+        )
+    conn.executemany(
+        """
+        INSERT INTO job_employer_analysis (
+            tenant_id, job_id, generation, snapshot_hash,
+            prompt_version, sdk_set_version, cache_key, role_framing,
+            inferred_seniority, ideal_candidate_narrative,
+            requirements_json, keywords_json, agreement_json,
+            eeo_screen_json, legs_attempted, legs_succeeded, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        analysis_rows,
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_employer_analysis_sub_analyses (
+            tenant_id, job_id, generation, model_id, analysis_json
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        sub_analysis_rows,
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_employer_analysis_failures (
+            tenant_id, job_id, generation, model_id, error, raw_output
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        failure_rows,
+    )
+    _verify_employer_analysis_references_v16(
+        conn,
+        expected_counts=before_counts,
+    )
+    return generation_map
 
 
 # ---------------------------------------------------------------------------

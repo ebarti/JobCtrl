@@ -3437,7 +3437,7 @@ class GenerateCoverLetterUseCase:
         tenant_id: TenantId = LOCAL_TENANT,
     ) -> CoverLetterOutcome:
         job_id = JobId(str(job.get("job_id") or job["url"]))
-        analysis_job_id = JobId(str(job["url"]))
+        analysis_job_id = job_id
         materials = _load_current_approved_materials(self._repository, tenant_id, job_id)
         if materials is None:
             return CoverLetterOutcome(

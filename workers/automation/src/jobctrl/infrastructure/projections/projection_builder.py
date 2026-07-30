@@ -2453,8 +2453,13 @@ class ProjectionBuilder:
         )
 
         try:
-            record = SqliteEmployerAnalysisRepository(self._conn).load(
-                self._tenant_id, JobId(job_url)
+            record = (
+                SqliteEmployerAnalysisRepository(
+                    self._conn
+                ).load_by_posting_url(
+                    self._tenant_id,
+                    PostingUrl(job_url),
+                )
             )
         except sqlite3.OperationalError:
             return None

@@ -2244,7 +2244,21 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
-  it("serves the canonical employer analysis from projection rows (TS↔Python parity)", async () => {
+  it.each([
+    {
+      label: "schema-v15 URL references",
+      referenceColumn: "job_url",
+      stableReferences: false,
+    },
+    {
+      label: "schema-v16 stable JobId references",
+      referenceColumn: "job_id",
+      stableReferences: true,
+    },
+  ])("serves canonical employer analysis from $label (TS↔Python parity)", async ({
+    referenceColumn,
+    stableReferences,
+  }) => {
     // AUDIT-02-style cross-runtime parity: seed the canonical
     // ``job_employer_analysis`` rows exactly as the Python repository writes
     // them, then assert the TS projection builder + read model reconstruct the
@@ -2254,9 +2268,19 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
+      if (stableReferences) db.pragma("user_version = 16");
+      const jobReference = stableReferences
+        ? String(
+            (
+              db.prepare("SELECT job_id FROM jobs WHERE url = ?").get(jobUrl) as {
+                job_id: string;
+              }
+            ).job_id,
+          )
+        : jobUrl;
       db.exec(`
         CREATE TABLE job_employer_analysis (
-          job_url TEXT NOT NULL,
+          ${referenceColumn} TEXT NOT NULL,
           generation INTEGER NOT NULL,
           tenant_id TEXT NOT NULL DEFAULT 'local',
           snapshot_hash TEXT NOT NULL,
@@ -2272,24 +2296,24 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           legs_attempted INTEGER NOT NULL,
           legs_succeeded INTEGER NOT NULL,
           created_at TEXT NOT NULL,
-          PRIMARY KEY (job_url, generation)
+          PRIMARY KEY (${stableReferences ? `tenant_id, ${referenceColumn}, generation` : `${referenceColumn}, generation`})
         );
         CREATE TABLE job_employer_analysis_sub_analyses (
-          job_url TEXT NOT NULL,
+          ${referenceColumn} TEXT NOT NULL,
           generation INTEGER NOT NULL,
           model_id TEXT NOT NULL,
           tenant_id TEXT NOT NULL DEFAULT 'local',
           analysis_json TEXT NOT NULL,
-          PRIMARY KEY (job_url, generation, model_id)
+          PRIMARY KEY (${stableReferences ? `tenant_id, ${referenceColumn}, generation, model_id` : `${referenceColumn}, generation, model_id`})
         );
         CREATE TABLE job_employer_analysis_failures (
-          job_url TEXT NOT NULL,
+          ${referenceColumn} TEXT NOT NULL,
           generation INTEGER NOT NULL,
           model_id TEXT NOT NULL,
           tenant_id TEXT NOT NULL DEFAULT 'local',
           error TEXT NOT NULL,
           raw_output TEXT,
-          PRIMARY KEY (job_url, generation, model_id)
+          PRIMARY KEY (${stableReferences ? `tenant_id, ${referenceColumn}, generation, model_id` : `${referenceColumn}, generation, model_id`})
         );
       `);
       const requirements = [
@@ -2313,29 +2337,29 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       // Two generations prove "load latest" + supersede-not-destroy (D-13).
       const insertAnalysis = db.prepare(
         `INSERT INTO job_employer_analysis (
-          job_url, generation, tenant_id, snapshot_hash, prompt_version, sdk_set_version,
+          ${referenceColumn}, generation, tenant_id, snapshot_hash, prompt_version, sdk_set_version,
           cache_key, role_framing, inferred_seniority, ideal_candidate_narrative,
           requirements_json, keywords_json, agreement_json, legs_attempted, legs_succeeded, created_at
         ) VALUES (?, ?, 'local', ?, 'employer-analysis-v1', 'claude+codex-v1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       insertAnalysis.run(
-        jobUrl, 1, "hash-old", "hash-old:employer-analysis-v1:claude+codex-v1",
+        jobReference, 1, "hash-old", "hash-old:employer-analysis-v1:claude+codex-v1",
         "Old framing.", "mid", "Old narrative.",
         "[]", "[]", JSON.stringify({ score: 0.5, flagged_requirements: [], flagged_keywords: [] }),
         2, 2, "2026-05-04T12:00:00+00:00",
       );
       insertAnalysis.run(
-        jobUrl, 2, "hash-new", "hash-new:employer-analysis-v1:claude+codex-v1",
+        jobReference, 2, "hash-new", "hash-new:employer-analysis-v1:claude+codex-v1",
         "Own the event platform.", "senior", "A hands-on platform owner.",
         JSON.stringify(requirements), JSON.stringify(keywords),
         JSON.stringify({ score: 0.8, flagged_requirements: [], flagged_keywords: ["kafka"] }),
         2, 1, "2026-05-04T13:00:00+00:00",
       );
       db.prepare(
-        `INSERT INTO job_employer_analysis_sub_analyses (job_url, generation, model_id, tenant_id, analysis_json)
+        `INSERT INTO job_employer_analysis_sub_analyses (${referenceColumn}, generation, model_id, tenant_id, analysis_json)
          VALUES (?, 2, 'claude-opus-4-8', 'local', ?)`,
       ).run(
-        jobUrl,
+        jobReference,
         JSON.stringify({
           role_framing: "Own the event platform.",
           inferred_seniority: "senior",
@@ -2345,9 +2369,9 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         }),
       );
       db.prepare(
-        `INSERT INTO job_employer_analysis_failures (job_url, generation, model_id, tenant_id, error, raw_output)
+        `INSERT INTO job_employer_analysis_failures (${referenceColumn}, generation, model_id, tenant_id, error, raw_output)
          VALUES (?, 2, 'gpt-5.4', 'local', 'codex app-server timeout', NULL)`,
-      ).run(jobUrl);
+      ).run(jobReference);
       db.close();
 
       const app = buildApp({

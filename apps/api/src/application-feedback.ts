@@ -300,14 +300,18 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
     : "";
   const closedParams = tableExists(db, "posting_snapshot_sets") ? CLOSED_ACTIVE_STATES : [];
   const hasEmployerAnalysis = tableExists(db, "job_employer_analysis");
+  const employerAnalysisReference = hasEmployerAnalysis
+    ? jobReferenceColumn(db, "job_employer_analysis")
+    : "job_url";
   const employerAnalysisCte = hasEmployerAnalysis
     ? `,
     latest_employer_analysis AS (
-      SELECT job_url, ideal_candidate_narrative, requirements_json
+      SELECT job_reference, ideal_candidate_narrative, requirements_json
       FROM (
-        SELECT job_url, ideal_candidate_narrative, requirements_json,
+        SELECT ${employerAnalysisReference} AS job_reference,
+               ideal_candidate_narrative, requirements_json,
                ROW_NUMBER() OVER (
-                 PARTITION BY tenant_id, job_url
+                 PARTITION BY tenant_id, ${employerAnalysisReference}
                  ORDER BY generation DESC
                ) AS row_num
         FROM job_employer_analysis
@@ -324,7 +328,14 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
            NULL AS employer_ideal_candidate_narrative,
            NULL AS employer_requirements_json`;
   const employerAnalysisJoin = hasEmployerAnalysis
-    ? "LEFT JOIN latest_employer_analysis ON latest_employer_analysis.job_url = jlp.job_id"
+    ? employerAnalysisReference === "job_id"
+      ? `LEFT JOIN jobs employer_analysis_job
+           ON employer_analysis_job.tenant_id = jlp.tenant_id
+          AND employer_analysis_job.url = jlp.job_id
+         LEFT JOIN latest_employer_analysis
+           ON latest_employer_analysis.job_reference =
+              employer_analysis_job.job_id`
+      : "LEFT JOIN latest_employer_analysis ON latest_employer_analysis.job_reference = jlp.job_id"
     : "";
   const stableStageReferences = jobReferenceColumn(
     db,

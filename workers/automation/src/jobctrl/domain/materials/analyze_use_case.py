@@ -135,7 +135,7 @@ class AnalyzeJobUseCase:
         tenant_id: TenantId = LOCAL_TENANT,
         force: bool = False,
     ) -> AnalyzeJobOutcome:
-        job_id = JobId(str(job["url"]))
+        job_id = JobId(str(job.get("job_id") or job["url"]))
         jd_snapshot = build_jd_snapshot(job)
         snapshot_hash = compute_snapshot_hash(jd_snapshot)
         from jobctrl.domain.materials.analysis import cache_key as _cache_key

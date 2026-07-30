@@ -29,6 +29,7 @@ import {
   jobReferenceForUrl,
   jobReferenceJoinToJobs,
   jobReferencePredicateForUrl,
+  tableColumnSet,
   tableExists,
   type SqliteDatabase,
   type SqliteValue,
@@ -1969,31 +1970,66 @@ interface EvidenceGapPayload {
  * ``EmployerAnalysis.to_read_model()`` — the cross-runtime projection parity
  * test asserts both builders agree. Returns null when no analysis exists.
  */
-function loadEmployerAnalysisJson(db: SqliteDatabase, jobUrl: string): string | null {
+function loadEmployerAnalysisJson(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+): string | null {
   if (!tableExists(db, "job_employer_analysis")) return null;
+  const referenceColumn = jobReferenceColumn(
+    db,
+    "job_employer_analysis",
+  );
+  const predicate = jobReferencePredicateForUrl(
+    db,
+    "job_employer_analysis",
+    jobUrl,
+    tenantId,
+    "analysis",
+  );
   const row = getRow<EmployerAnalysisRow>(
     db,
-    `SELECT * FROM job_employer_analysis WHERE job_url = ?
+    `SELECT * FROM job_employer_analysis AS analysis
+      WHERE ${predicate.sql}
       ORDER BY generation DESC LIMIT 1`,
-    [jobUrl],
+    predicate.params,
   );
   if (!row) return null;
+  const reference = String(row[referenceColumn]);
   const generation = Number(row.generation);
   const legsAttempted = Number(row.legs_attempted);
   const legsSucceeded = Number(row.legs_succeeded);
   const agreement = parseAnalysisAgreement(row.agreement_json);
+  const subAnalysisHasTenant = tableColumnSet(
+    db,
+    "job_employer_analysis_sub_analyses",
+  ).has("tenant_id");
+  const failureHasTenant = tableColumnSet(
+    db,
+    "job_employer_analysis_failures",
+  ).has("tenant_id");
 
   const subRows = allRows<{ model_id: string; analysis_json: string }>(
     db,
     `SELECT model_id, analysis_json FROM job_employer_analysis_sub_analyses
-      WHERE job_url = ? AND generation = ? ORDER BY model_id`,
-    [jobUrl, generation],
+      WHERE ${subAnalysisHasTenant ? "tenant_id = ? AND " : ""}${referenceColumn} = ?
+        AND generation = ? ORDER BY model_id`,
+    [
+      ...(subAnalysisHasTenant ? [tenantId] : []),
+      reference,
+      generation,
+    ],
   );
   const failureRows = allRows<{ model_id: string; error: string; raw_output: string | null }>(
     db,
     `SELECT model_id, error, raw_output FROM job_employer_analysis_failures
-      WHERE job_url = ? AND generation = ? ORDER BY model_id`,
-    [jobUrl, generation],
+      WHERE ${failureHasTenant ? "tenant_id = ? AND " : ""}${referenceColumn} = ?
+        AND generation = ? ORDER BY model_id`,
+    [
+      ...(failureHasTenant ? [tenantId] : []),
+      reference,
+      generation,
+    ],
   );
 
   const readModel = {
@@ -3405,7 +3441,11 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const score = loadLatestScore(db, jobUrl);
   const materials = loadLatestMaterials(db, jobUrl);
   const materialAnalytics = loadMaterialAnalytics(db, jobUrl);
-  const employerAnalysisJson = loadEmployerAnalysisJson(db, jobUrl);
+  const employerAnalysisJson = loadEmployerAnalysisJson(
+    db,
+    tenantId,
+    jobUrl,
+  );
   const requirementFitReportJson = loadRequirementFitReportJson(db, tenantId, jobUrl);
   const requirementFitBand = fitBand(loadLatestRequirementFitBand(db, tenantId, jobUrl));
   const interviewPrepJson = loadInterviewPrepJson(db, tenantId, jobUrl);

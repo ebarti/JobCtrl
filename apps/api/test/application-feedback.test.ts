@@ -5,7 +5,10 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ensureApplicationFeedbackTables } from "../src/application-feedback.js";
+import {
+  ensureApplicationFeedbackTables,
+  listApplyReviewQueue,
+} from "../src/application-feedback.js";
 import type { ApplyReviewQueueResponse } from "../src/contracts.js";
 import { GmailFeedbackScanError, type GmailFeedbackScanner } from "../src/gmail-feedback-worker.js";
 import { type ActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
@@ -205,6 +208,143 @@ describe("application feedback API", () => {
     });
 
     await app.close();
+  });
+
+  it("uses the URL owner when a review URL equals another stable JobId", () => {
+    const db = new Database(options.dbPath);
+    const uuidShapedUrl = "11111111-1111-4111-8111-111111111111";
+    const urlOwnerJobId = "22222222-2222-4222-8222-222222222222";
+    const idTextOwnerUrl = "https://example.com/jobs/id-text-owner";
+    db.exec(`
+      ALTER TABLE jobs ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local';
+      ALTER TABLE jobs ADD COLUMN job_id TEXT;
+    `);
+    const existingJobs = db.prepare("SELECT url FROM jobs ORDER BY url").all() as Array<{
+      url: string;
+    }>;
+    const setJobId = db.prepare("UPDATE jobs SET job_id = ? WHERE url = ?");
+    for (const job of existingJobs) {
+      setJobId.run(crypto.randomUUID(), job.url);
+    }
+    db.exec(`
+      CREATE UNIQUE INDEX idx_jobs_tenant_job_id_collision_fixture
+        ON jobs(tenant_id, job_id);
+    `);
+    db.prepare(
+      `INSERT INTO jobs (
+         url, title, site, strategy, location, salary, discovered_at,
+         application_url, description, full_description,
+         detail_scraped_at, detail_error, fit_score, score_reasoning,
+         scored_at, tailored_resume_path, tailored_at, tailor_attempts,
+         cover_letter_path, cover_letter_at, cover_attempts,
+         apply_status, apply_error, applied_at, tenant_id, job_id
+       )
+       SELECT ?, title, site, strategy, location, salary, discovered_at,
+              ?, description, full_description, detail_scraped_at,
+              detail_error, fit_score, score_reasoning, scored_at,
+              tailored_resume_path, tailored_at, tailor_attempts,
+              cover_letter_path, cover_letter_at, cover_attempts,
+              apply_status, apply_error, applied_at, 'local', ?
+       FROM jobs
+       WHERE url = ?`,
+    ).run(
+      uuidShapedUrl,
+      uuidShapedUrl,
+      urlOwnerJobId,
+      READY_JOB,
+    );
+    db.prepare(
+      `INSERT INTO jobs (
+         url, title, site, discovered_at, tenant_id, job_id
+       ) VALUES (?, 'ID text owner', 'example', ?, 'local', ?)`,
+    ).run(idTextOwnerUrl, NOW, uuidShapedUrl);
+    db.prepare(
+      `INSERT INTO job_stage_states (
+         job_url, stage, state, attempt_count, max_attempts, started_at,
+         updated_at, finished_at, duration_ms, error_code, error_message,
+         retryable, blocked_by_json, next_action, metadata_json
+       )
+       SELECT ?, stage, state, attempt_count, max_attempts, started_at,
+              updated_at, finished_at, duration_ms, error_code,
+              error_message, retryable, blocked_by_json, next_action,
+              metadata_json
+       FROM job_stage_states
+       WHERE job_url = ?`,
+    ).run(uuidShapedUrl, READY_JOB);
+    db.exec(`
+      DROP TABLE job_employer_analysis_sub_analyses;
+      DROP TABLE job_employer_analysis_failures;
+      DROP TABLE job_employer_analysis;
+      CREATE TABLE job_employer_analysis (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        snapshot_hash TEXT NOT NULL,
+        prompt_version TEXT NOT NULL,
+        sdk_set_version TEXT NOT NULL,
+        cache_key TEXT NOT NULL,
+        role_framing TEXT NOT NULL DEFAULT '',
+        inferred_seniority TEXT NOT NULL DEFAULT '',
+        ideal_candidate_narrative TEXT NOT NULL DEFAULT '',
+        requirements_json TEXT NOT NULL DEFAULT '[]',
+        keywords_json TEXT NOT NULL DEFAULT '[]',
+        agreement_json TEXT NOT NULL DEFAULT '{}',
+        eeo_screen_json TEXT NOT NULL DEFAULT '[]',
+        legs_attempted INTEGER NOT NULL,
+        legs_succeeded INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, job_id, generation)
+      );
+      CREATE TABLE job_employer_analysis_sub_analyses (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        model_id TEXT NOT NULL,
+        analysis_json TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, job_id, generation, model_id)
+      );
+      CREATE TABLE job_employer_analysis_failures (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        model_id TEXT NOT NULL,
+        error TEXT NOT NULL,
+        raw_output TEXT,
+        PRIMARY KEY (tenant_id, job_id, generation, model_id)
+      );
+    `);
+    const insertAnalysis = db.prepare(
+      `INSERT INTO job_employer_analysis (
+         tenant_id, job_id, generation, snapshot_hash, prompt_version,
+         sdk_set_version, cache_key, ideal_candidate_narrative,
+         requirements_json, legs_attempted, legs_succeeded, created_at
+       ) VALUES ('local', ?, 1, ?, 'prompt-v1', 'sdk-v1', ?, ?, '[]', 1, 1, ?)`,
+    );
+    insertAnalysis.run(
+      urlOwnerJobId,
+      "url-owner",
+      "cache:url-owner",
+      "Analysis owned by the UUID-shaped URL.",
+      NOW,
+    );
+    insertAnalysis.run(
+      uuidShapedUrl,
+      "id-owner",
+      "cache:id-owner",
+      "Analysis owned by the colliding JobId.",
+      NOW,
+    );
+
+    const queue = listApplyReviewQueue(db);
+
+    expect(
+      queue.items.find((item) => item.jobKey === uuidShapedUrl),
+    ).toMatchObject({
+      position: {
+        idealCandidate: "Analysis owned by the UUID-shaped URL.",
+      },
+    });
+    db.close();
   });
 
   it("excludes closed jobs through stable snapshot JobId references", async () => {

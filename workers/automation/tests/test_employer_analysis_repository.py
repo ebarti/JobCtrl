@@ -86,6 +86,14 @@ def test_round_trip_preserves_canonical_subanalyses_failures(conn: sqlite3.Conne
 
     loaded = repo.load(LOCAL_TENANT, JobId(JOB_URL))
     assert loaded is not None
+    stable_job_id = conn.execute(
+        "SELECT job_id FROM jobs WHERE url = ?",
+        (JOB_URL,),
+    ).fetchone()[0]
+    assert str(loaded.job_id) == stable_job_id
+    assert conn.execute(
+        "SELECT job_id FROM job_employer_analysis"
+    ).fetchone()[0] == stable_job_id
     assert loaded.generation == 1
     assert loaded.canonical.requirements[0].tier == "must_have"
     assert loaded.canonical.requirements[0].weight == 0.95
