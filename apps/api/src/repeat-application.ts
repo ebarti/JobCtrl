@@ -17,12 +17,15 @@ import {
   hasCompositeJobIdForeignKey,
   jobKeyReferenceColumn,
   jobKeyReferenceJoinToJobs,
+  stableJobIdForUrl,
+  tableColumnSet,
   tableExists,
   type SqliteDatabase,
 } from "./db.js";
 import { InputError } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
+const REPEAT_APPLICATION_REFERENCE_SCHEMA_VERSION = 23;
 
 interface JobIdentityRow extends Record<string, unknown> {
   url: string;
@@ -78,12 +81,56 @@ interface AuditRow extends Record<string, unknown> {
 }
 
 export function ensureRepeatApplicationTables(db: SqliteDatabase): void {
+  const schemaVersion = db.pragma("user_version", {
+    simple: true,
+  }) as number;
+  const overrideColumns = tableColumnSet(
+    db,
+    "application_repeat_overrides",
+  );
+  const stableOverrideReferences =
+    overrideColumns.has("target_job_id")
+    || (
+      overrideColumns.size === 0
+      && schemaVersion >= REPEAT_APPLICATION_REFERENCE_SCHEMA_VERSION
+    );
+  const auditColumns = tableColumnSet(
+    db,
+    "application_repeat_audit",
+  );
+  const stableAuditReference =
+    auditColumns.has("target_job_id")
+    || (
+      auditColumns.size === 0
+      && schemaVersion >= REPEAT_APPLICATION_REFERENCE_SCHEMA_VERSION
+    );
+  const targetReference = stableOverrideReferences
+    ? "target_job_id"
+    : "target_job_key";
+  const priorReference = stableOverrideReferences
+    ? "prior_job_id"
+    : "prior_job_key";
+  const auditTargetReference = stableAuditReference
+    ? "target_job_id"
+    : "target_job_key";
+  const overrideForeignKeys = stableOverrideReferences
+    ? `,
+      FOREIGN KEY (tenant_id, target_job_id)
+        REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE,
+      FOREIGN KEY (tenant_id, prior_job_id)
+        REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE`
+    : "";
+  const auditForeignKey = stableAuditReference
+    ? `,
+      FOREIGN KEY (tenant_id, target_job_id)
+        REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE`
+    : "";
   db.exec(`
     CREATE TABLE IF NOT EXISTS application_repeat_overrides (
       tenant_id            TEXT NOT NULL DEFAULT 'local',
       override_id          TEXT NOT NULL,
-      target_job_key       TEXT NOT NULL,
-      prior_job_key        TEXT NOT NULL,
+      ${targetReference}    TEXT NOT NULL,
+      ${priorReference}     TEXT NOT NULL,
       relationship         TEXT NOT NULL,
       evidence_fingerprint TEXT NOT NULL,
       evidence_json        TEXT NOT NULL,
@@ -91,9 +138,8 @@ export function ensureRepeatApplicationTables(db: SqliteDatabase): void {
       confirmed_by         TEXT NOT NULL,
       confirmed_at         TEXT NOT NULL,
       PRIMARY KEY (tenant_id, override_id)
+      ${overrideForeignKeys}
     );
-    CREATE INDEX IF NOT EXISTS idx_application_repeat_overrides_target
-      ON application_repeat_overrides(tenant_id, target_job_key, confirmed_at DESC);
 
     CREATE TABLE IF NOT EXISTS application_repeat_override_consumptions (
       tenant_id    TEXT NOT NULL DEFAULT 'local',
@@ -108,7 +154,7 @@ export function ensureRepeatApplicationTables(db: SqliteDatabase): void {
       tenant_id            TEXT NOT NULL DEFAULT 'local',
       audit_id             TEXT NOT NULL,
       audit_key            TEXT NOT NULL,
-      target_job_key       TEXT NOT NULL,
+      ${auditTargetReference} TEXT NOT NULL,
       action               TEXT NOT NULL,
       evidence_fingerprint TEXT NOT NULL,
       evidence_json        TEXT NOT NULL,
@@ -118,10 +164,65 @@ export function ensureRepeatApplicationTables(db: SqliteDatabase): void {
       occurred_at          TEXT NOT NULL,
       PRIMARY KEY (tenant_id, audit_id),
       UNIQUE (tenant_id, audit_key)
+      ${auditForeignKey}
     );
-    CREATE INDEX IF NOT EXISTS idx_application_repeat_audit_target
-      ON application_repeat_audit(tenant_id, target_job_key, occurred_at DESC);
   `);
+  const actualOverrideColumns = tableColumnSet(
+    db,
+    "application_repeat_overrides",
+  );
+  const actualTargetReference = actualOverrideColumns.has("target_job_id")
+    ? "target_job_id"
+    : "target_job_key";
+  const actualPriorReference = actualOverrideColumns.has("prior_job_id")
+    ? "prior_job_id"
+    : "prior_job_key";
+  const actualAuditReference = tableColumnSet(
+    db,
+    "application_repeat_audit",
+  ).has("target_job_id")
+    ? "target_job_id"
+    : "target_job_key";
+  ensureIndex(
+    db,
+    "application_repeat_overrides",
+    "idx_application_repeat_overrides_target",
+    ["tenant_id", actualTargetReference, "confirmed_at"],
+    `CREATE INDEX idx_application_repeat_overrides_target
+       ON application_repeat_overrides(
+         tenant_id, ${actualTargetReference}, confirmed_at DESC
+       )`,
+  );
+  if (actualPriorReference === "prior_job_id") {
+    ensureIndex(
+      db,
+      "application_repeat_overrides",
+      "idx_application_repeat_overrides_prior",
+      ["tenant_id", actualPriorReference, "confirmed_at"],
+      `CREATE INDEX idx_application_repeat_overrides_prior
+         ON application_repeat_overrides(
+           tenant_id, ${actualPriorReference}, confirmed_at DESC
+         )`,
+    );
+  }
+  ensureIndex(
+    db,
+    "application_repeat_audit",
+    "idx_application_repeat_audit_target",
+    ["tenant_id", actualAuditReference, "occurred_at"],
+    `CREATE INDEX idx_application_repeat_audit_target
+       ON application_repeat_audit(
+         tenant_id, ${actualAuditReference}, occurred_at DESC
+       )`,
+  );
+  if (
+    schemaVersion >= REPEAT_APPLICATION_REFERENCE_SCHEMA_VERSION
+    && !hasStableRepeatApplicationSchema(db)
+  ) {
+    throw new Error(
+      "Schema v23 requires stable repeat-application references.",
+    );
+  }
 }
 
 export function evaluateRepeatApplication(
@@ -217,16 +318,29 @@ export function recordRepeatApplicationOverride(
 
     const confirmedAt = new Date().toISOString();
     const overrideId = randomUUID();
+    const stableReferences = hasStableRepeatApplicationSchema(db);
+    const targetReference = stableReferences
+      ? stableRepeatJobId(db, targetJobKey)
+      : targetJobKey;
+    const priorReference = stableReferences
+      ? stableRepeatJobId(db, request.priorJobKey)
+      : request.priorJobKey;
+    const targetColumn = stableReferences
+      ? "target_job_id"
+      : "target_job_key";
+    const priorColumn = stableReferences
+      ? "prior_job_id"
+      : "prior_job_key";
     db.prepare(
       `INSERT INTO application_repeat_overrides (
-         tenant_id, override_id, target_job_key, prior_job_key, relationship,
+         tenant_id, override_id, ${targetColumn}, ${priorColumn}, relationship,
          evidence_fingerprint, evidence_json, reason, confirmed_by, confirmed_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       DEFAULT_TENANT,
       overrideId,
-      targetJobKey,
-      request.priorJobKey,
+      targetReference,
+      priorReference,
       selectedPrior.relationship,
       assessment.evidenceFingerprint,
       JSON.stringify(assessment.matches),
@@ -624,17 +738,41 @@ function matchingOverride(
   targetJobKey: string,
   evidenceFingerprint: string,
 ): RepeatApplicationOverride | null {
+  const stableReferences = hasStableRepeatApplicationSchema(db);
+  const targetReference = stableReferences
+    ? stableRepeatJobId(db, targetJobKey)
+    : targetJobKey;
+  const targetExpression = stableReferences
+    ? "target_jobs.url"
+    : "o.target_job_key";
+  const priorExpression = stableReferences
+    ? "prior_jobs.url"
+    : "o.prior_job_key";
+  const targetColumn = stableReferences
+    ? "target_job_id"
+    : "target_job_key";
+  const identityJoins = stableReferences
+    ? `JOIN jobs target_jobs
+         ON target_jobs.tenant_id = o.tenant_id
+        AND target_jobs.job_id = o.target_job_id
+       JOIN jobs prior_jobs
+         ON prior_jobs.tenant_id = o.tenant_id
+        AND prior_jobs.job_id = o.prior_job_id`
+    : "";
   const row = getRow<OverrideRow>(
     db,
-    `SELECT o.override_id, o.target_job_key, o.prior_job_key,
+    `SELECT o.override_id, ${targetExpression} AS target_job_key,
+            ${priorExpression} AS prior_job_key,
             o.evidence_fingerprint, o.reason, o.confirmed_by, o.confirmed_at,
             c.consumed_at, c.run_id AS consumed_run_id
        FROM application_repeat_overrides o
+       ${identityJoins}
        LEFT JOIN application_repeat_override_consumptions c
          ON c.tenant_id = o.tenant_id AND c.override_id = o.override_id
-      WHERE o.tenant_id = ? AND o.target_job_key = ? AND o.evidence_fingerprint = ?
+      WHERE o.tenant_id = ? AND o.${targetColumn} = ?
+        AND o.evidence_fingerprint = ?
       ORDER BY o.confirmed_at DESC, o.override_id DESC LIMIT 1`,
-    [DEFAULT_TENANT, targetJobKey, evidenceFingerprint],
+    [DEFAULT_TENANT, targetReference, evidenceFingerprint],
   );
   return row
     ? {
@@ -688,16 +826,23 @@ function insertAudit(
     occurredAt: string;
   },
 ): void {
+  const stableReferences = hasStableRepeatApplicationSchema(db);
+  const targetColumn = stableReferences
+    ? "target_job_id"
+    : "target_job_key";
+  const targetReference = stableReferences
+    ? stableRepeatJobId(db, input.targetJobKey)
+    : input.targetJobKey;
   db.prepare(
     `INSERT OR IGNORE INTO application_repeat_audit (
-       tenant_id, audit_id, audit_key, target_job_key, action,
+       tenant_id, audit_id, audit_key, ${targetColumn}, action,
        evidence_fingerprint, evidence_json, override_id, actor, reason, occurred_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     DEFAULT_TENANT,
     randomUUID(),
     input.auditKey,
-    input.targetJobKey,
+    targetReference,
     input.action,
     input.evidenceFingerprint,
     input.evidenceJson,
@@ -709,17 +854,40 @@ function insertAudit(
 }
 
 function auditTrail(db: SqliteDatabase, targetJobKey: string): RepeatApplicationAuditEntry[] {
+  const stableReferences = hasStableRepeatApplicationSchema(db);
+  const targetReference = stableReferences
+    ? stableRepeatJobId(db, targetJobKey)
+    : targetJobKey;
+  const targetExpression = stableReferences
+    ? "target_jobs.url"
+    : "a.target_job_key";
+  const priorExpression = stableReferences
+    ? "prior_jobs.url"
+    : "o.prior_job_key";
+  const targetColumn = stableReferences
+    ? "target_job_id"
+    : "target_job_key";
+  const identityJoins = stableReferences
+    ? `JOIN jobs target_jobs
+         ON target_jobs.tenant_id = a.tenant_id
+        AND target_jobs.job_id = a.target_job_id
+       LEFT JOIN jobs prior_jobs
+         ON prior_jobs.tenant_id = o.tenant_id
+        AND prior_jobs.job_id = o.prior_job_id`
+    : "";
   return allRows<AuditRow>(
     db,
-    `SELECT a.audit_id, a.target_job_key, a.action, a.evidence_fingerprint,
-            a.evidence_json, a.override_id, o.prior_job_key,
+    `SELECT a.audit_id, ${targetExpression} AS target_job_key, a.action,
+            a.evidence_fingerprint, a.evidence_json, a.override_id,
+            ${priorExpression} AS prior_job_key,
             a.actor, a.reason, a.occurred_at
        FROM application_repeat_audit a
        LEFT JOIN application_repeat_overrides o
          ON o.tenant_id = a.tenant_id AND o.override_id = a.override_id
-      WHERE a.tenant_id = ? AND a.target_job_key = ?
+       ${identityJoins}
+      WHERE a.tenant_id = ? AND a.${targetColumn} = ?
       ORDER BY a.occurred_at DESC, a.rowid DESC LIMIT 50`,
-    [DEFAULT_TENANT, targetJobKey],
+    [DEFAULT_TENANT, targetReference],
   ).map((row) => ({
     auditId: row.audit_id,
     targetJobKey: row.target_job_key,
@@ -732,6 +900,195 @@ function auditTrail(db: SqliteDatabase, targetJobKey: string): RepeatApplication
     reason: row.reason,
     occurredAt: row.occurred_at,
   }));
+}
+
+function ensureIndex(
+  db: SqliteDatabase,
+  tableName: string,
+  indexName: string,
+  columns: readonly string[],
+  createSql: string,
+): void {
+  const actual = indexColumns(db, tableName, indexName);
+  if (
+    actual?.length === columns.length
+    && actual.every((column, index) => column === columns[index])
+  ) {
+    return;
+  }
+  db.exec(`DROP INDEX IF EXISTS "${indexName}"`);
+  db.exec(createSql);
+}
+
+function indexColumns(
+  db: SqliteDatabase,
+  tableName: string,
+  indexName: string,
+): string[] | null {
+  const index = allRows<{
+    name: string;
+  }>(
+    db,
+    `PRAGMA index_list("${tableName}")`,
+  ).find((row) => row.name === indexName);
+  if (!index) return null;
+  return allRows<{
+    seqno: number;
+    name: string;
+  }>(
+    db,
+    `PRAGMA index_info("${indexName}")`,
+  )
+    .sort((left, right) => left.seqno - right.seqno)
+    .map((row) => row.name);
+}
+
+function primaryKeyColumns(
+  db: SqliteDatabase,
+  tableName: string,
+): string[] {
+  return allRows<{
+    name: string;
+    pk: number;
+  }>(
+    db,
+    `PRAGMA table_info("${tableName}")`,
+  )
+    .filter((row) => row.pk > 0)
+    .sort((left, right) => left.pk - right.pk)
+    .map((row) => row.name);
+}
+
+function hasUniqueIndexColumns(
+  db: SqliteDatabase,
+  tableName: string,
+  columns: readonly string[],
+): boolean {
+  const indexes = allRows<{
+    name: string;
+    unique: number;
+  }>(
+    db,
+    `PRAGMA index_list("${tableName}")`,
+  );
+  return indexes.some((index) => {
+    if (!index.unique) return false;
+    const actual = indexColumns(db, tableName, index.name);
+    return (
+      actual?.length === columns.length
+      && actual.every((column, position) => column === columns[position])
+    );
+  });
+}
+
+function hasStableRepeatApplicationSchema(
+  db: SqliteDatabase,
+): boolean {
+  const tables = [
+    "application_repeat_overrides",
+    "application_repeat_override_consumptions",
+    "application_repeat_audit",
+  ] as const;
+  if (!tables.every((table) => tableExists(db, table))) return false;
+  const overrides = tableColumnSet(
+    db,
+    "application_repeat_overrides",
+  );
+  const audit = tableColumnSet(db, "application_repeat_audit");
+  const sameColumns = (
+    left: readonly string[],
+    right: readonly string[],
+  ): boolean => (
+    left.length === right.length
+    && left.every((column, index) => column === right[index])
+  );
+  return (
+    overrides.has("target_job_id")
+    && overrides.has("prior_job_id")
+    && !overrides.has("target_job_key")
+    && !overrides.has("prior_job_key")
+    && sameColumns(
+      primaryKeyColumns(db, "application_repeat_overrides"),
+      ["tenant_id", "override_id"],
+    )
+    && hasCompositeJobIdForeignKey(
+      db,
+      "application_repeat_overrides",
+      "target_job_id",
+    )
+    && hasCompositeJobIdForeignKey(
+      db,
+      "application_repeat_overrides",
+      "prior_job_id",
+    )
+    && sameColumns(
+      indexColumns(
+        db,
+        "application_repeat_overrides",
+        "idx_application_repeat_overrides_target",
+      ) ?? [],
+      ["tenant_id", "target_job_id", "confirmed_at"],
+    )
+    && sameColumns(
+      indexColumns(
+        db,
+        "application_repeat_overrides",
+        "idx_application_repeat_overrides_prior",
+      ) ?? [],
+      ["tenant_id", "prior_job_id", "confirmed_at"],
+    )
+    && sameColumns(
+      primaryKeyColumns(
+        db,
+        "application_repeat_override_consumptions",
+      ),
+      ["tenant_id", "override_id"],
+    )
+    && hasUniqueIndexColumns(
+      db,
+      "application_repeat_override_consumptions",
+      ["tenant_id", "run_id"],
+    )
+    && audit.has("target_job_id")
+    && !audit.has("target_job_key")
+    && sameColumns(
+      primaryKeyColumns(db, "application_repeat_audit"),
+      ["tenant_id", "audit_id"],
+    )
+    && hasUniqueIndexColumns(
+      db,
+      "application_repeat_audit",
+      ["tenant_id", "audit_key"],
+    )
+    && hasCompositeJobIdForeignKey(
+      db,
+      "application_repeat_audit",
+      "target_job_id",
+    )
+    && sameColumns(
+      indexColumns(
+        db,
+        "application_repeat_audit",
+        "idx_application_repeat_audit_target",
+      ) ?? [],
+      ["tenant_id", "target_job_id", "occurred_at"],
+    )
+  );
+}
+
+function stableRepeatJobId(
+  db: SqliteDatabase,
+  jobKey: string,
+): string {
+  const jobId = stableJobIdForUrl(
+    db,
+    jobKey,
+    DEFAULT_TENANT,
+  );
+  if (!jobId) {
+    throw new InputError(`No stable Job identity for ${jobKey}.`);
+  }
+  return jobId;
 }
 
 function parseEvidenceSnapshot(value: string): RepeatApplicationMatch[] {

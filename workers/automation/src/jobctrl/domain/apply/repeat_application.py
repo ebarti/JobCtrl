@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 LOCAL_TENANT = "local"
+REPEAT_APPLICATION_REFERENCE_SCHEMA_VERSION = 23
 
 _RELATIONSHIP_RANK = {
     "canonical_job": 0,
@@ -60,16 +61,42 @@ def ensure_repeat_application_tables(conn) -> list[str]:
         "application_repeat_override_consumptions",
         "application_repeat_audit",
     ]
-    if all(_table_exists(conn, table_name) for table_name in table_names):
-        return table_names
+    schema_version = int(
+        conn.execute("PRAGMA user_version").fetchone()[0]
+    )
+    stable_references = (
+        schema_version >= REPEAT_APPLICATION_REFERENCE_SCHEMA_VERSION
+    )
+    target_column = (
+        "target_job_id" if stable_references else "target_job_key"
+    )
+    prior_column = (
+        "prior_job_id" if stable_references else "prior_job_key"
+    )
+    override_foreign_keys = (
+        """,
+          FOREIGN KEY (tenant_id, target_job_id)
+            REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE,
+          FOREIGN KEY (tenant_id, prior_job_id)
+            REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_references
+        else ""
+    )
+    audit_foreign_key = (
+        """,
+          FOREIGN KEY (tenant_id, target_job_id)
+            REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_references
+        else ""
+    )
     was_in_transaction = conn.in_transaction
     statements = (
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS application_repeat_overrides (
           tenant_id            TEXT NOT NULL DEFAULT 'local',
           override_id          TEXT NOT NULL,
-          target_job_key       TEXT NOT NULL,
-          prior_job_key        TEXT NOT NULL,
+          {target_column}       TEXT NOT NULL,
+          {prior_column}        TEXT NOT NULL,
           relationship         TEXT NOT NULL,
           evidence_fingerprint TEXT NOT NULL,
           evidence_json        TEXT NOT NULL,
@@ -77,11 +104,8 @@ def ensure_repeat_application_tables(conn) -> list[str]:
           confirmed_by         TEXT NOT NULL,
           confirmed_at         TEXT NOT NULL,
           PRIMARY KEY (tenant_id, override_id)
+          {override_foreign_keys}
         )
-        """,
-        """
-        CREATE INDEX IF NOT EXISTS idx_application_repeat_overrides_target
-          ON application_repeat_overrides(tenant_id, target_job_key, confirmed_at DESC)
         """,
         """
         CREATE TABLE IF NOT EXISTS application_repeat_override_consumptions (
@@ -93,12 +117,12 @@ def ensure_repeat_application_tables(conn) -> list[str]:
           UNIQUE (tenant_id, run_id)
         )
         """,
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS application_repeat_audit (
           tenant_id            TEXT NOT NULL DEFAULT 'local',
           audit_id             TEXT NOT NULL,
           audit_key            TEXT NOT NULL,
-          target_job_key       TEXT NOT NULL,
+          {target_column}       TEXT NOT NULL,
           action               TEXT NOT NULL,
           evidence_fingerprint TEXT NOT NULL,
           evidence_json        TEXT NOT NULL,
@@ -108,15 +132,78 @@ def ensure_repeat_application_tables(conn) -> list[str]:
           occurred_at          TEXT NOT NULL,
           PRIMARY KEY (tenant_id, audit_id),
           UNIQUE (tenant_id, audit_key)
+          {audit_foreign_key}
         )
-        """,
-        """
-        CREATE INDEX IF NOT EXISTS idx_application_repeat_audit_target
-          ON application_repeat_audit(tenant_id, target_job_key, occurred_at DESC)
         """,
     )
     for statement in statements:
         conn.execute(statement)
+    override_columns = _table_columns(
+        conn,
+        "application_repeat_overrides",
+    )
+    actual_target_column = (
+        "target_job_id"
+        if "target_job_id" in override_columns
+        else "target_job_key"
+    )
+    actual_prior_column = (
+        "prior_job_id"
+        if "prior_job_id" in override_columns
+        else "prior_job_key"
+    )
+    audit_columns = _table_columns(
+        conn,
+        "application_repeat_audit",
+    )
+    actual_audit_column = (
+        "target_job_id"
+        if "target_job_id" in audit_columns
+        else "target_job_key"
+    )
+    _ensure_index(
+        conn,
+        table="application_repeat_overrides",
+        name="idx_application_repeat_overrides_target",
+        columns=("tenant_id", actual_target_column, "confirmed_at"),
+        sql=f"""
+        CREATE INDEX idx_application_repeat_overrides_target
+        ON application_repeat_overrides(
+          tenant_id, {actual_target_column}, confirmed_at DESC
+        )
+        """,
+    )
+    if actual_prior_column == "prior_job_id":
+        _ensure_index(
+            conn,
+            table="application_repeat_overrides",
+            name="idx_application_repeat_overrides_prior",
+            columns=("tenant_id", actual_prior_column, "confirmed_at"),
+            sql=f"""
+            CREATE INDEX idx_application_repeat_overrides_prior
+            ON application_repeat_overrides(
+              tenant_id, {actual_prior_column}, confirmed_at DESC
+            )
+            """,
+        )
+    _ensure_index(
+        conn,
+        table="application_repeat_audit",
+        name="idx_application_repeat_audit_target",
+        columns=("tenant_id", actual_audit_column, "occurred_at"),
+        sql=f"""
+        CREATE INDEX idx_application_repeat_audit_target
+        ON application_repeat_audit(
+          tenant_id, {actual_audit_column}, occurred_at DESC
+        )
+        """,
+    )
+    if stable_references and not _has_stable_repeat_application_schema(
+        conn
+    ):
+        raise RuntimeError(
+            "schema v23 requires stable repeat-application references"
+        )
     if not was_in_transaction:
         conn.commit()
     return table_names
@@ -572,18 +659,44 @@ def _equivalent_employer_role(target: dict[str, Any], prior: dict[str, Any]) -> 
 
 
 def _matching_override(conn, target_job_key: str, fingerprint: str) -> dict[str, Any] | None:
-    row = conn.execute(
+    stable_references = _has_stable_repeat_application_schema(conn)
+    if stable_references:
+        target_reference = _stable_job_id_for_job_key(
+            conn,
+            target_job_key,
+        )
+        target_expression = "target_jobs.url"
+        prior_expression = "prior_jobs.url"
+        target_column = "target_job_id"
+        identity_joins = """
+          JOIN jobs AS target_jobs
+            ON target_jobs.tenant_id = o.tenant_id
+           AND target_jobs.job_id = o.target_job_id
+          JOIN jobs AS prior_jobs
+            ON prior_jobs.tenant_id = o.tenant_id
+           AND prior_jobs.job_id = o.prior_job_id
         """
-        SELECT o.override_id, o.target_job_key, o.prior_job_key,
+    else:
+        target_reference = target_job_key
+        target_expression = "o.target_job_key"
+        prior_expression = "o.prior_job_key"
+        target_column = "target_job_key"
+        identity_joins = ""
+    row = conn.execute(
+        f"""
+        SELECT o.override_id, {target_expression} AS target_job_key,
+               {prior_expression} AS prior_job_key,
                o.evidence_fingerprint, o.reason, o.confirmed_by, o.confirmed_at,
                c.consumed_at, c.run_id AS consumed_run_id
           FROM application_repeat_overrides o
+          {identity_joins}
           LEFT JOIN application_repeat_override_consumptions c
             ON c.tenant_id = o.tenant_id AND c.override_id = o.override_id
-         WHERE o.tenant_id = ? AND o.target_job_key = ? AND o.evidence_fingerprint = ?
+         WHERE o.tenant_id = ? AND o.{target_column} = ?
+           AND o.evidence_fingerprint = ?
          ORDER BY o.confirmed_at DESC, o.override_id DESC LIMIT 1
         """,
-        (LOCAL_TENANT, target_job_key, fingerprint),
+        (LOCAL_TENANT, target_reference, fingerprint),
     ).fetchone()
     if row is None:
         return None
@@ -613,10 +726,19 @@ def _insert_audit(
     reason: str | None,
     occurred_at: str,
 ) -> None:
+    stable_references = _has_stable_repeat_application_schema(conn)
+    target_column = (
+        "target_job_id" if stable_references else "target_job_key"
+    )
+    target_reference = (
+        _stable_job_id_for_job_key(conn, target_job_key)
+        if stable_references
+        else target_job_key
+    )
     conn.execute(
-        """
+        f"""
         INSERT OR IGNORE INTO application_repeat_audit (
-          tenant_id, audit_id, audit_key, target_job_key, action,
+          tenant_id, audit_id, audit_key, {target_column}, action,
           evidence_fingerprint, evidence_json, override_id, actor, reason, occurred_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
@@ -624,7 +746,7 @@ def _insert_audit(
             LOCAL_TENANT,
             str(uuid.uuid4()),
             audit_key,
-            target_job_key,
+            target_reference,
             action,
             evidence_fingerprint,
             evidence_json,
@@ -637,18 +759,43 @@ def _insert_audit(
 
 
 def _audit_trail(conn, target_job_key: str) -> list[dict[str, Any]]:
-    rows = conn.execute(
+    stable_references = _has_stable_repeat_application_schema(conn)
+    if stable_references:
+        target_reference = _stable_job_id_for_job_key(
+            conn,
+            target_job_key,
+        )
+        target_expression = "target_jobs.url"
+        prior_expression = "prior_jobs.url"
+        target_column = "target_job_id"
+        identity_joins = """
+          JOIN jobs AS target_jobs
+            ON target_jobs.tenant_id = a.tenant_id
+           AND target_jobs.job_id = a.target_job_id
+          LEFT JOIN jobs AS prior_jobs
+            ON prior_jobs.tenant_id = o.tenant_id
+           AND prior_jobs.job_id = o.prior_job_id
         """
-        SELECT a.audit_id, a.target_job_key, a.action, a.evidence_fingerprint,
-               a.evidence_json, a.override_id, o.prior_job_key,
+    else:
+        target_reference = target_job_key
+        target_expression = "a.target_job_key"
+        prior_expression = "o.prior_job_key"
+        target_column = "target_job_key"
+        identity_joins = ""
+    rows = conn.execute(
+        f"""
+        SELECT a.audit_id, {target_expression} AS target_job_key, a.action,
+               a.evidence_fingerprint, a.evidence_json, a.override_id,
+               {prior_expression} AS prior_job_key,
                a.actor, a.reason, a.occurred_at
           FROM application_repeat_audit a
           LEFT JOIN application_repeat_overrides o
             ON o.tenant_id = a.tenant_id AND o.override_id = a.override_id
-         WHERE a.tenant_id = ? AND a.target_job_key = ?
+          {identity_joins}
+         WHERE a.tenant_id = ? AND a.{target_column} = ?
          ORDER BY a.occurred_at DESC, a.rowid DESC LIMIT 50
         """,
-        (LOCAL_TENANT, target_job_key),
+        (LOCAL_TENANT, target_reference),
     ).fetchall()
     return [
         {
@@ -692,6 +839,204 @@ def _table_columns(conn, table_name: str) -> set[str]:
             f'PRAGMA table_info("{table_name}")'
         ).fetchall()
     }
+
+
+def _primary_key_columns(conn, table_name: str) -> tuple[str, ...]:
+    keyed = [
+        (int(row[5]), str(row[1]))
+        for row in conn.execute(
+            f'PRAGMA table_info("{table_name}")'
+        ).fetchall()
+        if int(row[5]) > 0
+    ]
+    return tuple(column for _position, column in sorted(keyed))
+
+
+def _index_columns(
+    conn,
+    table_name: str,
+    index_name: str,
+) -> tuple[str, ...] | None:
+    for row in conn.execute(
+        f'PRAGMA index_list("{table_name}")'
+    ).fetchall():
+        if str(row[1]) != index_name:
+            continue
+        return tuple(
+            str(index_row[2])
+            for index_row in conn.execute(
+                f'PRAGMA index_info("{index_name}")'
+            ).fetchall()
+        )
+    return None
+
+
+def _ensure_index(
+    conn,
+    *,
+    table: str,
+    name: str,
+    columns: tuple[str, ...],
+    sql: str,
+) -> None:
+    if _index_columns(conn, table, name) == columns:
+        return
+    conn.execute(f'DROP INDEX IF EXISTS "{name}"')
+    conn.execute(sql)
+
+
+def _has_unique_index_columns(
+    conn,
+    *,
+    table: str,
+    columns: tuple[str, ...],
+) -> bool:
+    for row in conn.execute(
+        f'PRAGMA index_list("{table}")'
+    ).fetchall():
+        if not bool(row[2]):
+            continue
+        name = str(row[1])
+        if _index_columns(conn, table, name) == columns:
+            return True
+    return False
+
+
+def _has_composite_job_reference_fk(
+    conn,
+    table: str,
+    reference_column: str,
+) -> bool:
+    groups: dict[int, set[tuple[str, str]]] = {}
+    cascades: dict[int, bool] = {}
+    for row in conn.execute(
+        f'PRAGMA foreign_key_list("{table}")'
+    ).fetchall():
+        if str(row[2]) != "jobs":
+            continue
+        foreign_key_id = int(row[0])
+        groups.setdefault(foreign_key_id, set()).add(
+            (str(row[3]), str(row[4]))
+        )
+        cascades[foreign_key_id] = str(row[6]).upper() == "CASCADE"
+    expected = {
+        ("tenant_id", "tenant_id"),
+        (reference_column, "job_id"),
+    }
+    return any(
+        columns == expected and cascades.get(foreign_key_id, False)
+        for foreign_key_id, columns in groups.items()
+    )
+
+
+def _has_stable_repeat_application_schema(conn) -> bool:
+    tables = (
+        "application_repeat_overrides",
+        "application_repeat_override_consumptions",
+        "application_repeat_audit",
+    )
+    if not all(_table_exists(conn, table) for table in tables):
+        return False
+    overrides = _table_columns(
+        conn,
+        "application_repeat_overrides",
+    )
+    audit = _table_columns(conn, "application_repeat_audit")
+    return (
+        {"target_job_id", "prior_job_id"}.issubset(overrides)
+        and "target_job_key" not in overrides
+        and "prior_job_key" not in overrides
+        and _primary_key_columns(
+            conn,
+            "application_repeat_overrides",
+        )
+        == ("tenant_id", "override_id")
+        and _has_composite_job_reference_fk(
+            conn,
+            "application_repeat_overrides",
+            "target_job_id",
+        )
+        and _has_composite_job_reference_fk(
+            conn,
+            "application_repeat_overrides",
+            "prior_job_id",
+        )
+        and _index_columns(
+            conn,
+            "application_repeat_overrides",
+            "idx_application_repeat_overrides_target",
+        )
+        == ("tenant_id", "target_job_id", "confirmed_at")
+        and _index_columns(
+            conn,
+            "application_repeat_overrides",
+            "idx_application_repeat_overrides_prior",
+        )
+        == ("tenant_id", "prior_job_id", "confirmed_at")
+        and _primary_key_columns(
+            conn,
+            "application_repeat_override_consumptions",
+        )
+        == ("tenant_id", "override_id")
+        and _has_unique_index_columns(
+            conn,
+            table="application_repeat_override_consumptions",
+            columns=("tenant_id", "run_id"),
+        )
+        and "target_job_id" in audit
+        and "target_job_key" not in audit
+        and _primary_key_columns(
+            conn,
+            "application_repeat_audit",
+        )
+        == ("tenant_id", "audit_id")
+        and _has_unique_index_columns(
+            conn,
+            table="application_repeat_audit",
+            columns=("tenant_id", "audit_key"),
+        )
+        and _has_composite_job_reference_fk(
+            conn,
+            "application_repeat_audit",
+            "target_job_id",
+        )
+        and _index_columns(
+            conn,
+            "application_repeat_audit",
+            "idx_application_repeat_audit_target",
+        )
+        == ("tenant_id", "target_job_id", "occurred_at")
+    )
+
+
+def _stable_job_id_for_job_key(conn, job_key: str) -> str:
+    row = conn.execute(
+        """
+        SELECT job_id
+        FROM jobs
+        WHERE tenant_id = ? AND url = ?
+        LIMIT 1
+        """,
+        (LOCAL_TENANT, job_key),
+    ).fetchone()
+    if row is None and _table_exists(conn, "job_identity_aliases"):
+        row = conn.execute(
+            """
+            SELECT aliases.job_id
+            FROM job_identity_aliases AS aliases
+            JOIN jobs
+              ON jobs.tenant_id = aliases.tenant_id
+             AND jobs.job_id = aliases.job_id
+            WHERE aliases.tenant_id = ?
+              AND aliases.alias_kind = 'posting_url'
+              AND aliases.alias_value = ?
+            LIMIT 1
+            """,
+            (LOCAL_TENANT, job_key),
+        ).fetchone()
+    if row is None:
+        raise ValueError(f"job not found: {job_key}")
+    return str(row[0])
 
 
 def _compact_json(value: Any) -> str:

@@ -338,7 +338,7 @@ def test_v11_scoring_references_migrate_alias_histories_and_reopen(
     assert (
         int(migrated.execute("PRAGMA user_version").fetchone()[0])
         == SCHEMA_VERSION
-        == 22
+        == 23
     )
     assert _columns(migrated, "job_scores") >= {"tenant_id", "job_id"}
     assert "job_url" not in _columns(migrated, "job_scores")
@@ -404,7 +404,7 @@ def test_v11_scoring_references_migrate_alias_histories_and_reopen(
     assert (
         int(reopened.execute("PRAGMA user_version").fetchone()[0])
         == SCHEMA_VERSION
-        == 22
+        == 23
     )
 
 
@@ -553,7 +553,7 @@ def test_scoring_migration_rolls_back_and_retries_after_verification_failure(
     assert (
         int(retried.execute("PRAGMA user_version").fetchone()[0])
         == SCHEMA_VERSION
-        == 22
+        == 23
     )
     assert [
         tuple(row)

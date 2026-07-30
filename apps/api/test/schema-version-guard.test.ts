@@ -63,7 +63,7 @@ describe("schema version guard at DB open", () => {
   });
 
   it("opens the worker-owned schema-v14 artifact registry", () => {
-    expect(SUPPORTED_SCHEMA_VERSION).toBe(22);
+    expect(SUPPORTED_SCHEMA_VERSION).toBe(23);
     const { dbPath, cleanup } = makeDbWithUserVersion(14);
     try {
       openDatabase(dbPath).close();

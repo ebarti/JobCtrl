@@ -83,7 +83,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v22 (application-feedback candidate references): linked email evidence and
 # pending/decided outcome suggestions reference the same tenant-scoped stable
 # Job aggregate while preserving their evidence and decision links.
-SCHEMA_VERSION = 22
+# v23 (repeat-application references): evidence-bound override and audit
+# ownership moves to stable target/prior JobIds without rewriting the immutable
+# URL-shaped evidence snapshot or its fingerprint.
+SCHEMA_VERSION = 23
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -236,6 +239,7 @@ def _schema_migrations() -> tuple[
         (20, ensure_application_review_references_v20),
         (21, ensure_application_outcome_references_v21),
         (22, ensure_application_feedback_candidate_references_v22),
+        (23, ensure_repeat_application_references_v23),
     )
 
 
@@ -4691,6 +4695,13 @@ def _reassign_discovery_identity_references(
         )
     if _has_application_feedback_candidate_schema_v22(conn):
         _reassign_application_feedback_candidate_references_v22(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+    if _has_repeat_application_reference_schema_v23(conn):
+        _reassign_repeat_application_references_v23(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
@@ -13757,6 +13768,624 @@ def _reassign_application_feedback_candidate_references_v22(
             (surviving_job_id, tenant_id, losing_job_id),
         )
     _verify_application_feedback_candidate_references_v22(
+        conn,
+        expected_counts=expected_counts,
+    )
+
+
+_REPEAT_APPLICATION_REFERENCE_SCHEMA_VERSION = 23
+_REPEAT_APPLICATION_REFERENCE_TABLES = (
+    "application_repeat_overrides",
+    "application_repeat_override_consumptions",
+    "application_repeat_audit",
+)
+
+
+def _create_repeat_application_overrides_table_v23(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    stable_references: bool,
+) -> None:
+    target_column = (
+        "target_job_id" if stable_references else "target_job_key"
+    )
+    prior_column = (
+        "prior_job_id" if stable_references else "prior_job_key"
+    )
+    foreign_keys = (
+        """,
+            FOREIGN KEY (tenant_id, target_job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE,
+            FOREIGN KEY (tenant_id, prior_job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_references
+        else ""
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            tenant_id            TEXT NOT NULL DEFAULT 'local',
+            override_id          TEXT NOT NULL,
+            {target_column}      TEXT NOT NULL,
+            {prior_column}       TEXT NOT NULL,
+            relationship         TEXT NOT NULL,
+            evidence_fingerprint TEXT NOT NULL,
+            evidence_json        TEXT NOT NULL,
+            reason               TEXT NOT NULL,
+            confirmed_by         TEXT NOT NULL,
+            confirmed_at         TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, override_id)
+            {foreign_keys}
+        )
+        """
+    )
+
+
+def _create_repeat_application_consumptions_table_v23(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            tenant_id   TEXT NOT NULL DEFAULT 'local',
+            override_id TEXT NOT NULL,
+            run_id      TEXT NOT NULL,
+            consumed_at TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, override_id),
+            UNIQUE (tenant_id, run_id)
+        )
+        """
+    )
+
+
+def _create_repeat_application_audit_table_v23(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    stable_reference: bool,
+) -> None:
+    target_column = (
+        "target_job_id" if stable_reference else "target_job_key"
+    )
+    foreign_key = (
+        """,
+            FOREIGN KEY (tenant_id, target_job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_reference
+        else ""
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            tenant_id            TEXT NOT NULL DEFAULT 'local',
+            audit_id             TEXT NOT NULL,
+            audit_key            TEXT NOT NULL,
+            {target_column}      TEXT NOT NULL,
+            action               TEXT NOT NULL,
+            evidence_fingerprint TEXT NOT NULL,
+            evidence_json        TEXT NOT NULL,
+            override_id          TEXT,
+            actor                TEXT NOT NULL,
+            reason               TEXT,
+            occurred_at          TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, audit_id),
+            UNIQUE (tenant_id, audit_key)
+            {foreign_key}
+        )
+        """
+    )
+
+
+def _create_repeat_application_indexes_v23(
+    conn: sqlite3.Connection,
+    *,
+    target_reference: str,
+    prior_reference: str,
+    audit_reference: str,
+) -> None:
+    indexes = (
+        (
+            "application_repeat_overrides",
+            "idx_application_repeat_overrides_target",
+            ("tenant_id", target_reference, "confirmed_at"),
+            f"""
+            CREATE INDEX idx_application_repeat_overrides_target
+            ON application_repeat_overrides(
+                tenant_id,
+                {target_reference},
+                confirmed_at DESC
+            )
+            """,
+        ),
+        (
+            "application_repeat_overrides",
+            "idx_application_repeat_overrides_prior",
+            ("tenant_id", prior_reference, "confirmed_at"),
+            f"""
+            CREATE INDEX idx_application_repeat_overrides_prior
+            ON application_repeat_overrides(
+                tenant_id,
+                {prior_reference},
+                confirmed_at DESC
+            )
+            """,
+        ),
+        (
+            "application_repeat_audit",
+            "idx_application_repeat_audit_target",
+            ("tenant_id", audit_reference, "occurred_at"),
+            f"""
+            CREATE INDEX idx_application_repeat_audit_target
+            ON application_repeat_audit(
+                tenant_id,
+                {audit_reference},
+                occurred_at DESC
+            )
+            """,
+        ),
+    )
+    for table, name, columns, create_sql in indexes:
+        if _has_index(
+            conn,
+            table,
+            name,
+            columns,
+            unique=False,
+        ):
+            continue
+        conn.execute(f'DROP INDEX IF EXISTS "{name}"')
+        conn.execute(create_sql)
+
+
+def _has_unique_index_columns_v23(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    columns: tuple[str, ...],
+) -> bool:
+    for row in conn.execute(
+        f'PRAGMA index_list("{table}")'
+    ).fetchall():
+        if not bool(row[2]):
+            continue
+        name = str(row[1])
+        actual_columns = tuple(
+            str(index_row[2])
+            for index_row in conn.execute(
+                f'PRAGMA index_info("{name}")'
+            ).fetchall()
+        )
+        if actual_columns == columns:
+            return True
+    return False
+
+
+def _has_repeat_application_reference_schema_v23(
+    conn: sqlite3.Connection,
+) -> bool:
+    overrides = "application_repeat_overrides"
+    consumptions = "application_repeat_override_consumptions"
+    audit = "application_repeat_audit"
+    return (
+        "target_job_id" in _table_columns(conn, overrides)
+        and "target_job_key" not in _table_columns(conn, overrides)
+        and "prior_job_id" in _table_columns(conn, overrides)
+        and "prior_job_key" not in _table_columns(conn, overrides)
+        and _primary_key_columns(conn, overrides)
+        == ("tenant_id", "override_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            overrides,
+            "target_job_id",
+        )
+        and _has_composite_job_id_foreign_key(
+            conn,
+            overrides,
+            "prior_job_id",
+        )
+        and _has_index(
+            conn,
+            overrides,
+            "idx_application_repeat_overrides_target",
+            ("tenant_id", "target_job_id", "confirmed_at"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            overrides,
+            "idx_application_repeat_overrides_prior",
+            ("tenant_id", "prior_job_id", "confirmed_at"),
+            unique=False,
+        )
+        and _primary_key_columns(conn, consumptions)
+        == ("tenant_id", "override_id")
+        and _has_unique_index_columns_v23(
+            conn,
+            table=consumptions,
+            columns=("tenant_id", "run_id"),
+        )
+        and "target_job_id" in _table_columns(conn, audit)
+        and "target_job_key" not in _table_columns(conn, audit)
+        and _primary_key_columns(conn, audit)
+        == ("tenant_id", "audit_id")
+        and _has_unique_index_columns_v23(
+            conn,
+            table=audit,
+            columns=("tenant_id", "audit_key"),
+        )
+        and _has_composite_job_id_foreign_key(
+            conn,
+            audit,
+            "target_job_id",
+        )
+        and _has_index(
+            conn,
+            audit,
+            "idx_application_repeat_audit_target",
+            ("tenant_id", "target_job_id", "occurred_at"),
+            unique=False,
+        )
+    )
+
+
+def _canonical_repeat_application_override_rows_v23(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    target_column = _legacy_or_stable_reference_column(
+        conn,
+        "application_repeat_overrides",
+        stable="target_job_id",
+        legacy="target_job_key",
+    )
+    prior_column = _legacy_or_stable_reference_column(
+        conn,
+        "application_repeat_overrides",
+        stable="prior_job_id",
+        legacy="prior_job_key",
+    )
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, override_id, {target_column}, {prior_column},
+               relationship, evidence_fingerprint, evidence_json, reason,
+               confirmed_by, confirmed_at
+        FROM application_repeat_overrides
+        ORDER BY tenant_id, override_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        target_reference = str(row[2])
+        prior_reference = str(row[3])
+        target_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=target_reference,
+            legacy_url=target_column == "target_job_key",
+        )
+        prior_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=prior_reference,
+            legacy_url=prior_column == "prior_job_key",
+        )
+        if target_job_id is None:
+            raise RuntimeError(
+                "repeat-application reference migration could not resolve "
+                f"application_repeat_overrides.{target_column}="
+                f"{target_reference!r}"
+            )
+        if prior_job_id is None:
+            raise RuntimeError(
+                "repeat-application reference migration could not resolve "
+                f"application_repeat_overrides.{prior_column}="
+                f"{prior_reference!r}"
+            )
+        _validate_job_uuid(target_job_id)
+        _validate_job_uuid(prior_job_id)
+        canonical.append(
+            (
+                tenant_id,
+                str(row[1]),
+                target_job_id,
+                prior_job_id,
+                *tuple(row[4:]),
+            )
+        )
+    return canonical
+
+
+def _canonical_repeat_application_audit_rows_v23(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    target_column = _legacy_or_stable_reference_column(
+        conn,
+        "application_repeat_audit",
+        stable="target_job_id",
+        legacy="target_job_key",
+    )
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, audit_id, audit_key, {target_column}, action,
+               evidence_fingerprint, evidence_json, override_id, actor,
+               reason, occurred_at
+        FROM application_repeat_audit
+        ORDER BY tenant_id, audit_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        tenant_id = str(row[0])
+        target_reference = str(row[3])
+        target_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=target_reference,
+            legacy_url=target_column == "target_job_key",
+        )
+        if target_job_id is None:
+            raise RuntimeError(
+                "repeat-application reference migration could not resolve "
+                f"application_repeat_audit.{target_column}="
+                f"{target_reference!r}"
+            )
+        _validate_job_uuid(target_job_id)
+        canonical.append(
+            (
+                tenant_id,
+                str(row[1]),
+                str(row[2]),
+                target_job_id,
+                *tuple(row[4:]),
+            )
+        )
+    return canonical
+
+
+def ensure_repeat_application_references_v23(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move repeat-protection ownership to stable target/prior JobIds."""
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _REPEAT_APPLICATION_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _APPLICATION_FEEDBACK_CANDIDATE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "repeat-application reference migration requires "
+            "application-feedback candidate schema v22"
+        )
+
+    conn.execute("SAVEPOINT repeat_application_references_v23")
+    try:
+        if not _has_application_feedback_candidate_schema_v22(conn):
+            raise RuntimeError(
+                "repeat-application reference migration requires the "
+                "stable application-feedback candidate reference schema"
+            )
+        from jobctrl.domain.apply.repeat_application import (
+            ensure_repeat_application_tables,
+        )
+
+        ensure_repeat_application_tables(conn)
+        expected_counts = {
+            table: int(
+                conn.execute(
+                    f'SELECT COUNT(*) FROM "{table}"'
+                ).fetchone()[0]
+            )
+            for table in _REPEAT_APPLICATION_REFERENCE_TABLES
+        }
+
+        if not {
+            "target_job_id",
+            "prior_job_id",
+        }.issubset(
+            _table_columns(conn, "application_repeat_overrides")
+        ):
+            override_rows = (
+                _canonical_repeat_application_override_rows_v23(conn)
+            )
+            conn.execute(
+                "DROP TABLE IF EXISTS application_repeat_overrides_v23"
+            )
+            _create_repeat_application_overrides_table_v23(
+                conn,
+                table="application_repeat_overrides_v23",
+                stable_references=True,
+            )
+            conn.executemany(
+                """
+                INSERT INTO application_repeat_overrides_v23 (
+                    tenant_id, override_id, target_job_id, prior_job_id,
+                    relationship, evidence_fingerprint, evidence_json,
+                    reason, confirmed_by, confirmed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                override_rows,
+            )
+            conn.execute('DROP TABLE "application_repeat_overrides"')
+            conn.execute(
+                'ALTER TABLE "application_repeat_overrides_v23" '
+                'RENAME TO "application_repeat_overrides"'
+            )
+
+        if "target_job_id" not in _table_columns(
+            conn,
+            "application_repeat_audit",
+        ):
+            audit_rows = _canonical_repeat_application_audit_rows_v23(
+                conn
+            )
+            conn.execute(
+                "DROP TABLE IF EXISTS application_repeat_audit_v23"
+            )
+            _create_repeat_application_audit_table_v23(
+                conn,
+                table="application_repeat_audit_v23",
+                stable_reference=True,
+            )
+            conn.executemany(
+                """
+                INSERT INTO application_repeat_audit_v23 (
+                    tenant_id, audit_id, audit_key, target_job_id, action,
+                    evidence_fingerprint, evidence_json, override_id, actor,
+                    reason, occurred_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                audit_rows,
+            )
+            conn.execute('DROP TABLE "application_repeat_audit"')
+            conn.execute(
+                'ALTER TABLE "application_repeat_audit_v23" '
+                'RENAME TO "application_repeat_audit"'
+            )
+
+        _create_repeat_application_indexes_v23(
+            conn,
+            target_reference="target_job_id",
+            prior_reference="prior_job_id",
+            audit_reference="target_job_id",
+        )
+        _verify_repeat_application_references_v23(
+            conn,
+            expected_counts=expected_counts,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_REPEAT_APPLICATION_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT repeat_application_references_v23"
+        )
+        conn.commit()
+    except BaseException:
+        conn.execute(
+            "ROLLBACK TO SAVEPOINT repeat_application_references_v23"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT repeat_application_references_v23"
+        )
+        raise
+
+    return list(_REPEAT_APPLICATION_REFERENCE_TABLES)
+
+
+def _verify_repeat_application_references_v23(
+    conn: sqlite3.Connection,
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    if not _has_repeat_application_reference_schema_v23(conn):
+        raise RuntimeError(
+            "repeat-application reference migration did not create the "
+            "stable reference schema"
+        )
+    for table, expected_count in expected_counts.items():
+        observed_count = int(
+            conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0]
+        )
+        if observed_count != expected_count:
+            raise RuntimeError(
+                "repeat-application reference migration changed "
+                f"{table} history count: expected {expected_count}, "
+                f"found {observed_count}"
+            )
+
+    references = (
+        (
+            "application_repeat_overrides",
+            "target_job_id",
+        ),
+        (
+            "application_repeat_overrides",
+            "prior_job_id",
+        ),
+        (
+            "application_repeat_audit",
+            "target_job_id",
+        ),
+    )
+    for table, column in references:
+        orphan = conn.execute(
+            f"""
+            SELECT source.{column}
+            FROM "{table}" AS source
+            LEFT JOIN jobs
+              ON jobs.tenant_id = source.tenant_id
+             AND jobs.job_id = source.{column}
+            WHERE jobs.job_id IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if orphan is not None:
+            raise RuntimeError(
+                "repeat-application reference migration left an "
+                f"unresolved JobId in {table}.{column}"
+            )
+        for row in conn.execute(
+            f'SELECT DISTINCT {column} FROM "{table}"'
+        ).fetchall():
+            _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "repeat-application reference migration found a foreign-key "
+            "violation"
+        )
+
+
+def _reassign_repeat_application_references_v23(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    if losing_job_id == surviving_job_id:
+        return
+    expected_counts = {
+        table: int(
+            conn.execute(
+                f'SELECT COUNT(*) FROM "{table}"'
+            ).fetchone()[0]
+        )
+        for table in _REPEAT_APPLICATION_REFERENCE_TABLES
+    }
+    conn.execute(
+        """
+        UPDATE application_repeat_overrides
+        SET target_job_id = ?
+        WHERE tenant_id = ? AND target_job_id = ?
+        """,
+        (surviving_job_id, tenant_id, losing_job_id),
+    )
+    conn.execute(
+        """
+        UPDATE application_repeat_overrides
+        SET prior_job_id = ?
+        WHERE tenant_id = ? AND prior_job_id = ?
+        """,
+        (surviving_job_id, tenant_id, losing_job_id),
+    )
+    conn.execute(
+        """
+        UPDATE application_repeat_audit
+        SET target_job_id = ?
+        WHERE tenant_id = ? AND target_job_id = ?
+        """,
+        (surviving_job_id, tenant_id, losing_job_id),
+    )
+    _verify_repeat_application_references_v23(
         conn,
         expected_counts=expected_counts,
     )

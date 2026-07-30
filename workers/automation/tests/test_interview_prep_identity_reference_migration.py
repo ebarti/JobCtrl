@@ -323,7 +323,7 @@ def test_v17_interview_prep_migrates_alias_histories_and_uuid_urls(
     assert (
         reopened.execute("PRAGMA user_version").fetchone()[0]
         == SCHEMA_VERSION
-        == 22
+        == 23
     )
     for table in database_module._INTERVIEW_PREP_REFERENCE_TABLES:
         assert "job_id" in _columns(reopened, table)

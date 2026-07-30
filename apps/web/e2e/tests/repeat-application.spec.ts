@@ -30,10 +30,34 @@ function repeatApplicationTablesExist(db: Database.Database): boolean {
 
 function clearRepeatApplicationState(db: Database.Database): void {
   db.prepare(
-    "DELETE FROM application_repeat_override_consumptions WHERE override_id IN (SELECT override_id FROM application_repeat_overrides WHERE target_job_key = ?)",
+    `DELETE FROM application_repeat_override_consumptions
+      WHERE tenant_id = 'local'
+        AND override_id IN (
+          SELECT override_id
+            FROM application_repeat_overrides
+           WHERE tenant_id = 'local'
+             AND target_job_id = (
+               SELECT job_id FROM jobs
+                WHERE tenant_id = 'local' AND url = ?
+             )
+        )`,
   ).run(TARGET);
-  db.prepare("DELETE FROM application_repeat_audit WHERE target_job_key = ?").run(TARGET);
-  db.prepare("DELETE FROM application_repeat_overrides WHERE target_job_key = ?").run(TARGET);
+  db.prepare(
+    `DELETE FROM application_repeat_audit
+      WHERE tenant_id = 'local'
+        AND target_job_id = (
+          SELECT job_id FROM jobs
+           WHERE tenant_id = 'local' AND url = ?
+        )`,
+  ).run(TARGET);
+  db.prepare(
+    `DELETE FROM application_repeat_overrides
+      WHERE tenant_id = 'local'
+        AND target_job_id = (
+          SELECT job_id FROM jobs
+           WHERE tenant_id = 'local' AND url = ?
+        )`,
+  ).run(TARGET);
 }
 
 function restoreRows(
@@ -94,7 +118,13 @@ test("repeat application block and reasoned override reach only the simulated su
   const originalRepeatOverrides = hasRepeatApplicationTables
     ? (db
         .prepare(
-          "SELECT * FROM application_repeat_overrides WHERE tenant_id = 'local' AND target_job_key = ?",
+          `SELECT *
+             FROM application_repeat_overrides
+            WHERE tenant_id = 'local'
+              AND target_job_id = (
+                SELECT job_id FROM jobs
+                 WHERE tenant_id = 'local' AND url = ?
+              )`,
         )
         .all(TARGET) as Array<Record<string, unknown>>)
     : [];
@@ -103,16 +133,26 @@ test("repeat application block and reasoned override reach only the simulated su
         .prepare(
           `SELECT c.*
              FROM application_repeat_override_consumptions c
-             JOIN application_repeat_overrides o
+            JOIN application_repeat_overrides o
                ON o.tenant_id = c.tenant_id AND o.override_id = c.override_id
-            WHERE o.tenant_id = 'local' AND o.target_job_key = ?`,
+            WHERE o.tenant_id = 'local'
+              AND o.target_job_id = (
+                SELECT job_id FROM jobs
+                 WHERE tenant_id = 'local' AND url = ?
+              )`,
         )
         .all(TARGET) as Array<Record<string, unknown>>)
     : [];
   const originalRepeatAudit = hasRepeatApplicationTables
     ? (db
         .prepare(
-          "SELECT * FROM application_repeat_audit WHERE tenant_id = 'local' AND target_job_key = ?",
+          `SELECT *
+             FROM application_repeat_audit
+            WHERE tenant_id = 'local'
+              AND target_job_id = (
+                SELECT job_id FROM jobs
+                 WHERE tenant_id = 'local' AND url = ?
+              )`,
         )
         .all(TARGET) as Array<Record<string, unknown>>)
     : [];
@@ -294,9 +334,25 @@ print(job["url"])
 
     const override = db
       .prepare(
-        `SELECT override_id, target_job_key, prior_job_key, evidence_fingerprint, reason, confirmed_by, confirmed_at
-           FROM application_repeat_overrides
-          WHERE tenant_id = 'local' AND target_job_key = ?
+        `SELECT overrides.override_id,
+                target_jobs.url AS target_job_key,
+                prior_jobs.url AS prior_job_key,
+                overrides.evidence_fingerprint,
+                overrides.reason,
+                overrides.confirmed_by,
+                overrides.confirmed_at
+           FROM application_repeat_overrides AS overrides
+           JOIN jobs AS target_jobs
+             ON target_jobs.tenant_id = overrides.tenant_id
+            AND target_jobs.job_id = overrides.target_job_id
+           JOIN jobs AS prior_jobs
+             ON prior_jobs.tenant_id = overrides.tenant_id
+            AND prior_jobs.job_id = overrides.prior_job_id
+          WHERE overrides.tenant_id = 'local'
+            AND overrides.target_job_id = (
+              SELECT job_id FROM jobs
+               WHERE tenant_id = 'local' AND url = ?
+            )
           ORDER BY confirmed_at DESC LIMIT 1`,
       )
       .get(TARGET) as Record<string, unknown>;
@@ -311,7 +367,10 @@ print(job["url"])
         `SELECT action, evidence_fingerprint, override_id
            FROM application_repeat_audit
           WHERE tenant_id = 'local'
-            AND target_job_key = ?
+            AND target_job_id = (
+              SELECT job_id FROM jobs
+               WHERE tenant_id = 'local' AND url = ?
+            )
             AND evidence_fingerprint = ?
             AND action IN ('blocked', 'override_recorded', 'override_consumed')
           ORDER BY CASE action

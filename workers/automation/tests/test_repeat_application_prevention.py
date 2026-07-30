@@ -125,9 +125,21 @@ def _insert_override(
     conn.execute(
         """
         INSERT INTO application_repeat_overrides (
-          tenant_id, override_id, target_job_key, prior_job_key, relationship,
+          tenant_id, override_id, target_job_id, prior_job_id, relationship,
           evidence_fingerprint, evidence_json, reason, confirmed_by, confirmed_at
-        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, 'qa-user', ?)
+        ) VALUES (
+          'local',
+          ?,
+          (
+            SELECT job_id FROM jobs
+            WHERE tenant_id = 'local' AND url = ?
+          ),
+          (
+            SELECT job_id FROM jobs
+            WHERE tenant_id = 'local' AND url = ?
+          ),
+          ?, ?, ?, ?, 'qa-user', ?
+        )
         """,
         (
             override_id,
@@ -395,7 +407,16 @@ def test_authoritative_claim_blocks_direct_dispatch_and_repeated_standing_polls(
     )
     assert (
         conn.execute(
-            "SELECT COUNT(*) FROM application_repeat_audit WHERE target_job_key = ? AND action = 'confirmation_required'",
+            """
+            SELECT COUNT(*)
+            FROM application_repeat_audit
+            WHERE tenant_id = 'local'
+              AND target_job_id = (
+                SELECT job_id FROM jobs
+                WHERE tenant_id = 'local' AND url = ?
+              )
+              AND action = 'confirmation_required'
+            """,
             (TARGET,),
         ).fetchone()[0]
         == 1
@@ -441,7 +462,16 @@ def test_non_targeted_claim_skips_protected_high_ranked_job_for_distinct_role(
     )
     assert (
         conn.execute(
-            "SELECT COUNT(*) FROM application_repeat_audit WHERE target_job_key = ? AND action = 'confirmation_required'",
+            """
+            SELECT COUNT(*)
+            FROM application_repeat_audit
+            WHERE tenant_id = 'local'
+              AND target_job_id = (
+                SELECT job_id FROM jobs
+                WHERE tenant_id = 'local' AND url = ?
+              )
+              AND action = 'confirmation_required'
+            """,
             (TARGET,),
         ).fetchone()[0]
         == 1
@@ -469,7 +499,16 @@ def test_protected_queue_audit_survives_lower_candidate_approval_refusal(
 
     assert acquire_job(worker_id=51, approval_required=True) is None
     assert conn.execute(
-        "SELECT COUNT(*) FROM application_repeat_audit WHERE target_job_key = ? AND action = 'confirmation_required'",
+        """
+        SELECT COUNT(*)
+        FROM application_repeat_audit
+        WHERE tenant_id = 'local'
+          AND target_job_id = (
+            SELECT job_id FROM jobs
+            WHERE tenant_id = 'local' AND url = ?
+          )
+          AND action = 'confirmation_required'
+        """,
         (TARGET,),
     ).fetchone()[0] == 1
 
@@ -760,7 +799,7 @@ def test_schema_v5_migrates_additively_without_changing_application_facts(
         (PRIOR,),
     ).fetchall()
 
-    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 22
+    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 23
     assert [tuple(row) for row in after] == [tuple(row) for row in before]
     assert "metadata_json" in {
         str(row[1]) for row in migrated.execute("PRAGMA table_info(job_stage_states)").fetchall()

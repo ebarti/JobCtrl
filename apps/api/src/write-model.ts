@@ -852,6 +852,11 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
     }
   }
   deleteWhere(db, "job_events", "job_url = ?", [jobUrl]);
+  deleteRepeatApplicationReferences(
+    db,
+    jobId,
+    jobUrl,
+  );
   deleteApplicationFeedbackReferences(
     db,
     jobId,
@@ -1046,6 +1051,179 @@ function deleteApplicationFeedbackReferences(
       ["local", reference],
     );
   }
+}
+
+function deleteRepeatApplicationReferences(
+  db: SqliteDatabase,
+  jobId: string | undefined,
+  jobUrl: string,
+): void {
+  const aliases = repeatApplicationJobAliases(
+    db,
+    jobId,
+    jobUrl,
+  );
+  const overrideIds = new Set<string>();
+  if (tableExists(db, "application_repeat_overrides")) {
+    const columns = tableColumnSet(
+      db,
+      "application_repeat_overrides",
+    );
+    let ownershipPredicate: string;
+    let ownershipParams: SqliteValue[];
+    if (
+      jobId
+      && columns.has("target_job_id")
+      && columns.has("prior_job_id")
+    ) {
+      ownershipPredicate =
+        "target_job_id = ? OR prior_job_id = ?";
+      ownershipParams = [jobId, jobId];
+    } else if (
+      columns.has("target_job_key")
+      && columns.has("prior_job_key")
+    ) {
+      const placeholders = aliases.map(() => "?").join(", ");
+      ownershipPredicate =
+        `target_job_key IN (${placeholders}) `
+        + `OR prior_job_key IN (${placeholders})`;
+      ownershipParams = [...aliases, ...aliases];
+    } else {
+      throw new Error(
+        "application_repeat_overrides has no supported Job identity columns.",
+      );
+    }
+    const aliasPlaceholders = aliases.map(() => "?").join(", ");
+    const predicate =
+      `tenant_id = ? AND ((${ownershipPredicate}) OR `
+      + `${repeatEvidenceReferencePredicate(
+        "application_repeat_overrides",
+        aliasPlaceholders,
+      )})`;
+    const params: SqliteValue[] = [
+      "local",
+      ...ownershipParams,
+      ...aliases,
+    ];
+    for (const row of allRows<{ override_id: string }>(
+      db,
+      `SELECT override_id
+         FROM application_repeat_overrides
+        WHERE ${predicate}`,
+      params,
+    )) {
+      overrideIds.add(row.override_id);
+    }
+  }
+
+  if (tableExists(db, "application_repeat_audit")) {
+    const columns = tableColumnSet(
+      db,
+      "application_repeat_audit",
+    );
+    let targetPredicate: string;
+    let targetParams: SqliteValue[];
+    if (jobId && columns.has("target_job_id")) {
+      targetPredicate = "target_job_id = ?";
+      targetParams = [jobId];
+    } else if (columns.has("target_job_key")) {
+      const placeholders = aliases.map(() => "?").join(", ");
+      targetPredicate = `target_job_key IN (${placeholders})`;
+      targetParams = aliases;
+    } else {
+      throw new Error(
+        "application_repeat_audit has no supported Job identity column.",
+      );
+    }
+    const overrideIdList = [...overrideIds];
+    const overridePredicate = overrideIdList.length
+      ? `OR override_id IN (${overrideIdList.map(() => "?").join(", ")})`
+      : "";
+    const aliasPlaceholders = aliases.map(() => "?").join(", ");
+    db.prepare(
+      `DELETE FROM application_repeat_audit
+        WHERE tenant_id = ?
+          AND (
+            ${targetPredicate}
+            ${overridePredicate}
+            OR ${repeatEvidenceReferencePredicate(
+              "application_repeat_audit",
+              aliasPlaceholders,
+            )}
+          )`,
+    ).run(
+      "local",
+      ...targetParams,
+      ...overrideIdList,
+      ...aliases,
+    );
+  }
+
+  const overrideIdList = [...overrideIds];
+  if (overrideIdList.length) {
+    const placeholders = overrideIdList.map(() => "?").join(", ");
+    deleteWhere(
+      db,
+      "application_repeat_override_consumptions",
+      `tenant_id = ? AND override_id IN (${placeholders})`,
+      ["local", ...overrideIdList],
+    );
+    deleteWhere(
+      db,
+      "application_repeat_overrides",
+      `tenant_id = ? AND override_id IN (${placeholders})`,
+      ["local", ...overrideIdList],
+    );
+  }
+}
+
+function repeatEvidenceReferencePredicate(
+  tableName:
+    | "application_repeat_overrides"
+    | "application_repeat_audit",
+  aliasPlaceholders: string,
+): string {
+  return `EXISTS (
+    SELECT 1
+      FROM json_each(
+        CASE
+          WHEN json_valid(${tableName}.evidence_json)
+          THEN ${tableName}.evidence_json
+          ELSE '[]'
+        END
+      ) AS evidence
+     WHERE json_extract(
+       CASE
+         WHEN evidence.type = 'object'
+         THEN evidence.value
+         ELSE '{}'
+       END,
+       '$.priorApplication.jobKey'
+     ) IN (${aliasPlaceholders})
+  )`;
+}
+
+function repeatApplicationJobAliases(
+  db: SqliteDatabase,
+  jobId: string | undefined,
+  jobUrl: string,
+): string[] {
+  const aliases = new Set([jobUrl]);
+  if (!jobId || !tableExists(db, "job_identity_aliases")) {
+    return [...aliases];
+  }
+  for (const row of allRows<{ alias_value: string }>(
+    db,
+    `SELECT alias_value
+       FROM job_identity_aliases
+      WHERE tenant_id = ?
+        AND job_id = ?
+        AND alias_kind = 'posting_url'`,
+    ["local", jobId],
+  )) {
+    if (row.alias_value) aliases.add(row.alias_value);
+  }
+  return [...aliases];
 }
 
 function deleteJobReferences(
