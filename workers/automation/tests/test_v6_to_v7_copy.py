@@ -12,6 +12,9 @@ from jobctrl.infrastructure.migrations.v6_to_v7_copy import (
     CandidateCopyError,
     copy_direct_and_scalar_tables,
 )
+from jobctrl.infrastructure.migrations.v6_to_v7_preflight import (
+    V6MigrationPreflightError,
+)
 from tests.v6_migration_fixture import (
     create_shipped_v6_database,
     create_supported_upgrade_history_v6_database,
@@ -182,14 +185,14 @@ def test_candidate_copy_rejects_unclassified_source_data_and_rolls_back(
     source, candidate = _connections(tmp_path)
     try:
         source.execute("ALTER TABLE job_enrichments ADD COLUMN drift TEXT")
-        with pytest.raises(CandidateCopyError, match="unclassified source columns"):
+        with pytest.raises(V6MigrationPreflightError, match="shipped v6"):
             copy_direct_and_scalar_tables(source, candidate)
         assert candidate.execute(
             "SELECT COUNT(*) FROM job_enrichments"
         ).fetchone() == (0,)
 
         source.execute("CREATE TABLE unclassified_data (value TEXT)")
-        with pytest.raises(CandidateCopyError, match="unclassified source tables"):
+        with pytest.raises(V6MigrationPreflightError, match="shipped v6"):
             copy_direct_and_scalar_tables(source, candidate)
     finally:
         source.close()
