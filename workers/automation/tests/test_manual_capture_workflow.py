@@ -16,7 +16,12 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl import config
-from jobctrl.database import close_connection, get_connection, init_db
+from jobctrl.database import (
+    close_connection,
+    get_connection,
+    init_db,
+    reassign_discovery_identity_references,
+)
 from jobctrl.discovery.manual_capture_workflow import (
     ManualCaptureImportActivityOutput,
     ManualCaptureImportWorkflow,
@@ -37,6 +42,10 @@ from jobctrl.workflow_specs import build_manual_capture_import_workflow_spec
 
 
 _CAPTURE_URL = "https://example.test/jobs/staff-engineer"
+_CANONICAL_URL = "https://example.test/jobs/staff-engineer-canonical"
+_SURVIVOR_URL = "https://example.test/jobs/staff-engineer-survivor"
+_CANONICAL_JOB_ID = "11111111-1111-4111-8111-111111111111"
+_SURVIVOR_JOB_ID = "22222222-2222-4222-8222-222222222222"
 _CAPTURE_HTML = """
 <html>
   <head>
@@ -198,9 +207,17 @@ def test_activity_reconstructs_exact_result_after_import_commit(tmp_path: Path) 
             (_CAPTURE_URL,),
         ).fetchone()[0]
         row = conn.execute(
-            "SELECT status, content_sha256, imported_at FROM manual_capture_queue "
+            "SELECT status, content_sha256, imported_at, job_id "
+            "FROM manual_capture_queue "
             "WHERE tenant_id = 'local' AND item_id = 'manual-1'"
         ).fetchone()
+        stable_job_id = conn.execute(
+            """
+            SELECT job_id FROM jobs
+            WHERE tenant_id = 'local' AND url = ?
+            """,
+            (_CAPTURE_URL,),
+        ).fetchone()[0]
     finally:
         close_connection(db_path)
 
@@ -209,12 +226,117 @@ def test_activity_reconstructs_exact_result_after_import_commit(tmp_path: Path) 
     assert first.item_id == "manual-1"
     assert first.job_id == _CAPTURE_URL
     assert first.imported_at == row["imported_at"]
+    assert row["job_id"] == stable_job_id
     assert row["status"] == "imported"
     assert row["content_sha256"] == hashlib.sha256(
         _CAPTURE_HTML.encode("utf-8")
     ).hexdigest()
     assert events_after_replay == events_before_replay
     assert snapshot_version_after_replay == snapshot_version_before_replay
+
+
+def test_activity_replays_accepted_alias_as_original_capture_url(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = _seed_pending(db_path)
+    payload = _pending_payload()
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, tenant_id, job_id, title, company, discovered_at
+        ) VALUES (?, 'local', ?, 'Staff Engineer', 'ExampleCo', ?)
+        """,
+        (
+            _CANONICAL_URL,
+            _CANONICAL_JOB_ID,
+            "2026-07-10T08:00:00+00:00",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_identity_aliases (
+            tenant_id, alias_kind, alias_value, job_id, created_at
+        ) VALUES ('local', 'posting_url', ?, ?, ?)
+        """,
+        (
+            _CAPTURE_URL,
+            _CANONICAL_JOB_ID,
+            "2026-07-10T08:00:00+00:00",
+        ),
+    )
+    conn.commit()
+    try:
+        first = execute_manual_capture_import(payload, conn=conn)
+        replay = execute_manual_capture_import(payload, conn=conn)
+        stored = conn.execute(
+            """
+            SELECT job_id, captured_url
+            FROM manual_capture_queue
+            WHERE tenant_id = 'local' AND item_id = 'manual-1'
+            """
+        ).fetchone()
+    finally:
+        close_connection(db_path)
+
+    assert replay == first
+    assert replay.job_id == _CAPTURE_URL
+    assert tuple(stored) == (_CANONICAL_JOB_ID, _CAPTURE_URL)
+
+
+def test_activity_replays_original_result_after_identity_collision(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = _seed_pending(db_path)
+    payload = _pending_payload()
+    try:
+        first = execute_manual_capture_import(payload, conn=conn)
+        losing_job_id = conn.execute(
+            """
+            SELECT job_id FROM jobs
+            WHERE tenant_id = 'local' AND url = ?
+            """,
+            (_CAPTURE_URL,),
+        ).fetchone()[0]
+        conn.execute(
+            """
+            INSERT INTO jobs (
+                url, tenant_id, job_id, title, company, discovered_at
+            ) VALUES (?, 'local', ?, 'Staff Engineer', 'ExampleCo', ?)
+            """,
+            (
+                _SURVIVOR_URL,
+                _SURVIVOR_JOB_ID,
+                "2026-07-10T08:00:00+00:00",
+            ),
+        )
+        conn.commit()
+        reassign_discovery_identity_references(
+            conn,
+            losing_job_url=_CAPTURE_URL,
+            surviving_job_url=_SURVIVOR_URL,
+        )
+        conn.execute(
+            "DELETE FROM jobs WHERE tenant_id = 'local' AND job_id = ?",
+            (losing_job_id,),
+        )
+        conn.commit()
+
+        replay = execute_manual_capture_import(payload, conn=conn)
+        stored = conn.execute(
+            """
+            SELECT job_id, captured_url
+            FROM manual_capture_queue
+            WHERE tenant_id = 'local' AND item_id = 'manual-1'
+            """
+        ).fetchone()
+    finally:
+        close_connection(db_path)
+
+    assert replay == first
+    assert replay.job_id == _CAPTURE_URL
+    assert tuple(stored) == (_SURVIVOR_JOB_ID, _CAPTURE_URL)
 
 
 @pytest.mark.parametrize(

@@ -867,6 +867,11 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
     jobId,
     jobUrl,
   );
+  deleteManualCaptureReferences(
+    db,
+    jobId,
+    jobUrl,
+  );
   detachOrDeleteOutreachReferences(db, jobId, jobUrl);
   detachOrDeleteContactReferences(db, jobId, jobUrl);
   deleteJobReferences(db, "job_artifacts", jobId, jobUrl);
@@ -1270,6 +1275,27 @@ function deleteDiscoveryFeedbackReferences(
   deleteWhere(
     db,
     "discovery_feedback",
+    `tenant_id = ? AND ${referenceColumn} = ?`,
+    ["local", reference],
+  );
+}
+
+function deleteManualCaptureReferences(
+  db: SqliteDatabase,
+  jobId: string | undefined,
+  jobUrl: string,
+): void {
+  if (!tableExists(db, "manual_capture_queue")) return;
+  const referenceColumn = jobKeyReferenceColumn(
+    db,
+    "manual_capture_queue",
+  );
+  const reference =
+    referenceColumn === "job_id" ? jobId : jobUrl;
+  if (!reference) return;
+  deleteWhere(
+    db,
+    "manual_capture_queue",
     `tenant_id = ? AND ${referenceColumn} = ?`,
     ["local", reference],
   );

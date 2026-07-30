@@ -164,14 +164,39 @@ def _capture_row(
     tenant_id: str,
     item_id: str,
 ) -> sqlite3.Row | None:
-    return conn.execute(
+    columns = {
+        str(row[1])
+        for row in conn.execute(
+            'PRAGMA table_info("manual_capture_queue")'
+        ).fetchall()
+    }
+    if "job_id" in columns:
+        reference_select = """
+        COALESCE(
+            NULLIF(TRIM(manual_capture_queue.captured_url), ''),
+            jobs.url
+        ) AS job_key
         """
-        SELECT tenant_id, item_id, originating_url, source_id, status,
+        reference_join = """
+        LEFT JOIN jobs
+          ON jobs.tenant_id = manual_capture_queue.tenant_id
+         AND jobs.job_id = manual_capture_queue.job_id
+        """
+    else:
+        reference_select = (
+            "manual_capture_queue.job_key AS job_key"
+        )
+        reference_join = ""
+    return conn.execute(
+        f"""
+        SELECT manual_capture_queue.tenant_id AS tenant_id,
+               item_id, originating_url, source_id, status,
                imported_at, capture_mode, captured_url, content_sha256,
                content_length, note, future_manual_action_required,
-               retry_context_json, job_key
+               retry_context_json, {reference_select}
         FROM manual_capture_queue
-        WHERE tenant_id = ? AND item_id = ?
+        {reference_join}
+        WHERE manual_capture_queue.tenant_id = ? AND item_id = ?
         LIMIT 1
         """,
         (tenant_id, item_id),

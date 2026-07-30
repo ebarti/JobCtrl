@@ -67,6 +67,7 @@ import { InputError } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
 const DISCOVERY_FEEDBACK_REFERENCE_SCHEMA_VERSION = 26;
+const MANUAL_CAPTURE_REFERENCE_SCHEMA_VERSION = 27;
 export const EXTENSION_MANUAL_CAPTURE_SOURCE_ID = "manual_capture:extension";
 const EXTENSION_MANUAL_CAPTURE_REASON: ManualActionReasonValue = "browser_extension_capture";
 const DEFAULT_DISCOVERY_SETTINGS: DiscoverySettings = {
@@ -246,6 +247,8 @@ export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
   );
   const stableFeedbackReferences =
     schemaVersion >= DISCOVERY_FEEDBACK_REFERENCE_SCHEMA_VERSION;
+  const stableManualCaptureReferences =
+    schemaVersion >= MANUAL_CAPTURE_REFERENCE_SCHEMA_VERSION;
   db.exec(`
     CREATE TABLE IF NOT EXISTS discovery_settings (
       tenant_id          TEXT PRIMARY KEY,
@@ -297,26 +300,6 @@ export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
       decided_at       TEXT,
       PRIMARY KEY (tenant_id, job_key)
     );
-    CREATE TABLE IF NOT EXISTS manual_capture_queue (
-      tenant_id                     TEXT NOT NULL DEFAULT 'local',
-      item_id                       TEXT NOT NULL,
-      originating_url               TEXT NOT NULL,
-      source_id                     TEXT,
-      reason                        TEXT NOT NULL,
-      retry_context_json            TEXT NOT NULL DEFAULT '{}',
-      required_at                   TEXT NOT NULL,
-      status                        TEXT NOT NULL DEFAULT 'pending',
-      imported_at                   TEXT,
-      dismissed_at                  TEXT,
-      capture_mode                  TEXT,
-      captured_url                  TEXT,
-      content_sha256                TEXT,
-      content_length                INTEGER,
-      note                          TEXT,
-      future_manual_action_required INTEGER NOT NULL DEFAULT 0,
-      job_key                       TEXT,
-      PRIMARY KEY (tenant_id, item_id)
-    );
     CREATE TABLE IF NOT EXISTS role_match_feedback_suggestions (
       tenant_id       TEXT NOT NULL DEFAULT 'local',
       suggestion_id   TEXT NOT NULL,
@@ -336,6 +319,79 @@ export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
       PRIMARY KEY (tenant_id, suggestion_id)
     );
   `);
+  if (!tableExists(db, "manual_capture_queue")) {
+    const referenceColumn = stableManualCaptureReferences
+      ? "job_id"
+      : "job_key";
+    const foreignKey = stableManualCaptureReferences
+      ? `,
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE`
+      : "";
+    db.exec(`
+      CREATE TABLE manual_capture_queue (
+        tenant_id                     TEXT NOT NULL DEFAULT 'local',
+        item_id                       TEXT NOT NULL,
+        originating_url               TEXT NOT NULL,
+        source_id                     TEXT,
+        reason                        TEXT NOT NULL,
+        retry_context_json            TEXT NOT NULL DEFAULT '{}',
+        required_at                   TEXT NOT NULL,
+        status                        TEXT NOT NULL DEFAULT 'pending',
+        imported_at                   TEXT,
+        dismissed_at                  TEXT,
+        capture_mode                  TEXT,
+        captured_url                  TEXT,
+        content_sha256                TEXT,
+        content_length                INTEGER,
+        note                          TEXT,
+        future_manual_action_required INTEGER NOT NULL DEFAULT 0,
+        ${referenceColumn}            TEXT,
+        PRIMARY KEY (tenant_id, item_id)
+        ${foreignKey}
+      );
+    `);
+  }
+  const manualCaptureColumns = tableColumnSet(
+    db,
+    "manual_capture_queue",
+  );
+  if (
+    stableManualCaptureReferences
+    && (
+      !manualCaptureColumns.has("job_id")
+      || manualCaptureColumns.has("job_key")
+    )
+  ) {
+    throw new Error(
+      "Schema v27 requires stable manual_capture_queue.job_id references.",
+    );
+  }
+  if (stableManualCaptureReferences) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_manual_capture_queue_job
+      ON manual_capture_queue(tenant_id, job_id, status);
+    `);
+    if (
+      !hasCompositeJobIdForeignKey(
+        db,
+        "manual_capture_queue",
+      )
+      || tableIndexColumns(
+        db,
+        "manual_capture_queue",
+        "idx_manual_capture_queue_job",
+      ).join(",") !== "tenant_id,job_id,status"
+      || primaryKeyColumns(
+        db,
+        "manual_capture_queue",
+      ).join(",") !== "tenant_id,item_id"
+    ) {
+      throw new Error(
+        "Schema v27 requires the stable manual-capture JobId contract.",
+      );
+    }
+  }
   if (!tableExists(db, "discovery_feedback")) {
     const referenceColumn = stableFeedbackReferences
       ? "job_id"
@@ -1185,13 +1241,17 @@ function dismissedExtensionManualCaptureResponse(
   db: SqliteDatabase,
   itemId: string,
 ): ExtensionCaptureIngestResponse | null {
+  const reference = manualCaptureReferenceProjection(db);
   const row = getRow<ImportedManualCaptureRow>(
     db,
     `SELECT item_id, originating_url, source_id, reason, retry_context_json,
             required_at, status, imported_at, dismissed_at, capture_mode,
-            captured_url, future_manual_action_required, job_key
+            captured_url, future_manual_action_required,
+            ${reference.selectSql}
      FROM manual_capture_queue
-     WHERE tenant_id = ? AND item_id = ? AND status = 'dismissed'`,
+     ${reference.joinSql}
+     WHERE manual_capture_queue.tenant_id = ?
+       AND item_id = ? AND status = 'dismissed'`,
     [DEFAULT_TENANT, itemId],
   );
   if (!row) {
@@ -1211,13 +1271,16 @@ function importedExtensionManualCaptureResponse(
   db: SqliteDatabase,
   itemId: string,
 ): ManualCaptureImportResponse | null {
+  const reference = manualCaptureReferenceProjection(db);
   const row = getRow<ImportedManualCaptureRow>(
     db,
     `SELECT item_id, originating_url, source_id, reason, retry_context_json,
             required_at, status, imported_at, capture_mode, captured_url,
-            future_manual_action_required, job_key
+            future_manual_action_required, ${reference.selectSql}
      FROM manual_capture_queue
-     WHERE tenant_id = ? AND item_id = ? AND status = 'imported'`,
+     ${reference.joinSql}
+     WHERE manual_capture_queue.tenant_id = ?
+       AND item_id = ? AND status = 'imported'`,
     [DEFAULT_TENANT, itemId],
   );
   if (!row?.imported_at) {
@@ -1334,6 +1397,31 @@ function primaryKeyColumns(
     .filter((row) => row.pk > 0)
     .sort((left, right) => left.pk - right.pk)
     .map((row) => row.name);
+}
+
+function manualCaptureReferenceProjection(
+  db: SqliteDatabase,
+): { selectSql: string; joinSql: string } {
+  if (
+    jobKeyReferenceColumn(
+      db,
+      "manual_capture_queue",
+    ) === "job_key"
+  ) {
+    return {
+      selectSql: "manual_capture_queue.job_key AS job_key",
+      joinSql: "",
+    };
+  }
+  return {
+    selectSql: `COALESCE(
+      NULLIF(TRIM(manual_capture_queue.captured_url), ''),
+      jobs.url
+    ) AS job_key`,
+    joinSql: `LEFT JOIN jobs
+      ON jobs.tenant_id = manual_capture_queue.tenant_id
+     AND jobs.job_id = manual_capture_queue.job_id`,
+  };
 }
 
 export function listRoleMatchFeedbackSuggestions(

@@ -100,7 +100,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v26 (discovery-feedback references): user-authored Discovery feedback points
 # at the tenant-scoped stable Job aggregate. The URL-shaped API/event contract
 # remains unchanged, and private free-form notes stay only in canonical storage.
-SCHEMA_VERSION = 26
+# v27 (manual-capture references): imported manual-capture queue rows point at
+# the tenant-scoped stable Job aggregate. Pending captures remain unlinked, and
+# workflow/API results continue to expose the posting URL until Phase 4.
+SCHEMA_VERSION = 27
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -257,6 +260,7 @@ def _schema_migrations() -> tuple[
         (24, ensure_contact_research_references_v24),
         (25, ensure_outreach_references_v25),
         (26, ensure_discovery_feedback_references_v26),
+        (27, ensure_manual_capture_references_v27),
     )
 
 
@@ -3728,6 +3732,9 @@ def ensure_discovery_control_tables(conn: sqlite3.Connection | None = None) -> l
     stable_feedback_references = (
         current_version >= _DISCOVERY_FEEDBACK_REFERENCE_SCHEMA_VERSION
     )
+    stable_manual_capture_references = (
+        current_version >= _MANUAL_CAPTURE_REFERENCE_SCHEMA_VERSION
+    )
 
     conn.execute(
         """
@@ -3785,30 +3792,31 @@ def ensure_discovery_control_tables(conn: sqlite3.Connection | None = None) -> l
         )
         """
     )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS manual_capture_queue (
-            tenant_id                     TEXT NOT NULL DEFAULT 'local',
-            item_id                       TEXT NOT NULL,
-            originating_url               TEXT NOT NULL,
-            source_id                     TEXT,
-            reason                        TEXT NOT NULL,
-            retry_context_json            TEXT NOT NULL DEFAULT '{}',
-            required_at                   TEXT NOT NULL,
-            status                        TEXT NOT NULL DEFAULT 'pending',
-            imported_at                   TEXT,
-            dismissed_at                  TEXT,
-            capture_mode                  TEXT,
-            captured_url                  TEXT,
-            content_sha256                TEXT,
-            content_length                INTEGER,
-            note                          TEXT,
-            future_manual_action_required INTEGER NOT NULL DEFAULT 0,
-            job_key                       TEXT,
-            PRIMARY KEY (tenant_id, item_id)
+    if not _table_columns(conn, "manual_capture_queue"):
+        _create_manual_capture_queue_table_v27(
+            conn,
+            table="manual_capture_queue",
+            stable_reference=stable_manual_capture_references,
         )
-        """
-    )
+    if stable_manual_capture_references:
+        manual_capture_columns = _table_columns(
+            conn,
+            "manual_capture_queue",
+        )
+        if (
+            "job_id" not in manual_capture_columns
+            or "job_key" in manual_capture_columns
+        ):
+            raise RuntimeError(
+                "Schema v27 requires stable manual-capture "
+                "JobId references."
+            )
+        _create_manual_capture_reference_index_v27(conn)
+        if not _has_manual_capture_reference_schema_v27(conn):
+            raise RuntimeError(
+                "Schema v27 requires the stable manual-capture "
+                "JobId contract."
+            )
     if not _table_columns(conn, "discovery_feedback"):
         _create_discovery_feedback_table_v26(
             conn,
@@ -4878,6 +4886,13 @@ def _reassign_discovery_identity_references(
         )
     if _has_discovery_feedback_reference_schema_v26(conn):
         _reassign_discovery_feedback_references_v26(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+    if _has_manual_capture_reference_schema_v27(conn):
+        _reassign_manual_capture_references_v27(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
@@ -15535,6 +15550,302 @@ def _reassign_discovery_feedback_references_v26(
         (surviving_job_id, tenant_id, losing_job_id),
     )
     _verify_discovery_feedback_references_v26(
+        conn,
+        expected_count=expected_count,
+    )
+
+
+_MANUAL_CAPTURE_REFERENCE_SCHEMA_VERSION = 27
+_MANUAL_CAPTURE_REFERENCE_TABLES = ("manual_capture_queue",)
+
+
+def _create_manual_capture_queue_table_v27(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    stable_reference: bool,
+) -> None:
+    reference_column = "job_id" if stable_reference else "job_key"
+    foreign_key = (
+        """,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE"""
+        if stable_reference
+        else ""
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE "{table}" (
+            tenant_id                     TEXT NOT NULL DEFAULT 'local',
+            item_id                       TEXT NOT NULL,
+            originating_url               TEXT NOT NULL,
+            source_id                     TEXT,
+            reason                        TEXT NOT NULL,
+            retry_context_json            TEXT NOT NULL DEFAULT '{{}}',
+            required_at                   TEXT NOT NULL,
+            status                        TEXT NOT NULL DEFAULT 'pending',
+            imported_at                   TEXT,
+            dismissed_at                  TEXT,
+            capture_mode                  TEXT,
+            captured_url                  TEXT,
+            content_sha256                TEXT,
+            content_length                INTEGER,
+            note                          TEXT,
+            future_manual_action_required INTEGER NOT NULL DEFAULT 0,
+            {reference_column}            TEXT,
+            PRIMARY KEY (tenant_id, item_id)
+            {foreign_key}
+        )
+        """
+    )
+
+
+def _create_manual_capture_reference_index_v27(
+    conn: sqlite3.Connection,
+) -> None:
+    if _has_index(
+        conn,
+        "manual_capture_queue",
+        "idx_manual_capture_queue_job",
+        ("tenant_id", "job_id", "status"),
+        unique=False,
+    ):
+        return
+    conn.execute(
+        'DROP INDEX IF EXISTS "idx_manual_capture_queue_job"'
+    )
+    conn.execute(
+        """
+        CREATE INDEX idx_manual_capture_queue_job
+        ON manual_capture_queue(tenant_id, job_id, status)
+        """
+    )
+
+
+def _has_manual_capture_reference_schema_v27(
+    conn: sqlite3.Connection,
+) -> bool:
+    table = "manual_capture_queue"
+    return (
+        "job_id" in _table_columns(conn, table)
+        and "job_key" not in _table_columns(conn, table)
+        and _primary_key_columns(conn, table)
+        == ("tenant_id", "item_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            table,
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            table,
+            "idx_manual_capture_queue_job",
+            ("tenant_id", "job_id", "status"),
+            unique=False,
+        )
+    )
+
+
+def _canonical_manual_capture_rows_v27(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    reference_column = _legacy_or_stable_reference_column(
+        conn,
+        "manual_capture_queue",
+        stable="job_id",
+        legacy="job_key",
+    )
+    rows = conn.execute(
+        f"""
+        SELECT tenant_id, item_id, originating_url, source_id,
+               reason, retry_context_json, required_at, status,
+               imported_at, dismissed_at, capture_mode, captured_url,
+               content_sha256, content_length, note,
+               future_manual_action_required, {reference_column}
+        FROM manual_capture_queue
+        ORDER BY tenant_id, item_id
+        """
+    ).fetchall()
+    canonical: list[tuple[Any, ...]] = []
+    for row in rows:
+        values = tuple(row)
+        raw_reference = values[16]
+        stable_job_id: str | None = None
+        if raw_reference is not None:
+            stable_job_id = _resolve_job_reference_value(
+                conn,
+                tenant_id=str(values[0]),
+                reference=str(raw_reference),
+                legacy_url=reference_column == "job_key",
+            )
+            if stable_job_id is None:
+                raise RuntimeError(
+                    "manual-capture reference migration could not "
+                    f"resolve manual_capture_queue.{reference_column}="
+                    f"{raw_reference!r} for tenant {values[0]!r}"
+                )
+            _validate_job_uuid(stable_job_id)
+        canonical.append((*values[:16], stable_job_id))
+    return canonical
+
+
+def ensure_manual_capture_references_v27(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move imported manual-capture links to stable JobIds."""
+    if conn is None:
+        conn = get_connection()
+    current = _assert_schema_version_supported(conn)
+    if current >= _MANUAL_CAPTURE_REFERENCE_SCHEMA_VERSION:
+        return list(_MANUAL_CAPTURE_REFERENCE_TABLES)
+    if current != _DISCOVERY_FEEDBACK_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "manual-capture reference migration requires schema v26; "
+            f"found v{current}"
+        )
+
+    conn.execute("SAVEPOINT manual_capture_references_v27")
+    try:
+        if not _table_columns(conn, "manual_capture_queue"):
+            _create_manual_capture_queue_table_v27(
+                conn,
+                table="manual_capture_queue",
+                stable_reference=False,
+            )
+        expected_count = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM manual_capture_queue"
+            ).fetchone()[0]
+        )
+        capture_rows = _canonical_manual_capture_rows_v27(conn)
+
+        conn.execute("DROP TABLE IF EXISTS manual_capture_queue_v27")
+        _create_manual_capture_queue_table_v27(
+            conn,
+            table="manual_capture_queue_v27",
+            stable_reference=True,
+        )
+        conn.executemany(
+            """
+            INSERT INTO manual_capture_queue_v27 (
+                tenant_id, item_id, originating_url, source_id,
+                reason, retry_context_json, required_at, status,
+                imported_at, dismissed_at, capture_mode, captured_url,
+                content_sha256, content_length, note,
+                future_manual_action_required, job_id
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            capture_rows,
+        )
+
+        conn.execute('DROP TABLE "manual_capture_queue"')
+        conn.execute(
+            'ALTER TABLE "manual_capture_queue_v27" '
+            'RENAME TO "manual_capture_queue"'
+        )
+        _create_manual_capture_reference_index_v27(conn)
+        _verify_manual_capture_references_v27(
+            conn,
+            expected_count=expected_count,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_MANUAL_CAPTURE_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT manual_capture_references_v27"
+        )
+    except BaseException:
+        conn.execute(
+            "ROLLBACK TO SAVEPOINT manual_capture_references_v27"
+        )
+        conn.execute(
+            "RELEASE SAVEPOINT manual_capture_references_v27"
+        )
+        raise
+    return list(_MANUAL_CAPTURE_REFERENCE_TABLES)
+
+
+def _verify_manual_capture_references_v27(
+    conn: sqlite3.Connection,
+    *,
+    expected_count: int,
+) -> None:
+    if not _has_manual_capture_reference_schema_v27(conn):
+        raise RuntimeError(
+            "manual-capture reference migration did not create "
+            "the stable reference schema"
+        )
+    observed_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM manual_capture_queue"
+        ).fetchone()[0]
+    )
+    if observed_count != expected_count:
+        raise RuntimeError(
+            "manual-capture reference migration changed row count: "
+            f"expected {expected_count}, found {observed_count}"
+        )
+    orphan = conn.execute(
+        """
+        SELECT capture.job_id
+        FROM manual_capture_queue AS capture
+        LEFT JOIN jobs
+          ON jobs.tenant_id = capture.tenant_id
+         AND jobs.job_id = capture.job_id
+        WHERE capture.job_id IS NOT NULL
+          AND jobs.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise RuntimeError(
+            "manual-capture reference migration left an "
+            "unresolved JobId"
+        )
+    for row in conn.execute(
+        """
+        SELECT DISTINCT job_id
+        FROM manual_capture_queue
+        WHERE job_id IS NOT NULL
+        """
+    ).fetchall():
+        _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "manual-capture reference migration found a "
+            "foreign-key violation"
+        )
+
+
+def _reassign_manual_capture_references_v27(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    if losing_job_id == surviving_job_id:
+        return
+    expected_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM manual_capture_queue"
+        ).fetchone()[0]
+    )
+    conn.execute(
+        """
+        UPDATE manual_capture_queue
+        SET job_id = ?
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (surviving_job_id, tenant_id, losing_job_id),
+    )
+    _verify_manual_capture_references_v27(
         conn,
         expected_count=expected_count,
     )

@@ -799,7 +799,7 @@ def test_schema_v5_migrates_additively_without_changing_application_facts(
         (PRIOR,),
     ).fetchall()
 
-    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 26
+    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 27
     assert [tuple(row) for row in after] == [tuple(row) for row in before]
     assert "metadata_json" in {
         str(row[1]) for row in migrated.execute("PRAGMA table_info(job_stage_states)").fetchall()

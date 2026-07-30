@@ -21,6 +21,8 @@ from typing import Any, Iterable
 from urllib.parse import urlparse
 
 from jobctrl.database import (
+    _resolve_job_reference_value,
+    _table_columns,
     ensure_discovery_control_tables,
     ensure_enrichment_tables,
     ensure_posting_snapshot_tables,
@@ -1101,8 +1103,15 @@ def import_manual_capture_item(
             notice_text="Manual capture imported but held for review.",
         )
 
+    reference_column, reference_value = (
+        _manual_capture_job_reference(
+            conn,
+            tenant_id=str(tenant_id),
+            job_url=captured_url,
+        )
+    )
     conn.execute(
-        """
+        f"""
         UPDATE manual_capture_queue
          SET status = 'imported',
              imported_at = ?,
@@ -1113,7 +1122,7 @@ def import_manual_capture_item(
              note = ?,
              future_manual_action_required = ?,
              retry_context_json = ?,
-             job_key = ?
+             {reference_column} = ?
          WHERE tenant_id = ? AND item_id = ?
         """,
         (
@@ -1125,7 +1134,7 @@ def import_manual_capture_item(
             capture.note,
             1 if capture.future_manual_action_required else 0,
             json.dumps(retry_context, sort_keys=True),
-            captured_url,
+            reference_value,
             str(tenant_id),
             capture.item_id,
         ),
@@ -1138,6 +1147,35 @@ def import_manual_capture_item(
         promoted_to_job_enrichment=outcome.promoted_to_job_enrichment,
         quarantine_reason=quarantine_reason,
     )
+
+
+def _manual_capture_job_reference(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    job_url: str,
+) -> tuple[str, str]:
+    reference_column = (
+        "job_id"
+        if "job_id" in _table_columns(
+            conn,
+            "manual_capture_queue",
+        )
+        else "job_key"
+    )
+    if reference_column == "job_key":
+        return reference_column, job_url
+    stable_job_id = _resolve_job_reference_value(
+        conn,
+        tenant_id=tenant_id,
+        reference=job_url,
+        legacy_url=True,
+    )
+    if stable_job_id is None:
+        raise RuntimeError(
+            "Manual capture import could not resolve its stable JobId."
+        )
+    return reference_column, stable_job_id
 
 
 def build_discovery_acceptance_report(

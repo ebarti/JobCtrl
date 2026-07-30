@@ -10,7 +10,6 @@ import pytest
 
 import jobctrl.database as database_module
 from jobctrl.database import (
-    SCHEMA_VERSION,
     ensure_discovery_control_tables,
     ensure_discovery_feedback_references_v26,
     init_db,
@@ -174,11 +173,7 @@ def test_v25_rows_migrate_exactly_with_url_first_resolution(
         database_module._DISCOVERY_FEEDBACK_REFERENCE_TABLES
     )
 
-    assert (
-        conn.execute("PRAGMA user_version").fetchone()[0]
-        == SCHEMA_VERSION
-        == 26
-    )
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 26
     assert (
         database_module
         ._has_discovery_feedback_reference_schema_v26(conn)
