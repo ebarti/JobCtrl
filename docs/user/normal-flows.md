@@ -14,6 +14,9 @@ review → Apply. The web app is the main way you work; the command line stays
 available for maintenance and diagnostics. For a screen-by-screen walkthrough of
 each page below, see the [Product Tour](product-tour.md).
 
+For a lifecycle-level view of the records these steps create, read
+[Open-source Job Application Tracker](../guides/open-source-job-application-tracker.md).
+
 ::: info Command spelling
 This guide uses the canonical installed spelling, `jobctrl <command>`. The
 same native executable owns `jobctrl start`, `stop`, and `status`, regardless

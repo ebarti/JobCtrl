@@ -44,6 +44,11 @@ const HOME_STRUCTURED_DATA = JSON.stringify({
       applicationSubCategory: "Job search automation",
       operatingSystem: "macOS 15 or later on Apple silicon",
       isAccessibleForFree: true,
+      offers: {
+        "@type": "Offer",
+        price: "0",
+        priceCurrency: "USD",
+      },
       license: "https://www.gnu.org/licenses/agpl-3.0.html",
       sameAs: [REPO_URL],
       publisher: { "@id": ORGANIZATION_ID },
@@ -133,6 +138,18 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
       {
         text: "Resume Tailoring Without Fabrication",
         link: "/guides/resume-tailoring-without-fabrication",
+      },
+      {
+        text: "Evidence-based Job Fit Scoring",
+        link: "/guides/evidence-based-job-fit-scoring",
+      },
+      {
+        text: "At-most-once Job Application Submission",
+        link: "/guides/at-most-once-job-application-submission",
+      },
+      {
+        text: "Temporal Workflows In A Desktop App",
+        link: "/guides/temporal-workflows-desktop-app",
       },
     ],
   },

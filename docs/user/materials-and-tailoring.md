@@ -8,6 +8,8 @@ Materials are the job-specific resumes, cover letters, PDFs, and related review
 records JobCtrl creates from canonical profile evidence and the target posting.
 Tailoring is the versioned, gated process that selects and renders those claims
 without turning the job description into evidence about you.
+For a plain-language walkthrough of that boundary, read
+[Resume Tailoring Without Fabrication](../guides/resume-tailoring-without-fabrication.md).
 
 ## How JobCtrl Chooses A Resume
 

@@ -17,6 +17,8 @@ controls that enforce risky actions, read [Security](security.md). Feature
 settings live in [Discovery](discovery.md) and [Apply](apply.md); shared
 providers, precedence, and spend controls live in
 [Configuration](configuration.md).
+For a plain-language overview, read
+[Local-first Job Search Automation](../guides/local-first-job-search-automation.md).
 
 ## Privacy Quick Answer
 

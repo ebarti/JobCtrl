@@ -4,6 +4,9 @@ JobCtrl runs as four long-lived local processes, plus a `jobctrl rpc`
 subprocess the TypeScript API spawns on demand. This page walks each runtime
 boundary — what it owns, what it must never do, and how the pieces talk.
 
+For a focused explanation of the workflow-engine choice, read
+[Temporal Workflows In A Desktop App](../guides/temporal-workflows-desktop-app.md).
+
 **Read this if** you need to know which process is responsible for a behavior,
 or where a change belongs.
 

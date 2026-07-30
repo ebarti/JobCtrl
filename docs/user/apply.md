@@ -15,6 +15,9 @@ Gmail for bounded verification or an explicitly approved email application.
 The practical review sequence is in [Daily Workflow](normal-flows.md); the
 enforcement model is in [Security](security.md#approval-and-control-gates).
 
+For the retry and ambiguity model behind employer-facing work, read
+[At-most-once Job Application Submission](../guides/at-most-once-job-application-submission.md).
+
 ::: info Command spelling
 Command blocks on this page use the canonical installed spelling,
 `jobctrl <command>`. Contributors running from source can use the

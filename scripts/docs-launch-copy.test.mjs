@@ -109,6 +109,7 @@ test("public docs emit crawl and social-discovery metadata", async () => {
   assert.match(config, /"@type": "WebSite"/);
   assert.match(config, /alternateName: "jobctrl\.dev"/);
   assert.match(config, /"@type": "SoftwareApplication"/);
+  assert.match(config, /offers:\s*\{\s*"@type": "Offer",\s*price: "0",/);
   assert.match(config, /id: "jobctrl-structured-data"/);
   assert.match(homepage, /title: "JobCtrl — Local-first job search automation"/);
   assert.match(homepage, /titleTemplate: false/);
@@ -143,6 +144,18 @@ test("priority public pages have distinct search descriptions", async () => {
     [
       "docs/guides/resume-tailoring-without-fabrication.md",
       "Understand how JobCtrl tailors a resume",
+    ],
+    [
+      "docs/guides/evidence-based-job-fit-scoring.md",
+      "Learn how evidence-based job fit scoring",
+    ],
+    [
+      "docs/guides/at-most-once-job-application-submission.md",
+      "Understand at-most-once job application submission",
+    ],
+    [
+      "docs/guides/temporal-workflows-desktop-app.md",
+      "Learn why JobCtrl runs Temporal workflows",
     ],
   ]);
   const observed = new Set();
@@ -186,6 +199,32 @@ test("search-intent guides are substantive and route readers to canonical owners
         "../user/materials-and-tailoring.md",
       ],
     },
+    {
+      path: "docs/guides/evidence-based-job-fit-scoring.md",
+      heading: "# Evidence-based Job Fit Scoring",
+      owners: [
+        "../user/scoring-and-employer-analysis.md",
+        "../architecture/scoring.md",
+        "../user/candidate-profile.md",
+      ],
+    },
+    {
+      path: "docs/guides/at-most-once-job-application-submission.md",
+      heading: "# At-most-once Job Application Submission",
+      owners: [
+        "../user/apply.md",
+        "../user/security.md",
+      ],
+    },
+    {
+      path: "docs/guides/temporal-workflows-desktop-app.md",
+      heading: "# Temporal Workflows In A Desktop App",
+      owners: [
+        "../architecture/runtime.md",
+        "../architecture/pipeline/index.md",
+        "../architecture/pipeline/operations.md",
+      ],
+    },
   ];
 
   for (const contract of guideContracts) {
@@ -201,6 +240,32 @@ test("search-intent guides are substantive and route readers to canonical owners
         document.includes(`](${owner}`),
         `${contract.path} must link to ${owner}`,
       );
+    }
+  }
+});
+
+test("homepage and canonical owners cross-link the public guides", async () => {
+  const links = new Map([
+    ["docs/index.md", [
+      "/guides/local-first-job-search-automation",
+      "/guides/open-source-job-application-tracker",
+      "/guides/resume-tailoring-without-fabrication",
+      "/guides/evidence-based-job-fit-scoring",
+      "/guides/at-most-once-job-application-submission",
+      "/guides/temporal-workflows-desktop-app",
+    ]],
+    ["docs/user/data-and-safety.md", ["../guides/local-first-job-search-automation.md"]],
+    ["docs/user/normal-flows.md", ["../guides/open-source-job-application-tracker.md"]],
+    ["docs/user/materials-and-tailoring.md", ["../guides/resume-tailoring-without-fabrication.md"]],
+    ["docs/user/scoring-and-employer-analysis.md", ["../guides/evidence-based-job-fit-scoring.md"]],
+    ["docs/user/apply.md", ["../guides/at-most-once-job-application-submission.md"]],
+    ["docs/architecture/runtime.md", ["../guides/temporal-workflows-desktop-app.md"]],
+  ]);
+
+  for (const [path, expectedLinks] of links) {
+    const document = await read(path);
+    for (const link of expectedLinks) {
+      assert.ok(document.includes(`](${link})`), `${path} must link to ${link}`);
     }
   }
 });
