@@ -10,6 +10,7 @@ from typing import Iterator
 import pytest
 
 from jobctrl.domain.compensation import ReportedCompensationObservation, parse_posted_compensation
+from jobctrl.domain.tenant import TenantId
 from jobctrl.database import close_connection, init_db
 from jobctrl.infrastructure.compensation import SqliteMarketCompensationRepository, SqlitePostedCompensationRepository
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
@@ -679,6 +680,91 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
     assert audit["market"]["estimate"]["matchScope"] == "exact_company_role"
     assert "Glassdoor" in json.dumps(audit)
     assert "/Users/" not in json.dumps(audit)
+
+
+def test_projects_compensation_for_non_local_tenant(
+    conn: sqlite3.Connection,
+) -> None:
+    tenant_id = TenantId("tenant-b")
+    local_job_url = "https://local.example/jobs/compensation"
+    job_url = "https://tenant-b.example/jobs/compensation"
+    job_id = "22222222-2222-4222-8222-222222222222"
+    _seed_job(conn, local_job_url)
+    record_job_event(
+        conn,
+        local_job_url,
+        "enrich",
+        "CompensationFactsUpdated",
+    )
+    conn.commit()
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, tenant_id, job_id, title, site, strategy, location,
+            salary, discovered_at, application_url, description
+        ) VALUES (
+            ?, ?, ?, 'Engineer', 'ExampleCo', 'jobspy', 'Remote',
+            'EUR 100000/year', ?, ?, 'x'
+        )
+        """,
+        (job_url, str(tenant_id), job_id, utc_now(), job_url),
+    )
+    conn.commit()
+    SqlitePostedCompensationRepository(
+        conn
+    ).parse_and_save_job_salary(
+        job_url,
+        "EUR 100000/year",
+        tenant_id=str(tenant_id),
+        parsed_at="2026-07-29T10:00:00Z",
+    )
+    SqliteMarketCompensationRepository(
+        conn
+    ).estimate_and_save_job(
+        job_url=job_url,
+        title="Engineer",
+        company="ExampleCo",
+        location="Remote",
+        observations=(),
+        tenant_id=str(tenant_id),
+        estimated_at="2026-07-29T10:01:00Z",
+    )
+
+    ProjectionBuilder(
+        conn_factory=lambda: conn,
+        tenant_id=tenant_id,
+    ).refresh()
+
+    row = conn.execute(
+        """
+        SELECT compensation_summary_json
+        FROM job_list_projections
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(tenant_id), job_url),
+    ).fetchone()
+    assert row is not None
+    summary = json.loads(row["compensation_summary_json"])
+    assert summary["posted"]["recordStatus"] == "recorded"
+    assert summary["market"]["recordStatus"] == "recorded"
+    assert conn.execute(
+        """
+        SELECT 1
+        FROM job_list_projections
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(tenant_id), local_job_url),
+    ).fetchone() is None
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    assert conn.execute(
+        """
+        SELECT 1
+        FROM job_list_projections
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (local_job_url,),
+    ).fetchone() is not None
 
 
 def _insert_score(

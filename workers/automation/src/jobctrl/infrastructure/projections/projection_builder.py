@@ -680,6 +680,15 @@ class ProjectionBuilder:
         ensure_projection_tables(boot_conn)
         boot_conn.commit()
 
+    @property
+    def _watermark_name(self) -> str:
+        tenant = str(self._tenant_id)
+        return (
+            PROJECTION_NAME
+            if tenant == str(LOCAL_TENANT)
+            else f"{PROJECTION_NAME}:{tenant}"
+        )
+
     # ------------------------------------------------------------ subscription
 
     def subscribe_to(self, publisher: EventPublisher) -> Subscription:
@@ -782,13 +791,17 @@ class ProjectionBuilder:
             return self._refresh_impl()
 
     def _refresh_impl(self) -> int:
-        watermark = self._watermarks.get(PROJECTION_NAME)
+        watermark_name = self._watermark_name
+        watermark = self._watermarks.get(watermark_name)
         rows = self._conn.execute(
             """
-            SELECT event_id, job_url, event_type, occurred_at, payload_json
-            FROM job_events
-            WHERE event_id > ?
-            ORDER BY event_id ASC
+            SELECT events.event_id, events.job_url, events.event_type,
+                   events.occurred_at, events.payload_json,
+                   jobs.tenant_id AS job_tenant_id
+            FROM job_events AS events
+            LEFT JOIN jobs ON jobs.url = events.job_url
+            WHERE events.event_id > ?
+            ORDER BY events.event_id ASC
             """,
             (watermark,),
         ).fetchall()
@@ -807,7 +820,16 @@ class ProjectionBuilder:
             if event_id > max_event_id:
                 max_event_id = event_id
             job_url = row["job_url"] if not isinstance(row, tuple) else row[1]
-            if job_url:
+            job_tenant_id = (
+                row["job_tenant_id"]
+                if not isinstance(row, tuple)
+                else row[5]
+            )
+            if (
+                job_url
+                and str(job_tenant_id or "")
+                == str(self._tenant_id)
+            ):
                 dirty_jobs.add(str(job_url))
             event_type = row["event_type"] if not isinstance(row, tuple) else row[2]
             if str(event_type) in SOURCE_QUALITY_EVENT_TYPES:
@@ -839,7 +861,8 @@ class ProjectionBuilder:
         if self._store.count_job_list(str(self._tenant_id)) == 0:
             try:
                 jobs_rows = self._conn.execute(
-                    "SELECT url FROM jobs"
+                    "SELECT url FROM jobs WHERE tenant_id = ?",
+                    (str(self._tenant_id),),
                 ).fetchall()
                 for jrow in jobs_rows:
                     url = jrow["url"] if not isinstance(jrow, tuple) else jrow[0]
@@ -938,7 +961,9 @@ class ProjectionBuilder:
                 self._rebuild_evidence_usage()
             if max_event_id > watermark:
                 self._watermarks.set(
-                    PROJECTION_NAME, max_event_id, commit=not defer_commit
+                    watermark_name,
+                    max_event_id,
+                    commit=not defer_commit,
                 )
             if not dashboard_exists:
                 self._rebuild_dashboard()
@@ -971,7 +996,9 @@ class ProjectionBuilder:
         self._rebuild_evidence_usage()
         if max_event_id > watermark:
             self._watermarks.set(
-                PROJECTION_NAME, max_event_id, commit=not defer_commit
+                watermark_name,
+                max_event_id,
+                commit=not defer_commit,
             )
         if audit_backfill_pending:
             self._mark_score_audit_backfill_done()
@@ -1322,7 +1349,12 @@ class ProjectionBuilder:
 
     def _rebuild_job(self, job_url: str) -> None:
         job_row = self._conn.execute(
-            "SELECT * FROM jobs WHERE url = ?", (job_url,)
+            """
+            SELECT *
+            FROM jobs
+            WHERE tenant_id = ? AND url = ?
+            """,
+            (str(self._tenant_id), job_url),
         ).fetchone()
         if job_row is None:
             # Orphaned event (e.g. job deleted from upstream) — drop projection.
@@ -2052,18 +2084,26 @@ class ProjectionBuilder:
         legacy_raw_salary: str | None,
     ) -> dict[str, Any]:
         try:
+            reference_predicate, reference_params = (
+                _job_reference_predicate_for_url(
+                    self._conn,
+                    "job_posted_compensation_facts",
+                    job_url,
+                    tenant_id=str(self._tenant_id),
+                )
+            )
             row = self._conn.execute(
-                """
-                SELECT tenant_id, job_url, source_field, source_text,
+                f"""
+                SELECT tenant_id, ? AS job_url, source_field, source_text,
                        legacy_raw_salary, parse_state, currency, period,
                        component, minimum_amount, maximum_amount,
                        annualized_minimum_amount, annualized_maximum_amount,
                        annualization_assumption, confidence, warnings_json,
                        parser_version, source_hash, parsed_at
                 FROM job_posted_compensation_facts
-                WHERE tenant_id = ? AND job_url = ?
+                WHERE {reference_predicate}
                 """,
-                (str(self._tenant_id), job_url),
+                (job_url, *reference_params),
             ).fetchone()
         except sqlite3.OperationalError:
             row = None
@@ -2079,9 +2119,18 @@ class ProjectionBuilder:
 
     def _load_market_compensation(self, job_url: str) -> dict[str, Any]:
         try:
+            reference_predicate, reference_params = (
+                _job_reference_predicate_for_url(
+                    self._conn,
+                    "job_market_compensation_estimates",
+                    job_url,
+                    tenant_id=str(self._tenant_id),
+                )
+            )
             row = self._conn.execute(
-                """
-                SELECT tenant_id, job_url, estimate_state, currency, period,
+                f"""
+                SELECT tenant_id, ? AS job_url, estimate_state,
+                       currency, period,
                        component, minimum_amount, maximum_amount,
                        confidence_interval_minimum_amount,
                        confidence_interval_maximum_amount,
@@ -2096,9 +2145,9 @@ class ProjectionBuilder:
                        normalized_company, role_title, normalized_role,
                        company_tier, match_scope
                 FROM job_market_compensation_estimates
-                WHERE tenant_id = ? AND job_url = ?
+                WHERE {reference_predicate}
                 """,
-                (str(self._tenant_id), job_url),
+                (job_url, *reference_params),
             ).fetchone()
         except sqlite3.OperationalError:
             row = None
@@ -2217,6 +2266,7 @@ class ProjectionBuilder:
                     self._conn,
                     "job_materials_artifacts",
                     job_url,
+                    tenant_id=str(self._tenant_id),
                 )
             )
             generation_row = self._conn.execute(
@@ -2278,6 +2328,7 @@ class ProjectionBuilder:
                     self._conn,
                     "job_materials_artifacts",
                     job_url,
+                    tenant_id=str(self._tenant_id),
                     alias="a",
                 )
             )
@@ -2366,6 +2417,7 @@ class ProjectionBuilder:
                         self._conn,
                         "job_materials",
                         job_url,
+                        tenant_id=str(self._tenant_id),
                     )
                 )
                 row = self._conn.execute(
@@ -2386,6 +2438,7 @@ class ProjectionBuilder:
                         self._conn,
                         "job_materials_artifacts",
                         job_url,
+                        tenant_id=str(self._tenant_id),
                     )
                 )
                 rows = self._conn.execute(
@@ -2416,6 +2469,7 @@ class ProjectionBuilder:
                         self._conn,
                         "job_materials_artifacts",
                         job_url,
+                        tenant_id=str(self._tenant_id),
                     )
                 )
                 rows = self._conn.execute(
@@ -2537,6 +2591,7 @@ class ProjectionBuilder:
                     self._conn,
                     "job_bullet_provenance",
                     job_url,
+                    tenant_id=str(self._tenant_id),
                 )
             )
             generation_rows = self._conn.execute(
@@ -2895,6 +2950,7 @@ class ProjectionBuilder:
                     self._conn,
                     "job_materials_artifacts",
                     job_url,
+                    tenant_id=str(self._tenant_id),
                 )
             )
             for row in self._conn.execute(
@@ -2934,6 +2990,7 @@ class ProjectionBuilder:
                 self._conn,
                 "job_artifacts",
                 job_url,
+                tenant_id=str(self._tenant_id),
             )
             for row in self._conn.execute(
                 f"""
@@ -2975,6 +3032,7 @@ class ProjectionBuilder:
                     self._conn,
                     "job_material_layout_boxes",
                     job_url,
+                    tenant_id=str(self._tenant_id),
                 )
             )
             rows = self._conn.execute(
@@ -4183,7 +4241,7 @@ def _job_reference_predicate_for_url(
     table_name: str,
     job_url: str,
     *,
-    tenant_id: str = str(LOCAL_TENANT),
+    tenant_id: str,
     alias: str = "",
 ) -> tuple[str, tuple[str, ...]]:
     """Resolve one explicit posting URL for legacy or stable table shapes."""
