@@ -975,10 +975,43 @@ def record_job_artifact(
 ) -> None:
     """Record or update one artifact with provenance."""
     path_str = str(path)
+    artifact_columns = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(job_artifacts)").fetchall()
+    }
+    values = (
+        stage,
+        artifact_type,
+        status,
+        path_str,
+        created_at or utc_now(),
+        _path_size(path_str),
+        _json_dumps(metadata),
+    )
+    if "job_id" in artifact_columns:
+        tenant_id, job_id = _stable_stage_identity_for_url(conn, job_url)
+        conn.execute(
+            """
+            INSERT INTO job_artifacts (
+                tenant_id, job_id, stage, artifact_type, status, path,
+                created_at, size_bytes, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(
+                tenant_id, job_id, stage, artifact_type, path
+            ) DO UPDATE SET
+                status = excluded.status,
+                created_at = excluded.created_at,
+                size_bytes = excluded.size_bytes,
+                metadata_json = excluded.metadata_json
+            """,
+            (tenant_id, job_id, *values),
+        )
+        return
     conn.execute(
         """
         INSERT INTO job_artifacts (
-            job_url, stage, artifact_type, status, path, created_at, size_bytes, metadata_json
+            job_url, stage, artifact_type, status, path, created_at,
+            size_bytes, metadata_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(job_url, stage, artifact_type, path) DO UPDATE SET
             status = excluded.status,
@@ -986,16 +1019,7 @@ def record_job_artifact(
             size_bytes = excluded.size_bytes,
             metadata_json = excluded.metadata_json
         """,
-        (
-            job_url,
-            stage,
-            artifact_type,
-            status,
-            path_str,
-            created_at or utc_now(),
-            _path_size(path_str),
-            _json_dumps(metadata),
-        ),
+        (job_url, *values),
     )
 
 

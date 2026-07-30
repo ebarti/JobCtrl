@@ -55,7 +55,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v13 (stage-state references): the canonical per-stage lifecycle row references
 # ``(tenant_id, job_id)``. Alias collisions keep the most recently updated
 # lifecycle fact while preserving monotonic attempt and optimistic-lock counts.
-SCHEMA_VERSION = 13
+# v14 (artifact registry references): generic per-job artifact registrations
+# reference ``(tenant_id, job_id)``. Alias collisions retain one current row per
+# registry key using the same last-write-wins rule as runtime artifact upserts.
+SCHEMA_VERSION = 14
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -199,6 +202,7 @@ def _schema_migrations() -> tuple[
         (11, ensure_enrichment_snapshot_references_v11),
         (12, ensure_scoring_references_v12),
         (13, ensure_stage_state_references_v13),
+        (14, ensure_artifact_registry_references_v14),
     )
 
 
@@ -1416,21 +1420,24 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         WHERE idempotency_key IS NOT NULL
         """
     )
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS job_artifacts (
-            artifact_id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_url             TEXT NOT NULL,
-            stage               TEXT NOT NULL,
-            artifact_type       TEXT NOT NULL,
-            status              TEXT NOT NULL DEFAULT 'candidate',
-            path                TEXT NOT NULL,
-            created_at          TEXT NOT NULL,
-            size_bytes          INTEGER,
-            metadata_json       TEXT,
-            UNIQUE(job_url, stage, artifact_type, path),
-            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
-        )
-    """)
+    if current_schema_version >= _ARTIFACT_REGISTRY_REFERENCE_SCHEMA_VERSION:
+        _create_job_artifacts_v14(conn)
+    else:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS job_artifacts (
+                artifact_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_url             TEXT NOT NULL,
+                stage               TEXT NOT NULL,
+                artifact_type       TEXT NOT NULL,
+                status              TEXT NOT NULL DEFAULT 'candidate',
+                path                TEXT NOT NULL,
+                created_at          TEXT NOT NULL,
+                size_bytes          INTEGER,
+                metadata_json       TEXT,
+                UNIQUE(job_url, stage, artifact_type, path),
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            )
+        """)
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_job_stage_states_stage_state
         ON job_stage_states(stage, state, updated_at DESC)
@@ -1457,10 +1464,14 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         CREATE INDEX IF NOT EXISTS idx_job_events_entity
         ON job_events(entity_kind, entity_ref, occurred_at DESC, event_id DESC)
     """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_job_artifacts_job_stage
-        ON job_artifacts(job_url, stage, status)
-    """)
+    artifact_columns = _table_columns(conn, "job_artifacts")
+    if "job_id" in artifact_columns:
+        _create_job_artifact_indexes_v14(conn)
+    else:
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_job_artifacts_job_stage
+            ON job_artifacts(job_url, stage, status)
+        """)
     # Event-watermark tracking — used by Phase 9 projection builders to
     # remember the last event_id they consumed.  The row exists per
     # projection name and is updated atomically as events are processed.
@@ -4323,6 +4334,13 @@ def _reassign_discovery_identity_references(
         )
     if _has_stage_state_reference_schema_v13(conn):
         _reassign_stage_state_references_v13(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+    if _has_artifact_registry_reference_schema_v14(conn):
+        _reassign_artifact_registry_references_v14(
             conn,
             tenant_id=tenant_id,
             losing_job_id=losing_job_id,
@@ -8354,6 +8372,352 @@ def _reassign_stage_state_references_v13(
     )
     expected_count = before_count - len(raw_rows) + len(merged_rows)
     _verify_stage_state_references_v13(
+        conn,
+        expected_count=expected_count,
+    )
+
+
+_ARTIFACT_REGISTRY_REFERENCE_SCHEMA_VERSION = 14
+_ARTIFACT_REGISTRY_REFERENCE_TABLES = ("job_artifacts",)
+
+
+def _create_job_artifacts_v14(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str = "job_artifacts",
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            artifact_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            job_id              TEXT NOT NULL,
+            stage               TEXT NOT NULL,
+            artifact_type       TEXT NOT NULL,
+            status              TEXT NOT NULL DEFAULT 'candidate',
+            path                TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            size_bytes          INTEGER,
+            metadata_json       TEXT,
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_job_artifact_indexes_v14(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_job_artifacts_registry_key
+        ON job_artifacts(
+            tenant_id, job_id, stage, artifact_type, path
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_artifacts_job_stage
+        ON job_artifacts(tenant_id, job_id, stage, status)
+        """
+    )
+
+
+def _has_artifact_registry_reference_schema_v14(
+    conn: sqlite3.Connection,
+) -> bool:
+    return (
+        "job_id" in _table_columns(conn, "job_artifacts")
+        and "job_url" not in _table_columns(conn, "job_artifacts")
+        and _primary_key_columns(conn, "job_artifacts") == ("artifact_id",)
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "job_artifacts",
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            "job_artifacts",
+            "idx_job_artifacts_registry_key",
+            (
+                "tenant_id",
+                "job_id",
+                "stage",
+                "artifact_type",
+                "path",
+            ),
+            unique=True,
+        )
+        and _has_index(
+            conn,
+            "job_artifacts",
+            "idx_job_artifacts_job_stage",
+            ("tenant_id", "job_id", "stage", "status"),
+            unique=False,
+        )
+    )
+
+
+def _artifact_registry_row_rank_v14(
+    row: tuple[Any, ...],
+) -> tuple[tuple[float, str], int]:
+    return (
+        _stage_state_timestamp_rank(row[6]),
+        int(row[0]),
+    )
+
+
+def _canonical_artifact_registry_rows_v14(
+    conn: sqlite3.Connection,
+) -> list[tuple[Any, ...]]:
+    rows = conn.execute(
+        """
+        SELECT artifact_id, job_url, stage, artifact_type, status, path,
+               created_at, size_bytes, metadata_json
+        FROM job_artifacts
+        ORDER BY artifact_id
+        """
+    ).fetchall()
+    grouped: dict[
+        tuple[str, str, str, str, str],
+        list[tuple[Any, ...]],
+    ] = {}
+    for row in rows:
+        raw_reference = str(row[1])
+        stable_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id="local",
+            reference=raw_reference,
+            legacy_url=True,
+        )
+        if stable_job_id is None:
+            raise RuntimeError(
+                "artifact registry reference migration could not resolve "
+                f"job_artifacts.job_url={raw_reference!r}"
+            )
+        _validate_job_uuid(stable_job_id)
+        key = (
+            "local",
+            stable_job_id,
+            str(row[2]),
+            str(row[3]),
+            str(row[5]),
+        )
+        grouped.setdefault(key, []).append(tuple(row))
+
+    canonical: list[tuple[Any, ...]] = []
+    for (
+        tenant_id,
+        stable_job_id,
+        stage,
+        artifact_type,
+        path,
+    ), candidates in sorted(grouped.items()):
+        selected = max(candidates, key=_artifact_registry_row_rank_v14)
+        canonical.append(
+            (
+                int(selected[0]),
+                tenant_id,
+                stable_job_id,
+                stage,
+                artifact_type,
+                str(selected[4]),
+                path,
+                str(selected[6]),
+                selected[7],
+                selected[8],
+            )
+        )
+    return canonical
+
+
+def ensure_artifact_registry_references_v14(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move generic artifact registrations to stable JobId references."""
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _ARTIFACT_REGISTRY_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _STAGE_STATE_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "artifact registry reference migration requires stage-state "
+            "schema v13"
+        )
+
+    conn.execute("SAVEPOINT artifact_registry_references_v14")
+    try:
+        if not _has_stage_state_reference_schema_v13(conn):
+            raise RuntimeError(
+                "artifact registry reference migration requires the stable "
+                "stage-state reference schema"
+            )
+        if _has_artifact_registry_reference_schema_v14(conn):
+            expected_count = int(
+                conn.execute("SELECT COUNT(*) FROM job_artifacts").fetchone()[0]
+            )
+        else:
+            canonical_rows = _canonical_artifact_registry_rows_v14(conn)
+            expected_count = len(canonical_rows)
+            conn.execute("DROP TABLE IF EXISTS job_artifacts_v14")
+            _create_job_artifacts_v14(
+                conn,
+                table_name="job_artifacts_v14",
+            )
+            conn.executemany(
+                """
+                INSERT INTO job_artifacts_v14 (
+                    artifact_id, tenant_id, job_id, stage, artifact_type,
+                    status, path, created_at, size_bytes, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                canonical_rows,
+            )
+            conn.execute("DROP TABLE job_artifacts")
+            conn.execute(
+                "ALTER TABLE job_artifacts_v14 RENAME TO job_artifacts"
+            )
+            _create_job_artifact_indexes_v14(conn)
+        _verify_artifact_registry_references_v14(
+            conn,
+            expected_count=expected_count,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_ARTIFACT_REGISTRY_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute("RELEASE SAVEPOINT artifact_registry_references_v14")
+        conn.commit()
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT artifact_registry_references_v14")
+        conn.execute("RELEASE SAVEPOINT artifact_registry_references_v14")
+        raise
+
+    return list(_ARTIFACT_REGISTRY_REFERENCE_TABLES)
+
+
+def _verify_artifact_registry_references_v14(
+    conn: sqlite3.Connection,
+    *,
+    expected_count: int,
+) -> None:
+    if not _has_artifact_registry_reference_schema_v14(conn):
+        raise RuntimeError(
+            "artifact registry reference migration did not install the "
+            "canonical schema"
+        )
+    observed_count = int(
+        conn.execute("SELECT COUNT(*) FROM job_artifacts").fetchone()[0]
+    )
+    if observed_count != expected_count:
+        raise RuntimeError(
+            "artifact registry reference migration changed the canonical "
+            f"row count: expected {expected_count}, found {observed_count}"
+        )
+    orphan = conn.execute(
+        """
+        SELECT artifact.job_id
+        FROM job_artifacts AS artifact
+        LEFT JOIN jobs j
+          ON j.tenant_id = artifact.tenant_id
+         AND j.job_id = artifact.job_id
+        WHERE j.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise RuntimeError(
+            "artifact registry reference migration left an unresolved JobId"
+        )
+    for row in conn.execute(
+        "SELECT DISTINCT job_id FROM job_artifacts"
+    ).fetchall():
+        _validate_job_uuid(str(row[0]))
+    foreign_key_error = conn.execute("PRAGMA foreign_key_check").fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "artifact registry reference migration found a foreign-key "
+            "violation"
+        )
+
+
+def _reassign_artifact_registry_references_v14(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    """Merge generic artifact registrations during Job identity collapse."""
+    if losing_job_id == surviving_job_id:
+        return
+    before_count = int(
+        conn.execute("SELECT COUNT(*) FROM job_artifacts").fetchone()[0]
+    )
+    rows = conn.execute(
+        """
+        SELECT artifact_id, tenant_id, job_id, stage, artifact_type,
+               status, path, created_at, size_bytes, metadata_json
+        FROM job_artifacts
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        ORDER BY artifact_id
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    grouped: dict[
+        tuple[str, str, str],
+        list[tuple[Any, ...]],
+    ] = {}
+    for row in rows:
+        grouped.setdefault(
+            (str(row[3]), str(row[4]), str(row[6])),
+            [],
+        ).append(tuple(row))
+    merged_rows: list[tuple[Any, ...]] = []
+    for (stage, artifact_type, path), candidates in sorted(grouped.items()):
+        selected = max(
+            candidates,
+            key=lambda row: (
+                _stage_state_timestamp_rank(row[7]),
+                int(row[0]),
+            ),
+        )
+        merged_rows.append(
+            (
+                int(selected[0]),
+                tenant_id,
+                surviving_job_id,
+                stage,
+                artifact_type,
+                str(selected[5]),
+                path,
+                str(selected[7]),
+                selected[8],
+                selected[9],
+            )
+        )
+    conn.execute(
+        """
+        DELETE FROM job_artifacts
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_artifacts (
+            artifact_id, tenant_id, job_id, stage, artifact_type,
+            status, path, created_at, size_bytes, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        merged_rows,
+    )
+    expected_count = before_count - len(rows) + len(merged_rows)
+    _verify_artifact_registry_references_v14(
         conn,
         expected_count=expected_count,
     )

@@ -3868,6 +3868,11 @@ function collectArtifacts(
     }
   }
   if (tableExists(db, "job_artifacts")) {
+    const artifactReference = jobReferencePredicateForUrl(
+      db,
+      "job_artifacts",
+      jobUrl,
+    );
     const rows = allRows<{
       row_id: number | string;
       artifact_type: string;
@@ -3878,8 +3883,8 @@ function collectArtifacts(
     }>(
       db,
       `SELECT rowid AS row_id, artifact_type, status, path, created_at, size_bytes
-       FROM job_artifacts WHERE job_url = ?`,
-      [jobUrl],
+       FROM job_artifacts WHERE ${artifactReference.sql}`,
+      artifactReference.params,
     );
     for (const row of rows) {
       if (!row.path) continue;

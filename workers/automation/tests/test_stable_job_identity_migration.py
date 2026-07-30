@@ -145,12 +145,12 @@ def _create_representative_v6_pair(
     conn.execute(
         """
         INSERT INTO job_artifacts (
-            job_url, stage, artifact_type, status, path, created_at,
-            size_bytes, metadata_json
-        ) VALUES (?, 'tailor', 'resume_pdf', 'accepted', ?, ?, 1024, ?)
+            tenant_id, job_id, stage, artifact_type, status, path,
+            created_at, size_bytes, metadata_json
+        ) VALUES ('local', ?, 'tailor', 'resume_pdf', 'accepted', ?, ?, 1024, ?)
         """,
         (
-            job_url,
+            job_id,
             "artifacts/synthetic-resume.pdf",
             "2026-07-01T10:10:00+00:00",
             '{"fixture":true}',
@@ -257,6 +257,25 @@ def _create_representative_v6_pair(
               ON jobs.tenant_id = scores.tenant_id
              AND jobs.job_id = scores.job_id
             ORDER BY scores.tenant_id, scores.job_id, scores.version
+            """
+        ).fetchall()
+        artifact_rows = raw.execute(
+            """
+            SELECT
+                artifacts.artifact_id,
+                jobs.url,
+                artifacts.stage,
+                artifacts.artifact_type,
+                artifacts.status,
+                artifacts.path,
+                artifacts.created_at,
+                artifacts.size_bytes,
+                artifacts.metadata_json
+            FROM job_artifacts AS artifacts
+            JOIN jobs
+              ON jobs.tenant_id = artifacts.tenant_id
+             AND jobs.job_id = artifacts.job_id
+            ORDER BY artifacts.artifact_id
             """
         ).fetchall()
         source_rows = raw.execute(
@@ -491,6 +510,35 @@ def _create_representative_v6_pair(
             """,
             stage_rows,
         )
+        raw.execute("DROP TABLE job_artifacts")
+        raw.executescript(
+            """
+            CREATE TABLE job_artifacts (
+                artifact_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_url             TEXT NOT NULL,
+                stage               TEXT NOT NULL,
+                artifact_type       TEXT NOT NULL,
+                status              TEXT NOT NULL DEFAULT 'candidate',
+                path                TEXT NOT NULL,
+                created_at          TEXT NOT NULL,
+                size_bytes          INTEGER,
+                metadata_json       TEXT,
+                UNIQUE(job_url, stage, artifact_type, path),
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            );
+            CREATE INDEX idx_job_artifacts_job_stage
+                ON job_artifacts(job_url, stage, status);
+            """
+        )
+        raw.executemany(
+            """
+            INSERT INTO job_artifacts (
+                artifact_id, job_url, stage, artifact_type, status, path,
+                created_at, size_bytes, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            artifact_rows,
+        )
         for trigger_name in database_module._STABLE_JOB_IDENTITY_TRIGGER_NAMES:
             raw.execute(f'DROP TRIGGER IF EXISTS "{trigger_name}"')
         raw.execute("DROP INDEX IF EXISTS idx_jobs_tenant_job_id")
@@ -626,6 +674,33 @@ def _reference_snapshot(db_path: Path) -> dict[str, list[tuple[object, ...]]]:
                     """
                 ).fetchall()
             ]
+        artifact_columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(job_artifacts)").fetchall()
+        }
+        if "job_id" in artifact_columns:
+            snapshot["job_artifacts"] = [
+                tuple(row)
+                for row in conn.execute(
+                    """
+                    SELECT
+                        artifacts.artifact_id,
+                        jobs.url,
+                        artifacts.stage,
+                        artifacts.artifact_type,
+                        artifacts.status,
+                        artifacts.path,
+                        artifacts.created_at,
+                        artifacts.size_bytes,
+                        artifacts.metadata_json
+                    FROM job_artifacts AS artifacts
+                    JOIN jobs
+                      ON jobs.tenant_id = artifacts.tenant_id
+                     AND jobs.job_id = artifacts.job_id
+                    ORDER BY artifacts.rowid
+                    """
+                ).fetchall()
+            ]
         snapshot["jobs"] = [
             tuple(row)
             for row in conn.execute(
@@ -666,7 +741,7 @@ def test_v6_jobs_gain_stable_uuid_and_posting_url_alias_once(
     init_db(db_path)
     close_connection(db_path)
 
-    assert _user_version(db_path) == SCHEMA_VERSION == 13
+    assert _user_version(db_path) == SCHEMA_VERSION == 14
     first_ids = _identity_rows(db_path)
     assert [row[0] for row in first_ids] == ["local", "local"]
     for _tenant_id, job_id, _url in first_ids:

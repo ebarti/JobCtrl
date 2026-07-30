@@ -850,7 +850,7 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
     }
   }
   deleteWhere(db, "job_events", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_artifacts", "job_url = ?", [jobUrl]);
+  deleteJobReferences(db, "job_artifacts", jobId, jobUrl);
   deleteScoringJobReferences(db, jobId, jobUrl);
   deleteWhere(db, "job_materials_artifacts", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_materials", "job_url = ?", [jobUrl]);
@@ -1000,6 +1000,25 @@ function deleteScoringJobReferences(
     if (!reference) continue;
     deleteWhere(db, tableName, `${referenceColumn} = ?`, [reference]);
   }
+}
+
+function deleteJobReferences(
+  db: SqliteDatabase,
+  tableName: string,
+  jobId: string | undefined,
+  jobUrl: string,
+): void {
+  if (!tableExists(db, tableName)) return;
+  const referenceColumn = jobReferenceColumn(db, tableName);
+  const reference = referenceColumn === "job_id" ? jobId : jobUrl;
+  if (!reference) return;
+  const predicate = referenceColumn === "job_id"
+    ? "tenant_id = ? AND job_id = ?"
+    : "job_url = ?";
+  const params: SqliteValue[] = referenceColumn === "job_id"
+    ? ["local", reference]
+    : [reference];
+  deleteWhere(db, tableName, predicate, params);
 }
 
 function ensureJobScoresTable(db: SqliteDatabase): void {

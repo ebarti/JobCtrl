@@ -50,6 +50,7 @@ import {
   hasCompositeJobIdForeignKey,
   jobReferenceColumn,
   jobReferenceJoinToJobs,
+  jobReferencePredicateForUrl,
   tableExists,
   type SqliteDatabase,
   type SqliteValue,
@@ -2663,6 +2664,11 @@ function materialArtifactCandidates(
   }
 
   if (tableExists(db, "job_artifacts")) {
+    const artifactReference = jobReferencePredicateForUrl(
+      db,
+      "job_artifacts",
+      jobKey,
+    );
     const rows = allRows<{
       created_at: string | null;
       path: string | null;
@@ -2671,14 +2677,14 @@ function materialArtifactCandidates(
       db,
       `SELECT rowid AS row_id, path, created_at
        FROM job_artifacts
-       WHERE job_url = ?
+       WHERE ${artifactReference.sql}
          AND artifact_type IN (${placeholders})
          AND COALESCE(status, 'active') NOT IN ('missing', 'failed', 'superseded', 'suppressed')
          AND path IS NOT NULL
          AND path != ''
        ORDER BY COALESCE(created_at, '') DESC, rowid DESC
        LIMIT 16`,
-      [jobKey, ...artifactTypes],
+      [...artifactReference.params, ...artifactTypes],
     );
     for (const [index, row] of rows.entries()) {
       pushMaterialCandidate(candidates, {

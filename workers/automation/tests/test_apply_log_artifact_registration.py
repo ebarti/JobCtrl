@@ -86,8 +86,10 @@ def test_mark_result_applied_registers_apply_log_artifact(
         )
 
         artifact_row = conn.execute(
-            "SELECT job_url, stage, artifact_type, status, path, size_bytes "
-            "FROM job_artifacts WHERE job_url = ? AND artifact_type = 'apply_log'",
+            "SELECT job_id, stage, artifact_type, status, path, size_bytes "
+            "FROM job_artifacts WHERE tenant_id = 'local' "
+            "AND job_id = (SELECT job_id FROM jobs WHERE url = ?) "
+            "AND artifact_type = 'apply_log'",
             ("https://example.com/job",),
         ).fetchone()
         assert artifact_row is not None
@@ -141,7 +143,9 @@ def test_mark_result_failed_registers_apply_log_artifact(tmp_path, monkeypatch):
 
         row = conn.execute(
             "SELECT path, size_bytes FROM job_artifacts "
-            "WHERE job_url = ? AND artifact_type = 'apply_log'",
+            "WHERE tenant_id = 'local' "
+            "AND job_id = (SELECT job_id FROM jobs WHERE url = ?) "
+            "AND artifact_type = 'apply_log'",
             ("https://example.com/job",),
         ).fetchone()
         assert row is not None
@@ -181,7 +185,9 @@ def test_mark_result_dry_run_registers_apply_log_artifact(
 
         row = conn.execute(
             "SELECT path FROM job_artifacts "
-            "WHERE job_url = ? AND artifact_type = 'apply_log'",
+            "WHERE tenant_id = 'local' "
+            "AND job_id = (SELECT job_id FROM jobs WHERE url = ?) "
+            "AND artifact_type = 'apply_log'",
             ("https://example.com/job",),
         ).fetchone()
         assert row is not None
@@ -246,7 +252,9 @@ def test_repository_persists_dry_run_blocked_channel_artifact(
 
         row = conn.execute(
             "SELECT path, metadata_json FROM job_artifacts "
-            "WHERE job_url = ? AND artifact_type = 'apply_dryrun_blocked'",
+            "WHERE tenant_id = 'local' "
+            "AND job_id = (SELECT job_id FROM jobs WHERE url = ?) "
+            "AND artifact_type = 'apply_dryrun_blocked'",
             ("https://example.com/job",),
         ).fetchone()
         assert row is not None
@@ -300,7 +308,8 @@ def test_mark_result_without_worker_id_skips_artifact_registration(
         )
 
         rows = conn.execute(
-            "SELECT 1 FROM job_artifacts WHERE job_url = ? "
+            "SELECT 1 FROM job_artifacts WHERE tenant_id = 'local' "
+            "AND job_id = (SELECT job_id FROM jobs WHERE url = ?) "
             "AND artifact_type = 'apply_log'",
             ("https://example.com/job",),
         ).fetchall()
@@ -376,7 +385,9 @@ def test_mark_result_apply_log_registration_is_idempotent(
 
         rows = conn.execute(
             "SELECT path, size_bytes FROM job_artifacts "
-            "WHERE job_url = ? AND artifact_type = 'apply_log'",
+            "WHERE tenant_id = 'local' "
+            "AND job_id = (SELECT job_id FROM jobs WHERE url = ?) "
+            "AND artifact_type = 'apply_log'",
             ("https://example.com/job",),
         ).fetchall()
         assert len(rows) == 1

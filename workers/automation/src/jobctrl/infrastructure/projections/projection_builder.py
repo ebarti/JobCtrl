@@ -2881,14 +2881,19 @@ class ProjectionBuilder:
         except sqlite3.OperationalError:
             pass
         try:
+            artifact_predicate, artifact_params = _job_reference_predicate_for_url(
+                self._conn,
+                "job_artifacts",
+                job_url,
+            )
             for row in self._conn.execute(
-                """
-                SELECT rowid AS row_id, job_url, stage, artifact_type, status,
+                f"""
+                SELECT rowid AS row_id, stage, artifact_type, status,
                        path, created_at, size_bytes
                 FROM job_artifacts
-                WHERE job_url = ?
+                WHERE {artifact_predicate}
                 """,
-                (job_url,),
+                artifact_params,
             ).fetchall():
                 local_path = _row_nullable_str(row, "path") or ""
                 atype = _row_nullable_str(row, "artifact_type") or "artifact"
@@ -4114,6 +4119,42 @@ def _has_column(conn: sqlite3.Connection, table_name: str, column_name: str) -> 
     return any(
         (row["name"] if isinstance(row, sqlite3.Row) else row[1]) == column_name
         for row in conn.execute(f"PRAGMA table_info({table_name})")
+    )
+
+
+def _job_reference_predicate_for_url(
+    conn: sqlite3.Connection,
+    table_name: str,
+    job_url: str,
+    *,
+    tenant_id: str = str(LOCAL_TENANT),
+) -> tuple[str, tuple[str, ...]]:
+    """Resolve one explicit posting URL for legacy or stable table shapes."""
+    if not _has_column(conn, table_name, "job_id"):
+        return "job_url = ?", (job_url,)
+    row = conn.execute(
+        """
+        SELECT j.tenant_id, j.job_id
+        FROM jobs j
+        WHERE j.tenant_id = ? AND j.url = ?
+        UNION ALL
+        SELECT alias.tenant_id, alias.job_id
+        FROM job_identity_aliases alias
+        JOIN jobs j
+          ON j.tenant_id = alias.tenant_id
+         AND j.job_id = alias.job_id
+        WHERE alias.tenant_id = ?
+          AND alias.alias_kind = 'posting_url'
+          AND alias.alias_value = ?
+        LIMIT 1
+        """,
+        (tenant_id, job_url, tenant_id, job_url),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"no stable Job identity for posting URL: {job_url}")
+    return "tenant_id = ? AND job_id = ?", (
+        str(row[0]),
+        str(row[1]),
     )
 
 
