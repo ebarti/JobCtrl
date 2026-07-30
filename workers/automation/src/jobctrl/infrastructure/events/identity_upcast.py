@@ -21,6 +21,10 @@ _SINGLE_FIELDS = {
     "job_id": "job_id",
     "job_url": "job_id",
     "job_key": "job_id",
+    "candidateJobId": "candidateJobId",
+    "candidate_job_id": "candidate_job_id",
+    "survivingJobId": "survivingJobId",
+    "surviving_job_id": "surviving_job_id",
 }
 _PLURAL_FIELDS = {
     "jobIds": "jobIds",
@@ -30,6 +34,12 @@ _PLURAL_FIELDS = {
     "job_urls": "job_ids",
     "job_keys": "job_ids",
 }
+_ROOT_PRIMARY_FIELDS = (
+    "jobId",
+    "job_id",
+    "survivingJobId",
+    "surviving_job_id",
+)
 
 
 class EventIdentityUpcastError(RuntimeError):
@@ -87,7 +97,7 @@ def upcast_event_identity(
 
     root_job_ids = {
         value
-        for key in ("jobId", "job_id")
+        for key in _ROOT_PRIMARY_FIELDS
         if isinstance((value := transformed.get(key)), str)
     }
     primary_job_ids = set(root_job_ids)
@@ -100,8 +110,8 @@ def upcast_event_identity(
         inferred_job_id = column_job_id
     elif len(root_job_ids) == 1:
         inferred_job_id = next(iter(root_job_ids))
-    elif len(referenced) == 1:
-        inferred_job_id = next(iter(referenced))
+    elif len(inferable_job_ids := _inferable_payload_job_ids(transformed)) == 1:
+        inferred_job_id = next(iter(inferable_job_ids))
     else:
         inferred_job_id = None
     return UpcastedEventIdentity(
@@ -224,19 +234,23 @@ def _resolve_reference(
         """,
         (tenant_id, normalized),
     )
-    alias_url = _job_id_from_query(
-        conn,
-        """
-        SELECT jobs.job_id
-        FROM job_identity_aliases AS aliases
-        JOIN jobs
-          ON jobs.tenant_id = aliases.tenant_id
-         AND jobs.job_id = aliases.job_id
-        WHERE aliases.tenant_id = ?
-          AND aliases.alias_kind = 'posting_url'
-          AND aliases.alias_value = ?
-        """,
-        (tenant_id, normalized),
+    alias_url = (
+        _job_id_from_query(
+            conn,
+            """
+            SELECT jobs.job_id
+            FROM job_identity_aliases AS aliases
+            JOIN jobs
+              ON jobs.tenant_id = aliases.tenant_id
+             AND jobs.job_id = aliases.job_id
+            WHERE aliases.tenant_id = ?
+              AND aliases.alias_kind = 'posting_url'
+              AND aliases.alias_value = ?
+            """,
+            (tenant_id, normalized),
+        )
+        if _table_exists(conn, "job_identity_aliases")
+        else None
     )
     if (
         direct_url is not None
@@ -275,6 +289,44 @@ def _job_id_from_query(
     if not normalized:
         raise EventIdentityUpcastError("event_job_identity_invalid")
     return normalized
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        LIMIT 1
+        """,
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _inferable_payload_job_ids(value: Any) -> set[str]:
+    if isinstance(value, list):
+        inferred: set[str] = set()
+        for item in value:
+            inferred.update(_inferable_payload_job_ids(item))
+        return inferred
+    if not isinstance(value, dict):
+        return set()
+
+    inferred = set()
+    for key, item in value.items():
+        if key in {"jobId", "job_id"} and isinstance(item, str):
+            inferred.add(item)
+        elif key in {"jobIds", "job_ids"} and isinstance(item, list):
+            inferred.update(entry for entry in item if isinstance(entry, str))
+        elif key not in {
+            "candidateJobId",
+            "candidate_job_id",
+            "survivingJobId",
+            "surviving_job_id",
+        }:
+            inferred.update(_inferable_payload_job_ids(item))
+    return inferred
 
 
 __all__ = [

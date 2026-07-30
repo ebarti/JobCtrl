@@ -9,6 +9,10 @@ const SINGLE_FIELDS: Record<string, string> = {
   job_id: "job_id",
   job_url: "job_id",
   job_key: "job_id",
+  candidateJobId: "candidateJobId",
+  candidate_job_id: "candidate_job_id",
+  survivingJobId: "survivingJobId",
+  surviving_job_id: "surviving_job_id",
 };
 
 const PLURAL_FIELDS: Record<string, string> = {
@@ -19,6 +23,12 @@ const PLURAL_FIELDS: Record<string, string> = {
   job_urls: "job_ids",
   job_keys: "job_ids",
 };
+const ROOT_PRIMARY_FIELDS = [
+  "jobId",
+  "job_id",
+  "survivingJobId",
+  "surviving_job_id",
+] as const;
 
 export class EventIdentityUpcastError extends Error {
   readonly code: string;
@@ -66,7 +76,7 @@ export function upcastEventIdentity(
   }
 
   const rootJobIds = new Set(
-    ["jobId", "job_id"]
+    ROOT_PRIMARY_FIELDS
       .map((key) => payload[key])
       .filter((value): value is string => typeof value === "string"),
   );
@@ -81,10 +91,12 @@ export function upcastEventIdentity(
     jobId = columnJobId;
   } else if (rootJobIds.size === 1) {
     jobId = rootJobIds.values().next().value ?? null;
-  } else if (referenced.size === 1) {
-    jobId = referenced.values().next().value ?? null;
   } else {
-    jobId = null;
+    const inferableJobIds = inferablePayloadJobIds(payload);
+    jobId =
+      inferableJobIds.size === 1
+        ? inferableJobIds.values().next().value ?? null
+        : null;
   }
   return {
     version: EVENT_IDENTITY_UPCAST_VERSION,
@@ -181,21 +193,23 @@ function resolveReference(
     tenantId,
     normalized,
   );
-  const aliasUrl = jobIdFromQuery(
-    db,
-    `
-      SELECT jobs.job_id
-      FROM job_identity_aliases AS aliases
-      JOIN jobs
-        ON jobs.tenant_id = aliases.tenant_id
-       AND jobs.job_id = aliases.job_id
-      WHERE aliases.tenant_id = ?
-        AND aliases.alias_kind = 'posting_url'
-        AND aliases.alias_value = ?
-    `,
-    tenantId,
-    normalized,
-  );
+  const aliasUrl = aliasTableExists(db)
+    ? jobIdFromQuery(
+        db,
+        `
+          SELECT jobs.job_id
+          FROM job_identity_aliases AS aliases
+          JOIN jobs
+            ON jobs.tenant_id = aliases.tenant_id
+           AND jobs.job_id = aliases.job_id
+          WHERE aliases.tenant_id = ?
+            AND aliases.alias_kind = 'posting_url'
+            AND aliases.alias_value = ?
+        `,
+        tenantId,
+        normalized,
+      )
+    : null;
   if (directUrl !== null && aliasUrl !== null && directUrl !== aliasUrl) {
     throw new EventIdentityUpcastError("event_job_identity_conflict");
   }
@@ -245,4 +259,49 @@ function valuesEqual(left: unknown, right: unknown): boolean {
 
 function hasOwn(record: Record<string, string>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function aliasTableExists(db: SqliteDatabase): boolean {
+  const row = db
+    .prepare(
+      `
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'job_identity_aliases'
+        LIMIT 1
+      `,
+    )
+    .get();
+  return row !== undefined;
+}
+
+function inferablePayloadJobIds(value: unknown): Set<string> {
+  const inferred = new Set<string>();
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      for (const jobId of inferablePayloadJobIds(item)) inferred.add(jobId);
+    }
+    return inferred;
+  }
+  if (!isRecord(value)) return inferred;
+
+  for (const [key, item] of Object.entries(value)) {
+    if ((key === "jobId" || key === "job_id") && typeof item === "string") {
+      inferred.add(item);
+    } else if ((key === "jobIds" || key === "job_ids") && Array.isArray(item)) {
+      for (const entry of item) {
+        if (typeof entry === "string") inferred.add(entry);
+      }
+    } else if (
+      ![
+        "candidateJobId",
+        "candidate_job_id",
+        "survivingJobId",
+        "surviving_job_id",
+      ].includes(key)
+    ) {
+      for (const jobId of inferablePayloadJobIds(item)) inferred.add(jobId);
+    }
+  }
+  return inferred;
 }

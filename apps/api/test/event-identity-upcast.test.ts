@@ -107,4 +107,23 @@ describe("historical event identity upcast", () => {
       );
     }
   });
+
+  it("resolves current URLs and stable IDs without an alias table", () => {
+    const db = seededDb();
+    db.exec("DROP TABLE job_identity_aliases");
+
+    const byUrl = upcastEventIdentity(db, {
+      tenantId: "local",
+      eventJobReference: "https://jobs.example/a",
+      payload: {},
+    });
+    const byId = upcastEventIdentity(db, {
+      tenantId: "local",
+      eventJobReference: "22222222-2222-4222-8222-222222222222",
+      payload: {},
+    });
+
+    expect(byUrl.jobId).toBe("11111111-1111-4111-8111-111111111111");
+    expect(byId.jobId).toBe("22222222-2222-4222-8222-222222222222");
+  });
 });

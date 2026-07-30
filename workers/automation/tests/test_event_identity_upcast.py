@@ -95,3 +95,25 @@ def test_event_identity_upcast_shared_contract(
         "payload": result.payload,
     } == case["expected"]
     assert result.version == _FIXTURE["version"]
+
+
+def test_current_url_and_stable_id_resolve_without_alias_table(
+    seeded_conn: sqlite3.Connection,
+) -> None:
+    seeded_conn.execute("DROP TABLE job_identity_aliases")
+
+    by_url = upcast_event_identity(
+        seeded_conn,
+        tenant_id="local",
+        event_job_reference="https://jobs.example/a",
+        payload={},
+    )
+    by_id = upcast_event_identity(
+        seeded_conn,
+        tenant_id="local",
+        event_job_reference="22222222-2222-4222-8222-222222222222",
+        payload={},
+    )
+
+    assert by_url.job_id == "11111111-1111-4111-8111-111111111111"
+    assert by_id.job_id == "22222222-2222-4222-8222-222222222222"
