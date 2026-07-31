@@ -2669,12 +2669,17 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   // against the conservative opt-in allowlist (INV-3). Candidates land
   // needs_review and require an explicit confirm command (INV-4). No send
   // transport exists on any of these routes (INV-1).
-  app.get("/v1/contacts/research", async (request, reply) =>
-    withDb(reply, options.dbPath, (db) => ({
+  app.get("/v1/contacts/research", async (request, reply) => {
+    const query = ContactResearchListQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      void reply.code(400);
+      return { ok: false, error: "invalid_contact_research_query" };
+    }
+    return withDb(reply, options.dbPath, (db) => ({
       ok: true,
-      items: listResearchTasks(db, ContactResearchListQuerySchema.parse(request.query)),
-    })),
-  );
+      items: listResearchTasks(db, query.data),
+    }));
+  });
 
   app.get<{ Params: { taskId: string } }>(
     "/v1/contacts/research/:taskId",
@@ -2707,12 +2712,21 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       label: source.label,
     }));
     return withWritableDb(reply, options.dbPath, async (db) => {
+      const jobUrl = jobId
+        ? (db
+            .prepare("SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ?")
+            .get("local", jobId) as { url: string } | undefined)?.url ?? null
+        : null;
+      if (jobId && !jobUrl) {
+        void reply.code(404);
+        return { ok: false, error: "contact_research_job_not_found" };
+      }
       createQueuedResearchTask(db, { taskId, employer, jobId });
       const started = await contactResearchStarter(
         {
           taskId,
           employer,
-          jobUrl: jobId,
+          jobUrl,
           sources,
           ...(body.llmModel ? { llmModel: body.llmModel } : {}),
         },

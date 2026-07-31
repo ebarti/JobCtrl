@@ -19,13 +19,16 @@ import type {
   ContactResearchDetailResponse,
   ContactResearchListResponse,
 } from "../src/contracts.js";
-import { ensureContactResearchTables } from "../src/contact-research.js";
 import type { ContactResearchStarter } from "../src/local-actions.js";
 import { buildApp } from "../src/server.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 const SECRET_NAME = "Dana Hiring-Manager";
 const SECRET_EMAIL = "dana@acme.example";
 const TEAM_URL = "https://acme.example/team";
+const JOB_ID_ONE = "00000000-0000-4000-8000-000000000021";
+const JOB_ID_TWO = "00000000-0000-4000-8000-000000000022";
+const JOB_URL_ONE = "https://jobs.example.test/research-one";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -37,23 +40,15 @@ afterEach(() => {
 function withTempApp(starter?: ContactResearchStarter) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-research-"));
   const dbPath = path.join(dir, "jobs.db");
+  initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE jobs (url TEXT PRIMARY KEY, title TEXT);
-    CREATE TABLE job_events (
-      event_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_url      TEXT,
-      stage        TEXT,
-      event_type   TEXT NOT NULL,
-      level        TEXT NOT NULL DEFAULT 'info',
-      message      TEXT,
-      occurred_at  TEXT NOT NULL,
-      payload_json TEXT,
-      entity_kind  TEXT,
-      entity_ref   TEXT
-    );
-  `);
-  ensureContactResearchTables(db);
+  db.pragma("foreign_keys = ON");
+  const insertJob = db.prepare(
+    `INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+     VALUES ('local', ?, ?, 'Fixture job', '2026-07-31T12:00:00Z')`,
+  );
+  insertJob.run(JOB_ID_ONE, JOB_URL_ONE);
+  insertJob.run(JOB_ID_TWO, "https://jobs.example.test/research-two");
   db.close();
   const app = buildApp({
     dbPath,
@@ -71,11 +66,12 @@ function seedNeedsReviewTask(dbPath: string): { taskId: string; candidateId: str
   const candidateId = "cand-seed";
   db.prepare(
     `INSERT INTO contact_research_tasks (
-       tenant_id, task_id, employer, job_url, status, source_attempts_json,
+       tenant_id, task_id, employer, job_id, status, source_attempts_json,
        started_at, updated_at, needs_review_at
-     ) VALUES ('local', ?, 'Acme', 'https://job/1', 'needs_review', ?, ?, ?, ?)`,
+     ) VALUES ('local', ?, 'Acme', ?, 'needs_review', ?, ?, ?, ?)`,
   ).run(
     taskId,
+    JOB_ID_ONE,
     JSON.stringify([
       {
         sourceKind: "public_web_page",
@@ -123,6 +119,25 @@ function eventTypes(dbPath: string): string[] {
   return rows.map((row) => row.event_type);
 }
 
+function researchEvents(dbPath: string): Array<{
+  tenant_id: string;
+  job_id: string | null;
+  identity_version: number;
+  event_type: string;
+}> {
+  const db = new Database(dbPath);
+  const rows = db
+    .prepare("SELECT tenant_id, job_id, identity_version, event_type FROM job_events")
+    .all() as Array<{
+    tenant_id: string;
+    job_id: string | null;
+    identity_version: number;
+    event_type: string;
+  }>;
+  db.close();
+  return rows;
+}
+
 function eventPayloadBlob(dbPath: string): string {
   const db = new Database(dbPath);
   const rows = db.prepare("SELECT payload_json FROM job_events").all() as Array<{
@@ -147,6 +162,7 @@ describe("contact research API", () => {
       url: "/v1/contacts/research",
       payload: {
         employer: "Acme",
+        jobId: JOB_ID_ONE,
         sources: [{ category: "public_web_page", url: TEAM_URL }],
       },
     });
@@ -157,6 +173,7 @@ describe("contact research API", () => {
     expect(starter).toHaveBeenCalledTimes(1);
     const input = starter.mock.calls[0]![0];
     expect(input.taskId).toBe(body.taskId);
+    expect(input.jobUrl).toBe(JOB_URL_ONE);
     expect(input.sources).toEqual([{ category: "public_web_page", url: TEAM_URL, label: "" }]);
 
     // The queued task is readable immediately and emitted a start event.
@@ -165,8 +182,15 @@ describe("contact research API", () => {
     ).json() as ContactResearchListResponse;
     expect(list.items).toHaveLength(1);
     expect(list.items[0]!.taskId).toBe(body.taskId);
+    expect(list.items[0]!.jobId).toBe(JOB_ID_ONE);
     expect(list.items[0]!.status).toBe("queued");
     expect(eventTypes(dbPath)).toContain("ContactResearchTaskStarted");
+    expect(researchEvents(dbPath)).toContainEqual({
+      tenant_id: "local",
+      job_id: JOB_ID_ONE,
+      identity_version: 1,
+      event_type: "ContactResearchTaskStarted",
+    });
   });
 
   it("rejects a run scoped to neither employer nor jobId", async () => {
@@ -182,6 +206,43 @@ describe("contact research API", () => {
       payload: { sources: [] },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects a URL-shaped JobId before research rows or events are written", async () => {
+    const { app, dbPath } = withTempApp(async () => ({
+      runId: null,
+      workflowId: null,
+      firstExecutionRunId: null,
+      status: "queued",
+    }));
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/contacts/research",
+      payload: { employer: "Acme", jobId: "https://jobs.example.test/not-an-id" },
+    });
+    expect(res.statusCode).toBe(400);
+    const db = new Database(dbPath, { readonly: true });
+    expect(
+      (db.prepare("SELECT COUNT(*) AS count FROM contact_research_tasks").get() as { count: number })
+        .count,
+    ).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS count FROM job_events").get() as { count: number }).count).toBe(0);
+    db.close();
+  });
+
+  it("rejects noncanonical JobId list filters before opening the database", async () => {
+    const { app } = withTempApp();
+    for (const jobId of [
+      "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF",
+      "https://jobs.example.test/not-an-id",
+    ]) {
+      const res = await app.inject({
+        method: "GET",
+        url: `/v1/contacts/research?jobId=${encodeURIComponent(jobId)}`,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ ok: false, error: "invalid_contact_research_query" });
+    }
   });
 
   it("renders each candidate's attributes with provenance and the source attempts (INV-2)", async () => {
