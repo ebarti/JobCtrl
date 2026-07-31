@@ -3300,7 +3300,7 @@ def _order_rows_by_feedback(
         return rows
 
     row_keys = set(rows[0].keys())
-    base_scores: dict[str, float] = {}
+    base_scores: dict[tuple[str, str], float] = {}
     for row in rows:
         raw_score = row["js_fit_score"] if "js_fit_score" in row_keys else None
         if raw_score is None:
@@ -3308,7 +3308,7 @@ def _order_rows_by_feedback(
         if raw_score is None:
             continue
         try:
-            base_scores[str(row["url"])] = float(raw_score)
+            base_scores[(str(row["tenant_id"]), str(row["job_id"]))] = float(raw_score)
         except (TypeError, ValueError):
             continue
 
@@ -3322,14 +3322,23 @@ def _order_rows_by_feedback(
         return rows
 
     ranked = rank_jobs_with_feedback(base_scores, signals)
-    rank_index = {item.job_id: index for index, item in enumerate(ranked)}
-    original_index = {str(row["url"]): index for index, row in enumerate(rows)}
+    rank_index = {
+        (item.tenant_id, item.job_id): index
+        for index, item in enumerate(ranked)
+    }
+    original_index = {
+        (str(row["tenant_id"]), str(row["job_id"])): index
+        for index, row in enumerate(rows)
+    }
     fallback_index = len(rank_index)
     return sorted(
         rows,
         key=lambda row: (
-            rank_index.get(str(row["url"]), fallback_index),
-            original_index[str(row["url"])],
+            rank_index.get(
+                (str(row["tenant_id"]), str(row["job_id"])),
+                fallback_index,
+            ),
+            original_index[(str(row["tenant_id"]), str(row["job_id"]))],
         ),
     )
 
