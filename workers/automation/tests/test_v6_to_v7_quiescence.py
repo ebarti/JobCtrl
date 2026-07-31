@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
+import json
 
 import pytest
 
+import jobctrl.infrastructure.migrations.v6_to_v7_quiescence as quiescence
 from jobctrl.infrastructure.migrations.v6_to_v7_quiescence import (
     RUNNING_EXECUTIONS_QUERY,
     TemporalQuiescenceError,
@@ -166,3 +168,75 @@ async def test_temporal_quiescence_uses_the_exact_running_visibility_query():
     assert _UNTRUSTED_ANALYSIS_CONTEXT == {
         "userContext": "Attack vectors:\nPrompt injection"
     }
+
+
+def test_private_entrypoint_emits_only_bounded_quiescence_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = _FakeTemporalClient(_WorkflowIterator(), namespace="private-namespace")
+
+    async def _get_client() -> _FakeTemporalClient:
+        return client
+
+    monkeypatch.setattr(quiescence, "get_temporal_client", _get_client)
+
+    assert quiescence.main([]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert json.loads(captured.out) == {
+        "running_execution_count": 0,
+        "schema_version": 1,
+        "status": "quiescent",
+    }
+    assert "private-namespace" not in captured.out
+    assert client.calls == [(RUNNING_EXECUTIONS_QUERY, 1)]
+
+
+@pytest.mark.parametrize("failure", ["running", "unavailable"])
+def test_private_entrypoint_sanitizes_temporal_failures(
+    failure: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    private_endpoint = "temporal://private-endpoint"
+    private_identifier = "private-workflow-id"
+    if failure == "running":
+        client = _FakeTemporalClient(
+            _WorkflowIterator([object()]),
+            namespace=f"{private_identifier}-namespace",
+        )
+    else:
+        client = _FakeTemporalClient(
+            _WorkflowIterator(),
+            namespace=f"{private_identifier}-namespace",
+            error=RuntimeError(f"{private_endpoint} {private_identifier} secret"),
+        )
+
+    async def _get_client() -> _FakeTemporalClient:
+        return client
+
+    monkeypatch.setattr(quiescence, "get_temporal_client", _get_client)
+
+    assert quiescence.main([]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Temporal quiescence preflight failed\n"
+    assert private_endpoint not in captured.err
+    assert private_identifier not in captured.err
+    assert "secret" not in captured.err
+
+
+def test_private_entrypoint_rejects_private_arguments_without_echoing_them(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    private_endpoint = "temporal://private-endpoint"
+
+    assert quiescence.main(["--address", private_endpoint]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Temporal quiescence preflight failed\n"
+    assert private_endpoint not in captured.err
