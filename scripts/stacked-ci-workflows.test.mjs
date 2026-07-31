@@ -33,6 +33,7 @@ const sameRepositoryPullRequest =
   "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository";
 const topOfStack =
   "github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size";
+const trustedTopOfStack = `(${sameRepositoryPullRequest}) && (${topOfStack})`;
 
 const findStep = (job, name) => {
   const step = job.steps.find((candidate) => candidate.name === name);
@@ -40,67 +41,58 @@ const findStep = (job, name) => {
   return step;
 };
 
-test("same-repository pull requests targeting main admit correctness workflows", async () => {
+test("stacked pull requests always instantiate the Python and TypeScript admission workflows", async () => {
   const specs = [
-    { workflowName: "python", jobName: "python", pathFiltered: true },
-    { workflowName: "typescript", jobName: "typescript", pathFiltered: true },
-    { workflowName: "docs-site", jobName: "build", pathFiltered: true },
-    { workflowName: "release-check", jobName: "release-check", pathFiltered: false },
+    { workflowName: "python", jobName: "python" },
+    { workflowName: "typescript", jobName: "typescript" },
   ];
 
   for (const spec of specs) {
     const workflow = await parseWorkflow(spec.workflowName);
-    assert.deepEqual(
-      workflow.on.pull_request.branches,
-      ["main"],
-      `${spec.workflowName} must admit every GitHub Stack layer as targeting main`,
+    assert.equal(
+      workflow.on.pull_request,
+      null,
+      `${spec.workflowName} must not suppress stacked PRs by their direct base branch or changed paths`,
     );
     assert.equal(
       workflow.jobs[spec.jobName].if,
-      `\${{ ${sameRepositoryPullRequest} }}`,
-      `${spec.workflowName} must continue to reject untrusted fork execution`,
+      `\${{ ${trustedTopOfStack} }}`,
+      `${spec.workflowName} must run hosted dependencies only on a trusted cumulative head`,
     );
-    if (spec.pathFiltered) {
-      assert.deepEqual(
-        workflow.on.pull_request.paths,
-        workflow.on.push.paths,
-        `${spec.workflowName} must use the same paths for stack PRs and main pushes`,
-      );
-    } else {
-      assert.equal(workflow.on.pull_request.paths, undefined);
-    }
   }
 });
 
 test("stack metadata gates cumulative Python product coverage", async () => {
   const workflow = await parseWorkflow("python");
   const job = workflow.jobs.python;
-  const matrix =
-    "fromJSON(github.event_name == 'pull_request' && github.event.pull_request.stack != null && github.event.pull_request.stack.position != github.event.pull_request.stack.size && '[\"3.11\"]' || '[\"3.11\",\"3.12\",\"3.13\"]')";
-
   assert.equal(
     job.strategy["fail-fast"],
     false,
     "one Python compatibility failure must not cancel the remaining top lanes",
   );
-  assert.equal(job.strategy.matrix["python-version"], `\${{ ${matrix} }}`);
-  for (const admissionStep of [
+  assert.deepEqual(job.strategy.matrix["python-version"], ["3.11", "3.12", "3.13"]);
+  assert.deepEqual(
+    findStep(job, "Set up Python ${{ matrix.python-version }}").with,
+    {
+      "python-version": "${{ matrix.python-version }}",
+      cache: "pip",
+      "cache-dependency-path": "workers/automation/pyproject.toml",
+    },
+    "the full Python lane must reuse pip downloads across top runs",
+  );
+  for (const productStep of [
     "Lint",
     "Release scan",
     "Validate Python workflow contract",
+    "Test",
     "Build package",
   ]) {
     assert.equal(
-      findStep(job, admissionStep).if,
+      findStep(job, productStep).if,
       undefined,
-      `${admissionStep} must run as a fast Python 3.11 admission check on every matching stack PR`,
+      `${productStep} must run when the trusted-top Python job is admitted`,
     );
   }
-  assert.equal(
-    findStep(job, "Test").if,
-    `\${{ ${topOfStack} }}`,
-    "the Python product suite must use the null-safe top-of-stack guard",
-  );
 });
 
 test("stack metadata gates cumulative TypeScript product suites", async () => {
@@ -108,12 +100,13 @@ test("stack metadata gates cumulative TypeScript product suites", async () => {
   const job = workflow.jobs.typescript;
 
   assert.equal(
-    findStep(job, "Check").if,
-    undefined,
-    "the static workspace check must run on every matching stack PR",
+    findStep(job, "Set up Node").with.cache,
+    "pnpm",
+    "the full TypeScript lane must reuse the pnpm store across top runs",
   );
 
-  for (const cumulativeStep of [
+  for (const productStep of [
+    "Check",
     "Set up Python",
     "Install uv",
     "Test",
@@ -127,9 +120,9 @@ test("stack metadata gates cumulative TypeScript product suites", async () => {
     "Test web storybook",
   ]) {
     assert.equal(
-      findStep(job, cumulativeStep).if,
-      `\${{ ${topOfStack} }}`,
-      `${cumulativeStep} must use the null-safe top-of-stack guard`,
+      findStep(job, productStep).if,
+      undefined,
+      `${productStep} must run when the trusted-top TypeScript job is admitted`,
     );
   }
 });
@@ -157,7 +150,7 @@ test("stack routing keeps per-layer correctness and cumulative top coverage", ()
       eventName: "pull_request",
       trusted: true,
       stack: { position: 2, size: 3 },
-      expectedPython: ["3.11"],
+      expectedPython: [],
       expectedCumulative: false,
     },
     {
@@ -179,21 +172,15 @@ test("stack routing keeps per-layer correctness and cumulative top coverage", ()
   ];
 
   for (const route of routes) {
-    const admitted = route.eventName !== "pull_request" || route.trusted;
-    const isLowerStackLayer =
-      route.eventName === "pull_request" &&
-      route.stack !== null &&
-      route.stack.position !== route.stack.size;
-    const pythonVersions = admitted
-      ? isLowerStackLayer
-        ? ["3.11"]
-        : ["3.11", "3.12", "3.13"]
-      : [];
-    const cumulative =
-      admitted &&
+    const admitted =
+      (route.eventName !== "pull_request" || route.trusted) &&
       (route.eventName !== "pull_request" ||
         route.stack === null ||
         route.stack.position === route.stack.size);
+    const pythonVersions = admitted
+      ? ["3.11", "3.12", "3.13"]
+      : [];
+    const cumulative = admitted;
 
     assert.deepEqual(pythonVersions, route.expectedPython, route.name);
     assert.equal(cumulative, route.expectedCumulative, route.name);
