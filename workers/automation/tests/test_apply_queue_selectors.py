@@ -19,7 +19,7 @@ from jobctrl.database import (
     get_stats,
     init_db,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials import (
     Artifact,
     ArtifactType,
@@ -68,6 +68,39 @@ def _insert_apply_ready_job(
     conn.commit()
 
 
+def _selector_job_id(number: int) -> JobId:
+    return canonical_job_id(f"90000000-0000-4000-8000-{number:012d}")
+
+
+def _insert_selector_apply_ready_job(
+    conn,
+    *,
+    job_id: JobId,
+    posting_url: str = "https://example.com/job",
+    application_url: str | None = "https://example.com/apply",
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, site, full_description,
+            application_url, fit_score, tailored_resume_path
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
+            posting_url,
+            "Eng",
+            "ExampleCo",
+            "Build distributed systems.",
+            application_url,
+            9,
+            "/tmp/resume.txt",
+        ),
+    )
+    conn.commit()
+
+
 def _mark_closed(conn, url: str, state: str = "removed") -> None:
     conn.execute(
         """
@@ -80,6 +113,22 @@ def _mark_closed(conn, url: str, state: str = "removed") -> None:
             updated_at = excluded.updated_at
         """,
         (str(LOCAL_TENANT), url, state, utc_now()),
+    )
+    conn.commit()
+
+
+def _mark_selector_closed(conn, job_id: JobId, state: str = "removed") -> None:
+    conn.execute(
+        """
+        INSERT INTO posting_snapshot_sets (
+            tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
+            latest_active_state, updated_at
+        ) VALUES (?, ?, '{}', 0, ?, ?)
+        ON CONFLICT(tenant_id, job_id) DO UPDATE SET
+            latest_active_state = excluded.latest_active_state,
+            updated_at = excluded.updated_at
+        """,
+        (str(LOCAL_TENANT), str(job_id), state, utc_now()),
     )
     conn.commit()
 
@@ -105,19 +154,22 @@ def _make_resume_pdf_artifact(path: str = "/tmp/resume.pdf") -> Artifact:
 def _insert_canonical_apply_job(
     conn,
     *,
-    url: str = "https://example.com/canonical-job",
+    job_id: JobId,
+    posting_url: str = "https://example.com/canonical-job",
     application_url: str | None = "https://example.com/apply",
     with_pdf: bool,
 ) -> None:
     conn.execute(
         """
         INSERT INTO jobs (
-            url, title, site, full_description, application_url,
-            fit_score
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, site, full_description,
+            application_url, fit_score
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            url,
+            str(LOCAL_TENANT),
+            str(job_id),
+            posting_url,
             "Eng",
             "ExampleCo",
             "Build distributed systems.",
@@ -127,7 +179,7 @@ def _insert_canonical_apply_job(
     )
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=job_id,
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         _make_resume_artifact(),
@@ -144,16 +196,17 @@ def _insert_canonical_apply_job(
     conn.commit()
 
 
-def _insert_blocked_score(conn, url: str, *, fit_score: int = 9) -> None:
+def _insert_blocked_score(conn, job_id: JobId, *, fit_score: int = 9) -> None:
     conn.execute(
         """
         INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json,
+            tenant_id, job_id, version, fit_score, breakdown_json,
             keywords_json, scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, 1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}')
+        ) VALUES (?, ?, 1, ?, ?, '["python"]', ?, NULL, '{}', '{}')
         """,
         (
-            url,
+            str(LOCAL_TENANT),
+            str(job_id),
             fit_score,
             json.dumps(
                 {
@@ -172,16 +225,17 @@ def _insert_blocked_score(conn, url: str, *, fit_score: int = 9) -> None:
     conn.commit()
 
 
-def _insert_allowed_score(conn, url: str, *, fit_score: int = 9) -> None:
+def _insert_allowed_score(conn, job_id: JobId, *, fit_score: int = 9) -> None:
     conn.execute(
         """
         INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json,
+            tenant_id, job_id, version, fit_score, breakdown_json,
             keywords_json, scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, 1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}')
+        ) VALUES (?, ?, 1, ?, ?, '["python"]', ?, NULL, '{}', '{}')
         """,
         (
-            url,
+            str(LOCAL_TENANT),
+            str(job_id),
             fit_score,
             json.dumps(
                 {
@@ -200,18 +254,18 @@ def _insert_allowed_score(conn, url: str, *, fit_score: int = 9) -> None:
     conn.commit()
 
 
-def _insert_active_score_staleness_marker(conn, url: str) -> None:
+def _insert_active_score_staleness_marker(conn, job_id: JobId) -> None:
     conn.execute(
         """
         INSERT INTO job_score_staleness (
-            tenant_id, job_url, stale_reason,
+            tenant_id, job_id, stale_reason,
             old_policy_id, old_policy_version,
             new_policy_id, new_policy_version,
             marked_at, resolved, resolved_at, resolved_by_score_version
         ) VALUES (?, ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
                   'local:scoring-policy-v2', 2, '2026-05-19T00:00:00+00:00', 0, NULL, NULL)
         """,
-        (str(LOCAL_TENANT), url),
+        (str(LOCAL_TENANT), str(job_id)),
     )
     conn.commit()
 
@@ -247,69 +301,104 @@ def _emit_failed(conn, url: str, run_id: str, *, when: str = "t9") -> None:
 
 
 def test_pending_apply_includes_jobs_with_no_apply_run(conn):
-    _insert_apply_ready_job(conn)
+    job_id = _selector_job_id(1)
+    _insert_selector_apply_ready_job(conn, job_id=job_id)
+
     rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
-    assert len(rows) == 1
-    assert rows[0]["url"] == "https://example.com/job"
+
+    assert [
+        (row["tenant_id"], row["job_id"], row["url"])
+        for row in rows
+    ] == [(str(LOCAL_TENANT), str(job_id), "https://example.com/job")]
 
 
 def test_pending_apply_can_start_from_posting_url_when_direct_apply_url_missing(conn):
-    _insert_apply_ready_job(
+    job_id = _selector_job_id(2)
+    posting_url = "https://example.com/posting-only"
+    _insert_selector_apply_ready_job(
         conn,
-        url="https://example.com/posting-only",
+        job_id=job_id,
+        posting_url=posting_url,
         application_url=None,
     )
 
     rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
 
-    assert len(rows) == 1
-    assert rows[0]["url"] == "https://example.com/posting-only"
+    assert [
+        (row["tenant_id"], row["job_id"], row["url"])
+        for row in rows
+    ] == [(str(LOCAL_TENANT), str(job_id), posting_url)]
     assert count_ready_to_apply(conn, min_score=7) == 1
     assert (
         count_ready_to_apply(
             conn,
             min_score=7,
-            target_url="https://example.com/posting-only",
+            target_url=posting_url,
         )
         == 1
     )
 
 
 def test_pending_apply_excludes_canonical_text_only_resume(conn):
-    url = "https://example.com/canonical-text-only"
-    _insert_canonical_apply_job(conn, url=url, with_pdf=False)
+    job_id = _selector_job_id(3)
+    posting_url = "https://example.com/canonical-text-only"
+    _insert_canonical_apply_job(
+        conn,
+        job_id=job_id,
+        posting_url=posting_url,
+        with_pdf=False,
+    )
 
     rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
 
     assert {row["url"] for row in rows} == set()
     assert count_ready_to_apply(conn, min_score=7) == 0
-    assert count_ready_to_apply(conn, min_score=7, target_url=url) == 0
+    assert count_ready_to_apply(conn, min_score=7, target_url=posting_url) == 0
     assert get_stats(conn)["ready_to_apply"] == 0
 
 
 def test_pending_apply_includes_canonical_resume_with_pdf(conn):
-    url = "https://example.com/canonical-with-pdf"
-    _insert_canonical_apply_job(conn, url=url, with_pdf=True)
+    job_id = _selector_job_id(4)
+    posting_url = "https://example.com/canonical-with-pdf"
+    _insert_canonical_apply_job(
+        conn,
+        job_id=job_id,
+        posting_url=posting_url,
+        with_pdf=True,
+    )
 
     rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
 
-    assert [row["url"] for row in rows] == [url]
+    assert [
+        (row["tenant_id"], row["job_id"], row["url"])
+        for row in rows
+    ] == [(str(LOCAL_TENANT), str(job_id), posting_url)]
     assert rows[0]["tailored_resume_path"] == "/tmp/resume.txt"
     assert rows[0]["jm_resume_pdf_path"] == "/tmp/resume.pdf"
     assert count_ready_to_apply(conn, min_score=7) == 1
-    assert count_ready_to_apply(conn, min_score=7, target_url=url) == 1
+    assert count_ready_to_apply(conn, min_score=7, target_url=posting_url) == 1
     assert get_stats(conn)["ready_to_apply"] == 1
 
 
 def test_pending_apply_excludes_high_score_blocked_jobs(conn):
-    _insert_apply_ready_job(conn, url="https://example.com/allowed")
-    _insert_apply_ready_job(conn, url="https://example.com/blocked")
-    _insert_blocked_score(conn, "https://example.com/blocked", fit_score=10)
+    allowed_job_id = _selector_job_id(5)
+    blocked_job_id = _selector_job_id(6)
+    _insert_selector_apply_ready_job(
+        conn,
+        job_id=allowed_job_id,
+        posting_url="https://example.com/allowed",
+    )
+    _insert_selector_apply_ready_job(
+        conn,
+        job_id=blocked_job_id,
+        posting_url="https://example.com/blocked",
+    )
+    _insert_blocked_score(conn, blocked_job_id, fit_score=10)
 
     rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
-    urls = {row["url"] for row in rows}
-    assert "https://example.com/allowed" in urls
-    assert "https://example.com/blocked" not in urls
+    identities = {(row["tenant_id"], row["job_id"]) for row in rows}
+    assert (str(LOCAL_TENANT), str(allowed_job_id)) in identities
+    assert (str(LOCAL_TENANT), str(blocked_job_id)) not in identities
 
 
 @pytest.mark.parametrize(
@@ -321,29 +410,38 @@ def test_pending_apply_excludes_high_score_blocked_jobs(conn):
     ],
 )
 def test_pending_apply_excludes_non_current_scores(conn, score_state: str, active_marker: bool):
-    url = f"https://example.com/non-current-apply-{score_state}-{active_marker}"
-    _insert_apply_ready_job(conn, url=url)
-    _insert_allowed_score(conn, url)
-    ensure_job_stage_rows(conn, url)
-    set_stage_state(conn, url, "score", score_state, validate_transition=False)
+    job_id = _selector_job_id(7)
+    posting_url = f"https://example.com/non-current-apply-{score_state}-{active_marker}"
+    _insert_selector_apply_ready_job(conn, job_id=job_id, posting_url=posting_url)
+    _insert_allowed_score(conn, job_id)
+    ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+    set_stage_state(
+        conn,
+        job_id,
+        "score",
+        score_state,
+        tenant_id=LOCAL_TENANT,
+        validate_transition=False,
+    )
     if active_marker:
-        _insert_active_score_staleness_marker(conn, url)
+        _insert_active_score_staleness_marker(conn, job_id)
 
     rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
-    urls = {row["url"] for row in rows}
-    assert url not in urls
+    identities = {(row["tenant_id"], row["job_id"]) for row in rows}
+    assert (str(LOCAL_TENANT), str(job_id)) not in identities
 
 
 def test_pending_apply_excludes_closed_postings(conn):
-    url = "https://example.com/closed-apply"
-    _insert_apply_ready_job(conn, url=url)
-    _mark_closed(conn, url)
+    job_id = _selector_job_id(8)
+    posting_url = "https://example.com/closed-apply"
+    _insert_selector_apply_ready_job(conn, job_id=job_id, posting_url=posting_url)
+    _mark_selector_closed(conn, job_id)
 
     rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
-    urls = {row["url"] for row in rows}
-    assert url not in urls
+    identities = {(row["tenant_id"], row["job_id"]) for row in rows}
+    assert (str(LOCAL_TENANT), str(job_id)) not in identities
     assert count_ready_to_apply(conn, min_score=7) == 0
-    assert count_ready_to_apply(conn, min_score=7, target_url=url) == 0
+    assert count_ready_to_apply(conn, min_score=7, target_url=posting_url) == 0
     assert get_stats(conn)["ready_to_apply"] == 0
 
 
