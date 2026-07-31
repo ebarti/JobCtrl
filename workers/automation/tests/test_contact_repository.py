@@ -22,6 +22,7 @@ from jobctrl.domain.contact import (
     ImportContactsUseCase,
     UpdateContactUseCase,
 )
+from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.contact.sqlite_repository import SqliteContactRepository
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
@@ -32,11 +33,24 @@ from jobctrl.infrastructure.projections.sqlite_projection_store import (
 
 _SECRET_NAME = "Jane Recruiter"
 _SECRET_EMAIL = "jane@acme.example"
+_JOB_ID = JobId("11111111-1111-4111-8111-111111111111")
+_OTHER_JOB_ID = JobId("22222222-2222-4222-8222-222222222222")
 
 
 def _setup(tmp_path: Path) -> tuple[SqliteContactRepository, sqlite3.Connection]:
     conn = init_db(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
+    conn.executemany(
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+        VALUES ('local', ?, ?, 'Test job', '2026-07-31T12:00:00Z')
+        """,
+        [
+            (_JOB_ID, "https://jobs.example/one"),
+            (_OTHER_JOB_ID, "https://jobs.example/two"),
+        ],
+    )
+    conn.commit()
     bus = InProcessEventBus()
     ProjectionBuilder(conn_factory=lambda: conn, tenant_id=LOCAL_TENANT).subscribe_to(bus)
     return SqliteContactRepository(conn, publisher=bus), conn
@@ -46,7 +60,7 @@ def test_create_persists_canonical_and_projects_with_provenance(tmp_path: Path) 
     repo, conn = _setup(tmp_path)
     contact = CreateContactUseCase(repo).execute(
         LOCAL_TENANT,
-        link=ContactLink(employer="Acme", job_id="https://job/1"),
+        link=ContactLink(employer="Acme", job_id=_JOB_ID),
         role=ContactRole.RECRUITER,
         attributes=[
             AttributeInput("name", _SECRET_NAME),
@@ -74,7 +88,7 @@ def test_values_never_leak_into_events_or_projection(tmp_path: Path) -> None:
     repo, conn = _setup(tmp_path)
     CreateContactUseCase(repo).execute(
         LOCAL_TENANT,
-        link=ContactLink(employer="Acme", job_id="https://job/1"),
+        link=ContactLink(employer="Acme", job_id=_JOB_ID),
         role=ContactRole.RECRUITER,
         attributes=[
             AttributeInput("name", _SECRET_NAME),
@@ -136,16 +150,17 @@ def test_soft_delete_drops_projection_and_hides_from_load(tmp_path: Path) -> Non
     repo, conn = _setup(tmp_path)
     contact = CreateContactUseCase(repo).execute(
         LOCAL_TENANT,
-        link=ContactLink(employer="Acme"),
+        link=ContactLink(employer="Acme", job_id=_JOB_ID),
         attributes=[AttributeInput("name", _SECRET_NAME)],
     )
     assert DeleteContactUseCase(repo).execute(LOCAL_TENANT, contact.contact_id, reason="dup")
     assert repo.load(LOCAL_TENANT, contact.contact_id) is None
     assert SqliteProjectionStore(conn).fetch_contacts("local") == []
-    deleted_events = conn.execute(
-        "SELECT COUNT(*) FROM job_events WHERE event_type = 'ContactDeleted'"
-    ).fetchone()[0]
-    assert deleted_events == 1
+    deleted_event = conn.execute(
+        "SELECT tenant_id, job_id, payload_json FROM job_events WHERE event_type = 'ContactDeleted'"
+    ).fetchone()
+    assert tuple(deleted_event[:2]) == (str(LOCAL_TENANT), _JOB_ID)
+    assert json.loads(deleted_event["payload_json"])["jobId"] == _JOB_ID
 
 
 def test_csv_import_tags_provenance_and_skips_linkless_rows(tmp_path: Path) -> None:
@@ -218,13 +233,13 @@ def test_list_for_job_filters_by_application(tmp_path: Path) -> None:
     repo, _ = _setup(tmp_path)
     CreateContactUseCase(repo).execute(
         LOCAL_TENANT,
-        link=ContactLink(employer="Acme", job_id="https://job/1"),
+        link=ContactLink(employer="Acme", job_id=_JOB_ID),
         attributes=[AttributeInput("name", "A")],
     )
     CreateContactUseCase(repo).execute(
         LOCAL_TENANT,
-        link=ContactLink(employer="Acme", job_id="https://job/2"),
+        link=ContactLink(employer="Acme", job_id=_OTHER_JOB_ID),
         attributes=[AttributeInput("name", "B")],
     )
-    assert len(repo.list_for_job(LOCAL_TENANT, "https://job/1")) == 1
+    assert len(repo.list_for_job(LOCAL_TENANT, _JOB_ID)) == 1
     assert len(repo.list_for_tenant(LOCAL_TENANT)) == 2

@@ -270,15 +270,20 @@ def build_contact_research_workflow_spec(params: dict[str, Any]) -> WorkflowStar
     """Build the spec for a supervised ``ContactResearchWorkflow`` run.
 
     The caller (TS API) supplies a fresh ``taskId`` so it can return it and the
-    UI can poll the task immediately. At least one of ``employer`` / ``jobUrl``
+    UI can poll the task immediately. At least one of ``employer`` / ``jobId``
     is required (a task must be scoped to a company or an application).
     """
     tenant_id = _tenant_id(params)
+    if "jobUrl" in params:
+        raise ValueError(
+            "contact research requires jobId; jobUrl is only a locator at the RPC boundary"
+        )
     task_id = str(_require(params, "taskId"))
     employer = str(params.get("employer") or "").strip() or None
-    job_url = str(params.get("jobUrl") or "").strip() or None
-    if not employer and not job_url:
-        raise ValueError("provide at least one of employer or jobUrl")
+    raw_job_id = params.get("jobId")
+    job_id = canonical_job_id(str(raw_job_id)) if raw_job_id not in (None, "") else None
+    if not employer and job_id is None:
+        raise ValueError("provide at least one of employer or jobId")
     raw_sources = params.get("sources") or []
     if not isinstance(raw_sources, list):
         raise ValueError("sources must be an array")
@@ -295,7 +300,7 @@ def build_contact_research_workflow_spec(params: dict[str, Any]) -> WorkflowStar
         tenant_id=tenant_id,
         task_id=task_id,
         employer=employer,
-        job_url=job_url,
+        job_id=job_id,
         sources=sources,
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
         expected_app_dir=params.get("expectedAppDir"),
@@ -304,7 +309,7 @@ def build_contact_research_workflow_spec(params: dict[str, Any]) -> WorkflowStar
     return WorkflowStartSpec(
         workflow=ContactResearchWorkflow,
         args=(payload,),
-        workflow_id=contact_research_workflow_id(task_id),
+        workflow_id=contact_research_workflow_id(tenant_id, task_id),
     )
 
 

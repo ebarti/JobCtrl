@@ -22,7 +22,7 @@ from typing import Protocol
 from jobctrl.domain.contact.aggregate import Contact
 from jobctrl.domain.contact.outreach import OutreachThread
 from jobctrl.domain.contact.research import ContactResearchTask
-from jobctrl.domain.identifiers import ContactId
+from jobctrl.domain.identifiers import ContactId, JobId
 from jobctrl.domain.tenant import TenantId
 
 __all__ = [
@@ -46,7 +46,7 @@ class ContactRepository(Protocol):
     def list_for_tenant(self, tenant_id: TenantId) -> list[Contact]:
         """Return all non-deleted contacts for the tenant."""
 
-    def list_for_job(self, tenant_id: TenantId, job_id: str) -> list[Contact]:
+    def list_for_job(self, tenant_id: TenantId, job_id: JobId) -> list[Contact]:
         """Return non-deleted contacts linked to a specific application."""
 
     def list_for_employer(self, tenant_id: TenantId, employer: str) -> list[Contact]:

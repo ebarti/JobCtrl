@@ -1,6 +1,6 @@
 """Temporal workflow for one supervised contact-research run.
 
-Deterministic id ``contact-research-{task_id}``. Modelled on
+Deterministic id ``contact-research-{tenant_id}-{task_id}``. Modelled on
 ``InterviewPrepWorkflow``: emit lifecycle, run the shared LLM spend preflight
 (§5.4 — the existing ``check_spend_budget`` activity + ``dailyBudgetUsd``; no
 second spend system), then the single research activity that fetches only
@@ -15,6 +15,8 @@ from dataclasses import dataclass
 
 from temporalio import workflow
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
+
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 
 with workflow.unsafe.imports_passed_through():
     from jobctrl.contact.activities import (
@@ -41,11 +43,15 @@ class ContactResearchWorkflowInput:
     tenant_id: str
     task_id: str
     employer: str | None = None
-    job_url: str | None = None
+    job_id: JobId | None = None
     sources: tuple[ResearchSourceInput, ...] = ()
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     expected_app_dir: str | None = None
     expected_db_path: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.job_id is not None:
+            object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
 @dataclass(frozen=True)
@@ -58,8 +64,8 @@ class ContactResearchWorkflowResult:
     error_code: str | None = None
 
 
-def contact_research_workflow_id(task_id: str) -> str:
-    return f"contact-research-{task_id}"
+def contact_research_workflow_id(tenant_id: str, task_id: str) -> str:
+    return f"contact-research-{tenant_id}-{task_id}"
 
 
 @workflow.defn(name="ContactResearchWorkflow")
@@ -77,7 +83,7 @@ class ContactResearchWorkflow:
             input_summary={
                 "taskId": payload.task_id,
                 "employer": payload.employer,
-                "jobUrl": payload.job_url,
+                "jobId": str(payload.job_id) if payload.job_id is not None else None,
                 "sourceCount": len(payload.sources),
             },
             started_at=started_at,
@@ -98,7 +104,7 @@ class ContactResearchWorkflow:
                     tenant_id=payload.tenant_id,
                     task_id=payload.task_id,
                     employer=payload.employer,
-                    job_url=payload.job_url,
+                    job_id=payload.job_id,
                     sources=payload.sources,
                     llm_model=payload.llm_model,
                     expected_app_dir=payload.expected_app_dir,

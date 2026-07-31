@@ -9,6 +9,7 @@ and the LLM spend preflight is the existing shared one (§5.4 — no second syst
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import urllib.error
 from email.message import Message
@@ -31,7 +32,7 @@ from jobctrl.domain.contact import (
 )
 from jobctrl.domain.ports.contact import ResearchPageFetch
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.contact import (
     GatewayContactResearchFetcher,
     SqliteContactRepository,
@@ -44,6 +45,7 @@ _HOST = "acme.example"
 _TEAM_URL = f"https://{_HOST}/team"
 _SECRET_NAME = "Dana Hiring-Manager"
 _SECRET_EMAIL = "dana@acme.example"
+_JOB_ID = "11111111-1111-4111-8111-111111111111"
 
 
 class _FakeFetcher:
@@ -96,6 +98,7 @@ def _setup(tmp_path: Path):
 
     conn = init_db(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
+    _seed_job(conn, LOCAL_TENANT, _JOB_ID, "https://jobs.example/contact-research")
     bus = InProcessEventBus()
     ProjectionBuilder(conn_factory=lambda: conn, tenant_id=LOCAL_TENANT).subscribe_to(bus)
     research_repo = SqliteContactResearchTaskRepository(conn, publisher=bus)
@@ -103,7 +106,27 @@ def _setup(tmp_path: Path):
     return conn, research_repo, contact_repo
 
 
-def _run_use_case(research_repo, *, fetcher, llm, sources, allowlist=(_HOST,)):
+def _seed_job(conn: sqlite3.Connection, tenant_id: TenantId, job_id: str, url: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+        VALUES (?, ?, ?, 'Test job', '2026-07-31T12:00:00Z')
+        """,
+        (str(tenant_id), job_id, url),
+    )
+    conn.commit()
+
+
+def _run_use_case(
+    research_repo,
+    *,
+    fetcher,
+    llm,
+    sources,
+    allowlist=(_HOST,),
+    tenant_id: TenantId = LOCAL_TENANT,
+    task_id: str = "task-1",
+):
     policy = ContactResearchSourcePolicy(domain_allowlist=allowlist)
     use_case = RunContactResearchUseCase(
         repository=research_repo,
@@ -113,9 +136,9 @@ def _run_use_case(research_repo, *, fetcher, llm, sources, allowlist=(_HOST,)):
         new_id=_counter(),
     )
     return use_case.execute(
-        LOCAL_TENANT,
-        task_id="task-1",
-        link=ContactLink(employer="Acme", job_id="https://job/1"),
+        tenant_id,
+        task_id=task_id,
+        link=ContactLink(employer="Acme", job_id=_JOB_ID),
         sources=sources,
     )
 
@@ -255,6 +278,42 @@ def test_candidate_values_never_leak_into_events(tmp_path: Path) -> None:
         "SELECT COUNT(*) FROM job_events WHERE event_type = 'ContactCandidateProposed'"
     ).fetchone()[0]
     assert proposed == 1
+
+
+def test_research_task_events_preserve_tenant_and_canonical_job_id(tmp_path: Path) -> None:
+    conn, research_repo, _contact_repo = _setup(tmp_path)
+    tenant_a = TenantId("tenant-a")
+    tenant_b = TenantId("tenant-b")
+    _seed_job(conn, tenant_a, _JOB_ID, "https://jobs.example/tenant-a")
+    _seed_job(conn, tenant_b, _JOB_ID, "https://jobs.example/tenant-b")
+
+    for tenant_id in (tenant_a, tenant_b):
+        _run_use_case(
+            research_repo,
+            tenant_id=tenant_id,
+            task_id="same-task-id",
+            fetcher=_FakeFetcher(
+                ResearchPageFetch(outcome=ResearchSourceOutcome.ALLOWED.value, text="team page body")
+            ),
+            llm=_FakeLlm([]),
+            sources=(ResearchSourceSpec(category="public_web_page", url=_TEAM_URL),),
+        )
+
+    rows = conn.execute(
+        """
+        SELECT tenant_id, job_id, payload_json
+        FROM job_events
+        WHERE event_type = 'ContactResearchTaskStarted'
+        ORDER BY tenant_id
+        """
+    ).fetchall()
+    assert [(row["tenant_id"], row["job_id"]) for row in rows] == [
+        (str(tenant_a), _JOB_ID),
+        (str(tenant_b), _JOB_ID),
+    ]
+    assert all(json.loads(row["payload_json"])["jobId"] == _JOB_ID for row in rows)
+    assert research_repo.load(tenant_a, "same-task-id") is not None
+    assert research_repo.load(tenant_b, "same-task-id") is not None
 
 
 def test_workflow_reuses_the_shared_spend_preflight() -> None:
@@ -502,7 +561,7 @@ def test_private_redirect_body_never_reaches_llm_prompt(tmp_path: Path) -> None:
     task = use_case.execute(
         LOCAL_TENANT,
         task_id="task-1",
-        link=ContactLink(employer="Acme", job_id="https://job/1"),
+        link=ContactLink(employer="Acme", job_id=_JOB_ID),
         sources=(ResearchSourceSpec(category="public_web_page", url=_TEAM_URL),),
     )
 
