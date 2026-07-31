@@ -11,6 +11,7 @@ from typing import Any
 from temporalio import activity
 
 from jobctrl.domain.errors import JobCtrlError, LlmTransientError, to_application_error
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
@@ -42,9 +43,12 @@ class ScoreActivityOutput:
 @dataclass(frozen=True)
 class ScoreJobActivityInput:
     tenant_id: str
-    job_url: str
+    job_id: JobId
     rescore: bool = False
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
 @dataclass(frozen=True)
@@ -139,11 +143,7 @@ async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
         stage_result, elapsed, status = result
         errors: dict[str, str] = {}
         if status not in _SUCCESS_STATUSES:
-            errors["score"] = str(
-                stage_result.get("error")
-                or stage_result.get("error_message")
-                or status
-            )
+            errors["score"] = str(stage_result.get("error") or stage_result.get("error_message") or status)
         stages = [{"stage": "score", "status": status, "elapsed": elapsed, **stage_result}]
         activity_result = {
             "status": status,
@@ -304,7 +304,7 @@ def _score_one_job(payload: ScoreJobActivityInput) -> dict[str, Any]:
     from jobctrl.scoring.scorer import score_job_by_url
 
     outcome = score_job_by_url(
-        payload.job_url,
+        payload.job_id,
         tenant_id=TenantId(payload.tenant_id),
         rescore=payload.rescore,
         llm_model=payload.llm_model,

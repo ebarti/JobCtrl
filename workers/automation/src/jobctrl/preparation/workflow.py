@@ -15,6 +15,7 @@ with workflow.unsafe.imports_passed_through():
         DiscoveryExecutionCohortKind,
         DiscoveryExecutionRef,
     )
+    from jobctrl.domain.identifiers import JobId, canonical_job_id
     from jobctrl.infrastructure.temporal.finalize import (
         emit_workflow_outcome,
         emit_workflow_started,
@@ -45,7 +46,7 @@ PREPARATION_STEP_ORDER: tuple[str, ...] = ("score", "tailor", "cover", "pdf")
 @dataclass(frozen=True)
 class JobPreparationInput:
     tenant_id: str
-    job_url: str
+    job_id: JobId
     steps: list[str]
     target_version: str
     idempotency_key: str
@@ -66,14 +67,10 @@ class JobPreparationInput:
     discovery_cohort_kind: DiscoveryExecutionCohortKind | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
         if (self.discovery_execution is None) != (self.discovery_cohort_kind is None):
-            raise ValueError(
-                "discovery_execution and discovery_cohort_kind must be supplied together"
-            )
-        if (
-            self.discovery_execution is not None
-            and self.discovery_execution.tenant_id != self.tenant_id
-        ):
+            raise ValueError("discovery_execution and discovery_cohort_kind must be supplied together")
+        if self.discovery_execution is not None and self.discovery_execution.tenant_id != self.tenant_id:
             raise ValueError("preparation tenant does not match discovery execution")
 
 
@@ -185,7 +182,7 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
             score_job_activity,
             ScoreJobActivityInput(
                 tenant_id=payload.tenant_id,
-                job_url=payload.job_url,
+                job_id=payload.job_id,
                 rescore=payload.rescore,
                 llm_model=payload.llm_model,
             ),
@@ -198,7 +195,7 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
             tailor_job_activity,
             TailorJobActivityInput(
                 tenant_id=payload.tenant_id,
-                job_url=payload.job_url,
+                job_id=payload.job_id,
                 min_score=payload.min_score,
                 workers=payload.workers,
                 validation_mode=payload.validation_mode,
@@ -219,7 +216,7 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
             cover_letter_activity,
             CoverLetterActivityInput(
                 tenant_id=payload.tenant_id,
-                job_url=payload.job_url,
+                job_id=payload.job_id,
                 min_score=payload.min_score,
                 validation_mode=payload.validation_mode,
                 llm_model=payload.llm_model,
@@ -233,14 +230,12 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
             render_pdf_activity,
             RenderPdfActivityInput(
                 tenant_id=payload.tenant_id,
-                job_url=payload.job_url,
+                job_id=payload.job_id,
                 expected_app_dir=payload.expected_app_dir,
                 expected_db_path=payload.expected_db_path,
                 discovery_execution=payload.discovery_execution,
                 pipeline_step_idempotency_key=(
-                    payload.idempotency_key
-                    if payload.discovery_execution is not None
-                    else None
+                    payload.idempotency_key if payload.discovery_execution is not None else None
                 ),
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
@@ -276,7 +271,7 @@ def _ordered_steps(steps: list[str]) -> list[str]:
 
 def _input_summary(payload: JobPreparationInput) -> dict[str, Any]:
     summary: dict[str, Any] = {
-        "jobUrl": payload.job_url,
+        "jobId": str(payload.job_id),
         "steps": list(payload.steps),
         "targetVersion": payload.target_version,
         "idempotencyKey": payload.idempotency_key,

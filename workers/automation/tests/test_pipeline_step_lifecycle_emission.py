@@ -14,6 +14,7 @@ from temporalio.exceptions import ApplicationError
 from jobctrl.discovery import activities as discovery_activities
 from jobctrl.discovery import workflow as discovery_workflow
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+from jobctrl.domain.identifiers import JobId
 from jobctrl.infrastructure.temporal.pipeline_step_lifecycle import (
     PipelineStepScope,
     begin_pipeline_step_attempt,
@@ -21,6 +22,9 @@ from jobctrl.infrastructure.temporal.pipeline_step_lifecycle import (
 )
 from jobctrl.materials import activities as materials_activities
 from jobctrl.preparation import workflow as preparation_workflow
+
+
+_JOB_ID = JobId("20000000-0000-4000-8000-000000000001")
 
 
 def _execution() -> DiscoveryExecutionRef:
@@ -175,9 +179,7 @@ def test_attempt_never_fabricates_missing_queue_metadata_or_terminal_fact() -> N
         scope,
         info=SimpleNamespace(
             attempt=1,
-            current_attempt_scheduled_time=datetime(
-                2026, 7, 14, 8, 59, tzinfo=UTC
-            ),
+            current_attempt_scheduled_time=datetime(2026, 7, 14, 8, 59, tzinfo=UTC),
             started_time=datetime(2026, 7, 14, 9, 0, tzinfo=UTC),
         ),
         writer=events.append,
@@ -262,6 +264,7 @@ async def test_discovery_activities_use_stable_scopes_and_terminal_counts(
         "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
         fake_run_blocking,
     )
+
     def fake_source_family(family: str, **kwargs: Any) -> dict[str, Any]:
         source_kwargs.update(kwargs)
         return {
@@ -322,19 +325,14 @@ async def test_discovery_activities_use_stable_scopes_and_terminal_counts(
         )
     )
 
-    assert [
-        (scope.step_kind, scope.item_key, scope.detail_code)
-        for scope, _kwargs, _recorder in scopes
-    ] == [
+    assert [(scope.step_kind, scope.item_key, scope.detail_code) for scope, _kwargs, _recorder in scopes] == [
         ("source_family", "family:workday", "source_family"),
         ("enrichment_pass", "streaming:pass-4", "streaming_pass"),
         ("existing_backlog_sweep", "existing_backlog", "existing_backlog"),
     ]
     assert scopes[0][1] == {"item_count": 1}
     assert source_kwargs["activity_attempt"] == 2
-    assert source_kwargs["activity_owner_token"] == (
-        "source-family:activity-run-2:2"
-    )
+    assert source_kwargs["activity_owner_token"] == ("source-family:activity-run-2:2")
     assert [recorder.completed_counts for _, _, recorder in scopes] == [
         [1],
         [2],
@@ -438,7 +436,7 @@ async def test_pdf_error_status_emits_safe_failed_terminal(
     output = await materials_activities.render_pdf_activity(
         materials_activities.RenderPdfActivityInput(
             tenant_id="local",
-            job_url="https://example.com/private-job",
+            job_id=_JOB_ID,
             discovery_execution=_execution(),
             pipeline_step_idempotency_key=raw_idempotency_key,
         )
@@ -447,9 +445,7 @@ async def test_pdf_error_status_emits_safe_failed_terminal(
     assert output.status == "error"
     assert captured["scope"].step_kind == "pdf_render"
     assert captured["scope"].detail_code == "pdf_render"
-    assert captured["scope"].item_key == pdf_pipeline_step_item_key(
-        raw_idempotency_key
-    )
+    assert captured["scope"].item_key == pdf_pipeline_step_item_key(raw_idempotency_key)
     assert raw_idempotency_key not in captured["scope"].item_key
     assert recorder.completed_counts == []
     assert recorder.failures == [
@@ -483,7 +479,7 @@ async def test_preparation_workflow_forwards_discovery_scope_to_pdf_activity(
         "pdf",
         preparation_workflow.JobPreparationInput(
             tenant_id="local",
-            job_url="https://example.com/private-job",
+            job_id=_JOB_ID,
             steps=["pdf"],
             target_version="1",
             idempotency_key="preparation:opaque-key",
@@ -497,7 +493,7 @@ async def test_preparation_workflow_forwards_discovery_scope_to_pdf_activity(
     assert captured["activity"] is materials_activities.render_pdf_activity
     assert captured["payload"] == materials_activities.RenderPdfActivityInput(
         tenant_id="local",
-        job_url="https://example.com/private-job",
+        job_id=_JOB_ID,
         expected_app_dir="/expected/app",
         expected_db_path="/expected/jobctrl.db",
         discovery_execution=execution,
@@ -521,7 +517,7 @@ def test_pdf_scope_rejects_an_empty_idempotency_key() -> None:
     with pytest.raises(ValueError, match="must be non-empty"):
         materials_activities.RenderPdfActivityInput(
             tenant_id="local",
-            job_url="https://example.com/private-job",
+            job_id=_JOB_ID,
             discovery_execution=_execution(),
             pipeline_step_idempotency_key="",
         )
