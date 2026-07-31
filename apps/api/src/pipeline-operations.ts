@@ -12,13 +12,12 @@ import type {
   PipelineProjectionCoverage,
   PipelineStageCounts,
 } from "./contracts.js";
-import { allRows, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { allRows, type SqliteDatabase, type SqliteValue } from "./db.js";
 import {
   estimatePipelineEta,
   type PipelineEtaEstimatorInput,
   type PipelineEtaStageInput,
 } from "./pipeline-eta.js";
-import { refreshProjections } from "./projections.js";
 import { readWorkerRuntimeTelemetry, type WorkerRuntimeTelemetrySnapshot } from "./worker-runtime-telemetry.js";
 import { readLlmSpendHealth } from "./worker-health.js";
 
@@ -77,7 +76,7 @@ interface WorkflowRow extends Record<string, unknown> {
 }
 
 interface MembershipRow extends Record<string, unknown> {
-  job_url: string;
+  job_id: string;
   cohort_kind: "observed_this_run" | "existing_backlog";
   preparation_workflow_id: string | null;
   work_plan_state: "pending" | "planned" | "not_eligible" | "failed";
@@ -85,7 +84,7 @@ interface MembershipRow extends Record<string, unknown> {
 }
 
 interface StageStateRow extends Record<string, unknown> {
-  job_url: string;
+  job_id: string;
   stage: string;
   state: string | null;
   duration_ms: number | null;
@@ -120,6 +119,7 @@ interface DiscoveryExecutionRecoveryRow extends Record<string, unknown> {
 }
 
 interface JobDisplayRow extends Record<string, unknown> {
+  job_id: string;
   url: string;
   title: string | null;
   company: string | null;
@@ -200,7 +200,6 @@ export function buildPipelineOperationsSnapshot(
   const now = options.now ?? new Date();
   const generatedAt = now.toISOString();
   const tenantId = options.tenantId ?? DEFAULT_TENANT;
-  refreshProjections(db, tenantId);
   const telemetry = readWorkerRuntimeTelemetry(options.dbPath, { now });
   const budgetAvailable = readLlmSpendHealth(options.dbPath, options.configPath, now).status !== "over_budget";
   const capacity = buildCapacity(telemetry, selectedInternalParallelism(db, tenantId));
@@ -267,7 +266,7 @@ export function buildPipelineOperationsSnapshot(
     projectionCoverage,
   );
   const reconciliation = reconciliationProgress(selected);
-  const active = buildActiveItems(db, selected, telemetry);
+  const active = buildActiveItems(db, tenantId, selected, telemetry);
   const etaInput = buildEtaInput(
     db,
     tenantId,
@@ -320,7 +319,6 @@ export function buildPipelineOperationsSnapshot(
 }
 
 function loadExecutions(db: SqliteDatabase, tenantId: string): WorkflowRow[] {
-  if (!tableExists(db, "workflow_run_projections")) return [];
   return allRows<WorkflowRow>(
     db,
     `SELECT workflow_id, temporal_run_id, workflow_type, status, input_summary_json,
@@ -359,7 +357,7 @@ function materializeExecution(
   const runId = nullableText(row.temporal_run_id);
   if (!runId) return null;
   const memberships = loadMemberships(db, tenantId, row.workflow_id, runId);
-  const stageStates = loadStageStates(db, memberships.map((membership) => membership.job_url));
+  const stageStates = loadStageStates(db, tenantId, memberships.map((membership) => membership.job_id));
   const preparationWorkflows = loadPreparationWorkflows(db, tenantId, memberships);
   const steps = loadPipelineSteps(db, tenantId, row.workflow_id, runId);
   const current = cohort(
@@ -387,32 +385,31 @@ function loadMemberships(
   workflowId: string,
   runId: string,
 ): MembershipRow[] {
-  if (!tableExists(db, "discovery_execution_jobs")) return [];
   return allRows<MembershipRow>(
     db,
-    `SELECT job_url, cohort_kind, preparation_workflow_id, work_plan_state, required_steps_json
+    `SELECT job_id, cohort_kind, preparation_workflow_id, work_plan_state, required_steps_json
        FROM discovery_execution_jobs
       WHERE tenant_id = ? AND discover_workflow_id = ? AND discover_run_id = ?`,
     [tenantId, workflowId, runId],
   );
 }
 
-function loadStageStates(db: SqliteDatabase, jobUrls: string[]): Map<string, Map<string, StageStateRow>> {
+function loadStageStates(db: SqliteDatabase, tenantId: string, jobIds: string[]): Map<string, Map<string, StageStateRow>> {
   const grouped = new Map<string, Map<string, StageStateRow>>();
-  if (jobUrls.length === 0 || !tableExists(db, "job_stage_states")) return grouped;
-  for (const group of chunks(jobUrls, 500)) {
+  if (jobIds.length === 0) return grouped;
+  for (const group of chunks(jobIds, 500)) {
     const placeholders = group.map(() => "?").join(", ");
     const rows = allRows<StageStateRow>(
       db,
-      `SELECT job_url, stage, state, duration_ms, finished_at, retryable
+      `SELECT job_id, stage, state, duration_ms, finished_at, retryable
          FROM job_stage_states
-        WHERE job_url IN (${placeholders})`,
-      group,
+        WHERE tenant_id = ? AND job_id IN (${placeholders})`,
+      [tenantId, ...group],
     );
     for (const row of rows) {
-      const stages = grouped.get(row.job_url) ?? new Map<string, StageStateRow>();
+      const stages = grouped.get(row.job_id) ?? new Map<string, StageStateRow>();
       stages.set(row.stage, row);
-      grouped.set(row.job_url, stages);
+      grouped.set(row.job_id, stages);
     }
   }
   return grouped;
@@ -425,7 +422,6 @@ function loadPreparationWorkflows(
 ): { statuses: Map<string, string>; runIds: Map<string, string> } {
   const statuses = new Map<string, string>();
   const runIds = new Map<string, string>();
-  if (!tableExists(db, "workflow_run_projections")) return { statuses, runIds };
   const workflowIds = [...new Set(
     memberships
       .map((member) => nullableText(member.preparation_workflow_id))
@@ -454,7 +450,6 @@ function loadPipelineSteps(
   workflowId: string,
   runId: string,
 ): PipelineStepRow[] {
-  if (!tableExists(db, "pipeline_step_projections")) return [];
   return allRows<PipelineStepRow>(
     db,
     `SELECT step_kind, item_key, state, attempt, retryable, duration_ms, finished_at,
@@ -496,7 +491,7 @@ function cohortSummary(
   for (const member of members) {
     if (member.work_plan_state === "planned") {
       planned += 1;
-      if (plannedMemberResolved(member, stageStates.get(member.job_url), steps, preparationWorkflowStatuses)) terminal += 1;
+      if (plannedMemberResolved(member, stageStates.get(member.job_id), steps, preparationWorkflowStatuses)) terminal += 1;
       else remaining += 1;
       continue;
     }
@@ -591,7 +586,7 @@ function hasUnresolvedPlannedMember(cohortValue: Cohort, steps: PipelineStepRow[
       member.work_plan_state === "planned" &&
       !plannedMemberResolved(
         member,
-        cohortValue.stageStates.get(member.job_url),
+        cohortValue.stageStates.get(member.job_id),
         steps,
         cohortValue.preparationWorkflowStatuses,
       ),
@@ -601,7 +596,7 @@ function hasUnresolvedPlannedMember(cohortValue: Cohort, steps: PipelineStepRow[
 function hasTerminalIssue(cohortValue: Cohort, steps: PipelineStepRow[]): boolean {
   return cohortValue.members.some((member) => {
     if (member.work_plan_state !== "planned") return member.work_plan_state === "failed";
-    const states = cohortValue.stageStates.get(member.job_url);
+    const states = cohortValue.stageStates.get(member.job_id);
     return requiredSteps(member).some((stage) => {
       const terminalOwner = memberPreparationWorkflowFailed(member, cohortValue.preparationWorkflowStatuses);
       if (stage === "pdf") return isTerminalStepFailure(pdfStepForMember(member, steps), terminalOwner);
@@ -745,7 +740,6 @@ function loadRuntimePreparationLineages(
   telemetry: WorkerRuntimeTelemetrySnapshot,
 ): Map<string, RuntimePreparationLineage> {
   const result = new Map<string, RuntimePreparationLineage>();
-  if (!tableExists(db, "workflow_run_projections")) return result;
   const workflowIds = [...new Set(
     telemetry.activeDetails
       .map((detail) => detail.workflowRef)
@@ -817,7 +811,7 @@ function loadProjectionCoverage(
   selected: SelectedExecution,
 ): PipelineProjectionCoverage {
   const membershipKeys = [...new Set(
-    selected.current.members.concat(selected.sweep.members).map((member) => member.job_url),
+    selected.current.members.concat(selected.sweep.members).map((member) => member.job_id),
   )];
   const stepKeys = [...new Set(
     selected.steps.map((step) => JSON.stringify([step.step_kind, step.item_key])),
@@ -826,9 +820,6 @@ function loadProjectionCoverage(
   const persistedMembershipCount = membershipKeys.length;
   const persistedStepCount = stepKeys.length;
 
-  if (!tableExists(db, "discovery_execution_recoveries")) {
-    return recoveringProjectionCoverage(persistedMembershipCount, persistedStepCount);
-  }
   const rows = allRows<DiscoveryExecutionRecoveryRow>(
     db,
     `SELECT state, mode, decoder_version, history_event_id,
@@ -1104,7 +1095,7 @@ function jobStageCounts(cohortValue: Cohort, stage: (typeof JOB_STAGES)[number])
         : member.work_plan_state === "planned" && requiredSteps(member).includes(stage);
     if (!eligible) continue;
     counts.eligible += 1;
-    addStageState(counts, cohortValue.stageStates.get(member.job_url)?.get(stage)?.state ?? null);
+    addStageState(counts, cohortValue.stageStates.get(member.job_id)?.get(stage)?.state ?? null);
   }
   return counts;
 }
@@ -1154,17 +1145,16 @@ function globalStageCounts(
 ): Map<(typeof OPERATIONAL_STAGES)[number], PipelineStageCounts> {
   const counts = new Map<(typeof OPERATIONAL_STAGES)[number], PipelineStageCounts>();
   for (const stage of OPERATIONAL_STAGES) counts.set(stage, emptyCounts());
-  if (!tableExists(db, "job_stage_states")) return counts;
-  const excluded = selected.current.members.concat(selected.sweep.members).map((member) => member.job_url);
-  const where = ["jss.stage IN ('enrich', 'score', 'tailor', 'cover')"];
-  const params: SqliteValue[] = [];
+  const excluded = selected.current.members.concat(selected.sweep.members).map((member) => member.job_id);
+  const where = ["jss.tenant_id = ?", "jss.stage IN ('enrich', 'score', 'tailor', 'cover')"];
+  const params: SqliteValue[] = [tenantId];
   if (excluded.length > 0) {
-    where.push(`jss.job_url NOT IN (${excluded.map(() => "?").join(", ")})`);
+    where.push(`jss.job_id NOT IN (${excluded.map(() => "?").join(", ")})`);
     params.push(...excluded);
   }
   const rows = allRows<StageStateRow>(
     db,
-    `SELECT jss.job_url, jss.stage, jss.state, jss.duration_ms, jss.finished_at
+    `SELECT jss.job_id, jss.stage, jss.state, jss.duration_ms, jss.finished_at
        FROM job_stage_states jss
       WHERE ${where.join(" AND ")}`,
     params,
@@ -1183,17 +1173,16 @@ function loadGlobalRetryability(
   tenantId: string,
   selected: SelectedExecution,
 ): GlobalRetryability {
-  if (!tableExists(db, "job_stage_states")) return { hasUnboundedRetryableDemand: false };
-  const excluded = selected.current.members.concat(selected.sweep.members).map((member) => member.job_url);
-  const where = ["stage IN ('enrich', 'score', 'tailor', 'cover')", "state = 'failed'", "retryable = 1"];
-  const params: SqliteValue[] = [];
+  const excluded = selected.current.members.concat(selected.sweep.members).map((member) => member.job_id);
+  const where = ["tenant_id = ?", "stage IN ('enrich', 'score', 'tailor', 'cover')", "state = 'failed'", "retryable = 1"];
+  const params: SqliteValue[] = [tenantId];
   if (excluded.length > 0) {
-    where.push(`job_url NOT IN (${excluded.map(() => "?").join(", ")})`);
+    where.push(`job_id NOT IN (${excluded.map(() => "?").join(", ")})`);
     params.push(...excluded);
   }
-  const rows = allRows<{ job_url: string }>(
+  const rows = allRows<{ job_id: string }>(
     db,
-    `SELECT job_url FROM job_stage_states WHERE ${where.join(" AND ")}`,
+    `SELECT job_id FROM job_stage_states WHERE ${where.join(" AND ")}`,
     params,
   );
   if (rows.length === 0) return { hasUnboundedRetryableDemand: false };
@@ -1201,7 +1190,7 @@ function loadGlobalRetryability(
   const owners = loadUniqueGlobalPreparationOwners(
     db,
     tenantId,
-    [...new Set(rows.map((row) => row.job_url))],
+    [...new Set(rows.map((row) => row.job_id))],
   );
   const statuses = loadPreparationWorkflowStatusById(
     db,
@@ -1209,7 +1198,7 @@ function loadGlobalRetryability(
     [...new Set([...owners.values()].filter((workflowId): workflowId is string => workflowId !== null))],
   );
   for (const row of rows) {
-    const workflowId = owners.get(row.job_url);
+    const workflowId = owners.get(row.job_id);
     // A global stage row has no workflow/run identity. Even a unique workflow
     // id cannot safely bind it to a nonterminal folded projection, so only a
     // proven failed terminal owner can remove its retryable queue-ahead risk.
@@ -1223,34 +1212,34 @@ function loadGlobalRetryability(
 function loadUniqueGlobalPreparationOwners(
   db: SqliteDatabase,
   tenantId: string,
-  jobUrls: string[],
+  jobIds: string[],
 ): Map<string, string | null> {
-  const owners = new Map<string, string | null>(jobUrls.map((jobUrl) => [jobUrl, null] as const));
-  if (jobUrls.length === 0 || !tableExists(db, "discovery_execution_jobs")) return owners;
-  const candidates = new Map(jobUrls.map((jobUrl) => [jobUrl, new Set<string>()] as const));
+  const owners = new Map<string, string | null>(jobIds.map((jobId) => [jobId, null] as const));
+  if (jobIds.length === 0) return owners;
+  const candidates = new Map(jobIds.map((jobId) => [jobId, new Set<string>()] as const));
   const ambiguous = new Set<string>();
-  for (const group of chunks(jobUrls, 500)) {
-    const rows = allRows<{ job_url: string; preparation_workflow_id: string | null }>(
+  for (const group of chunks(jobIds, 500)) {
+    const rows = allRows<{ job_id: string; preparation_workflow_id: string | null }>(
       db,
-      `SELECT job_url, preparation_workflow_id
+      `SELECT job_id, preparation_workflow_id
          FROM discovery_execution_jobs
-        WHERE tenant_id = ? AND job_url IN (${group.map(() => "?").join(", ")})`,
+        WHERE tenant_id = ? AND job_id IN (${group.map(() => "?").join(", ")})`,
       [tenantId, ...group],
     );
     for (const row of rows) {
       const workflowId = nullableText(row.preparation_workflow_id);
       if (!workflowId) {
-        ambiguous.add(row.job_url);
+        ambiguous.add(row.job_id);
         continue;
       }
-      candidates.get(row.job_url)?.add(workflowId);
+      candidates.get(row.job_id)?.add(workflowId);
     }
   }
-  for (const jobUrl of jobUrls) {
-    const workflowIds = candidates.get(jobUrl);
-    if (!ambiguous.has(jobUrl) && workflowIds?.size === 1) {
+  for (const jobId of jobIds) {
+    const workflowIds = candidates.get(jobId);
+    if (!ambiguous.has(jobId) && workflowIds?.size === 1) {
       const workflowId = workflowIds.values().next().value;
-      if (workflowId !== undefined) owners.set(jobUrl, workflowId);
+      if (workflowId !== undefined) owners.set(jobId, workflowId);
     }
   }
   return owners;
@@ -1262,7 +1251,7 @@ function loadPreparationWorkflowStatusById(
   workflowIds: string[],
 ): Map<string, string> {
   const statuses = new Map<string, string>();
-  if (workflowIds.length === 0 || !tableExists(db, "workflow_run_projections")) return statuses;
+  if (workflowIds.length === 0) return statuses;
   for (const group of chunks(workflowIds, 500)) {
     const rows = allRows<{ workflow_id: string; status: string }>(
       db,
@@ -1522,6 +1511,7 @@ function reconciliationProgress(
 
 function buildActiveItems(
   db: SqliteDatabase,
+  tenantId: string,
   selected: SelectedExecution,
   telemetry: WorkerRuntimeTelemetrySnapshot,
 ): { items: PipelineActiveItem[]; total: number | null; truncated: boolean | null } {
@@ -1536,13 +1526,14 @@ function buildActiveItems(
   );
   const display = loadJobDisplays(
     db,
-    [...byWorkflow.values()].map((member) => member.job_url),
+    tenantId,
+    [...byWorkflow.values()].map((member) => member.job_id),
   );
   const runtimeItems: PipelineActiveItem[] = telemetry.activeDetails.map((detail) => {
     const member = detail.workflowRef ? byWorkflow.get(detail.workflowRef) : undefined;
     const stage = RUNTIME_ACTIVITY_STAGE[detail.activityType];
     if (member && stage && isJobStage(stage)) {
-      const job = display.get(member.job_url);
+      const job = display.get(member.job_id);
       return {
         kind: "resolved_job" as const,
         activityType: detail.activityType,
@@ -1550,7 +1541,7 @@ function buildActiveItems(
         executionId: detail.executionRef,
         attempt: detail.attempt,
         startedAt: detail.startedAt,
-        // The runtime operational ref, not the DB job URL, is the safe display key.
+        // The runtime operational ref, not the canonical job id, is the safe display key.
         jobKey: detail.operationalRef.opaqueId,
         title: job?.title ?? null,
         company: job?.company ?? null,
@@ -1599,7 +1590,7 @@ function buildActiveItems(
       startedAt: step.started_at ?? latestStepObservation([step]),
     };
     if (pdfMember) {
-      const job = display.get(pdfMember.job_url);
+      const job = display.get(pdfMember.job_id);
       projectionItems.push({
         ...base,
         kind: "resolved_job",
@@ -1653,16 +1644,18 @@ function preparationWorkflowRunId(selected: SelectedExecution, workflowId: strin
     selected.sweep.preparationWorkflowRunIds.get(workflowId);
 }
 
-function loadJobDisplays(db: SqliteDatabase, jobUrls: string[]): Map<string, JobDisplayRow> {
+function loadJobDisplays(db: SqliteDatabase, tenantId: string, jobIds: string[]): Map<string, JobDisplayRow> {
   const result = new Map<string, JobDisplayRow>();
-  if (jobUrls.length === 0 || !hasColumns(db, "jobs", ["url", "title", "company"])) return result;
-  for (const group of chunks(jobUrls, 500)) {
+  if (jobIds.length === 0) return result;
+  for (const group of chunks(jobIds, 500)) {
     const rows = allRows<JobDisplayRow>(
       db,
-      `SELECT url, title, company FROM jobs WHERE url IN (${group.map(() => "?").join(", ")})`,
-      group,
+      `SELECT job_id, url, title, company
+         FROM jobs
+        WHERE tenant_id = ? AND job_id IN (${group.map(() => "?").join(", ")})`,
+      [tenantId, ...group],
     );
-    for (const row of rows) result.set(row.url, row);
+    for (const row of rows) result.set(row.job_id, row);
   }
   return result;
 }
@@ -1853,21 +1846,20 @@ function evidenceSamples(
 ): EtaSample[] {
   const primary = usesStepProjection(stage)
     ? pipelineStepHistorySamples(db, tenantId, stepKindForStage(stage), now)
-    : jobStageSamples(db, stage, now);
+    : jobStageSamples(db, tenantId, stage, now);
   // The estimator itself only reads metrics when the owning primary source is empty.
   return primary.length > 0 ? primary : attemptMetricSamples(db, tenantId, stage, now);
 }
 
-function jobStageSamples(db: SqliteDatabase, stage: string, now: Date): EtaSample[] {
-  if (!tableExists(db, "job_stage_states")) return [];
+function jobStageSamples(db: SqliteDatabase, tenantId: string, stage: string, now: Date): EtaSample[] {
   const rows = allRows<StageStateRow>(
     db,
-    `SELECT job_url, stage, state, duration_ms, finished_at
+    `SELECT job_id, stage, state, duration_ms, finished_at
        FROM job_stage_states
-      WHERE stage = ? AND state = 'succeeded' AND duration_ms > 0 AND finished_at IS NOT NULL
+      WHERE tenant_id = ? AND stage = ? AND state = 'succeeded' AND duration_ms > 0 AND finished_at IS NOT NULL
       ORDER BY finished_at DESC
       LIMIT ?`,
-    [stage, ETA_SAMPLE_LIMIT],
+    [tenantId, stage, ETA_SAMPLE_LIMIT],
   );
   return rows
     .filter((row) => withinEtaWindow(row.finished_at, now))
@@ -1905,7 +1897,6 @@ function pipelineStepHistorySamples(
   stepKind: string,
   now: Date,
 ): EtaSample[] {
-  if (!tableExists(db, "pipeline_step_projections")) return [];
   const rows = allRows<PipelineStepRow>(
     db,
     `SELECT step_kind, item_key, state, attempt, retryable, duration_ms, finished_at,
@@ -1921,7 +1912,6 @@ function pipelineStepHistorySamples(
 }
 
 function attemptMetricSamples(db: SqliteDatabase, tenantId: string, stage: string, now: Date): EtaSample[] {
-  if (!tableExists(db, "operational_attempt_metrics")) return [];
   const rows = allRows<MetricRow>(
     db,
     `SELECT stage, outcome, duration_ms, occurred_at
@@ -1948,7 +1938,7 @@ function remainingPaths(
 ): Array<{ stageIds: string[] }> {
   return cohortValue.members.flatMap((member) => {
     if (member.work_plan_state !== "planned") return [];
-    const states = cohortValue.stageStates.get(member.job_url);
+    const states = cohortValue.stageStates.get(member.job_id);
     const stageIds = requiredSteps(member).filter((stage) => {
       const terminalOwner = memberPreparationWorkflowFailed(member, cohortValue.preparationWorkflowStatuses);
       if (stage === "pdf") return !isTerminalStepState(pdfStepForMember(member, pipelineSteps), terminalOwner);
@@ -2109,7 +2099,7 @@ function retryableStageFailureForMember(
   member: MembershipRow,
   stage: (typeof JOB_STAGES)[number],
 ): boolean {
-  const state = cohortValue.stageStates.get(member.job_url)?.get(stage);
+  const state = cohortValue.stageStates.get(member.job_id)?.get(stage);
   return state !== undefined && isRetryableStageFailure(
     state,
     memberPreparationWorkflowFailed(member, cohortValue.preparationWorkflowStatuses),
@@ -2329,18 +2319,6 @@ function parseRecord(raw: string | null): Record<string, unknown> | null {
   return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
     ? (parsed as Record<string, unknown>)
     : null;
-}
-
-function hasColumns(db: SqliteDatabase, tableName: string, columns: string[]): boolean {
-  if (!tableExists(db, tableName)) return false;
-  const present = new Set(
-    db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all().map((row) => String((row as { name: unknown }).name)),
-  );
-  return columns.every((column) => present.has(column));
-}
-
-function quoteIdentifier(identifier: string): string {
-  return `"${identifier.replaceAll('"', '""')}"`;
 }
 
 function chunks<T>(items: T[], size: number): T[][] {

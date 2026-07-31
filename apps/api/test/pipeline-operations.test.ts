@@ -7,12 +7,13 @@ import { PipelineOperationsSnapshotSchema } from "@jobctrl/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildPipelineOperationsSnapshot } from "../src/pipeline-operations.js";
-import { ensureProjectionTables } from "../src/projections.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 const NOW = new Date("2026-07-14T12:00:00.000Z");
 const DISCOVER_WORKFLOW_ID = "discover-local";
 const DISCOVER_RUN_ID = "00000000-0000-4000-8000-000000000000";
 const PREPARATION_RUN_ID = "00000000-0000-4000-8000-000000000010";
+const SHARED_TENANT_JOB_ID = "99999999-9999-4999-8999-999999999999";
 const fixtures: Fixture[] = [];
 
 interface Fixture {
@@ -257,6 +258,56 @@ describe("pipeline operations read model", () => {
       kind: "domain_jobs",
       counts: { eligible: 1, succeeded: 1, waiting: 0 },
     });
+  });
+
+  it("uses exact-v7 tenant job ids", () => {
+    const fixture = createFixture();
+    const localUrl = "https://example.test/local/shared-job";
+    const otherUrl = "https://example.test/other/shared-job";
+    insertExecution(fixture, { status: "in_progress" });
+    const member = insertMember(fixture, {
+      key: "tenant-shared",
+      jobId: SHARED_TENANT_JOB_ID,
+      jobUrl: localUrl,
+      title: "Local role",
+      company: "Local company",
+      requiredSteps: ["score"],
+    });
+    insertStageState(fixture, "tenant-shared", "score", "succeeded", null, null, 0, {
+      jobId: SHARED_TENANT_JOB_ID,
+    });
+    fixture.db.prepare(
+      `INSERT INTO jobs (tenant_id, job_id, url, title, company)
+       VALUES ('other', ?, ?, 'Other role', 'Other company')`,
+    ).run(SHARED_TENANT_JOB_ID, otherUrl);
+    fixture.db.prepare(
+      `INSERT INTO job_stage_states (
+         tenant_id, job_id, stage, state, attempt_count, max_attempts, updated_at, retryable
+       ) VALUES ('other', ?, 'score', 'failed', 1, 3, ?, 1)`,
+    ).run(SHARED_TENANT_JOB_ID, NOW.toISOString());
+    insertWorkflowProjection(fixture, member.preparationWorkflowId, "in_progress", PREPARATION_RUN_ID);
+    insertHeartbeat(fixture, {
+      activeSlots: 1,
+      counts: { score_job: 1 },
+      details: [activityDetail("score_job", "op_000000000000000000000777", member.preparationWorkflowId, PREPARATION_RUN_ID)],
+    });
+
+    const result = snapshot(fixture);
+
+    expect(stage(result, "score", "current_execution").currentExecution).toMatchObject({
+      eligible: 1,
+      succeeded: 1,
+      failed: 0,
+    });
+    expect(stage(result, "score", "global_outside_execution").existingBacklog).toMatchObject({
+      counts: { eligible: 0, failed: 0 },
+    });
+    expect(result.activeItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "resolved_job", title: "Local role", company: "Local company" }),
+    ]));
+    expect(fixture.db.prepare(
+      "SELECT url FROM jobs WHERE tenant_id = 'local' AND job_id = ?",
+    ).get(SHARED_TENANT_JOB_ID)).toEqual({ url: localUrl });
   });
 
   it("selects the latest persisted terminal execution when no run is active or draining", () => {
@@ -734,7 +785,7 @@ describe("pipeline operations read model", () => {
       persistedMembershipCount: 1,
       expectedStepCount: 0,
       persistedStepCount: 0,
-      keyDigest: recoveryKeyDigest(["https://private.invalid/legacy-decoder"], []),
+      keyDigest: recoveryKeyDigest([jobIdFor("legacy-decoder")], []),
     });
 
     expect(snapshot(fixture, { autoReadyCheckpoint: false }).projectionCoverage).toMatchObject({
@@ -768,7 +819,7 @@ describe("pipeline operations read model", () => {
       persistedMembershipCount: 2,
       expectedStepCount: 2,
       persistedStepCount: 2,
-      keyDigest: "e10391b8b6c6def285172f687166d666e466e740a80487934aae552e6a1e6611",
+      keyDigest: "cf2bd8a207321752da638a0fe9c77bb9c6cb1ac51074454d8335fdc2af1b58b8",
     });
 
     expect(snapshot(fixture, { autoReadyCheckpoint: false }).projectionCoverage).toMatchObject({
@@ -1118,74 +1169,8 @@ function createFixture(): Fixture {
   const dbPath = path.join(directory, "jobctrl.db");
   const configPath = path.join(directory, "config.json");
   fs.writeFileSync(configPath, JSON.stringify({ daily_budget_usd: 25 }));
+  initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE job_stage_states (
-      job_url TEXT NOT NULL,
-      stage TEXT NOT NULL,
-      state TEXT,
-      attempt_count INTEGER,
-      max_attempts INTEGER,
-      started_at TEXT,
-      updated_at TEXT,
-      finished_at TEXT,
-      duration_ms INTEGER,
-      error_code TEXT,
-      error_message TEXT,
-      retryable INTEGER,
-      blocked_by_json TEXT,
-      next_action TEXT
-    );
-    CREATE TABLE discovery_execution_jobs (
-      tenant_id TEXT NOT NULL,
-      discover_workflow_id TEXT NOT NULL,
-      discover_run_id TEXT NOT NULL,
-      job_url TEXT NOT NULL,
-      cohort_kind TEXT NOT NULL,
-      preparation_workflow_id TEXT,
-      work_plan_state TEXT NOT NULL,
-      required_steps_json TEXT
-    );
-    CREATE TABLE worker_runtime_heartbeats (
-      worker_id TEXT PRIMARY KEY,
-      component TEXT NOT NULL,
-      pid INTEGER NOT NULL,
-      hostname TEXT NOT NULL,
-      app_dir TEXT NOT NULL,
-      db_path TEXT NOT NULL,
-      task_queue TEXT NOT NULL,
-      started_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL,
-      max_concurrent_activities INTEGER,
-      activity_executor_max_workers INTEGER,
-      active_activity_count INTEGER NOT NULL DEFAULT 0,
-      active_activity_counts_json TEXT NOT NULL DEFAULT '{}',
-      active_activity_details_json TEXT NOT NULL DEFAULT '[]',
-      active_activity_details_total INTEGER NOT NULL DEFAULT 0,
-      active_activity_details_truncated INTEGER NOT NULL DEFAULT 0,
-      activity_duration_summary_json TEXT NOT NULL DEFAULT '{}',
-      task_queue_observation_json TEXT,
-      heartbeat_schema_version INTEGER NOT NULL DEFAULT 2
-    );
-    CREATE TABLE discovery_execution_recoveries (
-      tenant_id TEXT NOT NULL,
-      discover_workflow_id TEXT NOT NULL,
-      discover_run_id TEXT NOT NULL,
-      state TEXT NOT NULL,
-      mode TEXT NOT NULL,
-      decoder_version INTEGER NOT NULL,
-      history_event_id INTEGER NOT NULL,
-      expected_membership_count INTEGER NOT NULL,
-      persisted_membership_count INTEGER NOT NULL,
-      expected_step_count INTEGER NOT NULL,
-      persisted_step_count INTEGER NOT NULL,
-      key_digest TEXT NOT NULL,
-      last_error_code TEXT,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, discover_workflow_id, discover_run_id)
-    );
-  `);
-  ensureProjectionTables(db);
   const fixture = { directory, dbPath, configPath, db };
   fixtures.push(fixture);
   return fixture;
@@ -1208,11 +1193,11 @@ function insertReadyRecoveryCheckpoints(fixture: Fixture): void {
   ).all() as Array<{ workflow_id: string; temporal_run_id: string }>;
   for (const execution of executions) {
     const memberships = (fixture.db.prepare(
-      `SELECT job_url FROM discovery_execution_jobs
+    `SELECT job_id FROM discovery_execution_jobs
         WHERE tenant_id = 'local' AND discover_workflow_id = ? AND discover_run_id = ?
-        ORDER BY job_url`,
-    ).all(execution.workflow_id, execution.temporal_run_id) as Array<{ job_url: string }>)
-      .map((row) => row.job_url);
+        ORDER BY job_id`,
+    ).all(execution.workflow_id, execution.temporal_run_id) as Array<{ job_id: string }>)
+      .map((row) => row.job_id);
     const steps = (fixture.db.prepare(
       `SELECT step_kind, item_key FROM pipeline_step_projections
         WHERE tenant_id = 'local' AND discover_workflow_id = ? AND discover_run_id = ?
@@ -1336,23 +1321,33 @@ function insertMember(
     workflowId?: string;
     runId?: string;
     jobUrl?: string;
+    jobId?: string;
+    title?: string;
+    company?: string;
   },
-): { preparationWorkflowId: string } {
+): { preparationWorkflowId: string; jobId: string } {
   const preparationWorkflowId = `prep-preparation:${createHash("sha256").update(input.key).digest("hex")}`;
+  const jobId = input.jobId ?? jobIdFor(input.key);
+  const jobUrl = input.jobUrl ?? `https://private.invalid/${input.key}`;
+  fixture.db.prepare(
+    `INSERT INTO jobs (tenant_id, job_id, url, title, company)
+     VALUES ('local', ?, ?, ?, ?)`,
+  ).run(jobId, jobUrl, input.title ?? null, input.company ?? null);
   fixture.db.prepare(
     `INSERT INTO discovery_execution_jobs (
-       tenant_id, discover_workflow_id, discover_run_id, job_url, cohort_kind,
-       preparation_workflow_id, work_plan_state, required_steps_json
-     ) VALUES ('local', ?, ?, ?, ?, ?, 'planned', ?)`,
+       tenant_id, discover_workflow_id, discover_run_id, job_id, cohort_kind,
+       preparation_workflow_id, work_plan_state, required_steps_json, linked_at
+     ) VALUES ('local', ?, ?, ?, ?, ?, 'planned', ?, ?)`,
   ).run(
     input.workflowId ?? DISCOVER_WORKFLOW_ID,
     input.runId ?? DISCOVER_RUN_ID,
-    input.jobUrl ?? `https://private.invalid/${input.key}`,
+    jobId,
     input.cohort ?? "observed_this_run",
     preparationWorkflowId,
     JSON.stringify(input.requiredSteps),
+    NOW.toISOString(),
   );
-  return { preparationWorkflowId };
+  return { preparationWorkflowId, jobId };
 }
 
 function insertStageState(
@@ -1363,12 +1358,22 @@ function insertStageState(
   durationMs: number | null = null,
   finishedAt: string | null = null,
   retryable = 0,
+  identity: { jobId?: string } = {},
 ): void {
+  const jobId = identity.jobId ?? jobIdFor(key);
+  fixture.db.prepare(
+    `INSERT OR IGNORE INTO jobs (tenant_id, job_id, url)
+     VALUES ('local', ?, ?)`,
+  ).run(jobId, `https://private.invalid/${key}`);
   fixture.db.prepare(
     `INSERT INTO job_stage_states (
-       job_url, stage, state, attempt_count, max_attempts, updated_at, finished_at, duration_ms, retryable
-     ) VALUES (?, ?, ?, 1, 3, ?, ?, ?, ?)`,
-  ).run(`https://private.invalid/${key}`, stage, state, NOW.toISOString(), finishedAt, durationMs, retryable);
+       tenant_id, job_id, stage, state, attempt_count, max_attempts, updated_at, finished_at, duration_ms, retryable
+     ) VALUES ('local', ?, ?, ?, 1, 3, ?, ?, ?, ?)`,
+  ).run(jobId, stage, state, NOW.toISOString(), finishedAt, durationMs, retryable);
+}
+
+function jobIdFor(key: string): string {
+  return `job-${createHash("sha256").update(key).digest("hex")}`;
 }
 
 function insertStep(

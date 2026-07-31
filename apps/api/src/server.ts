@@ -303,6 +303,7 @@ import {
   type RetryFailedJobTarget,
   restoreJob,
   restoreJobs,
+  resolveJobId,
   resetStaleScoresForRescore,
   resolveJobUrl,
   softDeleteJob,
@@ -4101,11 +4102,11 @@ function latestPipelineWorkflowEvent(
   db: ApiDb,
   workflowId: string,
 ): { stage: string | null; payload_json: string | null } | null {
-  if (!tableExists(db, "job_events")) return null;
   const row = db.prepare(
     `SELECT stage, payload_json
        FROM job_events
-      WHERE COALESCE(job_url, '') IN ('', ?)
+      WHERE tenant_id = 'local'
+        AND job_id IS NULL
         AND payload_json IS NOT NULL
         AND json_valid(payload_json)
         AND (
@@ -4114,7 +4115,7 @@ function latestPipelineWorkflowEvent(
         )
       ORDER BY event_id DESC
       LIMIT 1`,
-  ).get(PIPELINE_ACTION_JOB_KEY, workflowId, workflowId) as
+  ).get(workflowId, workflowId) as
     | { stage: string | null; payload_json: string | null }
     | undefined;
   return row ?? null;
@@ -4131,21 +4132,29 @@ function insertJobEvent(
     payload: Record<string, unknown>;
   },
 ): void {
-  if (!tableExists(db, "job_events")) return;
-  const columns = columnNames(db, "job_events");
-  const values = {
-    job_url: event.jobUrl,
-    stage: event.stage,
-    event_type: event.eventType,
-    level: event.level,
-    message: event.message,
-    occurred_at: new Date().toISOString(),
-    payload_json: JSON.stringify(event.payload),
+  const jobId = event.jobUrl === null ? null : resolveJobId(db, "local", event.jobUrl);
+  if (event.jobUrl !== null && !jobId) {
+    throw new InputError("Job not found.");
+  }
+  const payload = {
+    ...event.payload,
+    tenantId: "local",
+    ...(jobId ? { jobId } : {}),
   };
-  const entries = Object.entries(values).filter(([name]) => columns.has(name));
   db.prepare(
-    `INSERT INTO job_events (${entries.map(([name]) => name).join(", ")}) VALUES (${entries.map(() => "?").join(", ")})`,
-  ).run(...entries.map(([, value]) => value));
+    `INSERT INTO job_events (
+       tenant_id, job_id, identity_version, stage, event_type, level,
+       message, occurred_at, payload_json
+     ) VALUES ('local', ?, 1, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    jobId,
+    event.stage,
+    event.eventType,
+    event.level,
+    event.message,
+    new Date().toISOString(),
+    JSON.stringify(payload),
+  );
 }
 
 function tableExists(db: ApiDb, tableName: string): boolean {
