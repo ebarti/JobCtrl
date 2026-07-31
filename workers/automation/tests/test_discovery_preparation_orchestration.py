@@ -15,6 +15,7 @@ from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.preparation import PreparationWorkItemKind
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.discovery.workflow import DiscoverWorkflow
+from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
 from jobctrl.infrastructure.temporal.registry import WORKFLOWS
 from jobctrl.pipeline import preparation, runner
 from jobctrl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
@@ -54,15 +55,15 @@ def test_derive_preparation_targets_is_sorted_and_prefers_score_workflow(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_jobs(*, stage: str, **_kwargs):
+    def fake_job_ids(_conn, *, stage: str, **_kwargs):
         if stage == "pending_score":
-            return [{"job_id": _job_id(2)}, {"job_id": _job_id(1)}]
+            return [_job_id(2), _job_id(1)]
         if stage == "pending_tailor":
-            return [{"job_id": _job_id(1)}, {"job_id": _job_id(3)}]
+            return [_job_id(1), _job_id(3)]
         return []
 
     monkeypatch.setattr(preparation, "get_connection", lambda: conn)
-    monkeypatch.setattr(preparation, "get_jobs_by_stage", fake_jobs)
+    monkeypatch.setattr(preparation, "_preparation_job_ids", fake_job_ids)
     monkeypatch.setattr(preparation, "_suppress_ineligible_artifacts", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(preparation, "current_scoring_policy_version", lambda *_args, **_kwargs: 11)
     monkeypatch.setattr(preparation, "current_tailoring_policy_version", lambda *_args, **_kwargs: 7)
@@ -93,16 +94,16 @@ def test_derive_targets_score_only_skips_pending_tailor(
     own SCORE_JOB workflow) is NOT re-derived as a duplicate TAILOR_RESUME
     target. Score-only passes only start fresh SCORE_JOB work."""
 
-    def fake_jobs(*, stage: str, **_kwargs):
+    def fake_job_ids(_conn, *, stage: str, **_kwargs):
         if stage == "pending_score":
-            return [{"job_id": _job_id(10)}]
+            return [_job_id(10)]
         if stage == "pending_tailor":
             # A job scored earlier this run, now mid-tailor.
-            return [{"job_id": _job_id(11)}]
+            return [_job_id(11)]
         return []
 
     monkeypatch.setattr(preparation, "get_connection", lambda: conn)
-    monkeypatch.setattr(preparation, "get_jobs_by_stage", fake_jobs)
+    monkeypatch.setattr(preparation, "_preparation_job_ids", fake_job_ids)
     monkeypatch.setattr(preparation, "_suppress_ineligible_artifacts", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(preparation, "current_scoring_policy_version", lambda *_args, **_kwargs: 3)
     monkeypatch.setattr(preparation, "current_tailoring_policy_version", lambda *_args, **_kwargs: 5)
@@ -127,6 +128,171 @@ def test_derive_targets_score_only_skips_pending_tailor(
     # so the mid-tailor job cannot get a second, racing prep workflow.
     assert [target.job_id for target in score_only] == [_job_id(10)]
     assert score_only[0].steps == ["score", "tailor", "cover", "pdf"]
+
+
+def test_derive_preparation_targets_uses_exact_v7_job_identity_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The synchronous fan-out works on the sealed v7 schema without URL joins."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    create_exact_v7_schema(conn)
+    now = "2026-07-31T09:00:00+00:00"
+    pending_score_id = _job_id(60)
+    pending_tailor_id = _job_id(61)
+    suppressed_id = _job_id(62)
+    deleted_score_id = _job_id(63)
+    deleted_tailor_id = _job_id(64)
+    restored_score_id = _job_id(65)
+    other_tenant_id = _job_id(60)
+
+    try:
+        for tenant_id, job_id in (
+            (LOCAL_TENANT, pending_score_id),
+            (LOCAL_TENANT, pending_tailor_id),
+            (LOCAL_TENANT, suppressed_id),
+            (LOCAL_TENANT, deleted_score_id),
+            (LOCAL_TENANT, deleted_tailor_id),
+            (LOCAL_TENANT, restored_score_id),
+            ("other", other_tenant_id),
+        ):
+            conn.execute(
+                """
+                INSERT INTO jobs (tenant_id, job_id, url, discovered_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (str(tenant_id), str(job_id), f"https://jobs.example/{tenant_id}/{job_id}", now),
+            )
+        conn.executemany(
+            """
+            INSERT INTO job_enrichments (
+                tenant_id, job_id, current_status, full_description, updated_at
+            ) VALUES (?, ?, 'enriched', 'Canonical description', ?)
+            """,
+            [
+                (str(LOCAL_TENANT), str(pending_score_id), now),
+                (str(LOCAL_TENANT), str(pending_tailor_id), now),
+                (str(LOCAL_TENANT), str(deleted_score_id), now),
+                (str(LOCAL_TENANT), str(deleted_tailor_id), now),
+                (str(LOCAL_TENANT), str(restored_score_id), now),
+                ("other", str(other_tenant_id), now),
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO job_scores (
+                tenant_id, job_id, version, fit_score, breakdown_json,
+                keywords_json, scored_at
+            ) VALUES (?, ?, 1, ?, ?, '[]', ?)
+            """,
+            [
+                (
+                    str(LOCAL_TENANT),
+                    str(pending_tailor_id),
+                    8,
+                    '{"eligibility":{"status":"eligible","hard_blockers":[]}}',
+                    now,
+                ),
+                (
+                    str(LOCAL_TENANT),
+                    str(deleted_tailor_id),
+                    8,
+                    '{"eligibility":{"status":"eligible","hard_blockers":[]}}',
+                    now,
+                ),
+                (str(LOCAL_TENANT), str(suppressed_id), 5, "{}", now),
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO job_stage_states (
+                tenant_id, job_id, stage, state, attempt_count, updated_at
+            ) VALUES (?, ?, 'score', 'succeeded', 1, ?)
+            """,
+            (
+                (str(LOCAL_TENANT), str(pending_tailor_id), now),
+                (str(LOCAL_TENANT), str(deleted_tailor_id), now),
+            ),
+        )
+        conn.executemany(
+            """
+            INSERT INTO jobctrl_deleted_jobs (
+                tenant_id, job_id, deleted_at, reason, restored_at
+            ) VALUES (?, ?, ?, 'fixture', ?)
+            """,
+            (
+                (
+                    str(LOCAL_TENANT),
+                    str(deleted_score_id),
+                    "2026-07-31T09:01:00+00:00",
+                    None,
+                ),
+                (
+                    str(LOCAL_TENANT),
+                    str(deleted_tailor_id),
+                    "2026-07-31T09:01:00+00:00",
+                    None,
+                ),
+                (
+                    str(LOCAL_TENANT),
+                    str(restored_score_id),
+                    "2026-07-31T09:01:00+00:00",
+                    "2026-07-31T09:02:00+00:00",
+                ),
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_materials (
+                tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+            ) VALUES (?, ?, 1, 'resume_approved', ?, ?, '{"source":"fixture"}')
+            """,
+            (str(LOCAL_TENANT), str(suppressed_id), now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_materials_artifacts (
+                tenant_id, job_id, generation, artifact_type, artifact_id, status,
+                path, render_format, metadata_json, created_at
+            ) VALUES (?, ?, 1, 'tailored_resume', 'resume-62', 'approved',
+                      '/tmp/resume-62.txt', 'text', '{"source":"fixture"}', ?)
+            """,
+            (str(LOCAL_TENANT), str(suppressed_id), now),
+        )
+        conn.commit()
+        monkeypatch.setattr(preparation, "get_connection", lambda: conn)
+
+        targets = preparation.derive_preparation_targets(
+            preparation.DerivePreparationTargetsInput(tenant_id=str(LOCAL_TENANT), min_score=7)
+        )
+
+        assert [target.job_id for target in targets] == [
+            pending_score_id,
+            pending_tailor_id,
+            restored_score_id,
+        ]
+        assert targets[0].steps == ["score", "tailor", "cover", "pdf"]
+        assert targets[1].steps == ["tailor", "cover", "pdf"]
+        assert targets[2].steps == ["score", "tailor", "cover", "pdf"]
+        suppressed = conn.execute(
+            """
+            SELECT status, metadata_json
+            FROM job_materials_artifacts
+            WHERE tenant_id = ? AND job_id = ? AND generation = 1
+            """,
+            (str(LOCAL_TENANT), str(suppressed_id)),
+        ).fetchone()
+        assert suppressed is not None
+        assert suppressed["status"] == "suppressed"
+        assert '"reason":"threshold_or_hard_blocker_ineligible"' in suppressed["metadata_json"]
+        assert preparation._unselected_work_plan_outcome(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            job_id=suppressed_id,
+            min_score=7,
+        ) == ("not_eligible", "score_below_threshold")
+    finally:
+        conn.close()
 
 
 class _FakeUseExistingStarter:
