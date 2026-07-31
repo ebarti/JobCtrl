@@ -5477,6 +5477,14 @@ export type ContactAttributeInput = z.infer<typeof ContactAttributeInputSchema>;
 
 const contactEmployerField = z.string().trim().min(1).max(200).nullish();
 const contactJobIdField = z.string().trim().min(1).max(2000).nullish();
+const outreachJobIdField = z
+  .string()
+  .trim()
+  .uuid()
+  .refine((value) => value === value.toLowerCase(), {
+    message: "jobId must be a canonical UUID",
+  })
+  .nullish();
 
 export const ContactCreateRequestSchema = z
   .object({
@@ -5804,7 +5812,7 @@ export interface OutreachThreadDetail extends OutreachThreadSummary {
 
 export const GenerateOutreachDraftRequestSchema = z
   .object({
-    jobId: contactJobIdField,
+    jobId: outreachJobIdField,
     kind: OutreachDraftKindSchema.optional(),
     applicationRole: z.string().trim().max(200).optional(),
     llmModel: z.string().trim().min(1).max(120).optional(),
@@ -5832,7 +5840,7 @@ export type RejectOutreachDraftRequest = z.infer<typeof RejectOutreachDraftReque
 export const OutreachThreadQuerySchema = z
   .object({
     contactId: optionalText,
-    jobId: optionalText,
+    jobId: outreachJobIdField,
   })
   .strict();
 export type OutreachThreadQuery = z.infer<typeof OutreachThreadQuerySchema>;

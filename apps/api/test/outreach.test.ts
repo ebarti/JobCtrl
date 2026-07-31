@@ -16,12 +16,13 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { OutreachDraftGateResults, OutreachThreadDetail } from "../src/contracts.js";
-import { ensureOutreachTables } from "../src/outreach.js";
 import type { OutreachDraftGenerator } from "../src/local-actions.js";
 import { buildApp } from "../src/server.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 const SECRET_BODY = "Hi Dana, I boosted revenue 40% and would love to connect.";
 const SECRET_RATIONALE = "Grounded in the confirmed employer attribute.";
+const JOB_ID = "00000000-0000-4000-8000-000000000003";
 
 const PASSING_GATE: OutreachDraftGateResults = {
   passed: true,
@@ -51,34 +52,7 @@ afterEach(() => {
 function withTempApp(generator?: OutreachDraftGenerator) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-outreach-"));
   const dbPath = path.join(dir, "jobs.db");
-  const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE jobs (url TEXT PRIMARY KEY, title TEXT);
-    CREATE TABLE job_events (
-      event_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_url      TEXT,
-      stage        TEXT,
-      event_type   TEXT NOT NULL,
-      level        TEXT NOT NULL DEFAULT 'info',
-      message      TEXT,
-      occurred_at  TEXT NOT NULL,
-      payload_json TEXT,
-      entity_kind  TEXT,
-      entity_ref   TEXT
-    );
-    CREATE TABLE application_outcomes (
-      tenant_id     TEXT NOT NULL DEFAULT 'local',
-      outcome_id    TEXT NOT NULL,
-      job_key       TEXT NOT NULL,
-      kind          TEXT NOT NULL,
-      source        TEXT NOT NULL,
-      occurred_at   TEXT NOT NULL,
-      recorded_at   TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, outcome_id)
-    );
-  `);
-  ensureOutreachTables(db);
-  db.close();
+  initializeExactV7Database(dbPath);
   const app = buildApp({
     dbPath,
     configPath: path.join(dir, "config.json"),
@@ -91,13 +65,18 @@ function withTempApp(generator?: OutreachDraftGenerator) {
 
 function seedThread(
   dbPath: string,
-  input: { threadId: string; contactId: string; jobUrl: string | null },
+  input: { threadId: string; contactId: string; jobId: string | null },
 ): void {
   const db = new Database(dbPath);
+  if (input.jobId) {
+    db.prepare(
+      `INSERT OR IGNORE INTO jobs (tenant_id, job_id, url) VALUES ('local', ?, ?)`,
+    ).run(input.jobId, `https://posting.example/${input.jobId}`);
+  }
   db.prepare(
-    `INSERT INTO outreach_threads (tenant_id, thread_id, contact_id, job_url, created_at, updated_at)
+    `INSERT INTO outreach_threads (tenant_id, thread_id, contact_id, job_id, created_at, updated_at)
      VALUES ('local', ?, ?, ?, ?, ?)`,
-  ).run(input.threadId, input.contactId, input.jobUrl, "2026-07-06T00:00:00Z", "2026-07-06T00:00:00Z");
+  ).run(input.threadId, input.contactId, input.jobId, "2026-07-06T00:00:00Z", "2026-07-06T00:00:00Z");
   db.close();
 }
 
@@ -136,13 +115,13 @@ function seedDraft(
   db.close();
 }
 
-function seedSubmittedOutcome(dbPath: string, jobKey: string, occurredAt: string): void {
+function seedSubmittedOutcome(dbPath: string, jobId: string, occurredAt: string): void {
   const db = new Database(dbPath);
   db.prepare(
     `INSERT INTO application_outcomes (
-     tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at
+     tenant_id, outcome_id, job_id, kind, source, occurred_at, recorded_at
      ) VALUES ('local', ?, ?, 'applied_confirmation', 'manual', ?, ?)`,
-  ).run(`outcome-${jobKey}`, jobKey, occurredAt, "2026-07-06T00:00:00Z");
+  ).run(`outcome-${jobId}`, jobId, occurredAt, "2026-07-06T00:00:00Z");
   db.close();
 }
 
@@ -194,7 +173,7 @@ describe("outreach API", () => {
 
   it("maps gateResults + provenance + body from canonical rows on read", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-r", contactId: "contact-r", jobUrl: "https://job/9" });
+    seedThread(dbPath, { threadId: "thread-r", contactId: "contact-r", jobId: JOB_ID });
     seedDraft(dbPath, {
       draftId: "draft-r1",
       threadId: "thread-r",
@@ -214,7 +193,7 @@ describe("outreach API", () => {
 
     const res = await app.inject({
       method: "GET",
-      url: "/v1/contacts/contact-r/outreach?jobId=https%3A%2F%2Fjob%2F9",
+      url: `/v1/contacts/contact-r/outreach?jobId=${JOB_ID}`,
     });
     expect(res.statusCode).toBe(200);
     const thread = (res.json() as ThreadResponse).thread!;
@@ -232,7 +211,7 @@ describe("outreach API", () => {
 
   it("BLOCKS approval with 409/draft_gates_not_passed when the persisted gate did not pass (INV-5)", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-g", contactId: "contact-g", jobUrl: null });
+    seedThread(dbPath, { threadId: "thread-g", contactId: "contact-g", jobId: null });
     seedDraft(dbPath, { draftId: "draft-g1", threadId: "thread-g", generation: 1, gate: FAILING_GATE });
 
     const res = await app.inject({
@@ -251,7 +230,7 @@ describe("outreach API", () => {
 
   it("approves a gate-passing candidate and supersedes the prior approved generation", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-a", contactId: "contact-a", jobUrl: "https://job/1" });
+    seedThread(dbPath, { threadId: "thread-a", contactId: "contact-a", jobId: JOB_ID });
     seedDraft(dbPath, {
       draftId: "draft-a1",
       threadId: "thread-a",
@@ -278,7 +257,7 @@ describe("outreach API", () => {
 
   it("rejects a candidate but never touches an approved draft (INV-5)", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-j", contactId: "contact-j", jobUrl: null });
+    seedThread(dbPath, { threadId: "thread-j", contactId: "contact-j", jobId: null });
     seedDraft(dbPath, {
       draftId: "draft-j1",
       threadId: "thread-j",
@@ -327,7 +306,7 @@ describe("outreach API", () => {
 
   it("returns 404 approving a draft that does not exist", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-n", contactId: "contact-n", jobUrl: null });
+    seedThread(dbPath, { threadId: "thread-n", contactId: "contact-n", jobId: null });
     const res = await app.inject({
       method: "POST",
       url: "/v1/outreach/threads/thread-n/drafts/missing/approve",
@@ -338,7 +317,7 @@ describe("outreach API", () => {
 
   it("reflects the thread lifecycle in the outreach_thread_projections row without leaking bodies", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-p", contactId: "contact-p", jobUrl: "https://job/2" });
+    seedThread(dbPath, { threadId: "thread-p", contactId: "contact-p", jobId: JOB_ID });
     seedDraft(dbPath, {
       draftId: "draft-p1",
       threadId: "thread-p",
@@ -372,8 +351,13 @@ describe("outreach API", () => {
     const generator = vi.fn<OutreachDraftGenerator>(async (input, _context) => {
       // Simulate the worker (a separate process) persisting a gated candidate draft.
       const db = new Database(dbPathRef.current);
+      if (input.jobId) {
+        db.prepare(
+          `INSERT INTO jobs (tenant_id, job_id, url) VALUES ('local', ?, ?)`,
+        ).run(input.jobId, `https://posting.example/${input.jobId}`);
+      }
       db.prepare(
-        `INSERT INTO outreach_threads (tenant_id, thread_id, contact_id, job_url, created_at, updated_at)
+        `INSERT INTO outreach_threads (tenant_id, thread_id, contact_id, job_id, created_at, updated_at)
          VALUES ('local', ?, ?, ?, ?, ?)
          ON CONFLICT(tenant_id, thread_id) DO NOTHING`,
       ).run(input.threadId, input.contactId ?? "", input.jobId ?? null, "2026-07-06T02:00:00Z", "2026-07-06T02:00:00Z");
@@ -401,7 +385,7 @@ describe("outreach API", () => {
     const res = await app.inject({
       method: "POST",
       url: "/v1/contacts/contact-gen/outreach/drafts",
-      payload: { jobId: "https://job/3", kind: "intro_request" },
+      payload: { jobId: JOB_ID, kind: "intro_request" },
     });
     expect(res.statusCode).toBe(200);
     const thread = (res.json() as ThreadResponse).thread!;
@@ -410,8 +394,26 @@ describe("outreach API", () => {
     expect(generator).toHaveBeenCalledTimes(1);
     const input = generator.mock.calls[0]![0];
     expect(input.contactId).toBe("contact-gen");
-    expect(input.jobId).toBe("https://job/3");
+    expect(input.jobId).toBe(JOB_ID);
     expect(input.threadId).toBeTruthy();
+  });
+
+  it("rejects a URL-shaped outreach JobId before the worker, writes, or events", async () => {
+    const generator = vi.fn<OutreachDraftGenerator>();
+    const { app, dbPath } = withTempApp(generator);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/contacts/contact-invalid/outreach/drafts",
+      payload: { jobId: "https://jobs.example/invalid" },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(generator).not.toHaveBeenCalled();
+    const db = new Database(dbPath);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM outreach_threads").get()).toEqual({ count: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM job_events").get()).toEqual({ count: 0 });
+    db.close();
   });
 
   it("revises an existing thread through the injected generator with the edited body", async () => {
@@ -441,7 +443,7 @@ describe("outreach API", () => {
     });
     const { app, dbPath } = withTempApp(generator);
     dbPathRef.current = dbPath;
-    seedThread(dbPath, { threadId: "thread-e", contactId: "contact-e", jobUrl: null });
+    seedThread(dbPath, { threadId: "thread-e", contactId: "contact-e", jobId: null });
     seedDraft(dbPath, { draftId: "draft-e1", threadId: "thread-e", generation: 1, gate: PASSING_GATE });
 
     const res = await app.inject({
@@ -459,7 +461,7 @@ describe("outreach API", () => {
 
   it("exposes no send transport on any outreach route (INV-1)", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-s", contactId: "contact-s", jobUrl: null });
+    seedThread(dbPath, { threadId: "thread-s", contactId: "contact-s", jobId: null });
     seedDraft(dbPath, { draftId: "draft-s1", threadId: "thread-s", generation: 1, gate: PASSING_GATE });
     const res = await app.inject({
       method: "POST",
@@ -472,7 +474,7 @@ describe("outreach API", () => {
 
   it("records a user-attested send over an approved draft and marks the thread sent (INV-1)", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-send", contactId: "contact-send", jobUrl: "https://job/7" });
+    seedThread(dbPath, { threadId: "thread-send", contactId: "contact-send", jobId: JOB_ID });
     seedDraft(dbPath, {
       draftId: "draft-send",
       threadId: "thread-send",
@@ -507,7 +509,7 @@ describe("outreach API", () => {
 
   it("rejects address-shaped send channels before they can enter logs or events", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-channel", contactId: "contact-channel", jobUrl: null });
+    seedThread(dbPath, { threadId: "thread-channel", contactId: "contact-channel", jobId: null });
     seedDraft(dbPath, {
       draftId: "draft-channel",
       threadId: "thread-channel",
@@ -533,7 +535,7 @@ describe("outreach API", () => {
 
   it("refuses to log a send over a non-approved draft and leaves the thread unsent (INV-1)", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-c", contactId: "contact-c", jobUrl: null });
+    seedThread(dbPath, { threadId: "thread-c", contactId: "contact-c", jobId: null });
     seedDraft(dbPath, { draftId: "draft-c1", threadId: "thread-c", generation: 1, gate: PASSING_GATE });
 
     const res = await app.inject({
@@ -550,9 +552,9 @@ describe("outreach API", () => {
 
   it("schedules a follow-up from the canonical application outcome, then completes it", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-f", contactId: "contact-f", jobUrl: "https://job/8" });
+    seedThread(dbPath, { threadId: "thread-f", contactId: "contact-f", jobId: JOB_ID });
     seedDraft(dbPath, { draftId: "draft-f1", threadId: "thread-f", generation: 1, gate: PASSING_GATE });
-    seedSubmittedOutcome(dbPath, "https://job/8", "2026-07-01T00:00:00+00:00");
+    seedSubmittedOutcome(dbPath, JOB_ID, "2026-07-01T00:00:00+00:00");
 
     const scheduled = await app.inject({
       method: "POST",
@@ -577,9 +579,9 @@ describe("outreach API", () => {
 
   it("surfaces only arrived follow-ups in the due-follow-ups read model", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-due", contactId: "contact-due", jobUrl: "https://job/due" });
+    seedThread(dbPath, { threadId: "thread-due", contactId: "contact-due", jobId: JOB_ID });
     seedDraft(dbPath, { draftId: "d-due", threadId: "thread-due", generation: 1, gate: PASSING_GATE });
-    seedThread(dbPath, { threadId: "thread-upcoming", contactId: "contact-up", jobUrl: null });
+    seedThread(dbPath, { threadId: "thread-upcoming", contactId: "contact-up", jobId: null });
     seedDraft(dbPath, { draftId: "d-up", threadId: "thread-upcoming", generation: 1, gate: PASSING_GATE });
 
     await app.inject({
@@ -602,7 +604,7 @@ describe("outreach API", () => {
 
   it("dismisses a scheduled follow-up and drops it from the due list", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-dis", contactId: "contact-dis", jobUrl: null });
+    seedThread(dbPath, { threadId: "thread-dis", contactId: "contact-dis", jobId: null });
     seedDraft(dbPath, { draftId: "d-dis", threadId: "thread-dis", generation: 1, gate: PASSING_GATE });
     await app.inject({
       method: "POST",
@@ -624,7 +626,7 @@ describe("outreach API", () => {
 
   it("cannot complete or dismiss a follow-up that was never scheduled", async () => {
     const { app, dbPath } = withTempApp();
-    seedThread(dbPath, { threadId: "thread-ns", contactId: "contact-ns", jobUrl: null });
+    seedThread(dbPath, { threadId: "thread-ns", contactId: "contact-ns", jobId: null });
     const res = await app.inject({
       method: "POST",
       url: "/v1/outreach/threads/thread-ns/follow-up/complete",

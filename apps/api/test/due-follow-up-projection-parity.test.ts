@@ -15,8 +15,8 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ensureOutreachTables } from "../src/outreach.js";
-import { refreshProjections } from "../src/projections.js";
+import { refreshOutreachProjections } from "../src/projections.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 const FIXTURE_PATH = fileURLToPath(
   new URL(
@@ -42,24 +42,32 @@ afterEach(() => {
 
 function seededDb(): Database.Database {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-due-followup-parity-"));
-  const db = new Database(path.join(dir, "jobs.db"));
+  const dbPath = path.join(dir, "jobs.db");
+  initializeExactV7Database(dbPath);
+  const db = new Database(dbPath);
   cleanups.push(() => {
     db.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  ensureOutreachTables(db);
+  const insertJob = db.prepare(
+    `INSERT INTO jobs (tenant_id, job_id, url) VALUES (?, ?, ?)`,
+  );
   const insertThread = db.prepare(
     `INSERT INTO outreach_threads (
-       tenant_id, thread_id, contact_id, job_url, created_at, updated_at,
+       tenant_id, thread_id, contact_id, job_id, created_at, updated_at,
        follow_up_due_at, follow_up_basis, follow_up_state
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const thread of fixture.threads) {
+    if (thread.jobId) {
+      const jobId = String(thread.jobId);
+      insertJob.run(fixture.tenantId, jobId, `https://example.test/jobs/${jobId}`);
+    }
     insertThread.run(
       fixture.tenantId,
       thread.threadId,
       thread.contactId,
-      thread.jobUrl,
+      thread.jobId,
       thread.createdAt,
       thread.updatedAt,
       thread.followUpDueAt,
@@ -87,7 +95,7 @@ function normalize(row: Record<string, unknown>): Record<string, unknown> {
 describe("due_follow_up_projections cross-runtime parity", () => {
   it("materialises only scheduled follow-ups matching the shared fixture", () => {
     const db = seededDb();
-    refreshProjections(db, fixture.tenantId);
+    refreshOutreachProjections(db, fixture.tenantId);
     const rows = db
       .prepare("SELECT * FROM due_follow_up_projections WHERE tenant_id = ?")
       .all(fixture.tenantId) as Array<Record<string, unknown>>;
@@ -103,13 +111,13 @@ describe("due_follow_up_projections cross-runtime parity", () => {
 
   it("is idempotent across repeated refreshes", () => {
     const db = seededDb();
-    refreshProjections(db, fixture.tenantId);
+    refreshOutreachProjections(db, fixture.tenantId);
     const first = (
       db
         .prepare("SELECT * FROM due_follow_up_projections WHERE tenant_id = ?")
         .all(fixture.tenantId) as Array<Record<string, unknown>>
     ).map(normalize);
-    refreshProjections(db, fixture.tenantId);
+    refreshOutreachProjections(db, fixture.tenantId);
     const second = (
       db
         .prepare("SELECT * FROM due_follow_up_projections WHERE tenant_id = ?")

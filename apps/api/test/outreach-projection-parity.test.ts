@@ -16,8 +16,8 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ensureOutreachTables } from "../src/outreach.js";
-import { refreshProjections } from "../src/projections.js";
+import { refreshOutreachProjections } from "../src/projections.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 const FIXTURE_PATH = fileURLToPath(
   new URL(
@@ -45,23 +45,31 @@ afterEach(() => {
 
 function seededDb(): Database.Database {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-outreach-parity-"));
-  const db = new Database(path.join(dir, "jobs.db"));
+  const dbPath = path.join(dir, "jobs.db");
+  initializeExactV7Database(dbPath);
+  const db = new Database(dbPath);
   cleanups.push(() => {
     db.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  ensureOutreachTables(db);
+  const insertJob = db.prepare(
+    `INSERT INTO jobs (tenant_id, job_id, url) VALUES (?, ?, ?)`,
+  );
   const insertThread = db.prepare(
     `INSERT INTO outreach_threads (
-       tenant_id, thread_id, contact_id, job_url, created_at, updated_at
+       tenant_id, thread_id, contact_id, job_id, created_at, updated_at
      ) VALUES (?, ?, ?, ?, ?, ?)`,
   );
   for (const thread of fixture.threads) {
+    if (thread.jobId) {
+      const jobId = String(thread.jobId);
+      insertJob.run(fixture.tenantId, jobId, `https://example.test/jobs/${jobId}`);
+    }
     insertThread.run(
       fixture.tenantId,
       thread.threadId,
       thread.contactId,
-      thread.jobUrl,
+      thread.jobId,
       thread.createdAt,
       thread.updatedAt,
     );
@@ -112,7 +120,7 @@ function normalize(row: Record<string, unknown>): Record<string, unknown> {
 describe("outreach_thread_projections cross-runtime parity", () => {
   it("materialises the projection from canonical rows matching the shared fixture", () => {
     const db = seededDb();
-    refreshProjections(db, fixture.tenantId);
+    refreshOutreachProjections(db, fixture.tenantId);
     const rows = db
       .prepare("SELECT * FROM outreach_thread_projections WHERE tenant_id = ?")
       .all(fixture.tenantId) as Array<Record<string, unknown>>;
@@ -128,7 +136,7 @@ describe("outreach_thread_projections cross-runtime parity", () => {
 
   it("never persists a draft body, gate internal, or rationale into the projection", () => {
     const db = seededDb();
-    refreshProjections(db, fixture.tenantId);
+    refreshOutreachProjections(db, fixture.tenantId);
     const rows = db
       .prepare("SELECT * FROM outreach_thread_projections WHERE tenant_id = ?")
       .all(fixture.tenantId) as Array<Record<string, unknown>>;
@@ -136,5 +144,33 @@ describe("outreach_thread_projections cross-runtime parity", () => {
     for (const secret of fixture.sensitiveValues) {
       expect(serialized).not.toContain(secret);
     }
+  });
+
+  it("keeps the same canonical JobId isolated by tenant", () => {
+    const db = seededDb();
+    const jobId = String(fixture.threads[0]!.jobId);
+    db.prepare(`INSERT INTO jobs (tenant_id, job_id, url) VALUES (?, ?, ?)`).run(
+      "other",
+      jobId,
+      `https://example.test/jobs/${jobId}`,
+    );
+    db.prepare(
+      `INSERT INTO outreach_threads (
+         tenant_id, thread_id, contact_id, job_id, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run("other", "thread-a", "contact-other", jobId, "2026-07-07T00:00:00Z", "2026-07-07T00:00:00Z");
+
+    refreshOutreachProjections(db, fixture.tenantId);
+    refreshOutreachProjections(db, "other");
+
+    expect(
+      db
+        .prepare("SELECT tenant_id, contact_id, job_id FROM outreach_thread_projections ORDER BY tenant_id, thread_id")
+        .all(),
+    ).toEqual([
+      { tenant_id: "local", contact_id: "contact-a", job_id: jobId },
+      { tenant_id: "local", contact_id: "contact-b", job_id: null },
+      { tenant_id: "other", contact_id: "contact-other", job_id: jobId },
+    ]);
   });
 });
