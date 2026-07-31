@@ -2476,7 +2476,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
   const scoreReasoning = score.reasoning;
   const scoreBreakdownJson = score.breakdown ? JSON.stringify(score.breakdown) : null;
   const scoreKeywordsJson = JSON.stringify(score.keywords);
-  const compensationProjection = buildExactV7CompensationProjection(jobId, nullableString(job.salary));
+  const compensationProjection = buildCompensationProjection(db, tenantId, jobId);
 
   const artifacts = collectArtifacts(db, tenantId, jobId, materials);
   const resume = preferredArtifactSource(
@@ -2768,52 +2768,24 @@ interface CompensationProjectionPair {
 
 export function buildCompensationProjection(
   db: SqliteDatabase,
-  jobLocator: string,
+  tenantId: string,
   jobId: string,
 ): CompensationProjectionPair {
   const posted =
-    getPostedCompensationFact(db, jobLocator) ??
+    getPostedCompensationFact(db, tenantId, jobId) ??
     ({
       ok: true,
       recordStatus: "not_recorded",
-      jobKey: jobLocator,
+      jobKey: jobId,
       legacyRawSalary: null,
     } as const);
   const market =
-    getMarketCompensationEstimate(db, jobLocator) ??
+    getMarketCompensationEstimate(db, tenantId, jobId) ??
     ({
       ok: true,
       recordStatus: "not_requested",
-      jobKey: jobLocator,
+      jobKey: jobId,
     } as const);
-  const auditPosted = compensationAuditPosted(posted, jobId);
-  const auditMarket = compensationAuditMarket(market, jobId);
-  const summary = buildCompensationSummary(posted, market);
-  return {
-    summaryJson: JSON.stringify(summary),
-    auditJson: JSON.stringify({
-      projectionVersion: COMPENSATION_PROJECTION_VERSION,
-      posted: auditPosted,
-      market: auditMarket,
-    }),
-  };
-}
-
-function buildExactV7CompensationProjection(
-  jobId: string,
-  legacyRawSalary: string | null,
-): CompensationProjectionPair {
-  const posted = {
-    ok: true as const,
-    recordStatus: "not_recorded" as const,
-    jobKey: jobId,
-    legacyRawSalary,
-  };
-  const market = {
-    ok: true as const,
-    recordStatus: "not_requested" as const,
-    jobKey: jobId,
-  };
   const auditPosted = compensationAuditPosted(posted, jobId);
   const auditMarket = compensationAuditMarket(market, jobId);
   const summary = buildCompensationSummary(posted, market);

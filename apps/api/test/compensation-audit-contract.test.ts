@@ -1,18 +1,26 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 
 import { buildCompensationProjection } from "../src/projections.js";
 import { parseCompensationAudit } from "../src/read-model.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 describe("compensation audit identity contract", () => {
   it("emits the supplied jobId and rejects legacy jobKey audit payloads", () => {
-    const db = new Database(":memory:");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-compensation-audit-v7-"));
+    const dbPath = path.join(dir, "jobs.db");
+    initializeExactV7Database(dbPath);
+    const db = new Database(dbPath);
     const locator = "https://example.com/jobs/legacy-locator";
     const jobId = "123e4567-e89b-12d3-a456-426614174000";
-    db.exec("CREATE TABLE jobs (url TEXT PRIMARY KEY, salary TEXT)");
-    db.prepare("INSERT INTO jobs (url, salary) VALUES (?, ?)").run(locator, "EUR 90000/year");
+    db.prepare(
+      "INSERT INTO jobs (tenant_id, job_id, url, salary) VALUES ('local', ?, ?, ?)",
+    ).run(jobId, locator, "EUR 90000/year");
 
-    const absentAudit = JSON.parse(buildCompensationProjection(db, locator, jobId).auditJson);
+    const absentAudit = JSON.parse(buildCompensationProjection(db, "local", jobId).auditJson);
     expect(absentAudit).toMatchObject({
       posted: {
         ok: true,
@@ -25,54 +33,56 @@ describe("compensation audit identity contract", () => {
     expect(JSON.stringify(absentAudit)).not.toContain('"jobKey"');
     expect(parseCompensationAudit(JSON.stringify(absentAudit))).toEqual(absentAudit);
 
-    installCompensationTables(db);
-    insertRecordedCompensation(db, locator);
-    const recordedAudit = JSON.parse(buildCompensationProjection(db, locator, jobId).auditJson);
+    insertRecordedCompensation(db, jobId);
+    const recordedAudit = JSON.parse(buildCompensationProjection(db, "local", jobId).auditJson);
 
     expect(recordedAudit.posted.fact.jobId).toBe(jobId);
     expect(recordedAudit.market.estimate.jobId).toBe(jobId);
     expect(JSON.stringify(recordedAudit)).not.toContain('"jobKey"');
 
+    db.prepare("INSERT INTO jobs (tenant_id, job_id, url, salary) VALUES ('other', ?, ?, ?)").run(
+      jobId,
+      "https://example.com/jobs/other-tenant",
+      "EUR 50000/year",
+    );
+    insertRecordedCompensation(db, jobId, "other", 50_000, 60_000);
+    const otherTenantAudit = JSON.parse(buildCompensationProjection(db, "other", jobId).auditJson);
+    expect(otherTenantAudit.posted.fact).toMatchObject({
+      tenantId: "other",
+      jobId,
+      minimumAmount: 50_000,
+    });
+    expect(otherTenantAudit.market.estimate).toMatchObject({
+      tenantId: "other",
+      jobId,
+      minimumAmount: 60_000,
+    });
+    expect(recordedAudit.posted.fact.minimumAmount).toBe(90_000);
+
     recordedAudit.posted.fact.jobKey = locator;
     expect(parseCompensationAudit(JSON.stringify(recordedAudit))).toBeNull();
     db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
 
-function installCompensationTables(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE job_posted_compensation_facts (
-      tenant_id TEXT, job_url TEXT, source_field TEXT, source_text TEXT,
-      legacy_raw_salary TEXT, parse_state TEXT, currency TEXT, period TEXT,
-      component TEXT, minimum_amount INTEGER, maximum_amount INTEGER,
-      annualized_minimum_amount INTEGER, annualized_maximum_amount INTEGER,
-      annualization_assumption TEXT, confidence TEXT, warnings_json TEXT,
-      parser_version TEXT, source_hash TEXT, parsed_at TEXT
-    );
-    CREATE TABLE job_market_compensation_estimates (
-      tenant_id TEXT, job_url TEXT, estimate_state TEXT, currency TEXT,
-      period TEXT, component TEXT, minimum_amount INTEGER, maximum_amount INTEGER,
-      confidence_interval_minimum_amount INTEGER,
-      confidence_interval_maximum_amount INTEGER, confidence_band TEXT,
-      confidence_score REAL, source_count INTEGER, sample_count INTEGER,
-      aggregate_bucket TEXT, geography_scope TEXT, occupation_code TEXT,
-      occupation_label TEXT, seniority_label TEXT, source_snapshot_json TEXT,
-      factor_reasons_json TEXT, selected_evidence_json TEXT,
-      insufficient_reasons_json TEXT, unsupported_reasons_json TEXT,
-      source_unavailable_reasons_json TEXT, warnings_json TEXT,
-      estimator_version TEXT, estimated_at TEXT, company_name TEXT,
-      normalized_company TEXT, role_title TEXT, normalized_role TEXT,
-      company_tier TEXT, match_scope TEXT
-    );
-  `);
-}
-
-function insertRecordedCompensation(db: Database.Database, locator: string): void {
+function insertRecordedCompensation(
+  db: Database.Database,
+  jobId: string,
+  tenantId = "local",
+  postedMinimum = 90_000,
+  marketMinimum = 100_000,
+): void {
   db.prepare(
-    `INSERT INTO job_posted_compensation_facts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO job_posted_compensation_facts (
+      tenant_id, job_id, source_field, source_text, legacy_raw_salary, parse_state,
+      currency, period, component, minimum_amount, maximum_amount,
+      annualized_minimum_amount, annualized_maximum_amount, annualization_assumption,
+      confidence, warnings_json, parser_version, source_hash, parsed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    "local",
-    locator,
+    tenantId,
+    jobId,
     "jobs.salary",
     "EUR 90000/year",
     "EUR 90000/year",
@@ -80,10 +90,10 @@ function insertRecordedCompensation(db: Database.Database, locator: string): voi
     "EUR",
     "year",
     "base_salary",
-    90000,
-    120000,
-    90000,
-    120000,
+    postedMinimum,
+    postedMinimum + 30_000,
+    postedMinimum,
+    postedMinimum + 30_000,
     null,
     "high",
     "[]",
@@ -92,18 +102,28 @@ function insertRecordedCompensation(db: Database.Database, locator: string): voi
     "2026-07-31T00:00:00Z",
   );
   db.prepare(
-    `INSERT INTO job_market_compensation_estimates VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO job_market_compensation_estimates (
+      tenant_id, job_id, estimate_state, currency, period, component,
+      minimum_amount, maximum_amount, confidence_interval_minimum_amount,
+      confidence_interval_maximum_amount, confidence_band, confidence_score,
+      source_count, sample_count, aggregate_bucket, geography_scope,
+      occupation_code, occupation_label, seniority_label, source_snapshot_json,
+      factor_reasons_json, selected_evidence_json, insufficient_reasons_json,
+      unsupported_reasons_json, source_unavailable_reasons_json, warnings_json,
+      estimator_version, estimated_at, company_name, normalized_company,
+      role_title, normalized_role, company_tier, match_scope
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    "local",
-    locator,
+    tenantId,
+    jobId,
     "estimated_range",
     "EUR",
     "year",
     "total_compensation",
-    100000,
-    130000,
-    90000,
-    140000,
+    marketMinimum,
+    marketMinimum + 30_000,
+    marketMinimum - 10_000,
+    marketMinimum + 40_000,
     "medium",
     0.75,
     1,
