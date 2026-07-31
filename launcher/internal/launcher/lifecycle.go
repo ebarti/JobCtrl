@@ -70,6 +70,7 @@ var homebrewAssetsReader = readHomebrewFormulaAssets
 var homebrewPromotion = promoteExisting
 var curlPromotion = promoteExisting
 var startReleaseCommand = startRelease
+var removeSQLiteSidecar = os.Remove
 
 type databaseFile struct {
 	Name          string `json:"name"`
@@ -933,6 +934,7 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	if err := stop(ctx); err != nil {
 		return false, fmt.Errorf("quiesce interrupted transition: %w", err)
 	}
+	cleanupV7Candidate(ctx.Instance.StateDir, journal.ID)
 	if journal.BackupID != "" {
 		var pair databasePair
 		if err := decodeStrictRegular(filepath.Join(ctx.Instance.StateDir, "backups", journal.BackupID, "pair.json"), &pair); err != nil {
@@ -1052,6 +1054,8 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	if candidate.Sequence <= active.Receipt.Sequence {
 		return errors.New("update refuses a lower or equal-sequence different release; use explicit rollback for an eligible predecessor")
 	}
+	activeRuntime := verifiedReleaseContext(ctx, activeVerified)
+	candidateRuntime := verifiedReleaseContext(ctx, candidateVerified)
 	policy, err := readInstalledPolicy(store.Home, candidate)
 	if err != nil {
 		return err
@@ -1095,8 +1099,39 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		_ = store.Advance(&journal, release.Failed, err)
 		return fmt.Errorf("quiesce active release: %w", err)
 	}
+	restartBeforeBackup := func(cause error) error {
+		_ = store.Advance(&journal, release.RollbackRestoring, cause)
+		if stopErr := stop(ctx); stopErr != nil {
+			return fmt.Errorf("%v; old runtime could not be made safe to restart: %w", cause, stopErr)
+		}
+		if legacyErr := writeLegacyCurrent(store.Home, active.Receipt); legacyErr != nil {
+			return fmt.Errorf("%v; restore legacy receipt: %w", cause, legacyErr)
+		}
+		if restartErr := startReleaseCommand(ctx, active.Receipt, journal.ID); restartErr != nil {
+			return fmt.Errorf("%v; old release restart failed: %w", cause, restartErr)
+		}
+		_ = store.Advance(&journal, release.RolledBack, cause)
+		return cause
+	}
+	databaseVersion, err := jobCtrlSchemaVersion(activeRuntime)
+	if err != nil {
+		return restartBeforeBackup(fmt.Errorf("read stopped JobCtrl schema before update: %w", err))
+	}
+	switch databaseVersion {
+	case legacyJobCtrlSchemaVersion:
+		if err := temporalQuiescenceProof(activeRuntime, candidateRuntime); err != nil {
+			return restartBeforeBackup(fmt.Errorf("v6-to-v7 upgrade blocked before backup: %w", err))
+		}
+	case exactJobCtrlSchemaVersion:
+		// Ordinary exact-v7 release promotion uses the existing paired lifecycle.
+	default:
+		return restartBeforeBackup(fmt.Errorf("unsupported stopped JobCtrl schema version %d", databaseVersion))
+	}
 	pair, err := snapshotPair(ctx, active.Receipt)
 	if err != nil {
+		if databaseVersion == legacyJobCtrlSchemaVersion {
+			return restartBeforeBackup(fmt.Errorf("create paired pre-upgrade backup: %w", err))
+		}
 		_ = store.Advance(&journal, release.Failed, err)
 		return err
 	}
@@ -1115,6 +1150,7 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 
 	rollbackFailure := func(cause error) error {
 		_ = store.Advance(&journal, release.RollbackRestoring, cause)
+		cleanupV7Candidate(ctx.Instance.StateDir, journal.ID)
 		if stopErr := stop(ctx); stopErr != nil { // Candidate records share the canonical state identity.
 			return fmt.Errorf("%v; refusing paired rollback restore while the candidate could not be quiesced: %w", cause, stopErr)
 		}
@@ -1132,6 +1168,21 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		}
 		_ = store.Advance(&journal, release.RolledBack, cause)
 		return cause
+	}
+	if databaseVersion == legacyJobCtrlSchemaVersion {
+		candidatePath, err := sealedV7CandidateBuilder(candidateRuntime, pair, journal.ID)
+		if err != nil {
+			return rollbackFailure(fmt.Errorf("build exact-v7 migration candidate: %w", err))
+		}
+		if err := advance(store, &journal, release.MigrationCandidateReady); err != nil {
+			return rollbackFailure(err)
+		}
+		if err := sealedV7CandidateInstaller(candidateRuntime, candidatePath); err != nil {
+			return rollbackFailure(fmt.Errorf("activate exact-v7 database: %w", err))
+		}
+		if err := advance(store, &journal, release.MigrationActivated); err != nil {
+			return rollbackFailure(err)
+		}
 	}
 	if err := advance(store, &journal, release.CandidateStarting); err != nil {
 		return rollbackFailure(err)
@@ -1427,10 +1478,22 @@ func restorePair(ctx launchContext, pair databasePair) error {
 			return err
 		}
 	}
-	for _, name := range []string{"jobctrl.db-wal", "jobctrl.db-shm", "temporal.db-wal", "temporal.db-shm"} {
-		_ = os.Remove(filepath.Join(ctx.Instance.StateDir, name))
+	return cleanupSQLiteSidecars(ctx.Instance.StateDir, "jobctrl.db", "temporal.db")
+}
+
+func cleanupSQLiteSidecars(stateDir string, databaseNames ...string) error {
+	for _, name := range databaseNames {
+		if name != "jobctrl.db" && name != "temporal.db" {
+			return errors.New("unknown SQLite database sidecar owner")
+		}
+		for _, suffix := range []string{"-journal", "-shm", "-wal"} {
+			path := filepath.Join(stateDir, name+suffix)
+			if err := removeSQLiteSidecar(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove stale %s sidecar: %w", filepath.Base(path), err)
+			}
+		}
 	}
-	return syncDirectory(ctx.Instance.StateDir)
+	return syncDirectory(stateDir)
 }
 
 func copyRegular(source, destination string) error {

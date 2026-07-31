@@ -1335,7 +1335,7 @@ func environmentMap(env []string) map[string]string {
 	return values
 }
 func childEnvironment(inherited []string, payloadRoot, stateDir string, manifest runtimeManifest) []string {
-	blocked := map[string]bool{"VIRTUAL_ENV": true, "NODE_PATH": true, "NODE_OPTIONS": true, "PORT": true, "JOBCTRL_API_ALLOW_REMOTE_BIND": true, "JOBCTRL_API_HOST": true, "JOBCTRL_API_PORT": true, "JOBCTRL_WEB_PORT": true, "TEMPORAL_ADDRESS": true, "TEMPORAL_NAMESPACE": true, "JOBCTRL_TEMPORAL_DB": true, "PATH": true, "JOBCTRL_PAYLOAD_DIR": true, "JOBCTRL_RUNTIME_MODE": true, "JOBCTRL_WEB_ASSETS_DIR": true, "PLAYWRIGHT_BROWSERS_PATH": true, "JOBCTRL_PYTHON_EXECUTABLE": true}
+	blocked := map[string]bool{"BASH_ENV": true, "VIRTUAL_ENV": true, "NODE_PATH": true, "NODE_OPTIONS": true, "PORT": true, "JOBCTRL_API_ALLOW_REMOTE_BIND": true, "JOBCTRL_API_HOST": true, "JOBCTRL_API_PORT": true, "JOBCTRL_WEB_PORT": true, "TEMPORAL_ADDRESS": true, "TEMPORAL_NAMESPACE": true, "JOBCTRL_TEMPORAL_DB": true, "PATH": true, "JOBCTRL_PAYLOAD_DIR": true, "JOBCTRL_RUNTIME_MODE": true, "JOBCTRL_WEB_ASSETS_DIR": true, "PLAYWRIGHT_BROWSERS_PATH": true, "JOBCTRL_PYTHON_EXECUTABLE": true}
 	values := make(map[string]string, len(inherited))
 	for _, pair := range inherited {
 		key, value, ok := strings.Cut(pair, "=")
