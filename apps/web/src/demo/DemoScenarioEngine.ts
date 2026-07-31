@@ -927,7 +927,7 @@ function applyInterviewProjection(
   if (!template) return;
   target.interviewPrep = {
     ...structuredClone(template),
-    jobKey,
+    jobId: jobKey,
     generation: (target.interviewPrep?.generation ?? 0) + 1,
     generatedAt: now,
     model: "simulated",

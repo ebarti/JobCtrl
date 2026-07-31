@@ -18,7 +18,7 @@ const MODULE_URLS = {
   eventStream: "/src/demo/workspace/DemoWorkspaceEventStreamAdapter.ts",
 } as const;
 const STATIC_HOST = "/demo/source-preview.html";
-const CURRENT_DEMO_SEED_VERSION = "2026-07-12.2";
+const CURRENT_DEMO_SEED_VERSION = "2026-07-31.1";
 const GOOGLE_TAG_ORIGIN = "https://www.googletagmanager.com";
 const GOOGLE_TAG_MEASUREMENT_ID = "G-6MJGD17JN0";
 
@@ -1134,7 +1134,7 @@ scenarioTest("an older seed refreshes once and clears generated browser state", 
     await workspace.mutate((draft) => {
       (draft as unknown as { schemaVersion: number }).schemaVersion = 3;
       (draft as unknown as { seedVersion: string }).seedVersion =
-        "2026-07-11.1";
+        "2026-07-12.2";
       (draft.state as { title: string }).title =
         "Mutated previous synthetic seed";
     });

@@ -142,7 +142,7 @@ export const sampleCompensationAudit: JobCompensationAudit = {
     recordStatus: "recorded",
     fact: {
       tenantId: "local",
-      jobKey: "job-2",
+      jobId: "job-2",
       sourceField: "salary",
       legacyRawSalary: "EUR 70000-90000/year",
       sourceText: "EUR 70000-90000/year",
@@ -167,7 +167,7 @@ export const sampleCompensationAudit: JobCompensationAudit = {
     recordStatus: "recorded",
     estimate: {
       tenantId: "local",
-      jobKey: "job-2",
+      jobId: "job-2",
       estimateState: "estimated_range",
       confidenceBand: "medium",
       confidenceScore: 0.82,
@@ -822,7 +822,7 @@ export const sampleJobAuditHistory: JobAuditEntry[] = [
 ];
 
 export const sampleInterviewPrep: InterviewPrep = {
-  jobKey: sampleJob.jobKey,
+  jobId: sampleJob.jobKey,
   generation: 1,
   status: "accepted",
   generatedAt: "2026-05-03T09:30:00Z",

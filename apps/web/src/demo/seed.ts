@@ -6,7 +6,7 @@ const minutes = (offsetMinutes: number) => ({ offsetMinutes }) as const;
 
 const demoSeed = {
   schemaVersion: 1,
-  seedVersion: "2026-07-12.2",
+  seedVersion: "2026-07-31.1",
   title: "JobCtrl product tour",
   artifacts: DEMO_ARTIFACTS,
   readModel: DEMO_READ_MODEL,
