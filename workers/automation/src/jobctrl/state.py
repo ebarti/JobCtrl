@@ -876,7 +876,12 @@ def get_job_stage_states(conn, job: dict[str, Any], *, min_score: int = 7) -> li
     return states
 
 
-def _reset_enrichment_aggregate(conn, job_url: str) -> None:
+def _reset_enrichment_aggregate(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> None:
     """Reset the JobEnrichment aggregate for a job back to ``pending``.
 
     Phase 7 (S-26 round-1 review B1). The mirror of
@@ -894,12 +899,10 @@ def _reset_enrichment_aggregate(conn, job_url: str) -> None:
     The repository is loaded inline so we don't hit a circular import
     (the enrichment package imports ``state``).
     """
-    from jobctrl.domain.identifiers import JobId
-    from jobctrl.domain.tenant import LOCAL_TENANT
     from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
 
     repo = SqliteEnrichmentRepository(conn)
-    aggregate = repo.load(LOCAL_TENANT, JobId(job_url))
+    aggregate = repo.load(tenant_id, job_id)
     if aggregate is None:
         # Nothing to reset — the next pipeline run will create the row
         # in the empty state when start_attempt fires.
@@ -909,17 +912,25 @@ def _reset_enrichment_aggregate(conn, job_url: str) -> None:
     repo.save(aggregate.reset(reset_at=utc_now()))
 
 
-def _resettable_material_generation(conn, job_url: str, stage: str) -> int | None:
+def _resettable_material_generation(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    stage: str,
+) -> int | None:
     if stage == "tailor":
         row = conn.execute(
             """
             SELECT m.generation
             FROM job_materials m
-            WHERE m.job_url = ?
+            WHERE m.tenant_id = ?
+              AND m.job_id = ?
               AND NOT EXISTS (
                 SELECT 1
                 FROM job_materials_artifacts a
-                WHERE a.job_url = m.job_url
+                WHERE a.tenant_id = m.tenant_id
+                  AND a.job_id = m.job_id
                   AND a.generation = m.generation
                   AND a.artifact_type = 'tailored_resume'
                   AND a.status = 'approved'
@@ -927,18 +938,20 @@ def _resettable_material_generation(conn, job_url: str, stage: str) -> int | Non
             ORDER BY m.generation DESC
             LIMIT 1
             """,
-            (job_url,),
+            (str(tenant_id), str(job_id)),
         ).fetchone()
     elif stage == "cover":
         row = conn.execute(
             """
             SELECT m.generation
             FROM job_materials m
-            WHERE m.job_url = ?
+            WHERE m.tenant_id = ?
+              AND m.job_id = ?
               AND EXISTS (
                 SELECT 1
                 FROM job_materials_artifacts a
-                WHERE a.job_url = m.job_url
+                WHERE a.tenant_id = m.tenant_id
+                  AND a.job_id = m.job_id
                   AND a.generation = m.generation
                   AND a.artifact_type = 'tailored_resume'
                   AND a.status = 'approved'
@@ -946,7 +959,8 @@ def _resettable_material_generation(conn, job_url: str, stage: str) -> int | Non
               AND NOT EXISTS (
                 SELECT 1
                 FROM job_materials_artifacts a
-                WHERE a.job_url = m.job_url
+                WHERE a.tenant_id = m.tenant_id
+                  AND a.job_id = m.job_id
                   AND a.generation = m.generation
                   AND a.artifact_type = 'cover_letter'
                   AND a.status = 'approved'
@@ -954,7 +968,7 @@ def _resettable_material_generation(conn, job_url: str, stage: str) -> int | Non
             ORDER BY m.generation DESC
             LIMIT 1
             """,
-            (job_url,),
+            (str(tenant_id), str(job_id)),
         ).fetchone()
     else:
         return None
@@ -963,7 +977,13 @@ def _resettable_material_generation(conn, job_url: str, stage: str) -> int | Non
     return int(row["generation"] if hasattr(row, "keys") and "generation" in row.keys() else row[0])
 
 
-def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
+def _reset_materials_artifacts(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    stage: str,
+) -> None:
     """Clear failed/in-progress material artifacts after a stage reset.
 
     Round-2 review B3. Maps stage → artifact_type subset:
@@ -978,7 +998,12 @@ def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
     Status is rolled back to the appropriate lifecycle state so the
     aggregate's invariants stay consistent.
     """
-    generation = _resettable_material_generation(conn, job_url, stage)
+    generation = _resettable_material_generation(
+        conn,
+        tenant_id=tenant_id,
+        job_id=job_id,
+        stage=stage,
+    )
     if generation is None:
         return
 
@@ -994,23 +1019,36 @@ def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
     placeholders = ", ".join("?" for _ in targets)
     conn.execute(
         f"DELETE FROM job_materials_artifacts "
-        f"WHERE job_url = ? AND generation = ? AND artifact_type IN ({placeholders})",
-        (job_url, generation, *targets),
+        f"WHERE tenant_id = ? AND job_id = ? AND generation = ? "
+        f"AND artifact_type IN ({placeholders})",
+        (str(tenant_id), str(job_id), generation, *targets),
     )
     if new_status is not None:
         conn.execute(
-            "UPDATE job_materials SET status = ?, updated_at = ? WHERE job_url = ? AND generation = ?",
-            (new_status, utc_now(), job_url, generation),
+            """
+            UPDATE job_materials
+            SET status = ?, updated_at = ?
+            WHERE tenant_id = ? AND job_id = ? AND generation = ?
+            """,
+            (new_status, utc_now(), str(tenant_id), str(job_id), generation),
         )
 
 
-def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_attempts: bool = False) -> str:
-    """Reset one job/stage to pending and clear legacy fields that block retry.
+def reset_job_stage(
+    conn,
+    job_url_or_application_url: str,
+    stage: str,
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
+    reset_attempts: bool = False,
+) -> str:
+    """Resolve a locator once, then reset one tenant-scoped job stage.
 
     Args:
         conn: SQLite connection.
         job_url_or_application_url: Primary job URL or direct application URL.
         stage: Pipeline stage to reset.
+        tenant_id: Tenant that owns the locator and canonical JobId.
         reset_attempts: Whether to reset that stage's attempt counter.
 
     Returns:
@@ -1023,13 +1061,18 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
         raise ValueError(f"unknown stage: {stage}")
 
     row = conn.execute(
-        "SELECT url FROM jobs WHERE url = ? OR application_url = ?",
-        (job_url_or_application_url, job_url_or_application_url),
+        """
+        SELECT job_id, url
+        FROM jobs
+        WHERE tenant_id = ? AND (url = ? OR application_url = ?)
+        """,
+        (str(tenant_id), job_url_or_application_url, job_url_or_application_url),
     ).fetchone()
     if row is None:
         raise ValueError(f"no matching job found: {job_url_or_application_url}")
 
     job_url = row["url"]
+    stable_job_id = canonical_job_id(str(row["job_id"]))
     # Round-2 review B3: tailor / cover resets MUST clear the
     # ``job_materials_artifacts`` row(s) for the LATEST generation —
     # otherwise the new ``_LATEST_MATERIALS_JOIN`` queue selectors keep
@@ -1039,52 +1082,69 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
     # columns); for un-migrated rows they still NULL the legacy columns
     # so consumers reading the legacy fallback also see the reset.
     updates = {
-        "discover": "UPDATE jobs SET discovered_at = discovered_at WHERE url = ?",
-        "enrich": "UPDATE jobs SET detail_error = NULL, detail_scraped_at = NULL WHERE url = ?",
-        "score": "UPDATE jobs SET fit_score = NULL, score_reasoning = NULL, scored_at = NULL WHERE url = ?",
+        "discover": "UPDATE jobs SET discovered_at = discovered_at WHERE tenant_id = ? AND job_id = ?",
+        "enrich": (
+            "UPDATE jobs SET detail_error = NULL, detail_scraped_at = NULL "
+            "WHERE tenant_id = ? AND job_id = ?"
+        ),
+        "score": (
+            "UPDATE jobs SET fit_score = NULL, score_reasoning = NULL, scored_at = NULL "
+            "WHERE tenant_id = ? AND job_id = ?"
+        ),
         "tailor": (
             "UPDATE jobs SET tailored_resume_path = NULL, tailored_at = NULL"
             + (", tailor_attempts = 0" if reset_attempts else "")
-            + " WHERE url = ?"
+            + " WHERE tenant_id = ? AND job_id = ?"
         ),
         "cover": (
             "UPDATE jobs SET cover_letter_path = NULL, cover_letter_at = NULL"
             + (", cover_attempts = 0" if reset_attempts else "")
-            + " WHERE url = ?"
+            + " WHERE tenant_id = ? AND job_id = ?"
         ),
         "apply": (
             "UPDATE jobs SET apply_status = NULL, apply_error = NULL, agent_id = NULL, apply_task_id = NULL"
             + (", apply_attempts = 0" if reset_attempts else "")
-            + " WHERE url = ?"
+            + " WHERE tenant_id = ? AND job_id = ?"
         ),
     }
-    conn.execute(updates[stage], (job_url,))
+    conn.execute(updates[stage], (str(tenant_id), str(stable_job_id)))
 
     # Materials-side reset (Phase 6, round-2 B3). Idempotent — safe when
     # job_materials hasn't been populated yet.
     if stage in ("tailor", "cover"):
-        _reset_materials_artifacts(conn, job_url, stage)
+        _reset_materials_artifacts(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+            stage=stage,
+        )
     # Enrichment-side reset (Phase 7, round-1 B1). Mirror of the
     # materials reset for the enrichment aggregate. Without this the
     # ``_ENRICHMENT_PENDING`` queue predicate excludes the row and the
     # retry-enrich is a silent no-op.
     if stage == "enrich":
-        _reset_enrichment_aggregate(conn, job_url)
+        _reset_enrichment_aggregate(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+        )
     set_stage_state(
         conn,
-        job_url,
+        stable_job_id,
         stage,
         "pending",
+        tenant_id=tenant_id,
         attempt_count=0 if reset_attempts else None,
         validate_transition=False,  # admin override — reset bypasses normal machine
     )
     record_job_event(
         conn,
-        job_url,
+        stable_job_id,
         stage,
         # H1 (round-1 review): align with the domain catalog
         # (`domain/events/orchestration.py::create_stage_reset`).
         "StageReset",
+        tenant_id=tenant_id,
         message=f"Retry reset requested for {stage}",
         payload={"reset_attempts": reset_attempts},
     )
