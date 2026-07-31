@@ -451,3 +451,73 @@ async def test_preparation_workflow_resumes_at_cover_after_worker_restart(
     assert result.steps_completed == ["score", "tailor", "cover", "pdf"]
     assert result.steps_failed == []
     assert calls == ["score", "tailor", "cover", "cover", "pdf"]
+
+
+@pytest.mark.asyncio
+async def test_preparation_workflow_retries_transient_tailor_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue = f"prep-tailor-retry-{uuid.uuid4()}"
+    attempts = 0
+
+    @activity.defn(name="record_workflow_started")
+    async def record_started(_payload) -> None:
+        return None
+
+    @activity.defn(name="record_workflow_outcome")
+    async def record_outcome(_payload) -> None:
+        return None
+
+    def fake_tailor_job(_payload) -> dict[str, object]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary tailoring outage")
+        return {"status": "approved", "materials": SimpleNamespace(generation=1)}
+
+    monkeypatch.setattr("jobctrl.materials.activities._tailor_one_job", fake_tailor_job)
+    payload = JobPreparationInput(
+        tenant_id="local",
+        job_id=_JOB_ID,
+        steps=["tailor"],
+        target_version="1",
+        idempotency_key=f"preparation:{uuid.uuid4().hex}",
+    )
+    original_tailor_retry = prep_workflow_mod._TAILOR_RETRY
+    prep_workflow_mod._TAILOR_RETRY = RetryPolicy(
+        initial_interval=timedelta(milliseconds=100),
+        maximum_interval=timedelta(milliseconds=100),
+        maximum_attempts=3,
+        non_retryable_error_types=["configuration", "authentication", "missing_input"],
+    )
+
+    try:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPreparationWorkflow],
+                activities=[
+                    _check_spend_budget,
+                    record_started,
+                    record_outcome,
+                    tailor_job_activity,
+                ],
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await asyncio.wait_for(
+                    env.client.execute_workflow(
+                        JobPreparationWorkflow.run,
+                        payload,
+                        id=f"prep-{payload.idempotency_key}",
+                        task_queue=queue,
+                        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+                    ),
+                    timeout=30,
+                )
+    finally:
+        prep_workflow_mod._TAILOR_RETRY = original_tailor_retry
+
+    assert result.steps_completed == ["tailor"]
+    assert result.steps_failed == []
+    assert attempts == 2
