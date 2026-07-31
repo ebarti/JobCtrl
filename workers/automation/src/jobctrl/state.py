@@ -495,18 +495,25 @@ def reconcile_dependency_blockers(
 def reconcile_score_eligibility_blockers(
     conn,
     *,
-    job_url: str,
+    tenant_id: TenantId,
+    job_id: JobId,
     eligibility_status: str | None,
     hard_blockers: list[str] | tuple[str, ...] | None = None,
     now: str | None = None,
 ) -> int:
     """Keep downstream stage rows aligned with score hard-blocker eligibility."""
+    stable_job_id = canonical_job_id(str(job_id))
     blockers = _clean_blocker_reasons(hard_blockers)
     blocked = str(eligibility_status or "").strip().lower() == "blocked" or bool(blockers)
     updated_at = now or utc_now()
 
     if not blocked:
-        return _clear_score_eligibility_blockers(conn, job_url=job_url, now=updated_at)
+        return _clear_score_eligibility_blockers(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+            now=updated_at,
+        )
 
     reason = ", ".join(blockers) if blockers else str(eligibility_status or "blocked")
     message = f"{SCORE_ELIGIBILITY_BLOCKED_MESSAGE_PREFIX}: {reason}"
@@ -515,10 +522,11 @@ def reconcile_score_eligibility_blockers(
         f"""
         SELECT stage, state, attempt_count
           FROM job_stage_states
-         WHERE job_url = ?
+         WHERE tenant_id = ?
+           AND job_id = ?
            AND stage IN ({", ".join("?" for _ in _SCORE_ELIGIBILITY_DOWNSTREAM_STAGES)})
         """,
-        (job_url, *_SCORE_ELIGIBILITY_DOWNSTREAM_STAGES),
+        (str(tenant_id), str(stable_job_id), *_SCORE_ELIGIBILITY_DOWNSTREAM_STAGES),
     ).fetchall()
     for row in rows:
         stage = str(row["stage"])
@@ -528,9 +536,10 @@ def reconcile_score_eligibility_blockers(
         attempt_count = int(row["attempt_count"] or 0)
         set_stage_state(
             conn,
-            job_url,
+            stable_job_id,
             stage,
             "blocked",
+            tenant_id=tenant_id,
             attempt_count=attempt_count,
             error_code=SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE,
             error_message=message,
@@ -545,9 +554,10 @@ def reconcile_score_eligibility_blockers(
         )
         record_job_event(
             conn,
-            job_url,
+            stable_job_id,
             stage,
             "StageBlocked",
+            tenant_id=tenant_id,
             level="warning",
             message=message,
             occurred_at=updated_at,
@@ -562,28 +572,49 @@ def reconcile_score_eligibility_blockers(
     return changed
 
 
-def _clear_score_eligibility_blockers(conn, *, job_url: str, now: str) -> int:
+def _clear_score_eligibility_blockers(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    now: str,
+) -> int:
     rows = conn.execute(
         """
         SELECT stage, attempt_count
           FROM job_stage_states
-         WHERE job_url = ?
+         WHERE tenant_id = ?
+           AND job_id = ?
            AND state = 'blocked'
            AND error_code = ?
         """,
-        (job_url, SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE),
+        (str(tenant_id), str(job_id), SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE),
     ).fetchall()
     cleared = 0
     for row in rows:
         stage = str(row["stage"])
         attempt_count = int(row["attempt_count"] or 0)
-        restored = _restored_state_after_score_eligibility_cleared(conn, job_url=job_url, stage=stage)
-        set_stage_state(conn, job_url, stage, attempt_count=attempt_count, validate_transition=False, **restored)
+        restored = _restored_state_after_score_eligibility_cleared(
+            conn,
+            tenant_id=tenant_id,
+            job_id=job_id,
+            stage=stage,
+        )
+        set_stage_state(
+            conn,
+            job_id,
+            stage,
+            tenant_id=tenant_id,
+            attempt_count=attempt_count,
+            validate_transition=False,
+            **restored,
+        )
         record_job_event(
             conn,
-            job_url,
+            job_id,
             stage,
             "StageReset",
+            tenant_id=tenant_id,
             message=f"{stage} unblocked after score eligibility cleared.",
             occurred_at=now,
             payload={
@@ -596,13 +627,19 @@ def _clear_score_eligibility_blockers(conn, *, job_url: str, now: str) -> int:
     return cleared
 
 
-def _restored_state_after_score_eligibility_cleared(conn, *, job_url: str, stage: str) -> dict[str, Any]:
+def _restored_state_after_score_eligibility_cleared(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    stage: str,
+) -> dict[str, Any]:
     if stage == "tailor":
         return {"state": "pending"}
     if stage == "cover":
         return (
             {"state": "pending"}
-            if _stage_is_succeeded(conn, job_url=job_url, stage="tailor")
+            if _stage_is_succeeded(conn, tenant_id=tenant_id, job_id=job_id, stage="tailor")
             else {
                 "state": "blocked",
                 "error_code": "BLOCKED",
@@ -612,7 +649,7 @@ def _restored_state_after_score_eligibility_cleared(conn, *, job_url: str, stage
     if stage == "apply":
         return (
             {"state": "pending"}
-            if _stage_is_succeeded(conn, job_url=job_url, stage="tailor")
+            if _stage_is_succeeded(conn, tenant_id=tenant_id, job_id=job_id, stage="tailor")
             else {
                 "state": "blocked",
                 "error_code": "BLOCKED",
@@ -622,10 +659,16 @@ def _restored_state_after_score_eligibility_cleared(conn, *, job_url: str, stage
     return {"state": "pending"}
 
 
-def _stage_is_succeeded(conn, *, job_url: str, stage: str) -> bool:
+def _stage_is_succeeded(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    stage: str,
+) -> bool:
     row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
-        (job_url, stage),
+        "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = ?",
+        (str(tenant_id), str(job_id), stage),
     ).fetchone()
     return bool(row and str(row["state"]) == "succeeded")
 
