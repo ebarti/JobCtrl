@@ -3635,13 +3635,13 @@ function rebuildContactProjections(db: SqliteDatabase, tenantId: string): void {
   const contacts = allRows<{
     contact_id: string;
     employer: string | null;
-    job_url: string | null;
+    job_id: string | null;
     role: string | null;
     created_at: string | null;
     updated_at: string | null;
   }>(
     db,
-    `SELECT contact_id, employer, job_url, role, created_at, updated_at
+    `SELECT contact_id, employer, job_id, role, created_at, updated_at
      FROM contacts
      WHERE tenant_id = ? AND deleted_at IS NULL`,
     [tenantId],
@@ -3712,7 +3712,7 @@ function rebuildContactProjections(db: SqliteDatabase, tenantId: string): void {
       tenantId,
       contactId,
       contact.employer,
-      contact.job_url,
+      contact.job_id,
       String(contact.role ?? "other"),
       attributes.length,
       confirmed,
@@ -3774,7 +3774,7 @@ function rebuildContactResearchProjections(db: SqliteDatabase, tenantId: string)
   const tasks = allRows<{
     task_id: string;
     employer: string | null;
-    job_url: string | null;
+    job_id: string | null;
     status: string | null;
     source_attempts_json: string | null;
     started_at: string | null;
@@ -3785,7 +3785,7 @@ function rebuildContactResearchProjections(db: SqliteDatabase, tenantId: string)
     error_class: string | null;
   }>(
     db,
-    `SELECT task_id, employer, job_url, status, source_attempts_json,
+    `SELECT task_id, employer, job_id, status, source_attempts_json,
             started_at, updated_at, needs_review_at, completed_at, failed_at, error_class
      FROM contact_research_tasks
      WHERE tenant_id = ?`,
@@ -3867,7 +3867,7 @@ function rebuildContactResearchProjections(db: SqliteDatabase, tenantId: string)
       tenantId,
       taskId,
       task.employer,
-      task.job_url,
+      task.job_id,
       String(task.status ?? "queued"),
       candidateRows.length,
       needsReview,
@@ -3949,12 +3949,12 @@ function rebuildOutreachProjections(db: SqliteDatabase, tenantId: string): void 
   const threads = allRows<{
     thread_id: string;
     contact_id: string;
-    job_url: string | null;
+    job_id: string | null;
     created_at: string | null;
     updated_at: string | null;
   }>(
     db,
-    `SELECT thread_id, contact_id, job_url, created_at, updated_at
+    `SELECT thread_id, contact_id, job_id, created_at, updated_at
      FROM outreach_threads
      WHERE tenant_id = ?`,
     [tenantId],
@@ -4028,7 +4028,7 @@ function rebuildOutreachProjections(db: SqliteDatabase, tenantId: string): void 
       tenantId,
       threadId,
       String(thread.contact_id),
-      thread.job_url,
+      thread.job_id,
       draftRows.length,
       latestGeneration,
       hasApproved ? 1 : 0,
@@ -4069,7 +4069,7 @@ function rebuildDueFollowUpProjections(db: SqliteDatabase, tenantId: string): vo
   const threads = allRows<{
     thread_id: string;
     contact_id: string;
-    job_url: string | null;
+    job_id: string | null;
     follow_up_due_at: string | null;
     follow_up_basis: string | null;
     follow_up_state: string | null;
@@ -4077,7 +4077,7 @@ function rebuildDueFollowUpProjections(db: SqliteDatabase, tenantId: string): vo
     updated_at: string | null;
   }>(
     db,
-    `SELECT thread_id, contact_id, job_url, follow_up_due_at, follow_up_basis,
+    `SELECT thread_id, contact_id, job_id, follow_up_due_at, follow_up_basis,
             follow_up_state, created_at, updated_at
      FROM outreach_threads
      WHERE tenant_id = ? AND follow_up_state = 'scheduled'`,
@@ -4106,7 +4106,7 @@ function rebuildDueFollowUpProjections(db: SqliteDatabase, tenantId: string): vo
       tenantId,
       threadId,
       String(thread.contact_id),
-      thread.job_url,
+      thread.job_id,
       thread.follow_up_due_at,
       thread.follow_up_basis ?? "",
       String(thread.follow_up_state ?? "scheduled"),
