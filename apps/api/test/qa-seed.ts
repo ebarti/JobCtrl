@@ -9,8 +9,8 @@ import { ensureApplicationFeedbackTables } from "../src/application-feedback.js"
 import { ensureDiscoveryControlTables } from "../src/discovery-controls.js";
 import { ensureOutreachTables } from "../src/outreach.js";
 import { writeProfileConfig } from "../src/profile-store.js";
-import { ensureProjectionTables } from "../src/projections.js";
-import { ensureResumeReviewTables } from "../src/resume-review-drafts.js";
+import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 export interface QaWorkspace {
   appDir: string;
@@ -36,7 +36,10 @@ interface QaJobSeed {
 }
 
 const QA_NOW = "2026-05-04T12:00:00+00:00";
-const QA_PLATFORM_JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
+export const QA_PLATFORM_JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
+export const QA_PLATFORM_JOB_ID = qaJobId(QA_PLATFORM_JOB_URL);
+export const QA_RISK_JOB_URL = "https://linkedin.com/jobs/view/qa-risk-manager";
+export const QA_RISK_JOB_ID = qaJobId(QA_RISK_JOB_URL);
 const QA_RESUME_TEMPLATE = "{{ personal_data }}\n\n{{ resume_body }}\n";
 
 export function createQaPdfBytes(title: string): Buffer {
@@ -229,390 +232,18 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
   fs.writeFileSync(coverTxt, "QA cover letter");
   fs.writeFileSync(coverPdf, createQaPdfBytes("QA cover letter"));
 
+  initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE jobs (
-      url TEXT PRIMARY KEY,
-      title TEXT,
-      site TEXT,
-      strategy TEXT,
-      location TEXT,
-      salary TEXT,
-      discovered_at TEXT,
-      application_url TEXT,
-      description TEXT,
-      full_description TEXT,
-      detail_scraped_at TEXT,
-      detail_error TEXT,
-      fit_score INTEGER,
-      score_reasoning TEXT,
-      scored_at TEXT,
-      tailored_resume_path TEXT,
-      tailored_at TEXT,
-      tailor_attempts INTEGER,
-      cover_letter_path TEXT,
-      cover_letter_at TEXT,
-      cover_attempts INTEGER,
-      apply_status TEXT,
-      apply_error TEXT,
-      applied_at TEXT
-    );
-    CREATE TABLE job_stage_states (
-      job_url TEXT NOT NULL,
-      stage TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'pending',
-      attempt_count INTEGER DEFAULT 0,
-      max_attempts INTEGER,
-      started_at TEXT,
-      updated_at TEXT NOT NULL,
-      finished_at TEXT,
-      duration_ms INTEGER,
-      error_code TEXT,
-      error_message TEXT,
-      retryable INTEGER DEFAULT 1,
-      blocked_by_json TEXT,
-      next_action TEXT,
-      metadata_json TEXT,
-      version INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (job_url, stage)
-    );
-    CREATE TABLE job_artifacts (
-      job_url TEXT,
-      stage TEXT,
-      artifact_type TEXT,
-      status TEXT,
-      path TEXT,
-      created_at TEXT,
-      size_bytes INTEGER
-    );
-    CREATE TABLE job_events (
-      event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_url TEXT,
-      stage TEXT,
-      event_type TEXT NOT NULL DEFAULT '',
-      level TEXT NOT NULL DEFAULT 'info',
-      message TEXT,
-      occurred_at TEXT NOT NULL,
-      payload_json TEXT
-    );
-    CREATE TABLE apply_run_projections (
-      run_id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_id TEXT NOT NULL,
-      job_title TEXT NOT NULL DEFAULT '',
-      job_employer TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT '',
-      result TEXT,
-      dry_run INTEGER NOT NULL DEFAULT 0,
-      worker_id INTEGER,
-      model TEXT,
-      started_at TEXT,
-      finished_at TEXT,
-      duration_ms INTEGER,
-      events_json TEXT NOT NULL DEFAULT '[]'
-    );
-    CREATE TABLE workflow_run_projections (
-      workflow_id            TEXT PRIMARY KEY,
-      tenant_id              TEXT NOT NULL DEFAULT 'local',
-      workflow_type          TEXT NOT NULL DEFAULT '',
-      status                 TEXT NOT NULL DEFAULT 'in_progress',
-      input_summary_json     TEXT NOT NULL DEFAULT '{}',
-      error_code             TEXT,
-      error_message          TEXT,
-      retryable              INTEGER NOT NULL DEFAULT 0,
-      started_at             TEXT,
-      finished_at            TEXT,
-      duration_ms            INTEGER,
-      temporal_run_id        TEXT,
-      events_json            TEXT NOT NULL DEFAULT '[]'
-    );
-    CREATE TABLE worker_runtime_heartbeats (
-      worker_id TEXT PRIMARY KEY,
-      component TEXT NOT NULL,
-      pid INTEGER NOT NULL,
-      hostname TEXT NOT NULL,
-      app_dir TEXT NOT NULL,
-      db_path TEXT NOT NULL,
-      task_queue TEXT NOT NULL,
-      started_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL,
-      max_concurrent_activities INTEGER,
-      activity_executor_max_workers INTEGER,
-      active_activity_count INTEGER NOT NULL DEFAULT 0,
-      active_activity_counts_json TEXT NOT NULL DEFAULT '{}',
-      active_activity_details_json TEXT NOT NULL DEFAULT '[]',
-      active_activity_details_total INTEGER NOT NULL DEFAULT 0,
-      active_activity_details_truncated INTEGER NOT NULL DEFAULT 0,
-      activity_duration_summary_json TEXT NOT NULL DEFAULT '{}',
-      task_queue_observation_json TEXT,
-      heartbeat_schema_version INTEGER NOT NULL DEFAULT 2
-    );
-    CREATE TABLE discovery_execution_jobs (
-      tenant_id                TEXT NOT NULL,
-      discover_workflow_id     TEXT NOT NULL,
-      discover_run_id          TEXT NOT NULL,
-      job_url                  TEXT NOT NULL,
-      cohort_kind              TEXT NOT NULL
-          CHECK (cohort_kind IN ('observed_this_run', 'existing_backlog')),
-      source_family            TEXT,
-      source_run_id            TEXT,
-      preparation_workflow_id  TEXT,
-      work_plan_state          TEXT NOT NULL DEFAULT 'pending'
-          CHECK (work_plan_state IN ('pending', 'planned', 'not_eligible', 'failed')),
-      required_steps_json      TEXT,
-      work_plan_reason         TEXT,
-      linked_at                TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, discover_workflow_id, discover_run_id, job_url),
-      FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
-    );
-    CREATE TABLE pipeline_step_projections (
-      tenant_id              TEXT NOT NULL,
-      discover_workflow_id   TEXT NOT NULL,
-      discover_run_id        TEXT NOT NULL,
-      step_kind              TEXT NOT NULL CHECK (step_kind IN (
-        'source_planning', 'source_family', 'enrichment_pass',
-        'preparation_fanout', 'existing_backlog_sweep', 'pdf_render'
-      )),
-      item_key               TEXT NOT NULL,
-      state                  TEXT NOT NULL CHECK (state IN (
-        'queued', 'running', 'succeeded', 'failed'
-      )),
-      attempt                INTEGER NOT NULL CHECK (attempt >= 1),
-      queued_at              TEXT,
-      started_at             TEXT,
-      finished_at            TEXT,
-      duration_ms            INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
-      error_code             TEXT,
-      retryable              INTEGER NOT NULL DEFAULT 0 CHECK (retryable IN (0, 1)),
-      detail_code            TEXT,
-      detail_count           INTEGER CHECK (detail_count IS NULL OR detail_count >= 0),
-      last_event_id          INTEGER NOT NULL,
-      last_updated_at        TEXT NOT NULL,
-      PRIMARY KEY (
-        tenant_id, discover_workflow_id, discover_run_id, step_kind, item_key
-      )
-    );
-    CREATE TABLE discovery_execution_recoveries (
-      tenant_id TEXT NOT NULL,
-      discover_workflow_id TEXT NOT NULL,
-      discover_run_id TEXT NOT NULL,
-      state TEXT NOT NULL,
-      mode TEXT NOT NULL,
-      decoder_version INTEGER NOT NULL,
-      history_event_id INTEGER NOT NULL,
-      expected_membership_count INTEGER NOT NULL,
-      persisted_membership_count INTEGER NOT NULL,
-      expected_step_count INTEGER NOT NULL,
-      persisted_step_count INTEGER NOT NULL,
-      key_digest TEXT NOT NULL,
-      last_error_code TEXT,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, discover_workflow_id, discover_run_id)
-    );
-    CREATE TABLE operational_attempt_metrics (
-      metric_id               INTEGER PRIMARY KEY AUTOINCREMENT,
-      tenant_id               TEXT NOT NULL DEFAULT 'local',
-      occurred_at             TEXT NOT NULL,
-      stage                   TEXT NOT NULL,
-      source_id               TEXT,
-      source_kind             TEXT,
-      source_priority         TEXT,
-      source_role             TEXT,
-      adapter                 TEXT,
-      attempt_kind            TEXT NOT NULL,
-      outcome                 TEXT NOT NULL,
-      failure_category        TEXT,
-      is_operational_failure  INTEGER NOT NULL DEFAULT 0,
-      is_scrape_failure       INTEGER NOT NULL DEFAULT 0,
-      is_retryable            INTEGER NOT NULL DEFAULT 1,
-      run_id                  TEXT,
-      job_url                 TEXT,
-      duration_ms             INTEGER,
-      total_count             INTEGER,
-      new_count               INTEGER,
-      existing_count          INTEGER,
-      observed_count          INTEGER,
-      duplicate_count         INTEGER,
-      error_class             TEXT,
-      error_message           TEXT,
-      metadata_json           TEXT NOT NULL DEFAULT '{}'
-    );
-    CREATE TABLE contacts (
-      tenant_id   TEXT NOT NULL DEFAULT 'local',
-      contact_id  TEXT NOT NULL,
-      employer    TEXT,
-      job_url     TEXT,
-      role        TEXT NOT NULL DEFAULT 'other',
-      created_at  TEXT NOT NULL,
-      updated_at  TEXT NOT NULL,
-      deleted_at  TEXT,
-      PRIMARY KEY (tenant_id, contact_id)
-    );
-    CREATE TABLE contact_attributes (
-      tenant_id      TEXT NOT NULL DEFAULT 'local',
-      attribute_id   TEXT NOT NULL,
-      contact_id     TEXT NOT NULL,
-      attribute_kind TEXT NOT NULL,
-      value_json     TEXT,
-      source_kind    TEXT NOT NULL,
-      source_ref     TEXT NOT NULL,
-      capture_method TEXT NOT NULL,
-      confidence     REAL NOT NULL DEFAULT 0,
-      user_confirmed INTEGER NOT NULL DEFAULT 0,
-      recorded_at    TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, attribute_id)
-    );
-    CREATE TABLE job_scores (
-      job_url TEXT,
-      version INTEGER,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      fit_score INTEGER,
-      breakdown_json TEXT,
-      keywords_json TEXT,
-      scored_at TEXT,
-      correction_json TEXT,
-      criteria_json TEXT,
-      trace_json TEXT,
-      PRIMARY KEY (job_url, version, tenant_id)
-    );
-    CREATE TABLE job_materials (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      status TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      last_validation_json TEXT,
-      last_verdict_json TEXT,
-      metadata_json TEXT,
-      PRIMARY KEY (job_url, generation)
-    );
-    CREATE TABLE job_materials_artifacts (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      artifact_type TEXT NOT NULL,
-      artifact_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      path TEXT NOT NULL,
-      render_format TEXT NOT NULL,
-      size_bytes INTEGER,
-      metadata_json TEXT,
-      created_at TEXT NOT NULL,
-      superseded_at TEXT,
-      PRIMARY KEY (job_url, generation, artifact_type)
-    );
-    CREATE TABLE job_material_layout_boxes (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      artifact_id TEXT NOT NULL,
-      box_index INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      semantic_id TEXT NOT NULL,
-      page_number INTEGER NOT NULL,
-      line_number INTEGER,
-      text_excerpt TEXT NOT NULL,
-      left_pct REAL NOT NULL,
-      top_pct REAL NOT NULL,
-      width_pct REAL NOT NULL,
-      height_pct REAL NOT NULL,
-      audit_target_json TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (job_url, generation, artifact_id, box_index)
-    );
-    CREATE TABLE job_bullet_provenance (
-      job_url TEXT,
-      generation INTEGER,
-      bullet_id TEXT,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      artifact_id TEXT,
-      section TEXT,
-      source_id TEXT,
-      evidence_ids_json TEXT,
-      requirement_ids_json TEXT,
-      matched_keywords_json TEXT,
-      transform_type TEXT,
-      control TEXT,
-      rationale TEXT,
-      generated_text TEXT,
-      position INTEGER,
-      created_at TEXT,
-      coverage_json TEXT,
-      voice_json TEXT
-    );
-    CREATE TABLE job_employer_analysis (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      snapshot_hash TEXT NOT NULL DEFAULT '',
-      prompt_version TEXT NOT NULL DEFAULT '',
-      sdk_set_version TEXT NOT NULL DEFAULT '',
-      cache_key TEXT NOT NULL DEFAULT '',
-      role_framing TEXT NOT NULL DEFAULT '',
-      inferred_seniority TEXT NOT NULL DEFAULT '',
-      ideal_candidate_narrative TEXT NOT NULL DEFAULT '',
-      requirements_json TEXT NOT NULL DEFAULT '[]',
-      keywords_json TEXT NOT NULL DEFAULT '[]',
-      agreement_json TEXT NOT NULL DEFAULT '{}',
-      eeo_screen_json TEXT NOT NULL DEFAULT '[]',
-      legs_attempted INTEGER NOT NULL,
-      legs_succeeded INTEGER NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (job_url, generation)
-    );
-    CREATE TABLE job_employer_analysis_sub_analyses (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      model_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      analysis_json TEXT NOT NULL,
-      PRIMARY KEY (job_url, generation, model_id)
-    );
-    CREATE TABLE job_employer_analysis_failures (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      model_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      error TEXT NOT NULL,
-      raw_output TEXT,
-      PRIMARY KEY (job_url, generation, model_id)
-    );
-    CREATE TABLE job_requirement_fit_reports (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      score_version INTEGER NOT NULL,
-      employer_analysis_generation INTEGER NOT NULL,
-      profile_snapshot_version INTEGER NOT NULL,
-      scoring_policy_version INTEGER NOT NULL,
-      formula_version TEXT NOT NULL,
-      resolved_fit_score INTEGER,
-      fit_band TEXT NOT NULL,
-      confidence TEXT NOT NULL,
-      summary_json TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL DEFAULT '',
-      PRIMARY KEY (job_url, score_version, tenant_id)
-    );
-    CREATE TABLE job_requirement_fit_items (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      score_version INTEGER NOT NULL,
-      requirement_id TEXT NOT NULL,
-      requirement_text TEXT NOT NULL,
-      tier TEXT NOT NULL,
-      weight REAL NOT NULL,
-      job_evidence_span TEXT NOT NULL DEFAULT '',
-      fit_json TEXT NOT NULL DEFAULT '{}',
-      contribution_json TEXT NOT NULL DEFAULT '{}',
-      tailoring_json TEXT NOT NULL DEFAULT '{}',
-      artifact_coverage_json TEXT,
-      position INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (job_url, score_version, tenant_id, requirement_id)
-    );
-  `);
+  db.pragma("foreign_keys = ON");
+  ensureApplicationFeedbackTables(db);
+  ensureDiscoveryControlTables(db);
+  ensureOutreachTables(db);
   writeProfileConfig(db, {
     profile: QA_PROFILE,
     style: QA_RESUME_STYLE,
     templateText: QA_RESUME_TEMPLATE,
   });
+  seedBuiltInResumeTemplate(db);
 
   // INSPECT-01: a current worker heartbeat so the generate-materials route's
   // worker-readiness gate passes in E2E. ``app_dir``/``db_path`` must match the
@@ -621,8 +252,8 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
   seedWorkerHeartbeat(db, dbPath);
 
   insertJob(db, {
-    url: "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director",
-    applicationUrl: "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director",
+    url: QA_PLATFORM_JOB_URL,
+    applicationUrl: QA_PLATFORM_JOB_URL,
     title: "Director of Platform Engineering",
     site: "Greenhouse",
     strategy: "qa",
@@ -641,7 +272,7 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
     description: "Marketing role intentionally below target.",
   });
   insertJob(db, {
-    url: "https://linkedin.com/jobs/view/qa-risk-manager",
+    url: QA_RISK_JOB_URL,
     title: "Senior Engineering Manager - Risk",
     site: "linkedin",
     strategy: "qa",
@@ -702,7 +333,7 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
     "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     "qa-run-1",
-    "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director",
+    QA_PLATFORM_JOB_ID,
     "Director of Platform Engineering",
     "Greenhouse",
     "finished",
@@ -759,12 +390,14 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
   );
 
   // Canonical lifecycle events behind the projection above. Workflow events
-  // carry no job_url (stage "workflow"); identity travels in the camelCase
+  // carry no job_id (stage "workflow"); identity travels in the camelCase
   // payload, matching `infrastructure/temporal/finalize.py`. Seeding these
   // keeps the run drawer timeline and the activity/SSE stream consistent with
   // a real finalize + reconcile.
   const insertWorkflowEvent = db.prepare(
-    "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    `INSERT INTO job_events (
+       tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+     ) VALUES ('local', ?, 1, ?, ?, ?, ?, ?, ?)`,
   );
   insertWorkflowEvent.run(
     null,
@@ -801,6 +434,21 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
   db.close();
 }
 
+function seedBuiltInResumeTemplate(db: Database.Database): void {
+  db.prepare(
+    `INSERT INTO resume_templates (
+       tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+     ) VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)`,
+  ).run(QA_NOW, QA_NOW);
+  db.prepare(
+    `INSERT INTO resume_template_versions (
+       tenant_id, version_id, template_id, version_number, display_name, status,
+       theme_json, layout_json, content_hash, created_at
+     ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
+               'Modern HTML', 'active', ?, '{}', 'qa-seed-template', ?)`,
+  ).run(JSON.stringify(BUILT_IN_RESUME_TEMPLATE_THEME), QA_NOW);
+}
+
 function insertRequirementFitAuditFixture(
   db: Database.Database,
   paths: {
@@ -831,17 +479,17 @@ function insertCanonicalMaterials(
   const requirementLedMetadata = JSON.stringify(requirementLedAuditMetadata());
   db.prepare(
     `INSERT INTO job_materials (
-      job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(QA_PLATFORM_JOB_URL, 1, "local", "approved", QA_NOW, QA_NOW, requirementLedMetadata);
+      tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?)`,
+  ).run(QA_PLATFORM_JOB_ID, 1, "approved", QA_NOW, QA_NOW, requirementLedMetadata);
   const insert = db.prepare(
     `INSERT INTO job_materials_artifacts (
-      job_url, generation, artifact_type, artifact_id, status, path,
+      tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
       render_format, size_bytes, metadata_json, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   insert.run(
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     1,
     "tailored_resume",
     "qa-platform-resume-text",
@@ -853,7 +501,7 @@ function insertCanonicalMaterials(
     QA_NOW,
   );
   insert.run(
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     1,
     "resume_pdf",
     "qa-platform-resume-pdf",
@@ -865,7 +513,7 @@ function insertCanonicalMaterials(
     QA_NOW,
   );
   insert.run(
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     1,
     "cover_letter",
     "qa-platform-cover-text",
@@ -877,7 +525,7 @@ function insertCanonicalMaterials(
     QA_NOW,
   );
   insert.run(
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     1,
     "cover_letter_pdf",
     "qa-platform-cover-pdf",
@@ -890,17 +538,16 @@ function insertCanonicalMaterials(
   );
   const insertBox = db.prepare(
     `INSERT INTO job_material_layout_boxes (
-      job_url, generation, artifact_id, box_index, tenant_id, semantic_id,
+      tenant_id, job_id, generation, artifact_id, box_index, semantic_id,
       page_number, line_number, text_excerpt, left_pct, top_pct, width_pct,
       height_pct, audit_target_json, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   insertBox.run(
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     1,
     "qa-platform-resume-pdf",
     0,
-    "local",
     "experience:qa_platform:bullet:1",
     1,
     5,
@@ -1009,15 +656,14 @@ function requirementLedAuditMetadata(): Record<string, unknown> {
 function insertEmployerAnalysis(db: Database.Database): void {
   db.prepare(
     `INSERT INTO job_employer_analysis (
-      job_url, generation, tenant_id, snapshot_hash, prompt_version, sdk_set_version,
+      tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
       cache_key, role_framing, inferred_seniority, ideal_candidate_narrative,
       requirements_json, keywords_json, agreement_json, eeo_screen_json,
       legs_attempted, legs_succeeded, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     1,
-    "local",
     "qa-snapshot",
     "employer-analysis-v1",
     "qa-sdk-set",
@@ -1070,13 +716,13 @@ function insertEmployerAnalysis(db: Database.Database): void {
 function insertRequirementFitReport(db: Database.Database): void {
   db.prepare(
     `INSERT INTO job_requirement_fit_reports (
-      tenant_id, job_url, score_version, employer_analysis_generation,
+      tenant_id, job_id, score_version, employer_analysis_generation,
       profile_snapshot_version, scoring_policy_version, formula_version,
       resolved_fit_score, fit_band, confidence, summary_json, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     1,
     1,
     4,
@@ -1095,14 +741,14 @@ function insertRequirementFitReport(db: Database.Database): void {
   );
   const insertItem = db.prepare(
     `INSERT INTO job_requirement_fit_items (
-      tenant_id, job_url, score_version, requirement_id, requirement_text,
+      tenant_id, job_id, score_version, requirement_id, requirement_text,
       tier, weight, job_evidence_span, fit_json, contribution_json,
       tailoring_json, artifact_coverage_json, position
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   insertItem.run(
     "local",
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     1,
     "r1",
     "Lead platform reliability improvements across critical services.",
@@ -1134,7 +780,7 @@ function insertRequirementFitReport(db: Database.Database): void {
   );
   insertItem.run(
     "local",
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     1,
     "r2",
     "Improve developer experience and incident-response practices.",
@@ -1174,15 +820,14 @@ function insertRequirementFitReport(db: Database.Database): void {
 function insertBulletProvenance(db: Database.Database): void {
   db.prepare(
     `INSERT INTO job_bullet_provenance (
-      job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+      tenant_id, job_id, generation, bullet_id, artifact_id, section, source_id,
       evidence_ids_json, requirement_ids_json, matched_keywords_json,
       transform_type, control, rationale, generated_text, position, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     1,
     "summary-1",
-    "local",
     "qa-platform-resume-text",
     "summary",
     "qa_platform",
@@ -1201,13 +846,12 @@ function insertBulletProvenance(db: Database.Database): void {
 function insertScore(db: Database.Database, jobUrl: string, fitScore: number): void {
   db.prepare(
     `INSERT INTO job_scores (
-      job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+      tenant_id, job_id, version, fit_score, breakdown_json, keywords_json,
       scored_at, correction_json, criteria_json, trace_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    jobUrl,
+    qaJobId(jobUrl),
     1,
-    "local",
     fitScore,
     JSON.stringify({
       reasoning: "Strong platform leadership fit.",
@@ -1283,7 +927,7 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
 
   const insertMember = db.prepare(
     `INSERT INTO discovery_execution_jobs (
-      tenant_id, discover_workflow_id, discover_run_id, job_url, cohort_kind,
+      tenant_id, discover_workflow_id, discover_run_id, job_id, cohort_kind,
       source_family, source_run_id, preparation_workflow_id, work_plan_state,
       required_steps_json, work_plan_reason, linked_at
     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1291,7 +935,7 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
   insertMember.run(
     discoverWorkflowId,
     discoverRunId,
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     "observed_this_run",
     "greenhouse",
     "qa-greenhouse-run",
@@ -1304,7 +948,7 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
   insertMember.run(
     discoverWorkflowId,
     discoverRunId,
-    "https://talent.com/view?id=qa-marketing-director",
+    qaJobId("https://talent.com/view?id=qa-marketing-director"),
     "observed_this_run",
     "talent",
     "qa-talent-run",
@@ -1317,7 +961,7 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
   insertMember.run(
     discoverWorkflowId,
     discoverRunId,
-    "https://linkedin.com/jobs/view/qa-risk-manager",
+    qaJobId("https://linkedin.com/jobs/view/qa-risk-manager"),
     "existing_backlog",
     "linkedin",
     "qa-linkedin-run",
@@ -1330,7 +974,7 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
   insertMember.run(
     discoverWorkflowId,
     discoverRunId,
-    "https://motorolasolutions.com/careers/qa-command-center",
+    qaJobId("https://motorolasolutions.com/careers/qa-command-center"),
     "observed_this_run",
     "greenhouse",
     "qa-greenhouse-run",
@@ -1451,12 +1095,12 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
   const recoveryMemberships = (
     db
       .prepare(
-        `SELECT job_url FROM discovery_execution_jobs
+        `SELECT job_id FROM discovery_execution_jobs
           WHERE tenant_id = 'local' AND discover_workflow_id = ? AND discover_run_id = ?
-          ORDER BY job_url`,
+          ORDER BY job_id`,
       )
-      .all(discoverWorkflowId, discoverRunId) as Array<{ job_url: string }>
-  ).map((row) => row.job_url);
+      .all(discoverWorkflowId, discoverRunId) as Array<{ job_id: string }>
+  ).map((row) => row.job_id);
   const recoverySteps = (
     db
       .prepare(
@@ -1577,17 +1221,16 @@ function recoveryKeyDigest(
 }
 
 function seedResumeReviewDraft(db: Database.Database): void {
-  ensureResumeReviewTables(db);
   db.prepare(
     `INSERT INTO resume_review_drafts (
-      tenant_id, draft_id, job_key, base_generation,
+      tenant_id, draft_id, job_id, base_generation,
       base_resume_text_artifact_id, base_resume_pdf_artifact_id,
       renderer_format, state, current_revision_id, latest_revision_number,
       created_at, updated_at
     ) VALUES ('local', ?, ?, 1, ?, ?, 'html_pdf', 'active', NULL, 0, ?, ?)`,
   ).run(
     "qa-platform-resume-draft",
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     "qa-platform-resume-text",
     "qa-platform-resume-pdf",
     QA_NOW,
@@ -1637,7 +1280,6 @@ function seedContacts(db: Database.Database): void {
 }
 
 function seedOutcomeAnalytics(db: Database.Database): void {
-  ensureApplicationFeedbackTables(db);
   const applications = [
     {
       url: "https://boards.greenhouse.io/northstarlabs/jobs/qa-analytics-platform-manager",
@@ -1762,17 +1404,17 @@ function seedOutcomeAnalytics(db: Database.Database): void {
     },
   ] as const;
   const markApplied = db.prepare(
-    "UPDATE jobs SET apply_status = 'applied', applied_at = ? WHERE url = ?",
+    "UPDATE jobs SET apply_status = 'applied', applied_at = ? WHERE tenant_id = 'local' AND job_id = ?",
   );
   const insertOutcome = db.prepare(
     `INSERT INTO application_outcomes (
-      tenant_id, outcome_id, job_key, kind, source, note, occurred_at,
+      tenant_id, outcome_id, job_id, kind, source, note, occurred_at,
       recorded_at, suggestion_id, evidence_id, interview_prep_generation
     ) VALUES ('local', ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL)`,
   );
   const insertSuggestion = db.prepare(
     `INSERT INTO application_outcome_suggestions (
-      tenant_id, suggestion_id, job_key, evidence_id, suggested_kind,
+      tenant_id, suggestion_id, job_id, evidence_id, suggested_kind,
       confidence, rationale, status, created_at, decided_at, decision,
       decision_reason, decided_outcome_id
     ) VALUES ('local', ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1790,12 +1432,13 @@ function seedOutcomeAnalytics(db: Database.Database): void {
     for (const stage of ["discover", "enrich", "score", "tailor", "cover", "apply"]) {
       insertStage(db, application.url, stage, "succeeded");
     }
-    markApplied.run(application.appliedAt, application.url);
+    const jobId = qaJobId(application.url);
+    markApplied.run(application.appliedAt, jobId);
     const suggestionId =
       application.suggestion?.status === "ignored" ? null : application.suggestion?.id ?? null;
     insertOutcome.run(
       application.outcomeId,
-      application.url,
+      jobId,
       application.outcomeKind,
       suggestionId ? "email_suggestion" : "manual",
       application.outcomeAt,
@@ -1806,7 +1449,7 @@ function seedOutcomeAnalytics(db: Database.Database): void {
       const createdAt = new Date(Date.parse(application.outcomeAt) - 30 * 60_000).toISOString();
       insertSuggestion.run(
         application.suggestion.id,
-        application.url,
+        jobId,
         application.suggestion.suggestedKind,
         0.9,
         "Synthetic email signal matched to this application for documentation QA.",
@@ -1822,8 +1465,6 @@ function seedOutcomeAnalytics(db: Database.Database): void {
 }
 
 function seedDiscoverySources(db: Database.Database): void {
-  ensureDiscoveryControlTables(db);
-  ensureProjectionTables(db);
   const insertSource = db.prepare(
     `INSERT INTO source_registry_entries (
       tenant_id, source_id, kind, display_name, owner, priority, state,
@@ -2070,11 +1711,11 @@ function insertJob(db: Database.Database, job: QaJobSeed): void {
 function insertStage(db: Database.Database, jobUrl: string, stage: string, state: string, errorCode: string | null = null): void {
   db.prepare(
     `INSERT INTO job_stage_states (
-      job_url, stage, state, attempt_count, max_attempts, updated_at,
+      tenant_id, job_id, stage, state, attempt_count, max_attempts, updated_at,
       error_code, error_message, retryable, blocked_by_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    jobUrl,
+    qaJobId(jobUrl),
     stage,
     state,
     state === "failed" ? 1 : 0,
@@ -2089,8 +1730,10 @@ function insertStage(db: Database.Database, jobUrl: string, stage: string, state
 
 function insertArtifact(db: Database.Database, jobUrl: string, type: string, filePath: string): void {
   db.prepare(
-    "INSERT INTO job_artifacts (job_url, stage, artifact_type, status, path, created_at, size_bytes) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).run(jobUrl, artifactStage(type), type, "active", filePath, QA_NOW, localFileSize(filePath));
+    `INSERT INTO job_artifacts (
+       tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes
+     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(qaJobId(jobUrl), artifactStage(type), type, "active", filePath, QA_NOW, localFileSize(filePath));
 }
 
 function insertEvent(db: Database.Database, jobUrl: string, stage: string, level: string, message: string): void {
@@ -2100,8 +1743,10 @@ function insertEvent(db: Database.Database, jobUrl: string, stage: string, level
   // silently dropped from /v1/events/stream and any test that depends
   // on the SSE pipeline against qa-seed data sees nothing.
   db.prepare(
-    "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(jobUrl, stage, "QaInfo", level, message, QA_NOW);
+    `INSERT INTO job_events (
+       tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at
+     ) VALUES ('local', ?, 1, ?, ?, ?, ?, ?)`,
+  ).run(qaJobId(jobUrl), stage, "QaInfo", level, message, QA_NOW);
 }
 
 function artifactStage(type: string): string {
