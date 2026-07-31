@@ -11,7 +11,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CredentialStore } from "../src/credentials.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
-import { createQaWorkspace, removeQaWorkspace, type QaWorkspace } from "./qa-seed.js";
+import {
+  createQaWorkspace,
+  QA_PLATFORM_JOB_ID,
+  QA_RISK_JOB_ID,
+  removeQaWorkspace,
+  type QaWorkspace,
+} from "./qa-seed.js";
 
 const LOOPBACK_HEADERS = { origin: "http://127.0.0.1:5173" };
 
@@ -65,7 +71,7 @@ describe("seeded local QA workflow", () => {
     expect(deleteFailed.statusCode, deleteFailed.body).toBe(200);
     expect(deleteFailed.json()).toMatchObject({
       count: 1,
-      jobKeys: ["https://linkedin.com/jobs/view/qa-risk-manager"],
+      jobKeys: [QA_RISK_JOB_ID],
     });
 
     const activeRisk = await app.inject({ method: "GET", url: "/v1/jobs?deleted=active&q=risk" });
@@ -111,7 +117,7 @@ describe("seeded local QA workflow", () => {
     expect(artifacts.json().pagination.total).toBe(8);
     const gitlabArtifacts = artifacts
       .json()
-      .items.filter((artifact: { jobKey: string }) => artifact.jobKey === "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director");
+      .items.filter((artifact: { jobKey: string }) => artifact.jobKey === QA_PLATFORM_JOB_ID);
     expect(gitlabArtifacts).toHaveLength(7);
     expect(gitlabArtifacts.map((artifact: { type: string }) => artifact.type).sort()).toEqual(
       expect.arrayContaining([
@@ -162,13 +168,13 @@ describe("seeded local QA workflow", () => {
     const artifactsAfterDelete = await app.inject({ method: "GET", url: "/v1/artifacts?pageSize=20" });
     expect(artifactsAfterDelete.statusCode, artifactsAfterDelete.body).toBe(200);
     expect(artifactsAfterDelete.json().items.map((artifact: { jobKey: string }) => artifact.jobKey)).not.toContain(
-      "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director",
+      QA_PLATFORM_JOB_ID,
     );
 
     const dashboardAfterDelete = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
     expect(dashboardAfterDelete.statusCode, dashboardAfterDelete.body).toBe(200);
     expect(dashboardAfterDelete.json().applyRuns.map((run: { jobKey: string }) => run.jobKey)).not.toContain(
-      "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director",
+      QA_PLATFORM_JOB_ID,
     );
 
     await app.close();
