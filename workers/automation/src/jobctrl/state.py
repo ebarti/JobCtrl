@@ -821,11 +821,16 @@ def record_job_artifact(
 # ---------------------------------------------------------------------------
 
 
-def _load_explicit_states(conn, job_url: str) -> dict[str, dict[str, Any]]:
-    """Load all stage rows from ``job_stage_states`` for one job."""
+def _load_explicit_states(
+    conn,
+    job_id: JobId,
+    *,
+    tenant_id: TenantId,
+) -> dict[str, dict[str, Any]]:
+    """Load all stage rows for one tenant-scoped canonical job identity."""
     rows = conn.execute(
-        "SELECT * FROM job_stage_states WHERE job_url = ?",
-        (job_url,),
+        "SELECT * FROM job_stage_states WHERE tenant_id = ? AND job_id = ?",
+        (str(tenant_id), str(job_id)),
     ).fetchall()
     explicit: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -855,16 +860,23 @@ def _default_state(stage: str) -> dict[str, Any]:
     }
 
 
-def get_job_stage_states(conn, job: dict[str, Any], *, min_score: int = 7) -> list[dict[str, Any]]:
+def get_job_stage_states(
+    conn,
+    job_id: JobId,
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
+) -> list[dict[str, Any]]:
     """Return canonical stage states for one job.
 
     Reads directly from ``job_stage_states``. If a stage has no row,
     a default ``pending`` state is returned.
-
-    The ``job`` and ``min_score`` parameters are retained for backward
-    compatibility but are no longer used for legacy derivation.
     """
-    explicit = _load_explicit_states(conn, job["url"])
+    stable_job_id = canonical_job_id(str(job_id))
+    explicit = _load_explicit_states(
+        conn,
+        stable_job_id,
+        tenant_id=tenant_id,
+    )
 
     states: list[dict[str, Any]] = []
     for stage in STAGE_ORDER:
