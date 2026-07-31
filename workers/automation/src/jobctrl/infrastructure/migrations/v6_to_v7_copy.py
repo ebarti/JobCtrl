@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
+from jobctrl.infrastructure.migrations.resume_template_seed import (
+    seed_builtin_resume_template,
+)
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V7_MANIFEST,
     assert_exact_manifest,
@@ -142,6 +145,7 @@ def copy_direct_and_scalar_tables(
     try:
         for table in ordered_tables:
             _copy_table(source, candidate, table, job_ids)
+        seed_builtin_resume_template(candidate)
         violations = candidate.execute("PRAGMA foreign_key_check").fetchall()
         if violations:
             raise CandidateCopyError(

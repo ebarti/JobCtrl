@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
+from jobctrl.infrastructure.migrations.schema_v7 import (
+    create_unstamped_exact_v7_candidate,
+)
 from jobctrl.infrastructure.migrations.v6_to_v7_artifact_list_projections import (
     CandidateArtifactListProjectionsError,
     rebuild_artifact_list_projections,
@@ -60,7 +62,7 @@ def _databases(
     candidate_path = tmp_path / "candidate.db"
     candidate = sqlite3.connect(candidate_path)
     candidate.execute("PRAGMA foreign_keys = ON")
-    create_exact_v7_schema(candidate)
+    create_unstamped_exact_v7_candidate(candidate)
     return source, candidate, source_path, candidate_path
 
 

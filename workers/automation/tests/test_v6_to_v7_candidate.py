@@ -411,8 +411,48 @@ def test_population_accepts_an_empty_shipped_workspace_without_spurious_rows(
             for table in sorted(target_tables())
             if candidate.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
         }
-        assert nonempty_rows == {"dashboard_projections": 1}
+        assert nonempty_rows == {
+            "dashboard_projections": 1,
+            "resume_template_versions": 1,
+            "resume_templates": 1,
+        }
         assert _sequence_rows(candidate) == ()
+    finally:
+        source.close()
+        candidate.close()
+
+
+def test_population_seeds_the_builtin_template_when_v6_omits_it(
+    tmp_path: Path,
+) -> None:
+    source, candidate = _connections(tmp_path)
+    try:
+        source.execute("DELETE FROM job_resume_template_assignments")
+        source.execute("DELETE FROM resume_template_defaults")
+        source.execute("DELETE FROM resume_template_versions")
+        source.execute("DELETE FROM resume_templates")
+        source.commit()
+
+        result = populate_v7_candidate(
+            source,
+            candidate,
+            migration_at=_MIGRATION_AT,
+            job_id_factory=_allocator(*_JOB_IDS),
+        )
+
+        _assert_successful_result(
+            result,
+            candidate,
+            source_digest=source_logical_digest(source),
+            source_total_changes=source.total_changes,
+        )
+        assert candidate.execute(
+            """
+            SELECT template_id, version_id
+            FROM resume_templates
+            JOIN resume_template_versions USING (tenant_id, template_id)
+            """
+        ).fetchall() == [("built_in:modern-html", "built_in:modern-html:v1")]
     finally:
         source.close()
         candidate.close()
