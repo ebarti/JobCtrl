@@ -18,7 +18,7 @@ from temporalio.client import WorkflowHandle
 from temporalio.common import WorkflowIDConflictPolicy
 
 from jobctrl import database as db_module
-from jobctrl.database import get_connection, get_jobs_by_stage
+from jobctrl.database import get_connection
 from jobctrl.domain.discovery.execution import (
     DiscoveryExecutionCohortKind,
     DiscoveryExecutionRef,
@@ -26,11 +26,10 @@ from jobctrl.domain.discovery.execution import (
     validate_required_steps,
 )
 from jobctrl.domain.identifiers import JobId, canonical_job_id
-from jobctrl.domain.materials.use_cases import SuppressTailoredArtifactsUseCase
 from jobctrl.domain.preparation import PreparationWorkItemKind, make_preparation_idempotency_key
 from jobctrl.domain.rpc.messages import WorkflowStartSpec
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
-from jobctrl.infrastructure.materials import SqliteMaterialsRepository, SqliteTailoringPolicyRepository
+from jobctrl.infrastructure.materials import SqliteTailoringPolicyRepository
 from jobctrl.infrastructure.discovery.sqlite_execution_repository import (
     SqliteDiscoveryExecutionRepository,
 )
@@ -50,6 +49,51 @@ from jobctrl.state import utc_now
 log = logging.getLogger(__name__)
 
 PREPARATION_CHILD_BATCH_SIZE = 25
+
+_LATEST_SCORES_CTE = """
+latest_scores AS (
+    SELECT scores.tenant_id,
+           scores.job_id,
+           scores.fit_score,
+           CASE WHEN json_valid(scores.breakdown_json)
+                THEN LOWER(COALESCE(
+                    CAST(json_extract(scores.breakdown_json, '$.eligibility.status') AS TEXT),
+                    ''
+                ))
+                ELSE ''
+           END AS eligibility_status,
+           CASE WHEN json_valid(scores.breakdown_json)
+                THEN COALESCE(
+                    json_array_length(scores.breakdown_json, '$.eligibility.hard_blockers'),
+                    json_array_length(scores.breakdown_json, '$.eligibility.hardBlockers'),
+                    json_array_length(scores.breakdown_json, '$.eligibility.blockers'),
+                    0
+                )
+                ELSE 0
+           END AS hard_blocker_count
+      FROM job_scores scores
+      INNER JOIN (
+          SELECT tenant_id, job_id, MAX(version) AS version
+            FROM job_scores
+           GROUP BY tenant_id, job_id
+      ) latest
+        ON latest.tenant_id = scores.tenant_id
+       AND latest.job_id = scores.job_id
+       AND latest.version = scores.version
+)
+"""
+
+_LATEST_ACTIVE_MATERIALS_CTE = """
+latest_active_materials AS (
+    SELECT tenant_id, job_id, MAX(generation) AS generation
+      FROM job_materials_artifacts
+     WHERE status = 'approved'
+       AND artifact_type IN (
+            'tailored_resume', 'cover_letter', 'resume_pdf', 'cover_letter_pdf'
+       )
+     GROUP BY tenant_id, job_id
+)
+"""
 
 
 @dataclass(frozen=True)
@@ -380,8 +424,12 @@ def _derive_targets(
     score_target_version = current_scoring_policy_version(conn, tenant_id)
     targets: dict[JobId, PreparationTarget] = {}
 
-    for job in get_jobs_by_stage(conn=conn, stage="pending_score", limit=0):
-        job_id = canonical_job_id(str(job["job_id"]))
+    for job_id in _preparation_job_ids(
+        conn,
+        tenant_id=tenant_id,
+        stage="pending_score",
+        min_score=min_score,
+    ):
         targets[job_id] = _target(
             tenant_id=tenant_id,
             job_id=job_id,
@@ -405,8 +453,12 @@ def _derive_targets(
     # once (``include_pending_tailor=True``) and derive score-only thereafter.
     if include_pending_tailor:
         tailoring_target_version = current_tailoring_policy_version(conn, tenant_id)
-        for job in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=min_score, limit=0):
-            job_id = canonical_job_id(str(job["job_id"]))
+        for job_id in _preparation_job_ids(
+            conn,
+            tenant_id=tenant_id,
+            stage="pending_tailor",
+            min_score=min_score,
+        ):
             if job_id in targets:
                 continue
             targets[job_id] = _target(
@@ -423,6 +475,136 @@ def _derive_targets(
             )
 
     return [targets[job_id] for job_id in sorted(targets)]
+
+
+def _preparation_job_ids(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    stage: str,
+    min_score: int,
+) -> list[JobId]:
+    """Select exact-v7 preparation candidates by canonical identity."""
+    if stage == "pending_score":
+        rows = conn.execute(
+            f"""
+            WITH {_LATEST_SCORES_CTE}
+            SELECT jobs.job_id
+              FROM jobs
+              INNER JOIN job_enrichments enrichment
+                ON enrichment.tenant_id = jobs.tenant_id
+               AND enrichment.job_id = jobs.job_id
+              LEFT JOIN latest_scores score
+                ON score.tenant_id = jobs.tenant_id
+               AND score.job_id = jobs.job_id
+              LEFT JOIN job_stage_states score_stage
+                ON score_stage.tenant_id = jobs.tenant_id
+               AND score_stage.job_id = jobs.job_id
+               AND score_stage.stage = 'score'
+              LEFT JOIN posting_snapshot_sets snapshots
+                ON snapshots.tenant_id = jobs.tenant_id
+               AND snapshots.job_id = jobs.job_id
+             WHERE jobs.tenant_id = ?
+               AND NOT EXISTS (
+                    SELECT 1
+                      FROM jobctrl_deleted_jobs deleted
+                     WHERE deleted.tenant_id = jobs.tenant_id
+                       AND deleted.job_id = jobs.job_id
+                       AND (
+                            deleted.restored_at IS NULL
+                            OR julianday(deleted.restored_at) <= julianday(deleted.deleted_at)
+                       )
+               )
+               AND enrichment.full_description IS NOT NULL
+               AND score.job_id IS NULL
+               AND COALESCE(score_stage.state, 'pending') = 'pending'
+               AND COALESCE(score_stage.attempt_count, 0) < 5
+               AND (
+                    snapshots.latest_active_state IS NULL
+                    OR snapshots.latest_active_state NOT IN (
+                        'closed', 'expired', 'removed', 'location_incompatible'
+                    )
+               )
+             ORDER BY jobs.discovered_at DESC, jobs.job_id
+            """,
+            (str(tenant_id),),
+        ).fetchall()
+    elif stage == "pending_tailor":
+        rows = conn.execute(
+            f"""
+            WITH {_LATEST_SCORES_CTE},
+                 {_LATEST_ACTIVE_MATERIALS_CTE}
+            SELECT jobs.job_id
+              FROM jobs
+              INNER JOIN job_enrichments enrichment
+                ON enrichment.tenant_id = jobs.tenant_id
+               AND enrichment.job_id = jobs.job_id
+              INNER JOIN latest_scores score
+                ON score.tenant_id = jobs.tenant_id
+               AND score.job_id = jobs.job_id
+              LEFT JOIN job_stage_states score_stage
+                ON score_stage.tenant_id = jobs.tenant_id
+               AND score_stage.job_id = jobs.job_id
+               AND score_stage.stage = 'score'
+              LEFT JOIN job_stage_states tailor_stage
+                ON tailor_stage.tenant_id = jobs.tenant_id
+               AND tailor_stage.job_id = jobs.job_id
+               AND tailor_stage.stage = 'tailor'
+              LEFT JOIN job_score_staleness stale_score
+                ON stale_score.tenant_id = jobs.tenant_id
+               AND stale_score.job_id = jobs.job_id
+               AND stale_score.resolved = 0
+              LEFT JOIN posting_snapshot_sets snapshots
+                ON snapshots.tenant_id = jobs.tenant_id
+               AND snapshots.job_id = jobs.job_id
+              LEFT JOIN latest_active_materials materials
+                ON materials.tenant_id = jobs.tenant_id
+               AND materials.job_id = jobs.job_id
+              LEFT JOIN job_materials_artifacts tailored_resume
+                ON tailored_resume.tenant_id = materials.tenant_id
+               AND tailored_resume.job_id = materials.job_id
+               AND tailored_resume.generation = materials.generation
+               AND tailored_resume.artifact_type = 'tailored_resume'
+               AND tailored_resume.status = 'approved'
+             WHERE jobs.tenant_id = ?
+               AND NOT EXISTS (
+                    SELECT 1
+                      FROM jobctrl_deleted_jobs deleted
+                     WHERE deleted.tenant_id = jobs.tenant_id
+                       AND deleted.job_id = jobs.job_id
+                       AND (
+                            deleted.restored_at IS NULL
+                            OR julianday(deleted.restored_at) <= julianday(deleted.deleted_at)
+                       )
+               )
+               AND enrichment.full_description IS NOT NULL
+               AND score.fit_score >= ?
+               AND score.eligibility_status != 'blocked'
+               AND score.hard_blocker_count = 0
+               AND (score_stage.state IS NULL OR score_stage.state = 'succeeded')
+               AND stale_score.job_id IS NULL
+               AND COALESCE(tailor_stage.state, 'pending') = 'pending'
+               AND COALESCE(tailor_stage.attempt_count, 0) < 5
+               AND (
+                    snapshots.latest_active_state IS NULL
+                    OR snapshots.latest_active_state NOT IN (
+                        'closed', 'expired', 'removed', 'location_incompatible'
+                    )
+               )
+               AND (
+                    snapshots.latest_confidence IS NULL
+                    OR snapshots.latest_confidence != 'low'
+                    OR snapshots.latest_quarantine_reason IS NULL
+                    OR snapshots.latest_quarantine_reason IN ('none', '')
+               )
+               AND tailored_resume.artifact_id IS NULL
+             ORDER BY score.fit_score DESC, jobs.discovered_at DESC, jobs.job_id
+            """,
+            (str(tenant_id), int(min_score)),
+        ).fetchall()
+    else:
+        raise ValueError(f"unsupported preparation stage: {stage}")
+    return [canonical_job_id(str(row["job_id"] if isinstance(row, sqlite3.Row) else row[0])) for row in rows]
 
 
 def _target(
@@ -640,33 +822,49 @@ def _unselected_work_plan_outcome(
     job_id: JobId,
     min_score: int,
 ) -> tuple[DiscoveryExecutionWorkPlanState, str]:
-    is_deleted = "0"
-    if _table_exists(conn, "jobctrl_deleted_jobs"):
-        is_deleted = """
-            CASE WHEN EXISTS (
-                 SELECT 1
-                  FROM jobctrl_deleted_jobs deleted
-                 WHERE deleted.tenant_id = jobs.tenant_id
-                   AND deleted.job_id = jobs.job_id
-                   AND (
-                       deleted.restored_at IS NULL
-                       OR julianday(deleted.restored_at) <= julianday(deleted.deleted_at)
-                   )
-            ) THEN 1 ELSE 0 END
-        """
     row = conn.execute(
         f"""
-        SELECT {db_module._EFFECTIVE_FIT_SCORE} AS effective_score,
-               CASE WHEN {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM}
+        WITH {_LATEST_SCORES_CTE},
+             {_LATEST_ACTIVE_MATERIALS_CTE}
+        SELECT score.fit_score AS effective_score,
+               CASE WHEN score.eligibility_status != 'blocked'
+                         AND score.hard_blocker_count = 0
                     THEN 1 ELSE 0 END AS score_eligible,
-               pss.latest_active_state AS active_state,
-               jm.jm_resume_pdf_path AS resume_pdf_path,
-               jm.jm_cover_pdf_path AS cover_pdf_path,
-               {is_deleted} AS is_deleted
+               snapshots.latest_active_state AS active_state,
+               resume_pdf.artifact_id IS NOT NULL AS has_resume_pdf,
+               cover_pdf.artifact_id IS NOT NULL AS has_cover_pdf,
+               EXISTS (
+                    SELECT 1
+                      FROM jobctrl_deleted_jobs deleted
+                     WHERE deleted.tenant_id = jobs.tenant_id
+                       AND deleted.job_id = jobs.job_id
+                       AND (
+                            deleted.restored_at IS NULL
+                            OR julianday(deleted.restored_at) <= julianday(deleted.deleted_at)
+                       )
+               ) AS is_deleted
           FROM jobs
-          {db_module._LATEST_SCORE_JOIN}
-          {db_module._LATEST_MATERIALS_JOIN}
-          {db_module._ACTIVE_STATE_JOIN}
+          LEFT JOIN latest_scores score
+            ON score.tenant_id = jobs.tenant_id
+           AND score.job_id = jobs.job_id
+          LEFT JOIN posting_snapshot_sets snapshots
+            ON snapshots.tenant_id = jobs.tenant_id
+           AND snapshots.job_id = jobs.job_id
+          LEFT JOIN latest_active_materials materials
+            ON materials.tenant_id = jobs.tenant_id
+           AND materials.job_id = jobs.job_id
+          LEFT JOIN job_materials_artifacts resume_pdf
+            ON resume_pdf.tenant_id = materials.tenant_id
+           AND resume_pdf.job_id = materials.job_id
+           AND resume_pdf.generation = materials.generation
+           AND resume_pdf.artifact_type = 'resume_pdf'
+           AND resume_pdf.status = 'approved'
+          LEFT JOIN job_materials_artifacts cover_pdf
+            ON cover_pdf.tenant_id = materials.tenant_id
+           AND cover_pdf.job_id = materials.job_id
+           AND cover_pdf.generation = materials.generation
+           AND cover_pdf.artifact_type = 'cover_letter_pdf'
+           AND cover_pdf.status = 'approved'
          WHERE jobs.tenant_id = ?
            AND jobs.job_id = ?
         """,
@@ -684,7 +882,7 @@ def _unselected_work_plan_outcome(
         return ("not_eligible", "job_not_actionable")
     if str(row["active_state"] or "") in {"closed", "expired", "removed", "location_incompatible"}:
         return ("not_eligible", "posting_not_actionable")
-    if row["resume_pdf_path"] and row["cover_pdf_path"]:
+    if bool(row["has_resume_pdf"]) and bool(row["has_cover_pdf"]):
         return ("not_eligible", "preparation_already_accounted")
 
     stage_rows = conn.execute(
@@ -707,16 +905,6 @@ def _unselected_work_plan_outcome(
     ):
         return ("not_eligible", "preparation_explicitly_skipped")
     return ("failed", "preparation_target_not_selected")
-
-
-def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
-    return (
-        conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-            (table_name,),
-        ).fetchone()
-        is not None
-    )
 
 
 def _run_start_batch(specs: list[WorkflowStartSpec], starter: WorkflowStarter) -> list[WorkflowHandle]:
@@ -774,21 +962,83 @@ def _suppress_ineligible_artifacts(
     tenant_id: TenantId,
     min_score: int,
 ) -> int:
-    use_case = SuppressTailoredArtifactsUseCase(repository=SqliteMaterialsRepository(conn))
     suppressed = 0
     for job_id in _jobs_needing_artifact_suppression(
         conn,
         tenant_id=tenant_id,
         min_score=min_score,
     ):
-        outcome = use_case.execute(
+        suppressed += _suppress_active_artifacts(
+            conn,
             tenant_id=tenant_id,
             job_id=job_id,
             reason="threshold_or_hard_blocker_ineligible",
             suppressed_at=utc_now(),
         )
-        suppressed += int(outcome.suppressed)
     return suppressed
+
+
+def _suppress_active_artifacts(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    reason: str,
+    suppressed_at: str,
+) -> int:
+    generation_row = conn.execute(
+        f"""
+        WITH {_LATEST_ACTIVE_MATERIALS_CTE}
+        SELECT generation
+          FROM latest_active_materials
+         WHERE tenant_id = ?
+           AND job_id = ?
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    generation = generation_row[0] if generation_row is not None else None
+    if generation is None:
+        return 0
+
+    update_metadata = """
+        json_set(
+            CASE
+                WHEN json_valid(metadata_json) AND json_type(metadata_json) = 'object'
+                    THEN metadata_json
+                ELSE '{}'
+            END,
+            '$.suppression',
+            json_object('reason', ?, 'suppressed_at', ?)
+        )
+    """
+    cursor = conn.execute(
+        f"""
+        UPDATE job_materials_artifacts
+           SET status = 'suppressed',
+               metadata_json = {update_metadata},
+               superseded_at = NULL
+         WHERE tenant_id = ?
+           AND job_id = ?
+           AND generation = ?
+           AND status = 'approved'
+        """,
+        (reason, suppressed_at, str(tenant_id), str(job_id), generation),
+    )
+    if cursor.rowcount == 0:
+        return 0
+    conn.execute(
+        f"""
+        UPDATE job_materials
+           SET metadata_json = {update_metadata},
+               updated_at = ?
+         WHERE tenant_id = ?
+           AND job_id = ?
+           AND generation = ?
+        """,
+        (reason, suppressed_at, suppressed_at, str(tenant_id), str(job_id), generation),
+    )
+    conn.commit()
+    return 1
 
 
 def _jobs_needing_artifact_suppression(
@@ -799,18 +1049,31 @@ def _jobs_needing_artifact_suppression(
 ) -> list[JobId]:
     rows = conn.execute(
         f"""
+        WITH {_LATEST_SCORES_CTE},
+             {_LATEST_ACTIVE_MATERIALS_CTE}
         SELECT jobs.job_id
         FROM jobs
-        {db_module._LATEST_SCORE_JOIN}
-        {db_module._LATEST_MATERIALS_JOIN}
+        LEFT JOIN latest_scores score
+          ON score.tenant_id = jobs.tenant_id
+         AND score.job_id = jobs.job_id
+        LEFT JOIN latest_active_materials materials
+          ON materials.tenant_id = jobs.tenant_id
+         AND materials.job_id = jobs.job_id
+        LEFT JOIN job_materials_artifacts tailored_resume
+          ON tailored_resume.tenant_id = materials.tenant_id
+         AND tailored_resume.job_id = materials.job_id
+         AND tailored_resume.generation = materials.generation
+         AND tailored_resume.artifact_type = 'tailored_resume'
+         AND tailored_resume.status = 'approved'
         WHERE jobs.tenant_id = ?
-          AND {db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL
+          AND tailored_resume.artifact_id IS NOT NULL
           AND (
-            {db_module._EFFECTIVE_FIT_SCORE} IS NULL
-            OR {db_module._EFFECTIVE_FIT_SCORE} < ?
-            OR NOT {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM}
+            score.fit_score IS NULL
+            OR score.fit_score < ?
+            OR score.eligibility_status = 'blocked'
+            OR score.hard_blocker_count > 0
           )
-        ORDER BY jobs.discovered_at DESC
+        ORDER BY jobs.discovered_at DESC, jobs.job_id
         """,
         (tenant_id, int(min_score)),
     ).fetchall()
