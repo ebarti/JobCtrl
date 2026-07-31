@@ -553,6 +553,19 @@ def _template_key(value: str | None) -> str:
     return _projection_text(value) or "unreported"
 
 
+def _template_conversion_sort_key(
+    item: tuple[str, dict[str, object]],
+) -> tuple[int, str, str]:
+    template_id, bucket = item
+    counts = bucket["counts"]
+    assert isinstance(counts, dict)
+    return (
+        -int(counts["applied"]),
+        str(bucket.get("templateName") or template_id),
+        template_id,
+    )
+
+
 def _policy_key(value: int | None) -> str:
     return "unreported" if value is None else str(int(value))
 
@@ -3160,10 +3173,7 @@ class ProjectionBuilder:
             }
             for template_id, bucket in sorted(
                 by_template.items(),
-                key=lambda item: (
-                    -int(item[1]["counts"]["applied"]),  # type: ignore[index]
-                    str(item[1].get("templateName") or item[0]),
-                ),
+                key=_template_conversion_sort_key,
             )
         ]
         by_policy_list = []

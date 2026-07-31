@@ -4015,6 +4015,20 @@ function policyLabel(version: number | null): string {
   return version === null ? "Unreported" : `Policy v${version}`;
 }
 
+function compareUnicodeOrdinal(left: string, right: string): number {
+  const leftCodePoints = [...left];
+  const rightCodePoints = [...right];
+  const sharedLength = Math.min(leftCodePoints.length, rightCodePoints.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    const leftCodePoint = leftCodePoints[index]!.codePointAt(0)!;
+    const rightCodePoint = rightCodePoints[index]!.codePointAt(0)!;
+    if (leftCodePoint !== rightCodePoint) {
+      return leftCodePoint < rightCodePoint ? -1 : 1;
+    }
+  }
+  return leftCodePoints.length - rightCodePoints.length;
+}
+
 function buildOutcomeConversion(
   db: SqliteDatabase,
   tenantId: string,
@@ -4111,7 +4125,14 @@ function buildOutcomeConversion(
   }));
   const byTemplateList = [...byTemplate.entries()]
     .map(([templateId, bucket]) => ({ templateId, templateName: bucket.templateName, ...bucket.counts }))
-    .sort((a, b) => b.applied - a.applied || (a.templateName ?? a.templateId).localeCompare(b.templateName ?? b.templateId));
+    .sort((a, b) =>
+      b.applied - a.applied
+      || compareUnicodeOrdinal(
+        a.templateName ?? a.templateId,
+        b.templateName ?? b.templateId,
+      )
+      || compareUnicodeOrdinal(a.templateId, b.templateId),
+    );
   const byPolicyList = [...byPolicy.entries()]
     .map((entry) => {
       const [key, counts] = entry;
