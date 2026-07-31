@@ -234,14 +234,15 @@ class SqlitePostingSnapshotSetRepository:
         self._conn = conn
 
     def load(self, tenant_id: TenantId, job_id: JobId) -> PostingSnapshotSet | None:
+        stable_job_id = canonical_job_id(str(job_id))
         row = self._conn.execute(
             """
             SELECT snapshot_set_json
             FROM posting_snapshot_sets
-            WHERE tenant_id = ? AND job_url = ?
+            WHERE tenant_id = ? AND job_id = ?
             LIMIT 1
             """,
-            (str(tenant_id), str(job_id)),
+            (str(tenant_id), str(stable_job_id)),
         ).fetchone()
         if row is None:
             return None
@@ -254,11 +255,11 @@ class SqlitePostingSnapshotSetRepository:
         self._conn.execute(
             """
             INSERT INTO posting_snapshot_sets (
-                tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+                tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
                 latest_active_state, latest_confidence, latest_quarantine_reason,
                 updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+            ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 snapshot_set_json = excluded.snapshot_set_json,
                 latest_snapshot_version = excluded.latest_snapshot_version,
                 latest_active_state = excluded.latest_active_state,
@@ -287,7 +288,7 @@ class SqlitePostingSnapshotSetRepository:
     ) -> list[DedupeIndexEntry]:
         rows = self._conn.execute(
             """
-            SELECT job_url, snapshot_set_json
+            SELECT job_id, snapshot_set_json
             FROM posting_snapshot_sets
             WHERE tenant_id = ?
             ORDER BY updated_at DESC
@@ -296,8 +297,8 @@ class SqlitePostingSnapshotSetRepository:
         ).fetchall()
         entries: list[DedupeIndexEntry] = []
         for row in rows:
-            job_url = row["job_url"] if isinstance(row, sqlite3.Row) else row[0]
-            if exclude_job_id is not None and str(job_url) == str(exclude_job_id):
+            job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[0]
+            if exclude_job_id is not None and str(job_id) == str(exclude_job_id):
                 continue
             raw_json = row["snapshot_set_json"] if isinstance(row, sqlite3.Row) else row[1]
             data = json.loads(raw_json) if raw_json else {}
@@ -317,7 +318,7 @@ class SqlitePostingSnapshotSetRepository:
 
 def _snapshot_set_from_dict(data: dict[str, Any]) -> PostingSnapshotSet:
     tenant_id = TenantId(str(data.get("tenant_id") or LOCAL_TENANT))
-    job_id = JobId(str(data.get("job_id") or ""))
+    job_id = canonical_job_id(str(data.get("job_id") or ""))
     snapshots = tuple(
         _snapshot_from_dict(item)
         for item in data.get("snapshots", [])

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,9 @@ from jobctrl.enrichment import detail
 from jobctrl.enrichment.detail import (
     _detail_failure_retryable,
     _record_posting_snapshot_from_cascade,
+    _record_posting_snapshot_failure_from_cascade,
     _reset_authenticated_linkedin_retry_candidates,
+    _source_id_for_enriched_job,
     scrape_detail_page,
 )
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
@@ -173,6 +176,33 @@ def test_verified_inactive_detail_failure_is_not_retryable() -> None:
     ) is False
 
 
+def test_source_lookup_only_falls_back_for_missing_exact_v7_observation() -> None:
+    conn = sqlite3.connect(":memory:")
+    job_id = canonical_job_id("d06861be-e8d5-46dd-aa30-2d78dc12c96a")
+    try:
+        conn.execute(
+            """
+            CREATE TABLE job_source_observations (
+                tenant_id TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                source_id TEXT,
+                observed_at TEXT,
+                source_observation_id TEXT
+            )
+            """
+        )
+        assert _source_id_for_enriched_job(conn, job_id, fallback="enrichment") == "enrichment"
+
+        conn.execute("DROP TABLE job_source_observations")
+        conn.execute(
+            "CREATE TABLE job_source_observations (tenant_id TEXT NOT NULL, source_id TEXT)"
+        )
+        with pytest.raises(sqlite3.OperationalError, match="no such column: job_id"):
+            _source_id_for_enriched_job(conn, job_id, fallback="enrichment")
+    finally:
+        conn.close()
+
+
 def test_authenticated_linkedin_retry_resets_only_exact_v7_aggregate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -272,6 +302,87 @@ def test_authenticated_linkedin_retry_resets_only_exact_v7_aggregate(
         payload = json.loads(event["payload_json"])
         assert payload["jobId"] == str(job_id)
         assert "jobUrl" not in payload
+    finally:
+        close_connection(db_path)
+
+
+def test_scrape_site_batch_resolves_url_once_before_exact_v7_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    job_id = canonical_job_id("790fd73f-2fbe-44d7-b9a4-163040e69d89")
+    job_url = "https://www.linkedin.com/jobs/view/4375576106"
+    try:
+        _seed_current_job(conn, job_id=job_id, url=job_url, title="Director")
+        resolved_urls: list[str] = []
+        resolve_current_job_id = detail._resolve_current_enrichment_job_id
+
+        def resolve_once(current_conn, url: str):
+            resolved_urls.append(url)
+            return resolve_current_job_id(current_conn, url)
+
+        monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "0")
+        monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
+        monkeypatch.setattr(detail, "_resolve_current_enrichment_job_id", resolve_once)
+        monkeypatch.setattr(
+            detail,
+            "scrape_detail_page",
+            lambda _page, _url, session=None: {
+                "status": "ok",
+                "tier_used": 1,
+                "full_description": _long_description(),
+                "application_url": f"{job_url}/apply",
+                "elapsed": 1.0,
+                "active_state": "active",
+                "verification_method": "json_ld",
+            },
+        )
+
+        stats = detail.scrape_site_batch(
+            conn, "linkedin", [(job_url, "Director")], gateway=offline_gateway()
+        )
+
+        aggregate = SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, job_id)
+        snapshot = conn.execute(
+            """
+            SELECT job_id FROM posting_snapshot_sets
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()
+        stage = conn.execute(
+            """
+            SELECT job_id, state FROM job_stage_states
+            WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'
+            """,
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()
+        event = conn.execute(
+            """
+            SELECT job_id, payload_json FROM job_events
+            WHERE tenant_id = ? AND job_id = ? AND event_type = 'StageCompleted'
+            ORDER BY event_id DESC LIMIT 1
+            """,
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()
+
+        assert stats == {
+            "processed": 1,
+            "ok": 1,
+            "partial": 0,
+            "error": 0,
+            "blocked": 0,
+            "tiers": {1: 1, 2: 0, 3: 0},
+        }
+        assert aggregate is not None and aggregate.is_enriched
+        assert aggregate.job_id == job_id
+        assert resolved_urls == [job_url]
+        assert snapshot is not None and snapshot["job_id"] == str(job_id)
+        assert stage is not None and stage["job_id"] == str(job_id)
+        assert stage["state"] == "succeeded"
+        assert event is not None and event["job_id"] == str(job_id)
+        assert json.loads(event["payload_json"])["jobId"] == str(job_id)
     finally:
         close_connection(db_path)
 
@@ -415,20 +526,48 @@ def test_selected_enrichment_filters_retry_to_requested_job(monkeypatch: pytest.
     ]
 
 
-def test_inactive_cascade_snapshot_persists_closed_state(tmp_path: Path) -> None:
+def _seed_current_job(
+    conn, *, job_id, url: str, title: str = "Closed engineering role"
+) -> None:
+    discovered_at = "2026-05-29T10:00:00+00:00"
+    conn.execute(
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+        VALUES (?, ?, ?, ?, 'Example', 'example', ?)
+        """,
+        (str(LOCAL_TENANT), str(job_id), url, title, discovered_at),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_locators (
+            tenant_id, job_id, locator_kind, locator_value,
+            is_current, first_seen_at, last_seen_at
+        ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?)
+        """,
+        (str(LOCAL_TENANT), str(job_id), url, discovered_at, discovered_at),
+    )
+    conn.commit()
+
+
+def test_inactive_cascade_snapshot_uses_current_job_id_and_keeps_url_as_locator(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
+    job_id = canonical_job_id("43c31e55-7ac4-4e5f-afbe-7612180ef829")
+    url = "https://example.com/jobs/closed"
     try:
+        _seed_current_job(conn, job_id=job_id, url=url)
         _record_posting_snapshot_from_cascade(
             conn,
-            url="https://example.com/jobs/closed",
+            url=url,
             source_id="jobspy",
             title="Closed engineering role",
             cascade_result={
                 "status": "inactive",
                 "tier_used": 1,
                 "full_description": _long_description(),
-                "application_url": "https://example.com/jobs/closed/apply",
+                "application_url": None,
                 "active_state": "closed",
                 "verification_method": "closed_marker",
             },
@@ -437,23 +576,97 @@ def test_inactive_cascade_snapshot_persists_closed_state(tmp_path: Path) -> None
 
         snapshot_set = conn.execute(
             """
-            SELECT latest_active_state
+            SELECT job_id, latest_active_state
             FROM posting_snapshot_sets
-            WHERE tenant_id = 'local' AND job_url = ?
+            WHERE tenant_id = 'local' AND job_id = ?
             """,
-            ("https://example.com/jobs/closed",),
+            (str(job_id),),
         ).fetchone()
         event = conn.execute(
             """
-            SELECT payload_json
+            SELECT job_id, payload_json, entity_ref
             FROM job_events
-            WHERE event_type = 'JobActiveStateChanged'
+            WHERE event_type = 'PostingContentSnapshotCaptured'
             ORDER BY event_id DESC
             LIMIT 1
             """
         ).fetchone()
 
+        quarantine = conn.execute(
+            """
+            SELECT job_id, posting_url
+            FROM discovery_quarantine_entries
+            WHERE tenant_id = 'local' AND job_id = ?
+            """,
+            (str(job_id),),
+        ).fetchone()
+
+        assert snapshot_set["job_id"] == str(job_id)
         assert snapshot_set["latest_active_state"] == "closed"
-        assert json.loads(event["payload_json"])["active_state"] == "closed"
+        assert event["job_id"] == str(job_id)
+        payload = json.loads(event["payload_json"])
+        assert payload["jobId"] == str(job_id)
+        assert payload["snapshotRef"] == f"{job_id}:1"
+        assert event["entity_ref"] == f"{job_id}:1"
+        assert quarantine is not None
+        assert quarantine["job_id"] == str(job_id)
+        assert quarantine["posting_url"] == url
+        assert "job_url" not in {
+            row["name"] for row in conn.execute("PRAGMA table_info(posting_snapshot_sets)")
+        }
+        assert "job_key" not in {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(discovery_quarantine_entries)")
+        }
+    finally:
+        close_connection(db_path)
+
+
+def test_snapshot_failure_uses_current_job_id_for_state_and_events(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    job_id = canonical_job_id("9796a7ae-a520-4d7d-af21-c5474743e580")
+    url = "https://example.com/jobs/removed"
+    try:
+        _seed_current_job(conn, job_id=job_id, url=url)
+        _record_posting_snapshot_failure_from_cascade(
+            conn,
+            url=url,
+            source_id="jobspy",
+            cascade_result={
+                "status": "inactive",
+                "error": "posting removed",
+                "tier_used": 1,
+                "active_state": "removed",
+                "verification_method": "http_status",
+                "http_status": 404,
+            },
+            failed_at="2026-05-29T12:00:00+00:00",
+        )
+
+        snapshot_set = conn.execute(
+            """
+            SELECT job_id, latest_active_state
+            FROM posting_snapshot_sets
+            WHERE tenant_id = 'local' AND job_id = ?
+            """,
+            (str(job_id),),
+        ).fetchone()
+        event = conn.execute(
+            """
+            SELECT job_id, payload_json
+            FROM job_events
+            WHERE event_type = 'PostingContentSnapshotFailed'
+            ORDER BY event_id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+        assert snapshot_set is not None
+        assert snapshot_set["job_id"] == str(job_id)
+        assert snapshot_set["latest_active_state"] == "removed"
+        assert event is not None
+        assert event["job_id"] == str(job_id)
+        assert json.loads(event["payload_json"])["jobId"] == str(job_id)
     finally:
         close_connection(db_path)
