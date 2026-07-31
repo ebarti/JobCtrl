@@ -51,6 +51,9 @@ class CandidatePopulationResult:
     """Metadata-only result for an unstamped, validated v7 candidate."""
 
     migration_at: str
+    candidate_digest: str
+    source_digest: str
+    source_total_changes: int
     steps: tuple[CandidatePopulationStepReceipt, ...]
     table_row_counts: tuple[tuple[str, int], ...]
     event_sequence_high_water: int | None
@@ -74,7 +77,7 @@ def populate_v7_candidate(
     assert_v6_migration_preflight(source)
 
     source_total_changes = source.total_changes
-    source_digest = _logical_digest(source)
+    source_digest = source_logical_digest(source)
     source_query_only = int(source.execute("PRAGMA query_only").fetchone()[0])
     source_query_only_restored = False
     source.execute("PRAGMA query_only = ON")
@@ -98,6 +101,7 @@ def populate_v7_candidate(
                 receipts=receipts,
                 final_counts=final_counts,
             )
+            candidate_digest = candidate_logical_digest(candidate)
             source.execute(f"PRAGMA query_only = {source_query_only}")
             source_query_only_restored = True
             candidate.execute(f"RELEASE SAVEPOINT {_OUTER_SAVEPOINT}")
@@ -111,6 +115,9 @@ def populate_v7_candidate(
 
     return CandidatePopulationResult(
         migration_at=migration_at,
+        candidate_digest=candidate_digest,
+        source_digest=source_digest,
+        source_total_changes=source_total_changes,
         steps=receipts,
         table_row_counts=final_counts,
         event_sequence_high_water=event_sequence_high_water,
@@ -236,7 +243,7 @@ def _assert_final_candidate(
     receipt_counts = tuple(sorted((table, count) for receipt in receipts for table, count in receipt.table_row_counts))
     if final_counts != receipt_counts:
         raise CandidatePopulationError("candidate population final table counts differ from step receipts")
-    if source.total_changes != source_total_changes or _logical_digest(source) != source_digest:
+    if source.total_changes != source_total_changes or source_logical_digest(source) != source_digest:
         raise CandidatePopulationError("candidate population altered the v6 source")
 
 
@@ -257,10 +264,24 @@ def _table_counts(
     )
 
 
-def _logical_digest(conn: sqlite3.Connection) -> str:
-    """Hash schema and durable values without interpreting stored content."""
+def source_logical_digest(conn: sqlite3.Connection) -> str:
+    """Hash source version, schema, and values without interpreting content."""
+    return _database_logical_digest(conn, include_user_version=True)
+
+
+def candidate_logical_digest(conn: sqlite3.Connection) -> str:
+    """Hash candidate schema and values independently of its version stamp."""
+    return _database_logical_digest(conn, include_user_version=False)
+
+
+def _database_logical_digest(
+    conn: sqlite3.Connection,
+    *,
+    include_user_version: bool,
+) -> str:
     digest = hashlib.sha256()
-    _digest_value(digest, int(conn.execute("PRAGMA user_version").fetchone()[0]))
+    if include_user_version:
+        _digest_value(digest, int(conn.execute("PRAGMA user_version").fetchone()[0]))
     dump = schema_dump(conn)
     _digest_value(digest, dump)
     for object_type, table, _, _ in dump:
@@ -321,5 +342,7 @@ __all__ = [
     "CandidatePopulationError",
     "CandidatePopulationResult",
     "CandidatePopulationStepReceipt",
+    "candidate_logical_digest",
     "populate_v7_candidate",
+    "source_logical_digest",
 ]
