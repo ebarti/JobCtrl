@@ -10,10 +10,22 @@ on:
       - "package.json"
       - "pnpm-workspace.yaml"
       - ".github/workflows/typescript.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/typescript.yml"
   workflow_dispatch:
 
 jobs:
   typescript:
+    # Same-repository stacks are trusted to run hosted CI; public forks retain
+    # the maintainer-reviewed manual validation path documented in CONTRIBUTING.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: TypeScript (apps + packages)
     runs-on: ubuntu-latest
 
@@ -31,11 +43,13 @@ jobs:
           cache: pnpm
 
       - name: Set up Python
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install uv
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
         run: python -m pip install uv
 
       - name: Install dependencies
@@ -56,17 +70,24 @@ jobs:
       - name: Build web
         run: pnpm --filter @jobctrl/web build
 
+      # Browser and Storybook suites exercise the cumulative top layer. The
+      # null guard keeps full coverage for ordinary, non-stack pull requests.
       - name: Build web storybook
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
         run: pnpm --filter @jobctrl/web storybook:build
 
       - name: Install Playwright Chromium
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
         run: pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
 
       - name: Install Python Playwright Chromium
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
         run: uv --project workers/automation run playwright install chromium
 
       - name: Test web e2e
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
         run: pnpm --filter @jobctrl/web e2e
 
       - name: Test web storybook
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
         run: pnpm --filter @jobctrl/web storybook:test

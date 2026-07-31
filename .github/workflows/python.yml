@@ -8,15 +8,27 @@ on:
       - "scripts/**"
       - "pyproject.toml"
       - ".github/workflows/python.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "workers/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - ".github/workflows/python.yml"
   workflow_dispatch:
 
 jobs:
   python:
+    # Same-repository stacks are trusted to run hosted CI; public forks retain
+    # the maintainer-reviewed manual validation path documented in CONTRIBUTING.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: Python (workers/automation)
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # Every matching stack layer gets the 3.11 correctness lane. The top
+        # layer contains the cumulative stack and also exercises compatibility.
+        python-version: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.stack != null && github.event.pull_request.stack.position != github.event.pull_request.stack.size && '["3.11"]' || '["3.11","3.12","3.13"]') }}
 
     steps:
       - name: Checkout

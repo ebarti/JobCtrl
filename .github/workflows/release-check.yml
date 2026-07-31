@@ -3,10 +3,13 @@ name: Release Privacy Gate
 on:
   push:
     branches: ["main"]
+  pull_request:
+    branches: ["main"]
   workflow_dispatch:
 
 jobs:
   release-check:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: Release check
     runs-on: ubuntu-latest
 

@@ -46,9 +46,13 @@ JOBCTRL_DIR=/tmp/jobctrl-qa corepack pnpm dev
   unreleased stack, update canonical docs in the final PR and run QA afterward.
 - Do not commit local user data, `.env` files, resumes, PDFs, logs, browser
   profiles, SQLite databases, or generated application materials.
-- Heavy CI workflows do not run automatically on public pull requests. Run the
-  relevant local validation before opening a PR; maintainers run manual
-  workflows or local checks after reviewing the change.
+- Heavy CI workflows run automatically for same-repository pull requests, but
+  not for pull requests from public forks. Run the relevant local validation
+  before opening a PR; maintainers run manual workflows or local checks for
+  fork contributions after reviewing the change.
+- GitHub Stacks run matching correctness checks on every layer. Python
+  compatibility lanes and the browser/Storybook suites run on the top layer,
+  whose head contains the cumulative stack.
 
 ## Developer Certificate of Origin Sign-Off
 
