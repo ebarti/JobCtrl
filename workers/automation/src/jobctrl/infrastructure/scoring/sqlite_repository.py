@@ -1,17 +1,14 @@
 """SqliteScoreRepository — local-mode adapter for the Scoring context.
 
-Persists ``JobScore`` aggregates to the ``job_scores`` table created by
-``database.ensure_score_tables``. Versioning is enforced at save time:
+Persists ``JobScore`` aggregates to the exact-v7 ``job_scores`` table.
+Versioning is enforced at save time:
 every ``save`` call must hand in an aggregate whose ``version`` is exactly
 ``current_max + 1`` (or ``1`` when there is no row yet) — otherwise the
 adapter raises ``ScoreVersionConflict`` so callers cannot accidentally
 overwrite history.
 
-Local-mode treats ``job_id`` as the legacy ``jobs.url`` primary key. When
-the cloud cutover (Phase 9) introduces stable system-generated ``JobId``
-values, the adapter swaps the column without touching the port.
-
-See ddd-target.md §7.1 / §7.2 (per-aggregate repository, schema decoupling).
+The exact-v7 schema owns initialization and accepts only canonical UUID
+``JobId`` values scoped by ``tenant_id``. Posting URLs remain job locators.
 """
 
 from __future__ import annotations
@@ -21,12 +18,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from jobctrl.database import (
-    ensure_requirement_fit_tables,
-    ensure_score_staleness_tables,
-    ensure_scoring_policy_tables,
-)
-from jobctrl.domain.identifiers import JobId
+from jobctrl.database import ensure_scoring_policy_tables
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.scoring.aggregate import JobScore, ScoreStaleMarker
 from jobctrl.domain.scoring.policy import CorrectionSignal, ScoringPolicy
 from jobctrl.domain.scoring.value_objects import (
@@ -44,7 +37,7 @@ from jobctrl.domain.scoring.value_objects import (
     ScoreTrace,
     ScoringCriteria,
 )
-from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctrl.domain.tenant import TenantId
 from jobctrl.state import record_job_event, set_stage_state
 
 
@@ -70,7 +63,6 @@ class SqliteScoreStalenessRepository:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        ensure_score_staleness_tables(conn)
 
     def mark_comparable_scores_stale(
         self,
@@ -88,30 +80,32 @@ class SqliteScoreStalenessRepository:
         marked: list[ScoreStaleMarker] = []
         rows = self._conn.execute(
             """
-            SELECT s.job_url, s.trace_json
+            SELECT s.job_id, s.trace_json
             FROM job_scores s
             INNER JOIN (
-                SELECT job_url, MAX(version) AS max_version
+                SELECT tenant_id, job_id, MAX(version) AS max_version
                 FROM job_scores
                 WHERE tenant_id = ?
-                GROUP BY job_url
+                GROUP BY tenant_id, job_id
             ) latest
-              ON latest.job_url = s.job_url AND latest.max_version = s.version
+              ON latest.tenant_id = s.tenant_id
+             AND latest.job_id = s.job_id
+             AND latest.max_version = s.version
             WHERE s.tenant_id = ?
               AND (s.correction_json IS NULL OR TRIM(s.correction_json) = '')
             """,
             (str(tenant_id), str(tenant_id)),
         ).fetchall()
         for row in rows:
-            job_url = _row_value(row, "job_url", 0)
-            trace = _json_object(_row_value(row, "trace_json", 1))
+            job_id = canonical_job_id(str(row["job_id"]))
+            trace = _json_object(row["trace_json"])
             old_policy_version = _int_or_default(trace.get("scoring_policy_version"), 0)
             if old_policy_version >= new_policy_version:
                 continue
 
             marker = ScoreStaleMarker(
                 tenant_id=tenant_id,
-                job_id=JobId(str(job_url)),
+                job_id=job_id,
                 stale_reason=stale_reason,
                 old_policy_id=str(trace.get("scoring_policy_id") or ""),
                 old_policy_version=old_policy_version,
@@ -122,7 +116,7 @@ class SqliteScoreStalenessRepository:
             inserted = self._conn.execute(
                 """
                 INSERT OR IGNORE INTO job_score_staleness (
-                    tenant_id, job_url, stale_reason,
+                    tenant_id, job_id, stale_reason,
                     old_policy_id, old_policy_version,
                     new_policy_id, new_policy_version,
                     marked_at, resolved, resolved_at, resolved_by_score_version
@@ -151,6 +145,7 @@ class SqliteScoreStalenessRepository:
         """Resolve markers satisfied by a fresh, non-corrected score version."""
         if score.correction is not None or score.trace.scoring_policy_version <= 0:
             return 0
+        job_id = canonical_job_id(str(score.job_id))
         now = _utc_now()
         result = self._conn.execute(
             """
@@ -159,7 +154,7 @@ class SqliteScoreStalenessRepository:
                    resolved_at = ?,
                    resolved_by_score_version = ?
              WHERE tenant_id = ?
-               AND job_url = ?
+               AND job_id = ?
                AND resolved = 0
                AND new_policy_version <= ?
             """,
@@ -167,18 +162,19 @@ class SqliteScoreStalenessRepository:
                 now,
                 score.version,
                 str(score.tenant_id),
-                str(score.job_id),
+                str(job_id),
                 score.trace.scoring_policy_version,
             ),
         )
         if result.rowcount > 0:
             self._record_score_event(
-                str(score.job_id),
+                score.tenant_id,
+                job_id,
                 "ScoreStalenessResolved",
                 "Score stale marker resolved by a fresh score.",
                 {
                     "tenantId": str(score.tenant_id),
-                    "jobId": str(score.job_id),
+                    "jobId": str(job_id),
                     "scoreVersion": score.version,
                     "scoringPolicyVersion": score.trace.scoring_policy_version,
                 },
@@ -196,7 +192,7 @@ class SqliteScoreStalenessRepository:
         """Clear active markers and reset their score stage for explicit rescore."""
         now = reset_at or _utc_now()
         sql = (
-            "SELECT tenant_id, job_url, stale_reason, old_policy_id, "
+            "SELECT tenant_id, job_id, stale_reason, old_policy_id, "
             "old_policy_version, new_policy_id, new_policy_version, marked_at, "
             "resolved, resolved_at, resolved_by_score_version "
             "FROM job_score_staleness "
@@ -210,12 +206,12 @@ class SqliteScoreStalenessRepository:
         rows = self._conn.execute(sql, params).fetchall()
         markers = [self._row_to_marker(row) for row in rows]
         for marker in markers:
-            job_url = str(marker.job_id)
             set_stage_state(
                 self._conn,
-                job_url,
+                marker.job_id,
                 "score",
                 "pending",
+                tenant_id=marker.tenant_id,
                 attempt_count=0,
                 next_action="jobctrl run score --rescore",
                 metadata={
@@ -230,7 +226,7 @@ class SqliteScoreStalenessRepository:
                    SET resolved = 1,
                        resolved_at = ?
                  WHERE tenant_id = ?
-                   AND job_url = ?
+                   AND job_id = ?
                    AND stale_reason = ?
                    AND old_policy_version = ?
                    AND new_policy_version = ?
@@ -238,19 +234,20 @@ class SqliteScoreStalenessRepository:
                 (
                     now,
                     str(marker.tenant_id),
-                    job_url,
+                    str(marker.job_id),
                     marker.stale_reason,
                     marker.old_policy_version,
                     marker.new_policy_version,
                 ),
             )
             self._record_score_event(
-                job_url,
+                marker.tenant_id,
+                marker.job_id,
                 "ScoreRescoreRequested",
                 "Stale score reset for explicit rescore.",
                 {
                     "tenantId": str(marker.tenant_id),
-                    "jobId": job_url,
+                    "jobId": str(marker.job_id),
                     "staleReason": marker.stale_reason,
                     "oldPolicyVersion": marker.old_policy_version,
                     "newPolicyVersion": marker.new_policy_version,
@@ -261,18 +258,19 @@ class SqliteScoreStalenessRepository:
         return markers
 
     def _mark_score_stage_stale(self, marker: ScoreStaleMarker) -> None:
-        job_url = str(marker.job_id)
         row = self._conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-            (job_url,),
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'score'",
+            (str(marker.tenant_id), str(marker.job_id)),
         ).fetchone()
-        state = _row_value(row, "state", 0) if row is not None else None
+        state = row["state"] if row is not None else None
         if state in (None, "succeeded"):
             set_stage_state(
                 self._conn,
-                job_url,
+                marker.job_id,
                 "score",
                 "stale",
+                tenant_id=marker.tenant_id,
                 metadata={
                     "stale_reason": marker.stale_reason,
                     "old_policy_version": marker.old_policy_version,
@@ -280,12 +278,13 @@ class SqliteScoreStalenessRepository:
                 },
             )
         self._record_score_event(
-            job_url,
+            marker.tenant_id,
+            marker.job_id,
             "ScoreMarkedStale",
             "Score marked stale after scoring policy changed.",
             {
                 "tenantId": str(marker.tenant_id),
-                "jobId": job_url,
+                "jobId": str(marker.job_id),
                 "staleReason": marker.stale_reason,
                 "oldPolicyId": marker.old_policy_id,
                 "oldPolicyVersion": marker.old_policy_version,
@@ -297,36 +296,36 @@ class SqliteScoreStalenessRepository:
 
     def _record_score_event(
         self,
-        job_url: str,
+        tenant_id: TenantId,
+        job_id: JobId,
         event_type: str,
         message: str,
         payload: dict[str, Any],
     ) -> None:
-        if not _table_exists(self._conn, "job_events"):
-            return
         record_job_event(
             self._conn,
-            job_url,
+            job_id,
             "score",
             event_type,
+            tenant_id=tenant_id,
             message=message,
             payload=payload,
         )
 
     @staticmethod
-    def _row_to_marker(row: Any) -> ScoreStaleMarker:
+    def _row_to_marker(row: sqlite3.Row) -> ScoreStaleMarker:
         return ScoreStaleMarker(
-            tenant_id=TenantId(str(_row_value(row, "tenant_id", 0))),
-            job_id=JobId(str(_row_value(row, "job_url", 1))),
-            stale_reason=str(_row_value(row, "stale_reason", 2)),
-            old_policy_id=str(_row_value(row, "old_policy_id", 3) or ""),
-            old_policy_version=int(_row_value(row, "old_policy_version", 4) or 0),
-            new_policy_id=str(_row_value(row, "new_policy_id", 5) or ""),
-            new_policy_version=int(_row_value(row, "new_policy_version", 6) or 0),
-            marked_at=str(_row_value(row, "marked_at", 7)),
-            resolved=bool(_row_value(row, "resolved", 8)),
-            resolved_at=_row_value(row, "resolved_at", 9),
-            resolved_by_score_version=_row_value(row, "resolved_by_score_version", 10),
+            tenant_id=TenantId(str(row["tenant_id"])),
+            job_id=canonical_job_id(str(row["job_id"])),
+            stale_reason=str(row["stale_reason"]),
+            old_policy_id=str(row["old_policy_id"] or ""),
+            old_policy_version=int(row["old_policy_version"] or 0),
+            new_policy_id=str(row["new_policy_id"] or ""),
+            new_policy_version=int(row["new_policy_version"] or 0),
+            marked_at=str(row["marked_at"]),
+            resolved=bool(row["resolved"]),
+            resolved_at=row["resolved_at"],
+            resolved_by_score_version=row["resolved_by_score_version"],
         )
 
 
@@ -335,7 +334,6 @@ class SqliteRequirementFitReportRepository:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        ensure_requirement_fit_tables(conn)
 
     def load(
         self,
@@ -344,89 +342,91 @@ class SqliteRequirementFitReportRepository:
         *,
         score_version: int | None = None,
     ) -> RequirementFitReport | None:
+        stable_job_id = canonical_job_id(str(job_id))
         if score_version is None:
             row = self._conn.execute(
                 """
-                SELECT job_url, score_version, tenant_id,
+                SELECT job_id, score_version, tenant_id,
                        employer_analysis_generation, profile_snapshot_version,
                        scoring_policy_version, formula_version,
                        resolved_fit_score, fit_band, confidence, summary_json
-                  FROM job_requirement_fit_reports
+                 FROM job_requirement_fit_reports
                  WHERE tenant_id = ?
-                   AND job_url = ?
+                   AND job_id = ?
                  ORDER BY score_version DESC
                  LIMIT 1
                 """,
-                (str(tenant_id), str(job_id)),
+                (str(tenant_id), str(stable_job_id)),
             ).fetchone()
         else:
             row = self._conn.execute(
                 """
-                SELECT job_url, score_version, tenant_id,
+                SELECT job_id, score_version, tenant_id,
                        employer_analysis_generation, profile_snapshot_version,
                        scoring_policy_version, formula_version,
                        resolved_fit_score, fit_band, confidence, summary_json
                   FROM job_requirement_fit_reports
                  WHERE tenant_id = ?
-                   AND job_url = ?
+                   AND job_id = ?
                    AND score_version = ?
                  LIMIT 1
                 """,
-                (str(tenant_id), str(job_id), score_version),
+                (str(tenant_id), str(stable_job_id), score_version),
             ).fetchone()
         if row is None:
             return None
 
-        job_url = str(_row_value(row, "job_url", 0))
-        version = _int_or_default(_row_value(row, "score_version", 1), 0)
+        stored_job_id = canonical_job_id(str(row["job_id"]))
+        version = _int_or_default(row["score_version"], 0)
         item_rows = self._conn.execute(
             """
             SELECT requirement_id, requirement_text, tier, weight,
                    job_evidence_span, fit_json, contribution_json,
                    tailoring_json, artifact_coverage_json
-              FROM job_requirement_fit_items
+             FROM job_requirement_fit_items
              WHERE tenant_id = ?
-               AND job_url = ?
+               AND job_id = ?
                AND score_version = ?
              ORDER BY position ASC, requirement_id ASC
             """,
-            (str(tenant_id), job_url, version),
+            (str(tenant_id), str(stored_job_id), version),
         ).fetchall()
         assessments = tuple(self._row_to_assessment(item) for item in item_rows)
         return RequirementFitReport(
-            job_id=job_url,
+            job_id=stored_job_id,
             score_version=version,
             employer_analysis_generation=_int_or_default(
-                _row_value(row, "employer_analysis_generation", 3),
+                row["employer_analysis_generation"],
                 0,
             ),
             profile_snapshot_version=_int_or_default(
-                _row_value(row, "profile_snapshot_version", 4),
+                row["profile_snapshot_version"],
                 0,
             ),
             scoring_policy_version=_int_or_default(
-                _row_value(row, "scoring_policy_version", 5),
+                row["scoring_policy_version"],
                 0,
             ),
-            formula_version=str(_row_value(row, "formula_version", 6) or ""),
-            resolved_fit_score=FitScore.from_optional(_row_value(row, "resolved_fit_score", 7)),
-            fit_band=str(_row_value(row, "fit_band", 8) or "plausible"),
-            confidence=str(_row_value(row, "confidence", 9) or "medium"),
-            summary=RequirementFitSummary.from_dict(_json_object(_row_value(row, "summary_json", 10))),
+            formula_version=str(row["formula_version"] or ""),
+            resolved_fit_score=FitScore.from_optional(row["resolved_fit_score"]),
+            fit_band=str(row["fit_band"] or "plausible"),
+            confidence=str(row["confidence"] or "medium"),
+            summary=RequirementFitSummary.from_dict(_json_object(row["summary_json"])),
             assessments=assessments,
         )
 
     def save(self, tenant_id: TenantId, report: RequirementFitReport) -> None:
+        job_id = canonical_job_id(str(report.job_id))
         now = _utc_now()
         self._conn.execute(
             """
             INSERT INTO job_requirement_fit_reports (
-                job_url, score_version, tenant_id,
+                tenant_id, job_id, score_version,
                 employer_analysis_generation, profile_snapshot_version,
                 scoring_policy_version, formula_version, resolved_fit_score,
                 fit_band, confidence, summary_json, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(job_url, score_version, tenant_id) DO UPDATE SET
+            ON CONFLICT(tenant_id, job_id, score_version) DO UPDATE SET
                 employer_analysis_generation = excluded.employer_analysis_generation,
                 profile_snapshot_version = excluded.profile_snapshot_version,
                 scoring_policy_version = excluded.scoring_policy_version,
@@ -438,9 +438,9 @@ class SqliteRequirementFitReportRepository:
                 created_at = excluded.created_at
             """,
             (
-                report.job_id,
-                report.score_version,
                 str(tenant_id),
+                str(job_id),
+                report.score_version,
                 report.employer_analysis_generation,
                 report.profile_snapshot_version,
                 report.scoring_policy_version,
@@ -457,26 +457,26 @@ class SqliteRequirementFitReportRepository:
         self._conn.execute(
             """
             DELETE FROM job_requirement_fit_items
-             WHERE job_url = ?
+             WHERE tenant_id = ?
+               AND job_id = ?
                AND score_version = ?
-               AND tenant_id = ?
             """,
-            (report.job_id, report.score_version, str(tenant_id)),
+            (str(tenant_id), str(job_id), report.score_version),
         )
         for position, assessment in enumerate(report.assessments):
             self._conn.execute(
                 """
                 INSERT INTO job_requirement_fit_items (
-                    job_url, score_version, tenant_id, requirement_id,
+                    tenant_id, job_id, score_version, requirement_id,
                     requirement_text, tier, weight, job_evidence_span,
                     fit_json, contribution_json, tailoring_json,
                     artifact_coverage_json, position
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    report.job_id,
-                    report.score_version,
                     str(tenant_id),
+                    str(job_id),
+                    report.score_version,
                     assessment.requirement_id,
                     assessment.requirement_text,
                     assessment.tier,
@@ -496,20 +496,20 @@ class SqliteRequirementFitReportRepository:
         self._conn.commit()
 
     @staticmethod
-    def _row_to_assessment(row: Any) -> RequirementFitAssessment:
-        coverage = _row_value(row, "artifact_coverage_json", 8)
+    def _row_to_assessment(row: sqlite3.Row) -> RequirementFitAssessment:
+        coverage = row["artifact_coverage_json"]
         return RequirementFitAssessment(
-            requirement_id=str(_row_value(row, "requirement_id", 0)),
-            requirement_text=str(_row_value(row, "requirement_text", 1)),
-            tier=str(_row_value(row, "tier", 2)),
-            weight=float(_row_value(row, "weight", 3) or 0.0),
-            job_evidence_span=str(_row_value(row, "job_evidence_span", 4) or ""),
-            fit=RequirementFitStatus.from_dict(_json_object(_row_value(row, "fit_json", 5))),
+            requirement_id=str(row["requirement_id"]),
+            requirement_text=str(row["requirement_text"]),
+            tier=str(row["tier"]),
+            weight=float(row["weight"] or 0.0),
+            job_evidence_span=str(row["job_evidence_span"] or ""),
+            fit=RequirementFitStatus.from_dict(_json_object(row["fit_json"])),
             contribution=RequirementScoreContribution.from_dict(
-                _json_object(_row_value(row, "contribution_json", 6))
+                _json_object(row["contribution_json"])
             ),
             tailoring=RequirementTailoringDirective.from_dict(
-                _json_object(_row_value(row, "tailoring_json", 7))
+                _json_object(row["tailoring_json"])
             ),
             artifact_coverage=(
                 RequirementArtifactCoverage.from_dict(_json_object(coverage))
@@ -541,37 +541,40 @@ class SqliteScoreRepository:
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
-
     def load(self, tenant_id: TenantId, job_id: JobId) -> JobScore | None:
+        stable_job_id = canonical_job_id(str(job_id))
         row = self._conn.execute(
             """
-            SELECT job_url, version, fit_score, breakdown_json, keywords_json,
-                   scored_at, correction_json, criteria_json, trace_json
+            SELECT tenant_id, job_id, version, fit_score, breakdown_json,
+                   keywords_json, scored_at, correction_json, criteria_json, trace_json
             FROM job_scores
-            WHERE job_url = ? AND tenant_id = ?
+            WHERE tenant_id = ? AND job_id = ?
             ORDER BY version DESC
             LIMIT 1
             """,
-            (str(job_id), str(tenant_id)),
+            (str(tenant_id), str(stable_job_id)),
         ).fetchone()
         if row is None:
             return None
-        return self._row_to_score(row, tenant_id)
+        return self._row_to_score(row)
 
     def list_pending(self, tenant_id: TenantId, *, limit: int = 0) -> list[JobId]:
-        """Return job URLs that have a description but no score row yet."""
+        """Return enriched canonical JobIds that have no score row yet."""
         params: list[Any] = [str(tenant_id)]
         sql = (
-            "SELECT j.url FROM jobs j "
-            "LEFT JOIN job_scores s ON s.job_url = j.url AND s.tenant_id = ? "
-            "WHERE j.full_description IS NOT NULL AND s.job_url IS NULL "
+            "SELECT j.job_id FROM jobs j "
+            "INNER JOIN job_enrichments e "
+            "  ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id "
+            "LEFT JOIN job_scores s ON s.tenant_id = j.tenant_id AND s.job_id = j.job_id "
+            "WHERE j.tenant_id = ? AND e.current_status = 'enriched' "
+            "  AND TRIM(e.full_description) <> '' AND s.job_id IS NULL "
             "ORDER BY j.discovered_at DESC NULLS LAST"
         )
         if limit > 0:
             sql += " LIMIT ?"
             params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
-        return [JobId(row[0]) for row in rows if row[0]]
+        return [canonical_job_id(str(row[0])) for row in rows if row[0]]
 
     def list_by_score_range(
         self,
@@ -589,34 +592,37 @@ class SqliteScoreRepository:
 
         rows = self._conn.execute(
             """
-            SELECT s.job_url, s.version, s.fit_score, s.breakdown_json,
-                   s.keywords_json, s.scored_at, s.correction_json,
-                   s.criteria_json, s.trace_json
+            SELECT s.tenant_id, s.job_id, s.version, s.fit_score,
+                   s.breakdown_json, s.keywords_json, s.scored_at,
+                   s.correction_json, s.criteria_json, s.trace_json
             FROM job_scores s
             INNER JOIN (
-                SELECT job_url, MAX(version) AS max_version
+                SELECT tenant_id, job_id, MAX(version) AS max_version
                 FROM job_scores
                 WHERE tenant_id = ?
-                GROUP BY job_url
+                GROUP BY tenant_id, job_id
             ) latest
-              ON latest.job_url = s.job_url AND latest.max_version = s.version
+              ON latest.tenant_id = s.tenant_id
+             AND latest.job_id = s.job_id
+             AND latest.max_version = s.version
             WHERE s.tenant_id = ?
               AND s.fit_score BETWEEN ? AND ?
             ORDER BY s.fit_score DESC, s.scored_at DESC
             """,
             (str(tenant_id), str(tenant_id), min_score, max_score),
         ).fetchall()
-        return [self._row_to_score(row, tenant_id) for row in rows]
+        return [self._row_to_score(row) for row in rows]
 
     # ------------------------------------------------------------------
     # Write
     # ------------------------------------------------------------------
 
     def save(self, score: JobScore) -> None:
+        job_id = canonical_job_id(str(score.job_id))
         latest = self._conn.execute(
             "SELECT COALESCE(MAX(version), 0) AS v FROM job_scores "
-            "WHERE job_url = ? AND tenant_id = ?",
-            (str(score.job_id), str(score.tenant_id)),
+            "WHERE tenant_id = ? AND job_id = ?",
+            (str(score.tenant_id), str(job_id)),
         ).fetchone()
         current_max = int(latest[0] if latest else 0)
         expected = current_max + 1
@@ -630,14 +636,14 @@ class SqliteScoreRepository:
         self._conn.execute(
             """
             INSERT INTO job_scores (
-                job_url, version, tenant_id, fit_score, breakdown_json,
+                tenant_id, job_id, version, fit_score, breakdown_json,
                 keywords_json, scored_at, correction_json, criteria_json, trace_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                str(score.job_id),
-                score.version,
                 str(score.tenant_id),
+                str(job_id),
+                score.version,
                 score.fit_score.value,
                 json.dumps(score.breakdown.to_dict(), sort_keys=True),
                 json.dumps(score.matched_keywords.to_list()),
@@ -659,49 +665,21 @@ class SqliteScoreRepository:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _row_to_score(row: Any, tenant_id: TenantId | None = None) -> JobScore:
-        if isinstance(row, sqlite3.Row):
-            job_url = row["job_url"]
-            version = row["version"]
-            fit_score = row["fit_score"]
-            breakdown_json = row["breakdown_json"]
-            keywords_json = row["keywords_json"]
-            scored_at = row["scored_at"]
-            correction_json = row["correction_json"]
-            criteria_json = row["criteria_json"] if "criteria_json" in row.keys() else None
-            trace_json = row["trace_json"] if "trace_json" in row.keys() else None
-        else:
-            if len(row) >= 9:
-                (
-                    job_url,
-                    version,
-                    fit_score,
-                    breakdown_json,
-                    keywords_json,
-                    scored_at,
-                    correction_json,
-                    criteria_json,
-                    trace_json,
-                ) = row
-            else:
-                job_url, version, fit_score, breakdown_json, keywords_json, scored_at, correction_json = row
-                criteria_json = None
-                trace_json = None
-
-        breakdown_data = json.loads(breakdown_json) if breakdown_json else {}
-        keywords_data = json.loads(keywords_json) if keywords_json else []
-        correction_data = json.loads(correction_json) if correction_json else None
-        criteria_data = json.loads(criteria_json) if criteria_json else None
-        trace_data = json.loads(trace_json) if trace_json else None
+    def _row_to_score(row: sqlite3.Row) -> JobScore:
+        breakdown_data = json.loads(row["breakdown_json"]) if row["breakdown_json"] else {}
+        keywords_data = json.loads(row["keywords_json"]) if row["keywords_json"] else []
+        correction_data = json.loads(row["correction_json"]) if row["correction_json"] else None
+        criteria_data = json.loads(row["criteria_json"]) if row["criteria_json"] else None
+        trace_data = json.loads(row["trace_json"]) if row["trace_json"] else None
 
         return JobScore(
-            tenant_id=tenant_id or LOCAL_TENANT,
-            job_id=JobId(str(job_url)),
-            version=int(version),
-            fit_score=FitScore(value=int(fit_score)),
+            tenant_id=TenantId(str(row["tenant_id"])),
+            job_id=canonical_job_id(str(row["job_id"])),
+            version=int(row["version"]),
+            fit_score=FitScore(value=int(row["fit_score"])),
             breakdown=ScoreBreakdown.from_dict(breakdown_data),
             matched_keywords=MatchedKeywords.from_iterable(keywords_data),
-            scored_at=str(scored_at),
+            scored_at=str(row["scored_at"]),
             criteria=ScoringCriteria.from_dict(criteria_data),
             trace=ScoreTrace.from_dict(trace_data),
             correction=ScoreCorrection.from_dict(correction_data) if correction_data else None,
@@ -791,12 +769,6 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _row_value(row: Any, name: str, index: int) -> Any:
-    if isinstance(row, sqlite3.Row):
-        return row[name]
-    return row[index]
-
-
 def _json_object(raw: Any) -> dict[str, Any]:
     try:
         value = json.loads(str(raw or "{}"))
@@ -810,11 +782,3 @@ def _int_or_default(raw: Any, default: int) -> int:
         return int(raw)
     except (TypeError, ValueError):
         return default
-
-
-def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (table_name,),
-    ).fetchone()
-    return row is not None

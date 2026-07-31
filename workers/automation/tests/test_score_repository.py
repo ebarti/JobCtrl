@@ -1,22 +1,15 @@
-"""Phase 5 / S-16: SqliteScoreRepository round-trip + backfill + version conflict.
-
-Each test runs against a tmp SQLite database via the public ``init_db``
-helper so the schema (including ``ensure_score_tables`` + backfill) is
-exercised end-to-end. The legacy ``jobs.fit_score`` columns are written
-directly by these tests to seed the backfill path.
-"""
+"""Exact-v7 SQLite scoring repository persistence tests."""
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from jobctrl.database import ensure_score_tables, get_jobs_by_stage, init_db
-from jobctrl.domain.identifiers import JobId
+from jobctrl.database import init_db
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.scoring import (
     FitScore,
     JobScore,
@@ -30,12 +23,11 @@ from jobctrl.domain.scoring import (
     RequirementTailoringDirective,
     ScoreBreakdown,
     ScoreCorrection,
-    ScoreParseResult,
     ScoreTrace,
     ScoringCriteria,
 )
-from jobctrl.domain.scoring.use_cases import CorrectScoreUseCase, ScoreJobUseCase
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.scoring.use_cases import CorrectScoreUseCase
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.scoring import (
     SqliteRequirementFitReportRepository,
     SqliteScoreRepository,
@@ -43,37 +35,79 @@ from jobctrl.infrastructure.scoring import (
     SqliteScoringPolicyRepository,
 )
 from jobctrl.infrastructure.scoring.sqlite_repository import ScoreVersionConflict
-from jobctrl.scoring.eval import build_scoring_governance_report
-from jobctrl.state import set_stage_state
+
+
+def _job_id(seed: int) -> JobId:
+    return canonical_job_id(f"00000000-0000-4000-8000-{seed:012d}")
 
 
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
-    db_path = tmp_path / "jobctrl.db"
-    return init_db(db_path)
+    connection = init_db(tmp_path / "jobctrl.db")
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
 
 
-def _seed_job(conn: sqlite3.Connection, url: str = "https://example.com/job/1") -> str:
+def _seed_job(
+    conn: sqlite3.Connection,
+    *,
+    job_id: JobId,
+    url: str,
+    tenant_id: TenantId = LOCAL_TENANT,
+    full_description: str | None = "Description body",
+) -> JobId:
     conn.execute(
-        "INSERT INTO jobs (url, title, site, full_description, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (url, "Engineer", "Acme", "Description body", datetime.now(timezone.utc).isoformat()),
+        """
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, site, full_description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(tenant_id),
+            str(job_id),
+            url,
+            "Engineer",
+            "Acme",
+            full_description,
+            datetime.now(timezone.utc).isoformat(),
+        ),
     )
     conn.commit()
-    return url
+    return job_id
+
+
+def _seed_enrichment(
+    conn: sqlite3.Connection,
+    *,
+    job_id: JobId,
+    tenant_id: TenantId = LOCAL_TENANT,
+    full_description: str = "Canonical enriched description.",
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        INSERT INTO job_enrichments (
+            tenant_id, job_id, current_status, full_description, enriched_at,
+            extraction_tier, updated_at
+        ) VALUES (?, ?, 'enriched', ?, ?, 'json_ld', ?)
+        """,
+        (str(tenant_id), str(job_id), full_description, now, now),
+    )
+    conn.commit()
 
 
 def _build_score(
-    url: str,
+    job_id: JobId,
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
     version: int = 1,
     fit: int = 7,
-    *,
     trace: ScoreTrace | None = None,
     correction: ScoreCorrection | None = None,
 ) -> JobScore:
     return JobScore(
-        tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        tenant_id=tenant_id,
+        job_id=job_id,
         version=version,
         fit_score=FitScore.create(fit),
         breakdown=ScoreBreakdown(technical_fit=8, experience_fit=6, role_fit=7, reasoning="ok"),
@@ -138,14 +172,14 @@ def _requirement_assessment(
 
 
 def _requirement_report(
-    url: str,
+    job_id: JobId,
     *,
     score_version: int = 1,
     fit: int = 8,
     assessments: tuple[RequirementFitAssessment, ...] | None = None,
 ) -> RequirementFitReport:
     return RequirementFitReport(
-        job_id=url,
+        job_id=job_id,
         score_version=score_version,
         employer_analysis_generation=2,
         profile_snapshot_version=3,
@@ -164,29 +198,60 @@ def _requirement_report(
     )
 
 
-# ---------------------------------------------------------------------------
-# Round-trip
-# ---------------------------------------------------------------------------
+def test_converted_repositories_do_not_initialize_schema_at_runtime() -> None:
+    connection = sqlite3.connect(":memory:")
+
+    SqliteScoreRepository(connection)
+    SqliteScoreStalenessRepository(connection)
+    SqliteRequirementFitReportRepository(connection)
+
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    assert not {
+        "job_scores",
+        "job_score_staleness",
+        "job_requirement_fit_reports",
+        "job_requirement_fit_items",
+    } & tables
 
 
-def test_save_and_load_round_trips(conn: sqlite3.Connection) -> None:
-    url = _seed_job(conn)
+def test_score_round_trip_uses_canonical_job_id_distinct_from_posting_url(
+    conn: sqlite3.Connection,
+) -> None:
+    job_id = _seed_job(
+        conn,
+        job_id=_job_id(1),
+        url="https://example.com/jobs/score-round-trip",
+    )
     repo = SqliteScoreRepository(conn)
-    repo.save(_build_score(url))
+    repo.save(_build_score(job_id))
 
-    loaded = repo.load(LOCAL_TENANT, JobId(url))
+    loaded = repo.load(LOCAL_TENANT, job_id)
+
     assert loaded is not None
+    assert loaded.job_id == job_id
     assert loaded.fit_score.value == 7
     assert loaded.matched_keywords.values == ("python", "fastapi")
     assert loaded.breakdown.technical_fit == 8
+    row = conn.execute(
+        "SELECT tenant_id, job_id FROM job_scores"
+    ).fetchone()
+    assert tuple(row) == (str(LOCAL_TENANT), str(job_id))
 
 
-def test_save_and_load_round_trips_criteria_and_trace(conn: sqlite3.Connection) -> None:
-    url = _seed_job(conn)
-    repo = SqliteScoreRepository(conn)
+def test_score_round_trip_preserves_criteria_and_trace(conn: sqlite3.Connection) -> None:
+    job_id = _seed_job(
+        conn,
+        job_id=_job_id(2),
+        url="https://example.com/jobs/criteria-and-trace",
+    )
     score = JobScore.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=job_id,
         fit_score=FitScore.create(9),
         breakdown=ScoreBreakdown(
             technical_fit=9,
@@ -230,9 +295,10 @@ def test_save_and_load_round_trips_criteria_and_trace(conn: sqlite3.Connection) 
             parser_warnings=("missing_confidence",),
         ),
     )
+    repo = SqliteScoreRepository(conn)
     repo.save(score)
 
-    loaded = repo.load(LOCAL_TENANT, JobId(url))
+    loaded = repo.load(LOCAL_TENANT, job_id)
 
     assert loaded is not None
     assert loaded.criteria.criteria_text == "Security leadership."
@@ -261,92 +327,95 @@ def test_save_and_load_round_trips_criteria_and_trace(conn: sqlite3.Connection) 
     assert loaded.trace.parser_warnings == ("missing_confidence",)
 
 
-def test_load_legacy_trace_without_policy_metadata(conn: sqlite3.Connection) -> None:
-    url = _seed_job(conn)
-    conn.execute(
-        """
-        INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json,
-            keywords_json, scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, 1, ?, 7, ?, ?, ?, NULL, ?, ?)
-        """,
-        (
-            url,
-            str(LOCAL_TENANT),
-            '{"technical_fit": 7, "experience_fit": 7, "role_fit": 7, "reasoning": "legacy"}',
-            '["python"]',
-            datetime.now(timezone.utc).isoformat(),
-            "{}",
-            '{"prompt_version": "legacy", "schema_version": "legacy", "model": "legacy"}',
-        ),
+def test_score_repository_rejects_url_shaped_job_ids(conn: sqlite3.Connection) -> None:
+    url = "https://example.com/jobs/not-an-id"
+    repo = SqliteScoreRepository(conn)
+
+    with pytest.raises(ValueError, match="JobId must be a canonical UUID"):
+        repo.load(LOCAL_TENANT, JobId(url))
+    with pytest.raises(ValueError, match="JobId must be a canonical UUID"):
+        repo.save(_build_score(JobId(url)))
+
+    assert conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0] == 0
+
+
+def test_score_repository_scopes_same_job_id_by_tenant(conn: sqlite3.Connection) -> None:
+    job_id = _job_id(3)
+    other_tenant = TenantId("other")
+    _seed_job(
+        conn,
+        job_id=job_id,
+        url="https://example.com/jobs/local-score",
     )
-    conn.commit()
+    _seed_job(
+        conn,
+        tenant_id=other_tenant,
+        job_id=job_id,
+        url="https://example.com/jobs/other-score",
+    )
+    repo = SqliteScoreRepository(conn)
+    repo.save(_build_score(job_id, fit=7))
+    repo.save(_build_score(job_id, tenant_id=other_tenant, fit=9))
 
-    loaded = SqliteScoreRepository(conn).load(LOCAL_TENANT, JobId(url))
+    local_score = repo.load(LOCAL_TENANT, job_id)
+    other_score = repo.load(other_tenant, job_id)
+    local_range = repo.list_by_score_range(LOCAL_TENANT, min_score=1)
 
-    assert loaded is not None
-    assert loaded.trace.prompt_version == "legacy"
-    assert loaded.trace.scoring_policy_id == ""
-    assert loaded.trace.scoring_policy_version == 0
-    assert loaded.trace.rubric_version == ""
-    assert loaded.trace.raw_weighted_score is None
-    assert loaded.trace.calibration_adjustment == 0.0
-    assert loaded.trace.anchor_ids == ()
-    assert loaded.trace.resolved_fit_band == ""
-    assert loaded.trace.resolution_reason == ""
-    assert loaded.trace.resolved_dimensions == ()
-    assert loaded.trace.fit_band_thresholds == ()
-    assert loaded.trace.policy_evidence == {}
+    assert local_score is not None
+    assert other_score is not None
+    assert local_score.fit_score.value == 7
+    assert other_score.fit_score.value == 9
+    assert [(score.tenant_id, score.job_id) for score in local_range] == [
+        (LOCAL_TENANT, job_id)
+    ]
 
 
 def test_load_returns_none_when_no_score(conn: sqlite3.Connection) -> None:
-    url = _seed_job(conn)
-    repo = SqliteScoreRepository(conn)
-    assert repo.load(LOCAL_TENANT, JobId(url)) is None
+    job_id = _seed_job(
+        conn,
+        job_id=_job_id(4),
+        url="https://example.com/jobs/no-score",
+    )
+
+    assert SqliteScoreRepository(conn).load(LOCAL_TENANT, job_id) is None
 
 
-# ---------------------------------------------------------------------------
-# Requirement fit report persistence
-# ---------------------------------------------------------------------------
-
-
-def test_init_db_creates_requirement_fit_tables(conn: sqlite3.Connection) -> None:
-    table_names = {
-        row[0]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"
-        ).fetchall()
-    }
-    assert "job_requirement_fit_reports" in table_names
-    assert "job_requirement_fit_items" in table_names
-
-
-def test_requirement_fit_report_repository_round_trips(conn: sqlite3.Connection) -> None:
-    url = _seed_job(conn)
-    SqliteScoreRepository(conn).save(_build_score(url, fit=8))
-    report = _requirement_report(url)
-
+def test_requirement_fit_report_round_trips_with_canonical_job_id(
+    conn: sqlite3.Connection,
+) -> None:
+    job_id = _seed_job(
+        conn,
+        job_id=_job_id(5),
+        url="https://example.com/jobs/requirement-round-trip",
+    )
+    SqliteScoreRepository(conn).save(_build_score(job_id, fit=8))
+    report = _requirement_report(job_id)
     repo = SqliteRequirementFitReportRepository(conn)
     repo.save(LOCAL_TENANT, report)
 
-    loaded = repo.load(LOCAL_TENANT, JobId(url), score_version=1)
+    loaded = repo.load(LOCAL_TENANT, job_id, score_version=1)
 
     assert loaded == report
     assert loaded is not None
+    assert loaded.job_id == job_id
     assert loaded.assessments[0].fit.kind == "matched"
     assert loaded.assessments[0].tailoring.action == "double_down"
     assert loaded.assessments[0].artifact_coverage is not None
     assert loaded.assessments[0].artifact_coverage.state == "covered"
 
 
-def test_requirement_fit_report_repository_replaces_item_rows(conn: sqlite3.Connection) -> None:
-    url = _seed_job(conn)
-    SqliteScoreRepository(conn).save(_build_score(url, fit=8))
+def test_requirement_fit_report_replaces_item_rows(conn: sqlite3.Connection) -> None:
+    job_id = _seed_job(
+        conn,
+        job_id=_job_id(6),
+        url="https://example.com/jobs/requirement-replace",
+    )
+    SqliteScoreRepository(conn).save(_build_score(job_id, fit=8))
     repo = SqliteRequirementFitReportRepository(conn)
     repo.save(
         LOCAL_TENANT,
         _requirement_report(
-            url,
+            job_id,
             assessments=(
                 _requirement_assessment("r1"),
                 _requirement_assessment("r2", status="transferable", action="bridge_gap"),
@@ -356,14 +425,14 @@ def test_requirement_fit_report_repository_replaces_item_rows(conn: sqlite3.Conn
     repo.save(
         LOCAL_TENANT,
         _requirement_report(
-            url,
+            job_id,
             assessments=(
                 _requirement_assessment("r1", status="missing", action="avoid_claim"),
             ),
         ),
     )
 
-    loaded = repo.load(LOCAL_TENANT, JobId(url), score_version=1)
+    loaded = repo.load(LOCAL_TENANT, job_id, score_version=1)
 
     assert loaded is not None
     assert [item.requirement_id for item in loaded.assessments] == ["r1"]
@@ -371,25 +440,29 @@ def test_requirement_fit_report_repository_replaces_item_rows(conn: sqlite3.Conn
     assert loaded.assessments[0].tailoring.action == "avoid_claim"
 
 
-def test_requirement_fit_report_repository_loads_latest_version(conn: sqlite3.Connection) -> None:
-    url = _seed_job(conn)
+def test_requirement_fit_report_loads_latest_score_version(conn: sqlite3.Connection) -> None:
+    job_id = _seed_job(
+        conn,
+        job_id=_job_id(7),
+        url="https://example.com/jobs/requirement-versions",
+    )
     score_repo = SqliteScoreRepository(conn)
-    score_repo.save(_build_score(url, version=1, fit=7))
-    score_repo.save(_build_score(url, version=2, fit=9))
+    score_repo.save(_build_score(job_id, version=1, fit=7))
+    score_repo.save(_build_score(job_id, version=2, fit=9))
     report_repo = SqliteRequirementFitReportRepository(conn)
-    report_repo.save(LOCAL_TENANT, _requirement_report(url, score_version=1, fit=7))
+    report_repo.save(LOCAL_TENANT, _requirement_report(job_id, score_version=1, fit=7))
     report_repo.save(
         LOCAL_TENANT,
         _requirement_report(
-            url,
+            job_id,
             score_version=2,
             fit=9,
             assessments=(_requirement_assessment("r9"),),
         ),
     )
 
-    latest = report_repo.load(LOCAL_TENANT, JobId(url))
-    first = report_repo.load(LOCAL_TENANT, JobId(url), score_version=1)
+    latest = report_repo.load(LOCAL_TENANT, job_id)
+    first = report_repo.load(LOCAL_TENANT, job_id, score_version=1)
 
     assert latest is not None
     assert latest.score_version == 2
@@ -399,101 +472,182 @@ def test_requirement_fit_report_repository_loads_latest_version(conn: sqlite3.Co
     assert first.score_version == 1
 
 
-# ---------------------------------------------------------------------------
-# Versioning
-# ---------------------------------------------------------------------------
+def test_requirement_fit_report_scopes_same_job_id_by_tenant(conn: sqlite3.Connection) -> None:
+    job_id = _job_id(8)
+    other_tenant = TenantId("other")
+    _seed_job(
+        conn,
+        job_id=job_id,
+        url="https://example.com/jobs/local-requirement",
+    )
+    _seed_job(
+        conn,
+        tenant_id=other_tenant,
+        job_id=job_id,
+        url="https://example.com/jobs/other-requirement",
+    )
+    score_repo = SqliteScoreRepository(conn)
+    score_repo.save(_build_score(job_id, fit=7))
+    score_repo.save(_build_score(job_id, tenant_id=other_tenant, fit=9))
+    report_repo = SqliteRequirementFitReportRepository(conn)
+    report_repo.save(LOCAL_TENANT, _requirement_report(job_id, fit=7))
+    report_repo.save(other_tenant, _requirement_report(job_id, fit=9))
+
+    local_report = report_repo.load(LOCAL_TENANT, job_id)
+    other_report = report_repo.load(other_tenant, job_id)
+
+    assert local_report is not None
+    assert other_report is not None
+    assert local_report.resolved_fit_score == FitScore.create(7)
+    assert other_report.resolved_fit_score == FitScore.create(9)
+
+
+def test_requirement_fit_repository_rejects_url_shaped_job_ids(conn: sqlite3.Connection) -> None:
+    url = "https://example.com/jobs/not-an-requirement-id"
+    repo = SqliteRequirementFitReportRepository(conn)
+
+    with pytest.raises(ValueError, match="JobId must be a canonical UUID"):
+        repo.load(LOCAL_TENANT, JobId(url))
+    with pytest.raises(ValueError, match="JobId must be a canonical UUID"):
+        repo.save(LOCAL_TENANT, _requirement_report(JobId(url)))
+
+    assert conn.execute("SELECT COUNT(*) FROM job_requirement_fit_reports").fetchone()[0] == 0
 
 
 def test_save_increments_version(conn: sqlite3.Connection) -> None:
-    url = _seed_job(conn)
+    job_id = _seed_job(
+        conn,
+        job_id=_job_id(9),
+        url="https://example.com/jobs/versioning",
+    )
     repo = SqliteScoreRepository(conn)
-    repo.save(_build_score(url, version=1, fit=7))
-    repo.save(_build_score(url, version=2, fit=9))
+    repo.save(_build_score(job_id, version=1, fit=7))
+    repo.save(_build_score(job_id, version=2, fit=9))
 
-    latest = repo.load(LOCAL_TENANT, JobId(url))
+    latest = repo.load(LOCAL_TENANT, job_id)
+
     assert latest is not None
     assert latest.version == 2
     assert latest.fit_score.value == 9
 
 
-def test_save_rejects_version_skip(conn: sqlite3.Connection) -> None:
-    url = _seed_job(conn)
+def test_save_rejects_version_skip_and_replay(conn: sqlite3.Connection) -> None:
+    job_id = _seed_job(
+        conn,
+        job_id=_job_id(10),
+        url="https://example.com/jobs/version-conflict",
+    )
     repo = SqliteScoreRepository(conn)
-    repo.save(_build_score(url, version=1, fit=7))
+    repo.save(_build_score(job_id, version=1, fit=7))
+
     with pytest.raises(ScoreVersionConflict) as excinfo:
-        repo.save(_build_score(url, version=3, fit=8))
+        repo.save(_build_score(job_id, version=3, fit=8))
+    with pytest.raises(ScoreVersionConflict):
+        repo.save(_build_score(job_id, version=1, fit=8))
+
     assert excinfo.value.expected == 2
 
 
-def test_save_rejects_replay_of_existing_version(conn: sqlite3.Connection) -> None:
-    url = _seed_job(conn)
+def test_list_pending_reads_canonical_enrichment_content_with_tenant_isolation(
+    conn: sqlite3.Connection,
+) -> None:
+    scored_job_id = _seed_job(
+        conn,
+        job_id=_job_id(11),
+        url="https://example.com/jobs/scored",
+        full_description=None,
+    )
+    pending_job_id = _seed_job(
+        conn,
+        job_id=_job_id(12),
+        url="https://example.com/jobs/pending",
+        full_description=None,
+    )
+    legacy_only_job_id = _seed_job(
+        conn,
+        job_id=_job_id(13),
+        url="https://example.com/jobs/legacy-only",
+    )
+    other_tenant = TenantId("other")
+    other_pending_job_id = _seed_job(
+        conn,
+        tenant_id=other_tenant,
+        job_id=_job_id(14),
+        url="https://example.com/jobs/other-pending",
+        full_description=None,
+    )
+    _seed_enrichment(conn, job_id=scored_job_id)
+    _seed_enrichment(conn, job_id=pending_job_id)
+    _seed_enrichment(conn, tenant_id=other_tenant, job_id=other_pending_job_id)
     repo = SqliteScoreRepository(conn)
-    repo.save(_build_score(url, version=1, fit=7))
-    with pytest.raises(ScoreVersionConflict):
-        repo.save(_build_score(url, version=1, fit=8))
+    repo.save(_build_score(scored_job_id))
 
-
-# ---------------------------------------------------------------------------
-# List queries
-# ---------------------------------------------------------------------------
-
-
-def test_list_pending_returns_jobs_without_score(conn: sqlite3.Connection) -> None:
-    url_scored = _seed_job(conn, url="https://example.com/job/scored")
-    url_pending = _seed_job(conn, url="https://example.com/job/pending")
-    repo = SqliteScoreRepository(conn)
-    repo.save(_build_score(url_scored))
-
-    pending = repo.list_pending(LOCAL_TENANT)
-    assert pending == [JobId(url_pending)]
+    assert repo.list_pending(LOCAL_TENANT) == [pending_job_id]
+    assert repo.list_pending(other_tenant) == [other_pending_job_id]
+    assert legacy_only_job_id not in repo.list_pending(LOCAL_TENANT)
 
 
 def test_list_pending_respects_limit(conn: sqlite3.Connection) -> None:
-    for n in range(3):
-        _seed_job(conn, url=f"https://example.com/job/{n}")
-    repo = SqliteScoreRepository(conn)
-    assert len(repo.list_pending(LOCAL_TENANT, limit=2)) == 2
+    for seed in range(13, 16):
+        job_id = _seed_job(
+            conn,
+            job_id=_job_id(seed),
+            url=f"https://example.com/jobs/pending-{seed}",
+        )
+        _seed_enrichment(conn, job_id=job_id)
+
+    assert len(SqliteScoreRepository(conn).list_pending(LOCAL_TENANT, limit=2)) == 2
 
 
-def test_list_by_score_range_returns_only_latest_version_in_range(
+def test_list_by_score_range_returns_latest_versions_for_current_tenant(
     conn: sqlite3.Connection,
 ) -> None:
-    url_a = _seed_job(conn, url="https://example.com/job/a")
-    url_b = _seed_job(conn, url="https://example.com/job/b")
-    url_c = _seed_job(conn, url="https://example.com/job/c")
-
+    job_a = _seed_job(conn, job_id=_job_id(16), url="https://example.com/jobs/a")
+    job_b = _seed_job(conn, job_id=_job_id(17), url="https://example.com/jobs/b")
+    job_c = _seed_job(conn, job_id=_job_id(18), url="https://example.com/jobs/c")
     repo = SqliteScoreRepository(conn)
-    repo.save(_build_score(url_a, version=1, fit=4))
-    repo.save(_build_score(url_a, version=2, fit=8))  # latest in range
-    repo.save(_build_score(url_b, version=1, fit=6))  # in range
-    repo.save(_build_score(url_c, version=1, fit=2))  # out of range
+    repo.save(_build_score(job_a, version=1, fit=4))
+    repo.save(_build_score(job_a, version=2, fit=8))
+    repo.save(_build_score(job_b, version=1, fit=6))
+    repo.save(_build_score(job_c, version=1, fit=2))
 
     matches = repo.list_by_score_range(LOCAL_TENANT, min_score=5, max_score=10)
-    keys = sorted(int(score.fit_score.value) for score in matches)
-    # Only the latest A version (8) and B (6) appear.
-    assert keys == [6, 8]
+
+    assert {(score.job_id, score.fit_score.value) for score in matches} == {
+        (job_a, 8),
+        (job_b, 6),
+    }
 
 
 def test_list_by_score_range_validates_inputs(conn: sqlite3.Connection) -> None:
     repo = SqliteScoreRepository(conn)
+
     with pytest.raises(ValueError):
         repo.list_by_score_range(LOCAL_TENANT, min_score=0)
     with pytest.raises(ValueError):
         repo.list_by_score_range(LOCAL_TENANT, min_score=8, max_score=4)
 
 
-# ---------------------------------------------------------------------------
-# Staleness markers
-# ---------------------------------------------------------------------------
-
-
-def test_score_correction_marks_comparable_uncorrected_scores_stale_and_resolve_on_rescore(
+def test_score_correction_marks_and_resolves_only_tenant_scoped_staleness(
     conn: sqlite3.Connection,
 ) -> None:
-    target_url = _seed_job(conn, url="https://example.com/job/corrected")
-    comparable_url = _seed_job(conn, url="https://example.com/job/comparable")
-    current_url = _seed_job(conn, url="https://example.com/job/current-policy")
-    already_corrected_url = _seed_job(conn, url="https://example.com/job/already-corrected")
+    target_job_id = _seed_job(
+        conn,
+        job_id=_job_id(19),
+        url="https://example.com/jobs/corrected",
+    )
+    comparable_job_id = _seed_job(
+        conn,
+        job_id=_job_id(20),
+        url="https://example.com/jobs/comparable",
+    )
+    other_tenant = TenantId("other")
+    _seed_job(
+        conn,
+        tenant_id=other_tenant,
+        job_id=comparable_job_id,
+        url="https://example.com/jobs/other-comparable",
+    )
     policy_v1 = ScoreTrace(
         scoring_policy_id="local:scoring-policy-v1",
         scoring_policy_version=1,
@@ -503,21 +657,9 @@ def test_score_correction_marks_comparable_uncorrected_scores_stale_and_resolve_
         scoring_policy_version=2,
     )
     repo = SqliteScoreRepository(conn)
-    repo.save(_build_score(target_url, trace=policy_v1))
-    repo.save(_build_score(comparable_url, trace=policy_v1))
-    repo.save(_build_score(current_url, trace=policy_v2))
-    already_corrected = _build_score(already_corrected_url, trace=policy_v1)
-    repo.save(already_corrected)
-    repo.save(
-        already_corrected.with_correction(
-            ScoreCorrection(
-                corrected_fit_score=FitScore.create(8),
-                rationale="Already reviewed.",
-                corrected_by=LOCAL_TENANT,
-                corrected_at="2024-01-01T00:01:00+00:00",
-            )
-        )
-    )
+    repo.save(_build_score(target_job_id, trace=policy_v1))
+    repo.save(_build_score(comparable_job_id, trace=policy_v1))
+    repo.save(_build_score(comparable_job_id, tenant_id=other_tenant, trace=policy_v1))
 
     CorrectScoreUseCase(
         repository=repo,
@@ -525,268 +667,48 @@ def test_score_correction_marks_comparable_uncorrected_scores_stale_and_resolve_
         staleness_repository=SqliteScoreStalenessRepository(conn),
     ).execute(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(target_url),
+        job_id=target_job_id,
         corrected_fit_score=FitScore.create(9),
         rationale="Manual review found stronger fit.",
-        corrected_at="2024-01-02T00:00:00+00:00",
+        corrected_at="2026-07-31T00:00:00+00:00",
     )
 
     rows = conn.execute(
         """
-        SELECT job_url, stale_reason, old_policy_version, new_policy_version, resolved
+        SELECT tenant_id, job_id, stale_reason, old_policy_version, new_policy_version, resolved
         FROM job_score_staleness
-        ORDER BY job_url
+        ORDER BY tenant_id, job_id
         """
     ).fetchall()
-    assert [row["job_url"] for row in rows] == [comparable_url]
-    assert rows[0]["stale_reason"] == "scoring_policy_changed"
-    assert rows[0]["old_policy_version"] == 1
-    assert rows[0]["new_policy_version"] == 2
-    assert rows[0]["resolved"] == 0
+    assert [tuple(row) for row in rows] == [
+        (str(LOCAL_TENANT), str(comparable_job_id), "scoring_policy_changed", 1, 2, 0)
+    ]
     stale_stage = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-        (comparable_url,),
+        """
+        SELECT state FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'score'
+        """,
+        (str(LOCAL_TENANT), str(comparable_job_id)),
     ).fetchone()
     assert stale_stage["state"] == "stale"
     stale_event = conn.execute(
-        "SELECT event_type FROM job_events WHERE job_url = ? ORDER BY event_id DESC LIMIT 1",
-        (comparable_url,),
+        """
+        SELECT event_type FROM job_events
+        WHERE tenant_id = ? AND job_id = ?
+        ORDER BY event_id DESC LIMIT 1
+        """,
+        (str(LOCAL_TENANT), str(comparable_job_id)),
     ).fetchone()
     assert stale_event["event_type"] == "ScoreMarkedStale"
 
-    repo.save(_build_score(comparable_url, version=2, fit=8, trace=policy_v2))
+    repo.save(_build_score(comparable_job_id, version=2, fit=8, trace=policy_v2))
 
     resolved = conn.execute(
         """
         SELECT resolved, resolved_by_score_version
         FROM job_score_staleness
-        WHERE job_url = ?
+        WHERE tenant_id = ? AND job_id = ?
         """,
-        (comparable_url,),
+        (str(LOCAL_TENANT), str(comparable_job_id)),
     ).fetchone()
-    assert resolved["resolved"] == 1
-    assert resolved["resolved_by_score_version"] == 2
-
-
-def test_score_correction_governance_report_and_downstream_staleness_gate(
-    conn: sqlite3.Connection,
-) -> None:
-    target_url = _seed_job(conn, url="https://example.com/job/eval-corrected")
-    comparable_url = _seed_job(conn, url="https://example.com/job/eval-comparable")
-    subsequent_url = _seed_job(conn, url="https://example.com/job/eval-subsequent")
-    repo = SqliteScoreRepository(conn)
-    policy_repo = SqliteScoringPolicyRepository(conn)
-    staleness_repo = SqliteScoreStalenessRepository(conn)
-    policy_v1 = policy_repo.get_current(LOCAL_TENANT)
-    target_resolution = policy_v1.resolve(
-        ScoreBreakdown(
-            technical_fit=5,
-            experience_fit=5,
-            role_fit=5,
-            reasoning="Initial score before correction.",
-        )
-    )
-    comparable_resolution = policy_v1.resolve(
-        ScoreBreakdown(
-            technical_fit=8,
-            experience_fit=7,
-            role_fit=8,
-            reasoning="Comparable score under the original policy.",
-        )
-    )
-
-    repo.save(
-        _build_score(
-            target_url,
-            fit=target_resolution.fit_score.value,
-            trace=ScoreTrace().with_policy_resolution(target_resolution),
-        )
-    )
-    repo.save(
-        _build_score(
-            comparable_url,
-            fit=comparable_resolution.fit_score.value,
-            trace=ScoreTrace().with_policy_resolution(comparable_resolution),
-        )
-    )
-    set_stage_state(
-        conn,
-        comparable_url,
-        "score",
-        "succeeded",
-        validate_transition=False,
-    )
-    pending_before = {
-        row["url"]
-        for row in get_jobs_by_stage(conn, "pending_tailor", min_score=7, limit=0)
-    }
-    assert comparable_url in pending_before
-
-    CorrectScoreUseCase(
-        repository=repo,
-        policy_repository=policy_repo,
-        staleness_repository=staleness_repo,
-    ).execute(
-        tenant_id=LOCAL_TENANT,
-        job_id=JobId(target_url),
-        corrected_fit_score=FitScore.create(9),
-        rationale="Manual review found stronger platform evidence.",
-        corrected_at="2024-01-02T00:00:00+00:00",
-    )
-
-    policy_v2 = policy_repo.get_current(LOCAL_TENANT)
-    governance = build_scoring_governance_report(conn, correction_agreement=1.0)
-    governance_payload = json.dumps(governance.to_dict(), sort_keys=True)
-
-    assert policy_v2.version == 2
-    assert len(policy_v2.anchors) == 1
-    assert governance.to_dict() == {
-        "policy_version": 2,
-        "rubric_version": "default-scoring-rubric-v1",
-        "anchor_count": 1,
-        "stale_unresolved_count": 1,
-        "stale_resolved_count": 0,
-        "correction_signal_count": 1,
-        "correction_agreement": 1.0,
-    }
-    assert "https://example.com/job" not in governance_payload
-    assert "Manual review" not in governance_payload
-    assert policy_v2.anchors[0].anchor_id not in governance_payload
-
-    pending_after_correction = {
-        row["url"]
-        for row in get_jobs_by_stage(conn, "pending_tailor", min_score=7, limit=0)
-    }
-    assert comparable_url not in pending_after_correction
-
-    scorer = ScoreJobUseCase(
-        repository=repo,
-        llm=object(),
-        policy_repository=policy_repo,
-    )
-    subsequent = scorer.persist_outcome(
-        job={"url": subsequent_url},
-        parse=ScoreParseResult(
-            ok=True,
-            fit_score=FitScore.create(10),
-            breakdown=ScoreBreakdown(
-                technical_fit=7,
-                experience_fit=7,
-                role_fit=7,
-                reasoning="Subsequent score after correction.",
-            ),
-            keywords=MatchedKeywords.from_iterable(["python"]),
-        ),
-    )
-
-    assert subsequent.ok is True
-    assert subsequent.score is not None
-    assert subsequent.score.trace.scoring_policy_version == 2
-    assert subsequent.score.trace.rubric_version == "default-scoring-rubric-v1"
-    assert subsequent.score.trace.anchor_ids == (policy_v2.anchors[0].anchor_id,)
-
-    markers = staleness_repo.reset_for_rescore(
-        LOCAL_TENANT,
-        reset_at="2024-01-02T00:05:00+00:00",
-    )
-    pending_after_reset = {
-        row["url"]
-        for row in get_jobs_by_stage(conn, "pending_tailor", min_score=7, limit=0)
-    }
-    assert [str(marker.job_id) for marker in markers] == [comparable_url]
-    assert comparable_url not in pending_after_reset
-
-    refreshed_resolution = policy_v2.resolve(
-        ScoreBreakdown(
-            technical_fit=8,
-            experience_fit=7,
-            role_fit=8,
-            reasoning="Explicit rescore under updated policy.",
-        )
-    )
-    repo.save(
-        _build_score(
-            comparable_url,
-            version=2,
-            fit=refreshed_resolution.fit_score.value,
-            trace=ScoreTrace().with_policy_resolution(refreshed_resolution),
-        )
-    )
-    set_stage_state(
-        conn,
-        comparable_url,
-        "score",
-        "succeeded",
-        validate_transition=False,
-    )
-
-    final_governance = build_scoring_governance_report(conn, correction_agreement=1.0)
-    pending_after_rescore = {
-        row["url"]
-        for row in get_jobs_by_stage(conn, "pending_tailor", min_score=7, limit=0)
-    }
-    assert final_governance.stale_unresolved_count == 0
-    assert final_governance.stale_resolved_count == 1
-    assert comparable_url in pending_after_rescore
-
-
-# ---------------------------------------------------------------------------
-# Backfill
-# ---------------------------------------------------------------------------
-
-
-def test_backfill_copies_legacy_columns_into_job_scores(tmp_path: Path) -> None:
-    db_path = tmp_path / "legacy.db"
-    conn = init_db(db_path)
-    conn.execute(
-        "INSERT INTO jobs (url, title, fit_score, score_reasoning, scored_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        ("https://example.com/legacy", "Engineer", 8, "Strong overlap", "2023-12-01T00:00:00+00:00"),
-    )
-    # Drop the existing table so the backfill is forced to fire again on
-    # the seeded legacy row (init_db ran the migration before our INSERT).
-    conn.execute("DROP TABLE job_scores")
-    conn.commit()
-    ensure_score_tables(conn)
-
-    repo = SqliteScoreRepository(conn)
-    loaded = repo.load(LOCAL_TENANT, JobId("https://example.com/legacy"))
-    assert loaded is not None
-    assert loaded.version == 1
-    assert loaded.fit_score.value == 8
-    assert "Strong overlap" in loaded.breakdown.reasoning
-
-
-def test_backfill_is_idempotent(tmp_path: Path) -> None:
-    db_path = tmp_path / "legacy.db"
-    conn = init_db(db_path)
-    conn.execute(
-        "INSERT INTO jobs (url, fit_score, scored_at) VALUES (?, ?, ?)",
-        ("https://example.com/legacy", 8, "2023-12-01T00:00:00+00:00"),
-    )
-    conn.execute("DROP TABLE job_scores")
-    conn.commit()
-    ensure_score_tables(conn)
-    # Running again must not duplicate rows.
-    ensure_score_tables(conn)
-
-    count = conn.execute(
-        "SELECT COUNT(*) FROM job_scores WHERE job_url = ?",
-        ("https://example.com/legacy",),
-    ).fetchone()[0]
-    assert count == 1
-
-
-def test_backfill_skips_invalid_legacy_scores(tmp_path: Path) -> None:
-    db_path = tmp_path / "legacy.db"
-    conn = init_db(db_path)
-    conn.execute(
-        "INSERT INTO jobs (url, fit_score) VALUES (?, ?)",
-        ("https://example.com/bogus", 0),
-    )
-    conn.execute("DROP TABLE job_scores")
-    conn.commit()
-    ensure_score_tables(conn)
-
-    count = conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0]
-    assert count == 0
+    assert tuple(resolved) == (1, 2)
