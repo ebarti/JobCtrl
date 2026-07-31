@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from jobctrl.database import close_connection, init_db
+from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.pipeline.aggregate import JobPipelineState, OptimisticLockError
 from jobctrl.domain.pipeline_types import (
     Blocked,
@@ -19,16 +21,45 @@ from jobctrl.domain.pipeline_types import (
 )
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.pipeline.sqlite_repository import SqlitePipelineStateRepository
-from jobctrl.state import ensure_job_stage_rows, set_stage_state
+from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state
+
+JOB_URL = "https://example.com/job"
+JOB_ID = JobId("00000000-0000-4000-8000-000000000001")
+NEW_JOB_ID = JobId("00000000-0000-4000-8000-000000000002")
+TWIN_JOB_ID = JobId("00000000-0000-4000-8000-000000000003")
+FRESH_JOB_ID = JobId("00000000-0000-4000-8000-000000000004")
+UNKNOWN_JOB_ID = JobId("00000000-0000-4000-8000-000000000099")
+_UNTRUSTED_ANALYSIS_CONTEXT = {"userContext": "Attack vectors:\nPrompt injection"}
 
 
-def _insert_job(conn, url: str = "https://example.com/job") -> None:
+class _Publisher:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    def publish(self, event: object) -> None:
+        self.events.append(event)
+
+
+def _insert_job(
+    conn,
+    url: str = JOB_URL,
+    job_id: JobId = JOB_ID,
+) -> None:
     conn.execute(
         """
-        INSERT OR IGNORE INTO jobs (url, title, site, strategy, discovered_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT OR IGNORE INTO jobs (
+            tenant_id, job_id, url, title, site, strategy, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (url, "Platform Engineer", "ExampleCo", "test", "2026-04-29T10:00:00+00:00"),
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
+            url,
+            "Platform Engineer",
+            "ExampleCo",
+            "test",
+            "2026-04-29T10:00:00+00:00",
+        ),
     )
     conn.commit()
 
@@ -38,7 +69,11 @@ def db(tmp_path):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
     _insert_job(conn)
-    ensure_job_stage_rows(conn, "https://example.com/job", discovered_at="2026-04-29T10:00:00+00:00")
+    ensure_job_stage_rows(
+        conn,
+        JOB_ID,
+        discovered_at="2026-04-29T10:00:00+00:00",
+    )
     conn.commit()
     yield conn
     close_connection(db_path)
@@ -46,13 +81,13 @@ def db(tmp_path):
 
 def test_load_returns_none_for_unknown_job(db):
     repo = SqlitePipelineStateRepository(db)
-    result = repo.load(LOCAL_TENANT, "https://nonexistent.example.com/job")
+    result = repo.load(LOCAL_TENANT, UNKNOWN_JOB_ID)
     assert result is None
 
 
 def test_roundtrip_save_and_load(db):
     repo = SqlitePipelineStateRepository(db)
-    agg = repo.load(LOCAL_TENANT, "https://example.com/job")
+    agg = repo.load(LOCAL_TENANT, JOB_ID)
     assert agg is not None
     assert agg.version == 0  # initial
 
@@ -62,7 +97,7 @@ def test_roundtrip_save_and_load(db):
     assert agg.version == 1
 
     # Re-load and verify
-    reloaded = repo.load(LOCAL_TENANT, "https://example.com/job")
+    reloaded = repo.load(LOCAL_TENANT, JOB_ID)
     assert reloaded is not None
     assert reloaded.version == 1
     enrich = reloaded.get_stage_state(Stage.Enrich)
@@ -73,7 +108,7 @@ def test_roundtrip_save_and_load(db):
 
 def test_roundtrip_succeeded_state(db):
     repo = SqlitePipelineStateRepository(db)
-    agg = repo.load(LOCAL_TENANT, "https://example.com/job")
+    agg = repo.load(LOCAL_TENANT, JOB_ID)
     assert agg is not None
 
     agg.set_stage_state(
@@ -82,7 +117,7 @@ def test_roundtrip_succeeded_state(db):
     )
     repo.save(agg)
 
-    reloaded = repo.load(LOCAL_TENANT, "https://example.com/job")
+    reloaded = repo.load(LOCAL_TENANT, JOB_ID)
     assert reloaded is not None
     score = reloaded.get_stage_state(Stage.Score)
     assert isinstance(score, Succeeded)
@@ -92,7 +127,7 @@ def test_roundtrip_succeeded_state(db):
 
 def test_roundtrip_failed_state(db):
     repo = SqlitePipelineStateRepository(db)
-    agg = repo.load(LOCAL_TENANT, "https://example.com/job")
+    agg = repo.load(LOCAL_TENANT, JOB_ID)
     assert agg is not None
 
     agg.set_stage_state(
@@ -108,7 +143,7 @@ def test_roundtrip_failed_state(db):
     )
     repo.save(agg)
 
-    reloaded = repo.load(LOCAL_TENANT, "https://example.com/job")
+    reloaded = repo.load(LOCAL_TENANT, JOB_ID)
     assert reloaded is not None
     enrich = reloaded.get_stage_state(Stage.Enrich)
     assert isinstance(enrich, Failed)
@@ -121,8 +156,8 @@ def test_optimistic_lock_conflict(db):
     repo = SqlitePipelineStateRepository(db)
 
     # Load two copies of the same aggregate
-    agg1 = repo.load(LOCAL_TENANT, "https://example.com/job")
-    agg2 = repo.load(LOCAL_TENANT, "https://example.com/job")
+    agg1 = repo.load(LOCAL_TENANT, JOB_ID)
+    agg2 = repo.load(LOCAL_TENANT, JOB_ID)
     assert agg1 is not None and agg2 is not None
 
     # Save the first
@@ -142,7 +177,7 @@ def test_list_by_stage(db):
     repo = SqlitePipelineStateRepository(db)
     results = repo.list_by_stage(LOCAL_TENANT, "discover")
     assert len(results) == 1
-    assert results[0].job_url == "https://example.com/job"
+    assert results[0].job_id == JOB_ID
 
 
 def test_list_by_stage_with_state_filter(db):
@@ -158,15 +193,19 @@ def test_list_by_stage_with_state_filter(db):
 
 def test_save_creates_new_rows_for_new_job(db):
     """Save an aggregate for a job that has no existing rows in job_stage_states."""
-    _insert_job(db, url="https://example.com/new-job")
+    _insert_job(
+        db,
+        url="https://example.com/new-job",
+        job_id=NEW_JOB_ID,
+    )
 
     repo = SqlitePipelineStateRepository(db)
-    agg = JobPipelineState.new_for_job(LOCAL_TENANT, "https://example.com/new-job")
+    agg = JobPipelineState.new_for_job(LOCAL_TENANT, NEW_JOB_ID)
     agg.set_stage_state(Stage.Discover, Succeeded(attempt_count=1, finished_at="2026-05-01T00:00:00Z"))
     repo.save(agg)
     assert agg.version == 1
 
-    reloaded = repo.load(LOCAL_TENANT, "https://example.com/new-job")
+    reloaded = repo.load(LOCAL_TENANT, NEW_JOB_ID)
     assert reloaded is not None
     assert reloaded.version == 1
     assert isinstance(reloaded.get_stage_state(Stage.Discover), Succeeded)
@@ -177,12 +216,11 @@ def test_save_creates_new_rows_for_new_job(db):
 # ---------------------------------------------------------------------------
 
 
-def _job_events(conn, job_url: str) -> list[tuple[str, str | None, str | None]]:
+def _job_events(conn, job_id: JobId) -> list[tuple[str, str | None, str | None]]:
     """Return (event_type, stage, level) rows for one job ordered by id."""
     rows = conn.execute(
-        "SELECT event_type, stage, level FROM job_events "
-        "WHERE job_url = ? ORDER BY event_id",
-        (job_url,),
+        "SELECT event_type, stage, level FROM job_events WHERE tenant_id = ? AND job_id = ? ORDER BY event_id",
+        (str(LOCAL_TENANT), str(job_id)),
     ).fetchall()
     return [(r["event_type"], r["stage"], r["level"]) for r in rows]
 
@@ -193,14 +231,14 @@ def test_save_emits_event_per_changed_stage(db):
     db.execute("DELETE FROM job_events")
     db.commit()
 
-    agg = repo.load(LOCAL_TENANT, "https://example.com/job")
+    agg = repo.load(LOCAL_TENANT, JOB_ID)
     assert agg is not None
 
     agg.set_stage_state(Stage.Enrich, Running(attempt_count=1, started_at="2026-05-01T00:00:00Z"))
     agg.set_stage_state(Stage.Score, Running(attempt_count=1, started_at="2026-05-01T00:01:00Z"))
     repo.save(agg)
 
-    events = _job_events(db, "https://example.com/job")
+    events = _job_events(db, JOB_ID)
     stages_with_events = sorted({stage for _, stage, _ in events if stage is not None})
     assert stages_with_events == ["enrich", "score"], events
     types_by_stage = {stage: event_type for event_type, stage, _ in events}
@@ -208,10 +246,113 @@ def test_save_emits_event_per_changed_stage(db):
     assert types_by_stage["score"] == "StageStarted"
 
 
+def test_current_events_persist_only_canonical_job_identity(db):
+    db.execute("DELETE FROM job_events")
+    publisher = _Publisher()
+    record_job_event(
+        db,
+        JOB_ID,
+        "enrich",
+        "StageStarted",
+        payload={
+            **_UNTRUSTED_ANALYSIS_CONTEXT,
+            "jobId": JOB_URL,
+            "job_url": JOB_URL,
+        },
+        publisher=publisher,  # type: ignore[arg-type]
+    )
+
+    row = db.execute(
+        """
+        SELECT tenant_id, job_id, identity_version, payload_json
+        FROM job_events
+        """
+    ).fetchone()
+    payload = json.loads(row["payload_json"])
+    assert tuple(row[:3]) == (str(LOCAL_TENANT), str(JOB_ID), 1)
+    assert payload["jobId"] == str(JOB_ID)
+    assert "job_url" not in payload
+    assert payload["userContext"] == "Attack vectors:\nPrompt injection"
+    assert "job_url" not in row.keys()
+    assert len(publisher.events) == 1
+    event = publisher.events[0]
+    assert getattr(event, "payload")["jobId"] == str(JOB_ID)
+    assert "job_url" not in getattr(event, "payload")
+    assert getattr(event, "payload")["userContext"] == ("Attack vectors:\nPrompt injection")
+
+
+def test_run_scoped_events_do_not_invent_a_job_identity(db):
+    db.execute("DELETE FROM job_events")
+    publisher = _Publisher()
+
+    record_job_event(
+        db,
+        None,
+        "workflow",
+        "WorkflowStarted",
+        payload=_UNTRUSTED_ANALYSIS_CONTEXT,
+        publisher=publisher,  # type: ignore[arg-type]
+    )
+
+    row = db.execute(
+        """
+        SELECT tenant_id, job_id, identity_version, payload_json
+        FROM job_events
+        """
+    ).fetchone()
+    payload = json.loads(row["payload_json"])
+    assert tuple(row[:3]) == (str(LOCAL_TENANT), None, 1)
+    assert "jobId" not in payload
+    assert payload["userContext"] == "Attack vectors:\nPrompt injection"
+    assert "jobId" not in getattr(publisher.events[0], "payload")
+
+
+def test_pipeline_identity_rejects_url_shaped_values(db):
+    repo = SqlitePipelineStateRepository(db)
+
+    with pytest.raises(ValueError, match="canonical UUID"):
+        repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    with pytest.raises(ValueError, match="canonical UUID"):
+        ensure_job_stage_rows(db, JobId(JOB_URL))
+    with pytest.raises(ValueError, match="canonical UUID"):
+        record_job_event(db, JobId(JOB_URL), "enrich", "StageStarted")
+
+
+def test_completed_stage_unblocks_the_same_tenant_and_job(db):
+    set_stage_state(
+        db,
+        JOB_ID,
+        "score",
+        "blocked",
+        error_code="BLOCKED",
+        error_message="Enrichment has not completed.",
+        validate_transition=False,
+    )
+
+    set_stage_state(
+        db,
+        JOB_ID,
+        "enrich",
+        "succeeded",
+        validate_transition=False,
+    )
+
+    score = db.execute(
+        "SELECT state, error_code FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'score'",
+        (str(LOCAL_TENANT), str(JOB_ID)),
+    ).fetchone()
+    assert tuple(score) == ("pending", None)
+    reset = db.execute(
+        "SELECT tenant_id, job_id, identity_version FROM job_events "
+        "WHERE event_type = 'StageReset' AND stage = 'score'",
+    ).fetchone()
+    assert tuple(reset) == (str(LOCAL_TENANT), str(JOB_ID), 1)
+
+
 def test_save_does_not_emit_for_idempotent_writes(db):
     """save() must not emit an event when the persisted state is unchanged."""
     repo = SqlitePipelineStateRepository(db)
-    agg = repo.load(LOCAL_TENANT, "https://example.com/job")
+    agg = repo.load(LOCAL_TENANT, JOB_ID)
     assert agg is not None
 
     agg.set_stage_state(Stage.Enrich, Running(attempt_count=1, started_at="2026-05-01T00:00:00Z"))
@@ -221,11 +362,11 @@ def test_save_does_not_emit_for_idempotent_writes(db):
     db.commit()
 
     # Re-load + save without changing anything.
-    reloaded = repo.load(LOCAL_TENANT, "https://example.com/job")
+    reloaded = repo.load(LOCAL_TENANT, JOB_ID)
     assert reloaded is not None
     repo.save(reloaded)
 
-    events = _job_events(db, "https://example.com/job")
+    events = _job_events(db, JOB_ID)
     assert events == [], events
 
 
@@ -234,7 +375,7 @@ def test_save_emits_state_specific_event_types(db):
     repo = SqlitePipelineStateRepository(db)
 
     # Set up: drive enrich Pending -> Running -> Failed in two saves.
-    agg = repo.load(LOCAL_TENANT, "https://example.com/job")
+    agg = repo.load(LOCAL_TENANT, JOB_ID)
     assert agg is not None
     agg.set_stage_state(Stage.Enrich, Running(attempt_count=1, started_at="2026-05-01T00:00:00Z"))
     repo.save(agg)
@@ -254,7 +395,7 @@ def test_save_emits_state_specific_event_types(db):
     )
     repo.save(agg)
 
-    events = _job_events(db, "https://example.com/job")
+    events = _job_events(db, JOB_ID)
     assert events == [("StageFailed", "enrich", "error")], events
 
 
@@ -267,7 +408,7 @@ def test_save_event_emission_matches_canonical_helper(db):
     db.commit()
 
     # Path A: write Enrich Running -> Succeeded via the repository.
-    agg = repo.load(LOCAL_TENANT, "https://example.com/job")
+    agg = repo.load(LOCAL_TENANT, JOB_ID)
     assert agg is not None
     agg.set_stage_state(Stage.Enrich, Running(attempt_count=1, started_at="2026-05-01T00:00:00Z"))
     repo.save(agg)
@@ -278,17 +419,26 @@ def test_save_event_emission_matches_canonical_helper(db):
     repo.save(agg)
     repo_row = db.execute(
         "SELECT state, attempt_count, started_at, finished_at, duration_ms "
-        "FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        ("https://example.com/job",),
+        "FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+        (str(LOCAL_TENANT), str(JOB_ID)),
     ).fetchone()
 
     # Path B: identical writes via canonical set_stage_state on a sibling job.
-    _insert_job(db, url="https://example.com/twin")
-    ensure_job_stage_rows(db, "https://example.com/twin", discovered_at="2026-04-29T10:00:00+00:00")
+    _insert_job(
+        db,
+        url="https://example.com/twin",
+        job_id=TWIN_JOB_ID,
+    )
+    ensure_job_stage_rows(
+        db,
+        TWIN_JOB_ID,
+        discovered_at="2026-04-29T10:00:00+00:00",
+    )
     db.commit()
     set_stage_state(
         db,
-        "https://example.com/twin",
+        TWIN_JOB_ID,
         "enrich",
         "running",
         attempt_count=1,
@@ -296,7 +446,7 @@ def test_save_event_emission_matches_canonical_helper(db):
     )
     set_stage_state(
         db,
-        "https://example.com/twin",
+        TWIN_JOB_ID,
         "enrich",
         "succeeded",
         attempt_count=1,
@@ -307,8 +457,9 @@ def test_save_event_emission_matches_canonical_helper(db):
     db.commit()
     twin_row = db.execute(
         "SELECT state, attempt_count, started_at, finished_at, duration_ms "
-        "FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        ("https://example.com/twin",),
+        "FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+        (str(LOCAL_TENANT), str(TWIN_JOB_ID)),
     ).fetchone()
 
     assert dict(repo_row) == dict(twin_row)
@@ -318,12 +469,12 @@ def test_save_attempts_counter_progresses_across_calls(db):
     """The attempt_count is preserved across successive save() calls."""
     repo = SqlitePipelineStateRepository(db)
 
-    agg = repo.load(LOCAL_TENANT, "https://example.com/job")
+    agg = repo.load(LOCAL_TENANT, JOB_ID)
     assert agg is not None
     agg.set_stage_state(Stage.Enrich, Running(attempt_count=1, started_at="2026-05-01T00:00:00Z"))
     repo.save(agg)
 
-    reloaded = repo.load(LOCAL_TENANT, "https://example.com/job")
+    reloaded = repo.load(LOCAL_TENANT, JOB_ID)
     assert reloaded is not None
     enrich_state = reloaded.get_stage_state(Stage.Enrich)
     assert isinstance(enrich_state, Running)
@@ -332,7 +483,7 @@ def test_save_attempts_counter_progresses_across_calls(db):
     reloaded.set_stage_state(Stage.Enrich, Running(attempt_count=2, started_at="2026-05-01T00:02:00Z"))
     repo.save(reloaded)
 
-    final = repo.load(LOCAL_TENANT, "https://example.com/job")
+    final = repo.load(LOCAL_TENANT, JOB_ID)
     assert final is not None
     final_state = final.get_stage_state(Stage.Enrich)
     assert isinstance(final_state, Running)
@@ -345,7 +496,7 @@ def test_save_blocked_state_round_trip(db):
     db.execute("DELETE FROM job_events")
     db.commit()
 
-    agg = repo.load(LOCAL_TENANT, "https://example.com/job")
+    agg = repo.load(LOCAL_TENANT, JOB_ID)
     assert agg is not None
     agg.set_stage_state(
         Stage.Enrich,
@@ -357,13 +508,13 @@ def test_save_blocked_state_round_trip(db):
     )
     repo.save(agg)
 
-    reloaded = repo.load(LOCAL_TENANT, "https://example.com/job")
+    reloaded = repo.load(LOCAL_TENANT, JOB_ID)
     assert reloaded is not None
     state = reloaded.get_stage_state(Stage.Enrich)
     assert isinstance(state, Blocked)
     assert state.blocked_by == (Stage.Discover,)
 
-    events = _job_events(db, "https://example.com/job")
+    events = _job_events(db, JOB_ID)
     assert ("StageBlocked", "enrich", "warn") in events
 
 
@@ -372,19 +523,19 @@ def test_save_skipped_state_emits_stage_skipped(db):
     db.execute("DELETE FROM job_events")
     db.commit()
 
-    agg = repo.load(LOCAL_TENANT, "https://example.com/job")
+    agg = repo.load(LOCAL_TENANT, JOB_ID)
     assert agg is not None
     agg.set_stage_state(Stage.Enrich, Skipped(reason="below threshold"))
     repo.save(agg)
 
-    events = _job_events(db, "https://example.com/job")
+    events = _job_events(db, JOB_ID)
     assert ("StageSkipped", "enrich", "info") in events
 
 
 def test_save_canceled_state_emits_stage_canceled(db):
     repo = SqlitePipelineStateRepository(db)
     # Cancel is a valid transition only from Queued/Running, so seed Running.
-    agg = repo.load(LOCAL_TENANT, "https://example.com/job")
+    agg = repo.load(LOCAL_TENANT, JOB_ID)
     assert agg is not None
     agg.set_stage_state(Stage.Enrich, Running(attempt_count=1, started_at="2026-05-01T00:00:00Z"))
     repo.save(agg)
@@ -398,7 +549,7 @@ def test_save_canceled_state_emits_stage_canceled(db):
     )
     repo.save(agg)
 
-    events = _job_events(db, "https://example.com/job")
+    events = _job_events(db, JOB_ID)
     assert ("StageCanceled", "enrich", "info") in events
 
 
@@ -422,7 +573,7 @@ def test_set_stage_state_with_expected_version_round_trip(db):
     """state.set_stage_state honours expected_version when supplied."""
     set_stage_state(
         db,
-        "https://example.com/job",
+        JOB_ID,
         "enrich",
         "running",
         attempt_count=1,
@@ -433,8 +584,8 @@ def test_set_stage_state_with_expected_version_round_trip(db):
     db.commit()
 
     row = db.execute(
-        "SELECT state, version FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        ("https://example.com/job",),
+        "SELECT state, version FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+        (str(LOCAL_TENANT), str(JOB_ID)),
     ).fetchone()
     assert row["state"] == "running"
     assert row["version"] == 1
@@ -445,7 +596,7 @@ def test_set_stage_state_expected_version_mismatch_raises(db):
     # Bump version to 1.
     set_stage_state(
         db,
-        "https://example.com/job",
+        JOB_ID,
         "enrich",
         "running",
         attempt_count=1,
@@ -458,7 +609,7 @@ def test_set_stage_state_expected_version_mismatch_raises(db):
     with pytest.raises(OptimisticLockError) as exc:
         set_stage_state(
             db,
-            "https://example.com/job",
+            JOB_ID,
             "enrich",
             "succeeded",
             attempt_count=1,
@@ -474,12 +625,16 @@ def test_set_stage_state_expected_version_mismatch_raises(db):
 
 def test_set_stage_state_expected_version_inserts_when_missing(db):
     """When the row does not exist, expected_version=0 inserts at version 1."""
-    _insert_job(db, url="https://example.com/fresh")
+    _insert_job(
+        db,
+        url="https://example.com/fresh",
+        job_id=FRESH_JOB_ID,
+    )
     db.commit()
 
     set_stage_state(
         db,
-        "https://example.com/fresh",
+        FRESH_JOB_ID,
         "enrich",
         "pending",
         expected_version=0,
@@ -488,8 +643,8 @@ def test_set_stage_state_expected_version_inserts_when_missing(db):
     db.commit()
 
     row = db.execute(
-        "SELECT state, version FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        ("https://example.com/fresh",),
+        "SELECT state, version FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+        (str(LOCAL_TENANT), str(FRESH_JOB_ID)),
     ).fetchone()
     assert row["state"] == "pending"
     assert row["version"] == 1
