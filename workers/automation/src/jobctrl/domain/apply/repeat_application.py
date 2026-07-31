@@ -15,7 +15,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-LOCAL_TENANT = "local"
+from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 
 _RELATIONSHIP_RANK = {
     "canonical_job": 0,
@@ -68,8 +69,8 @@ def ensure_repeat_application_tables(conn) -> list[str]:
         CREATE TABLE IF NOT EXISTS application_repeat_overrides (
           tenant_id            TEXT NOT NULL DEFAULT 'local',
           override_id          TEXT NOT NULL,
-          target_job_key       TEXT NOT NULL,
-          prior_job_key        TEXT NOT NULL,
+          target_job_id        TEXT NOT NULL,
+          prior_job_id         TEXT NOT NULL,
           relationship         TEXT NOT NULL,
           evidence_fingerprint TEXT NOT NULL,
           evidence_json        TEXT NOT NULL,
@@ -81,7 +82,7 @@ def ensure_repeat_application_tables(conn) -> list[str]:
         """,
         """
         CREATE INDEX IF NOT EXISTS idx_application_repeat_overrides_target
-          ON application_repeat_overrides(tenant_id, target_job_key, confirmed_at DESC)
+          ON application_repeat_overrides(tenant_id, target_job_id, confirmed_at DESC)
         """,
         """
         CREATE TABLE IF NOT EXISTS application_repeat_override_consumptions (
@@ -98,7 +99,7 @@ def ensure_repeat_application_tables(conn) -> list[str]:
           tenant_id            TEXT NOT NULL DEFAULT 'local',
           audit_id             TEXT NOT NULL,
           audit_key            TEXT NOT NULL,
-          target_job_key       TEXT NOT NULL,
+          target_job_id        TEXT NOT NULL,
           action               TEXT NOT NULL,
           evidence_fingerprint TEXT NOT NULL,
           evidence_json        TEXT NOT NULL,
@@ -112,7 +113,7 @@ def ensure_repeat_application_tables(conn) -> list[str]:
         """,
         """
         CREATE INDEX IF NOT EXISTS idx_application_repeat_audit_target
-          ON application_repeat_audit(tenant_id, target_job_key, occurred_at DESC)
+          ON application_repeat_audit(tenant_id, target_job_id, occurred_at DESC)
         """,
     )
     for statement in statements:
@@ -124,23 +125,32 @@ def ensure_repeat_application_tables(conn) -> list[str]:
 
 def evaluate_repeat_application(
     conn,
-    target_job_key: str,
     *,
+    tenant_id: TenantId = LOCAL_TENANT,
+    target_job_id: JobId,
     record_audit: bool = True,
     evaluated_at: str | None = None,
 ) -> dict[str, Any]:
-    """Evaluate confirmed prior applications related to ``target_job_key``."""
+    """Evaluate confirmed prior applications related to one canonical JobId."""
 
     ensure_repeat_application_tables(conn)
     evaluated_at = evaluated_at or _utc_now()
-    target = _job_identity(conn, target_job_key)
+    stable_job_id = canonical_job_id(str(target_job_id))
+    target = _job_identity(conn, tenant_id=tenant_id, job_id=stable_job_id)
     if target is None:
-        raise ValueError(f"job not found: {target_job_key}")
+        raise ValueError(f"job not found: {stable_job_id}")
 
     matches = [
         match
-        for fact in _confirmed_application_facts(conn)
-        if (match := _relationship_match(conn, target, fact)) is not None
+        for fact in _confirmed_application_facts(conn, tenant_id=tenant_id)
+        if (
+            match := _relationship_match(
+                conn,
+                tenant_id=tenant_id,
+                target=target,
+                fact=fact,
+            )
+        ) is not None
     ]
     matches.sort(key=_match_sort_key)
     if not matches:
@@ -151,21 +161,30 @@ def evaluate_repeat_application(
             "evaluatedAt": evaluated_at,
             "matches": [],
             "override": None,
-            "auditTrail": _audit_trail(conn, target_job_key),
+            "auditTrail": _audit_trail(
+                conn,
+                tenant_id=tenant_id,
+                target_job_id=stable_job_id,
+            ),
         }
 
-    fingerprint = repeat_evidence_fingerprint(target_job_key, matches)
-    override = _matching_override(conn, target_job_key, fingerprint)
-    exact = any(match["relationship"] != "same_employer_equivalent_role" for match in matches)
-    if override and override["consumedAt"] is None:
+    fingerprint = repeat_evidence_fingerprint(str(stable_job_id), matches)
+    override = _matching_override(
+        conn,
+        tenant_id=tenant_id,
+        target_job_id=stable_job_id,
+        fingerprint=fingerprint,
+    )
+    hard_block = any(match["relationship"] != "same_employer_equivalent_role" for match in matches)
+    if hard_block:
+        status = "blocked"
+        summary = "A confirmed application to this canonical opening blocks another live submission."
+    elif override and override["consumedAt"] is None:
         status = "override_ready"
         summary = "A reasoned confirmation is recorded for one live attempt against this exact evidence."
     elif override:
         status = "override_consumed"
         summary = "The prior confirmation was already used; another live attempt requires a new confirmation."
-    elif exact:
-        status = "blocked"
-        summary = "A confirmed application to this canonical opening blocks another live submission by default."
     else:
         status = "confirmation_required"
         summary = (
@@ -175,8 +194,9 @@ def evaluate_repeat_application(
     if record_audit and status in {"blocked", "confirmation_required"}:
         _insert_audit(
             conn,
-            audit_key=f"assessment:{target_job_key}:{fingerprint}:{status}",
-            target_job_key=target_job_key,
+            tenant_id=tenant_id,
+            audit_key=f"assessment:{stable_job_id}:{fingerprint}:{status}",
+            target_job_id=stable_job_id,
             action=status,
             evidence_fingerprint=fingerprint,
             evidence_json=_compact_json(matches),
@@ -193,7 +213,11 @@ def evaluate_repeat_application(
         "evaluatedAt": evaluated_at,
         "matches": matches,
         "override": override,
-        "auditTrail": _audit_trail(conn, target_job_key),
+        "auditTrail": _audit_trail(
+            conn,
+            tenant_id=tenant_id,
+            target_job_id=stable_job_id,
+        ),
     }
 
 
@@ -201,7 +225,8 @@ def consume_repeat_application_override(
     conn,
     assessment: dict[str, Any],
     *,
-    target_job_key: str,
+    tenant_id: TenantId = LOCAL_TENANT,
+    target_job_id: JobId,
     run_id: str,
     consumed_at: str,
 ) -> str | None:
@@ -218,12 +243,13 @@ def consume_repeat_application_override(
           tenant_id, override_id, run_id, consumed_at
         ) VALUES (?, ?, ?, ?)
         """,
-        (LOCAL_TENANT, override["overrideId"], run_id, consumed_at),
+        (str(tenant_id), override["overrideId"], run_id, consumed_at),
     )
     _insert_audit(
         conn,
+        tenant_id=tenant_id,
         audit_key=f"override_consumed:{override['overrideId']}",
-        target_job_key=target_job_key,
+        target_job_id=target_job_id,
         action="override_consumed",
         evidence_fingerprint=assessment["evidenceFingerprint"],
         evidence_json=_compact_json(assessment["matches"]),
@@ -236,17 +262,17 @@ def consume_repeat_application_override(
 
 
 def repeat_evidence_fingerprint(
-    target_job_key: str,
+    target_job_id: str,
     matches: list[dict[str, Any]],
 ) -> str:
     canonical = {
-        "targetJobKey": target_job_key,
+        "targetJobId": target_job_id,
         "matches": [
             {
                 "relationship": match["relationship"],
                 "reason": match["reason"],
                 "priorApplication": {
-                    "jobKey": match["priorApplication"]["jobKey"],
+                    "jobId": match["priorApplication"]["jobId"],
                     "title": match["priorApplication"]["title"],
                     "company": match["priorApplication"]["company"],
                     "applicationUrl": match["priorApplication"]["applicationUrl"],
@@ -271,7 +297,7 @@ def _match_sort_key(match: dict[str, Any]) -> tuple[int, bytes, bytes]:
     prior = match["priorApplication"]
     return (
         _RELATIONSHIP_RANK[str(match["relationship"])],
-        str(prior["jobKey"]).encode("utf-8"),
+        str(prior["jobId"]).encode("utf-8"),
         str(prior["factId"]).encode("utf-8"),
     )
 
@@ -296,7 +322,12 @@ def _normalize_tokens(value: str | None) -> list[str]:
     return [token for token in re.sub(r"[^a-z0-9]+", " ", normalized).strip().split() if token]
 
 
-def _job_identity(conn, job_key: str) -> dict[str, Any] | None:
+def _job_identity(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> dict[str, Any] | None:
     company_expression = "j.company"
     company_params: tuple[str, ...] = ()
     if _table_exists(conn, "job_list_projections"):
@@ -304,31 +335,32 @@ def _job_identity(conn, job_key: str) -> dict[str, Any] | None:
             COALESCE(
               NULLIF(j.company, ''),
               (SELECT jlp.employer
-                 FROM job_list_projections jlp
-                WHERE jlp.tenant_id = ? AND jlp.job_id = j.url
+                FROM job_list_projections jlp
+                WHERE jlp.tenant_id = ? AND jlp.job_id = j.job_id
                 LIMIT 1)
             )
         """
-        company_params = (LOCAL_TENANT,)
+        company_params = (str(tenant_id),)
     row = conn.execute(
         f"""
-        SELECT j.url, j.title, {company_expression} AS company,
+        SELECT j.job_id, j.url, j.title, {company_expression} AS company,
                COALESCE(
                  (SELECT je.application_url
                     FROM job_enrichments je
-                   WHERE je.job_url = j.url AND je.tenant_id = ?
+                   WHERE je.tenant_id = ? AND je.job_id = j.job_id
                    ORDER BY je.updated_at DESC LIMIT 1),
                  j.application_url,
                  j.url
                ) AS application_url
          FROM jobs j
-         WHERE j.url = ?
+         WHERE j.tenant_id = ? AND j.job_id = ?
         """,
-        (*company_params, LOCAL_TENANT, job_key),
+        (*company_params, str(tenant_id), str(tenant_id), str(job_id)),
     ).fetchone()
     if row is None:
         return None
     return {
+        "job_id": str(row["job_id"]),
         "url": str(row["url"]),
         "title": str(row["title"] or ""),
         "company": str(row["company"] or ""),
@@ -336,12 +368,16 @@ def _job_identity(conn, job_key: str) -> dict[str, Any] | None:
     }
 
 
-def _confirmed_application_facts(conn) -> list[dict[str, Any]]:
+def _confirmed_application_facts(
+    conn,
+    *,
+    tenant_id: TenantId,
+) -> list[dict[str, Any]]:
     facts: list[dict[str, Any]] = []
     if _table_exists(conn, "job_events"):
         for row in conn.execute(
             """
-            SELECT job_url AS job_key,
+            SELECT job_id,
                    CASE event_type
                      WHEN 'ApplicationSubmitted' THEN 'application_submitted'
                      ELSE 'application_manually_marked'
@@ -350,40 +386,42 @@ def _confirmed_application_facts(conn) -> list[dict[str, Any]]:
                    occurred_at AS confirmed_at,
                    CASE event_type WHEN 'ApplicationSubmitted' THEN 40 ELSE 30 END AS priority
               FROM job_events
-             WHERE job_url IS NOT NULL
+             WHERE tenant_id = ? AND job_id IS NOT NULL
                AND event_type IN ('ApplicationSubmitted', 'ApplicationManuallyMarked')
-            """
+            """,
+            (str(tenant_id),),
         ).fetchall():
             facts.append(dict(row))
     if _table_exists(conn, "application_outcomes"):
         for row in conn.execute(
             """
-            SELECT job_key, 'applied_confirmation' AS fact_kind,
+            SELECT job_id, 'applied_confirmation' AS fact_kind,
                    'outcome:' || outcome_id AS fact_id,
                    occurred_at AS confirmed_at, 20 AS priority
               FROM application_outcomes
              WHERE tenant_id = ? AND kind = 'applied_confirmation'
             """,
-            (LOCAL_TENANT,),
+            (str(tenant_id),),
         ).fetchall():
             facts.append(dict(row))
     for row in conn.execute(
         """
-        SELECT url AS job_key, 'legacy_applied_status' AS fact_kind,
-               'job:' || url AS fact_id,
+        SELECT job_id, 'legacy_applied_status' AS fact_kind,
+               'job:' || job_id AS fact_id,
                COALESCE(applied_at, discovered_at, '') AS confirmed_at,
                10 AS priority
           FROM jobs
-         WHERE LOWER(COALESCE(apply_status, '')) = 'applied'
+         WHERE tenant_id = ? AND LOWER(COALESCE(apply_status, '')) = 'applied'
            AND COALESCE(applied_at, '') != ''
-        """
+        """,
+        (str(tenant_id),),
     ).fetchall():
         facts.append(dict(row))
 
     best: dict[str, dict[str, Any]] = {}
     for fact in facts:
-        job_key = str(fact["job_key"])
-        current = best.get(job_key)
+        job_id = str(fact["job_id"])
+        current = best.get(job_id)
         if (
             current is None
             or int(fact["priority"]) > int(current["priority"])
@@ -392,30 +430,46 @@ def _confirmed_application_facts(conn) -> list[dict[str, Any]]:
                 and str(fact["confirmed_at"]) > str(current["confirmed_at"])
             )
         ):
-            best[job_key] = fact
+            best[job_id] = fact
     return list(best.values())
 
 
 def _relationship_match(
     conn,
+    *,
+    tenant_id: TenantId,
     target: dict[str, Any],
     fact: dict[str, Any],
 ) -> dict[str, Any] | None:
-    prior = _job_identity(conn, str(fact["job_key"]))
+    prior = _job_identity(
+        conn,
+        tenant_id=tenant_id,
+        job_id=canonical_job_id(str(fact["job_id"])),
+    )
     if prior is None:
         return None
     relationship: str | None = None
     reason = ""
     evidence: list[str] = []
-    if target["url"] == prior["url"]:
+    if target["job_id"] == prior["job_id"]:
         relationship = "canonical_job"
         reason = "Both records resolve to the same canonical JobCtrl job."
-        evidence = [f"job:{target['url']}"]
-    elif canonical := _canonical_identity_relationship(conn, target["url"], prior["url"]):
+        evidence = [f"job:{target['job_id']}"]
+    elif canonical := _canonical_identity_relationship(
+        conn,
+        tenant_id=tenant_id,
+        target_job_id=target["job_id"],
+        prior_job_id=prior["job_id"],
+    ):
         relationship = "canonical_identity"
         reason = "The canonical ATS identity matches the previously applied opening."
         evidence = canonical
-    elif duplicate := _accepted_duplicate_relationship(conn, target["url"], prior["url"]):
+    elif duplicate := _accepted_duplicate_relationship(
+        conn,
+        tenant_id=tenant_id,
+        target_job_id=target["job_id"],
+        prior_job_id=prior["job_id"],
+    ):
         relationship = "accepted_duplicate"
         reason = "An accepted duplicate link connects this representation to the previously applied opening."
         evidence = duplicate
@@ -432,7 +486,7 @@ def _relationship_match(
         "relationship": relationship,
         "reason": reason,
         "priorApplication": {
-            "jobKey": prior["url"],
+            "jobId": prior["job_id"],
             "title": prior["title"].strip() or "Untitled role",
             "company": prior["company"].strip() or "Unknown company",
             "applicationUrl": prior["application_url"],
@@ -444,20 +498,26 @@ def _relationship_match(
     }
 
 
-def _canonical_identity_relationship(conn, target_job_key: str, prior_job_key: str) -> list[str] | None:
+def _canonical_identity_relationship(
+    conn,
+    *,
+    tenant_id: TenantId,
+    target_job_id: str,
+    prior_job_id: str,
+) -> list[str] | None:
     if not _table_exists(conn, "job_canonical_identities"):
         return None
     rows = conn.execute(
         """
-        SELECT job_url, canonical_url, ats_kind, source_native_id
+        SELECT job_id, canonical_url, ats_kind, source_native_id
           FROM job_canonical_identities
-         WHERE tenant_id = ? AND job_url IN (?, ?)
+         WHERE tenant_id = ? AND job_id IN (?, ?)
         """,
-        (LOCAL_TENANT, target_job_key, prior_job_key),
+        (str(tenant_id), target_job_id, prior_job_id),
     ).fetchall()
-    identities = {str(row["job_url"]): row for row in rows}
-    target = identities.get(target_job_key)
-    prior = identities.get(prior_job_key)
+    identities = {str(row["job_id"]): row for row in rows}
+    target = identities.get(target_job_id)
+    prior = identities.get(prior_job_id)
     if target is None or prior is None:
         return None
     if target["canonical_url"] and target["canonical_url"] == prior["canonical_url"]:
@@ -472,17 +532,31 @@ def _canonical_identity_relationship(conn, target_job_key: str, prior_job_key: s
     return None
 
 
-def _accepted_duplicate_relationship(conn, target_job_key: str, prior_job_key: str) -> list[str] | None:
+def _accepted_duplicate_relationship(
+    conn,
+    *,
+    tenant_id: TenantId,
+    target_job_id: str,
+    prior_job_id: str,
+) -> list[str] | None:
     if not _table_exists(conn, "job_duplicate_links"):
         return None
-    target_aliases = _job_aliases(conn, target_job_key)
-    prior_aliases = _job_aliases(conn, prior_job_key)
+    target_aliases = _job_aliases(
+        conn,
+        tenant_id=tenant_id,
+        job_id=target_job_id,
+    )
+    prior_aliases = _job_aliases(
+        conn,
+        tenant_id=tenant_id,
+        job_id=prior_job_id,
+    )
     rows = conn.execute(
         """
         SELECT surviving_job_id, superseded_job_or_observation_id, reason
           FROM job_duplicate_links WHERE tenant_id = ?
         """,
-        (LOCAL_TENANT,),
+        (str(tenant_id),),
     ).fetchall()
     for row in rows:
         survivor = str(row["surviving_job_id"])
@@ -498,16 +572,21 @@ def _accepted_duplicate_relationship(conn, target_job_key: str, prior_job_key: s
     return None
 
 
-def _job_aliases(conn, job_key: str) -> set[str]:
-    aliases = {job_key}
+def _job_aliases(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: str,
+) -> set[str]:
+    aliases = {job_id}
     if not _table_exists(conn, "job_source_observations"):
         return aliases
     rows = conn.execute(
         """
-        SELECT source_observation_id, observed_url, normalized_observed_url
-          FROM job_source_observations WHERE tenant_id = ? AND job_url = ?
+        SELECT source_observation_id
+          FROM job_source_observations WHERE tenant_id = ? AND job_id = ?
         """,
-        (LOCAL_TENANT, job_key),
+        (str(tenant_id), job_id),
     ).fetchall()
     for row in rows:
         aliases.update(str(value) for value in row if value)
@@ -525,26 +604,32 @@ def _equivalent_employer_role(target: dict[str, Any], prior: dict[str, Any]) -> 
     return target_role == prior_role or sorted(target_role.split()) == sorted(prior_role.split())
 
 
-def _matching_override(conn, target_job_key: str, fingerprint: str) -> dict[str, Any] | None:
+def _matching_override(
+    conn,
+    *,
+    tenant_id: TenantId,
+    target_job_id: JobId,
+    fingerprint: str,
+) -> dict[str, Any] | None:
     row = conn.execute(
         """
-        SELECT o.override_id, o.target_job_key, o.prior_job_key,
+        SELECT o.override_id, o.target_job_id, o.prior_job_id,
                o.evidence_fingerprint, o.reason, o.confirmed_by, o.confirmed_at,
                c.consumed_at, c.run_id AS consumed_run_id
           FROM application_repeat_overrides o
           LEFT JOIN application_repeat_override_consumptions c
             ON c.tenant_id = o.tenant_id AND c.override_id = o.override_id
-         WHERE o.tenant_id = ? AND o.target_job_key = ? AND o.evidence_fingerprint = ?
+         WHERE o.tenant_id = ? AND o.target_job_id = ? AND o.evidence_fingerprint = ?
          ORDER BY o.confirmed_at DESC, o.override_id DESC LIMIT 1
         """,
-        (LOCAL_TENANT, target_job_key, fingerprint),
+        (str(tenant_id), str(target_job_id), fingerprint),
     ).fetchone()
     if row is None:
         return None
     return {
         "overrideId": str(row["override_id"]),
-        "targetJobKey": str(row["target_job_key"]),
-        "priorJobKey": str(row["prior_job_key"]),
+        "targetJobId": str(row["target_job_id"]),
+        "priorJobId": str(row["prior_job_id"]),
         "evidenceFingerprint": str(row["evidence_fingerprint"]),
         "reason": str(row["reason"]),
         "confirmedBy": str(row["confirmed_by"]),
@@ -557,8 +642,9 @@ def _matching_override(conn, target_job_key: str, fingerprint: str) -> dict[str,
 def _insert_audit(
     conn,
     *,
+    tenant_id: TenantId,
     audit_key: str,
-    target_job_key: str,
+    target_job_id: JobId,
     action: str,
     evidence_fingerprint: str,
     evidence_json: str,
@@ -570,15 +656,15 @@ def _insert_audit(
     conn.execute(
         """
         INSERT OR IGNORE INTO application_repeat_audit (
-          tenant_id, audit_id, audit_key, target_job_key, action,
+          tenant_id, audit_id, audit_key, target_job_id, action,
           evidence_fingerprint, evidence_json, override_id, actor, reason, occurred_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            LOCAL_TENANT,
+            str(tenant_id),
             str(uuid.uuid4()),
             audit_key,
-            target_job_key,
+            str(target_job_id),
             action,
             evidence_fingerprint,
             evidence_json,
@@ -590,29 +676,34 @@ def _insert_audit(
     )
 
 
-def _audit_trail(conn, target_job_key: str) -> list[dict[str, Any]]:
+def _audit_trail(
+    conn,
+    *,
+    tenant_id: TenantId,
+    target_job_id: JobId,
+) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-        SELECT a.audit_id, a.target_job_key, a.action, a.evidence_fingerprint,
-               a.evidence_json, a.override_id, o.prior_job_key,
+        SELECT a.audit_id, a.target_job_id, a.action, a.evidence_fingerprint,
+               a.evidence_json, a.override_id, o.prior_job_id,
                a.actor, a.reason, a.occurred_at
           FROM application_repeat_audit a
           LEFT JOIN application_repeat_overrides o
             ON o.tenant_id = a.tenant_id AND o.override_id = a.override_id
-         WHERE a.tenant_id = ? AND a.target_job_key = ?
+         WHERE a.tenant_id = ? AND a.target_job_id = ?
          ORDER BY a.occurred_at DESC, a.rowid DESC LIMIT 50
         """,
-        (LOCAL_TENANT, target_job_key),
+        (str(tenant_id), str(target_job_id)),
     ).fetchall()
     return [
         {
             "auditId": str(row["audit_id"]),
-            "targetJobKey": str(row["target_job_key"]),
+            "targetJobId": str(row["target_job_id"]),
             "action": str(row["action"]),
             "evidenceFingerprint": str(row["evidence_fingerprint"]),
             "evidence": _parse_evidence_snapshot(row["evidence_json"]),
             "overrideId": str(row["override_id"]) if row["override_id"] else None,
-            "priorJobKey": str(row["prior_job_key"]) if row["prior_job_key"] else None,
+            "priorJobId": str(row["prior_job_id"]) if row["prior_job_id"] else None,
             "actor": str(row["actor"]),
             "reason": str(row["reason"]) if row["reason"] else None,
             "occurredAt": str(row["occurred_at"]),
