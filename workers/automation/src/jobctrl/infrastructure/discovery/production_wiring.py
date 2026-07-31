@@ -999,7 +999,6 @@ def import_manual_capture_item(
     tenant_id: TenantId = LOCAL_TENANT,
 ) -> ManualCaptureImportOutcome:
     """Import one queued manual capture through Discovery + Enrichment."""
-    ensure_worker_discovery_tables(conn)
     row = conn.execute(
         """
         SELECT item_id, originating_url, source_id, reason, retry_context_json
@@ -1034,8 +1033,9 @@ def import_manual_capture_item(
     if isinstance(extension_version, str) and extension_version.strip():
         retry_context["manual_capture_provenance"]["extension_version"] = extension_version.strip()
 
+    repository = SqliteJobRepository(conn)
     use_case = DiscoverJobsUseCase(
-        repository=SqliteJobRepository(conn),
+        repository=repository,
         publisher=DurableJobEventPublisher(conn, stage="discover"),
     )
     posting = _manual_capture_posting(
@@ -1050,6 +1050,10 @@ def import_manual_capture_item(
         postings=(posting,),
         run_id=f"manual-capture:{capture.item_id}",
     )
+    identity = repository.resolve_by_posting_url(tenant_id, posting.posting_url)
+    if identity is None:
+        raise RuntimeError("Manual capture import did not persist a canonical JobId")
+    job_id = identity.job_id
 
     snapshot_use_case = _manual_capture_snapshot_use_case(
         conn,
@@ -1058,7 +1062,7 @@ def import_manual_capture_item(
     )
     outcome = snapshot_use_case.execute(
         tenant_id=tenant_id,
-        job_id=JobId(captured_url),
+        job_id=job_id,
         url=captured_url,
         source_id=str(source_id),
         policy_id="user_mediated_capture",
@@ -1070,7 +1074,8 @@ def import_manual_capture_item(
     if outcome.ok and quarantine_reason and quarantine_reason != QuarantineReason.NONE.value:
         _upsert_quarantine_entry(
             conn,
-            job_id=captured_url,
+            tenant_id=tenant_id,
+            job_id=job_id,
             source_id=str(source_id),
             reason=quarantine_reason,
             confidence=None,
@@ -1093,7 +1098,7 @@ def import_manual_capture_item(
              note = ?,
              future_manual_action_required = ?,
              retry_context_json = ?,
-             job_key = ?
+             job_id = ?
          WHERE tenant_id = ? AND item_id = ?
         """,
         (
@@ -1105,7 +1110,7 @@ def import_manual_capture_item(
             capture.note,
             1 if capture.future_manual_action_required else 0,
             json.dumps(retry_context, sort_keys=True),
-            captured_url,
+            str(job_id),
             str(tenant_id),
             capture.item_id,
         ),
@@ -1113,7 +1118,7 @@ def import_manual_capture_item(
     conn.commit()
     return ManualCaptureImportOutcome(
         item_id=capture.item_id,
-        job_id=captured_url,
+        job_id=str(job_id),
         snapshot_version=outcome.captured_snapshot_version,
         promoted_to_job_enrichment=outcome.promoted_to_job_enrichment,
         quarantine_reason=quarantine_reason,
@@ -2074,7 +2079,8 @@ def manual_capture_content(capture: ManualCaptureImport) -> str:
 def _upsert_quarantine_entry(
     conn: sqlite3.Connection,
     *,
-    job_id: str,
+    tenant_id: TenantId,
+    job_id: JobId,
     source_id: str,
     reason: str,
     confidence: float | None,
@@ -2087,11 +2093,11 @@ def _upsert_quarantine_entry(
     conn.execute(
         """
         INSERT INTO discovery_quarantine_entries (
-            tenant_id, job_id, job_key, title, company, source_id, posting_url,
+            tenant_id, job_id, title, company, source_id, posting_url,
             reason, confidence, snapshot_version, captured_at, notice_text,
             status
-        ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, 'pending')
-        ON CONFLICT(tenant_id, job_key) DO UPDATE SET
+        ) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, 'pending')
+        ON CONFLICT(tenant_id, job_id) DO UPDATE SET
             title = excluded.title,
             source_id = excluded.source_id,
             posting_url = excluded.posting_url,
@@ -2103,9 +2109,8 @@ def _upsert_quarantine_entry(
             status = excluded.status
         """,
         (
-            str(LOCAL_TENANT),
-            job_id,
-            job_id,
+            str(tenant_id),
+            str(job_id),
             title,
             source_id,
             posting_url,
