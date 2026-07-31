@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
 import {
+  IncompatibleSchemaManifestError,
   IncompatibleSchemaVersionError,
   SUPPORTED_SCHEMA_VERSION,
   migrateLegacyJobTables,
@@ -12,12 +14,27 @@ import {
   openReadOnlyDatabase,
   tableExists,
 } from "../src/db.js";
+import { EXACT_V7_SCHEMA_MANIFEST } from "../src/schema-manifest.js";
 
 function makeDbWithUserVersion(userVersion: number): { dbPath: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-schema-version-"));
   const dbPath = path.join(dir, "jobs.db");
   const db = new Database(dbPath);
   db.pragma(`user_version = ${userVersion}`);
+  db.close();
+  return { dbPath, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+function makeExactV7Database(): { dbPath: string; cleanup: () => void } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-exact-v7-"));
+  const dbPath = path.join(dir, "jobs.db");
+  const schemaPath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../../workers/automation/src/jobctrl/infrastructure/migrations/schema_v7.sql",
+  );
+  const db = new Database(dbPath);
+  db.exec(fs.readFileSync(schemaPath, "utf8"));
+  db.pragma(`user_version = ${SUPPORTED_SCHEMA_VERSION}`);
   db.close();
   return { dbPath, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
@@ -61,8 +78,8 @@ describe("schema version guard at DB open", () => {
     }
   });
 
-  it("opens a database stamped at exactly the supported version", () => {
-    const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
+  it("opens the exact v7 schema", () => {
+    const { dbPath, cleanup } = makeExactV7Database();
     try {
       openDatabase(dbPath).close();
       openReadOnlyDatabase(dbPath).close();
@@ -71,7 +88,24 @@ describe("schema version guard at DB open", () => {
     }
   });
 
-  it("does not run the legacy tombstone migration on writable open", () => {
+  it("rejects a merely stamped v7 database before runtime writes", () => {
+    const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
+    try {
+      expect(() => openDatabase(dbPath)).toThrow(IncompatibleSchemaManifestError);
+      expect(() => openReadOnlyDatabase(dbPath)).toThrow(IncompatibleSchemaManifestError);
+      const probe = new Database(dbPath, { readonly: true });
+      try {
+        expect(probe.pragma("user_version", { simple: true })).toBe(SUPPORTED_SCHEMA_VERSION);
+        expect(tableExists(probe, "jobs")).toBe(false);
+      } finally {
+        probe.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rejects a malformed v7 database without running legacy tombstone migration", () => {
     const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
     try {
       const token = "job" + "ctl";
@@ -85,16 +119,38 @@ describe("schema version guard at DB open", () => {
       `);
       seed.close();
 
-      const db = openDatabase(dbPath);
+      expect(() => openDatabase(dbPath)).toThrow(IncompatibleSchemaManifestError);
+      expect(() => openReadOnlyDatabase(dbPath)).toThrow(IncompatibleSchemaManifestError);
+      const probe = new Database(dbPath, { readonly: true });
       try {
-        expect(tableExists(db, `${token}_hidden_jobs`)).toBe(true);
-        expect(tableExists(db, "jobctrl_hidden_jobs")).toBe(false);
+        expect(probe.pragma("user_version", { simple: true })).toBe(SUPPORTED_SCHEMA_VERSION);
+        expect(tableExists(probe, `${token}_hidden_jobs`)).toBe(true);
+        expect(tableExists(probe, "jobctrl_hidden_jobs")).toBe(false);
       } finally {
-        db.close();
+        probe.close();
       }
     } finally {
       cleanup();
     }
+  });
+
+  it("keeps the checked TypeScript manifest aligned with the Python owner", () => {
+    const pythonManifestPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../../workers/automation/src/jobctrl/infrastructure/migrations/schema_manifest.py",
+    );
+    const pythonManifest = fs.readFileSync(pythonManifestPath, "utf8");
+
+    expect(pythonManifest).toContain("version=7,");
+    expect(pythonManifest).toContain("object_count=197,");
+    expect(pythonManifest).toContain("table_count=101,");
+    expect(pythonManifest).toContain(`fingerprint=\"${EXACT_V7_SCHEMA_MANIFEST.fingerprint}\",`);
+    expect(EXACT_V7_SCHEMA_MANIFEST).toEqual({
+      version: SUPPORTED_SCHEMA_VERSION,
+      objectCount: 197,
+      tableCount: 101,
+      fingerprint: "14e3ee939ca12ae4535fca7ab031671976b2375c911a51ada89851113bb5e4af",
+    });
   });
 });
 
