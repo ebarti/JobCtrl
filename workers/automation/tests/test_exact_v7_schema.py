@@ -16,11 +16,15 @@ from jobctrl.database import (
 from jobctrl.infrastructure.migrations import schema_v7
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V7_MANIFEST,
+    SchemaManifestError,
     assert_exact_manifest,
     schema_dump,
     schema_manifest,
 )
-from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
+from jobctrl.infrastructure.migrations.schema_v7 import (
+    create_exact_v7_schema,
+    create_unstamped_exact_v7_candidate,
+)
 from jobctrl.infrastructure import runtime_identity
 
 
@@ -116,6 +120,59 @@ def test_fresh_v7_creation_matches_the_exact_manifest(tmp_path: Path) -> None:
         "application_preference_how_heard",
     } <= profile_columns
     close_connection(db_path)
+
+
+def test_unstamped_v7_candidate_matches_the_exact_manifest_without_version_stamp() -> None:
+    conn = sqlite3.connect(":memory:")
+
+    def deny_version_pragma(
+        action: int,
+        argument1: str | None,
+        argument2: str | None,
+        _database: str | None,
+        _source: str | None,
+    ) -> int:
+        if (
+            action == sqlite3.SQLITE_PRAGMA
+            and argument1 == "user_version"
+            and argument2 is not None
+        ):
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    try:
+        conn.set_authorizer(deny_version_pragma)
+        create_unstamped_exact_v7_candidate(conn)
+        conn.set_authorizer(None)
+
+        assert_exact_manifest(conn, EXACT_V7_MANIFEST)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+    finally:
+        conn.set_authorizer(None)
+        conn.close()
+
+
+@pytest.mark.parametrize("version", (1, 6, SCHEMA_VERSION, 99))
+def test_unstamped_v7_candidate_rejects_nonzero_version_without_mutation(
+    version: int,
+) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.execute(f"PRAGMA user_version = {version}")
+    before = schema_dump(conn), conn.execute("PRAGMA user_version").fetchone()[0]
+
+    try:
+        with pytest.raises(
+            SchemaManifestError,
+            match="unstamped exact v7 candidate creation requires user_version 0",
+        ):
+            create_unstamped_exact_v7_candidate(conn)
+
+        assert (
+            schema_dump(conn),
+            conn.execute("PRAGMA user_version").fetchone()[0],
+        ) == before
+    finally:
+        conn.close()
 
 
 def test_exact_v7_reopen_has_no_writes_or_schema_or_data_changes(tmp_path: Path) -> None:
@@ -327,6 +384,37 @@ def test_fresh_schema_fault_leaves_no_partial_stamped_v7_database(tmp_path: Path
     conn.close()
     assert executed == 2
     assert _complete_database_dump(db_path) == before
+
+
+def test_unstamped_candidate_fault_rolls_back_and_can_retry() -> None:
+    conn = sqlite3.connect(":memory:")
+    before = schema_dump(conn)
+    executed = 0
+
+    def fail_after_partial_creation(statement: str) -> object:
+        nonlocal executed
+        executed += 1
+        if executed == 2:
+            raise RuntimeError("fixture candidate creation failure")
+        return conn.execute(statement)
+
+    try:
+        with pytest.raises(RuntimeError, match="fixture candidate creation failure"):
+            create_unstamped_exact_v7_candidate(
+                conn,
+                _execute=fail_after_partial_creation,
+            )
+
+        assert executed == 2
+        assert schema_dump(conn) == before
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+
+        create_unstamped_exact_v7_candidate(conn)
+
+        assert_exact_manifest(conn, EXACT_V7_MANIFEST)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+    finally:
+        conn.close()
 
 
 def test_failed_fresh_init_removes_its_file_and_can_retry(
