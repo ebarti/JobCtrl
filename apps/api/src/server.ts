@@ -1330,11 +1330,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return undefined;
       }
       return withWritableDb(reply, options.dbPath, (db) => {
-        const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
-        if (!jobUrl) {
+        const jobId = resolveJobId(db, "local", decodeRouteParam(request.params.jobKey));
+        if (!jobId) {
           return { ok: false, error: "job_not_found" };
         }
-        return recordRepeatApplicationOverride(db, jobUrl, body);
+        return recordRepeatApplicationOverride(db, jobId, body);
       });
     },
   );
@@ -1802,12 +1802,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return undefined;
     }
     return withWritableDb(reply, options.dbPath, async (db) => {
-      const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
-      if (!jobUrl) {
+      const jobLocator = decodeRouteParam(request.params.jobKey);
+      const jobId = resolveJobId(db, "local", jobLocator);
+      const jobUrl = resolveExistingJob(reply, db, jobLocator);
+      if (!jobId || !jobUrl) {
         return { ok: false, error: "job_not_found" };
       }
       if (!body.dryRun) {
-        assertLiveApplicationMayDispatch(db, jobUrl);
+        assertLiveApplicationMayDispatch(db, jobId);
       }
       const command = {
         action: "apply" as const,

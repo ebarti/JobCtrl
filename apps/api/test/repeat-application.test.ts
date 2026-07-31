@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import Database from "better-sqlite3";
@@ -15,78 +16,19 @@ import {
 
 const PRIOR = "https://jobs.example.test/prior";
 const TARGET = "https://careers.example.test/target";
+const PRIOR_JOB_ID = "70000000-0000-4000-8000-000000000002";
+const TARGET_JOB_ID = "70000000-0000-4000-8000-000000000001";
 const NOW = "2026-07-20T08:00:00.000Z";
 
 let db: Database.Database;
 
 beforeEach(() => {
   db = new Database(":memory:");
-  db.exec(`
-    CREATE TABLE jobs (
-      url TEXT PRIMARY KEY,
-      title TEXT,
-      company TEXT,
-      application_url TEXT,
-      applied_at TEXT,
-      apply_status TEXT,
-      discovered_at TEXT
-    );
-    CREATE TABLE job_enrichments (
-      job_url TEXT NOT NULL,
-      tenant_id TEXT NOT NULL,
-      application_url TEXT,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE job_list_projections (
-      tenant_id TEXT NOT NULL,
-      job_id TEXT NOT NULL,
-      employer TEXT NOT NULL
-    );
-    CREATE TABLE job_events (
-      event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_url TEXT,
-      event_type TEXT NOT NULL,
-      occurred_at TEXT NOT NULL
-    );
-    CREATE TABLE application_outcomes (
-      tenant_id TEXT NOT NULL,
-      outcome_id TEXT NOT NULL,
-      job_key TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      occurred_at TEXT NOT NULL
-    );
-    CREATE TABLE application_outcome_suggestions (
-      tenant_id TEXT NOT NULL,
-      suggestion_id TEXT NOT NULL,
-      job_key TEXT NOT NULL,
-      suggested_kind TEXT NOT NULL,
-      status TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE job_canonical_identities (
-      tenant_id TEXT NOT NULL,
-      job_url TEXT NOT NULL,
-      canonical_url TEXT NOT NULL,
-      ats_kind TEXT NOT NULL,
-      source_native_id TEXT NOT NULL
-    );
-    CREATE TABLE job_source_observations (
-      tenant_id TEXT NOT NULL,
-      source_observation_id TEXT NOT NULL,
-      job_url TEXT NOT NULL,
-      observed_url TEXT NOT NULL,
-      normalized_observed_url TEXT NOT NULL
-    );
-    CREATE TABLE job_duplicate_links (
-      tenant_id TEXT NOT NULL,
-      duplicate_link_id TEXT NOT NULL,
-      surviving_job_id TEXT NOT NULL,
-      superseded_job_or_observation_id TEXT NOT NULL,
-      reason TEXT NOT NULL,
-      confidence REAL NOT NULL,
-      linked_at TEXT NOT NULL
-    );
-  `);
+  db.exec(readFileSync(new URL(
+    "../../../workers/automation/src/jobctrl/infrastructure/migrations/schema_v7.sql",
+    import.meta.url,
+  ), "utf8"));
+  db.pragma("user_version = 7");
   ensureRepeatApplicationTables(db);
 });
 
@@ -95,17 +37,30 @@ afterEach(() => {
   db.close();
 });
 
+function jobIdFor(url: string): string {
+  if (url === PRIOR) return PRIOR_JOB_ID;
+  if (url === TARGET) return TARGET_JOB_ID;
+  const hex = createHash("sha256").update(`repeat-test:${url}`, "utf8").digest("hex").slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20)}`;
+}
+
 function insertJob(url: string, title: string, company: string): void {
   db.prepare(
-    `INSERT INTO jobs (url, title, company, application_url, discovered_at)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(url, title, company, `${url}/apply`, NOW);
+    `INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url, discovered_at)
+     VALUES ('local', ?, ?, ?, ?, ?, ?)`,
+  ).run(jobIdFor(url), url, title, company, `${url}/apply`, NOW);
+  db.prepare(
+    `INSERT INTO job_enrichments
+       (tenant_id, job_id, current_status, application_url, updated_at)
+     VALUES ('local', ?, 'enriched', ?, ?)`,
+  ).run(jobIdFor(url), `${url}/apply`, NOW);
 }
 
 function confirmPrior(kind: "ApplicationSubmitted" | "ApplicationManuallyMarked" = "ApplicationSubmitted"): void {
   db.prepare(
-    "INSERT INTO job_events (job_url, event_type, occurred_at) VALUES (?, ?, ?)",
-  ).run(PRIOR, kind, NOW);
+    `INSERT INTO job_events (tenant_id, job_id, identity_version, event_type, occurred_at)
+     VALUES ('local', ?, 1, ?, ?)`,
+  ).run(PRIOR_JOB_ID, kind, NOW);
 }
 
 describe("repeat application evidence", () => {
@@ -119,17 +74,71 @@ describe("repeat application evidence", () => {
         "utf8",
       ),
     ) as {
-      targetJobKey: string;
+      targetJobId: string;
       matches: Parameters<typeof repeatEvidenceFingerprint>[1];
       expectedFingerprint: string;
     };
 
-    expect(repeatEvidenceFingerprint(fixture.targetJobKey, fixture.matches)).toBe(
+    expect(repeatEvidenceFingerprint(fixture.targetJobId, fixture.matches)).toBe(
       fixture.expectedFingerprint,
     );
-    expect(repeatEvidenceFingerprint(fixture.targetJobKey, [...fixture.matches].reverse())).toBe(
+    expect(repeatEvidenceFingerprint(fixture.targetJobId, [...fixture.matches].reverse())).toBe(
       fixture.expectedFingerprint,
     );
+  });
+
+  it("rejects legacy locator keys at the fingerprint boundary", () => {
+    const legacyMatch = {
+      relationship: "canonical_identity",
+      reason: "legacy input",
+      priorApplication: {
+        jobKey: PRIOR,
+        title: "Platform Engineer",
+        company: "Acme",
+        applicationUrl: null,
+        factKind: "application_submitted",
+        factId: "event:legacy",
+        confirmedAt: NOW,
+      },
+      identityEvidence: [],
+    } as unknown as Parameters<typeof repeatEvidenceFingerprint>[1][number];
+
+    expect(
+      () =>
+        repeatEvidenceFingerprint("70000000-0000-4000-8000-000000000001", [legacyMatch]),
+    ).toThrow("canonical priorApplication.jobId");
+  });
+
+  it("rejects every shared invalid fingerprint vector", () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL(
+          "../../../packages/domain-types/test/fixtures/repeat_application_fingerprint_parity.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as {
+      invalidVectors: Array<{
+        targetJobId: string;
+        matches: unknown[];
+        error: string;
+      }>;
+    };
+
+    for (const vector of fixture.invalidVectors) {
+      expect(() =>
+        repeatEvidenceFingerprint(
+          vector.targetJobId,
+          vector.matches as Parameters<typeof repeatEvidenceFingerprint>[1],
+        ),
+      ).toThrow(vector.error);
+    }
+  });
+
+  it("keeps live-dispatch safety on canonical JobIds", () => {
+    insertJob(TARGET, "Platform Engineer", "Acme Inc");
+    expect(assertLiveApplicationMayDispatch(db, TARGET_JOB_ID).status).toBe("clear");
   });
 
   it("blocks alternate URLs with the same canonical ATS identity", () => {
@@ -138,21 +147,21 @@ describe("repeat application evidence", () => {
     confirmPrior();
     const identity = db.prepare(
       `INSERT INTO job_canonical_identities
-       (tenant_id, job_url, canonical_url, ats_kind, source_native_id)
-       VALUES ('local', ?, ?, 'greenhouse', 'gh-123')`,
+       (tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at)
+       VALUES ('local', ?, ?, 'greenhouse', 'gh-123', 1, ?)`,
     );
-    identity.run(PRIOR, "https://boards.example.test/jobs/123");
-    identity.run(TARGET, "https://boards.example.test/jobs/123");
+    identity.run(PRIOR_JOB_ID, "https://boards.example.test/jobs/123", NOW);
+    identity.run(TARGET_JOB_ID, "https://boards.example.test/jobs/123", NOW);
 
-    const assessment = evaluateRepeatApplication(db, TARGET);
+    const assessment = evaluateRepeatApplication(db, TARGET_JOB_ID);
 
     expect(assessment.status).toBe("blocked");
     expect(assessment.matches[0]).toMatchObject({
       relationship: "canonical_identity",
-      priorApplication: { jobKey: PRIOR, factKind: "application_submitted" },
+      priorApplication: { jobId: PRIOR_JOB_ID, factKind: "application_submitted" },
     });
     expect(assessment.auditTrail[0]?.action).toBe("blocked");
-    expect(() => assertLiveApplicationMayDispatch(db, TARGET)).toThrow(
+    expect(() => assertLiveApplicationMayDispatch(db, TARGET_JOB_ID)).toThrow(
       "repeat_application_blocked",
     );
   });
@@ -163,17 +172,18 @@ describe("repeat application evidence", () => {
     confirmPrior("ApplicationManuallyMarked");
     db.prepare(
       `INSERT INTO job_source_observations
-       (tenant_id, source_observation_id, job_url, observed_url, normalized_observed_url)
-       VALUES ('local', 'prior-observation', ?, ?, ?)`,
-    ).run(PRIOR, `${PRIOR}?source=board`, PRIOR);
+       (tenant_id, source_observation_id, job_id, source_id, source_native_id,
+        observed_url, normalized_observed_url, observed_at)
+       VALUES ('local', 'prior-observation', ?, 'test', 'prior-observation', ?, ?, ?)`,
+    ).run(PRIOR_JOB_ID, `${PRIOR}?source=board`, PRIOR, NOW);
     db.prepare(
       `INSERT INTO job_duplicate_links
        (tenant_id, duplicate_link_id, surviving_job_id,
         superseded_job_or_observation_id, reason, confidence, linked_at)
        VALUES ('local', 'link-1', ?, 'prior-observation', 'accepted_content_identity', 0.99, ?)`,
-    ).run(TARGET, NOW);
+    ).run(TARGET_JOB_ID, NOW);
 
-    expect(evaluateRepeatApplication(db, TARGET)).toMatchObject({
+    expect(evaluateRepeatApplication(db, TARGET_JOB_ID)).toMatchObject({
       status: "blocked",
       matches: [{ relationship: "accepted_duplicate" }],
     });
@@ -184,7 +194,7 @@ describe("repeat application evidence", () => {
     insertJob(TARGET, "Senior Backend Engineer 2 (Remote)", "ACME INC");
     confirmPrior();
 
-    const assessment = evaluateRepeatApplication(db, TARGET);
+    const assessment = evaluateRepeatApplication(db, TARGET_JOB_ID);
 
     expect(assessment.status).toBe("confirmation_required");
     expect(assessment.matches[0]?.relationship).toBe("same_employer_equivalent_role");
@@ -201,10 +211,10 @@ describe("repeat application evidence", () => {
     db.prepare(
       `INSERT INTO job_list_projections (tenant_id, job_id, employer)
        VALUES ('local', ?, 'Acme Inc'), ('local', ?, 'Acme Inc')`,
-    ).run(PRIOR, TARGET);
+    ).run(PRIOR_JOB_ID, TARGET_JOB_ID);
     confirmPrior();
 
-    const assessment = evaluateRepeatApplication(db, TARGET);
+    const assessment = evaluateRepeatApplication(db, TARGET_JOB_ID);
 
     expect(assessment.status).toBe("confirmation_required");
     expect(assessment.matches[0]).toMatchObject({
@@ -222,7 +232,7 @@ describe("repeat application evidence", () => {
     insertJob(TARGET, title, company);
     confirmPrior();
 
-    expect(evaluateRepeatApplication(db, TARGET).status).toBe("clear");
+    expect(evaluateRepeatApplication(db, TARGET_JOB_ID).status).toBe("clear");
   });
 
   it("excludes dry runs, failed attempts, and pending outcome suggestions", () => {
@@ -230,28 +240,28 @@ describe("repeat application evidence", () => {
     insertJob(TARGET, "Senior Backend Engineer", "Acme Inc");
     for (const eventType of ["DryRunCompleted", "ApplicationFailed", "ApplySubmitIntended"]) {
       db.prepare(
-        "INSERT INTO job_events (job_url, event_type, occurred_at) VALUES (?, ?, ?)",
-      ).run(PRIOR, eventType, NOW);
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, event_type, occurred_at) VALUES ('local', ?, 1, ?, ?)",
+      ).run(PRIOR_JOB_ID, eventType, NOW);
     }
     db.prepare(
       `INSERT INTO application_outcome_suggestions
-       (tenant_id, suggestion_id, job_key, suggested_kind, status, created_at)
+       (tenant_id, suggestion_id, job_id, suggested_kind, status, created_at)
        VALUES ('local', 'suggestion-1', ?, 'applied_confirmation', 'pending', ?)`,
-    ).run(PRIOR, NOW);
+    ).run(PRIOR_JOB_ID, NOW);
     db.prepare(
       `INSERT INTO application_outcomes
-       (tenant_id, outcome_id, job_key, kind, occurred_at)
-       VALUES ('local', 'note-like-outcome', ?, 'unknown', ?)`,
-    ).run(PRIOR, NOW);
+       (tenant_id, outcome_id, job_id, kind, source, occurred_at, recorded_at)
+       VALUES ('local', 'note-like-outcome', ?, 'unknown', 'test', ?, ?)`,
+    ).run(PRIOR_JOB_ID, NOW, NOW);
 
-    expect(evaluateRepeatApplication(db, TARGET).status).toBe("clear");
+    expect(evaluateRepeatApplication(db, TARGET_JOB_ID).status).toBe("clear");
 
     db.prepare(
       `INSERT INTO application_outcomes
-       (tenant_id, outcome_id, job_key, kind, occurred_at)
-       VALUES ('local', 'confirmed-application', ?, 'applied_confirmation', ?)`,
-    ).run(PRIOR, NOW);
-    expect(evaluateRepeatApplication(db, TARGET)).toMatchObject({
+       (tenant_id, outcome_id, job_id, kind, source, occurred_at, recorded_at)
+       VALUES ('local', 'confirmed-application', ?, 'applied_confirmation', 'test', ?, ?)`,
+    ).run(PRIOR_JOB_ID, NOW, NOW);
+    expect(evaluateRepeatApplication(db, TARGET_JOB_ID)).toMatchObject({
       status: "confirmation_required",
       matches: [{ priorApplication: { factKind: "applied_confirmation" } }],
     });
@@ -263,11 +273,11 @@ describe("repeat application evidence", () => {
     insertJob(PRIOR, "Senior Backend Engineer", "Acme Inc");
     insertJob(TARGET, "Senior Backend Engineer", "Acme Inc");
     confirmPrior();
-    const initial = evaluateRepeatApplication(db, TARGET);
+    const initial = evaluateRepeatApplication(db, TARGET_JOB_ID);
 
-    const response = recordRepeatApplicationOverride(db, TARGET, {
+    const response = recordRepeatApplicationOverride(db, TARGET_JOB_ID, {
       evidenceFingerprint: initial.evidenceFingerprint!,
-      priorJobKey: PRIOR,
+      priorJobId: PRIOR_JOB_ID,
       reason: "The first record was withdrawn before review.",
       confirmedBy: "qa-user",
     });
@@ -275,8 +285,8 @@ describe("repeat application evidence", () => {
     expect(response.assessment).toMatchObject({
       status: "override_ready",
       override: {
-        targetJobKey: TARGET,
-        priorJobKey: PRIOR,
+        targetJobId: TARGET_JOB_ID,
+        priorJobId: PRIOR_JOB_ID,
         reason: "The first record was withdrawn before review.",
         confirmedBy: "qa-user",
         consumedAt: null,
@@ -294,47 +304,47 @@ describe("repeat application evidence", () => {
     db.prepare(
       "UPDATE application_repeat_audit SET audit_id = ? WHERE action = 'override_recorded'",
     ).run("00000000-0000-0000-0000-000000000000");
-    const ordered = evaluateRepeatApplication(db, TARGET, {
+    const ordered = evaluateRepeatApplication(db, TARGET_JOB_ID, {
       recordAudit: false,
       evaluatedAt: NOW,
     });
     expect(ordered.auditTrail[0]).toMatchObject({
       action: "override_recorded",
-      targetJobKey: TARGET,
-      priorJobKey: PRIOR,
+      targetJobId: TARGET_JOB_ID,
+      priorJobId: PRIOR_JOB_ID,
       evidence: [
         {
           relationship: "same_employer_equivalent_role",
-          priorApplication: { jobKey: PRIOR, factId: "event:1" },
+          priorApplication: { jobId: PRIOR_JOB_ID, factId: "event:1" },
         },
       ],
     });
 
-    db.prepare("UPDATE jobs SET title = 'Engineering Manager' WHERE url = ?").run(TARGET);
-    const cleared = evaluateRepeatApplication(db, TARGET);
+    db.prepare("UPDATE jobs SET title = 'Engineering Manager' WHERE job_id = ?").run(TARGET_JOB_ID);
+    const cleared = evaluateRepeatApplication(db, TARGET_JOB_ID);
     expect(cleared.status).toBe("clear");
     expect(cleared.auditTrail).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           action: "override_recorded",
-          priorJobKey: PRIOR,
+          priorJobId: PRIOR_JOB_ID,
           evidence: expect.arrayContaining([
-            expect.objectContaining({ priorApplication: expect.objectContaining({ jobKey: PRIOR }) }),
+            expect.objectContaining({ priorApplication: expect.objectContaining({ jobId: PRIOR_JOB_ID }) }),
           ]),
         }),
       ]),
     );
-    db.prepare("UPDATE jobs SET title = 'Senior Backend Engineer' WHERE url = ?").run(TARGET);
+    db.prepare("UPDATE jobs SET title = 'Senior Backend Engineer' WHERE job_id = ?").run(TARGET_JOB_ID);
 
     const secondPrior = "https://jobs.example.test/second-prior";
     insertJob(secondPrior, "Senior Backend Engineer", "Acme Inc");
     db.prepare(
-      "INSERT INTO job_events (job_url, event_type, occurred_at) VALUES (?, 'ApplicationSubmitted', ?)",
-    ).run(secondPrior, "2026-07-20T09:00:00.000Z");
+      "INSERT INTO job_events (tenant_id, job_id, identity_version, event_type, occurred_at) VALUES ('local', ?, 1, 'ApplicationSubmitted', ?)",
+    ).run(jobIdFor(secondPrior), "2026-07-20T09:00:00.000Z");
     expect(() =>
-      recordRepeatApplicationOverride(db, TARGET, {
+      recordRepeatApplicationOverride(db, TARGET_JOB_ID, {
         evidenceFingerprint: initial.evidenceFingerprint!,
-        priorJobKey: PRIOR,
+        priorJobId: PRIOR_JOB_ID,
         reason: "Trying to reuse an outdated confirmation.",
         confirmedBy: "qa-user",
       }),

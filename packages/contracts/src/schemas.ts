@@ -385,7 +385,7 @@ export interface ApplyReviewDecisionResponse {
 export const RepeatApplicationOverrideRequestSchema = z
   .object({
     evidenceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-    priorJobKey: z.string().trim().min(1).max(2048),
+    priorJobId: z.string().uuid(),
     reason: z.string().trim().min(10).max(400),
     confirmedBy: z.string().trim().min(1).max(120).default("user"),
   })
@@ -820,7 +820,7 @@ export interface RepeatApplicationMatch {
   relationship: RepeatApplicationRelationship;
   reason: string;
   priorApplication: {
-    jobKey: string;
+    jobId: string;
     title: string;
     company: string;
     applicationUrl: string | null;
@@ -833,8 +833,8 @@ export interface RepeatApplicationMatch {
 
 export interface RepeatApplicationOverride {
   overrideId: string;
-  targetJobKey: string;
-  priorJobKey: string;
+  targetJobId: string;
+  priorJobId: string;
   evidenceFingerprint: string;
   reason: string;
   confirmedBy: string;
@@ -845,12 +845,12 @@ export interface RepeatApplicationOverride {
 
 export interface RepeatApplicationAuditEntry {
   auditId: string;
-  targetJobKey: string;
+  targetJobId: string;
   action: "blocked" | "confirmation_required" | "override_recorded" | "override_consumed";
   evidenceFingerprint: string;
   evidence: RepeatApplicationMatch[];
   overrideId: string | null;
-  priorJobKey: string | null;
+  priorJobId: string | null;
   actor: string;
   reason: string | null;
   occurredAt: string;
