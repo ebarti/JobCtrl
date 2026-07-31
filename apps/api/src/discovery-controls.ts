@@ -47,11 +47,11 @@ import {
   SOURCE_PRIORITY_VALUES,
   SOURCE_STATE_VALUES,
 } from "./contracts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { allRows, getRow, type SqliteDatabase } from "./db.js";
 import { emptyPolitenessOutcomes, politenessOutcomesBySource } from "./source-politeness.js";
 import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 import { refreshProjections } from "./projections.js";
-import { InputError } from "./write-model.js";
+import { InputError, resolveJobId } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
 export const EXTENSION_MANUAL_CAPTURE_SOURCE_ID = "manual_capture:extension";
@@ -149,7 +149,8 @@ interface SourceLocatorCandidateRow extends Record<string, unknown> {
 }
 
 interface PreviewObservationRow extends Record<string, unknown> {
-  job_url: string;
+  job_id: string;
+  posting_url: string | null;
   observed_url: string;
   observed_at: string;
   title: string | null;
@@ -159,7 +160,6 @@ interface PreviewObservationRow extends Record<string, unknown> {
 
 interface QuarantineEntryRow extends Record<string, unknown> {
   job_id: string;
-  job_key: string;
   title: string;
   company: string;
   source_id: string;
@@ -187,11 +187,11 @@ interface ImportedManualCaptureRow extends ManualCaptureRow {
   capture_mode: string | null;
   captured_url: string | null;
   future_manual_action_required: number | null;
-  job_key: string | null;
+  job_id: string | null;
 }
 
 interface LowScoreJobRow extends Record<string, unknown> {
-  job_key: string;
+  job_id: string;
   title: string | null;
   company: string | null;
   site: string | null;
@@ -225,115 +225,9 @@ interface CandidateProfileTargetRow extends Record<string, unknown> {
   personal_country?: string;
 }
 
-type CandidateProfileTargetColumn = "experience_target_locations" | "personal_city" | "personal_country";
-
-export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS discovery_settings (
-      tenant_id          TEXT PRIMARY KEY,
-      search_config_json TEXT NOT NULL,
-      created_at         TEXT NOT NULL,
-      updated_at         TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS source_registry_entries (
-      tenant_id     TEXT NOT NULL DEFAULT 'local',
-      source_id     TEXT NOT NULL,
-      kind          TEXT NOT NULL,
-      display_name  TEXT NOT NULL,
-      owner         TEXT NOT NULL DEFAULT 'user',
-      priority      TEXT NOT NULL DEFAULT 'standard',
-      state         TEXT NOT NULL DEFAULT 'experimental',
-      policy_id     TEXT NOT NULL,
-      seed_url      TEXT,
-      created_at    TEXT NOT NULL,
-      updated_at    TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, source_id)
-    );
-    CREATE TABLE IF NOT EXISTS source_locator_candidates (
-      tenant_id                TEXT NOT NULL DEFAULT 'local',
-      candidate_id             TEXT NOT NULL,
-      candidate_url            TEXT NOT NULL,
-      source_kind              TEXT NOT NULL,
-      confidence               REAL NOT NULL DEFAULT 0,
-      detected_ats_kind        TEXT,
-      employer_domain_matched  INTEGER NOT NULL DEFAULT 0,
-      manual_action_reason     TEXT,
-      discovered_at            TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, candidate_id)
-    );
-    CREATE TABLE IF NOT EXISTS discovery_quarantine_entries (
-      tenant_id        TEXT NOT NULL DEFAULT 'local',
-      job_id           TEXT NOT NULL,
-      job_key          TEXT NOT NULL,
-      title            TEXT NOT NULL DEFAULT '',
-      company          TEXT NOT NULL DEFAULT '',
-      source_id        TEXT NOT NULL,
-      posting_url      TEXT,
-      reason           TEXT NOT NULL,
-      confidence       REAL,
-      snapshot_version INTEGER,
-      captured_at      TEXT,
-      notice_text      TEXT,
-      status           TEXT NOT NULL DEFAULT 'pending',
-      decision_reason  TEXT,
-      decided_at       TEXT,
-      PRIMARY KEY (tenant_id, job_key)
-    );
-    CREATE TABLE IF NOT EXISTS manual_capture_queue (
-      tenant_id                     TEXT NOT NULL DEFAULT 'local',
-      item_id                       TEXT NOT NULL,
-      originating_url               TEXT NOT NULL,
-      source_id                     TEXT,
-      reason                        TEXT NOT NULL,
-      retry_context_json            TEXT NOT NULL DEFAULT '{}',
-      required_at                   TEXT NOT NULL,
-      status                        TEXT NOT NULL DEFAULT 'pending',
-      imported_at                   TEXT,
-      dismissed_at                  TEXT,
-      capture_mode                  TEXT,
-      captured_url                  TEXT,
-      content_sha256                TEXT,
-      content_length                INTEGER,
-      note                          TEXT,
-      future_manual_action_required INTEGER NOT NULL DEFAULT 0,
-      job_key                       TEXT,
-      PRIMARY KEY (tenant_id, item_id)
-    );
-    CREATE TABLE IF NOT EXISTS discovery_feedback (
-      tenant_id   TEXT NOT NULL DEFAULT 'local',
-      feedback_id TEXT NOT NULL,
-      job_key     TEXT NOT NULL,
-      source_id   TEXT,
-      kind        TEXT NOT NULL,
-      note        TEXT,
-      recorded_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, feedback_id)
-    );
-    CREATE TABLE IF NOT EXISTS role_match_feedback_suggestions (
-      tenant_id       TEXT NOT NULL DEFAULT 'local',
-      suggestion_id   TEXT NOT NULL,
-      status          TEXT NOT NULL DEFAULT 'pending',
-      rule_kind       TEXT NOT NULL,
-      title_pattern   TEXT NOT NULL,
-      title_display   TEXT NOT NULL,
-      reason_code     TEXT NOT NULL,
-      reason          TEXT NOT NULL,
-      sample_count    INTEGER NOT NULL DEFAULT 0,
-      source_ids_json TEXT NOT NULL DEFAULT '[]',
-      evidence_json   TEXT NOT NULL DEFAULT '[]',
-      created_at      TEXT NOT NULL,
-      updated_at      TEXT NOT NULL,
-      decided_at      TEXT,
-      decision_reason TEXT,
-      PRIMARY KEY (tenant_id, suggestion_id)
-    );
-  `);
-}
-
 export function readDiscoverySettings(
   db: SqliteDatabase,
 ): DiscoverySettingsResponse {
-  ensureDiscoveryControlTables(db);
   const stored = readDiscoverySearchConfig(db);
   return resolvedDiscoverySettings(stored.config, stored.persisted);
 }
@@ -342,7 +236,6 @@ export function writeDiscoverySettings(
   db: SqliteDatabase,
   request: DiscoverySettingsUpdateRequest,
 ): DiscoverySettingsResponse {
-  ensureDiscoveryControlTables(db);
   const stored = readDiscoverySearchConfig(db);
   const currentConfig = stored.config;
   const current = discoverySettingsFromConfig(currentConfig);
@@ -628,7 +521,6 @@ function positiveInt(value: unknown, fallback: number): number {
 }
 
 export function listSourceRegistry(db: SqliteDatabase): SourceRegistryListResponse {
-  ensureDiscoveryControlTables(db);
   refreshProjections(db, DEFAULT_TENANT);
   const filterAmericaOnlySources = targetSearchPrefersEurope(db);
 
@@ -683,15 +575,9 @@ function canonicalWorkdaySourceIdForAlias(sourceId: string): string | null {
 }
 
 function targetSearchPrefersEurope(db: SqliteDatabase): boolean {
-  if (!tableExists(db, "candidate_profiles")) {
-    return false;
-  }
-  const columns = candidateProfileColumns(db);
   const row = getRow<CandidateProfileTargetRow>(
     db,
-    `SELECT ${candidateProfileColumn(columns, "experience_target_locations")},
-            ${candidateProfileColumn(columns, "personal_city")},
-            ${candidateProfileColumn(columns, "personal_country")}
+    `SELECT experience_target_locations, personal_city, personal_country
      FROM candidate_profiles
      WHERE tenant_id = ? AND profile_id = ?`,
     [DEFAULT_TENANT, "default"],
@@ -707,16 +593,6 @@ function targetSearchPrefersEurope(db: SqliteDatabase): boolean {
   return EUROPE_TARGET_MARKERS.some((marker) => target.includes(marker));
 }
 
-function candidateProfileColumns(db: SqliteDatabase): Set<string> {
-  return new Set(
-    allRows<{ name: string }>(db, "PRAGMA table_info(candidate_profiles)").map((row) => row.name),
-  );
-}
-
-function candidateProfileColumn(columns: Set<string>, column: CandidateProfileTargetColumn): string {
-  return columns.has(column) ? column : `'' AS ${column}`;
-}
-
 function isAmericaOnlySource(sourceId: string, displayName: string, seedUrl: string | null): boolean {
   const target = `${sourceId} ${displayName} ${seedUrl ?? ""}`.toLowerCase();
   return AMERICA_ONLY_SOURCE_MARKERS.some((marker) => target.includes(marker));
@@ -726,7 +602,6 @@ export function upsertSourceRegistryEntry(
   db: SqliteDatabase,
   input: SourceUpsertRequest,
 ): SourceRegistryEntrySummary {
-  ensureDiscoveryControlTables(db);
   const now = new Date().toISOString();
   const existing = getSourceRegistryRow(db, input.sourceId);
   const policyId = existing?.policy_id ?? `local:${input.sourceId}`;
@@ -790,7 +665,6 @@ export function patchSourceState(
   sourceId: string,
   patch: SourceStatePatch,
 ): SourceRegistryEntrySummary {
-  ensureDiscoveryControlTables(db);
   const now = new Date().toISOString();
   let existing = getSourceRegistryRow(db, sourceId);
   if (!existing) {
@@ -851,7 +725,6 @@ export function patchSourceState(
 }
 
 export function listSourceLocatorCandidates(db: SqliteDatabase): SourceLocatorListResponse {
-  ensureDiscoveryControlTables(db);
   const rows = allRows<SourceLocatorCandidateRow>(
     db,
     `SELECT candidate_id, candidate_url, source_kind, confidence, detected_ats_kind,
@@ -892,7 +765,6 @@ export function promoteSourceLocatorCandidate(
   db: SqliteDatabase,
   candidateId: string,
 ): SourceLocatorDecisionResponse {
-  ensureDiscoveryControlTables(db);
   const candidate = getSourceLocatorCandidateRow(db, candidateId);
   if (!candidate) {
     throw new InputError(`Source locator candidate ${candidateId} was not found.`);
@@ -923,7 +795,6 @@ export function rejectSourceLocatorCandidate(
   db: SqliteDatabase,
   candidateId: string,
 ): SourceLocatorDecisionResponse {
-  ensureDiscoveryControlTables(db);
   const candidate = getSourceLocatorCandidateRow(db, candidateId);
   if (!candidate) {
     throw new InputError(`Source locator candidate ${candidateId} was not found.`);
@@ -934,21 +805,20 @@ export function rejectSourceLocatorCandidate(
 }
 
 export function listQuarantine(db: SqliteDatabase): QuarantineListResponse {
-  ensureDiscoveryControlTables(db);
   const rows = allRows<QuarantineEntryRow>(
     db,
-    `SELECT job_id, job_key, title, company, source_id, posting_url, reason,
+    `SELECT job_id, title, company, source_id, posting_url, reason,
             confidence, snapshot_version, captured_at, notice_text
      FROM discovery_quarantine_entries
      WHERE tenant_id = ? AND status = 'pending'
-     ORDER BY captured_at DESC, job_key ASC`,
+     ORDER BY captured_at DESC, job_id ASC`,
     [DEFAULT_TENANT],
   );
   return {
     ok: true,
     entries: rows.map((row) => ({
       jobId: row.job_id,
-      jobKey: row.job_key,
+      jobKey: row.job_id,
       title: row.title,
       company: row.company,
       sourceId: row.source_id,
@@ -967,15 +837,18 @@ export function decideQuarantineEntry(
   jobKey: string,
   decision: QuarantineDecision,
 ): QuarantineDecisionResponse {
-  ensureDiscoveryControlTables(db);
   const now = new Date().toISOString();
+  const jobId = resolveJobId(db, DEFAULT_TENANT, jobKey);
+  if (!jobId) {
+    throw new InputError(`Quarantine entry ${jobKey} was not found.`);
+  }
   const row = getRow<QuarantineEntryRow>(
     db,
-    `SELECT job_id, job_key, title, company, source_id, posting_url, reason,
+    `SELECT job_id, title, company, source_id, posting_url, reason,
             confidence, snapshot_version, captured_at, notice_text
      FROM discovery_quarantine_entries
-     WHERE tenant_id = ? AND job_key = ? AND status = 'pending'`,
-    [DEFAULT_TENANT, jobKey],
+     WHERE tenant_id = ? AND job_id = ? AND status = 'pending'`,
+    [DEFAULT_TENANT, jobId],
   );
   if (!row) {
     throw new InputError(`Quarantine entry ${jobKey} was not found.`);
@@ -983,25 +856,24 @@ export function decideQuarantineEntry(
   db.prepare(
     `UPDATE discovery_quarantine_entries
      SET status = ?, decision_reason = ?, decided_at = ?
-     WHERE tenant_id = ? AND job_key = ?`,
-  ).run(decision.decision, decision.reason ?? null, now, DEFAULT_TENANT, jobKey);
+     WHERE tenant_id = ? AND job_id = ?`,
+  ).run(decision.decision, decision.reason ?? null, now, DEFAULT_TENANT, jobId);
   recordEvent(db, {
     eventType: "DiscoveryFeedbackRecorded",
-    jobUrl: row.job_id || row.job_key,
+    jobId: row.job_id,
     message: "Discovery quarantine decision recorded.",
     payload: {
       feedbackId: `feedback-${crypto.randomUUID()}`,
-      jobId: row.job_id || row.job_key,
+      jobId: row.job_id,
       sourceId: row.source_id,
       kind: decision.decision === "approve" ? "useful" : "irrelevant",
       recordedAt: now,
     },
   });
-  return { ok: true, jobKey, decision: decision.decision, recordedAt: now };
+  return { ok: true, jobKey: row.job_id, decision: decision.decision, recordedAt: now };
 }
 
 export function listManualCaptureQueue(db: SqliteDatabase): ManualCaptureListResponse {
-  ensureDiscoveryControlTables(db);
   const rows = allRows<ManualCaptureRow>(
     db,
     `SELECT item_id, originating_url, source_id, reason, retry_context_json, required_at, status
@@ -1028,7 +900,6 @@ export function seedExtensionManualCapture(
   db: SqliteDatabase,
   input: ExtensionCaptureIngestRequest,
 ): { itemId: string; sourceId: string } | ExtensionCaptureIngestResponse {
-  ensureDiscoveryControlTables(db);
   const now = new Date().toISOString();
   const itemId = extensionManualCaptureItemId(input);
   upsertSourceRegistryEntry(db, {
@@ -1118,7 +989,7 @@ function dismissedExtensionManualCaptureResponse(
     db,
     `SELECT item_id, originating_url, source_id, reason, retry_context_json,
             required_at, status, imported_at, dismissed_at, capture_mode,
-            captured_url, future_manual_action_required, job_key
+            captured_url, future_manual_action_required, job_id
      FROM manual_capture_queue
      WHERE tenant_id = ? AND item_id = ? AND status = 'dismissed'`,
     [DEFAULT_TENANT, itemId],
@@ -1144,7 +1015,7 @@ function importedExtensionManualCaptureResponse(
     db,
     `SELECT item_id, originating_url, source_id, reason, retry_context_json,
             required_at, status, imported_at, capture_mode, captured_url,
-            future_manual_action_required, job_key
+            future_manual_action_required, job_id
      FROM manual_capture_queue
      WHERE tenant_id = ? AND item_id = ? AND status = 'imported'`,
     [DEFAULT_TENANT, itemId],
@@ -1159,7 +1030,7 @@ function importedExtensionManualCaptureResponse(
   return {
     ok: true,
     itemId: row.item_id,
-    jobKey: optionalText(row.job_key) ?? optionalText(row.captured_url),
+    jobKey: optionalText(row.job_id) ?? optionalText(row.captured_url),
     importedAt: row.imported_at,
     provenance: {
       sourceKind: "user_mediated_capture",
@@ -1177,7 +1048,6 @@ export function dismissManualCapture(
   itemId: string,
   _reason?: string,
 ): ManualCaptureDismissResponse {
-  ensureDiscoveryControlTables(db);
   const row = getManualCaptureRow(db, itemId);
   if (!row) {
     throw new InputError(`Manual capture item ${itemId} was not found.`);
@@ -1195,17 +1065,20 @@ export function recordDiscoveryFeedback(
   db: SqliteDatabase,
   input: DiscoveryFeedbackRequest,
 ): DiscoveryFeedbackResponse {
-  ensureDiscoveryControlTables(db);
   const now = new Date().toISOString();
   const feedbackId = `feedback-${crypto.randomUUID()}`;
+  const jobId = resolveJobId(db, DEFAULT_TENANT, input.jobKey);
+  if (!jobId) {
+    throw new InputError(`Job ${input.jobKey} was not found.`);
+  }
   db.prepare(
     `INSERT INTO discovery_feedback (
-       tenant_id, feedback_id, job_key, source_id, kind, note, recorded_at
+       tenant_id, feedback_id, job_id, source_id, kind, note, recorded_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     DEFAULT_TENANT,
     feedbackId,
-    input.jobKey,
+    jobId,
     input.sourceId ?? null,
     input.kind,
     input.note ?? null,
@@ -1213,11 +1086,11 @@ export function recordDiscoveryFeedback(
   );
   recordEvent(db, {
     eventType: "DiscoveryFeedbackRecorded",
-    jobUrl: input.jobKey,
+    jobId,
     message: "Discovery feedback recorded.",
     payload: {
       feedbackId,
-      jobId: input.jobKey,
+      jobId,
       sourceId: input.sourceId ?? null,
       kind: input.kind,
       recordedAt: now,
@@ -1226,7 +1099,7 @@ export function recordDiscoveryFeedback(
   return {
     ok: true,
     feedbackId,
-    jobKey: input.jobKey,
+    jobKey: jobId,
     sourceId: input.sourceId ?? null,
     kind: input.kind,
     recordedAt: now,
@@ -1236,7 +1109,6 @@ export function recordDiscoveryFeedback(
 export function listRoleMatchFeedbackSuggestions(
   db: SqliteDatabase,
 ): RoleMatchFeedbackListResponse {
-  ensureDiscoveryControlTables(db);
   refreshRoleMatchFeedbackSuggestions(db);
   const rows = allRows<RoleMatchFeedbackRow>(
     db,
@@ -1259,7 +1131,6 @@ export function decideRoleMatchFeedbackSuggestion(
   suggestionId: string,
   decision: RoleMatchFeedbackDecisionRequest,
 ): RoleMatchFeedbackDecisionResponse {
-  ensureDiscoveryControlTables(db);
   refreshRoleMatchFeedbackSuggestions(db);
   const existing = getRoleMatchFeedbackRow(db, suggestionId);
   if (!existing) {
@@ -1283,17 +1154,12 @@ export function previewDiscoverySource(
   db: SqliteDatabase,
   sourceId: string,
 ): DiscoveryPreviewResponse {
-  ensureDiscoveryControlTables(db);
-  if (!tableExists(db, "job_source_observations")) {
-    return { ok: true, sourceId, leads: [], generatedAt: new Date().toISOString() };
-  }
-
   const rows = allRows<PreviewObservationRow>(
     db,
-    `SELECT o.job_url, o.observed_url, o.observed_at,
+    `SELECT o.job_id, j.url AS posting_url, o.observed_url, o.observed_at,
             j.title, j.site, j.location
      FROM job_source_observations o
-     LEFT JOIN jobs j ON j.url = o.job_url
+     JOIN jobs j ON j.tenant_id = o.tenant_id AND j.job_id = o.job_id
      WHERE o.tenant_id = ? AND o.source_id = ?
      ORDER BY o.observed_at DESC, o.source_observation_id DESC
      LIMIT 10`,
@@ -1302,7 +1168,7 @@ export function previewDiscoverySource(
   const leads: DiscoveryPreviewResponse["leads"] = [];
   const seen = new Set<string>();
   for (const row of rows) {
-    const candidateUrl = row.observed_url || row.job_url;
+    const candidateUrl = row.observed_url || row.posting_url;
     if (!candidateUrl || seen.has(candidateUrl)) {
       continue;
     }
@@ -1324,9 +1190,6 @@ export function previewDiscoverySource(
 }
 
 function sourceQualityById(db: SqliteDatabase): Map<string, SourceQualityRow> {
-  if (!tableExists(db, "source_quality_stats")) {
-    return new Map();
-  }
   const rows = allRows<SourceQualityRow>(
     db,
     `SELECT source_id, recommended_state, run_count, failed_run_count,
@@ -1422,9 +1285,9 @@ function refreshRoleMatchFeedbackSuggestions(db: SqliteDatabase): void {
 function lowScoreRoleMatchGroups(db: SqliteDatabase): Map<string, RoleMatchFeedbackSuggestion> {
   const groups = new Map<string, RoleMatchFeedbackSuggestion>();
   const rows = lowScoreJobRows(db);
-  const sourceByJobKey = latestSourceIdsByJobKey(db);
+  const sourceByJobId = latestSourceIdsByJobId(db);
   for (const row of rows) {
-    const evidence = roleMatchFeedbackEvidence(row, sourceByJobKey.get(row.job_key) ?? null);
+    const evidence = roleMatchFeedbackEvidence(row, sourceByJobId.get(row.job_id) ?? null);
     if (!evidence) {
       continue;
     }
@@ -1470,37 +1333,28 @@ function lowScoreRoleMatchGroups(db: SqliteDatabase): Map<string, RoleMatchFeedb
 }
 
 function lowScoreJobRows(db: SqliteDatabase): LowScoreJobRow[] {
-  if (!tableExists(db, "jobs") || !tableExists(db, "job_scores")) {
-    return [];
-  }
-  const columns = tableColumns(db, "jobs");
-  const titleExpr = columns.has("title") ? "COALESCE(j.title, '')" : "''";
-  const companyExpr = columns.has("company")
-    ? "COALESCE(j.company, j.site, '')"
-    : columns.has("site")
-      ? "COALESCE(j.site, '')"
-      : "''";
-  const siteExpr = columns.has("site") ? "COALESCE(j.site, '')" : "''";
-  const strategyExpr = columns.has("strategy") ? "COALESCE(j.strategy, '')" : "''";
   return allRows<LowScoreJobRow>(
     db,
     `WITH latest_scores AS (
-       SELECT job_url, MAX(version) AS version
+       SELECT tenant_id, job_id, MAX(version) AS version
        FROM job_scores
        WHERE tenant_id = ?
-       GROUP BY job_url
+       GROUP BY tenant_id, job_id
      )
-     SELECT j.url AS job_key,
-            ${titleExpr} AS title,
-            ${companyExpr} AS company,
-            ${siteExpr} AS site,
-            ${strategyExpr} AS strategy,
+     SELECT j.job_id,
+            COALESCE(j.title, '') AS title,
+            COALESCE(j.company, j.site, '') AS company,
+            COALESCE(j.site, '') AS site,
+            COALESCE(j.strategy, '') AS strategy,
             s.fit_score,
             s.breakdown_json,
             s.scored_at
      FROM latest_scores latest
-     JOIN job_scores s ON s.job_url = latest.job_url AND s.version = latest.version
-     JOIN jobs j ON j.url = s.job_url
+     JOIN job_scores s
+       ON s.tenant_id = latest.tenant_id
+      AND s.job_id = latest.job_id
+      AND s.version = latest.version
+     JOIN jobs j ON j.tenant_id = s.tenant_id AND j.job_id = s.job_id
      WHERE s.tenant_id = ?
        AND s.fit_score <= 2
      ORDER BY s.scored_at DESC
@@ -1509,13 +1363,10 @@ function lowScoreJobRows(db: SqliteDatabase): LowScoreJobRow[] {
   );
 }
 
-function latestSourceIdsByJobKey(db: SqliteDatabase): Map<string, string> {
-  if (!tableExists(db, "job_source_observations")) {
-    return new Map();
-  }
-  const rows = allRows<{ job_url: string; source_id: string }>(
+function latestSourceIdsByJobId(db: SqliteDatabase): Map<string, string> {
+  const rows = allRows<{ job_id: string; source_id: string }>(
     db,
-    `SELECT job_url, source_id
+    `SELECT job_id, source_id
      FROM job_source_observations
      WHERE tenant_id = ?
        AND source_id != ''
@@ -1524,8 +1375,8 @@ function latestSourceIdsByJobKey(db: SqliteDatabase): Map<string, string> {
   );
   const result = new Map<string, string>();
   for (const row of rows) {
-    if (!result.has(row.job_url)) {
-      result.set(row.job_url, row.source_id);
+    if (!result.has(row.job_id)) {
+      result.set(row.job_id, row.source_id);
     }
   }
   return result;
@@ -1556,7 +1407,7 @@ function roleMatchFeedbackEvidence(
     return null;
   }
   return {
-    jobKey: row.job_key,
+    jobKey: row.job_id,
     title,
     company: String(row.company ?? "").trim(),
     sourceId: observedSourceId ?? inferredSourceId(row),
@@ -1713,35 +1564,23 @@ function recordEvent(
     eventType: string;
     payload: Record<string, unknown>;
     message: string;
-    jobUrl?: string;
+    jobId?: string;
     stage?: string;
   },
 ): void {
-  if (!tableExists(db, "job_events")) {
-    return;
-  }
-  const columns = jobEventColumns(db);
-  const values: Record<string, SqliteValue> = {
-    job_url: event.jobUrl ?? null,
-    stage: event.stage ?? "discover",
-    event_type: event.eventType,
-    level: "info",
-    message: event.message,
-    occurred_at: new Date().toISOString(),
-    payload_json: JSON.stringify(event.payload),
-  };
-  const entries = Object.entries(values).filter(([name]) => columns.has(name));
-  if (!entries.length) {
-    return;
-  }
   db.prepare(
-    `INSERT INTO job_events (${entries.map(([name]) => name).join(", ")}) VALUES (${entries.map(() => "?").join(", ")})`,
-  ).run(...entries.map(([, value]) => value));
-}
-
-function jobEventColumns(db: SqliteDatabase): Set<string> {
-  return new Set(
-    allRows<{ name: string }>(db, "PRAGMA table_info(job_events)").map((row) => row.name),
+    `INSERT INTO job_events (
+       tenant_id, job_id, identity_version, stage, event_type, level,
+       message, occurred_at, payload_json, entity_kind
+     ) VALUES (?, ?, 1, ?, ?, 'info', ?, ?, ?, 'discovery')`,
+  ).run(
+    DEFAULT_TENANT,
+    event.jobId ?? null,
+    event.stage ?? "discover",
+    event.eventType,
+    event.message,
+    new Date().toISOString(),
+    JSON.stringify(event.payload),
   );
 }
 
@@ -1906,12 +1745,6 @@ function normalizeTitlePattern(value: string): string {
 
 function shortHash(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex").slice(0, 16);
-}
-
-function tableColumns(db: SqliteDatabase, tableName: string): Set<string> {
-  return new Set(
-    allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name),
-  );
 }
 
 function nullableNumber(value: unknown): number | null {
