@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import uuid
 from collections import Counter
 from hashlib import sha256
 from pathlib import Path
@@ -31,10 +32,18 @@ from jobctrl.apply.launcher import (
 from jobctrl.apply.dashboard import get_recent_events
 from jobctrl.apply.origins import canonical_http_url
 from jobctrl.database import close_connection, get_connection, init_db
-from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
 from jobctrl.workflow_specs import StartedWorkflowResult
+
+
+LOCAL_TENANT = "local"
+
+
+def _job_id_for(url: str) -> str:
+    """Return the deterministic canonical identity for one test locator."""
+
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"apply-regression:{url}"))
 
 
 @pytest.fixture(autouse=True)
@@ -53,45 +62,84 @@ def _insert_ready_job(
     *,
     url: str = "https://example.com/job",
     application_url: str | None = "https://example.com/apply",
-) -> None:
+) -> str:
+    job_id = _job_id_for(url)
+    now = "2026-05-04T13:00:00+00:00"
     conn.execute(
         """
         INSERT INTO jobs (
-            url, title, site, full_description, application_url,
-            fit_score, tailored_resume_path, cover_letter_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, company, site, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            LOCAL_TENANT,
+            job_id,
             url,
             "Platform Engineer",
             "ExampleCo",
-            "Build distributed systems.",
-            application_url,
-            9,
-            "/tmp/resume.txt",
-            "/tmp/cover.txt",
+            "ExampleCo",
+            now,
         ),
     )
-    conn.commit()
-
-
-def _insert_single_job_tailor_candidate(conn, *, url: str = "https://example.com/job") -> None:
     conn.execute(
         """
-        INSERT INTO jobs (
-            url, title, site, full_description, application_url, fit_score
-        ) VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO job_locators (
+            tenant_id, job_id, locator_kind, locator_value,
+            is_current, first_seen_at, last_seen_at
+        ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?)
         """,
-        (
-            url,
-            "Platform Engineer",
-            "ExampleCo",
-            "Build distributed systems.",
-            "https://example.com/apply",
-            9,
-        ),
+        (LOCAL_TENANT, job_id, url, now, now),
     )
+    conn.execute(
+        """
+        INSERT INTO job_enrichments (
+            tenant_id, job_id, current_status, full_description, application_url, updated_at
+        ) VALUES (?, ?, 'enriched', 'Build distributed systems.', ?, ?)
+        """,
+        (LOCAL_TENANT, job_id, application_url, now),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_scores (
+            tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at
+        ) VALUES (?, ?, 1, 9, '{}', '[]', ?)
+        """,
+        (LOCAL_TENANT, job_id, now),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES (?, ?, 1, 'approved', ?, ?)
+        """,
+        (LOCAL_TENANT, job_id, now, now),
+    )
+    for artifact_type, artifact_id, path in (
+        ("tailored_resume", "resume-text-1", "/tmp/resume.txt"),
+        ("resume_pdf", "resume-pdf-1", "/tmp/resume.pdf"),
+    ):
+        conn.execute(
+            """
+            INSERT INTO job_materials_artifacts (
+                tenant_id, job_id, generation, artifact_type, artifact_id,
+                status, path, render_format, created_at
+            ) VALUES (?, ?, 1, ?, ?, 'approved', ?, 'text', ?)
+            """,
+            (LOCAL_TENANT, job_id, artifact_type, artifact_id, path, now),
+        )
+    ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+    for stage in ("enrich", "score", "tailor"):
+        set_stage_state(
+            conn,
+            job_id,
+            stage,
+            "succeeded",
+            tenant_id=LOCAL_TENANT,
+            finished_at=now,
+            validate_transition=False,
+        )
     conn.commit()
+    return job_id
 
 
 def _target_job_id(conn, url: str = "https://example.com/job") -> str:
@@ -104,15 +152,17 @@ def _target_job_id(conn, url: str = "https://example.com/job") -> str:
 
 
 def _insert_blocked_score(conn, url: str, *, fit_score: int = 9) -> None:
+    job_id = _job_id_for(url)
     conn.execute(
         """
         INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json,
+            tenant_id, job_id, version, fit_score, breakdown_json,
             keywords_json, scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, 1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}')
+        ) VALUES (?, ?, 2, ?, ?, '["python"]', ?, NULL, '{}', '{}')
         """,
         (
-            url,
+            LOCAL_TENANT,
+            job_id,
             fit_score,
             json.dumps(
                 {
@@ -136,17 +186,18 @@ def test_unsafe_url_failure_is_permanent() -> None:
 
 
 def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> None:
+    job_id = _job_id_for(url)
     conn.execute(
         """
         INSERT INTO posting_snapshot_sets (
-            tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+            tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
             latest_active_state, updated_at
-        ) VALUES ('local', ?, '{}', 0, ?, ?)
-        ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+        ) VALUES (?, ?, '{}', 0, ?, ?)
+        ON CONFLICT(tenant_id, job_id) DO UPDATE SET
             latest_active_state = excluded.latest_active_state,
             updated_at = excluded.updated_at
         """,
-        (url, state, utc_now()),
+        (LOCAL_TENANT, job_id, state, utc_now()),
     )
     conn.commit()
 
@@ -154,7 +205,7 @@ def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> 
 def _insert_review_decision(
     conn: sqlite3.Connection,
     *,
-    job_key: str = "https://example.com/job",
+    job_id: str | None = None,
     decision: str = "approve_submit",
     decided_at: str = "2026-01-01T00:00:00+00:00",
     decision_id: str | None = None,
@@ -163,16 +214,18 @@ def _insert_review_decision(
     application_url: str | None = None,
     partial_override_run_id: str | None = None,
 ) -> None:
+    stable_job_id = job_id or _job_id_for("https://example.com/job")
     conn.execute(
         """
         INSERT INTO application_review_decisions (
-            tenant_id, decision_id, job_key, decision, reason, decided_by, decided_at,
+            tenant_id, decision_id, job_id, decision, reason, decided_by, decided_at,
             materials_generation, profile_version, application_url, partial_override_run_id
-        ) VALUES ('local', ?, ?, ?, 'test', 'pytest', ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, 'test', 'pytest', ?, ?, ?, ?, ?)
         """,
         (
+            LOCAL_TENANT,
             decision_id or f"decision-{decision}-{decided_at}",
-            job_key,
+            stable_job_id,
             decision,
             decided_at,
             materials_generation,
@@ -187,29 +240,30 @@ def _insert_review_decision(
 def _seed_current_apply_binding(
     conn: sqlite3.Connection,
     *,
-    job_key: str = "https://example.com/job",
+    job_id: str | None = None,
     application_url: str = "https://example.com/apply",
     generation: int = 1,
     profile_version: int = 1,
     coverage: str | None = "full",
     run_id: str = "dry-run-full",
 ) -> None:
+    stable_job_id = job_id or _job_id_for("https://example.com/job")
     now = "2026-01-01T00:00:00+00:00"
     conn.execute(
         """
         INSERT OR REPLACE INTO candidate_profiles (
             tenant_id, profile_id, version, updated_at
-        ) VALUES ('local', 'default', ?, ?)
+        ) VALUES (?, 'default', ?, ?)
         """,
-        (profile_version, now),
+        (LOCAL_TENANT, profile_version, now),
     )
     conn.execute(
         """
         INSERT OR REPLACE INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at
-        ) VALUES (?, ?, 'local', 'approved', ?, ?)
+            tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES (?, ?, ?, 'approved', ?, ?)
         """,
-        (job_key, generation, now, now),
+        (LOCAL_TENANT, stable_job_id, generation, now, now),
     )
     for artifact_type, artifact_id, path in (
         ("tailored_resume", "resume-text-1", "/tmp/resume.txt"),
@@ -218,18 +272,19 @@ def _seed_current_apply_binding(
         conn.execute(
             """
             INSERT OR REPLACE INTO job_materials_artifacts (
-                job_url, generation, artifact_type, artifact_id, status, path,
+                tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
                 render_format, created_at
-            ) VALUES (?, ?, ?, ?, 'approved', ?, 'text', ?)
+            ) VALUES (?, ?, ?, ?, ?, 'approved', ?, 'text', ?)
             """,
-            (job_key, generation, artifact_type, artifact_id, path, now),
+            (LOCAL_TENANT, stable_job_id, generation, artifact_type, artifact_id, path, now),
         )
     if coverage is not None:
         record_job_event(
             conn,
-            job_key,
+            stable_job_id,
             "apply",
             "ApplyRunStarted",
+            tenant_id=LOCAL_TENANT,
             message="Apply dry-run started",
             payload={
                 "run_id": run_id,
@@ -241,9 +296,10 @@ def _seed_current_apply_binding(
         )
         record_job_event(
             conn,
-            job_key,
+            stable_job_id,
             "apply",
             "DryRunCompleted",
+            tenant_id=LOCAL_TENANT,
             message="Dry run completed",
             payload={
                 "run_id": run_id,
@@ -278,7 +334,7 @@ def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
     Legacy ``jobs.apply_status`` stays NULL."""
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
+    job_id = _insert_ready_job(conn)
 
     try:
         monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
@@ -290,21 +346,25 @@ def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
         assert job is not None
         assert job["url"] == "https://example.com/job"
         # Legacy column stays NULL on the new path.
-        legacy = conn.execute("SELECT apply_status FROM jobs WHERE url = ?", (job["url"],)).fetchone()
+        legacy = conn.execute(
+            "SELECT apply_status FROM jobs WHERE tenant_id = ? AND job_id = ?",
+            (LOCAL_TENANT, job_id),
+        ).fetchone()
         assert legacy["apply_status"] is None
         # Canonical lock: stage row in 'running'.
         stage = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            (LOCAL_TENANT, job_id),
         ).fetchone()
         assert stage is not None
         assert stage["state"] == "running"
         # ApplyRunStarted event recorded with the same run_id.
         evt = conn.execute(
             "SELECT payload_json FROM job_events "
-            "WHERE job_url = ? AND event_type = 'ApplyRunStarted' "
+            "WHERE tenant_id = ? AND job_id = ? AND event_type = 'ApplyRunStarted' "
             "ORDER BY event_id DESC LIMIT 1",
-            (job["url"],),
+            (LOCAL_TENANT, job_id),
         ).fetchone()
         assert evt is not None
         import json
@@ -330,15 +390,16 @@ def test_application_review_decisions_table_exists_on_fresh_db(tmp_path):
 def test_apply_approval_gate_blocks_live_without_approval(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
+    job_id = _insert_ready_job(conn)
 
     try:
         monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         prior_event_count = len(get_recent_events())
         assert acquire_job(target_job_id=_target_job_id(conn), worker_id=1) is None
         row = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            ("https://example.com/job",),
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            (LOCAL_TENANT, job_id),
         ).fetchone()
         assert row is None or row["state"] == "pending"
         assert any("Awaiting apply approval" in event for event in get_recent_events()[prior_event_count:])
@@ -352,7 +413,7 @@ def test_approval_required_apply_loop_never_runs_browser_for_unapproved_job(
 ):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
+    job_id = _insert_ready_job(conn)
 
     def fail_run_job(*_args, **_kwargs):
         raise AssertionError("unapproved live job reached browser automation")
@@ -370,8 +431,9 @@ def test_approval_required_apply_loop_never_runs_browser_for_unapproved_job(
 
         assert (applied, failed) == (0, 0)
         row = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            ("https://example.com/job",),
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            (LOCAL_TENANT, job_id),
         ).fetchone()
         assert row is None or row["state"] == "pending"
     finally:
@@ -391,7 +453,14 @@ def test_apply_approval_gate_can_be_disabled_or_bypassed_for_dry_run(tmp_path, m
             approval_required=False,
         )
         assert job is not None
-        set_stage_state(conn, job["url"], "apply", "pending", validate_transition=False)
+        set_stage_state(
+            conn,
+            job["job_id"],
+            "apply",
+            "pending",
+            tenant_id=LOCAL_TENANT,
+            validate_transition=False,
+        )
         conn.commit()
 
         dry_job = acquire_job(
@@ -408,10 +477,11 @@ def test_apply_approval_gate_can_be_disabled_or_bypassed_for_dry_run(tmp_path, m
 def test_apply_approval_gate_requires_latest_approve_submit(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
-    _seed_current_apply_binding(conn)
+    job_id = _insert_ready_job(conn)
+    _seed_current_apply_binding(conn, job_id=job_id)
     _insert_review_decision(
         conn,
+        job_id=job_id,
         decision="approve_submit",
         decided_at="2026-01-01T00:00:00+00:00",
         decision_id="decision-old-approve",
@@ -421,6 +491,7 @@ def test_apply_approval_gate_requires_latest_approve_submit(tmp_path, monkeypatc
     )
     _insert_review_decision(
         conn,
+        job_id=job_id,
         decision="decline",
         decided_at="2026-01-02T00:00:00+00:00",
         decision_id="decision-new-decline",
@@ -431,6 +502,7 @@ def test_apply_approval_gate_requires_latest_approve_submit(tmp_path, monkeypatc
         assert acquire_job(target_job_id=_target_job_id(conn), worker_id=1) is None
         _insert_review_decision(
             conn,
+            job_id=job_id,
             decision="approve_submit",
             decided_at="2026-01-03T00:00:00+00:00",
             decision_id="decision-new-approve",
@@ -446,10 +518,11 @@ def test_apply_approval_gate_requires_latest_approve_submit(tmp_path, monkeypatc
 def test_apply_approval_gate_requires_matching_full_dry_run(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
-    _seed_current_apply_binding(conn, coverage=None)
+    job_id = _insert_ready_job(conn)
+    _seed_current_apply_binding(conn, job_id=job_id, coverage=None)
     _insert_review_decision(
         conn,
+        job_id=job_id,
         decision="approve_submit",
         materials_generation=1,
         profile_version=1,
@@ -468,8 +541,8 @@ def test_apply_approval_gate_requires_matching_full_dry_run(tmp_path, monkeypatc
 def test_normal_dry_run_completion_satisfies_approval_gate(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
-    _seed_current_apply_binding(conn, coverage=None)
+    job_id = _insert_ready_job(conn)
+    _seed_current_apply_binding(conn, job_id=job_id, coverage=None)
 
     try:
         monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
@@ -483,9 +556,10 @@ def test_normal_dry_run_completion_satisfies_approval_gate(tmp_path, monkeypatch
         assert dry_run_job is not None
         record_job_event(
             conn,
-            "https://example.com/job",
+            dry_run_job["job_id"],
             "apply",
             "DryRunCompleted",
+            tenant_id=LOCAL_TENANT,
             message="Saga dry run completed",
             payload={
                 "run_id": run_ctx["run_id"],
@@ -499,17 +573,18 @@ def test_normal_dry_run_completion_satisfies_approval_gate(tmp_path, monkeypatch
             },
         )
         mark_result(
-            "https://example.com/job",
+            dry_run_job["job_id"],
             "dry_run",
             duration_ms=123,
             task_id=run_ctx["run_id"],
             run_ctx=run_ctx,
+            tenant_id=LOCAL_TENANT,
         )
         completion = conn.execute(
             "SELECT payload_json FROM job_events "
-            "WHERE job_url = ? AND event_type = 'DryRunCompleted' "
+            "WHERE tenant_id = ? AND job_id = ? AND event_type = 'DryRunCompleted' "
             "ORDER BY event_id DESC LIMIT 1",
-            ("https://example.com/job",),
+            (LOCAL_TENANT, job_id),
         ).fetchone()
         assert completion is not None
         payload = json.loads(completion["payload_json"])
@@ -520,6 +595,7 @@ def test_normal_dry_run_completion_satisfies_approval_gate(tmp_path, monkeypatch
 
         _insert_review_decision(
             conn,
+            job_id=job_id,
             decision="approve_submit",
             decided_at="2026-01-02T00:00:00+00:00",
             materials_generation=1,
@@ -543,8 +619,8 @@ def test_full_dry_run_without_navigation_receipt_cannot_satisfy_approval_gate(
 ):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
-    _seed_current_apply_binding(conn, coverage=None)
+    job_id = _insert_ready_job(conn)
+    _seed_current_apply_binding(conn, job_id=job_id, coverage=None)
 
     try:
         monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
@@ -559,23 +635,25 @@ def test_full_dry_run_without_navigation_receipt_cannot_satisfy_approval_gate(
             is not None
         )
         mark_result(
-            "https://example.com/job",
+            job_id,
             "dry_run",
             duration_ms=123,
             task_id=run_ctx["run_id"],
             run_ctx=run_ctx,
+            tenant_id=LOCAL_TENANT,
         )
         completion = conn.execute(
             "SELECT payload_json FROM job_events "
-            "WHERE job_url = ? AND event_type = 'DryRunCompleted' "
+            "WHERE tenant_id = ? AND job_id = ? AND event_type = 'DryRunCompleted' "
             "ORDER BY event_id DESC LIMIT 1",
-            ("https://example.com/job",),
+            (LOCAL_TENANT, job_id),
         ).fetchone()
         assert completion is not None
         assert json.loads(completion["payload_json"])["coverage"] == "partial"
 
         _insert_review_decision(
             conn,
+            job_id=job_id,
             decision="approve_submit",
             decided_at="2026-01-02T00:00:00+00:00",
             materials_generation=1,
@@ -620,9 +698,14 @@ def test_apply_approval_gate_rejects_stale_bindings(
 ):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
-    _seed_current_apply_binding(conn)
-    _insert_review_decision(conn, decision="approve_submit", **decision_bindings)
+    job_id = _insert_ready_job(conn)
+    _seed_current_apply_binding(conn, job_id=job_id)
+    _insert_review_decision(
+        conn,
+        job_id=job_id,
+        decision="approve_submit",
+        **decision_bindings,
+    )
 
     try:
         monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
@@ -640,10 +723,16 @@ def test_apply_approval_gate_rejects_stale_bindings(
 def test_apply_approval_gate_accepts_partial_override_bound_to_run(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
-    _seed_current_apply_binding(conn, coverage="partial", run_id="dry-run-partial")
+    job_id = _insert_ready_job(conn)
+    _seed_current_apply_binding(
+        conn,
+        job_id=job_id,
+        coverage="partial",
+        run_id="dry-run-partial",
+    )
     _insert_review_decision(
         conn,
+        job_id=job_id,
         decision="approve_submit",
         materials_generation=1,
         profile_version=1,
@@ -674,9 +763,10 @@ def test_apply_approval_gate_rejects_dry_run_evidence_for_stale_profile(
 ):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
+    job_id = _insert_ready_job(conn)
     _seed_current_apply_binding(
         conn,
+        job_id=job_id,
         coverage=coverage,
         profile_version=1,
         run_id="dry-run-profile-v1",
@@ -692,6 +782,7 @@ def test_apply_approval_gate_rejects_dry_run_evidence_for_stale_profile(
     conn.commit()
     _insert_review_decision(
         conn,
+        job_id=job_id,
         decision="approve_submit",
         materials_generation=1,
         profile_version=2,
@@ -716,14 +807,15 @@ def test_apply_approval_gate_rejects_invalid_partial_override(
 ):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
-    _seed_current_apply_binding(conn, coverage=None)
+    job_id = _insert_ready_job(conn)
+    _seed_current_apply_binding(conn, job_id=job_id, coverage=None)
     if seed_stale_run:
         record_job_event(
             conn,
-            "https://example.com/job",
+            job_id,
             "apply",
             "ApplyRunStarted",
+            tenant_id=LOCAL_TENANT,
             message="stale partial dry-run started",
             payload={
                 "run_id": "dry-run-partial",
@@ -735,9 +827,10 @@ def test_apply_approval_gate_rejects_invalid_partial_override(
         )
         record_job_event(
             conn,
-            "https://example.com/job",
+            job_id,
             "apply",
             "DryRunCompleted",
+            tenant_id=LOCAL_TENANT,
             message="stale partial dry-run completed",
             payload={
                 "run_id": "dry-run-partial",
@@ -748,6 +841,7 @@ def test_apply_approval_gate_rejects_invalid_partial_override(
         conn.commit()
     _insert_review_decision(
         conn,
+        job_id=job_id,
         decision="approve_submit",
         materials_generation=1,
         profile_version=1,
@@ -793,6 +887,8 @@ def test_worker_loop_delegates_browser_lifecycle_to_apply_saga(monkeypatch):
     """
 
     job = {
+        "tenant_id": LOCAL_TENANT,
+        "job_id": _job_id_for("https://example.com/job"),
         "url": "https://example.com/job",
         "title": "Platform Engineer",
         "site": "ExampleCo",
@@ -815,8 +911,8 @@ def test_worker_loop_delegates_browser_lifecycle_to_apply_saga(monkeypatch):
     def fake_run_job(*_args, **_kwargs):
         return "dry_run", 10
 
-    def fake_mark_result(url, status, **kwargs):
-        marked["url"] = url
+    def fake_mark_result(job_id, status, **kwargs):
+        marked["job_id"] = job_id
         marked["status"] = status
         marked["duration_ms"] = kwargs.get("duration_ms")
 
@@ -833,7 +929,7 @@ def test_worker_loop_delegates_browser_lifecycle_to_apply_saga(monkeypatch):
 
     assert (applied, failed) == (0, 0)
     assert marked == {
-        "url": "https://example.com/job",
+        "job_id": _job_id_for("https://example.com/job"),
         "status": "dry_run",
         "duration_ms": 10,
     }
@@ -956,23 +1052,25 @@ def test_acquire_job_promotes_prior_apply_run_into_row_dict(tmp_path, monkeypatc
     ``apply_status`` slot."""
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
+    job_id = _insert_ready_job(conn)
     # Seed prior failed apply via the canonical writer + projector.
-    ensure_job_stage_rows(conn, "https://example.com/job")
+    ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
     set_stage_state(
         conn,
-        "https://example.com/job",
+        job_id,
         "apply",
         "failed",
+        tenant_id=LOCAL_TENANT,
         finished_at="2026-01-01T00:01:00+00:00",
         attempt_count=1,
         validate_transition=False,
     )
     record_job_event(
         conn,
-        "https://example.com/job",
+        job_id,
         "apply",
         "ApplyRunStarted",
+        tenant_id=LOCAL_TENANT,
         payload={
             "run_id": "run-prior",
             "started_at": "2026-01-01T00:00:00+00:00",
@@ -980,9 +1078,10 @@ def test_acquire_job_promotes_prior_apply_run_into_row_dict(tmp_path, monkeypatc
     )
     record_job_event(
         conn,
-        "https://example.com/job",
+        job_id,
         "apply",
         "ApplicationFailed",
+        tenant_id=LOCAL_TENANT,
         payload={
             "run_id": "run-prior",
             "finished_at": "2026-01-01T00:01:00+00:00",
@@ -1023,15 +1122,13 @@ def test_acquire_job_finds_new_path_enriched_job(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
     url = "https://example.com/new-path-job"
-    conn.execute(
-        "INSERT INTO jobs (url, title, site, fit_score, tailored_resume_path) VALUES (?, ?, ?, ?, ?)",
-        (url, "New Path Engineer", "ExampleCo", 9, "/tmp/resume.txt"),
-    )
-    conn.commit()
+    job_id = _insert_ready_job(conn, url=url, application_url=None)
 
     repo = SqliteEnrichmentRepository(conn)
     repo.save(
-        JobEnrichment.empty(tenant_id=LOCAL_TENANT, job_id=JobId(url), updated_at="t0")
+        JobEnrichment.empty(
+            tenant_id=LOCAL_TENANT, job_id=JobId(job_id), updated_at="t0"
+        )
         .start_attempt(extraction_tier=ExtractionTier.JSON_LD, started_at="t0")
         .succeed_attempt(
             full_description=FullDescription(text="Build distributed systems."),
@@ -1040,7 +1137,10 @@ def test_acquire_job_finds_new_path_enriched_job(tmp_path, monkeypatch):
             finished_at="t1",
         )
     )
-    legacy = conn.execute("SELECT application_url FROM jobs WHERE url = ?", (url,)).fetchone()
+    legacy = conn.execute(
+        "SELECT application_url FROM jobs WHERE tenant_id = ? AND job_id = ?",
+        (LOCAL_TENANT, job_id),
+    ).fetchone()
     assert legacy["application_url"] is None
 
     try:
@@ -1061,25 +1161,28 @@ def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
     """
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
+    job_id = _insert_ready_job(conn)
 
     try:
         monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         mark_result(
-            "https://example.com/job",
+            job_id,
             "dry_run",
             duration_ms=123,
             task_id="run-test",
+            tenant_id=LOCAL_TENANT,
         )
         ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).refresh()
 
         row = conn.execute(
-            "SELECT apply_status, applied_at, apply_task_id FROM jobs WHERE url = ?",
-            ("https://example.com/job",),
+            "SELECT apply_status, applied_at, apply_task_id FROM jobs "
+            "WHERE tenant_id = ? AND job_id = ?",
+            (LOCAL_TENANT, job_id),
         ).fetchone()
         state = conn.execute(
-            "SELECT state, error_code FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            ("https://example.com/job",),
+            "SELECT state, error_code FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            (LOCAL_TENANT, job_id),
         ).fetchone()
         # Legacy columns stay NULL on the new write path.
         assert row["apply_status"] is None
@@ -1089,8 +1192,9 @@ def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
         assert state["error_code"] == "DRY_RUN"
         # Canonical: an apply_run_projections row in dry_run_complete.
         ar = conn.execute(
-            "SELECT run_id, status, dry_run FROM apply_run_projections WHERE job_id = ?",
-            ("https://example.com/job",),
+            "SELECT run_id, status, dry_run FROM apply_run_projections "
+            "WHERE tenant_id = ? AND job_id = ?",
+            (LOCAL_TENANT, job_id),
         ).fetchone()
         assert ar is not None
         assert ar["status"] == "dry_run_complete"
@@ -1124,24 +1228,27 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(tmp_path, mon
         assert job is not None
         # Sanity: the lock acquired -> Running.
         before = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert before["state"] == "running"
 
         # Production sequence -- this used to raise ValueError.
         mark_result(
-            job["url"],
+            job["job_id"],
             "dry_run",
             duration_ms=42,
             run_ctx=run_ctx,
+            tenant_id=LOCAL_TENANT,
         )
 
         # (a) No exception (we got here).
         # (b) Stage row landed on Skipped.
         after = conn.execute(
-            "SELECT state, error_code FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
+            "SELECT state, error_code FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert after["state"] == "skipped"
         assert after["error_code"] == "DRY_RUN"
@@ -1150,8 +1257,9 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(tmp_path, mon
         # and a sensible terminal status, after refresh.
         ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).refresh()
         ar = conn.execute(
-            "SELECT run_id, status, dry_run FROM apply_run_projections WHERE job_id = ?",
-            (job["url"],),
+            "SELECT run_id, status, dry_run FROM apply_run_projections "
+            "WHERE tenant_id = ? AND job_id = ?",
+            (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert ar is not None
         assert ar["run_id"] == run_ctx["run_id"]
@@ -1178,16 +1286,18 @@ def test_release_lock_does_not_rewind_running_row(tmp_path, monkeypatch):
         )
         assert job is not None
         before = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert before["state"] == "running"
 
-        release_lock(job["url"], run_ctx=run_ctx)
+        release_lock(job["job_id"], run_ctx=run_ctx, tenant_id=LOCAL_TENANT)
 
         after = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert after["state"] == "running"
     finally:
@@ -1215,8 +1325,9 @@ def test_apply_recovery_rewinds_before_submit_intent(tmp_path, monkeypatch):
         recovered = recover_ambiguous_running_apply()
         assert recovered == 1
         row = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert row["state"] == "pending"
     finally:
@@ -1241,13 +1352,14 @@ def test_apply_recovery_after_submit_intent_needs_verification(tmp_path, monkeyp
         assert job is not None
         record_job_event(
             conn,
-            job["url"],
+            job["job_id"],
             "apply",
             "ApplySubmitIntended",
+            tenant_id=LOCAL_TENANT,
             message="apply submission intent recorded",
             payload={
-                "tenant_id": "local",
-                "job_key": job["url"],
+                "tenant_id": LOCAL_TENANT,
+                "job_id": job["job_id"],
                 "run_id": run_ctx["run_id"],
                 "material_version": "1",
                 "intended_at": utc_now(),
@@ -1258,13 +1370,18 @@ def test_apply_recovery_after_submit_intent_needs_verification(tmp_path, monkeyp
         recovered = recover_ambiguous_running_apply()
         assert recovered == 1
         row = conn.execute(
-            "SELECT state, error_code FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
+            "SELECT state, error_code FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert row["state"] == "needs_verification"
         assert row["error_code"] == "APPLY_NEEDS_VERIFICATION"
 
-        _insert_review_decision(conn, job_key=job["url"], decision="approve_submit")
+        _insert_review_decision(
+            conn,
+            job_id=job["job_id"],
+            decision="approve_submit",
+        )
         assert (
             acquire_job(
                 target_job_id=_target_job_id(conn, job["url"]),
@@ -1283,8 +1400,9 @@ def test_apply_recovery_after_submit_intent_needs_verification(tmp_path, monkeyp
             is None
         )
         parked = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert parked["state"] == "needs_verification"
     finally:
@@ -1316,13 +1434,14 @@ def test_failed_result_after_submit_intent_parks_without_reclaim(
         assert job is not None
         record_job_event(
             conn,
-            job["url"],
+            job["job_id"],
             "apply",
             "ApplySubmitIntended",
+            tenant_id=LOCAL_TENANT,
             message="owned email application intent recorded",
             payload={
-                "tenant_id": "local",
-                "job_key": job["url"],
+                "tenant_id": LOCAL_TENANT,
+                "job_id": job["job_id"],
                 "run_id": run_ctx["run_id"],
                 "material_version": "1",
                 "submission_channel": "email",
@@ -1332,16 +1451,18 @@ def test_failed_result_after_submit_intent_parks_without_reclaim(
         conn.commit()
 
         mark_result(
-            job["url"],
+            job["job_id"],
             "failed",
             "email_send_outcome_ambiguous:provider timed out after accepting request",
             run_ctx=run_ctx,
+            tenant_id=LOCAL_TENANT,
         )
 
         row = conn.execute(
             "SELECT state, error_code, retryable, next_action "
-            "FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
-            (job["url"],),
+            "FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert row["state"] == "needs_verification"
         assert row["error_code"] == "APPLY_NEEDS_VERIFICATION"
@@ -1377,8 +1498,7 @@ def test_acquire_job_concurrent_workers_only_one_succeeds(tmp_path, monkeypatch)
     """
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
-    job_id = _target_job_id(conn)
+    job_id = _insert_ready_job(conn)
     close_connection(db_path)  # workers create thread-local connections
 
     try:
@@ -1427,8 +1547,10 @@ def test_acquire_job_concurrent_workers_only_one_succeeds(tmp_path, monkeypatch)
         # Exactly one ``running`` row in ``job_stage_states.apply``.
         check_conn = get_connection(db_path)
         running_count = check_conn.execute(
-            "SELECT COUNT(*) FROM job_stage_states WHERE job_url = ? AND stage = 'apply' AND state = 'running'",
-            ("https://example.com/job",),
+            "SELECT COUNT(*) FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? "
+            "AND stage = 'apply' AND state = 'running'",
+            (LOCAL_TENANT, job_id),
         ).fetchone()[0]
         assert running_count == 1
     finally:
@@ -1454,7 +1576,7 @@ def test_record_job_event_default_publisher_refreshes_apply_run_projections(tmp_
 
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    _insert_ready_job(conn)
+    job_id = _insert_ready_job(conn)
     reset_default_publisher()
     publisher = get_default_publisher()
 
@@ -1468,9 +1590,10 @@ def test_record_job_event_default_publisher_refreshes_apply_run_projections(tmp_
     try:
         record_job_event(
             conn,
-            "https://example.com/job",
+            job_id,
             "apply",
             "ApplyRunStarted",
+            tenant_id=LOCAL_TENANT,
             payload={
                 "run_id": "run-fresh",
                 "started_at": "2026-05-04T13:00:00+00:00",
@@ -1484,9 +1607,10 @@ def test_record_job_event_default_publisher_refreshes_apply_run_projections(tmp_
 
         record_job_event(
             conn,
-            "https://example.com/job",
+            job_id,
             "apply",
             "ApplicationSubmitted",
+            tenant_id=LOCAL_TENANT,
             payload={
                 "run_id": "run-fresh",
                 "result": "applied",
@@ -1497,8 +1621,9 @@ def test_record_job_event_default_publisher_refreshes_apply_run_projections(tmp_
         ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
         ar = conn.execute(
-            "SELECT run_id, status FROM apply_run_projections WHERE job_id = ?",
-            ("https://example.com/job",),
+            "SELECT run_id, status FROM apply_run_projections "
+            "WHERE tenant_id = ? AND job_id = ?",
+            (LOCAL_TENANT, job_id),
         ).fetchone()
         assert ar is not None
         assert ar["run_id"] == "run-fresh"
@@ -1532,7 +1657,7 @@ def test_record_job_event_from_worker_thread_refreshes_projection(
 
     db_path = Path(tmp_path) / "jobs.db"
     bootstrap_conn = init_db(db_path)
-    _insert_ready_job(bootstrap_conn)
+    job_id = _insert_ready_job(bootstrap_conn)
     reset_default_publisher()
 
     # Wire the projection builder on the bootstrap thread the same way
@@ -1551,9 +1676,10 @@ def test_record_job_event_from_worker_thread_refreshes_projection(
             # builder has a complete starting + terminal pair to fold.
             record_job_event(
                 worker_conn,
-                "https://example.com/job",
+                job_id,
                 "apply",
                 "ApplyRunStarted",
+                tenant_id=LOCAL_TENANT,
                 payload={
                     "run_id": "from-worker",
                     "started_at": "2026-05-04T13:00:00+00:00",
@@ -1563,9 +1689,10 @@ def test_record_job_event_from_worker_thread_refreshes_projection(
             )
             record_job_event(
                 worker_conn,
-                "https://example.com/job",
+                job_id,
                 "apply",
                 "ApplicationSubmitted",
+                tenant_id=LOCAL_TENANT,
                 payload={
                     "run_id": "from-worker",
                     "result": "applied",
@@ -1591,8 +1718,9 @@ def test_record_job_event_from_worker_thread_refreshes_projection(
         ar = None
         while _time.monotonic() < deadline:
             ar = bootstrap_conn.execute(
-                "SELECT run_id, status FROM apply_run_projections WHERE job_id = ?",
-                ("https://example.com/job",),
+                "SELECT run_id, status FROM apply_run_projections "
+                "WHERE tenant_id = ? AND job_id = ?",
+                (LOCAL_TENANT, job_id),
             ).fetchone()
             if ar is not None:
                 break
@@ -1656,7 +1784,7 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(tmp_path, monkeypat
         run = ApplyRun.start(
             tenant_id=LOCAL_TENANT,
             run_id=ApplyRunId(run_id),
-            job_id=JobId(job["url"]),
+            job_id=JobId(job["job_id"]),
             started_at="2026-05-04T13:00:00+00:00",
             worker_id=1,
             model="haiku",
@@ -1665,7 +1793,7 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(tmp_path, monkeypat
             attempts=1,
         )
         for event_type, payload in (
-            ("SagaStarted", {"job_id": job["url"], "model": "haiku"}),
+            ("SagaStarted", {"job_id": job["job_id"], "model": "haiku"}),
             ("BrowserLaunched", {"cdp_port": 9222, "pid": 1234}),
             ("AgentStarted", {"model": "haiku"}),
             # Agent-stream events forwarded by the Claude CLI adapter
@@ -1696,17 +1824,19 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(tmp_path, monkeypat
 
         # Mark the terminal applied result via the launcher.
         mark_result(
-            job["url"],
+            job["job_id"],
             "applied",
             duration_ms=60000,
             run_ctx=run_ctx,
+            tenant_id=LOCAL_TENANT,
         )
 
         # The saga's intermediate timeline lands in job_events keyed by run_id.
         events = conn.execute(
             "SELECT event_type, payload_json FROM job_events "
-            "WHERE job_url = ? AND stage = 'apply' ORDER BY event_id ASC",
-            (job["url"],),
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply' "
+            "ORDER BY event_id ASC",
+            (LOCAL_TENANT, job["job_id"]),
         ).fetchall()
         counts = Counter(evt["event_type"] for evt in events)
         recorded: dict[str, dict] = {}
@@ -1779,38 +1909,20 @@ def test_dashboard_dry_runs_excludes_soft_deleted_jobs(tmp_path):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
 
-    # ``jobctrl_deleted_jobs`` is created on demand by the discovery
-    # repository.  Create it here so the test seeds a tombstone.
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-            job_url TEXT PRIMARY KEY,
-            deleted_at TEXT NOT NULL,
-            reason TEXT,
-            restored_at TEXT,
-            FOREIGN KEY(job_url) REFERENCES jobs(url)
-        )
-        """
-    )
-    conn.commit()
-
     try:
         # Two jobs, both with a dry-run apply lifecycle.
+        job_ids: dict[str, str] = {}
         for url in (
             "https://example.com/job-live",
             "https://example.com/job-deleted",
         ):
-            conn.execute(
-                "INSERT INTO jobs (url, title, site, fit_score, "
-                "tailored_resume_path, application_url) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (url, "Eng", "ExampleCo", 9, "/tmp/r.txt", url),
-            )
+            job_ids[url] = _insert_ready_job(conn, url=url, application_url=url)
             record_job_event(
                 conn,
-                url,
+                job_ids[url],
                 "apply",
                 "ApplyRunStarted",
+                tenant_id=LOCAL_TENANT,
                 payload={
                     "run_id": f"run-{url[-8:]}",
                     "started_at": "2026-05-04T13:00:00+00:00",
@@ -1820,9 +1932,10 @@ def test_dashboard_dry_runs_excludes_soft_deleted_jobs(tmp_path):
             )
             record_job_event(
                 conn,
-                url,
+                job_ids[url],
                 "apply",
                 "DryRunCompleted",
+                tenant_id=LOCAL_TENANT,
                 payload={
                     "run_id": f"run-{url[-8:]}",
                     "result": "dry_run_complete",
@@ -1833,8 +1946,13 @@ def test_dashboard_dry_runs_excludes_soft_deleted_jobs(tmp_path):
 
         # Soft-delete the second job.
         conn.execute(
-            "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at) VALUES (?, ?)",
-            ("https://example.com/job-deleted", "2026-05-04T13:05:00+00:00"),
+            "INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at) "
+            "VALUES (?, ?, ?)",
+            (
+                LOCAL_TENANT,
+                job_ids["https://example.com/job-deleted"],
+                "2026-05-04T13:05:00+00:00",
+            ),
         )
         conn.commit()
         ProjectionBuilder(conn_factory=lambda: conn).refresh()
