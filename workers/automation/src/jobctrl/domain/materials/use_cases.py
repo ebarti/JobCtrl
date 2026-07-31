@@ -56,7 +56,7 @@ from jobctrl.domain.events import (
     create_resume_approved,
     create_resume_failed,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.aggregate import (
     MaterialsLifecycle,
     MaterialsSet,
@@ -1564,6 +1564,7 @@ class TailorResumeUseCase:
         self,
         *,
         job: dict,
+        job_id: JobId | None = None,
         profile_snapshot: ProfileSnapshot,
         tailored_dir: Path,
         validation_mode: str = "normal",
@@ -1573,7 +1574,8 @@ class TailorResumeUseCase:
         employer_analysis: EmployerAnalysis | None = None,
         requirement_fit_report: "RequirementFitReport | None" = None,
     ) -> TailorOutcome:
-        job_id = JobId(str(job["url"]))
+        stable_job_id = job_id if job_id is not None else job.get("job_id")
+        job_id = canonical_job_id(str(stable_job_id))
         # D-20: run/reuse the canonical employer analysis as the front-half
         # sub-step of tailor (cache-backed, so a re-tailor reuses it). The
         # analysis drives keyword selection in ``build_tailoring_plan``.
