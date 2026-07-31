@@ -841,13 +841,13 @@ func TestChildEnvironmentStripsAmbientRuntimeOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := childEnvironment([]string{
-		"HOME=/home/test", "PYTHONPATH=/evil", "PYTHONHOME=/evil", "VIRTUAL_ENV=/evil",
+		"HOME=/home/test", "BASH_ENV=/evil", "PYTHONPATH=/evil", "PYTHONHOME=/evil", "VIRTUAL_ENV=/evil",
 		"NODE_OPTIONS=--require=/evil", "NODE_PATH=/evil", "PORT=1234",
 		"JOBCTRL_API_ALLOW_REMOTE_BIND=1", "JOBCTRL_API_HOST=0.0.0.0", "JOBCTRL_API_PORT=9999",
 		"TEMPORAL_ADDRESS=evil:7233", "PATH=/evil", "OPENAI_API_KEY=kept",
 	}, "/payload", "/state", manifest)
 	values := environmentMap(env)
-	for _, key := range []string{"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "NODE_OPTIONS", "NODE_PATH", "PORT", "JOBCTRL_API_ALLOW_REMOTE_BIND"} {
+	for _, key := range []string{"BASH_ENV", "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "NODE_OPTIONS", "NODE_PATH", "PORT", "JOBCTRL_API_ALLOW_REMOTE_BIND"} {
 		if _, exists := values[key]; exists {
 			t.Fatalf("child inherited forbidden %s", key)
 		}
