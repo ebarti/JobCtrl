@@ -203,7 +203,7 @@ export const defaultActionDispatcher: ActionDispatcher = createActionDispatcher(
 export interface ContactResearchStartInput {
   taskId: string;
   employer: string | null;
-  jobUrl: string | null;
+  jobId: string | null;
   sources: { category: string; url: string; label: string }[];
   llmModel?: string;
 }
@@ -223,16 +223,17 @@ export type ContactResearchStarter = (
 /** Start a supervised research run on the Python worker via JSON-RPC / Temporal. */
 export function createContactResearchStarter(
   pythonRuntime: PythonRuntimeCommandResolver = defaultSourcePythonRuntime,
+  dispatcherFactory: JsonRpcDispatcherFactory = createRuntimeJsonRpcDispatcherFactory(pythonRuntime),
 ): ContactResearchStarter {
   return async (input, context) => {
-    const rpc = getDefaultJsonRpcDispatcher({ appDir: context.appDir, pythonRuntime });
+    const rpc = dispatcherFactory(context);
     const response = await rpc.call("run_contact_research", {
       tenantId: "local",
       expectedAppDir: context.appDir,
       expectedDbPath: context.dbPath,
       taskId: input.taskId,
       ...(input.employer ? { employer: input.employer } : {}),
-      ...(input.jobUrl ? { jobUrl: input.jobUrl } : {}),
+      ...(input.jobId ? { jobId: input.jobId } : {}),
       sources: input.sources,
       llmModel: input.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
     });

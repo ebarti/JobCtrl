@@ -15,6 +15,7 @@ import { DEFAULT_PIPELINE_LLM_MODEL, PIPELINE_ACTION_JOB_KEY, type ActionCommand
 import {
   buildActionResponse,
   createActionDispatcher,
+  createContactResearchStarter,
   type ActionDispatchResult,
   type JsonRpcDispatcherFactory,
 } from "../src/local-actions.js";
@@ -47,6 +48,67 @@ class FakeDispatcher implements JsonRpcDispatcher {
     /* no-op */
   }
 }
+
+describe("createContactResearchStarter (JSON-RPC adapter)", () => {
+  it("dispatches only the canonical JobId to the worker", async () => {
+    const fake = new FakeDispatcher();
+    fake.setResponse({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        runId: "run-contact",
+        workflowId: "contact-research-task-1",
+        firstExecutionRunId: "run-contact",
+      },
+    });
+    const factory = vi.fn<JsonRpcDispatcherFactory>(() => fake);
+    const starter = createContactResearchStarter(undefined, factory);
+
+    const result = await starter(
+      {
+        taskId: "task-1",
+        employer: "Acme",
+        jobId: CANONICAL_JOB_ID,
+        sources: [
+          {
+            category: "public_web_page",
+            url: "https://example.com/team",
+            label: "Team",
+          },
+        ],
+      },
+      { appDir: "/tmp", dbPath: "/tmp/jobctrl.db" },
+    );
+
+    expect(fake.calls).toEqual([
+      {
+        method: "run_contact_research",
+        params: {
+          tenantId: "local",
+          expectedAppDir: "/tmp",
+          expectedDbPath: "/tmp/jobctrl.db",
+          taskId: "task-1",
+          employer: "Acme",
+          jobId: CANONICAL_JOB_ID,
+          sources: [
+            {
+              category: "public_web_page",
+              url: "https://example.com/team",
+              label: "Team",
+            },
+          ],
+          llmModel: DEFAULT_PIPELINE_LLM_MODEL,
+        },
+      },
+    ]);
+    expect(result).toEqual({
+      runId: "run-contact",
+      workflowId: "contact-research-task-1",
+      firstExecutionRunId: "run-contact",
+      status: "queued",
+    });
+  });
+});
 
 describe("createActionDispatcher (JSON-RPC adapter)", () => {
   it("maps an apply action to the apply RPC method", async () => {
