@@ -16,6 +16,7 @@ from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
+from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.preparation import PreparationWorkItemKind
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.materials.activities import cover_letter_activity, render_pdf_activity, tailor_job_activity
@@ -24,6 +25,9 @@ from jobctrl.preparation import workflow as prep_workflow_mod
 from jobctrl.preparation.workflow import JobPreparationInput, JobPreparationWorkflow
 from jobctrl.scoring.activities import score_job_activity
 from jobctrl.llm import SpendBudgetStatus
+
+
+_JOB_ID = JobId("10000000-0000-4000-8000-000000000001")
 
 
 @activity.defn(name="check_spend_budget")
@@ -51,7 +55,7 @@ async def test_preparation_workflow_runs_requested_steps_in_order(monkeypatch: p
     result = await JobPreparationWorkflow()._execute_steps(
         JobPreparationInput(
             tenant_id="local",
-            job_url="https://example.com/job/prep",
+            job_id=_JOB_ID,
             steps=["pdf", "score", "cover", "tailor"],
             target_version="1",
             idempotency_key="preparation:test",
@@ -66,6 +70,8 @@ async def test_preparation_workflow_runs_requested_steps_in_order(monkeypatch: p
         "cover_letter_activity",
         "render_pdf_activity",
     ]
+    assert [payload.job_id for _fn, payload in calls] == [_JOB_ID] * 4
+    assert all(not hasattr(payload, "job_url") for _fn, payload in calls)
 
 
 @pytest.mark.asyncio
@@ -80,7 +86,7 @@ async def test_preparation_workflow_treats_already_done_step_as_complete(
     result = await JobPreparationWorkflow()._execute_steps(
         JobPreparationInput(
             tenant_id="local",
-            job_url="https://example.com/job/prep",
+            job_id=_JOB_ID,
             steps=["cover"],
             target_version="1",
             idempotency_key="preparation:test",
@@ -89,6 +95,17 @@ async def test_preparation_workflow_treats_already_done_step_as_complete(
 
     assert result.steps_completed == ["cover"]
     assert result.failure is None
+
+
+def test_preparation_workflow_rejects_url_shaped_job_id() -> None:
+    with pytest.raises(ValueError, match="JobId must be a canonical UUID"):
+        JobPreparationInput(
+            tenant_id="local",
+            job_id=JobId("https://example.com/jobs/legacy"),
+            steps=["score"],
+            target_version="1",
+            idempotency_key="preparation:test",
+        )
 
 
 @pytest.mark.asyncio
@@ -116,7 +133,7 @@ async def test_preparation_workflow_records_failed_step_and_error_code(
     result = await JobPreparationWorkflow()._execute_steps(
         JobPreparationInput(
             tenant_id="local",
-            job_url="https://example.com/job/prep",
+            job_id=_JOB_ID,
             steps=["score", "tailor", "cover"],
             target_version="1",
             idempotency_key="preparation:test",
@@ -130,11 +147,10 @@ async def test_preparation_workflow_records_failed_step_and_error_code(
     assert result.failure.startswith("tailor:")
 
 
-def test_preparation_workflow_specs_are_deterministic_for_duplicate_triggers(
-) -> None:
+def test_preparation_workflow_specs_are_deterministic_for_duplicate_triggers() -> None:
     first = preparation.build_preparation_workflow_spec(
         tenant_id=LOCAL_TENANT,
-        job_url="https://example.com/job/retry",
+        job_id=_JOB_ID,
         steps=["tailor", "cover", "pdf"],
         kind=PreparationWorkItemKind.TAILOR_RESUME,
         target_version=3,
@@ -142,7 +158,7 @@ def test_preparation_workflow_specs_are_deterministic_for_duplicate_triggers(
     )
     second = preparation.build_preparation_workflow_spec(
         tenant_id=LOCAL_TENANT,
-        job_url="https://example.com/job/retry",
+        job_id=_JOB_ID,
         steps=["tailor", "cover", "pdf"],
         kind=PreparationWorkItemKind.TAILOR_RESUME,
         target_version=3,
@@ -197,7 +213,7 @@ async def test_duplicate_preparation_workflow_start_attaches_without_duplicate_s
 
     payload = JobPreparationInput(
         tenant_id="local",
-        job_url="https://example.com/job/prep",
+        job_id=_JOB_ID,
         steps=["score", "tailor", "cover", "pdf"],
         target_version="1",
         idempotency_key=workflow_id.removeprefix("prep-"),
@@ -260,9 +276,7 @@ async def test_preparation_workflow_fails_fast_when_budget_exceeded_and_spends_n
         from jobctrl.domain.errors import BudgetExceededError, to_application_error
 
         raise to_application_error(
-            BudgetExceededError(
-                "LLM daily spend budget exceeded: $30.0000 spent of $25.00 for 2026-07-05."
-            )
+            BudgetExceededError("LLM daily spend budget exceeded: $30.0000 spent of $25.00 for 2026-07-05.")
         )
 
     @activity.defn(name="record_workflow_started")
@@ -295,7 +309,7 @@ async def test_preparation_workflow_fails_fast_when_budget_exceeded_and_spends_n
 
     payload = JobPreparationInput(
         tenant_id="local",
-        job_url="https://example.com/job/budget",
+        job_id=_JOB_ID,
         steps=["score", "tailor", "cover", "pdf"],
         target_version="1",
         idempotency_key=f"preparation:{uuid.uuid4().hex}",
@@ -390,7 +404,7 @@ async def test_preparation_workflow_resumes_at_cover_after_worker_restart(
     ]
     payload = JobPreparationInput(
         tenant_id="local",
-        job_url="https://example.com/job/prep",
+        job_id=_JOB_ID,
         steps=["score", "tailor", "cover", "pdf"],
         target_version="1",
         idempotency_key=f"preparation:{uuid.uuid4().hex}",

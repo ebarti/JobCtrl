@@ -25,7 +25,7 @@ from jobctrl.domain.discovery.execution import (
     DiscoveryExecutionWorkPlanState,
     validate_required_steps,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.use_cases import SuppressTailoredArtifactsUseCase
 from jobctrl.domain.preparation import PreparationWorkItemKind, make_preparation_idempotency_key
 from jobctrl.domain.rpc.messages import WorkflowStartSpec
@@ -54,10 +54,15 @@ PREPARATION_CHILD_BATCH_SIZE = 25
 
 @dataclass(frozen=True)
 class PreparationTarget:
-    job_url: str
+    tenant_id: TenantId
+    job_id: JobId
     idempotency_key: str
     target_version: str
     steps: list[str]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "tenant_id", TenantId(str(self.tenant_id)))
+        object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
 @dataclass(frozen=True)
@@ -191,7 +196,7 @@ def start_discovery_preparation_workflows(
 
 
 def start_job_preparation_workflow(
-    job_url: str,
+    job_id: JobId,
     *,
     min_score: int = 7,
     workers: int = 1,
@@ -215,12 +220,13 @@ def start_job_preparation_workflow(
     version, latest source event), so `USE_EXISTING` makes the per-job handoff
     and the reconciling fan-outs converge on exactly one execution per job (I1).
     """
+    stable_job_id = canonical_job_id(str(job_id))
     try:
         conn = get_connection()
         target_version = current_scoring_policy_version(conn, tenant_id)
         spec = build_preparation_workflow_spec(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=stable_job_id,
             steps=["score", "tailor", "cover", "pdf"],
             kind=PreparationWorkItemKind.SCORE_JOB,
             target_version=target_version,
@@ -232,9 +238,7 @@ def start_job_preparation_workflow(
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,
             discovery_execution=discovery_execution,
-            discovery_cohort_kind=(
-                discovery_cohort_kind if discovery_execution is not None else None
-            ),
+            discovery_cohort_kind=(discovery_cohort_kind if discovery_execution is not None else None),
         )
         if discovery_execution is not None:
             preparation_payload = spec.args[0]
@@ -243,7 +247,8 @@ def start_job_preparation_workflow(
             workflow_cohorts_to_start = _record_preparation_work_plans(
                 [
                     PreparationTarget(
-                        job_url=job_url,
+                        tenant_id=tenant_id,
+                        job_id=stable_job_id,
                         idempotency_key=preparation_payload.idempotency_key,
                         target_version=preparation_payload.target_version,
                         steps=list(preparation_payload.steps),
@@ -263,7 +268,7 @@ def start_job_preparation_workflow(
         if discovery_execution is not None:
             _mark_job_work_plan_failed(
                 discovery_execution,
-                job_url=job_url,
+                job_id=stable_job_id,
                 reason="work_plan_persistence_failed",
             )
         raise
@@ -275,7 +280,7 @@ def start_job_preparation_workflow(
 def build_preparation_workflow_spec(
     *,
     tenant_id: TenantId,
-    job_url: str,
+    job_id: JobId,
     steps: list[str],
     kind: PreparationWorkItemKind,
     target_version: int,
@@ -296,17 +301,26 @@ def build_preparation_workflow_spec(
     discovery_execution: DiscoveryExecutionRef | None = None,
     discovery_cohort_kind: DiscoveryExecutionCohortKind | None = None,
 ) -> WorkflowStartSpec:
-    source_event = source_event_id if source_event_id is not None else _latest_source_event_id(get_connection(), job_url)
+    stable_job_id = canonical_job_id(str(job_id))
+    source_event = (
+        source_event_id
+        if source_event_id is not None
+        else _latest_source_event_id(
+            get_connection(),
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+        )
+    )
     idempotency_key = make_preparation_idempotency_key(
         tenant_id=tenant_id,
-        job_id=JobId(job_url),
+        job_id=stable_job_id,
         kind=kind,
         target_version=target_version,
         source_event_id=source_event,
     )
     payload = JobPreparationInput(
         tenant_id=str(tenant_id),
-        job_url=job_url,
+        job_id=stable_job_id,
         steps=list(steps),
         target_version=str(target_version),
         idempotency_key=idempotency_key,
@@ -343,8 +357,17 @@ def current_tailoring_policy_version(conn: sqlite3.Connection, tenant_id: Tenant
     return policy.version if policy is not None else 1
 
 
-def latest_source_event_id(conn: sqlite3.Connection, job_url: str) -> str:
-    return _latest_source_event_id(conn, job_url)
+def latest_source_event_id(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> str:
+    return _latest_source_event_id(
+        conn,
+        tenant_id=tenant_id,
+        job_id=canonical_job_id(str(job_id)),
+    )
 
 
 def _derive_targets(
@@ -355,16 +378,20 @@ def _derive_targets(
     include_pending_tailor: bool = True,
 ) -> list[PreparationTarget]:
     score_target_version = current_scoring_policy_version(conn, tenant_id)
-    targets: dict[str, PreparationTarget] = {}
+    targets: dict[JobId, PreparationTarget] = {}
 
     for job in get_jobs_by_stage(conn=conn, stage="pending_score", limit=0):
-        job_url = str(job["url"])
-        targets[job_url] = _target(
+        job_id = canonical_job_id(str(job["job_id"]))
+        targets[job_id] = _target(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             kind=PreparationWorkItemKind.SCORE_JOB,
             target_version=score_target_version,
-            source_event_id=_latest_source_event_id(conn, job_url),
+            source_event_id=_latest_source_event_id(
+                conn,
+                tenant_id=tenant_id,
+                job_id=job_id,
+            ),
             steps=["score", "tailor", "cover", "pdf"],
         )
 
@@ -379,25 +406,29 @@ def _derive_targets(
     if include_pending_tailor:
         tailoring_target_version = current_tailoring_policy_version(conn, tenant_id)
         for job in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=min_score, limit=0):
-            job_url = str(job["url"])
-            if job_url in targets:
+            job_id = canonical_job_id(str(job["job_id"]))
+            if job_id in targets:
                 continue
-            targets[job_url] = _target(
+            targets[job_id] = _target(
                 tenant_id=tenant_id,
-                job_url=job_url,
+                job_id=job_id,
                 kind=PreparationWorkItemKind.TAILOR_RESUME,
                 target_version=tailoring_target_version,
-                source_event_id=_latest_source_event_id(conn, job_url),
+                source_event_id=_latest_source_event_id(
+                    conn,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                ),
                 steps=["tailor", "cover", "pdf"],
             )
 
-    return [targets[job_url] for job_url in sorted(targets)]
+    return [targets[job_id] for job_id in sorted(targets)]
 
 
 def _target(
     *,
     tenant_id: TenantId,
-    job_url: str,
+    job_id: JobId,
     kind: PreparationWorkItemKind,
     target_version: int,
     source_event_id: str,
@@ -405,13 +436,14 @@ def _target(
 ) -> PreparationTarget:
     idempotency_key = make_preparation_idempotency_key(
         tenant_id=tenant_id,
-        job_id=JobId(job_url),
+        job_id=job_id,
         kind=kind,
         target_version=target_version,
         source_event_id=source_event_id,
     )
     return PreparationTarget(
-        job_url=job_url,
+        tenant_id=tenant_id,
+        job_id=job_id,
         idempotency_key=idempotency_key,
         target_version=str(target_version),
         steps=list(steps),
@@ -432,9 +464,11 @@ def _workflow_spec_for_target(
     discovery_execution: DiscoveryExecutionRef | None,
     discovery_cohort_kind: DiscoveryExecutionCohortKind,
 ) -> WorkflowStartSpec:
+    if target.tenant_id != tenant_id:
+        raise ValueError("preparation target tenant does not match workflow tenant")
     payload = JobPreparationInput(
         tenant_id=str(tenant_id),
-        job_url=target.job_url,
+        job_id=target.job_id,
         steps=list(target.steps),
         target_version=target.target_version,
         idempotency_key=target.idempotency_key,
@@ -446,9 +480,7 @@ def _workflow_spec_for_target(
         tailor_judge_model=tailor_judge_model,
         tailor_judge_min_score=tailor_judge_min_score,
         discovery_execution=discovery_execution,
-        discovery_cohort_kind=(
-            discovery_cohort_kind if discovery_execution is not None else None
-        ),
+        discovery_cohort_kind=(discovery_cohort_kind if discovery_execution is not None else None),
     )
     return WorkflowStartSpec(
         workflow=JobPreparationWorkflow,
@@ -482,15 +514,15 @@ def _record_preparation_work_plans(
         if discovery_cohort_kind == "existing_backlog":
             membership = repository.link_job(
                 discovery_execution,
-                target.job_url,
+                target.job_id,
                 cohort_kind="existing_backlog",
             )
         else:
-            membership = repository.get(discovery_execution, target.job_url)
+            membership = repository.get(discovery_execution, target.job_id)
             if membership is None:
                 membership = repository.link_job(
                     discovery_execution,
-                    target.job_url,
+                    target.job_id,
                     cohort_kind="existing_backlog",
                 )
         workflow_id = preparation_workflow_id(target.idempotency_key)
@@ -508,7 +540,7 @@ def _record_preparation_work_plans(
             continue
         repository.set_work_plan(
             discovery_execution,
-            target.job_url,
+            target.job_id,
             state="planned",
             required_steps=target.steps,
             preparation_workflow_id=workflow_id,
@@ -543,7 +575,7 @@ def _mark_pending_work_plans_failed(
             continue
         repository.set_work_plan(
             discovery_execution,
-            membership.job_url,
+            membership.job_id,
             state="failed",
             reason=reason,
         )
@@ -552,16 +584,16 @@ def _mark_pending_work_plans_failed(
 def _mark_job_work_plan_failed(
     discovery_execution: DiscoveryExecutionRef,
     *,
-    job_url: str,
+    job_id: JobId,
     reason: str,
 ) -> None:
     repository = SqliteDiscoveryExecutionRepository(get_connection())
-    membership = repository.get(discovery_execution, job_url)
+    membership = repository.get(discovery_execution, job_id)
     if membership is None or membership.work_plan_state != "pending":
         return
     repository.set_work_plan(
         discovery_execution,
-        job_url,
+        job_id,
         state="failed",
         reason=reason,
     )
@@ -589,12 +621,13 @@ def _finalize_unplanned_observed_work_plans(
             continue
         state, reason = _unselected_work_plan_outcome(
             conn,
-            job_url=membership.job_url,
+            tenant_id=TenantId(discovery_execution.tenant_id),
+            job_id=membership.job_id,
             min_score=min_score,
         )
         repository.set_work_plan(
             discovery_execution,
-            membership.job_url,
+            membership.job_id,
             state=state,
             reason=reason,
         )
@@ -603,16 +636,18 @@ def _finalize_unplanned_observed_work_plans(
 def _unselected_work_plan_outcome(
     conn: sqlite3.Connection,
     *,
-    job_url: str,
+    tenant_id: TenantId,
+    job_id: JobId,
     min_score: int,
 ) -> tuple[DiscoveryExecutionWorkPlanState, str]:
     is_deleted = "0"
     if _table_exists(conn, "jobctrl_deleted_jobs"):
         is_deleted = """
             CASE WHEN EXISTS (
-                SELECT 1
+                 SELECT 1
                   FROM jobctrl_deleted_jobs deleted
-                 WHERE deleted.job_url = jobs.url
+                 WHERE deleted.tenant_id = jobs.tenant_id
+                   AND deleted.job_id = jobs.job_id
                    AND (
                        deleted.restored_at IS NULL
                        OR julianday(deleted.restored_at) <= julianday(deleted.deleted_at)
@@ -632,9 +667,10 @@ def _unselected_work_plan_outcome(
           {db_module._LATEST_SCORE_JOIN}
           {db_module._LATEST_MATERIALS_JOIN}
           {db_module._ACTIVE_STATE_JOIN}
-         WHERE jobs.url = ?
+         WHERE jobs.tenant_id = ?
+           AND jobs.job_id = ?
         """,
-        (job_url,),
+        (tenant_id, job_id),
     ).fetchone()
     if row is None:
         return ("failed", "canonical_job_missing")
@@ -654,11 +690,12 @@ def _unselected_work_plan_outcome(
     stage_rows = conn.execute(
         """
         SELECT stage, state
-          FROM job_stage_states
-         WHERE job_url = ?
+         FROM job_stage_states
+         WHERE tenant_id = ?
+           AND job_id = ?
            AND stage IN ('score', 'tailor', 'cover', 'apply')
         """,
-        (job_url,),
+        (tenant_id, job_id),
     ).fetchall()
     stage_states = {str(stage_row["stage"]): str(stage_row["state"]) for stage_row in stage_rows}
     if stage_states.get("apply") == "succeeded":
@@ -702,12 +739,18 @@ def _batches(items: list[WorkflowStartSpec], size: int) -> list[list[WorkflowSta
     return [items[index : index + size] for index in range(0, len(items), size)]
 
 
-def _latest_source_event_id(conn: sqlite3.Connection, job_url: str) -> str:
+def _latest_source_event_id(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> str:
     row = conn.execute(
         """
         SELECT event_id
         FROM job_events
-        WHERE job_url = ?
+        WHERE tenant_id = ?
+          AND job_id = ?
           AND event_type IN (
             'JobDiscovered',
             'JobUpdated',
@@ -718,7 +761,7 @@ def _latest_source_event_id(conn: sqlite3.Connection, job_url: str) -> str:
         ORDER BY event_id DESC
         LIMIT 1
         """,
-        (job_url,),
+        (tenant_id, job_id),
     ).fetchone()
     if row is None:
         return ""
@@ -733,7 +776,11 @@ def _suppress_ineligible_artifacts(
 ) -> int:
     use_case = SuppressTailoredArtifactsUseCase(repository=SqliteMaterialsRepository(conn))
     suppressed = 0
-    for job_id in _jobs_needing_artifact_suppression(conn, min_score=min_score):
+    for job_id in _jobs_needing_artifact_suppression(
+        conn,
+        tenant_id=tenant_id,
+        min_score=min_score,
+    ):
         outcome = use_case.execute(
             tenant_id=tenant_id,
             job_id=job_id,
@@ -747,15 +794,17 @@ def _suppress_ineligible_artifacts(
 def _jobs_needing_artifact_suppression(
     conn: sqlite3.Connection,
     *,
+    tenant_id: TenantId,
     min_score: int,
 ) -> list[JobId]:
     rows = conn.execute(
         f"""
-        SELECT jobs.url
+        SELECT jobs.job_id
         FROM jobs
         {db_module._LATEST_SCORE_JOIN}
         {db_module._LATEST_MATERIALS_JOIN}
-        WHERE {db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL
+        WHERE jobs.tenant_id = ?
+          AND {db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL
           AND (
             {db_module._EFFECTIVE_FIT_SCORE} IS NULL
             OR {db_module._EFFECTIVE_FIT_SCORE} < ?
@@ -763,9 +812,9 @@ def _jobs_needing_artifact_suppression(
           )
         ORDER BY jobs.discovered_at DESC
         """,
-        (int(min_score),),
+        (tenant_id, int(min_score)),
     ).fetchall()
-    return [JobId(str(row["url"] if isinstance(row, sqlite3.Row) else row[0])) for row in rows]
+    return [canonical_job_id(str(row["job_id"] if isinstance(row, sqlite3.Row) else row[0])) for row in rows]
 
 
 __all__ = [
