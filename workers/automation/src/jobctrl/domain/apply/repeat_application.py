@@ -265,8 +265,21 @@ def repeat_evidence_fingerprint(
     target_job_id: str,
     matches: list[dict[str, Any]],
 ) -> str:
+    canonical_target_job_id = str(canonical_job_id(str(target_job_id)))
+    validated_matches: list[dict[str, Any]] = []
+    for match in matches:
+        prior = match.get("priorApplication")
+        if not isinstance(prior, dict) or "jobKey" in prior or "jobId" not in prior:
+            raise ValueError("Repeat evidence fingerprint requires canonical priorApplication.jobId")
+        canonical_prior_job_id = str(canonical_job_id(str(prior["jobId"])))
+        validated_matches.append(
+            {
+                **match,
+                "priorApplication": {**prior, "jobId": canonical_prior_job_id},
+            }
+        )
     canonical = {
-        "targetJobId": target_job_id,
+        "targetJobId": canonical_target_job_id,
         "matches": [
             {
                 "relationship": match["relationship"],
@@ -282,7 +295,7 @@ def repeat_evidence_fingerprint(
                 },
                 "identityEvidence": list(match["identityEvidence"]),
             }
-            for match in sorted(matches, key=_match_sort_key)
+            for match in sorted(validated_matches, key=_match_sort_key)
         ],
     }
     return hashlib.sha256(_compact_json(canonical).encode("utf-8")).hexdigest()
