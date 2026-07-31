@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import type { JobId } from "@jobctrl/domain-types";
+
 import type {
   EnsureCurrentResumeMaterialsResponse,
   JobResumeTemplateAssignmentRequest,
@@ -27,7 +29,7 @@ import {
   ResumeTemplateLayoutSchema,
   ResumeTemplateThemeSchema,
 } from "./contracts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { allRows, getRow, type SqliteDatabase } from "./db.js";
 import { defaultResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 
 const DEFAULT_TENANT = "local";
@@ -37,6 +39,7 @@ const BUILT_IN_VERSION_ID = "built_in:modern-html:v1";
 const TEMPLATE_METADATA_KEY = "resume_template";
 const TEMPLATE_REFRESH_SOURCE = "resume_template_lazy_refresh";
 const TEXT_BYTE_LIMIT = 128_000;
+const CANONICAL_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export class ResumeTemplateInputError extends Error {}
 
@@ -81,7 +84,6 @@ interface MaterialArtifactRow extends Record<string, unknown> {
 
 interface RefreshAttemptRow extends Record<string, unknown> {
   attempt_id: string;
-  job_url: string;
   status: string;
   from_generation: number | null;
   to_generation: number | null;
@@ -114,81 +116,7 @@ export const BUILT_IN_RESUME_TEMPLATE_THEME: ResumeTemplateTheme =
     hiddenSections: [],
   });
 
-const EMPTY_LAYOUT: ResumeTemplateLayout = ResumeTemplateLayoutSchema.parse({});
-
-export function ensureResumeTemplateTables(db: SqliteDatabase): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS resume_templates (
-      tenant_id    TEXT NOT NULL DEFAULT 'local',
-      template_id  TEXT NOT NULL,
-      display_name TEXT NOT NULL,
-      status       TEXT NOT NULL DEFAULT 'active',
-      built_in     INTEGER NOT NULL DEFAULT 0,
-      created_at   TEXT NOT NULL,
-      updated_at   TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, template_id)
-    );
-    CREATE TABLE IF NOT EXISTS resume_template_versions (
-      tenant_id      TEXT NOT NULL DEFAULT 'local',
-      version_id     TEXT NOT NULL,
-      template_id    TEXT NOT NULL,
-      version_number INTEGER NOT NULL,
-      display_name   TEXT NOT NULL,
-      status         TEXT NOT NULL DEFAULT 'active',
-      theme_json     TEXT NOT NULL,
-      layout_json    TEXT NOT NULL DEFAULT '{}',
-      content_hash   TEXT NOT NULL,
-      created_at     TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, version_id),
-      UNIQUE (tenant_id, template_id, version_number)
-    );
-    CREATE INDEX IF NOT EXISTS idx_resume_template_versions_template
-      ON resume_template_versions(tenant_id, template_id, version_number DESC);
-
-    CREATE TABLE IF NOT EXISTS resume_template_defaults (
-      tenant_id   TEXT NOT NULL DEFAULT 'local',
-      profile_id  TEXT NOT NULL DEFAULT 'default',
-      template_id TEXT NOT NULL,
-      version_id  TEXT NOT NULL,
-      updated_at  TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, profile_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS job_resume_template_assignments (
-      tenant_id   TEXT NOT NULL DEFAULT 'local',
-      job_url     TEXT NOT NULL,
-      template_id TEXT NOT NULL,
-      version_id  TEXT NOT NULL,
-      updated_at  TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, job_url)
-    );
-    CREATE INDEX IF NOT EXISTS idx_job_resume_template_assignments_template
-      ON job_resume_template_assignments(tenant_id, template_id, version_id);
-
-    CREATE TABLE IF NOT EXISTS resume_template_refresh_attempts (
-      tenant_id           TEXT NOT NULL DEFAULT 'local',
-      attempt_id          TEXT NOT NULL,
-      job_url             TEXT NOT NULL,
-      status              TEXT NOT NULL,
-      from_generation     INTEGER,
-      to_generation       INTEGER,
-      template_id         TEXT,
-      template_version_id TEXT,
-      template_hash       TEXT,
-      error_message       TEXT,
-      metadata_json       TEXT NOT NULL DEFAULT '{}',
-      created_at          TEXT NOT NULL,
-      completed_at        TEXT,
-      PRIMARY KEY (tenant_id, attempt_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_resume_template_refresh_attempts_job
-      ON resume_template_refresh_attempts(tenant_id, job_url, created_at DESC);
-  `);
-  seedBuiltInResumeTemplate(db);
-}
-
 export function listResumeTemplates(db: SqliteDatabase): ResumeTemplateListResponse {
-  ensureResumeTemplateTables(db);
   const rows = allRows<TemplateRow>(
     db,
     `SELECT *
@@ -210,7 +138,6 @@ export function listResumeTemplates(db: SqliteDatabase): ResumeTemplateListRespo
 }
 
 export function getResumeTemplateDetail(db: SqliteDatabase, templateId: string): ResumeTemplateDetailResponse | null {
-  ensureResumeTemplateTables(db);
   const template = templateSummaryFromRow(db, getTemplateRow(db, templateId));
   return template ? { ok: true, template } : null;
 }
@@ -219,7 +146,6 @@ export function createResumeTemplateVersion(
   db: SqliteDatabase,
   request: ResumeTemplateVersionSaveRequest,
 ): ResumeTemplateVersionSaveResponse {
-  ensureResumeTemplateTables(db);
   const normalized = normalizeTemplateVersionRequest(request);
   assertTemplatePayloadSafe(db, normalized);
 
@@ -230,29 +156,41 @@ export function createResumeTemplateVersion(
   const versionId = `${templateId}:v${versionNumber}:${crypto.randomUUID().slice(0, 8)}`;
   const contentHash = templateContentHash(normalized.theme, normalized.layout);
 
-  insertDynamicRow(db, "resume_templates", {
-    tenant_id: DEFAULT_TENANT,
-    template_id: templateId,
-    display_name: normalized.displayName,
-    status: "active",
-    built_in: existing?.built_in ?? 0,
-    created_at: existing?.created_at ?? now,
-    updated_at: now,
-  });
-  insertDynamicRow(db, "resume_template_versions", {
-    tenant_id: DEFAULT_TENANT,
-    version_id: versionId,
-    template_id: templateId,
-    version_number: versionNumber,
-    display_name: normalized.displayName,
-    status: "active",
-    theme_json: JSON.stringify(normalized.theme),
-    layout_json: JSON.stringify(normalized.layout),
-    content_hash: contentHash,
-    created_at: now,
-  });
+  db.prepare(
+    `INSERT INTO resume_templates (
+       tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+     ) VALUES (?, ?, ?, 'active', ?, ?, ?)
+     ON CONFLICT(tenant_id, template_id) DO UPDATE SET
+       display_name = excluded.display_name,
+       status = excluded.status,
+       built_in = excluded.built_in,
+       updated_at = excluded.updated_at`,
+  ).run(
+    DEFAULT_TENANT,
+    templateId,
+    normalized.displayName,
+    existing?.built_in ?? 0,
+    existing?.created_at ?? now,
+    now,
+  );
+  db.prepare(
+    `INSERT INTO resume_template_versions (
+       tenant_id, version_id, template_id, version_number, display_name, status,
+       theme_json, layout_json, content_hash, created_at
+     ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
+  ).run(
+    DEFAULT_TENANT,
+    versionId,
+    templateId,
+    versionNumber,
+    normalized.displayName,
+    JSON.stringify(normalized.theme),
+    JSON.stringify(normalized.layout),
+    contentHash,
+    now,
+  );
   recordTemplateEvent(db, {
-    jobUrl: null,
+    jobId: null,
     eventType: "ResumeTemplateVersionSaved",
     message: `Resume template saved: ${normalized.displayName}`,
     payload: {
@@ -275,18 +213,25 @@ export function setDefaultResumeTemplate(
   db: SqliteDatabase,
   request: ResumeTemplateDefaultSelectionRequest,
 ): ResumeTemplateDefaultSelectionResponse {
-  ensureResumeTemplateTables(db);
   const effective = resolveTemplateByRequest(db, request.templateId, request.versionId, "profile_default");
   const now = new Date().toISOString();
-  insertDynamicRow(db, "resume_template_defaults", {
-    tenant_id: DEFAULT_TENANT,
-    profile_id: DEFAULT_PROFILE_ID,
-    template_id: effective.metadata.templateId,
-    version_id: effective.metadata.templateVersionId,
-    updated_at: now,
-  });
+  db.prepare(
+    `INSERT INTO resume_template_defaults (
+       tenant_id, profile_id, template_id, version_id, updated_at
+     ) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(tenant_id, profile_id) DO UPDATE SET
+       template_id = excluded.template_id,
+       version_id = excluded.version_id,
+       updated_at = excluded.updated_at`,
+  ).run(
+    DEFAULT_TENANT,
+    DEFAULT_PROFILE_ID,
+    effective.metadata.templateId,
+    effective.metadata.templateVersionId,
+    now,
+  );
   recordTemplateEvent(db, {
-    jobUrl: null,
+    jobId: null,
     eventType: "ResumeTemplateDefaultChanged",
     message: `Default resume template changed to ${effective.metadata.templateName}`,
     payload: {
@@ -300,39 +245,47 @@ export function setDefaultResumeTemplate(
 
 export function setJobResumeTemplateAssignment(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: string,
   request: JobResumeTemplateAssignmentRequest,
 ): JobResumeTemplateAssignmentResponse {
-  ensureResumeTemplateTables(db);
-  assertJobExists(db, jobKey);
+  const stableJobId = requireJobId(jobId);
+  assertJobExists(db, stableJobId);
   const now = new Date().toISOString();
   let overrideTemplate: ResumeTemplateMetadata | null = null;
 
   if (request.templateId === null) {
     db.prepare(
-      "DELETE FROM job_resume_template_assignments WHERE tenant_id = ? AND job_url = ?",
-    ).run(DEFAULT_TENANT, jobKey);
+      "DELETE FROM job_resume_template_assignments WHERE tenant_id = ? AND job_id = ?",
+    ).run(DEFAULT_TENANT, stableJobId);
   } else if (request.templateId) {
     const effective = resolveTemplateByRequest(db, request.templateId, request.versionId ?? undefined, "job_override");
-    insertDynamicRow(db, "job_resume_template_assignments", {
-      tenant_id: DEFAULT_TENANT,
-      job_url: jobKey,
-      template_id: effective.metadata.templateId,
-      version_id: effective.metadata.templateVersionId,
-      updated_at: now,
-    });
+    db.prepare(
+      `INSERT INTO job_resume_template_assignments (
+         tenant_id, job_id, template_id, version_id, updated_at
+       ) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(tenant_id, job_id) DO UPDATE SET
+         template_id = excluded.template_id,
+         version_id = excluded.version_id,
+         updated_at = excluded.updated_at`,
+    ).run(
+      DEFAULT_TENANT,
+      stableJobId,
+      effective.metadata.templateId,
+      effective.metadata.templateVersionId,
+      now,
+    );
     overrideTemplate = effective.metadata;
   }
 
-  const effectiveTemplate = resolveEffectiveResumeTemplate(db, jobKey);
+  const effectiveTemplate = resolveEffectiveResumeTemplateForJob(db, stableJobId);
   recordTemplateEvent(db, {
-    jobUrl: jobKey,
+    jobId: stableJobId,
     eventType: "JobResumeTemplateAssigned",
     message: overrideTemplate
       ? `Job resume template set to ${overrideTemplate.templateName}`
       : "Job resume template override cleared",
     payload: {
-      jobId: jobKey,
+      jobId: stableJobId,
       templateId: overrideTemplate?.templateId ?? null,
       templateVersionId: overrideTemplate?.templateVersionId ?? null,
       assignedAt: now,
@@ -340,22 +293,25 @@ export function setJobResumeTemplateAssignment(
   });
   return {
     ok: true,
-    jobKey,
+    jobKey: stableJobId,
     effectiveTemplate: effectiveTemplate.metadata,
     overrideTemplate,
-    templateState: resumeTemplateStateForJob(db, jobKey),
+    templateState: resumeTemplateStateForJobId(db, stableJobId),
   };
 }
 
-export function resolveEffectiveResumeTemplate(db: SqliteDatabase, jobKey?: string | null): EffectiveTemplate {
-  ensureResumeTemplateTables(db);
-  if (jobKey) {
+export function resolveEffectiveResumeTemplate(db: SqliteDatabase, jobId?: string | null): EffectiveTemplate {
+  return resolveEffectiveResumeTemplateForJob(db, jobId ? requireJobId(jobId) : null);
+}
+
+function resolveEffectiveResumeTemplateForJob(db: SqliteDatabase, jobId?: JobId | null): EffectiveTemplate {
+  if (jobId) {
     const assignment = getRow<AssignmentRow>(
       db,
       `SELECT template_id, version_id, updated_at
          FROM job_resume_template_assignments
-        WHERE tenant_id = ? AND job_url = ?`,
-      [DEFAULT_TENANT, jobKey],
+        WHERE tenant_id = ? AND job_id = ?`,
+      [DEFAULT_TENANT, jobId],
     );
     if (assignment?.template_id && assignment.version_id) {
       return resolveTemplateByRequest(db, assignment.template_id, assignment.version_id, "job_override");
@@ -366,11 +322,14 @@ export function resolveEffectiveResumeTemplate(db: SqliteDatabase, jobKey?: stri
   return resolveBuiltInTemplate(db);
 }
 
-export function resumeTemplateStateForJob(db: SqliteDatabase, jobKey: string): ResumeTemplateState | null {
-  ensureResumeTemplateTables(db);
-  const effective = resolveEffectiveResumeTemplate(db, jobKey).metadata;
-  const material = latestResumeMaterial(db, jobKey);
-  const lastRefreshAttempt = latestRefreshAttempt(db, jobKey);
+export function resumeTemplateStateForJob(db: SqliteDatabase, jobId: string): ResumeTemplateState | null {
+  return resumeTemplateStateForJobId(db, requireJobId(jobId));
+}
+
+function resumeTemplateStateForJobId(db: SqliteDatabase, jobId: JobId): ResumeTemplateState | null {
+  const effective = resolveEffectiveResumeTemplateForJob(db, jobId).metadata;
+  const material = latestResumeMaterial(db, jobId);
+  const lastRefreshAttempt = latestRefreshAttempt(db, jobId);
   const snapshot = material ? snapshotFromMaterial(db, effective, material) : null;
   const stale = snapshot !== null && !sameTemplateSnapshot(snapshot, effective);
   const state = stateFromRefreshAttempt(lastRefreshAttempt, stale, material);
@@ -385,25 +344,25 @@ export function resumeTemplateStateForJob(db: SqliteDatabase, jobKey: string): R
 
 export function resumeTemplateStateForArtifact(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: string,
   artifactMetadataJson: string | null,
 ): ResumeTemplateState | null {
-  ensureResumeTemplateTables(db);
-  const effective = resolveEffectiveResumeTemplate(db, jobKey).metadata;
+  const stableJobId = requireJobId(jobId);
+  const effective = resolveEffectiveResumeTemplateForJob(db, stableJobId).metadata;
   const snapshot = snapshotFromMetadata(parseJsonRecord(artifactMetadataJson)) ?? null;
-  if (!snapshot) return resumeTemplateStateForJob(db, jobKey);
+  if (!snapshot) return resumeTemplateStateForJobId(db, stableJobId);
   const stale = !sameTemplateSnapshot(snapshot, effective);
   return {
     effective,
     snapshot,
     state: stale ? "template_stale" : "template_current",
     reason: stale ? "Artifact was rendered with a different resume template version." : null,
-    lastRefreshAttempt: latestRefreshAttempt(db, jobKey),
+    lastRefreshAttempt: latestRefreshAttempt(db, stableJobId),
   };
 }
 
-export function templateMetadataForMaterial(db: SqliteDatabase, jobKey: string): ResumeTemplateMetadata {
-  return resolveEffectiveResumeTemplate(db, jobKey).metadata;
+export function templateMetadataForMaterial(db: SqliteDatabase, jobId: string): ResumeTemplateMetadata {
+  return resolveEffectiveResumeTemplateForJob(db, requireJobId(jobId)).metadata;
 }
 
 export function templateMetadataPayload(metadata: ResumeTemplateMetadata): Record<string, unknown> {
@@ -419,29 +378,29 @@ export function templateMetadataPayload(metadata: ResumeTemplateMetadata): Recor
 
 export function ensureCurrentResumeTemplateMaterials(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: string,
   options: { force?: boolean } = {},
   renderPdf: ResumeHtmlPdfRenderer = defaultResumeHtmlPdfRenderer,
 ): EnsureCurrentResumeMaterialsResponse {
-  ensureResumeTemplateTables(db);
-  assertJobExists(db, jobKey);
+  const stableJobId = requireJobId(jobId);
+  assertJobExists(db, stableJobId);
 
-  const initialState = resumeTemplateStateForJob(db, jobKey);
+  const initialState = resumeTemplateStateForJobId(db, stableJobId);
   if (!initialState) {
-    return noRefreshResponse(jobKey, "not_required", null, null, "No resume template state is available.");
+    return noRefreshResponse(stableJobId, "not_required", null, null, "No resume template state is available.");
   }
   if (!options.force && initialState.state === "template_current") {
-    return noRefreshResponse(jobKey, "not_required", initialState, null, "Resume materials already use the effective template.");
+    return noRefreshResponse(stableJobId, "not_required", initialState, null, "Resume materials already use the effective template.");
   }
 
-  const material = latestResumeMaterial(db, jobKey);
+  const material = latestResumeMaterial(db, stableJobId);
   const reusableMaterial =
     material && material.text
       ? { generation: material.generation, text: material.text, pdf: material.pdf }
       : null;
   if (!reusableMaterial) {
     const attempt = recordRefreshAttempt(db, {
-      jobKey,
+      jobId: stableJobId,
       status: "unavailable",
       fromGeneration: material?.generation ?? null,
       toGeneration: null,
@@ -449,11 +408,11 @@ export function ensureCurrentResumeTemplateMaterials(
       errorMessage: "Latest accepted resume has no reusable text source for render-only refresh.",
     });
     recordTemplateEvent(db, {
-      jobUrl: jobKey,
+      jobId: stableJobId,
       eventType: "ResumeTemplateRefreshFailed",
       message: "Resume template refresh unavailable",
       payload: {
-        jobId: jobKey,
+        jobId: stableJobId,
         attemptId: attempt.attemptId,
         status: "unavailable",
         errorMessage: attempt.errorMessage ?? "",
@@ -462,9 +421,9 @@ export function ensureCurrentResumeTemplateMaterials(
     });
     return {
       ok: true,
-      jobKey,
+      jobKey: stableJobId,
       status: "unavailable",
-      templateState: resumeTemplateStateForJob(db, jobKey),
+      templateState: resumeTemplateStateForJobId(db, stableJobId),
       attempt,
       generation: null,
       message: attempt.errorMessage,
@@ -472,7 +431,7 @@ export function ensureCurrentResumeTemplateMaterials(
   }
 
   recordRefreshAttempt(db, {
-    jobKey,
+    jobId: stableJobId,
     status: "queued",
     fromGeneration: reusableMaterial.generation,
     toGeneration: null,
@@ -481,9 +440,9 @@ export function ensureCurrentResumeTemplateMaterials(
   });
 
   try {
-    const refreshed = persistRenderOnlyRefresh(db, jobKey, reusableMaterial, initialState.effective, renderPdf);
+    const refreshed = persistRenderOnlyRefresh(db, stableJobId, reusableMaterial, initialState.effective, renderPdf);
     const attempt = recordRefreshAttempt(db, {
-      jobKey,
+      jobId: stableJobId,
       status: "completed",
       fromGeneration: reusableMaterial.generation,
       toGeneration: refreshed.generation,
@@ -491,11 +450,11 @@ export function ensureCurrentResumeTemplateMaterials(
       errorMessage: null,
     });
     recordTemplateEvent(db, {
-      jobUrl: jobKey,
+      jobId: stableJobId,
       eventType: "ResumeTemplateRefreshCompleted",
       message: "Resume template refresh completed",
       payload: {
-        jobId: jobKey,
+        jobId: stableJobId,
         attemptId: attempt.attemptId,
         generation: refreshed.generation,
         templateId: initialState.effective.templateId,
@@ -505,9 +464,9 @@ export function ensureCurrentResumeTemplateMaterials(
     });
     return {
       ok: true,
-      jobKey,
+      jobKey: stableJobId,
       status: "completed",
-      templateState: resumeTemplateStateForJob(db, jobKey),
+      templateState: resumeTemplateStateForJobId(db, stableJobId),
       attempt,
       generation: refreshed.generation,
       message: "Resume materials were refreshed with the effective template.",
@@ -515,7 +474,7 @@ export function ensureCurrentResumeTemplateMaterials(
   } catch (error) {
     const message = error instanceof Error ? error.message : "Template refresh failed.";
     const attempt = recordRefreshAttempt(db, {
-      jobKey,
+      jobId: stableJobId,
       status: "failed",
       fromGeneration: reusableMaterial.generation,
       toGeneration: null,
@@ -523,11 +482,11 @@ export function ensureCurrentResumeTemplateMaterials(
       errorMessage: message,
     });
     recordTemplateEvent(db, {
-      jobUrl: jobKey,
+      jobId: stableJobId,
       eventType: "ResumeTemplateRefreshFailed",
       message: "Resume template refresh failed",
       payload: {
-        jobId: jobKey,
+        jobId: stableJobId,
         attemptId: attempt.attemptId,
         status: "failed",
         errorMessage: message,
@@ -536,9 +495,9 @@ export function ensureCurrentResumeTemplateMaterials(
     });
     return {
       ok: true,
-      jobKey,
+      jobKey: stableJobId,
       status: "failed",
-      templateState: resumeTemplateStateForJob(db, jobKey),
+      templateState: resumeTemplateStateForJobId(db, stableJobId),
       attempt,
       generation: null,
       message,
@@ -551,80 +510,38 @@ export function resolveCurrentResumeArtifactIdForOpen(
   artifactId: string,
   renderPdf: ResumeHtmlPdfRenderer = defaultResumeHtmlPdfRenderer,
 ): string {
-  ensureResumeTemplateTables(db);
-  if (!tableExists(db, "job_materials_artifacts")) return artifactId;
-  const columns = tableColumnSet(db, "job_materials_artifacts");
-  if (
-    !columns.includes("job_url") ||
-    !columns.includes("artifact_type") ||
-    !columns.includes("artifact_id") ||
-    !columns.includes("generation")
-  ) {
-    return artifactId;
-  }
   const row = getRow<{
-    job_url: string;
+    job_id: string;
     artifact_type: string;
     generation: number | string | null;
   }>(
     db,
-    `SELECT job_url, artifact_type, generation
+    `SELECT job_id, artifact_type, generation
        FROM job_materials_artifacts
-      WHERE artifact_id = ?`,
-    [artifactId],
+      WHERE tenant_id = ? AND artifact_id = ?`,
+    [DEFAULT_TENANT, artifactId],
   );
   if (!row || (row.artifact_type !== "tailored_resume" && row.artifact_type !== "resume_pdf")) {
     return artifactId;
   }
 
-  const refresh = ensureCurrentResumeTemplateMaterials(db, row.job_url, {}, renderPdf);
+  const jobId = requireJobId(row.job_id);
+  const refresh = ensureCurrentResumeTemplateMaterials(db, jobId, {}, renderPdf);
   if (refresh.status !== "completed" && refresh.status !== "not_required") {
     return artifactId;
   }
-  const statusWhere = columns.includes("status") ? "AND COALESCE(status, 'approved') IN ('approved', 'active')" : "";
-  const orderBy = columns.includes("created_at")
-    ? "generation DESC, datetime(created_at) DESC, artifact_id DESC"
-    : "generation DESC, artifact_id DESC";
   const latest = getRow<{ artifact_id: string }>(
     db,
     `SELECT artifact_id
        FROM job_materials_artifacts
-      WHERE job_url = ?
+      WHERE tenant_id = ? AND job_id = ?
         AND artifact_type = ?
-        ${statusWhere}
-      ORDER BY ${orderBy}
+        AND status IN ('approved', 'active')
+      ORDER BY generation DESC, datetime(created_at) DESC, artifact_id DESC
       LIMIT 1`,
-    [row.job_url, row.artifact_type],
+    [DEFAULT_TENANT, jobId, row.artifact_type],
   );
   return latest?.artifact_id ?? artifactId;
-}
-
-function seedBuiltInResumeTemplate(db: SqliteDatabase): void {
-  const now = new Date().toISOString();
-  const theme = BUILT_IN_RESUME_TEMPLATE_THEME;
-  const layout = EMPTY_LAYOUT;
-  const hash = templateContentHash(theme, layout);
-  insertDynamicRow(db, "resume_templates", {
-    tenant_id: DEFAULT_TENANT,
-    template_id: BUILT_IN_TEMPLATE_ID,
-    display_name: "Modern HTML",
-    status: "active",
-    built_in: 1,
-    created_at: now,
-    updated_at: now,
-  });
-  insertDynamicRow(db, "resume_template_versions", {
-    tenant_id: DEFAULT_TENANT,
-    version_id: BUILT_IN_VERSION_ID,
-    template_id: BUILT_IN_TEMPLATE_ID,
-    version_number: 1,
-    display_name: "Modern HTML",
-    status: "active",
-    theme_json: JSON.stringify(theme),
-    layout_json: JSON.stringify(layout),
-    content_hash: hash,
-    created_at: now,
-  });
 }
 
 function normalizeTemplateVersionRequest(
@@ -662,40 +579,27 @@ function assertTemplatePayloadSafe(db: SqliteDatabase, request: ResumeTemplateVe
 
 function sensitiveFactSentinels(db: SqliteDatabase): string[] {
   const facts = new Set<string>();
-  if (tableExists(db, "candidate_profiles")) {
-    const columns = tableColumnSet(db, "candidate_profiles");
-    const selected = [
-      "personal_full_name",
-      "personal_email",
-      "personal_phone",
-      "personal_linkedin_url",
-      "personal_github_url",
-      "personal_portfolio_url",
-      "personal_website_url",
-    ].filter((column) => columns.includes(column));
-    if (selected.length) {
-      const row = getRow<Record<string, unknown>>(
-        db,
-        `SELECT ${selected.join(", ")} FROM candidate_profiles WHERE tenant_id = ? AND profile_id = ?`,
-        [DEFAULT_TENANT, DEFAULT_PROFILE_ID],
-      );
-      for (const value of Object.values(row ?? {})) addSensitiveFact(facts, value);
-    }
-  }
-  if (tableExists(db, "jobs")) {
-    const columns = tableColumnSet(db, "jobs");
-    const selected = ["title", "company", "employer", "application_url"].filter((column) =>
-      columns.includes(column),
-    );
-    if (selected.length) {
-      const rows = allRows<Record<string, unknown>>(
-        db,
-        `SELECT ${selected.join(", ")} FROM jobs ORDER BY discovered_at DESC LIMIT 25`,
-      );
-      for (const row of rows) {
-        for (const value of Object.values(row)) addSensitiveFact(facts, value);
-      }
-    }
+  const profile = getRow<Record<string, unknown>>(
+    db,
+    `SELECT personal_full_name, personal_email, personal_phone,
+            personal_linkedin_url, personal_github_url,
+            personal_portfolio_url, personal_website_url
+       FROM candidate_profiles
+      WHERE tenant_id = ? AND profile_id = ?`,
+    [DEFAULT_TENANT, DEFAULT_PROFILE_ID],
+  );
+  for (const value of Object.values(profile ?? {})) addSensitiveFact(facts, value);
+  const jobs = allRows<Record<string, unknown>>(
+    db,
+    `SELECT title, company, application_url
+       FROM jobs
+      WHERE tenant_id = ?
+      ORDER BY discovered_at DESC
+      LIMIT 25`,
+    [DEFAULT_TENANT],
+  );
+  for (const job of jobs) {
+    for (const value of Object.values(job)) addSensitiveFact(facts, value);
   }
   return [...facts];
 }
@@ -828,32 +732,18 @@ function metadataFromVersion(
 
 function latestResumeMaterial(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: JobId,
 ): { generation: number; text: MaterialArtifactRow | null; pdf: MaterialArtifactRow | null } | null {
-  if (!tableExists(db, "job_materials_artifacts")) return null;
-  const columns = tableColumnSet(db, "job_materials_artifacts");
-  if (!columns.includes("artifact_type") || !columns.includes("generation")) return null;
-  const selectColumns = [
-    columns.includes("artifact_id") ? "artifact_id" : "NULL AS artifact_id",
-    "artifact_type",
-    "generation",
-    columns.includes("path") ? "path" : "NULL AS path",
-    columns.includes("render_format") ? "render_format" : "NULL AS render_format",
-    columns.includes("metadata_json") ? "metadata_json" : "NULL AS metadata_json",
-    columns.includes("created_at") ? "created_at" : "NULL AS created_at",
-  ].join(", ");
-  const jobColumn = columns.includes("job_url") ? "job_url" : columns.includes("job_id") ? "job_id" : null;
-  if (!jobColumn) return null;
-  const statusWhere = columns.includes("status") ? "AND COALESCE(status, 'approved') IN ('approved', 'active')" : "";
   const rows = allRows<MaterialArtifactRow>(
     db,
-    `SELECT ${selectColumns}
+    `SELECT artifact_id, artifact_type, generation, path, render_format,
+            metadata_json, created_at
        FROM job_materials_artifacts
-      WHERE ${jobColumn} = ?
+      WHERE tenant_id = ? AND job_id = ?
         AND artifact_type IN ('tailored_resume', 'resume_pdf')
-        ${statusWhere}
+        AND status IN ('approved', 'active')
       ORDER BY generation DESC, CASE artifact_type WHEN 'resume_pdf' THEN 0 ELSE 1 END`,
-    [jobKey],
+    [DEFAULT_TENANT, jobId],
   );
   const generation = rows[0]?.generation === undefined ? null : Number(rows[0].generation);
   if (!generation) return null;
@@ -934,24 +824,25 @@ function reasonForTemplateState(
   return `Rendered with ${snapshot.templateName}; current effective template is ${effective.templateName}.`;
 }
 
-function latestRefreshAttempt(db: SqliteDatabase, jobKey: string): ResumeTemplateRefreshAttempt | null {
-  if (!tableExists(db, "resume_template_refresh_attempts")) return null;
+function latestRefreshAttempt(db: SqliteDatabase, jobId: JobId): ResumeTemplateRefreshAttempt | null {
   const row = getRow<RefreshAttemptRow>(
     db,
     `SELECT *
        FROM resume_template_refresh_attempts
-      WHERE tenant_id = ? AND job_url = ?
-      ORDER BY created_at DESC, attempt_id DESC
+      WHERE tenant_id = ? AND job_id = ?
+      ORDER BY created_at DESC,
+               CASE WHEN completed_at IS NULL THEN 1 ELSE 0 END,
+               attempt_id DESC
       LIMIT 1`,
-    [DEFAULT_TENANT, jobKey],
+    [DEFAULT_TENANT, jobId],
   );
-  return row ? refreshAttemptFromRow(row) : null;
+  return row ? refreshAttemptFromRow(row, jobId) : null;
 }
 
 function recordRefreshAttempt(
   db: SqliteDatabase,
   input: {
-    jobKey: string;
+    jobId: JobId;
     status: ResumeTemplateRefreshStatus;
     fromGeneration: number | null;
     toGeneration: number | null;
@@ -961,35 +852,41 @@ function recordRefreshAttempt(
 ): ResumeTemplateRefreshAttempt {
   const now = new Date().toISOString();
   const attemptId = `template_refresh_${crypto.randomUUID()}`;
-  insertDynamicRow(db, "resume_template_refresh_attempts", {
-    tenant_id: DEFAULT_TENANT,
-    attempt_id: attemptId,
-    job_url: input.jobKey,
-    status: input.status,
-    from_generation: input.fromGeneration,
-    to_generation: input.toGeneration,
-    template_id: input.effective.templateId,
-    template_version_id: input.effective.templateVersionId,
-    template_hash: input.effective.templateHash,
-    error_message: input.errorMessage,
-    metadata_json: JSON.stringify({ source: TEMPLATE_REFRESH_SOURCE }),
-    created_at: now,
-    completed_at: input.status === "queued" ? null : now,
-  });
+  db.prepare(
+    `INSERT INTO resume_template_refresh_attempts (
+       tenant_id, attempt_id, job_id, status, from_generation, to_generation,
+       template_id, template_version_id, template_hash, error_message,
+       metadata_json, created_at, completed_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    DEFAULT_TENANT,
+    attemptId,
+    input.jobId,
+    input.status,
+    input.fromGeneration,
+    input.toGeneration,
+    input.effective.templateId,
+    input.effective.templateVersionId,
+    input.effective.templateHash,
+    input.errorMessage,
+    JSON.stringify({ source: TEMPLATE_REFRESH_SOURCE }),
+    now,
+    input.status === "queued" ? null : now,
+  );
   const row = getRow<RefreshAttemptRow>(
     db,
     "SELECT * FROM resume_template_refresh_attempts WHERE tenant_id = ? AND attempt_id = ?",
     [DEFAULT_TENANT, attemptId],
   );
   if (!row) throw new Error("Template refresh attempt was not persisted.");
-  return refreshAttemptFromRow(row);
+  return refreshAttemptFromRow(row, input.jobId);
 }
 
-function refreshAttemptFromRow(row: RefreshAttemptRow): ResumeTemplateRefreshAttempt {
+function refreshAttemptFromRow(row: RefreshAttemptRow, jobId: JobId): ResumeTemplateRefreshAttempt {
   const status = stringValue(row.status);
   return {
     attemptId: row.attempt_id,
-    jobKey: row.job_url,
+    jobKey: jobId,
     status:
       status === "queued" ||
       status === "completed" ||
@@ -1009,7 +906,7 @@ function refreshAttemptFromRow(row: RefreshAttemptRow): ResumeTemplateRefreshAtt
 
 function persistRenderOnlyRefresh(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: JobId,
   material: { generation: number; text: MaterialArtifactRow; pdf: MaterialArtifactRow | null },
   effective: ResumeTemplateMetadata,
   renderPdf: ResumeHtmlPdfRenderer,
@@ -1024,8 +921,8 @@ function persistRenderOnlyRefresh(
 
   const outputDir = path.dirname(material.pdf?.path || material.text.path);
   fs.mkdirSync(outputDir, { recursive: true });
-  const generation = nextMaterialGeneration(db, jobKey);
-  const suffix = stableHash([jobKey, generation, effective.templateVersionId, effective.templateHash]).slice(0, 16);
+  const generation = nextMaterialGeneration(db, jobId);
+  const suffix = stableHash([jobId, generation, effective.templateVersionId, effective.templateHash]).slice(0, 16);
   const textArtifactId = `template_refresh_text_${suffix}`;
   const pdfArtifactId = `template_refresh_pdf_${suffix}`;
   const baseName = `resume-template-refresh-${suffix}`;
@@ -1040,109 +937,144 @@ function persistRenderOnlyRefresh(
   fs.writeFileSync(htmlPath, htmlForTemplateRefresh(text, effective), "utf8");
   renderPdf({ htmlPath, pdfPath });
 
-  insertDynamicRow(db, "job_materials", {
-    job_url: jobKey,
+  db.prepare(
+    `INSERT INTO job_materials (
+       tenant_id, job_id, generation, status, created_at, updated_at,
+       last_validation_json, last_verdict_json, metadata_json
+     ) VALUES (?, ?, ?, 'resume_approved', ?, ?, ?, ?, ?)`,
+  ).run(
+    DEFAULT_TENANT,
+    jobId,
     generation,
-    tenant_id: DEFAULT_TENANT,
-    status: "resume_approved",
-    created_at: now,
-    updated_at: now,
-    last_validation_json: JSON.stringify({ passed: true, errors: [], warnings: [] }),
-    last_verdict_json: JSON.stringify({ approved: true, source: TEMPLATE_REFRESH_SOURCE }),
-    metadata_json: JSON.stringify({
+    now,
+    now,
+    JSON.stringify({ passed: true, errors: [], warnings: [] }),
+    JSON.stringify({ approved: true, source: TEMPLATE_REFRESH_SOURCE }),
+    JSON.stringify({
       source: TEMPLATE_REFRESH_SOURCE,
       base_generation: material.generation,
       [TEMPLATE_METADATA_KEY]: templateMetadata,
     }),
-  });
-  insertDynamicRow(db, "job_materials_artifacts", {
-    job_url: jobKey,
+  );
+  insertMaterialArtifact(db, {
+    jobId,
     generation,
-    artifact_type: "tailored_resume",
-    artifact_id: textArtifactId,
-    status: "approved",
+    artifactType: "tailored_resume",
+    artifactId: textArtifactId,
     path: textPath,
-    render_format: "text",
-    size_bytes: fs.statSync(textPath).size,
-    metadata_json: JSON.stringify({
+    renderFormat: "text",
+    sizeBytes: fs.statSync(textPath).size,
+    metadata: {
       source: TEMPLATE_REFRESH_SOURCE,
       base_resume_text_artifact_id: material.text.artifact_id,
       [TEMPLATE_METADATA_KEY]: templateMetadata,
-    }),
-    created_at: now,
-    superseded_at: null,
+    },
+    createdAt: now,
   });
-  insertDynamicRow(db, "job_materials_artifacts", {
-    job_url: jobKey,
+  insertMaterialArtifact(db, {
+    jobId,
     generation,
-    artifact_type: "resume_pdf",
-    artifact_id: pdfArtifactId,
-    status: "approved",
+    artifactType: "resume_pdf",
+    artifactId: pdfArtifactId,
     path: pdfPath,
-    render_format: "html_pdf",
-    size_bytes: fs.statSync(pdfPath).size,
-    metadata_json: JSON.stringify({
+    renderFormat: "html_pdf",
+    sizeBytes: fs.statSync(pdfPath).size,
+    metadata: {
       source: TEMPLATE_REFRESH_SOURCE,
       html_path: htmlPath,
       base_resume_pdf_artifact_id: material.pdf?.artifact_id ?? null,
       layout_box_count: layoutBoxes.length,
       [TEMPLATE_METADATA_KEY]: templateMetadata,
-    }),
-    created_at: now,
-    superseded_at: null,
+    },
+    createdAt: now,
   });
-  replaceLayoutBoxes(db, jobKey, generation, pdfArtifactId, layoutBoxes, now);
+  replaceLayoutBoxes(db, jobId, generation, pdfArtifactId, layoutBoxes, now);
   return { generation };
 }
 
-function nextMaterialGeneration(db: SqliteDatabase, jobKey: string): number {
-  const values: number[] = [];
-  for (const table of ["job_materials", "job_materials_artifacts"]) {
-    if (!tableExists(db, table)) continue;
-    const row = getRow<{ max_generation: number | null }>(
-      db,
-      `SELECT MAX(generation) AS max_generation FROM ${table} WHERE ${table === "job_materials" ? "job_url" : "job_url"} = ?`,
-      [jobKey],
-    );
-    if (row?.max_generation !== null && row?.max_generation !== undefined) values.push(Number(row.max_generation));
-  }
-  return Math.max(0, ...values.filter(Number.isFinite)) + 1;
+function insertMaterialArtifact(
+  db: SqliteDatabase,
+  input: {
+    jobId: JobId;
+    generation: number;
+    artifactType: "tailored_resume" | "resume_pdf";
+    artifactId: string;
+    path: string;
+    renderFormat: "text" | "html_pdf";
+    sizeBytes: number;
+    metadata: Record<string, unknown>;
+    createdAt: string;
+  },
+): void {
+  db.prepare(
+    `INSERT INTO job_materials_artifacts (
+       tenant_id, job_id, generation, artifact_type, artifact_id, status,
+       path, render_format, size_bytes, metadata_json, created_at, superseded_at
+     ) VALUES (?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)`,
+  ).run(
+    DEFAULT_TENANT,
+    input.jobId,
+    input.generation,
+    input.artifactType,
+    input.artifactId,
+    input.path,
+    input.renderFormat,
+    input.sizeBytes,
+    JSON.stringify(input.metadata),
+    input.createdAt,
+  );
+}
+
+function nextMaterialGeneration(db: SqliteDatabase, jobId: JobId): number {
+  const row = getRow<{ max_generation: number | null }>(
+    db,
+    `SELECT MAX(generation) AS max_generation
+       FROM job_materials
+      WHERE tenant_id = ? AND job_id = ?`,
+    [DEFAULT_TENANT, jobId],
+  );
+  return Math.max(0, Number(row?.max_generation ?? 0)) + 1;
 }
 
 function replaceLayoutBoxes(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: JobId,
   generation: number,
   artifactId: string,
   boxes: readonly ResumeLayoutBox[],
   createdAt: string,
 ): void {
-  if (!tableExists(db, "job_material_layout_boxes")) return;
   db.prepare(
-    "DELETE FROM job_material_layout_boxes WHERE job_url = ? AND generation = ? AND artifact_id = ?",
-  ).run(jobKey, generation, artifactId);
+    "DELETE FROM job_material_layout_boxes WHERE tenant_id = ? AND job_id = ? AND generation = ? AND artifact_id = ?",
+  ).run(DEFAULT_TENANT, jobId, generation, artifactId);
   for (const [index, box] of boxes.entries()) {
-    insertDynamicRow(db, "job_material_layout_boxes", {
-      job_url: jobKey,
+    db.prepare(
+      `INSERT INTO job_material_layout_boxes (
+         tenant_id, job_id, generation, artifact_id, box_index, semantic_id,
+         page_number, line_number, text_excerpt, left_pct, top_pct, width_pct,
+         height_pct, audit_target_json, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      DEFAULT_TENANT,
+      jobId,
       generation,
-      artifact_id: artifactId,
-      box_index: index,
-      tenant_id: DEFAULT_TENANT,
-      semantic_id: box.semanticId,
-      page_number: box.pageNumber,
-      line_number: box.lineNumber,
-      text_excerpt: box.textExcerpt,
-      left_pct: box.leftPct,
-      top_pct: box.topPct,
-      width_pct: box.widthPct,
-      height_pct: box.heightPct,
-      audit_target_json: JSON.stringify({
+      artifactId,
+      index,
+      box.semanticId,
+      box.pageNumber,
+      box.lineNumber,
+      box.textExcerpt,
+      box.leftPct,
+      box.topPct,
+      box.widthPct,
+      box.heightPct,
+      JSON.stringify({
         source: TEMPLATE_REFRESH_SOURCE,
         semanticId: box.semanticId,
         lineNumber: box.lineNumber,
       }),
-      created_at: createdAt,
-    });
+      createdAt,
+    );
   }
 }
 
@@ -1206,7 +1138,7 @@ function htmlForTemplateRefresh(text: string, effective: ResumeTemplateMetadata)
 }
 
 function noRefreshResponse(
-  jobKey: string,
+  jobId: JobId,
   status: ResumeTemplateRefreshStatus,
   templateState: ResumeTemplateState | null,
   attempt: ResumeTemplateRefreshAttempt | null,
@@ -1214,7 +1146,7 @@ function noRefreshResponse(
 ): EnsureCurrentResumeMaterialsResponse {
   return {
     ok: true,
-    jobKey,
+    jobKey: jobId,
     status,
     templateState,
     attempt,
@@ -1223,62 +1155,49 @@ function noRefreshResponse(
   };
 }
 
-function assertJobExists(db: SqliteDatabase, jobKey: string): void {
-  if (!tableExists(db, "jobs")) return;
-  const row = getRow<{ url: string }>(
+function requireJobId(value: string): JobId {
+  if (!CANONICAL_JOB_ID.test(value)) {
+    throw new ResumeTemplateInputError("jobId must be a canonical lowercase UUID");
+  }
+  return value as JobId;
+}
+
+function assertJobExists(db: SqliteDatabase, jobId: JobId): void {
+  const row = getRow<{ job_id: string }>(
     db,
-    "SELECT url FROM jobs WHERE url = ? OR application_url = ? LIMIT 1",
-    [jobKey, jobKey],
+    "SELECT job_id FROM jobs WHERE tenant_id = ? AND job_id = ?",
+    [DEFAULT_TENANT, jobId],
   );
-  if (!row) throw new ResumeTemplateInputError(`Job not found: ${jobKey}`);
+  if (!row) throw new ResumeTemplateInputError(`Job not found: ${jobId}`);
 }
 
 function recordTemplateEvent(
   db: SqliteDatabase,
   event: {
-    jobUrl: string | null;
+    jobId: JobId | null;
     eventType: string;
     message: string;
     payload: Record<string, unknown>;
   },
 ): void {
-  if (!tableExists(db, "job_events")) return;
-  const columns = tableColumnSet(db, "job_events");
-  const values = {
-    job_url: event.jobUrl,
-    stage: "tailor",
-    event_type: event.eventType,
-    level: event.eventType.endsWith("Failed") ? "warn" : "info",
-    message: event.message,
-    occurred_at: new Date().toISOString(),
-    payload_json: JSON.stringify({
+  db.prepare(
+    `INSERT INTO job_events (
+       tenant_id, job_id, identity_version, stage, event_type, level,
+       message, occurred_at, payload_json, entity_kind, entity_ref, idempotency_key
+     ) VALUES (?, ?, 1, 'tailor', ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
+  ).run(
+    DEFAULT_TENANT,
+    event.jobId,
+    event.eventType,
+    event.eventType.endsWith("Failed") ? "warn" : "info",
+    event.message,
+    new Date().toISOString(),
+    JSON.stringify({
       tenantId: DEFAULT_TENANT,
-      ...(event.jobUrl ? { jobId: event.jobUrl } : {}),
+      ...(event.jobId ? { jobId: event.jobId } : {}),
       ...event.payload,
     }),
-  };
-  const entries = Object.entries(values).filter(([name]) => columns.includes(name));
-  if (!entries.length) return;
-  db.prepare(
-    `INSERT INTO job_events (${entries.map(([name]) => name).join(", ")}) VALUES (${entries.map(() => "?").join(", ")})`,
-  ).run(...entries.map(([, value]) => value));
-}
-
-function insertDynamicRow(
-  db: SqliteDatabase,
-  tableName: string,
-  values: Record<string, SqliteValue>,
-): void {
-  const columns = tableColumnSet(db, tableName).filter((column) => Object.hasOwn(values, column));
-  if (!columns.length) return;
-  const placeholders = columns.map(() => "?").join(", ");
-  db.prepare(
-    `INSERT OR REPLACE INTO ${tableName} (${columns.join(", ")}) VALUES (${placeholders})`,
-  ).run(...columns.map((column) => values[column] ?? null));
-}
-
-function tableColumnSet(db: SqliteDatabase, tableName: string): string[] {
-  return allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name);
+  );
 }
 
 function templateContentHash(theme: ResumeTemplateTheme, layout: ResumeTemplateLayout): string {
