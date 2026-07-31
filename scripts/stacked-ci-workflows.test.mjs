@@ -72,37 +72,49 @@ test("same-repository pull requests targeting main admit correctness workflows",
   }
 });
 
-test("stack metadata gates only cumulative Python compatibility lanes", async () => {
+test("stack metadata gates cumulative Python product coverage", async () => {
   const workflow = await parseWorkflow("python");
   const job = workflow.jobs.python;
   const matrix =
     "fromJSON(github.event_name == 'pull_request' && github.event.pull_request.stack != null && github.event.pull_request.stack.position != github.event.pull_request.stack.size && '[\"3.11\"]' || '[\"3.11\",\"3.12\",\"3.13\"]')";
 
   assert.equal(job.strategy.matrix["python-version"], `\${{ ${matrix} }}`);
-  for (const requiredStep of ["Lint", "Release scan", "Test", "Build package"]) {
+  for (const admissionStep of [
+    "Lint",
+    "Release scan",
+    "Validate Python workflow contract",
+    "Build package",
+  ]) {
     assert.equal(
-      findStep(job, requiredStep).if,
+      findStep(job, admissionStep).if,
       undefined,
-      `${requiredStep} must run in the Python 3.11 correctness lane on every matching stack PR`,
+      `${admissionStep} must run as a fast Python 3.11 admission check on every matching stack PR`,
     );
   }
+  assert.equal(
+    findStep(job, "Test").if,
+    `\${{ ${topOfStack} }}`,
+    "the Python product suite must use the null-safe top-of-stack guard",
+  );
 });
 
-test("stack metadata gates only cumulative TypeScript browser suites", async () => {
+test("stack metadata gates cumulative TypeScript product suites", async () => {
   const workflow = await parseWorkflow("typescript");
   const job = workflow.jobs.typescript;
 
-  for (const requiredStep of ["Check", "Test", "Test web", "Test web types", "Build web"]) {
-    assert.equal(
-      findStep(job, requiredStep).if,
-      undefined,
-      `${requiredStep} must run on every matching stack PR`,
-    );
-  }
+  assert.equal(
+    findStep(job, "Check").if,
+    undefined,
+    "the static workspace check must run on every matching stack PR",
+  );
 
   for (const cumulativeStep of [
     "Set up Python",
     "Install uv",
+    "Test",
+    "Test web",
+    "Test web types",
+    "Build web",
     "Build web storybook",
     "Install Playwright Chromium",
     "Install Python Playwright Chromium",

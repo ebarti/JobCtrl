@@ -50,9 +50,10 @@ JOBCTRL_DIR=/tmp/jobctrl-qa corepack pnpm dev
   not for pull requests from public forks. Run the relevant local validation
   before opening a PR; maintainers run manual workflows or local checks for
   fork contributions after reviewing the change.
-- GitHub Stacks run matching correctness checks on every layer. Python
-  compatibility lanes and the browser/Storybook suites run on the top layer,
-  whose head contains the cumulative stack.
+- GitHub Stacks run matching fast admission and static checks on every layer.
+  Those checks include the Python sdist/wheel smoke build. Product test suites,
+  Python compatibility lanes, cumulative web builds, and the browser/Storybook
+  suites run on the top layer, whose head contains the cumulative stack.
 
 ## Developer Certificate of Origin Sign-Off
 
