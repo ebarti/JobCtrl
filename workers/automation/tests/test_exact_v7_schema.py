@@ -103,6 +103,18 @@ def test_fresh_v7_creation_matches_the_exact_manifest(tmp_path: Path) -> None:
         ).fetchall()
     }
     assert _CROSS_RUNTIME_DURABLE_TABLES <= tables
+    profile_columns = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(candidate_profiles)").fetchall()
+    }
+    assert {
+        "application_attestation_age_18_plus",
+        "application_attestation_background_check_consent",
+        "application_attestation_felony_conviction",
+        "application_attestation_previously_worked_at_employer",
+        "application_attestation_additional_json",
+        "application_preference_how_heard",
+    } <= profile_columns
     close_connection(db_path)
 
 
