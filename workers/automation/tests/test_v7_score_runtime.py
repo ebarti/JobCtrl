@@ -250,6 +250,83 @@ def test_score_by_id_blocks_downstream_stages_for_hard_blocker(
         assert state_by_stage[stage] == ("blocked", "SCORE_ELIGIBILITY_BLOCKED")
 
 
+def test_existing_score_repairs_stage_only_when_not_stale(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_target(conn, tenant_id=_TENANT_A, job_id=_JOB_ID_A)
+    llm = _StrongLlm()
+    first = _score_by_id(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=_JOB_ID_A,
+        llm=llm,
+    )
+    assert first.ok is True
+
+    conn.execute(
+        """
+        UPDATE job_stage_states
+        SET state = 'failed', finished_at = NULL
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'score'
+        """,
+        (str(_TENANT_A), str(_JOB_ID_A)),
+    )
+    conn.commit()
+    reused = _score_by_id(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=_JOB_ID_A,
+        llm=llm,
+    )
+    assert reused.ok is True
+    assert llm.calls == 1
+    repaired_state = conn.execute(
+        """
+        SELECT state
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'score'
+        """,
+        (str(_TENANT_A), str(_JOB_ID_A)),
+    ).fetchone()
+    assert repaired_state["state"] == "succeeded"
+
+    conn.execute(
+        """
+        UPDATE job_stage_states
+        SET state = 'stale', finished_at = NULL
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'score'
+        """,
+        (str(_TENANT_A), str(_JOB_ID_A)),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_score_staleness (
+            tenant_id, job_id, stale_reason, old_policy_version,
+            new_policy_version, marked_at
+        ) VALUES (?, ?, 'policy_changed', 1, 2, '2026-07-30T11:00:00+00:00')
+        """,
+        (str(_TENANT_A), str(_JOB_ID_A)),
+    )
+    conn.commit()
+    still_stale = _score_by_id(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=_JOB_ID_A,
+        llm=llm,
+    )
+    assert still_stale.ok is True
+    assert llm.calls == 1
+    stale_state = conn.execute(
+        """
+        SELECT state
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'score'
+        """,
+        (str(_TENANT_A), str(_JOB_ID_A)),
+    ).fetchone()
+    assert stale_state["state"] == "stale"
+
+
 def test_score_by_id_rejects_url_shaped_identity_before_llm(
     conn: sqlite3.Connection,
 ) -> None:
