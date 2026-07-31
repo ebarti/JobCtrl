@@ -303,7 +303,8 @@ def test_serializes_every_v7_column_from_canonical_uuid_rows() -> None:
         assert row["job_id"] != _JOB_URL
         assert "STALE URL CACHE" not in json.dumps(row)
         assert row["title"] == "Platform Engineer"
-        assert row["employer"] == "Exampleco"
+        assert row["employer"] == "Unknown company"
+        assert row["source"] == "greenhouse"
         assert row["location"] == "Community of Madrid, Spain (Remote)"
         assert row["full_description"] == "Canonical enriched description"
         assert row["fit_score"] == 8

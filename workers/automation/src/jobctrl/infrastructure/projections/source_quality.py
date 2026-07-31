@@ -37,7 +37,7 @@ class EventRow:
     event_type: str
     occurred_at: str
     payload: dict[str, Any]
-    job_url: str | None = None
+    job_id: str | None = None
 
 
 @dataclass
@@ -79,7 +79,7 @@ def event_row_from_sql(row: Any) -> EventRow:
         event_type=str(event_type or ""),
         occurred_at=str(occurred_at or ""),
         payload=_json_payload(payload_json),
-        job_url=_nullable_str(_row_value(row, "job_url", 1)),
+        job_id=_nullable_str(_row_value(row, "job_id", 1)),
     )
 
 
@@ -190,7 +190,7 @@ def project_source_quality(
         elif event.event_type == "JobSourceObserved":
             source_id = _text(payload, "source_id", "sourceId")
             observation_id = _text(payload, "source_observation_id", "sourceObservationId")
-            job_id = _text(payload, "job_id", "jobId") or event.job_url
+            job_id = _text(payload, "job_id", "jobId") or event.job_id
             if source_id:
                 current = _stats(stats, source_id)
                 current.observed_jobs += 1
@@ -220,21 +220,21 @@ def project_source_quality(
                     duplicate_by_run_source[key] = duplicate_by_run_source.get(key, 0) + 1
         elif event.event_type == "PostingContentSnapshotCaptured":
             source_id = _text(payload, "source_id", "sourceId")
-            job_id = _text(payload, "job_id", "jobId") or event.job_url
+            job_id = _text(payload, "job_id", "jobId") or event.job_id
             if source_id:
                 current = _stats(stats, source_id)
                 _mark_detail_success(current, job_id)
                 current.event_count += 1
         elif event.event_type == "PostingContentSnapshotFailed":
             source_id = _text(payload, "source_id", "sourceId")
-            job_id = _text(payload, "job_id", "jobId") or event.job_url
+            job_id = _text(payload, "job_id", "jobId") or event.job_id
             if source_id:
                 current = _stats(stats, source_id)
                 _mark_detail_failure(current, job_id)
                 current.last_error_class = _text(payload, "error_class", "errorClass") or None
                 current.event_count += 1
         elif event.event_type == "JobEnriched":
-            job_id = _text(payload, "job_id", "jobId") or event.job_url
+            job_id = _text(payload, "job_id", "jobId") or event.job_id
             full_description = _text(payload, "full_description", "fullDescription")
             application_url = _text(payload, "application_url", "applicationUrl")
             for source_id in sources_by_job.get(job_id, set()):
@@ -249,7 +249,7 @@ def project_source_quality(
                     _mark_apply_failure(current, job_id)
                 current.event_count += 1
         elif event.event_type == "EnrichmentFailed":
-            job_id = _text(payload, "job_id", "jobId") or event.job_url
+            job_id = _text(payload, "job_id", "jobId") or event.job_id
             error_class = _text(payload, "error_class", "errorClass", "error")
             for source_id in sources_by_job.get(job_id, set()):
                 current = _stats(stats, source_id)
@@ -258,7 +258,7 @@ def project_source_quality(
                 current.last_error_class = error_class or current.last_error_class
                 current.event_count += 1
         elif event.event_type == "JobActiveStateChanged":
-            job_id = _text(payload, "job_id", "jobId") or event.job_url
+            job_id = _text(payload, "job_id", "jobId") or event.job_id
             active_state = _text(payload, "active_state", "activeState")
             for source_id in sources_by_job.get(job_id, set()):
                 current = _stats(stats, source_id)
@@ -268,7 +268,7 @@ def project_source_quality(
                     current.stale_jobs += 1
                 current.event_count += 1
         elif event.event_type == "ContentDuplicateCandidateDetected":
-            job_id = _text(payload, "job_id", "jobId") or event.job_url
+            job_id = _text(payload, "job_id", "jobId") or event.job_id
             candidate_job_id = _text(payload, "candidate_job_id", "candidateJobId")
             source_ids = sources_by_job.get(job_id, set()) | sources_by_job.get(candidate_job_id, set())
             for source_id in source_ids:
@@ -280,7 +280,7 @@ def project_source_quality(
                     key = (active_run_id, source_id)
                     duplicate_by_run_source[key] = duplicate_by_run_source.get(key, 0) + 1
         elif event.event_type == "DiscoveryFeedbackRecorded":
-            job_id = _text(payload, "job_id", "jobId") or event.job_url
+            job_id = _text(payload, "job_id", "jobId") or event.job_id
             explicit_source_id = _nullable_str(_value(payload, "source_id", "sourceId"))
             source_ids = (explicit_source_id,) if explicit_source_id else tuple(sources_by_job.get(job_id, set()))
             kind = _text(payload, "kind")
