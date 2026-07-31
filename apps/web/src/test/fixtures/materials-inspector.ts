@@ -112,7 +112,7 @@ export const emptyEmployerAnalysis: EmployerAnalysis = {
 };
 
 export const populatedRequirementFitReport: RequirementFitReport = {
-  jobKey: "job-1",
+  jobId: "job-1",
   scoreVersion: 4,
   employerAnalysisGeneration: populatedEmployerAnalysis.generation,
   profileSnapshotVersion: 7,

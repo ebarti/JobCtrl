@@ -35,7 +35,7 @@ test("interview-prep contracts expose generated prep only, never live session st
   }>();
 
   expectTypeOf<InterviewPrep>().toMatchTypeOf<{
-    jobKey: string;
+    jobId: string;
     generation: number;
     status: InterviewPrepStatus;
     items: InterviewPrepItem[];

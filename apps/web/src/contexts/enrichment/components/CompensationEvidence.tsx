@@ -2,16 +2,16 @@ import { IconRefresh } from "@tabler/icons-react";
 import { type FormEvent, useState } from "react";
 import type {
   JobCompensationAudit,
+  JobCompensationAuditMarketEstimate,
+  JobCompensationAuditPostedFact,
   JobCompensationSummary,
   JobMarketCompensationSummary,
   JobPostedCompensationSummary,
-  MarketCompensationEstimate,
   MarketCompensationEvidenceRow,
   MarketCompensationFactor,
   MarketCompensationReason,
   MarketCompensationSourceSnapshot,
   MarketCompensationWarning,
-  PostedCompensationFact,
   PostedCompensationWarning,
 } from "@jobctrl/contracts";
 
@@ -370,7 +370,7 @@ function ReasonList({
   );
 }
 
-function MarketReasonLists({ estimate }: { readonly estimate: MarketCompensationEstimate }) {
+function MarketReasonLists({ estimate }: { readonly estimate: JobCompensationAuditMarketEstimate }) {
   if (estimate.estimateState === "unsupported") {
     return <ReasonList title="Unsupported reasons" reasons={estimate.unsupportedReasons} />;
   }
@@ -475,7 +475,7 @@ function PostedPanel({
   fact,
 }: {
   readonly posted: JobPostedCompensationSummary;
-  readonly fact: PostedCompensationFact | null;
+  readonly fact: JobCompensationAuditPostedFact | null;
 }) {
   return (
     <article className="compensation-panel">
@@ -504,7 +504,7 @@ function MarketPanel({
   estimate,
 }: {
   readonly market: JobMarketCompensationSummary;
-  readonly estimate: MarketCompensationEstimate | null;
+  readonly estimate: JobCompensationAuditMarketEstimate | null;
 }) {
   const score = estimate ? formatPercent(estimate.confidenceScore) : formatPercent(market.confidenceScore);
   return (

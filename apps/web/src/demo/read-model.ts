@@ -240,7 +240,7 @@ const clearRepeatApplication = {
 } satisfies DemoReadModel["apply"]["queue"]["items"][number]["repeatApplication"];
 
 const interviewPrep = {
-  jobKey: job.jobKey,
+  jobId: job.jobKey,
   generation: 1,
   status: "accepted",
   generatedAt: at("2026-07-10T10:00:00.000Z"),
