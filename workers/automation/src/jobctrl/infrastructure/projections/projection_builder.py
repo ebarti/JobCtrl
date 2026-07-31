@@ -374,7 +374,7 @@ DEFAULT_MAX_ATTEMPTS: dict[str, int] = {
 def _job_list_stage(stage: str | None, *, has_resume: bool = False) -> str:
     return "apply" if stage == "apply" or (stage == "cover" and has_resume) else "discover"
 
-_SOURCE_BOARD_NAMES = {"greenhouse", "linkedin", "talent.com"}
+_UNKNOWN_EMPLOYER = "Unknown company"
 
 # Score bands bucket ``fit_score`` by the user-facing scoring criteria in
 # ``domain/scoring/use_cases.py`` SCORE_PROMPT (9-10 perfect ... 1-2 poor) so the
@@ -692,6 +692,15 @@ class ProjectionBuilder:
         ensure_projection_tables(boot_conn)
         boot_conn.commit()
 
+    @property
+    def _watermark_name(self) -> str:
+        tenant = str(self._tenant_id)
+        return (
+            PROJECTION_NAME
+            if tenant == str(LOCAL_TENANT)
+            else f"{PROJECTION_NAME}:{tenant}"
+        )
+
     # ------------------------------------------------------------ subscription
 
     def subscribe_to(self, publisher: EventPublisher) -> Subscription:
@@ -794,18 +803,21 @@ class ProjectionBuilder:
             return self._refresh_impl()
 
     def _refresh_impl(self) -> int:
-        watermark = self._watermarks.get(PROJECTION_NAME)
+        watermark_name = self._watermark_name
+        watermark = self._watermarks.get(watermark_name)
         rows = self._conn.execute(
             """
-            SELECT event_id, job_url, event_type, occurred_at, payload_json
-            FROM job_events
-            WHERE event_id > ?
-            ORDER BY event_id ASC
+            SELECT events.event_id, events.job_id, events.event_type,
+                   events.occurred_at, events.payload_json
+            FROM job_events AS events
+            WHERE events.tenant_id = ?
+              AND events.event_id > ?
+            ORDER BY events.event_id ASC
             """,
-            (watermark,),
+            (str(self._tenant_id), watermark),
         ).fetchall()
 
-        dirty_jobs: set[str] = set()
+        dirty_job_ids: set[str] = set()
         source_quality_dirty = False
         workflow_runs_dirty = False
         pipeline_steps_dirty = False
@@ -818,9 +830,9 @@ class ProjectionBuilder:
             event_id = int(row["event_id"]) if not isinstance(row, tuple) else int(row[0])
             if event_id > max_event_id:
                 max_event_id = event_id
-            job_url = row["job_url"] if not isinstance(row, tuple) else row[1]
-            if job_url:
-                dirty_jobs.add(str(job_url))
+            job_id = row["job_id"] if not isinstance(row, tuple) else row[1]
+            if job_id:
+                dirty_job_ids.add(str(job_id))
             event_type = row["event_type"] if not isinstance(row, tuple) else row[2]
             if str(event_type) in SOURCE_QUALITY_EVENT_TYPES:
                 source_quality_dirty = True
@@ -851,18 +863,19 @@ class ProjectionBuilder:
         if self._store.count_job_list(str(self._tenant_id)) == 0:
             try:
                 jobs_rows = self._conn.execute(
-                    "SELECT url FROM jobs"
+                    "SELECT job_id FROM jobs WHERE tenant_id = ?",
+                    (str(self._tenant_id),),
                 ).fetchall()
                 for jrow in jobs_rows:
-                    url = jrow["url"] if not isinstance(jrow, tuple) else jrow[0]
-                    if url:
-                        dirty_jobs.add(str(url))
+                    job_id = jrow["job_id"] if not isinstance(jrow, tuple) else jrow[0]
+                    if job_id:
+                        dirty_job_ids.add(str(job_id))
             except sqlite3.OperationalError:
                 # ``jobs`` table not yet created (very-fresh DB) — nothing
                 # to backfill.
                 pass
-        dirty_jobs.update(self._stale_deleted_projection_jobs())
-        dirty_jobs.update(self._stale_stage_projection_jobs())
+        dirty_job_ids.update(self._stale_deleted_projection_jobs())
+        dirty_job_ids.update(self._stale_stage_projection_jobs())
 
         # One-time score-audit backfill (see SCORE_AUDIT_BACKFILL): rebuild any
         # already-projected scored job whose audit columns are still NULL. This
@@ -870,7 +883,7 @@ class ProjectionBuilder:
         # added long ago by the TS builder, so the migration reset never runs.
         audit_backfill_pending = not self._score_audit_backfill_done()
         if audit_backfill_pending:
-            dirty_jobs.update(self._jobs_missing_score_audit_projection())
+            dirty_job_ids.update(self._jobs_missing_score_audit_projection())
         workflow_runs_backfill_pending = self._workflow_runs_backfill_pending()
         if not pipeline_steps_dirty and self._pipeline_steps_backfill_pending():
             pipeline_steps_dirty = True
@@ -905,7 +918,7 @@ class ProjectionBuilder:
         )
         source_quality_history = source_quality_dirty or self._has_source_quality_history()
         if (
-            not dirty_jobs
+            not dirty_job_ids
             and not source_quality_dirty
             and dashboard_exists
             and (source_quality_exists or not source_quality_history)
@@ -929,8 +942,8 @@ class ProjectionBuilder:
         # CLI / tests) commit themselves.
         defer_commit = bool(getattr(self._conn, "in_transaction", False))
 
-        if not dirty_jobs:
-            # Watermark advanced past events with no job_url (e.g.
+        if not dirty_job_ids:
+            # Watermark advanced past events with no job (e.g.
             # system events, workflow lifecycle events) OR first-run: bump
             # the watermark + ensure the dashboard row exists.
             if source_quality_dirty or (not source_quality_exists and source_quality_history):
@@ -950,7 +963,7 @@ class ProjectionBuilder:
                 self._rebuild_evidence_usage()
             if max_event_id > watermark:
                 self._watermarks.set(
-                    PROJECTION_NAME, max_event_id, commit=not defer_commit
+                    watermark_name, max_event_id, commit=not defer_commit
                 )
             if not dashboard_exists:
                 self._rebuild_dashboard()
@@ -977,19 +990,19 @@ class ProjectionBuilder:
         if outreach_dirty:
             self._rebuild_outreach()
             self._rebuild_due_follow_ups()
-        for job_url in dirty_jobs:
-            self._rebuild_job(job_url)
+        for job_id in dirty_job_ids:
+            self._rebuild_job(job_id)
         self._rebuild_dashboard()
         self._rebuild_evidence_usage()
         if max_event_id > watermark:
             self._watermarks.set(
-                PROJECTION_NAME, max_event_id, commit=not defer_commit
+                watermark_name, max_event_id, commit=not defer_commit
             )
         if audit_backfill_pending:
             self._mark_score_audit_backfill_done()
         if not defer_commit:
             self._conn.commit()
-        return len(dirty_jobs)
+        return len(dirty_job_ids)
 
     # -------------------------------------------------------------- builders
 
@@ -1017,7 +1030,7 @@ class ProjectionBuilder:
         try:
             contact_rows = self._conn.execute(
                 """
-                SELECT contact_id, employer, job_url, role, created_at, updated_at
+                SELECT contact_id, employer, job_id, role, created_at, updated_at
                 FROM contacts
                 WHERE tenant_id = ? AND deleted_at IS NULL
                 """,
@@ -1108,7 +1121,7 @@ class ProjectionBuilder:
         try:
             task_rows = self._conn.execute(
                 """
-                SELECT task_id, employer, job_url, status, source_attempts_json,
+                SELECT task_id, employer, job_id, status, source_attempts_json,
                        started_at, updated_at, needs_review_at, completed_at,
                        failed_at, error_class
                 FROM contact_research_tasks
@@ -1212,7 +1225,7 @@ class ProjectionBuilder:
         try:
             thread_rows = self._conn.execute(
                 """
-                SELECT thread_id, contact_id, job_url, created_at, updated_at
+                SELECT thread_id, contact_id, job_id, created_at, updated_at
                 FROM outreach_threads
                 WHERE tenant_id = ?
                 """,
@@ -1297,7 +1310,7 @@ class ProjectionBuilder:
         try:
             rows = self._conn.execute(
                 """
-                SELECT thread_id, contact_id, job_url, follow_up_due_at,
+                SELECT thread_id, contact_id, job_id, follow_up_due_at,
                        follow_up_basis, follow_up_state, created_at, updated_at
                 FROM outreach_threads
                 WHERE tenant_id = ? AND follow_up_state = 'scheduled'
@@ -1332,30 +1345,34 @@ class ProjectionBuilder:
             if thread_id not in live_ids:
                 self._store.delete_due_follow_up(tenant, thread_id)
 
-    def _rebuild_job(self, job_url: str) -> None:
+    def _rebuild_job(self, job_id: str) -> None:
         job_row = self._conn.execute(
-            "SELECT * FROM jobs WHERE url = ?", (job_url,)
+            """
+            SELECT *
+            FROM jobs
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (str(self._tenant_id), job_id),
         ).fetchone()
         if job_row is None:
             # Orphaned event (e.g. job deleted from upstream) — drop projection.
-            self._store.delete_job_list(str(self._tenant_id), job_url)
+            self._store.delete_job_list(str(self._tenant_id), job_id)
             return
 
-        stages = self._load_stage_projections(job_url)
-        score = self._load_latest_score(job_url)
-        materials = self._load_latest_materials(job_url)
-        material_analytics = self._load_material_analytics(job_url)
-        employer_analysis_json = self._load_employer_analysis(job_url)
-        requirement_fit_report_json = self._load_requirement_fit_report(job_url)
+        stages = self._load_stage_projections(job_id)
+        score = self._load_latest_score(job_id)
+        materials = self._load_latest_materials(job_id)
+        material_analytics = self._load_material_analytics(job_id)
+        employer_analysis_json = self._load_employer_analysis(job_id)
+        requirement_fit_report_json = self._load_requirement_fit_report(job_id)
         requirement_fit_band = _fit_band_from_report_json(requirement_fit_report_json)
-        interview_prep_json = self._load_interview_prep(job_url)
-        provenance_by_artifact = self._load_bullet_provenance_by_artifact(job_url)
-        layout_boxes_by_artifact = self._load_layout_boxes_by_artifact(job_url)
-        enrichment = self._load_enrichment(job_url)
-        apply_run = self._load_latest_apply_run(job_url)
-        deleted_at = self._load_deleted_at(job_url)
-        artifacts = self._load_artifacts(job_url)
-        artifacts = _with_synthetic_pdf_artifacts(job_url, artifacts, materials)
+        interview_prep_json = self._load_interview_prep(job_id)
+        provenance_by_artifact = self._load_bullet_provenance_by_artifact(job_id)
+        layout_boxes_by_artifact = self._load_layout_boxes_by_artifact(job_id)
+        enrichment = self._load_enrichment(job_id)
+        apply_run = self._load_latest_apply_run(job_id)
+        deleted_at = self._load_deleted_at(job_id)
+        artifacts = self._load_artifacts(job_id)
 
         title = _row_str(job_row, "title")
         site = _row_str(job_row, "site")
@@ -1363,7 +1380,7 @@ class ProjectionBuilder:
             enrichment.get("application_url")
             or _row_nullable_str(job_row, "application_url")
         )
-        employer = _row_str(job_row, "company") or _company_name(site, application_url or job_url)
+        employer = _canonical_employer(job_row)
 
         # currentStage/State: the list view exposes only product stages.
         # The full internal preparation state remains available in
@@ -1386,11 +1403,9 @@ class ProjectionBuilder:
             current_error_message = first_actionable.error_message
             current_next_action = first_actionable.next_action
 
-        # Score: prefer per-aggregate row, fall back to legacy column.
+        # Score is owned by the canonical per-job score history.
         fit_score = score.get("fit_score")
-        if fit_score is None:
-            fit_score = _row_nullable_int(job_row, "fit_score")
-        score_reasoning = score.get("reasoning") or _row_str(job_row, "score_reasoning")
+        score_reasoning = score.get("reasoning") or ""
         score_breakdown_json = score.get("breakdown_json")
         score_keywords_json = score.get("keywords_json") or "[]"
         score_version = score.get("version")
@@ -1400,12 +1415,8 @@ class ProjectionBuilder:
         score_correction_json = score.get("correction_json")
 
         # Materials presence:
-        tailor_path = materials.get("tailor_path") or _row_nullable_str(
-            job_row, "tailored_resume_path"
-        )
-        cover_path = materials.get("cover_path") or _row_nullable_str(
-            job_row, "cover_letter_path"
-        )
+        tailor_path = materials.get("tailor_path")
+        cover_path = materials.get("cover_path")
         resume_pdf_path = materials.get("resume_pdf_path")
         cover_pdf_path = materials.get("cover_pdf_path")
 
@@ -1420,28 +1431,25 @@ class ProjectionBuilder:
         ar_finished = apply_run.get("finished_at") if apply_run else None
         apply_status = _derive_apply_status(
             ar_status,
-            _row_nullable_str(job_row, "apply_status"),
+            None,
         )
         applied_at: str | None
         if ar_status == "succeeded":
             applied_at = ar_finished
         else:
-            applied_at = _row_nullable_str(job_row, "applied_at")
+            applied_at = None
         apply_mode = self._derive_apply_mode(
-            job_url,
+            job_id,
             apply_run,
-            _row_nullable_str(job_row, "apply_status"),
-            _row_nullable_str(job_row, "applied_at"),
+            None,
+            None,
         )
 
         # description fallbacks
         description = _row_str(job_row, "description")
-        full_description = enrichment.get("full_description") or _row_str(
-            job_row, "full_description"
-        )
+        full_description = enrichment.get("full_description") or description
         compensation_summary, compensation_audit = self._build_compensation_projection(
-            job_id=job_url,
-            job_locator=job_url,
+            job_id=job_id,
             legacy_raw_salary=_row_nullable_str(job_row, "salary"),
         )
 
@@ -1449,7 +1457,7 @@ class ProjectionBuilder:
 
         list_proj = JobListProjection(
             tenant_id=self._tenant_id,
-            job_id=job_url,
+            job_id=job_id,
             title=title or "Untitled",
             employer=employer,
             source=site or "unknown",
@@ -1497,7 +1505,7 @@ class ProjectionBuilder:
         # JobDetail
         detail_proj = JobDetailProjection(
             tenant_id=self._tenant_id,
-            job_id=job_url,
+            job_id=job_id,
             description_preview=_preview_text(
                 full_description or description, 6000
             ),
@@ -1524,7 +1532,7 @@ class ProjectionBuilder:
             ArtifactListProjection(
                 artifact_id=a["artifact_id"],
                 tenant_id=self._tenant_id,
-                job_id=job_url,
+                job_id=job_id,
                 job_title=title or "Untitled",
                 job_employer=employer,
                 artifact_type=a.get("artifact_type", ""),
@@ -1542,7 +1550,7 @@ class ProjectionBuilder:
             for a in artifacts
         ]
         self._store.replace_artifacts_for_job(
-            str(self._tenant_id), job_url, artifact_projs
+            str(self._tenant_id), job_id, artifact_projs
         )
 
     def _rebuild_evidence_usage(self) -> None:
@@ -1758,11 +1766,15 @@ class ProjectionBuilder:
     def _attach_resume_usages(self, entries: dict[str, dict[str, Any]]) -> None:
         if not _table_exists(self._conn, "job_bullet_provenance"):
             return
-        job_metadata = _job_metadata_join_sql(self._conn, "provenance.job_url")
-        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "provenance.job_url")
+        job_metadata = _job_metadata_join_sql(
+            self._conn, "provenance.tenant_id", "provenance.job_id"
+        )
+        lifecycle = _job_lifecycle_exclusion_sql(
+            self._conn, "provenance.tenant_id", "provenance.job_id"
+        )
         rows = self._conn.execute(
             f"""
-            SELECT provenance.job_url, provenance.artifact_id, provenance.generation,
+            SELECT provenance.job_id, provenance.artifact_id, provenance.generation,
                    provenance.bullet_id, provenance.generated_text, provenance.created_at,
                    provenance.evidence_ids_json,
                    {job_metadata['select_sql']}
@@ -1771,18 +1783,18 @@ class ProjectionBuilder:
              WHERE provenance.tenant_id = ?{lifecycle['where_sql']}
                AND provenance.generation = (
                  SELECT MAX(latest.generation)
-                   FROM job_bullet_provenance AS latest
+                  FROM job_bullet_provenance AS latest
                   WHERE latest.tenant_id = provenance.tenant_id
-                    AND latest.job_url = provenance.job_url
+                    AND latest.job_id = provenance.job_id
                )
-             ORDER BY provenance.job_url, provenance.position, provenance.bullet_id
+             ORDER BY provenance.job_id, provenance.position, provenance.bullet_id
             """,
             (str(self._tenant_id),),
         ).fetchall()
         for row in rows:
             usage = {
                 "kind": "resume_bullet",
-                "jobKey": _row_str(row, "job_url"),
+                "jobId": _row_str(row, "job_id"),
                 "jobTitle": _row_nullable_str(row, "job_title"),
                 "employer": _row_nullable_str(row, "employer"),
                 "artifactId": _row_nullable_str(row, "artifact_id"),
@@ -1819,11 +1831,15 @@ class ProjectionBuilder:
             self._conn, "job_requirement_fit_items"
         ):
             return
-        job_metadata = _job_metadata_join_sql(self._conn, "items.job_url")
-        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "items.job_url")
+        job_metadata = _job_metadata_join_sql(
+            self._conn, "items.tenant_id", "items.job_id"
+        )
+        lifecycle = _job_lifecycle_exclusion_sql(
+            self._conn, "items.tenant_id", "items.job_id"
+        )
         rows = self._conn.execute(
             f"""
-            SELECT items.job_url, items.score_version, items.requirement_id,
+            SELECT items.job_id, items.score_version, items.requirement_id,
                    items.requirement_text, items.tier, items.weight,
                    items.fit_json, items.artifact_coverage_json,
                    {job_metadata['select_sql']}
@@ -1832,11 +1848,11 @@ class ProjectionBuilder:
              WHERE items.tenant_id = ?{lifecycle['where_sql']}
                AND items.score_version = (
                  SELECT MAX(report.score_version)
-                   FROM job_requirement_fit_reports AS report
+                  FROM job_requirement_fit_reports AS report
                   WHERE report.tenant_id = items.tenant_id
-                    AND report.job_url = items.job_url
+                    AND report.job_id = items.job_id
                )
-             ORDER BY items.job_url, items.position, items.requirement_id
+             ORDER BY items.job_id, items.position, items.requirement_id
             """,
             (str(self._tenant_id),),
         ).fetchall()
@@ -1852,7 +1868,7 @@ class ProjectionBuilder:
             )
             usage = {
                 "kind": "requirement_fit",
-                "jobKey": _row_str(row, "job_url"),
+                "jobId": _row_str(row, "job_id"),
                 "jobTitle": _row_nullable_str(row, "job_title"),
                 "employer": _row_nullable_str(row, "employer"),
                 "artifactId": None,
@@ -1879,7 +1895,7 @@ class ProjectionBuilder:
                     "transferable": "transferable_requirement",
                 }[fit_kind]
                 gap = {
-                    "gapId": f"{_row_str(row, 'job_url')}#{_row_str(row, 'requirement_id')}",
+                    "gapId": f"{_row_str(row, 'job_id')}#{_row_str(row, 'requirement_id')}",
                     "kind": kind,
                     "requirementId": _row_str(row, "requirement_id"),
                     "requirementText": _row_str(row, "requirement_text"),
@@ -1904,7 +1920,9 @@ class ProjectionBuilder:
     ) -> None:
         if not _table_exists(self._conn, "artifact_list_projections"):
             return
-        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "alp.job_id")
+        lifecycle = _job_lifecycle_exclusion_sql(
+            self._conn, "alp.tenant_id", "alp.job_id"
+        )
         rows = self._conn.execute(
             f"""
             SELECT alp.job_id, alp.job_title, alp.job_employer, alp.artifact_id, alp.generation,
@@ -1948,15 +1966,13 @@ class ProjectionBuilder:
         self,
         *,
         job_id: str,
-        job_locator: str,
         legacy_raw_salary: str | None,
     ) -> tuple[str, str]:
         posted = self._load_posted_compensation(
-            job_locator,
-            legacy_raw_salary,
             job_id,
+            legacy_raw_salary,
         )
-        market = self._load_market_compensation(job_locator, job_id)
+        market = self._load_market_compensation(job_id)
         posted_warning_count = (
             len(posted["fact"]["warnings"])
             if posted["recordStatus"] == "recorded" and isinstance(posted.get("fact"), dict)
@@ -2053,23 +2069,22 @@ class ProjectionBuilder:
 
     def _load_posted_compensation(
         self,
-        job_locator: str,
-        legacy_raw_salary: str | None,
         job_id: str,
+        legacy_raw_salary: str | None,
     ) -> dict[str, Any]:
         try:
             row = self._conn.execute(
                 """
-                SELECT tenant_id, job_url, source_field, source_text,
+                SELECT tenant_id, job_id, source_field, source_text,
                        legacy_raw_salary, parse_state, currency, period,
                        component, minimum_amount, maximum_amount,
                        annualized_minimum_amount, annualized_maximum_amount,
                        annualization_assumption, confidence, warnings_json,
                        parser_version, source_hash, parsed_at
                 FROM job_posted_compensation_facts
-                WHERE tenant_id = ? AND job_url = ?
+                WHERE tenant_id = ? AND job_id = ?
                 """,
-                (str(self._tenant_id), job_locator),
+                (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
             row = None
@@ -2083,11 +2098,11 @@ class ProjectionBuilder:
         fact = _posted_fact_from_row(row, job_id)
         return {"ok": True, "recordStatus": "recorded", "fact": fact}
 
-    def _load_market_compensation(self, job_locator: str, job_id: str) -> dict[str, Any]:
+    def _load_market_compensation(self, job_id: str) -> dict[str, Any]:
         try:
             row = self._conn.execute(
                 """
-                SELECT tenant_id, job_url, estimate_state, currency, period,
+                SELECT tenant_id, job_id, estimate_state, currency, period,
                        component, minimum_amount, maximum_amount,
                        confidence_interval_minimum_amount,
                        confidence_interval_maximum_amount,
@@ -2102,9 +2117,9 @@ class ProjectionBuilder:
                        normalized_company, role_title, normalized_role,
                        company_tier, match_scope
                 FROM job_market_compensation_estimates
-                WHERE tenant_id = ? AND job_url = ?
+                WHERE tenant_id = ? AND job_id = ?
                 """,
-                (str(self._tenant_id), job_locator),
+                (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
             row = None
@@ -2120,11 +2135,14 @@ class ProjectionBuilder:
 
     # ------------------------------------------------------------- joiners
 
-    def _load_stage_projections(self, job_url: str) -> list[StageProjection]:
+    def _load_stage_projections(self, job_id: str) -> list[StageProjection]:
         try:
             rows = self._conn.execute(
-                "SELECT * FROM job_stage_states WHERE job_url = ?",
-                (job_url,),
+                """
+                SELECT * FROM job_stage_states
+                WHERE tenant_id = ? AND job_id = ?
+                """,
+                (str(self._tenant_id), job_id),
             ).fetchall()
         except sqlite3.OperationalError:
             rows = []
@@ -2167,7 +2185,7 @@ class ProjectionBuilder:
             )
         return result
 
-    def _load_latest_score(self, job_url: str) -> dict:
+    def _load_latest_score(self, job_id: str) -> dict:
         try:
             row = self._conn.execute(
                 """
@@ -2175,11 +2193,11 @@ class ProjectionBuilder:
                        s.keywords_json, s.criteria_json, s.trace_json,
                        s.correction_json
                 FROM job_scores s
-                WHERE s.job_url = ?
+                WHERE s.tenant_id = ? AND s.job_id = ?
                 ORDER BY s.version DESC
                 LIMIT 1
                 """,
-                (job_url,),
+                (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
             return {}
@@ -2187,9 +2205,7 @@ class ProjectionBuilder:
             return {}
         breakdown = _json_loads(_row_nullable_str(row, "breakdown_json"), {})
         reasoning = ""
-        legacy = False
         if isinstance(breakdown, dict):
-            legacy = breakdown.get("legacy") is True
             if isinstance(breakdown.get("reasoning"), str):
                 reasoning = breakdown["reasoning"]
         keywords = _normalize_keywords(_json_loads(_row_nullable_str(row, "keywords_json"), []))
@@ -2197,22 +2213,23 @@ class ProjectionBuilder:
             "version": _row_nullable_int(row, "version"),
             "fit_score": _row_nullable_int(row, "fit_score"),
             "scored_at": _row_nullable_str(row, "scored_at"),
-            "breakdown_json": None if legacy else json.dumps(_camel_score_breakdown(breakdown)),
-            "keywords_json": json.dumps([] if legacy and keywords == ["legacy"] else keywords),
+            "breakdown_json": json.dumps(_camel_score_breakdown(breakdown)),
+            "keywords_json": json.dumps(keywords),
             "reasoning": reasoning,
             "criteria_json": _row_nullable_str(row, "criteria_json"),
             "trace_json": _row_nullable_str(row, "trace_json"),
             "correction_json": _row_nullable_str(row, "correction_json"),
         }
 
-    def _load_latest_materials(self, job_url: str) -> dict:
+    def _load_latest_materials(self, job_id: str) -> dict:
         try:
             generation_row = self._conn.execute(
                 """
                 SELECT MAX(generation)
                 FROM job_materials_artifacts
-                WHERE job_url = ?
+                WHERE tenant_id = ? AND job_id = ?
                   AND status = 'approved'
+                  AND superseded_at IS NULL
                   AND artifact_type IN (
                     'tailored_resume',
                     'cover_letter',
@@ -2220,33 +2237,10 @@ class ProjectionBuilder:
                     'cover_letter_pdf'
                   )
                 """,
-                (job_url,),
+                (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
-            try:
-                row = self._conn.execute(
-                    """
-                    SELECT artifact_id, generation, metadata_json,
-                           NULL AS material_metadata_json
-                    FROM job_materials_artifacts
-                    WHERE job_url = ?
-                      AND status = 'approved'
-                      AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
-                    ORDER BY COALESCE(generation, -1) DESC,
-                             CASE artifact_type
-                               WHEN 'tailored_resume' THEN 0
-                               WHEN 'tailored_resume_txt' THEN 1
-                               WHEN 'resume_pdf' THEN 2
-                               ELSE 3
-                             END,
-                             created_at DESC,
-                             rowid DESC
-                    LIMIT 1
-                    """,
-                    (job_url,),
-                ).fetchone()
-            except sqlite3.OperationalError:
-                return {}
+            return {}
         if generation_row is None:
             return {}
         max_generation = generation_row[0]
@@ -2257,9 +2251,10 @@ class ProjectionBuilder:
                 """
                 SELECT artifact_type, path, status, created_at
                 FROM job_materials_artifacts
-                WHERE job_url = ? AND generation = ? AND status = 'approved'
+                WHERE tenant_id = ? AND job_id = ? AND generation = ?
+                  AND status = 'approved' AND superseded_at IS NULL
                 """,
-                (job_url, int(max_generation)),
+                (str(self._tenant_id), job_id, int(max_generation)),
             ).fetchall()
         except sqlite3.OperationalError:
             return {}
@@ -2281,7 +2276,7 @@ class ProjectionBuilder:
                 result["cover_pdf_path"] = path
         return result
 
-    def _load_material_analytics(self, job_url: str) -> dict[str, object]:
+    def _load_material_analytics(self, job_id: str) -> dict[str, object]:
         try:
             row = self._conn.execute(
                 """
@@ -2289,10 +2284,12 @@ class ProjectionBuilder:
                        m.metadata_json AS material_metadata_json
                 FROM job_materials_artifacts a
                 LEFT JOIN job_materials m
-                  ON m.job_url = a.job_url
+                  ON m.tenant_id = a.tenant_id
+                 AND m.job_id = a.job_id
                  AND m.generation = a.generation
-                WHERE a.job_url = ?
+                WHERE a.tenant_id = ? AND a.job_id = ?
                   AND a.status = 'approved'
+                  AND a.superseded_at IS NULL
                   AND a.artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
                 ORDER BY COALESCE(a.generation, -1) DESC,
                          CASE a.artifact_type
@@ -2305,33 +2302,10 @@ class ProjectionBuilder:
                          a.rowid DESC
                 LIMIT 1
                 """,
-                (job_url,),
+                (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
-            try:
-                row = self._conn.execute(
-                    """
-                    SELECT artifact_id, generation, metadata_json,
-                           NULL AS material_metadata_json
-                    FROM job_materials_artifacts
-                    WHERE job_url = ?
-                      AND status = 'approved'
-                      AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
-                    ORDER BY COALESCE(generation, -1) DESC,
-                             CASE artifact_type
-                               WHEN 'tailored_resume' THEN 0
-                               WHEN 'tailored_resume_txt' THEN 1
-                               WHEN 'resume_pdf' THEN 2
-                               ELSE 3
-                             END,
-                             created_at DESC,
-                             rowid DESC
-                    LIMIT 1
-                    """,
-                    (job_url,),
-                ).fetchone()
-            except sqlite3.OperationalError:
-                return {}
+            return {}
         metadata_jsons = [
             _row_nullable_str(row, "metadata_json"),
             _row_nullable_str(row, "material_metadata_json"),
@@ -2340,12 +2314,12 @@ class ProjectionBuilder:
         if _material_analytics_complete(current):
             return current
         return _merge_material_analytics(
-            metadata_jsons + self._load_base_material_metadata(job_url, metadata_jsons)
+            metadata_jsons + self._load_base_material_metadata(job_id, metadata_jsons)
         )
 
     def _load_base_material_metadata(
         self,
-        job_url: str,
+        job_id: str,
         metadata_jsons: list[str | None],
     ) -> list[str | None]:
         base_generation, base_artifact_ids = _material_metadata_references(metadata_jsons)
@@ -2356,10 +2330,10 @@ class ProjectionBuilder:
                     """
                     SELECT metadata_json
                     FROM job_materials
-                    WHERE job_url = ? AND generation = ?
+                    WHERE tenant_id = ? AND job_id = ? AND generation = ?
                     LIMIT 1
                     """,
-                    (job_url, base_generation),
+                    (str(self._tenant_id), job_id, base_generation),
                 ).fetchone()
             except sqlite3.OperationalError:
                 row = None
@@ -2369,7 +2343,7 @@ class ProjectionBuilder:
                     """
                     SELECT metadata_json
                     FROM job_materials_artifacts
-                    WHERE job_url = ?
+                    WHERE tenant_id = ? AND job_id = ?
                       AND generation = ?
                       AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_pdf')
                     ORDER BY CASE artifact_type
@@ -2380,7 +2354,7 @@ class ProjectionBuilder:
                              END,
                              rowid DESC
                     """,
-                    (job_url, base_generation),
+                    (str(self._tenant_id), job_id, base_generation),
                 ).fetchall()
             except sqlite3.OperationalError:
                 rows = []
@@ -2392,7 +2366,7 @@ class ProjectionBuilder:
                     f"""
                     SELECT metadata_json
                     FROM job_materials_artifacts
-                    WHERE job_url = ?
+                    WHERE tenant_id = ? AND job_id = ?
                       AND artifact_id IN ({placeholders})
                     ORDER BY COALESCE(generation, -1) DESC,
                              CASE artifact_type
@@ -2403,14 +2377,14 @@ class ProjectionBuilder:
                              END,
                              rowid DESC
                     """,
-                    (job_url, *base_artifact_ids),
+                    (str(self._tenant_id), job_id, *base_artifact_ids),
                 ).fetchall()
             except sqlite3.OperationalError:
                 rows = []
             metadata.extend(_row_nullable_str(row, "metadata_json") for row in rows)
         return metadata
 
-    def _load_employer_analysis(self, job_url: str) -> str | None:
+    def _load_employer_analysis(self, job_id: str) -> str | None:
         """Project the latest canonical employer analysis read shape (Phase 1).
 
         The single owner of the analysis read shape: it loads the latest
@@ -2424,7 +2398,7 @@ class ProjectionBuilder:
 
         try:
             record = SqliteEmployerAnalysisRepository(self._conn).load(
-                self._tenant_id, JobId(job_url)
+                self._tenant_id, JobId(job_id)
             )
         except sqlite3.OperationalError:
             return None
@@ -2432,7 +2406,7 @@ class ProjectionBuilder:
             return None
         return json.dumps(record.to_read_model(), ensure_ascii=False)
 
-    def _load_requirement_fit_report(self, job_url: str) -> str | None:
+    def _load_requirement_fit_report(self, job_id: str) -> str | None:
         """Project the latest canonical requirement-fit report read shape.
 
         The score aggregate owns the source rows. The detail projection exposes
@@ -2444,7 +2418,7 @@ class ProjectionBuilder:
 
         try:
             record = SqliteRequirementFitReportRepository(self._conn).load(
-                self._tenant_id, JobId(job_url)
+                self._tenant_id, JobId(job_id)
             )
         except sqlite3.OperationalError:
             return None
@@ -2452,10 +2426,10 @@ class ProjectionBuilder:
             return None
         read_model = record.to_read_model()
         read_model.pop("jobKey", None)
-        read_model["jobId"] = job_url
+        read_model["jobId"] = job_id
         return json.dumps(read_model, ensure_ascii=False)
 
-    def _load_interview_prep(self, job_url: str) -> str | None:
+    def _load_interview_prep(self, job_id: str) -> str | None:
         """Project the latest accepted interview-prep read shape.
 
         Failed generations stay in canonical history but never replace the
@@ -2465,7 +2439,7 @@ class ProjectionBuilder:
 
         try:
             record = SqliteInterviewPrepRepository(self._conn).load_latest(
-                self._tenant_id, JobId(job_url), status="accepted"
+                self._tenant_id, JobId(job_id), status="accepted"
             )
         except sqlite3.OperationalError:
             return None
@@ -2473,10 +2447,10 @@ class ProjectionBuilder:
             return None
         read_model = record.to_read_model()
         read_model.pop("jobKey", None)
-        read_model["jobId"] = job_url
+        read_model["jobId"] = job_id
         return json.dumps(read_model, ensure_ascii=False)
 
-    def _load_bullet_provenance_by_artifact(self, job_url: str) -> "_ProvenanceProjection":
+    def _load_bullet_provenance_by_artifact(self, job_id: str) -> "_ProvenanceProjection":
         """Project provenance + coverage + voice read shapes, keyed by artifact.
 
         The single owner of the provenance/coverage/voice read shapes (Phase 2 +
@@ -2499,10 +2473,10 @@ class ProjectionBuilder:
                 """
                 SELECT DISTINCT generation
                 FROM job_bullet_provenance
-                WHERE job_url = ? AND tenant_id = ?
+                WHERE tenant_id = ? AND job_id = ?
                 ORDER BY generation
                 """,
-                (job_url, str(self._tenant_id)),
+                (str(self._tenant_id), job_id),
             ).fetchall()
         except sqlite3.OperationalError:
             return empty
@@ -2515,7 +2489,7 @@ class ProjectionBuilder:
         for row in generation_rows:
             record = repository.load(
                 self._tenant_id,
-                JobId(job_url),
+                JobId(job_id),
                 generation=int(row["generation"]),
             )
             if record is None or record.is_empty:
@@ -2542,16 +2516,16 @@ class ProjectionBuilder:
             voice=voice_by_artifact,
         )
 
-    def _load_enrichment(self, job_url: str) -> dict:
+    def _load_enrichment(self, job_id: str) -> dict:
         try:
             row = self._conn.execute(
                 """
                 SELECT full_description, application_url, enriched_at,
                        current_status, extraction_tier
                 FROM job_enrichments
-                WHERE job_url = ?
+                WHERE tenant_id = ? AND job_id = ?
                 """,
-                (job_url,),
+                (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
             return {}
@@ -2565,7 +2539,7 @@ class ProjectionBuilder:
             "extraction_tier": _row_nullable_str(row, "extraction_tier"),
         }
 
-    def _load_latest_apply_run(self, job_url: str) -> dict:
+    def _load_latest_apply_run(self, job_id: str) -> dict:
         # PR 4 of the Temporal stack: ``apply_run_projections`` is the
         # canonical apply lifecycle row (sourced from ``job_events`` by
         # ``_rebuild_apply_runs`` below). ``_rebuild_job`` reads it
@@ -2577,11 +2551,11 @@ class ProjectionBuilder:
                 SELECT run_id, status, result, started_at, finished_at,
                        worker_id, model, dry_run, duration_ms
                 FROM apply_run_projections
-                WHERE job_id = ?
+                WHERE tenant_id = ? AND job_id = ?
                 ORDER BY started_at DESC, run_id DESC
                 LIMIT 1
                 """,
-                (job_url,),
+                (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
             return {}
@@ -2601,7 +2575,7 @@ class ProjectionBuilder:
 
     def _derive_apply_mode(
         self,
-        job_url: str,
+        job_id: str,
         apply_run: dict,
         legacy_status: str | None,
         legacy_applied_at: str | None,
@@ -2611,45 +2585,51 @@ class ProjectionBuilder:
         is_applied = bool(legacy_applied_at) or legacy_status == "applied"
         if not is_applied:
             return None
-        if self._has_job_event(job_url, "ApplicationManuallyMarked"):
+        if self._has_job_event(job_id, "ApplicationManuallyMarked"):
             return "manual_marked"
-        if self._has_application_outcome_kind(job_url, "applied_confirmation"):
+        if self._has_application_outcome_kind(job_id, "applied_confirmation"):
             return "external_confirmed"
         return "manual_marked"
 
-    def _has_job_event(self, job_url: str, event_type: str) -> bool:
+    def _has_job_event(self, job_id: str, event_type: str) -> bool:
         try:
             row = self._conn.execute(
-                "SELECT COUNT(*) AS c FROM job_events WHERE job_url = ? AND event_type = ?",
-                (job_url, event_type),
+                """
+                SELECT COUNT(*) AS c
+                FROM job_events AS events
+                WHERE events.tenant_id = ?
+                  AND events.job_id = ?
+                  AND events.event_type = ?
+                """,
+                (str(self._tenant_id), job_id, event_type),
             ).fetchone()
         except sqlite3.OperationalError:
             return False
         return int(_row_nullable_int(row, "c") or 0) > 0
 
-    def _has_application_outcome_kind(self, job_url: str, kind: str) -> bool:
+    def _has_application_outcome_kind(self, job_id: str, kind: str) -> bool:
         try:
             row = self._conn.execute(
                 """
                 SELECT COUNT(*) AS c
                 FROM application_outcomes
-                WHERE tenant_id = ? AND job_key = ? AND kind = ?
+                WHERE tenant_id = ? AND job_id = ? AND kind = ?
                 """,
-                (str(self._tenant_id), job_url, kind),
+                (str(self._tenant_id), job_id, kind),
             ).fetchone()
         except sqlite3.OperationalError:
             return False
         return int(_row_nullable_int(row, "c") or 0) > 0
 
-    def _load_deleted_at(self, job_url: str) -> str | None:
+    def _load_deleted_at(self, job_id: str) -> str | None:
         try:
             row = self._conn.execute(
                 """
                 SELECT deleted_at FROM jobctrl_deleted_jobs
-                WHERE job_url = ?
+                WHERE tenant_id = ? AND job_id = ?
                   AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))
                 """,
-                (job_url,),
+                (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
             return None
@@ -2664,7 +2644,8 @@ class ProjectionBuilder:
                 SELECT p.job_id
                 FROM job_list_projections p
                 JOIN jobctrl_deleted_jobs d
-                  ON d.job_url = p.job_id
+                  ON d.tenant_id = p.tenant_id
+                 AND d.job_id = p.job_id
                 WHERE p.tenant_id = ?
                   AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
                   AND (p.deleted_at IS NULL OR p.deleted_at != d.deleted_at)
@@ -2683,15 +2664,13 @@ class ProjectionBuilder:
         try:
             rows = self._conn.execute(
                 """
-                SELECT DISTINCT s.job_url AS job_id
+                SELECT DISTINCT s.job_id
                   FROM job_stage_states s
-                  JOIN jobs j
-                    ON j.url = s.job_url
                   LEFT JOIN job_list_projections p
-                    ON p.tenant_id = ?
-                   AND p.job_id = s.job_url
-                 WHERE s.job_url IS NOT NULL
-                   AND TRIM(s.job_url) != ''
+                    ON p.tenant_id = s.tenant_id
+                   AND p.job_id = s.job_id
+                 WHERE s.tenant_id = ?
+                   AND TRIM(s.job_id) != ''
                    AND (
                      p.job_id IS NULL
                      OR (
@@ -2743,7 +2722,9 @@ class ProjectionBuilder:
                 """
                 SELECT p.job_id
                 FROM job_list_projections p
-                JOIN job_scores s ON s.job_url = p.job_id
+                JOIN job_scores s
+                  ON s.tenant_id = p.tenant_id
+                 AND s.job_id = p.job_id
                 WHERE p.tenant_id = ?
                   AND p.score_criteria_json IS NULL
                 """,
@@ -2761,7 +2742,7 @@ class ProjectionBuilder:
         try:
             rows = self._conn.execute(
                 """
-                SELECT job_url
+                SELECT job_id
                 FROM posting_snapshot_sets
                 WHERE tenant_id = ?
                   AND latest_active_state IN (
@@ -2773,9 +2754,9 @@ class ProjectionBuilder:
         except sqlite3.OperationalError:
             return set()
         return {
-            str(row["job_url"] if not isinstance(row, tuple) else row[0])
+            str(row["job_id"] if not isinstance(row, tuple) else row[0])
             for row in rows
-            if (row["job_url"] if not isinstance(row, tuple) else row[0])
+            if (row["job_id"] if not isinstance(row, tuple) else row[0])
         }
 
     def _hidden_projection_jobs(self) -> set[str]:
@@ -2786,20 +2767,21 @@ class ProjectionBuilder:
         try:
             rows = self._conn.execute(
                 """
-                SELECT job_url
+                SELECT job_id
                 FROM jobctrl_hidden_jobs
-                WHERE unhidden_at IS NULL
-                """
+                WHERE tenant_id = ? AND unhidden_at IS NULL
+                """,
+                (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
             return set()
         return {
-            str(row["job_url"] if not isinstance(row, tuple) else row[0])
+            str(row["job_id"] if not isinstance(row, tuple) else row[0])
             for row in rows
-            if (row["job_url"] if not isinstance(row, tuple) else row[0])
+            if (row["job_id"] if not isinstance(row, tuple) else row[0])
         }
 
-    def _load_artifacts(self, job_url: str) -> list[dict]:
+    def _load_artifacts(self, job_id: str) -> list[dict]:
         artifacts: list[dict] = []
         seen: set[tuple[str, str]] = set()
         try:
@@ -2808,9 +2790,9 @@ class ProjectionBuilder:
                 SELECT artifact_id, artifact_type, status, path, created_at,
                        size_bytes, generation, metadata_json
                 FROM job_materials_artifacts
-                WHERE job_url = ?
+                WHERE tenant_id = ? AND job_id = ?
                 """,
-                (job_url,),
+                (str(self._tenant_id), job_id),
             ).fetchall():
                 local_path = _row_nullable_str(row, "path") or ""
                 atype = _row_nullable_str(row, "artifact_type") or ""
@@ -2838,12 +2820,12 @@ class ProjectionBuilder:
         try:
             for row in self._conn.execute(
                 """
-                SELECT rowid AS row_id, job_url, stage, artifact_type, status,
+                SELECT rowid AS row_id, job_id, stage, artifact_type, status,
                        path, created_at, size_bytes
                 FROM job_artifacts
-                WHERE job_url = ?
+                WHERE tenant_id = ? AND job_id = ?
                 """,
-                (job_url,),
+                (str(self._tenant_id), job_id),
             ).fetchall():
                 local_path = _row_nullable_str(row, "path") or ""
                 atype = _row_nullable_str(row, "artifact_type") or "artifact"
@@ -2869,17 +2851,17 @@ class ProjectionBuilder:
             pass
         return artifacts
 
-    def _load_layout_boxes_by_artifact(self, job_url: str) -> dict[str, str]:
+    def _load_layout_boxes_by_artifact(self, job_id: str) -> dict[str, str]:
         try:
             rows = self._conn.execute(
                 """
                 SELECT artifact_id, semantic_id, page_number, line_number,
                        text_excerpt, left_pct, top_pct, width_pct, height_pct
                 FROM job_material_layout_boxes
-                WHERE job_url = ? AND tenant_id = ?
+                WHERE tenant_id = ? AND job_id = ?
                 ORDER BY artifact_id, page_number, box_index
                 """,
-                (job_url, str(self._tenant_id)),
+                (str(self._tenant_id), job_id),
             ).fetchall()
         except sqlite3.OperationalError:
             return {}
@@ -2953,20 +2935,23 @@ class ProjectionBuilder:
                     SELECT COUNT(*)
                     FROM apply_run_projections arp
                     LEFT JOIN jobctrl_deleted_jobs d
-                        ON d.job_url = arp.job_id
+                        ON d.tenant_id = arp.tenant_id
+                       AND d.job_id = arp.job_id
                        AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
                     LEFT JOIN posting_snapshot_sets pss
                         ON pss.tenant_id = arp.tenant_id
-                       AND pss.job_url = arp.job_id
-                    WHERE arp.dry_run = 1
-                      AND d.job_url IS NULL
+                       AND pss.job_id = arp.job_id
+                    WHERE arp.tenant_id = ?
+                      AND arp.dry_run = 1
+                      AND d.job_id IS NULL
                       AND (
                         pss.latest_active_state IS NULL
                         OR pss.latest_active_state NOT IN (
                           'closed', 'expired', 'removed', 'location_incompatible'
                         )
                       )
-                    """
+                    """,
+                    (str(self._tenant_id),),
                 ).fetchone()[0]
             )
         except sqlite3.OperationalError:
@@ -3210,21 +3195,21 @@ class ProjectionBuilder:
     def _load_outcomes_by_job(self) -> dict[str, tuple[dict[str, str | None], ...]]:
         try:
             rows = self._conn.execute(
-                "SELECT job_key, kind, occurred_at FROM application_outcomes WHERE tenant_id = ?",
+                "SELECT job_id, kind, occurred_at FROM application_outcomes WHERE tenant_id = ?",
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
             return {}
         grouped: dict[str, list[dict[str, str | None]]] = {}
         for row in rows:
-            job_key = _row_str(row, "job_key")
+            job_id = _row_str(row, "job_id")
             kind = _row_str(row, "kind")
-            if not job_key or not kind:
+            if not job_id or not kind:
                 continue
-            grouped.setdefault(job_key, []).append(
+            grouped.setdefault(job_id, []).append(
                 {"kind": kind, "occurredAt": _row_nullable_str(row, "occurred_at")}
             )
-        return {job_key: tuple(outcomes) for job_key, outcomes in grouped.items()}
+        return {job_id: tuple(outcomes) for job_id, outcomes in grouped.items()}
 
     def _load_suggestion_accuracy(self) -> dict[str, int]:
         counts = {"decided": 0, "accepted": 0, "corrected": 0, "ignored": 0}
@@ -3251,12 +3236,14 @@ class ProjectionBuilder:
         placeholders = ", ".join("?" for _ in SOURCE_QUALITY_EVENT_TYPES)
         rows = self._conn.execute(
             f"""
-            SELECT event_id, job_url, event_type, occurred_at, payload_json
+            SELECT event_id, job_id, event_type,
+                   occurred_at, payload_json
             FROM job_events
-            WHERE event_type IN ({placeholders})
+            WHERE tenant_id = ?
+              AND event_type IN ({placeholders})
             ORDER BY event_id ASC
             """,
-            tuple(sorted(SOURCE_QUALITY_EVENT_TYPES)),
+            (str(self._tenant_id), *sorted(SOURCE_QUALITY_EVENT_TYPES)),
         ).fetchall()
         result = project_source_quality(
             tenant_id=self._tenant_id,
@@ -3271,9 +3258,10 @@ class ProjectionBuilder:
             f"""
             SELECT COUNT(*)
             FROM job_events
-            WHERE event_type IN ({placeholders})
+            WHERE tenant_id = ?
+              AND event_type IN ({placeholders})
             """,
-            tuple(sorted(SOURCE_QUALITY_EVENT_TYPES)),
+            (str(self._tenant_id), *sorted(SOURCE_QUALITY_EVENT_TYPES)),
         ).fetchone()
         return bool(row and int(row[0]) > 0)
 
@@ -3291,12 +3279,17 @@ class ProjectionBuilder:
                     JSON_EXTRACT(payload_json, '$.itemKey')
                 )
                 FROM job_events
-                WHERE event_type IN ({placeholders})
+                WHERE tenant_id = ?
+                  AND event_type IN ({placeholders})
                   AND payload_json IS NOT NULL
                   AND json_valid(payload_json)
                   AND JSON_EXTRACT(payload_json, '$.execution.tenantId') = ?
                 """,
-                (*sorted(PIPELINE_STEP_EVENT_TYPES), str(self._tenant_id)),
+                (
+                    str(self._tenant_id),
+                    *sorted(PIPELINE_STEP_EVENT_TYPES),
+                    str(self._tenant_id),
+                ),
             ).fetchone()
             projection_row = self._conn.execute(
                 "SELECT COUNT(*) FROM pipeline_step_projections WHERE tenant_id = ?",
@@ -3323,10 +3316,11 @@ class ProjectionBuilder:
             f"""
             SELECT event_id, event_type, occurred_at, payload_json
             FROM job_events
-            WHERE event_type IN ({placeholders})
+            WHERE tenant_id = ?
+              AND event_type IN ({placeholders})
             ORDER BY event_id ASC
             """,
-            tuple(sorted(PIPELINE_STEP_EVENT_TYPES)),
+            (str(self._tenant_id), *sorted(PIPELINE_STEP_EVENT_TYPES)),
         ).fetchall()
 
         folded: dict[tuple[str, str, str, str], _PipelineStepFold] = {}
@@ -3609,11 +3603,12 @@ class ProjectionBuilder:
                     JSON_EXTRACT(payload_json, '$.workflow_id')
                 ))
                 FROM job_events
-                WHERE event_type IN ({placeholders})
+                WHERE tenant_id = ?
+                  AND event_type IN ({placeholders})
                   AND payload_json IS NOT NULL
                   AND json_valid(payload_json)
                 """,
-                WORKFLOW_EVENT_TYPES,
+                (str(self._tenant_id), *WORKFLOW_EVENT_TYPES),
             ).fetchone()
             projection_row = self._conn.execute(
                 "SELECT COUNT(*) FROM workflow_run_projections WHERE tenant_id = ?",
@@ -3651,10 +3646,11 @@ class ProjectionBuilder:
                 f"""
                 SELECT event_type, occurred_at, payload_json
                 FROM job_events
-                WHERE event_type IN ({placeholders})
+                WHERE tenant_id = ?
+                  AND event_type IN ({placeholders})
                 ORDER BY event_id ASC
                 """,
-                WORKFLOW_EVENT_TYPES,
+                (str(self._tenant_id), *WORKFLOW_EVENT_TYPES),
             ).fetchall()
         except sqlite3.OperationalError:
             return {}
@@ -3831,12 +3827,14 @@ class ProjectionBuilder:
         try:
             rows = self._conn.execute(
                 """
-                SELECT job_url, event_type, level, message, occurred_at,
-                       payload_json
-                FROM job_events
-                WHERE stage = 'apply'
-                ORDER BY event_id ASC
-                """
+                SELECT events.job_id, events.event_type, events.level,
+                       events.message, events.occurred_at, events.payload_json
+                FROM job_events AS events
+                WHERE events.tenant_id = ?
+                  AND events.stage = 'apply'
+                ORDER BY events.event_id ASC
+                """,
+                (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
             return {}
@@ -3851,7 +3849,7 @@ class ProjectionBuilder:
             run_id_str = str(run_id)
             out.setdefault(run_id_str, []).append(
                 {
-                    "job_url": _row_nullable_str(row, "job_url"),
+                    "job_id": _row_nullable_str(row, "job_id"),
                     "event_type": _row_str(row, "event_type"),
                     "level": _row_nullable_str(row, "level") or "info",
                     "message": _row_nullable_str(row, "message"),
@@ -3893,9 +3891,8 @@ class ProjectionBuilder:
     ) -> ApplyRunProjection | None:
         if not events:
             return None
-        job_url = ""
+        job_id = ""
         title = ""
-        site = ""
         status = "starting"
         result: str | None = None
         started_at: str | None = None
@@ -3908,8 +3905,8 @@ class ProjectionBuilder:
         for event in events:
             payload = event["payload"]
             event_type = event["event_type"]
-            if event["job_url"]:
-                job_url = event["job_url"]
+            if event["job_id"]:
+                job_id = event["job_id"]
 
             if event_type == "ApplyRunStarted":
                 started_at = (
@@ -3979,7 +3976,7 @@ class ProjectionBuilder:
                     except (TypeError, ValueError):
                         pass
 
-        if not job_url:
+        if not job_id:
             return None
 
         # Hydrate denormalised job columns from the parent ``jobs`` row
@@ -3987,17 +3984,19 @@ class ProjectionBuilder:
         # "Untitled" / "Unknown company".
         try:
             meta = self._conn.execute(
-                "SELECT title, site, company FROM jobs WHERE url = ? LIMIT 1",
-                (job_url,),
+                """
+                SELECT title, company FROM jobs
+                WHERE tenant_id = ? AND job_id = ?
+                LIMIT 1
+                """,
+                (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
             meta = None
         if meta is not None:
             title = _row_str(meta, "title") or title
-            site = _row_str(meta, "site") or site
 
-        employer = _row_str(meta, "company") if meta is not None else ""
-        employer = employer or _company_name(site, job_url)
+        employer = _canonical_employer(meta)
 
         events_payload: list[dict] = []
         for event in events:
@@ -4015,7 +4014,7 @@ class ProjectionBuilder:
         return ApplyRunProjection(
             run_id=run_id,
             tenant_id=self._tenant_id,
-            job_id=job_url,
+            job_id=job_id,
             job_title=title or "Untitled",
             job_employer=employer,
             status=status,
@@ -4060,28 +4059,35 @@ def _column_or_literal(
     return f"{alias}.{column_name}" if _has_column(conn, table_name, column_name) else fallback_sql
 
 
-def _job_metadata_join_sql(conn: sqlite3.Connection, job_url_expression: str) -> dict[str, str]:
+def _job_metadata_join_sql(
+    conn: sqlite3.Connection,
+    tenant_id_expression: str,
+    job_id_expression: str,
+) -> dict[str, str]:
     if not _table_exists(conn, "jobs"):
         return {"select_sql": "NULL AS job_title, NULL AS employer", "join_sql": ""}
     title_sql = _column_or_literal(conn, "jobs", "title", "NULL", "jobs")
-    employer_parts = []
     if _has_column(conn, "jobs", "company"):
-        employer_parts.append("NULLIF(jobs.company, '')")
-    if _has_column(conn, "jobs", "site"):
-        employer_parts.append("jobs.site")
-    employer_sql = (
-        f"COALESCE({', '.join(employer_parts)})"
-        if len(employer_parts) > 1
-        else (employer_parts[0] if employer_parts else "NULL")
-    )
+        employer_sql = (
+            "COALESCE(NULLIF(TRIM(jobs.company), ''), "
+            f"'{_UNKNOWN_EMPLOYER}')"
+        )
+    else:
+        employer_sql = f"'{_UNKNOWN_EMPLOYER}'"
     return {
         "select_sql": f"{title_sql} AS job_title, {employer_sql} AS employer",
-        "join_sql": f"LEFT JOIN jobs ON jobs.url = {job_url_expression}",
+        "join_sql": (
+            "LEFT JOIN jobs ON "
+            f"jobs.tenant_id = {tenant_id_expression} "
+            f"AND jobs.job_id = {job_id_expression}"
+        ),
     }
 
 
 def _job_lifecycle_exclusion_sql(
-    conn: sqlite3.Connection, job_url_expression: str
+    conn: sqlite3.Connection,
+    tenant_id_expression: str,
+    job_id_expression: str,
 ) -> dict[str, str]:
     """Anti-join fragments excluding soft-deleted and hidden jobs from a
     tenant-wide read, mirroring the TS ``jobLifecycleExclusionSql``. Guarded by
@@ -4093,16 +4099,18 @@ def _job_lifecycle_exclusion_sql(
     if _table_exists(conn, "jobctrl_deleted_jobs"):
         joins.append(
             "LEFT JOIN jobctrl_deleted_jobs d "
-            f"ON d.job_url = {job_url_expression} "
+            f"ON d.tenant_id = {tenant_id_expression} "
+            f"AND d.job_id = {job_id_expression} "
             "AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
         )
-        wheres.append("d.job_url IS NULL")
+        wheres.append("d.job_id IS NULL")
     if _table_exists(conn, "jobctrl_hidden_jobs"):
         joins.append(
             "LEFT JOIN jobctrl_hidden_jobs h "
-            f"ON h.job_url = {job_url_expression} AND h.unhidden_at IS NULL"
+            f"ON h.tenant_id = {tenant_id_expression} "
+            f"AND h.job_id = {job_id_expression} AND h.unhidden_at IS NULL"
         )
-        wheres.append("h.job_url IS NULL")
+        wheres.append("h.job_id IS NULL")
     return {
         "join_sql": (" " + " ".join(joins)) if joins else "",
         "where_sql": (" AND " + " AND ".join(wheres)) if wheres else "",
@@ -4119,6 +4127,10 @@ def _row_nullable_str(row: object, key: str) -> str | None:
     if value is None or value == "":
         return None
     return str(value)
+
+
+def _canonical_employer(job_row: object) -> str:
+    return _row_str(job_row, "company").strip() or _UNKNOWN_EMPLOYER
 
 
 def _row_nullable_int(row: object, key: str) -> int | None:
@@ -4707,117 +4719,6 @@ def _confidence_band(value: object) -> str:
     return text if text in MARKET_CONFIDENCE_BANDS else "none"
 
 
-def _with_synthetic_pdf_artifacts(
-    job_url: str,
-    artifacts: list[dict],
-    materials: dict,
-) -> list[dict]:
-    out = list(artifacts)
-    seen = {
-        (str(item.get("artifact_type") or ""), str(item.get("local_path") or ""))
-        for item in out
-    }
-    preferred_generation = materials.get("generation")
-
-    tailor_source = _preferred_artifact_source(
-        out,
-        {"tailored_resume", "tailored_resume_txt"},
-        preferred_generation,
-    )
-    tailor_pdf_path = materials.get("resume_pdf_path")
-    if (
-        not tailor_pdf_path
-        and tailor_source
-        and tailor_source.get("artifact_type") == "tailored_resume_txt"
-    ):
-        tailor_pdf_path = _pdf_sibling(str(tailor_source.get("local_path") or ""))
-    if tailor_pdf_path and ("tailored_resume_pdf", tailor_pdf_path) not in seen:
-        out.append(
-            {
-                "artifact_id": f"{job_url}:tailored_resume_pdf:{tailor_pdf_path}",
-                "artifact_type": "tailored_resume_pdf",
-                "status": "active",
-                "local_path": tailor_pdf_path,
-                "created_at": tailor_source.get("created_at") if tailor_source else None,
-                "size_bytes": None,
-                "generation": tailor_source.get("generation") if tailor_source else None,
-                "metadata_json": tailor_source.get("metadata_json") if tailor_source else None,
-            }
-        )
-
-    cover_source = _preferred_artifact_source(
-        out,
-        {"cover_letter", "cover_letter_txt"},
-        preferred_generation,
-    )
-    cover_pdf_path = materials.get("cover_pdf_path")
-    if (
-        not cover_pdf_path
-        and cover_source
-        and cover_source.get("artifact_type") == "cover_letter_txt"
-    ):
-        cover_pdf_path = _pdf_sibling(str(cover_source.get("local_path") or ""))
-    if cover_pdf_path and ("cover_letter_pdf", cover_pdf_path) not in seen:
-        out.append(
-            {
-                "artifact_id": f"{job_url}:cover_letter_pdf:{cover_pdf_path}",
-                "artifact_type": "cover_letter_pdf",
-                "status": "active",
-                "local_path": cover_pdf_path,
-                "created_at": cover_source.get("created_at") if cover_source else None,
-                "size_bytes": None,
-                "generation": cover_source.get("generation") if cover_source else None,
-                "metadata_json": cover_source.get("metadata_json") if cover_source else None,
-            }
-        )
-    return out
-
-
-def _preferred_artifact_source(
-    artifacts: list[dict],
-    artifact_types: set[str],
-    preferred_generation: object,
-) -> dict | None:
-    candidates = [
-        artifact
-        for artifact in artifacts
-        if str(artifact.get("artifact_type") or "") in artifact_types
-        and _is_default_visible_artifact(str(artifact.get("status") or ""))
-    ]
-    candidates.sort(
-        key=lambda artifact: (
-            artifact.get("generation") == preferred_generation,
-            _artifact_status_rank(str(artifact.get("status") or "")),
-            int(artifact.get("generation") or -1),
-        ),
-        reverse=True,
-    )
-    return candidates[0] if candidates else None
-
-
-def _is_default_visible_artifact(status: str) -> bool:
-    return status.lower() != "suppressed"
-
-
-def _artifact_status_rank(status: str) -> int:
-    match status.lower():
-        case "approved" | "active":
-            return 3
-        case "candidate":
-            return 2
-        case "rejected":
-            return 1
-        case _:
-            return 0
-
-
-def _pdf_sibling(value: str) -> str | None:
-    if not value:
-        return None
-    base = value.rsplit(".", 1)[0] if "." in value else value
-    return f"{base}.pdf"
-
-
 def _row_get(row: object, key: str) -> object:
     if row is None:
         return None
@@ -4889,7 +4790,7 @@ def _requirement_artifact_coverage_to_read_model(value: dict[str, Any]) -> dict[
 def _skill_coverage_usage(row: object, keyword: str, state: str) -> dict[str, Any]:
     return {
         "kind": "skill_coverage",
-        "jobKey": _row_str(row, "job_id"),
+        "jobId": _row_str(row, "job_id"),
         "jobTitle": _row_nullable_str(row, "job_title"),
         "employer": _row_nullable_str(row, "job_employer"),
         "artifactId": _row_nullable_str(row, "artifact_id"),
@@ -4981,43 +4882,14 @@ def _normalize_keywords(value) -> list[str]:
     return keywords
 
 
-def _company_name(site: str, posting_url: str) -> str:
-    inferred = _inferred_company_from_url(posting_url)
-    if inferred:
-        return inferred
-    if not site or site.lower() in _SOURCE_BOARD_NAMES:
-        return "Unknown company"
-    return site
+def _company_name(_site: str, _posting_url: str) -> str:
+    """Return the explicit unknown state for callers lacking canonical company data.
 
+    The arguments remain only for the v7 migration serializer's existing helper
+    call.  Source boards and locator URLs are not employer evidence.
+    """
 
-def _inferred_company_from_url(raw_url: str) -> str:
-    if not raw_url:
-        return ""
-    try:
-        from urllib.parse import urlparse
-
-        parsed = urlparse(raw_url)
-    except ValueError:
-        return ""
-    host = parsed.hostname or ""
-    segments = [seg for seg in parsed.path.split("/") if seg]
-    if not segments:
-        return ""
-    if host.endswith("greenhouse.io"):
-        return _title_from_slug(segments[0])
-    if host == "jobs.lever.co":
-        return _title_from_slug(segments[0])
-    if host == "jobs.ashbyhq.com":
-        return _title_from_slug(segments[0])
-    return ""
-
-
-def _title_from_slug(value: str) -> str:
-    known = {"gitlab": "GitLab"}
-    lowered = value.lower()
-    if lowered in known:
-        return known[lowered]
-    return " ".join(part.capitalize() for part in value.replace("_", "-").split("-") if part)
+    return _UNKNOWN_EMPLOYER
 
 
 def _derive_apply_status(ar_status: str | None, legacy_status: str | None) -> str | None:
