@@ -93,9 +93,7 @@ def _build_llm_policy(
     configured_models = config.get_tailoring_generator_models()
     configured_judge_model = config.get_tailoring_judge_model()
     judge_min_score = (
-        config.get_tailoring_judge_min_score()
-        if tailor_judge_min_score is None
-        else tailor_judge_min_score
+        config.get_tailoring_judge_min_score() if tailor_judge_min_score is None else tailor_judge_min_score
     )
     return TailoringLlmPolicy(
         candidate_models=tailor_models or configured_models or ((llm_model,) if llm_model else ()),
@@ -168,9 +166,7 @@ def _build_use_case(
     if policy_repository is None:
         policy_repository = SqliteTailoringPolicyRepository(conn)
     if provenance_repository is None:
-        provenance_repository = SqliteBulletProvenanceRepository(
-            conn, unit_of_work=unit_of_work
-        )
+        provenance_repository = SqliteBulletProvenanceRepository(conn, unit_of_work=unit_of_work)
     if requirement_fit_repository is None:
         requirement_fit_repository = SqliteRequirementFitReportRepository(conn)
     if llm_port is None:
@@ -247,8 +243,7 @@ def _mark_cover_pending_after_tailor_success(
         sort_keys=True,
     )
     conn.execute(
-        "UPDATE jobs SET cover_letter_path = NULL, cover_letter_at = NULL, cover_attempts = 0 "
-        "WHERE url = ?",
+        "UPDATE jobs SET cover_letter_path = NULL, cover_letter_at = NULL, cover_attempts = 0 WHERE url = ?",
         (job_url,),
     )
     conn.execute(
@@ -419,6 +414,7 @@ def run_tailoring(
     """
     if snapshot is None:
         from jobctrl.infrastructure.profile import get_profile_repository
+
         snapshot = get_profile_repository().load_snapshot(tenant_id)
 
     conn = get_connection()
@@ -516,8 +512,13 @@ def run_tailoring(
                 result = future.result()
             except Exception as e:
                 result = {
-                    "url": job["url"], "title": job["title"], "site": job.get("site"),
-                    "status": "error", "attempts": 0, "path": None, "pdf_path": None,
+                    "url": job["url"],
+                    "title": job["title"],
+                    "site": job.get("site"),
+                    "status": "error",
+                    "attempts": 0,
+                    "path": None,
+                    "pdf_path": None,
                     "materials": None,
                 }
                 log.error("%d/%d [ERROR] %s -- %s", completed, len(jobs), job["title"][:40], e)
@@ -529,7 +530,8 @@ def run_tailoring(
             rate = completed / elapsed if elapsed > 0 else 0
             log.info(
                 "%d/%d [%s] attempts=%s | %.1f jobs/min | %s",
-                completed, len(jobs),
+                completed,
+                len(jobs),
                 str(result.get("status", "error")).upper(),
                 result.get("attempts", "?"),
                 rate * 60,
@@ -570,10 +572,7 @@ def run_tailoring(
                 reason="tailor_stage_completed",
             )
         else:
-            exhausted = (
-                attempts >= config.DEFAULTS["max_tailor_attempts"]
-                or r.get("status") == "exhausted_retries"
-            )
+            exhausted = attempts >= config.DEFAULTS["max_tailor_attempts"] or r.get("status") == "exhausted_retries"
             set_stage_state(
                 conn,
                 url,
@@ -587,9 +586,7 @@ def run_tailoring(
                 error_message=f"Tailoring ended with status {r.get('status', 'error')}",
                 retryable=True,
                 next_action=(
-                    f"jobctrl retry tailor {url} --reset-attempts"
-                    if exhausted
-                    else f"jobctrl retry tailor {url}"
+                    f"jobctrl retry tailor {url} --reset-attempts" if exhausted else f"jobctrl retry tailor {url}"
                 ),
             )
             record_job_event(
@@ -740,10 +737,7 @@ def tailor_job_by_url(
             reason="tailor_stage_completed",
         )
     else:
-        exhausted = (
-            attempts >= config.DEFAULTS["max_tailor_attempts"]
-            or result.get("status") == "exhausted_retries"
-        )
+        exhausted = attempts >= config.DEFAULTS["max_tailor_attempts"] or result.get("status") == "exhausted_retries"
         set_stage_state(
             conn,
             job_url,
@@ -757,9 +751,7 @@ def tailor_job_by_url(
             error_message=f"Tailoring ended with status {result.get('status', 'error')}",
             retryable=True,
             next_action=(
-                f"jobctrl retry tailor {job_url} --reset-attempts"
-                if exhausted
-                else f"jobctrl retry tailor {job_url}"
+                f"jobctrl retry tailor {job_url} --reset-attempts" if exhausted else f"jobctrl retry tailor {job_url}"
             ),
             validate_transition=False,
         )

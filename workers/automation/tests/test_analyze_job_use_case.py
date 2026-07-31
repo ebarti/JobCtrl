@@ -25,6 +25,7 @@ from jobctrl.domain.materials.analysis import (
 from jobctrl.domain.materials.analyze_use_case import AnalyzeJobUseCase, build_jd_snapshot
 from jobctrl.domain.tenant import LOCAL_TENANT
 
+
 def _job_id_for(url: str) -> JobId:
     return canonical_job_id(str(uuid.uuid5(uuid.NAMESPACE_URL, url)))
 
@@ -103,9 +104,7 @@ def _outcome(role: str = "Own the platform.", *, drafts=1, attempted=2, failures
     canonical = _canonical(role)
     return EnsembleOutcome(
         canonical=canonical,
-        drafts=tuple(
-            JobAnalysisDraft(model_id=f"m{i}", **canonical.model_dump()) for i in range(drafts)
-        ),
+        drafts=tuple(JobAnalysisDraft(model_id=f"m{i}", **canonical.model_dump()) for i in range(drafts)),
         failures=failures,
         agreement=AnalysisAgreement(score=1.0),
         legs_attempted=attempted,
@@ -214,9 +213,7 @@ class TestAnalyzeJobUseCase:
             inferred_seniority="staff",
             ideal_candidate_narrative="y",
             requirements=[
-                Requirement(
-                    id="r1", text="Rust", tier="must_have", weight=0.5, evidence_span="ten years of Rust"
-                )
+                Requirement(id="r1", text="Rust", tier="must_have", weight=0.5, evidence_span="ten years of Rust")
             ],
             keywords=[],
         )
@@ -262,11 +259,7 @@ class TestAnalyzeJobUseCase:
                     evidence_span="high-availability SOC",  # ASCII hyphen
                 )
             ],
-            keywords=[
-                ReasonedKeyword(
-                    keyword="HA", evidence_span="high-availability", requirement_ref="r1"
-                )
-            ],
+            keywords=[ReasonedKeyword(keyword="HA", evidence_span="high-availability", requirement_ref="r1")],
         )
         outcome = EnsembleOutcome(
             canonical=ascii_canonical,
