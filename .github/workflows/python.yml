@@ -75,6 +75,9 @@ jobs:
           fi
 
       - name: Test
+        # Approved stack layers can be intentionally non-installable review
+        # slices. Exercise the product suite only on a cumulative head.
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
         run: pytest workers/automation/tests -v
 
       - name: Build package

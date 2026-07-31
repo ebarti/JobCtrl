@@ -58,16 +58,23 @@ jobs:
       - name: Check
         run: pnpm -r check
 
+      # Product suites and builds require the cumulative stack. Lower layers
+      # retain dependency installation and static workspace checks as fast
+      # admission checks.
       - name: Test
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
         run: pnpm --filter @jobctrl/api test
 
       - name: Test web
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
         run: pnpm --filter @jobctrl/web test
 
       - name: Test web types
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
         run: pnpm --filter @jobctrl/web test-d
 
       - name: Build web
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
         run: pnpm --filter @jobctrl/web build
 
       # Browser and Storybook suites exercise the cumulative top layer. The
