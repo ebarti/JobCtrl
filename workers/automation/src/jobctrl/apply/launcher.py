@@ -79,7 +79,6 @@ from jobctrl.database import (
     _SCORE_DOWNSTREAM_STATE_JOIN,
     _SCORE_CURRENT_FOR_DOWNSTREAM,
     _SCORE_ELIGIBLE_FOR_DOWNSTREAM,
-    ensure_application_review_decision_columns,
     get_connection,
 )
 from jobctrl.domain.apply.services import ApplyPromptBuilder
@@ -88,7 +87,10 @@ from jobctrl.domain.apply.repeat_application import (
     evaluate_repeat_application,
 )
 from jobctrl.domain.apply.value_objects import ApplyPrompt, ApplyRunId, new_apply_run_id
+from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.tenant import TenantId
+from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
 from jobctrl.operational_metrics import record_operational_attempt_metric
 from jobctrl.state import (
     ensure_job_stage_rows,
@@ -136,62 +138,64 @@ def _utc_now() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _has_active_apply(conn, url: str) -> bool:
-    """True when ``job_stage_states.apply.state == 'running'`` for ``url``.
+def _has_active_apply(conn, *, tenant_id: str, job_id: str) -> bool:
+    """True when ``job_stage_states.apply.state == 'running'`` for one JobId.
 
     The §4.6 invariant — at most one in-progress apply per JobId —
     is enforced by checking the canonical stage state row.
     """
     row = conn.execute(
         "SELECT 1 FROM job_stage_states "
-        "WHERE job_url = ? AND stage = 'apply' AND state = 'running' LIMIT 1",
-        (url,),
+        "WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'apply' AND state = 'running' LIMIT 1",
+        (tenant_id, job_id),
     ).fetchone()
     return row is not None
 
 
-def _has_succeeded_apply(conn, url: str) -> bool:
-    """True when the canonical apply stage row is succeeded for ``url``."""
+def _has_succeeded_apply(conn, *, tenant_id: str, job_id: str) -> bool:
+    """True when the canonical apply stage row is succeeded for one JobId."""
     row = conn.execute(
         "SELECT 1 FROM job_stage_states "
-        "WHERE job_url = ? AND stage = 'apply' AND state = 'succeeded' LIMIT 1",
-        (url,),
+        "WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'apply' AND state = 'succeeded' LIMIT 1",
+        (tenant_id, job_id),
     ).fetchone()
     return row is not None
 
 
-def _has_needs_verification_apply(conn, url: str) -> bool:
-    """True when a live apply is parked for manual verification."""
+def _has_needs_verification_apply(conn, *, tenant_id: str, job_id: str) -> bool:
+    """True when one JobId is parked for manual verification."""
     row = conn.execute(
         "SELECT 1 FROM job_stage_states "
-        "WHERE job_url = ? AND stage = 'apply' AND state = 'needs_verification' LIMIT 1",
-        (url,),
+        "WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'apply' AND state = 'needs_verification' LIMIT 1",
+        (tenant_id, job_id),
     ).fetchone()
     return row is not None
 
 
-def _attempt_count_for(conn, url: str) -> int:
+def _attempt_count_for(conn, *, tenant_id: str, job_id: str) -> int:
     """Return the canonical attempt count from ``job_stage_states.apply``."""
     row = conn.execute(
         "SELECT attempt_count FROM job_stage_states "
-        "WHERE job_url = ? AND stage = 'apply' LIMIT 1",
-        (url,),
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply' LIMIT 1",
+        (tenant_id, job_id),
     ).fetchone()
     return int(row[0] or 0) if row else 0
 
 
-def _latest_apply_review_decision(conn, *, tenant_id: str, job_key: str) -> dict[str, Any] | None:
-    ensure_application_review_decision_columns(conn)
+def _latest_apply_review_decision(conn, *, tenant_id: str, job_id: str) -> dict[str, Any] | None:
     row = conn.execute(
         """
         SELECT decision, materials_generation, profile_version, application_url,
                partial_override_run_id, email_recipient, email_attachment_artifact_id
         FROM application_review_decisions
-        WHERE tenant_id = ? AND job_key = ?
+        WHERE tenant_id = ? AND job_id = ?
         ORDER BY decided_at DESC, decision_id DESC
         LIMIT 1
         """,
-        (tenant_id, job_key),
+        (tenant_id, job_id),
     ).fetchone()
     if row is None:
         return None
@@ -206,19 +210,24 @@ def _latest_apply_review_decision(conn, *, tenant_id: str, job_key: str) -> dict
     }
 
 
-def _latest_email_application_candidate(conn, *, job_key: str) -> dict[str, Any] | None:
+def _latest_email_application_candidate(
+    conn,
+    *,
+    tenant_id: str,
+    job_id: str,
+) -> dict[str, Any] | None:
     try:
         row = conn.execute(
             """
             SELECT payload_json
             FROM job_events
-            WHERE job_url = ?
+            WHERE tenant_id = ? AND job_id = ?
               AND stage = 'apply'
               AND event_type = 'EmailApplicationCandidateRecorded'
             ORDER BY occurred_at DESC, event_id DESC
             LIMIT 1
             """,
-            (job_key,),
+            (tenant_id, job_id),
         ).fetchone()
     except Exception:  # noqa: BLE001
         return None
@@ -321,7 +330,8 @@ def _has_run_bound_initial_navigation(
 def _dry_run_evidence_exists(
     conn,
     *,
-    job_key: str,
+    tenant_id: str,
+    job_id: str,
     materials_generation: int,
     profile_version: int,
     application_url: str,
@@ -331,11 +341,12 @@ def _dry_run_evidence_exists(
     rows = conn.execute(
         """
         SELECT payload_json FROM job_events
-        WHERE job_url = ? AND stage = 'apply' AND event_type = 'DryRunCompleted'
+        WHERE tenant_id = ? AND job_id = ?
+          AND stage = 'apply' AND event_type = 'DryRunCompleted'
         ORDER BY event_id DESC
         LIMIT 24
         """,
-        (job_key,),
+        (tenant_id, job_id),
     ).fetchall()
     for row in rows:
         payload = _payload_from_row(row)
@@ -357,11 +368,12 @@ def _dry_run_evidence_exists(
         started_rows = conn.execute(
             """
             SELECT payload_json FROM job_events
-            WHERE job_url = ? AND stage = 'apply' AND event_type = 'ApplyRunStarted'
+            WHERE tenant_id = ? AND job_id = ?
+              AND stage = 'apply' AND event_type = 'ApplyRunStarted'
             ORDER BY event_id DESC
             LIMIT 48
             """,
-            (job_key,),
+            (tenant_id, job_id),
         ).fetchall()
         for started_row in started_rows:
             started_payload = _payload_from_row(started_row)
@@ -527,7 +539,7 @@ def _approval_refusal_reason(
     conn,
     *,
     tenant_id: str,
-    job_key: str,
+    job_id: str,
     materials_generation: Any,
     profile_version: int | None,
     application_url: str,
@@ -535,7 +547,7 @@ def _approval_refusal_reason(
     decision = _latest_apply_review_decision(
         conn,
         tenant_id=tenant_id,
-        job_key=job_key,
+        job_id=job_id,
     )
     if not decision or decision.get("decision") != "approve_submit":
         return "awaiting_approval"
@@ -557,7 +569,11 @@ def _approval_refusal_reason(
         return "approval_stale_profile"
     if str(decision.get("application_url") or "") != application_url:
         return "approval_stale_url"
-    email_candidate = _latest_email_application_candidate(conn, job_key=job_key)
+    email_candidate = _latest_email_application_candidate(
+        conn,
+        tenant_id=tenant_id,
+        job_id=job_id,
+    )
     if email_candidate:
         if (
             str(decision.get("email_recipient") or "").lower()
@@ -568,7 +584,8 @@ def _approval_refusal_reason(
             return "approval_stale_email_candidate"
     if _dry_run_evidence_exists(
         conn,
-        job_key=job_key,
+        tenant_id=tenant_id,
+        job_id=job_id,
         materials_generation=current_materials_generation,
         profile_version=decision_profile_version,
         application_url=application_url,
@@ -579,7 +596,8 @@ def _approval_refusal_reason(
     if partial_override_run_id:
         if _dry_run_evidence_exists(
             conn,
-            job_key=job_key,
+            tenant_id=tenant_id,
+            job_id=job_id,
             materials_generation=current_materials_generation,
             profile_version=decision_profile_version,
             application_url=application_url,
@@ -608,7 +626,9 @@ def _apply_candidate_select_parts() -> tuple[str, str]:
     attempts_subquery = (
         "(SELECT COALESCE(jss_a.attempt_count, 0) "
         "FROM job_stage_states jss_a "
-        "WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply' LIMIT 1) AS apply_attempts"
+        "WHERE jss_a.tenant_id = jobs.tenant_id "
+        "AND jss_a.job_id = jobs.job_id "
+        "AND jss_a.stage = 'apply' LIMIT 1) AS apply_attempts"
     )
     columns = (
         f"jobs.tenant_id AS tenant_id, jobs.job_id AS job_id, "
@@ -640,6 +660,7 @@ def acquire_job(
     worker_id: int = 0,
     run_ctx: dict | None = None,
     approval_required: bool = True,
+    tenant_id: str | None = None,
 ) -> dict | None:
     """Atomically acquire the next job to apply to.
 
@@ -653,29 +674,40 @@ def acquire_job(
     conn = get_connection()
     try:
         conn.execute("BEGIN IMMEDIATE")
+        tenant_id = str(
+            tenant_id
+            or (run_ctx.get("tenant_id") if run_ctx else None)
+            or LOCAL_TENANT
+        )
 
         common_columns, common_joins = _apply_candidate_select_parts()
 
         if target_url:
-            like = f"%{target_url.split('?')[0].rstrip('/')}%"
-            target_row = conn.execute(
-                f"""
-                SELECT {common_columns}
-                FROM jobs {common_joins}
-                WHERE (jobs.url = ? OR {_EFFECTIVE_APPLICATION_URL} = ?
-                       OR {_EFFECTIVE_APPLICATION_URL} LIKE ? OR jobs.url LIKE ?)
-                  AND {_READY_TAILORED_RESUME_WITH_PDF}
-                  AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
-                  AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
-                  AND {_NOT_CLOSED_ACTIVE_STATE}
-                LIMIT 1
-                """,
-                (target_url, target_url, like, like),
-            ).fetchone()
+            target_identity = SqliteJobIdentityResolver(conn).resolve_by_posting_url(
+                TenantId(tenant_id),
+                PostingUrl(value=target_url),
+            )
+            target_row = None
+            if target_identity is not None:
+                target_row = conn.execute(
+                    f"""
+                    SELECT {common_columns}
+                    FROM jobs {common_joins}
+                    WHERE jobs.tenant_id = ?
+                      AND jobs.job_id = ?
+                      AND {_READY_TAILORED_RESUME_WITH_PDF}
+                      AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
+                      AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
+                      AND {_NOT_CLOSED_ACTIVE_STATE}
+                    LIMIT 1
+                    """,
+                    (tenant_id, str(target_identity.job_id)),
+                ).fetchone()
             candidate_rows = [target_row] if target_row is not None else []
         else:
             blocked_sites, blocked_patterns = _load_blocked()
             params: list[Any] = [
+                tenant_id,
                 config.DEFAULTS["max_apply_attempts"],
                 min_score,
             ]
@@ -694,18 +726,22 @@ def acquire_job(
                 f"""
                 SELECT {common_columns}
                 FROM jobs {common_joins}
-                WHERE {_READY_TAILORED_RESUME_WITH_PDF}
+                WHERE jobs.tenant_id = ?
+                  AND {_READY_TAILORED_RESUME_WITH_PDF}
                   AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL
                   AND {_EFFECTIVE_APPLY_TARGET_URL} != ''
                   AND NOT EXISTS (
                       SELECT 1 FROM job_stage_states jss_active
-                      WHERE jss_active.job_url = jobs.url
+                      WHERE jss_active.tenant_id = jobs.tenant_id
+                        AND jss_active.job_id = jobs.job_id
                         AND jss_active.stage = 'apply'
                         AND jss_active.state IN ('running', 'succeeded', 'needs_verification')
                   )
                   AND COALESCE(
                       (SELECT jss_a.attempt_count FROM job_stage_states jss_a
-                       WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply'
+                       WHERE jss_a.tenant_id = jobs.tenant_id
+                         AND jss_a.job_id = jobs.job_id
+                         AND jss_a.stage = 'apply'
                        LIMIT 1), 0
                   ) < ?
                   AND {_EFFECTIVE_FIT_SCORE} >= ?
@@ -731,7 +767,11 @@ def acquire_job(
         if not dry_run:
             row = None
             for candidate in candidate_rows:
-                candidate_assessment = evaluate_repeat_application(conn, candidate["url"])
+                candidate_assessment = evaluate_repeat_application(
+                    conn,
+                    tenant_id=tenant_id,
+                    target_job_id=candidate["job_id"],
+                )
                 if candidate_assessment["status"] in {"clear", "override_ready"}:
                     row = candidate
                     repeat_assessment = candidate_assessment
@@ -754,16 +794,18 @@ def acquire_job(
         # Skip manual ATS sites (the agent cannot solve them).
         from jobctrl.config import is_manual_ats
 
+        job_id = str(row["job_id"])
         url = row["url"]
         apply_url = row["application_url"] or url
         if is_manual_ats(apply_url):
             now = _utc_now()
-            ensure_job_stage_rows(conn, url)
+            ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
             set_stage_state(
                 conn,
-                url,
+                job_id,
                 "apply",
                 "skipped",
+                tenant_id=tenant_id,
                 finished_at=now,
                 error_code="MANUAL_ATS",
                 error_message="manual ATS",
@@ -772,9 +814,10 @@ def acquire_job(
             run_id = new_apply_run_id()
             record_job_event(
                 conn,
-                url,
+                job_id,
                 "apply",
                 "ApplyManualSkip",
+                tenant_id=tenant_id,
                 level="info",
                 message="manual ATS",
                 payload={
@@ -793,26 +836,26 @@ def acquire_job(
         # Targeted-mode also enforces the no-active + max-attempts
         # invariants (the SELECT above is permissive on target_url so
         # we can surface "no such job" errors clearly).
-        if _has_active_apply(conn, url):
+        if _has_active_apply(conn, tenant_id=tenant_id, job_id=job_id):
             conn.rollback()
             return None
-        if _has_succeeded_apply(conn, url):
+        if _has_succeeded_apply(conn, tenant_id=tenant_id, job_id=job_id):
             conn.rollback()
             return None
-        if _has_needs_verification_apply(conn, url):
+        if _has_needs_verification_apply(conn, tenant_id=tenant_id, job_id=job_id):
             conn.rollback()
             return None
-        attempts = _attempt_count_for(conn, url)
+        attempts = _attempt_count_for(conn, tenant_id=tenant_id, job_id=job_id)
         if attempts >= int(config.DEFAULTS["max_apply_attempts"]):
             conn.rollback()
             return None
         if approval_required and not dry_run:
             refusal_reason = _approval_refusal_reason(
                 conn,
-                tenant_id=LOCAL_TENANT,
-                job_key=url,
+                tenant_id=tenant_id,
+                job_id=job_id,
                 materials_generation=row["materials_generation"],
-                profile_version=_current_profile_version(conn, tenant_id=LOCAL_TENANT),
+                profile_version=_current_profile_version(conn, tenant_id=tenant_id),
                 application_url=apply_url,
             )
             if refusal_reason:
@@ -841,18 +884,19 @@ def acquire_job(
             repeat_override_id = consume_repeat_application_override(
                 conn,
                 repeat_assessment,
-                target_job_key=url,
+                tenant_id=tenant_id,
+                target_job_id=job_id,
                 run_id=str(run_id),
                 consumed_at=now,
             )
-        ensure_job_stage_rows(conn, url)
+        ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
         # Reset prior retryable terminal state (failed / exhausted /
         # canceled / skipped) back to pending so the §8.5 state machine accepts
         # the pending → running transition.
         prior_row = conn.execute(
             "SELECT state FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply' LIMIT 1",
-            (url,),
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply' LIMIT 1",
+            (tenant_id, job_id),
         ).fetchone()
         if prior_row is not None and prior_row[0] not in {
             "pending",
@@ -862,24 +906,27 @@ def acquire_job(
         }:
             set_stage_state(
                 conn,
-                url,
+                job_id,
                 "apply",
                 "pending",
+                tenant_id=tenant_id,
                 validate_transition=False,
             )
         set_stage_state(
             conn,
-            url,
+            job_id,
             "apply",
             "running",
+            tenant_id=tenant_id,
             started_at=now,
             attempt_count=attempts + 1,
         )
         record_job_event(
             conn,
-            url,
+            job_id,
             "apply",
             "ApplyRunStarted",
+            tenant_id=tenant_id,
             message="Apply agent acquired job",
             payload={
                 "run_id": str(run_id),
@@ -892,7 +939,7 @@ def acquire_job(
                 "workflow_id": run_ctx.get("workflow_id") if run_ctx else None,
                 "materials_generation": row["materials_generation"],
                 "application_url": apply_url,
-                "profile_version": _current_profile_version(conn, tenant_id=LOCAL_TENANT),
+                "profile_version": _current_profile_version(conn, tenant_id=tenant_id),
                 "repeat_application_override_id": repeat_override_id,
                 "repeat_application_evidence_fingerprint": (
                     repeat_assessment.get("evidenceFingerprint")
@@ -908,9 +955,11 @@ def acquire_job(
             run_ctx.setdefault("worker_id", worker_id)
             run_ctx["materials_generation"] = row["materials_generation"]
             run_ctx["application_url"] = apply_url
+            run_ctx["tenant_id"] = tenant_id
+            run_ctx["job_id"] = job_id
             run_ctx["profile_version"] = _current_profile_version(
                 conn,
-                tenant_id=LOCAL_TENANT,
+                tenant_id=tenant_id,
             )
             run_ctx["repeat_application_override_id"] = repeat_override_id
             run_ctx["repeat_application_evidence_fingerprint"] = (
@@ -922,8 +971,8 @@ def acquire_job(
         job_dict = _row_to_job_dict(row, run_id=run_id)
         decision = _latest_apply_review_decision(
             conn,
-            tenant_id=LOCAL_TENANT,
-            job_key=url,
+            tenant_id=tenant_id,
+            job_id=job_id,
         )
         if decision:
             job_dict["approved_email_recipient"] = str(decision.get("email_recipient") or "")
