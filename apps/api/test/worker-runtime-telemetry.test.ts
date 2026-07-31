@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { readWorkerRuntimeTelemetry } from "../src/worker-runtime-telemetry.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 const fixtures: Fixture[] = [];
 
@@ -254,30 +255,8 @@ interface Fixture {
 function createFixture(): Fixture {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-worker-runtime-"));
   const dbPath = path.join(directory, "jobctrl.db");
+  initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE worker_runtime_heartbeats (
-      worker_id TEXT PRIMARY KEY,
-      component TEXT NOT NULL,
-      pid INTEGER NOT NULL,
-      hostname TEXT NOT NULL,
-      app_dir TEXT NOT NULL,
-      db_path TEXT NOT NULL,
-      task_queue TEXT NOT NULL,
-      started_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL,
-      max_concurrent_activities INTEGER,
-      activity_executor_max_workers INTEGER,
-      active_activity_count INTEGER NOT NULL DEFAULT 0,
-      active_activity_counts_json TEXT NOT NULL DEFAULT '{}',
-      active_activity_details_json TEXT NOT NULL DEFAULT '[]',
-      active_activity_details_total INTEGER NOT NULL DEFAULT 0,
-      active_activity_details_truncated INTEGER NOT NULL DEFAULT 0,
-      activity_duration_summary_json TEXT NOT NULL DEFAULT '{}',
-      task_queue_observation_json TEXT,
-      heartbeat_schema_version INTEGER NOT NULL DEFAULT 2
-    )
-  `);
   const fixture = { directory, dbPath, db };
   fixtures.push(fixture);
   return fixture;
