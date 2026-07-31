@@ -194,6 +194,7 @@ def _build_use_case(repo, *, agent_result=None, publisher=None) -> SubmitApplica
 
 def _ready_job():
     return {
+        "job_id": "90000000-0000-4000-8000-000000000041",
         "url": "https://example.com/job",
         "application_url": "https://example.com/apply",
         "tailored_resume_path": "/tmp/resume.txt",
