@@ -16,7 +16,7 @@ from jobctrl.domain.events import (
     create_interview_prep_failed,
     create_interview_prep_generated,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.interview.value_objects import (
     INTERVIEW_PREP_ITEM_KINDS,
     InterviewPrep,
@@ -137,9 +137,7 @@ class GenerateInterviewPrepUseCase:
         model: str | None = None,
         origin_run_id: str = "",
     ) -> InterviewPrepGenerationOutcome:
-        job_id = JobId(str(job.get("url") or job.get("jobKey") or "").strip())
-        if not str(job_id):
-            raise ValueError("job must include url/jobKey for interview prep")
+        job_id = canonical_job_id(str(job.get("job_id") or ""))
         if origin_run_id:
             existing = self._repository.find_completed_for_run(tenant_id, job_id, origin_run_id)
             if existing is not None:
@@ -164,7 +162,7 @@ class GenerateInterviewPrepUseCase:
             )
             items = _items_from_candidate(
                 candidate,
-                job_id=str(job_id),
+                job_id=job_id,
                 known_evidence_ids=known_evidence_ids,
                 source_text_by_evidence=source_text_by_evidence,
             )
@@ -227,7 +225,7 @@ class GenerateInterviewPrepUseCase:
             warnings=tuple(dict.fromkeys((*gate.warnings, *judge.warnings))),
         )
         prep = InterviewPrep(
-            job_id=str(job_id),
+            job_id=job_id,
             generation=generation,
             status="accepted",
             generated_at=generated_at,
@@ -337,7 +335,7 @@ class GenerateInterviewPrepUseCase:
             warnings=warnings,
         )
         prep = InterviewPrep(
-            job_id=str(job_id),
+            job_id=job_id,
             generation=generation,
             status="failed",
             generated_at=generated_at,
@@ -692,7 +690,7 @@ CONTEXT:
 
 def _safe_job(job: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        "url": job.get("url") or job.get("jobKey"),
+        "url": job.get("url"),
         "title": job.get("title"),
         "company": job.get("company") or job.get("employer"),
         "fit_score": job.get("fit_score") or job.get("fitScore"),

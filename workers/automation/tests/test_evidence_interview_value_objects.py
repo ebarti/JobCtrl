@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.interview import (
     INTERVIEW_PREP_STATUSES,
     InterviewPrep,
@@ -83,7 +84,7 @@ def test_evidence_map_entry_round_trips_to_camel_case_read_model() -> None:
 
 def test_interview_prep_round_trips_and_requires_grounded_star_evidence() -> None:
     prep = InterviewPrep(
-        job_id="job-1",
+        job_id=JobId("90000000-0000-4000-8000-000000000022"),
         generation=1,
         status="accepted",
         generated_at="2026-07-05T12:00:00Z",
@@ -110,7 +111,7 @@ def test_interview_prep_round_trips_and_requires_grounded_star_evidence() -> Non
 
     read_model = prep.to_read_model()
 
-    assert read_model["jobId"] == "job-1"
+    assert read_model["jobId"] == "90000000-0000-4000-8000-000000000022"
     assert "jobKey" not in read_model
     assert read_model["gateAudit"]["status"] == "passed"
     assert read_model["items"][0]["kind"] == "star_draft"
@@ -139,7 +140,7 @@ def test_interview_prep_has_no_live_assistance_status() -> None:
 
     with pytest.raises(ValueError, match="unknown interview prep status"):
         InterviewPrep(
-            job_id="job-1",
+            job_id=JobId("90000000-0000-4000-8000-000000000022"),
             generation=1,
             status="live",  # type: ignore[arg-type]
             generated_at="2026-07-05T12:00:00Z",

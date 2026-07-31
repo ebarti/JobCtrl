@@ -359,7 +359,7 @@ class TestInterviewEvents:
         event = create_interview_prep_generated(
             LOCAL_TENANT,
             InterviewPrepGeneratedPayload(
-                job_id="https://example.test/job/1",
+                job_id="90000000-0000-4000-8000-000000000023",
                 generation=1,
                 item_count=3,
                 generated_at="2026-07-05T12:00:00Z",
@@ -374,7 +374,7 @@ class TestInterviewEvents:
         event = create_interview_prep_failed(
             LOCAL_TENANT,
             InterviewPrepFailedPayload(
-                job_id="https://example.test/job/1",
+                job_id="90000000-0000-4000-8000-000000000023",
                 generation=2,
                 failed_at="2026-07-05T12:10:00Z",
                 reason_count=1,

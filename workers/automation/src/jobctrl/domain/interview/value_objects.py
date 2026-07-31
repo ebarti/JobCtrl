@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from jobctrl.domain.identifiers import JobId, canonical_job_id
+
 InterviewPrepItemKind = Literal["theme", "star_draft", "gap_drill", "company_note"]
 InterviewPrepStatus = Literal["accepted", "failed", "superseded"]
 
@@ -138,7 +140,7 @@ class InterviewPrepItem:
 class InterviewPrep:
     """Generation-versioned prep for one job application."""
 
-    job_id: str
+    job_id: JobId
     generation: int
     status: InterviewPrepStatus
     generated_at: str
@@ -147,8 +149,7 @@ class InterviewPrep:
     model: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.job_id.strip():
-            raise ValueError("InterviewPrep.job_id must be non-empty")
+        object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
         if self.generation < 1:
             raise ValueError("InterviewPrep.generation must be >= 1")
         if self.status not in INTERVIEW_PREP_STATUSES:
@@ -179,7 +180,7 @@ class InterviewPrep:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "InterviewPrep":
         return cls(
-            job_id=str(data["jobId"]),
+            job_id=canonical_job_id(str(data["jobId"])),
             generation=int(data["generation"]),
             status=str(data["status"]),  # type: ignore[arg-type]
             generated_at=str(data["generatedAt"]),

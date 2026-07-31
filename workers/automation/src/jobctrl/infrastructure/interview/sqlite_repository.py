@@ -6,8 +6,7 @@ import json
 import sqlite3
 from typing import Any
 
-from jobctrl.database import ensure_interview_prep_tables
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.interview import (
     InterviewPrep,
     InterviewPrepGateAudit,
@@ -26,15 +25,15 @@ class SqliteInterviewPrepRepository:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        ensure_interview_prep_tables(conn)
 
     def next_generation(self, tenant_id: TenantId, job_id: JobId) -> int:
+        stable_job_id = canonical_job_id(str(job_id))
         row = self._conn.execute(
             """
             SELECT MAX(generation) FROM job_interview_prep
-            WHERE tenant_id = ? AND job_url = ?
+            WHERE tenant_id = ? AND job_id = ?
             """,
-            (str(tenant_id), str(job_id)),
+            (str(tenant_id), str(stable_job_id)),
         ).fetchone()
         current = row[0] if row is not None else None
         return int(current or 0) + 1
@@ -53,14 +52,15 @@ class SqliteInterviewPrepRepository:
         """
         if not origin_run_id:
             return None
+        stable_job_id = canonical_job_id(str(job_id))
         row = self._conn.execute(
             """
             SELECT * FROM job_interview_prep
-            WHERE tenant_id = ? AND job_url = ? AND origin_run_id = ?
+            WHERE tenant_id = ? AND job_id = ? AND origin_run_id = ?
             ORDER BY generation DESC
             LIMIT 1
             """,
-            (str(tenant_id), str(job_id), str(origin_run_id)),
+            (str(tenant_id), str(stable_job_id), str(origin_run_id)),
         ).fetchone()
         if row is None:
             return None
@@ -73,7 +73,7 @@ class SqliteInterviewPrepRepository:
         tenant_id: TenantId,
         origin_run_id: str = "",
     ) -> None:
-        job_url = str(prep.job_id)
+        job_id = canonical_job_id(str(prep.job_id))
         tenant = str(tenant_id)
         if prep.status == "accepted":
             self._conn.execute(
@@ -81,21 +81,20 @@ class SqliteInterviewPrepRepository:
                 UPDATE job_interview_prep
                    SET status = 'superseded'
                  WHERE tenant_id = ?
-                   AND job_url = ?
+                   AND job_id = ?
                    AND status = 'accepted'
                    AND generation < ?
                 """,
-                (tenant, job_url, prep.generation),
+                (tenant, str(job_id), prep.generation),
             )
         self._conn.execute(
             """
             INSERT INTO job_interview_prep (
-                job_url, generation, tenant_id, status, model, generated_at,
+                tenant_id, job_id, generation, status, model, generated_at,
                 gate_status, fabrication_findings_json, grounding_findings_json,
                 judge_verdict, warnings_json, failure_reason, origin_run_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(job_url, generation) DO UPDATE SET
-                tenant_id = excluded.tenant_id,
+            ON CONFLICT(tenant_id, job_id, generation) DO UPDATE SET
                 status = excluded.status,
                 model = excluded.model,
                 generated_at = excluded.generated_at,
@@ -108,9 +107,9 @@ class SqliteInterviewPrepRepository:
                 origin_run_id = excluded.origin_run_id
             """,
             (
-                job_url,
-                prep.generation,
                 tenant,
+                str(job_id),
+                prep.generation,
                 prep.status,
                 prep.model,
                 prep.generated_at,
@@ -126,25 +125,25 @@ class SqliteInterviewPrepRepository:
         self._conn.execute(
             """
             DELETE FROM job_interview_prep_items
-            WHERE tenant_id = ? AND job_url = ? AND generation = ?
+            WHERE tenant_id = ? AND job_id = ? AND generation = ?
             """,
-            (tenant, job_url, prep.generation),
+            (tenant, str(job_id), prep.generation),
         )
         for position, item in enumerate(prep.items):
             self._conn.execute(
                 """
                 INSERT INTO job_interview_prep_items (
-                    job_url, generation, item_id, tenant_id, kind, title,
+                    tenant_id, job_id, generation, item_id, kind, title,
                     generated_text, evidence_ids_json, requirement_ids_json,
                     source_text_json, transform_type, control,
                     grounding_audit_json, warnings_json, position
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    job_url,
+                    tenant,
+                    str(job_id),
                     prep.generation,
                     item.item_id,
-                    tenant,
                     item.kind,
                     item.title,
                     item.generated_text,
@@ -167,7 +166,8 @@ class SqliteInterviewPrepRepository:
         *,
         status: str | None = "accepted",
     ) -> InterviewPrep | None:
-        params: list[Any] = [str(tenant_id), str(job_id)]
+        stable_job_id = canonical_job_id(str(job_id))
+        params: list[Any] = [str(tenant_id), str(stable_job_id)]
         status_filter = ""
         if status is not None:
             status_filter = "AND status = ?"
@@ -175,7 +175,7 @@ class SqliteInterviewPrepRepository:
         row = self._conn.execute(
             f"""
             SELECT * FROM job_interview_prep
-            WHERE tenant_id = ? AND job_url = ? {status_filter}
+            WHERE tenant_id = ? AND job_id = ? {status_filter}
             ORDER BY generation DESC
             LIMIT 1
             """,
@@ -192,12 +192,13 @@ class SqliteInterviewPrepRepository:
         *,
         generation: int,
     ) -> InterviewPrep | None:
+        stable_job_id = canonical_job_id(str(job_id))
         row = self._conn.execute(
             """
             SELECT * FROM job_interview_prep
-            WHERE tenant_id = ? AND job_url = ? AND generation = ?
+            WHERE tenant_id = ? AND job_id = ? AND generation = ?
             """,
-            (str(tenant_id), str(job_id), int(generation)),
+            (str(tenant_id), str(stable_job_id), int(generation)),
         ).fetchone()
         if row is None:
             return None
@@ -207,10 +208,10 @@ class SqliteInterviewPrepRepository:
         item_rows = self._conn.execute(
             """
             SELECT * FROM job_interview_prep_items
-            WHERE tenant_id = ? AND job_url = ? AND generation = ?
+            WHERE tenant_id = ? AND job_id = ? AND generation = ?
             ORDER BY position, item_id
             """,
-            (str(tenant_id), row["job_url"], int(row["generation"])),
+            (str(tenant_id), row["job_id"], int(row["generation"])),
         ).fetchall()
         gate = InterviewPrepGateAudit(
             status=row["gate_status"],
@@ -220,7 +221,7 @@ class SqliteInterviewPrepRepository:
             warnings=tuple(_load_list(row["warnings_json"])),
         )
         return InterviewPrep(
-            job_id=str(row["job_url"]),
+            job_id=canonical_job_id(str(row["job_id"])),
             generation=int(row["generation"]),
             status=str(row["status"]),  # type: ignore[arg-type]
             generated_at=str(row["generated_at"]),

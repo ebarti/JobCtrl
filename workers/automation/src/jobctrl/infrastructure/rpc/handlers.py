@@ -624,10 +624,14 @@ def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
 def generate_interview_prep(params: dict[str, Any]) -> WorkflowStartSpec:
     """Build a workflow spec for user-triggered stored interview prep."""
     try:
-        _required_job_id(params)
-        return build_interview_prep_workflow_spec(
-            _legacy_workflow_locator_params(params)
+        tenant_id = TenantId(_tenant_id(params))
+        job_id = _required_job_id(params)
+        _load_current_job_by_id(
+            get_connection(),
+            tenant_id=tenant_id,
+            job_id=job_id,
         )
+        return build_interview_prep_workflow_spec(params)
     except ValueError as exc:
         raise invalid_params(str(exc)) from exc
 
