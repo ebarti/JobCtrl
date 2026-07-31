@@ -873,7 +873,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     "/v1/jobs/:jobKey/compensation/posted",
     async (request, reply) =>
       withDb(reply, options.dbPath, (db) => {
-        const response = getPostedCompensationFact(db, decodeRouteParam(request.params.jobKey));
+        const jobId = resolveJobId(db, "local", decodeRouteParam(request.params.jobKey));
+        const response = jobId ? getPostedCompensationFact(db, "local", jobId) : null;
         if (!response) {
           void reply.code(404);
           return { ok: false, error: "job_not_found" };
@@ -886,7 +887,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     "/v1/jobs/:jobKey/compensation/market",
     async (request, reply) =>
       withDb(reply, options.dbPath, (db) => {
-        const response = getMarketCompensationEstimate(db, decodeRouteParam(request.params.jobKey));
+        const jobId = resolveJobId(db, "local", decodeRouteParam(request.params.jobKey));
+        const response = jobId ? getMarketCompensationEstimate(db, "local", jobId) : null;
         if (!response) {
           void reply.code(404);
           return { ok: false, error: "job_not_found" };
