@@ -45,7 +45,7 @@ _CSV_ATTRIBUTE_COLUMNS: dict[str, str] = {
 
 _CSV_ROLE_COLUMNS = ("role",)
 _CSV_EMPLOYER_COLUMNS = ("employer", "company")
-_CSV_JOB_COLUMNS = ("job_id", "jobid", "job_url", "joburl")
+_CSV_JOB_COLUMNS = ("job_id", "jobid")
 
 
 class ContactInputError(ValueError):

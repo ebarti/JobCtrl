@@ -13,6 +13,8 @@ import pytest
 from temporalio.common import WorkflowIDConflictPolicy
 
 from jobctrl.database import close_connection, get_connection, init_db
+from jobctrl.contact.activities import ResearchSourceInput, RunContactResearchActivityInput
+from jobctrl.contact.workflow import ContactResearchWorkflow, ContactResearchWorkflowInput
 from jobctrl.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
 from jobctrl.domain.compensation import ReportedCompensationObservation
 from jobctrl.domain.interview import INTERVIEW_PREP_ITEM_KINDS, INTERVIEW_PREP_STATUSES
@@ -44,6 +46,7 @@ from jobctrl.preparation.workflow import JobPreparationInput, JobPreparationWork
 from jobctrl.profile.workflow import ProfileImportWorkflow, ProfileImportWorkflowInput
 from jobctrl.scoring import activities as scoring_activities_mod
 from jobctrl.scoring.activities import ScoreActivityInput, score_activity
+from jobctrl.workflow_specs import build_contact_research_workflow_spec
 
 
 class _StubHandle:
@@ -128,6 +131,7 @@ def test_default_handlers_are_registered(monkeypatch) -> None:
         "retailor_current_policy",
         "refresh_compensation",
         "generate_interview_prep",
+        "run_contact_research",
         "apply",
         "profile_import",
         "provider_status",
@@ -296,6 +300,121 @@ def test_generate_interview_prep_starts_user_triggered_workflow(tmp_db: Path) ->
     assert second is not None
     assert len(seen) == 2
     assert seen[1].workflow_id == seen[0].workflow_id
+
+
+def test_contact_research_resolves_job_url_only_at_rpc_boundary(tmp_db: Path) -> None:
+    seen: list[WorkflowStartSpec] = []
+    job_url = "https://example.com/job/contact-research"
+    source_url = "https://example.com/people"
+    job_id = _test_job_id(job_url)
+    _seed_job(tmp_db, job_url)
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        seen.append(spec)
+        return _StubHandle("contact-research-wf", "contact-research-run")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="run_contact_research",
+            params={
+                "tenantId": "local",
+                "taskId": "contact-task-1",
+                "employer": "Example",
+                "jobUrl": job_url,
+                "sources": [
+                    {
+                        "category": "public_web_page",
+                        "url": source_url,
+                        "label": "People",
+                    }
+                ],
+            },
+            id=1,
+        )
+    )
+
+    assert response is not None
+    assert "error" not in response.to_dict()
+    assert len(seen) == 1
+    assert seen[0].workflow is ContactResearchWorkflow
+    assert seen[0].workflow_id == "contact-research-local-contact-task-1"
+    (payload,) = seen[0].args
+    assert payload == ContactResearchWorkflowInput(
+        tenant_id="local",
+        task_id="contact-task-1",
+        employer="Example",
+        job_id=job_id,
+        sources=(
+            ResearchSourceInput(
+                category="public_web_page",
+                url=source_url,
+                label="People",
+            ),
+        ),
+    )
+    assert not hasattr(payload, "job_url")
+
+    second = server.dispatch(
+        JsonRpcRequest(
+            method="run_contact_research",
+            params={
+                "tenantId": "local",
+                "taskId": "contact-task-1",
+                "employer": "Example",
+                "jobUrl": job_url,
+            },
+            id=2,
+        )
+    )
+    assert second is not None
+    assert seen[1].workflow_id == seen[0].workflow_id
+
+    rejected = server.dispatch(
+        JsonRpcRequest(
+            method="run_contact_research",
+            params={
+                "tenantId": "local",
+                "taskId": "contact-task-2",
+                "jobId": str(job_id),
+            },
+            id=3,
+        )
+    )
+    assert rejected is not None
+    assert rejected.to_dict()["error"]["code"] == INVALID_PARAMS
+    assert "jobUrl only at the RPC boundary" in rejected.to_dict()["error"]["message"]
+
+    with pytest.raises(ValueError, match="canonical UUID"):
+        build_contact_research_workflow_spec(
+            {
+                "tenantId": "local",
+                "taskId": "contact-task-2",
+                "jobId": job_url,
+            }
+        )
+
+    tenant_a_spec = build_contact_research_workflow_spec(
+        {"tenantId": "tenant-a", "taskId": "same-task-id", "jobId": str(job_id)}
+    )
+    tenant_b_spec = build_contact_research_workflow_spec(
+        {"tenantId": "tenant-b", "taskId": "same-task-id", "jobId": str(job_id)}
+    )
+    assert tenant_a_spec.workflow_id == "contact-research-tenant-a-same-task-id"
+    assert tenant_b_spec.workflow_id == "contact-research-tenant-b-same-task-id"
+
+
+def test_contact_research_direct_inputs_require_canonical_job_ids() -> None:
+    for input_type in (ContactResearchWorkflowInput, RunContactResearchActivityInput):
+        with pytest.raises(ValueError, match="canonical UUID"):
+            input_type(
+                tenant_id="local",
+                task_id="contact-task-direct",
+                employer="Example",
+                job_id="https://example.com/job/contact-research",
+            )
 
 
 def test_interview_prep_has_no_live_assistance_surface() -> None:

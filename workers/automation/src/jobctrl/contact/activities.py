@@ -19,6 +19,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from jobctrl.domain.errors import JobCtrlError, to_application_error
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
@@ -36,11 +37,15 @@ class RunContactResearchActivityInput:
     tenant_id: str
     task_id: str
     employer: str | None = None
-    job_url: str | None = None
+    job_id: JobId | None = None
     sources: tuple[ResearchSourceInput, ...] = ()
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     expected_app_dir: str | None = None
     expected_db_path: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.job_id is not None:
+            object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
 @dataclass(frozen=True)
@@ -109,6 +114,7 @@ def _run_contact_research(
 
     conn = get_connection()
     tenant = TenantId(payload.tenant_id or LOCAL_TENANT)
+    job_id = canonical_job_id(str(payload.job_id)) if payload.job_id is not None else None
 
     # Per-source opt-in (resolved decision 3): the allowlist is exactly the hosts
     # the user explicitly provided — nothing is discovered or fetched autonomously.
@@ -139,12 +145,17 @@ def _run_contact_research(
     task = use_case.execute(
         tenant,
         task_id=payload.task_id,
-        link=ContactLink(employer=payload.employer or None, job_id=payload.job_url or None),
+        link=ContactLink(employer=payload.employer or None, job_id=job_id),
         sources=specs,
         model=payload.llm_model,
     )
 
-    activity.heartbeat({"status": task.status.value})
+    activity.heartbeat(
+        {
+            "status": task.status.value,
+            **({"jobId": str(job_id)} if job_id is not None else {}),
+        }
+    )
     ProjectionBuilder(conn_factory=lambda: conn, tenant_id=tenant).refresh()
     return RunContactResearchActivityOutput(
         task_id=task.task_id,

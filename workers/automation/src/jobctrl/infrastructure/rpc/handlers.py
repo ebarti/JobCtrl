@@ -571,7 +571,23 @@ def run_contact_research(params: dict[str, Any]) -> WorkflowStartSpec:
     require an explicit user confirmation before becoming stored facts (INV-4).
     """
     try:
-        return build_contact_research_workflow_spec(params)
+        if "jobId" in params:
+            raise invalid_params("run_contact_research accepts jobUrl only at the RPC boundary")
+        tenant_id = TenantId(_tenant_id(params))
+        job_url = str(params.get("jobUrl") or "").strip()
+        spec_params = dict(params)
+        spec_params.pop("jobUrl", None)
+        spec_params["tenantId"] = str(tenant_id)
+        if job_url:
+            job_id = _job_id(
+                _load_current_job(
+                    get_connection(),
+                    tenant_id=tenant_id,
+                    job_url=job_url,
+                )
+            )
+            spec_params["jobId"] = str(job_id)
+        return build_contact_research_workflow_spec(spec_params)
     except ValueError as exc:
         raise invalid_params(str(exc)) from exc
 

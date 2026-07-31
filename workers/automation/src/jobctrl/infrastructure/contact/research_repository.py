@@ -10,7 +10,7 @@ persisted ONLY in ``contact_candidates.attributes_json``. Event payloads written
 to ``job_events`` carry ids, kinds, provenance metadata, confidence, outcomes,
 and timestamps — never a value or a fetched page body. Research events carry
 honest identity via ``entity_kind='contact_research'`` / ``entity_ref=<task_id>``;
-application-linked tasks additionally key on the job's ``job_url``.
+application-linked tasks additionally key on the canonical ``job_id``.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ import json
 import logging
 import sqlite3
 
-from jobctrl.database import ensure_contact_tables
 from jobctrl.domain.contact.research import (
     CandidateStatus,
     ContactCandidate,
@@ -33,6 +32,7 @@ from jobctrl.domain.contact.value_objects import (
     ContactLink,
     ContactRole,
 )
+from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.tenant import TenantId
 from jobctrl.state import record_job_event
@@ -46,7 +46,6 @@ class SqliteContactResearchTaskRepository:
     def __init__(self, conn: sqlite3.Connection, *, publisher: EventPublisher) -> None:
         self._conn = conn
         self._publisher = publisher
-        ensure_contact_tables(self._conn)
 
     # ------------------------------------------------------------------ load
 
@@ -74,7 +73,7 @@ class SqliteContactResearchTaskRepository:
         return ContactResearchTask(
             tenant_id=tenant_id,
             task_id=str(row["task_id"]),
-            link=ContactLink(employer=row["employer"], job_id=row["job_url"]),
+            link=ContactLink(employer=row["employer"], job_id=row["job_id"]),
             status=_status(row["status"]),
             candidates=self._load_candidates(tenant_id, str(row["task_id"])),
             source_attempts=_decode_attempts(row["source_attempts_json"]),
@@ -147,12 +146,12 @@ class SqliteContactResearchTaskRepository:
             self._conn.execute(
                 """
                 INSERT INTO contact_research_tasks (
-                    tenant_id, task_id, employer, job_url, status, source_attempts_json,
+                    tenant_id, task_id, employer, job_id, status, source_attempts_json,
                     started_at, updated_at, needs_review_at, completed_at, failed_at, error_class
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tenant_id, task_id) DO UPDATE SET
                     employer             = excluded.employer,
-                    job_url              = excluded.job_url,
+                    job_id               = excluded.job_id,
                     status               = excluded.status,
                     source_attempts_json = excluded.source_attempts_json,
                     started_at           = excluded.started_at,
@@ -217,12 +216,13 @@ class SqliteContactResearchTaskRepository:
     ) -> None:
         tenant = str(tenant_id)
         task_id = str(task.task_id)
-        job_url = task.link.job_id or None
+        job_id = task.link.job_id
         previous_status = previous.status if previous is not None else None
 
         if previous is None:
             self._record(
-                job_url,
+                tenant_id,
+                job_id,
                 task_id,
                 "ContactResearchTaskStarted",
                 "Contact research started.",
@@ -243,7 +243,8 @@ class SqliteContactResearchTaskRepository:
                 if candidate.candidate_id in known:
                     continue
                 self._record(
-                    job_url,
+                    tenant_id,
+                    job_id,
                     task_id,
                     "ContactCandidateProposed",
                     "Contact candidate proposed for review.",
@@ -260,7 +261,8 @@ class SqliteContactResearchTaskRepository:
                     },
                 )
             self._record(
-                job_url,
+                tenant_id,
+                job_id,
                 task_id,
                 "ContactResearchTaskNeedsReview",
                 "Contact research needs review.",
@@ -277,7 +279,8 @@ class SqliteContactResearchTaskRepository:
             and previous_status is not ResearchTaskStatus.COMPLETED
         ):
             self._record(
-                job_url,
+                tenant_id,
+                job_id,
                 task_id,
                 "ContactResearchTaskCompleted",
                 "Contact research completed.",
@@ -294,7 +297,8 @@ class SqliteContactResearchTaskRepository:
             and previous_status is not ResearchTaskStatus.FAILED
         ):
             self._record(
-                job_url,
+                tenant_id,
+                job_id,
                 task_id,
                 "ContactResearchTaskFailed",
                 "Contact research failed.",
@@ -309,7 +313,8 @@ class SqliteContactResearchTaskRepository:
 
     def _record(
         self,
-        job_url: str | None,
+        tenant_id: TenantId,
+        job_id: JobId | None,
         task_id: str,
         event_type: str,
         message: str,
@@ -317,9 +322,10 @@ class SqliteContactResearchTaskRepository:
     ) -> None:
         record_job_event(
             self._conn,
-            job_url,
+            job_id,
             None,
             event_type,
+            tenant_id=tenant_id,
             message=message,
             payload=payload,
             publisher=self._publisher,
