@@ -1,10 +1,9 @@
-"""SqliteEmployerAnalysisRepository — local-mode adapter (Phase 1).
+"""Exact-v7 SQLite adapter for employer-analysis aggregates.
 
 Persists :class:`EmployerAnalysis` aggregates to the canonical
-``job_employer_analysis`` (+ ``_sub_analyses`` / ``_failures``) tables created
-by :func:`database.ensure_employer_analysis_tables`. Mirrors
-:class:`SqliteMaterialsRepository`: one connection per adapter, eager commit,
-monotonic generation allocation, and supersede-not-destroy semantics (D-13).
+``job_employer_analysis`` (+ ``_sub_analyses`` / ``_failures``) tables.
+The database lifecycle owns schema creation and migration; this runtime
+repository requires the exact-v7 tenant-scoped ``JobId`` shape.
 
 The cache short-circuit (D-11/D-12) is served by :meth:`get_by_cache_key`,
 which returns the latest analysis matching a snapshot+version cache key so a
@@ -17,8 +16,7 @@ import json
 import sqlite3
 from typing import Any
 
-from jobctrl.database import ensure_employer_analysis_tables
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
     AnalysisFailure,
@@ -35,8 +33,6 @@ class SqliteEmployerAnalysisRepository:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        # Idempotent — safe if init_db already ran; keeps test setup minimal.
-        ensure_employer_analysis_tables(conn)
 
     # ------------------------------------------------------------------ read
 
@@ -47,27 +43,28 @@ class SqliteEmployerAnalysisRepository:
         *,
         generation: int | None = None,
     ) -> EmployerAnalysis | None:
+        stable_job_id = canonical_job_id(str(job_id))
         if generation is None:
             row = self._conn.execute(
                 """
                 SELECT * FROM job_employer_analysis
-                WHERE job_url = ? AND tenant_id = ?
+                WHERE tenant_id = ? AND job_id = ?
                 ORDER BY generation DESC
                 LIMIT 1
                 """,
-                (str(job_id), str(tenant_id)),
+                (str(tenant_id), str(stable_job_id)),
             ).fetchone()
         else:
             row = self._conn.execute(
                 """
                 SELECT * FROM job_employer_analysis
-                WHERE job_url = ? AND tenant_id = ? AND generation = ?
+                WHERE tenant_id = ? AND job_id = ? AND generation = ?
                 """,
-                (str(job_id), str(tenant_id), int(generation)),
+                (str(tenant_id), str(stable_job_id), int(generation)),
             ).fetchone()
         if row is None:
             return None
-        return self._row_to_analysis(row, tenant_id, job_id)
+        return self._row_to_analysis(row, tenant_id, stable_job_id)
 
     def get_by_cache_key(
         self,
@@ -75,18 +72,19 @@ class SqliteEmployerAnalysisRepository:
         job_id: JobId,
         cache_key: str,
     ) -> EmployerAnalysis | None:
+        stable_job_id = canonical_job_id(str(job_id))
         row = self._conn.execute(
             """
             SELECT * FROM job_employer_analysis
-            WHERE job_url = ? AND tenant_id = ? AND cache_key = ?
+            WHERE tenant_id = ? AND job_id = ? AND cache_key = ?
             ORDER BY generation DESC
             LIMIT 1
             """,
-            (str(job_id), str(tenant_id), cache_key),
+            (str(tenant_id), str(stable_job_id), cache_key),
         ).fetchone()
         if row is None:
             return None
-        return self._row_to_analysis(row, tenant_id, job_id)
+        return self._row_to_analysis(row, tenant_id, stable_job_id)
 
     # ----------------------------------------------------------------- write
 
@@ -98,7 +96,23 @@ class SqliteEmployerAnalysisRepository:
         generation again overwrites the canonical row + replaces its child rows.
         Prior generations are NEVER deleted — they remain audit history.
         """
-        job_url = str(analysis.job_id)
+        job_id = canonical_job_id(str(analysis.job_id))
+        savepoint = "employer_analysis_aggregate_save"
+        self._conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            self._save_rows(analysis, job_id)
+        except BaseException:
+            self._conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
+        else:
+            self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+
+    def _save_rows(
+        self,
+        analysis: EmployerAnalysis,
+        job_id: JobId,
+    ) -> None:
         tenant = str(analysis.tenant_id)
         generation = analysis.generation
         canonical = analysis.canonical
@@ -106,13 +120,13 @@ class SqliteEmployerAnalysisRepository:
         self._conn.execute(
             """
             INSERT INTO job_employer_analysis (
-                job_url, generation, tenant_id, snapshot_hash, prompt_version,
+                tenant_id, job_id, generation, snapshot_hash, prompt_version,
                 sdk_set_version, cache_key, role_framing, inferred_seniority,
                 ideal_candidate_narrative, requirements_json, keywords_json,
                 agreement_json, eeo_screen_json, legs_attempted, legs_succeeded,
                 created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(job_url, generation) DO UPDATE SET
+            ON CONFLICT(tenant_id, job_id, generation) DO UPDATE SET
                 snapshot_hash             = excluded.snapshot_hash,
                 prompt_version            = excluded.prompt_version,
                 sdk_set_version           = excluded.sdk_set_version,
@@ -129,9 +143,9 @@ class SqliteEmployerAnalysisRepository:
                 created_at                = excluded.created_at
             """,
             (
-                job_url,
-                generation,
                 tenant,
+                str(job_id),
+                generation,
                 analysis.snapshot_hash,
                 analysis.prompt_version,
                 analysis.sdk_set_version,
@@ -142,9 +156,7 @@ class SqliteEmployerAnalysisRepository:
                 json.dumps([req.model_dump() for req in canonical.requirements], ensure_ascii=False),
                 json.dumps([kw.model_dump() for kw in canonical.keywords], ensure_ascii=False),
                 json.dumps(analysis.agreement.to_dict(), ensure_ascii=False),
-                json.dumps(
-                    [hit.to_dict() for hit in analysis.eeo_screen_hits], ensure_ascii=False
-                ),
+                json.dumps([hit.to_dict() for hit in analysis.eeo_screen_hits], ensure_ascii=False),
                 analysis.legs_attempted,
                 analysis.legs_succeeded,
                 analysis.created_at,
@@ -153,49 +165,55 @@ class SqliteEmployerAnalysisRepository:
 
         # Replace child rows for this generation (idempotent re-save).
         self._conn.execute(
-            "DELETE FROM job_employer_analysis_sub_analyses WHERE job_url = ? AND generation = ?",
-            (job_url, generation),
+            "DELETE FROM job_employer_analysis_sub_analyses WHERE tenant_id = ? AND job_id = ? AND generation = ?",
+            (tenant, str(job_id), generation),
         )
         for draft in analysis.sub_analyses:
             self._conn.execute(
                 """
                 INSERT INTO job_employer_analysis_sub_analyses (
-                    job_url, generation, model_id, tenant_id, analysis_json
+                    tenant_id, job_id, generation, model_id, analysis_json
                 ) VALUES (?, ?, ?, ?, ?)
                 """,
                 (
-                    job_url,
+                    tenant,
+                    str(job_id),
                     generation,
                     draft.model_id,
-                    tenant,
                     json.dumps(draft.model_dump(exclude={"model_id"}), ensure_ascii=False),
                 ),
             )
 
         self._conn.execute(
-            "DELETE FROM job_employer_analysis_failures WHERE job_url = ? AND generation = ?",
-            (job_url, generation),
+            "DELETE FROM job_employer_analysis_failures WHERE tenant_id = ? AND job_id = ? AND generation = ?",
+            (tenant, str(job_id), generation),
         )
         for failure in analysis.failures:
             self._conn.execute(
                 """
                 INSERT INTO job_employer_analysis_failures (
-                    job_url, generation, model_id, tenant_id, error, raw_output
+                    tenant_id, job_id, generation, model_id, error, raw_output
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (job_url, generation, failure.model_id, tenant, failure.error, failure.raw_output),
+                (
+                    tenant,
+                    str(job_id),
+                    generation,
+                    failure.model_id,
+                    failure.error,
+                    failure.raw_output,
+                ),
             )
-
-        self._conn.commit()
 
     def next_generation(self, tenant_id: TenantId, job_id: JobId) -> int:
         """Return the next generation to write for ``(tenant, job)`` (>= 1)."""
+        stable_job_id = canonical_job_id(str(job_id))
         row = self._conn.execute(
             """
             SELECT MAX(generation) FROM job_employer_analysis
-            WHERE job_url = ? AND tenant_id = ?
+            WHERE tenant_id = ? AND job_id = ?
             """,
-            (str(job_id), str(tenant_id)),
+            (str(tenant_id), str(stable_job_id)),
         ).fetchone()
         current = row[0] if row is not None else None
         return int(current) + 1 if current is not None else 1
@@ -219,22 +237,21 @@ class SqliteEmployerAnalysisRepository:
         sub_rows = self._conn.execute(
             """
             SELECT model_id, analysis_json FROM job_employer_analysis_sub_analyses
-            WHERE job_url = ? AND generation = ?
+            WHERE tenant_id = ? AND job_id = ? AND generation = ?
             ORDER BY model_id
             """,
-            (str(job_id), generation),
+            (str(tenant_id), str(job_id), generation),
         ).fetchall()
         sub_analyses = tuple(
-            JobAnalysisDraft(model_id=sub["model_id"], **json.loads(sub["analysis_json"]))
-            for sub in sub_rows
+            JobAnalysisDraft(model_id=sub["model_id"], **json.loads(sub["analysis_json"])) for sub in sub_rows
         )
         failure_rows = self._conn.execute(
             """
             SELECT model_id, error, raw_output FROM job_employer_analysis_failures
-            WHERE job_url = ? AND generation = ?
+            WHERE tenant_id = ? AND job_id = ? AND generation = ?
             ORDER BY model_id
             """,
-            (str(job_id), generation),
+            (str(tenant_id), str(job_id), generation),
         ).fetchall()
         failures = tuple(
             AnalysisFailure(
@@ -244,10 +261,7 @@ class SqliteEmployerAnalysisRepository:
             )
             for f in failure_rows
         )
-        eeo_screen_hits = tuple(
-            EeoScreenHit.from_dict(item)
-            for item in _json_list(_row_get(row, "eeo_screen_json"))
-        )
+        eeo_screen_hits = tuple(EeoScreenHit.from_dict(item) for item in _json_list(row["eeo_screen_json"]))
         return EmployerAnalysis(
             tenant_id=tenant_id,
             job_id=job_id,
@@ -277,11 +291,6 @@ def _json_list(value: Any) -> list[dict[str, Any]]:
         return []
     parsed = json.loads(value)
     return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
-
-
-def _row_get(row: sqlite3.Row, key: str) -> Any:
-    """Read a column from a sqlite3.Row, tolerating its absence on older rows."""
-    return row[key] if key in row.keys() else None
 
 
 __all__ = ["SqliteEmployerAnalysisRepository"]
