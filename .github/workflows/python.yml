@@ -25,6 +25,9 @@ jobs:
     name: Python (workers/automation)
     runs-on: ubuntu-latest
     strategy:
+      # A failure in one top compatibility lane must not cancel the others;
+      # every supported Python version owns an independent product result.
+      fail-fast: false
       matrix:
         # Every matching stack layer gets the 3.11 correctness lane. The top
         # layer contains the cumulative stack and also exercises compatibility.

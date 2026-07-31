@@ -78,6 +78,11 @@ test("stack metadata gates cumulative Python product coverage", async () => {
   const matrix =
     "fromJSON(github.event_name == 'pull_request' && github.event.pull_request.stack != null && github.event.pull_request.stack.position != github.event.pull_request.stack.size && '[\"3.11\"]' || '[\"3.11\",\"3.12\",\"3.13\"]')";
 
+  assert.equal(
+    job.strategy["fail-fast"],
+    false,
+    "one Python compatibility failure must not cancel the remaining top lanes",
+  );
   assert.equal(job.strategy.matrix["python-version"], `\${{ ${matrix} }}`);
   for (const admissionStep of [
     "Lint",
