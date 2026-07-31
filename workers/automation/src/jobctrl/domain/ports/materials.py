@@ -87,7 +87,7 @@ class MaterialsRepository(Protocol):
         tailored resume is approved. Rejected re-tailor attempts remain history
         and must not hide the last accepted artifact from downstream stages.
 
-    The selectors (``list_pending_*``) return job URLs, not full
+    The selectors (``list_pending_*``) return canonical JobIds, not full
     aggregates, so the queue runner can decide whether to load each one.
     """
 
@@ -135,7 +135,7 @@ class MaterialsRepository(Protocol):
         limit: int = 0,
         retailor: bool = False,
     ) -> list[JobId]:
-        """Return job URLs eligible for tailoring.
+        """Return canonical JobIds eligible for tailoring.
 
         Eligibility: full description present, ``fit_score >= min_score``,
         and either no MaterialsSet exists yet OR ``retailor=True`` (the
@@ -151,7 +151,7 @@ class MaterialsRepository(Protocol):
         min_score: int = 7,
         limit: int = 0,
     ) -> list[JobId]:
-        """Return job URLs that have an approved tailored resume but no
+        """Return canonical JobIds that have an approved tailored resume but no
         approved cover letter in the latest generation."""
         ...
 
@@ -161,7 +161,7 @@ class MaterialsRepository(Protocol):
         *,
         limit: int = 0,
     ) -> list[JobId]:
-        """Return job URLs whose latest generation has text artifacts but
+        """Return canonical JobIds whose latest generation has text artifacts but
         is missing one or more PDFs."""
         ...
 
