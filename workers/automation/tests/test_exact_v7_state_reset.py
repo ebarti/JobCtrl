@@ -33,6 +33,13 @@ def _exact_v7_candidate(stage: str) -> sqlite3.Connection:
             (str(_OTHER_TENANT), str(_JOB_ID), _JOB_URL, _NOW),
         ],
     )
+    candidate.execute(
+        """
+        UPDATE jobs
+        SET tailored_resume_path = 'legacy-resume.md',
+            cover_letter_path = 'legacy-cover.md'
+        """
+    )
     for tenant_id in (LOCAL_TENANT, _OTHER_TENANT):
         ensure_job_stage_rows(candidate, _JOB_ID, tenant_id=tenant_id, discovered_at=_NOW)
         set_stage_state(
@@ -147,6 +154,17 @@ def test_reset_materials_uses_tenant_scoped_job_id(
     ).fetchone()
     assert local_event is not None
     assert local_event["job_id"] == str(_JOB_ID)
+    legacy_projection = candidate.execute(
+        """
+        SELECT tailored_resume_path, cover_letter_path
+        FROM jobs
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(_JOB_ID)),
+    ).fetchone()
+    assert legacy_projection is not None
+    assert legacy_projection["tailored_resume_path"] == "legacy-resume.md"
+    assert legacy_projection["cover_letter_path"] == "legacy-cover.md"
 
     other_materials = candidate.execute(
         """
