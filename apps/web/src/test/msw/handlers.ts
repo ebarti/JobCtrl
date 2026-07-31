@@ -555,7 +555,7 @@ export const handlers = [
   http.post("*/v1/jobs/:jobKey/repeat-application/override", async ({ params, request }) => {
     const body = (await request.json()) as {
       evidenceFingerprint: string;
-      priorJobKey: string;
+      priorJobId: string;
       reason: string;
       confirmedBy?: string;
     };
@@ -578,8 +578,8 @@ export const handlers = [
         evidenceFingerprint: body.evidenceFingerprint,
         override: {
           overrideId: `repeat-override-${jobKey}`,
-          targetJobKey: jobKey,
-          priorJobKey: body.priorJobKey,
+          targetJobId: jobKey,
+          priorJobId: body.priorJobId,
           evidenceFingerprint: body.evidenceFingerprint,
           reason: body.reason,
           confirmedBy: body.confirmedBy ?? "user",
