@@ -612,6 +612,7 @@ def _apply_candidate_select_parts() -> tuple[str, str]:
         "WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply' LIMIT 1) AS apply_attempts"
     )
     columns = (
+        f"jobs.tenant_id AS tenant_id, jobs.job_id AS job_id, "
         f"jobs.url AS url, jobs.title AS title, jobs.site AS site, "
         f"{_EFFECTIVE_APPLICATION_URL} AS application_url, "
         f"{_EFFECTIVE_TAILOR_PATH} AS tailored_resume_path, "

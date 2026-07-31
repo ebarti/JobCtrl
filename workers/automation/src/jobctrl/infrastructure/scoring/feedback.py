@@ -17,6 +17,7 @@ from typing import Any, Iterable
 
 @dataclass(frozen=True)
 class ScoringFeedbackSignal:
+    tenant_id: str
     job_id: str
     kind: str
     weight: float
@@ -25,6 +26,7 @@ class ScoringFeedbackSignal:
 
 @dataclass(frozen=True)
 class FeedbackRankedJob:
+    tenant_id: str
     job_id: str
     base_score: float
     feedback_adjustment: float
@@ -51,21 +53,22 @@ def collect_feedback_signals(conn: sqlite3.Connection) -> tuple[ScoringFeedbackS
 
 
 def rank_jobs_with_feedback(
-    base_scores: dict[str, float],
+    base_scores: dict[tuple[str, str], float],
     signals: Iterable[ScoringFeedbackSignal],
 ) -> tuple[FeedbackRankedJob, ...]:
     """Apply bounded, evidence-backed feedback adjustments to base scores."""
 
-    by_job: dict[str, list[ScoringFeedbackSignal]] = defaultdict(list)
+    by_job: dict[tuple[str, str], list[ScoringFeedbackSignal]] = defaultdict(list)
     for signal in signals:
-        by_job[signal.job_id].append(signal)
+        by_job[(signal.tenant_id, signal.job_id)].append(signal)
 
     ranked: list[FeedbackRankedJob] = []
-    for job_id, base_score in base_scores.items():
-        job_signals = by_job.get(job_id, [])
+    for (tenant_id, job_id), base_score in base_scores.items():
+        job_signals = by_job.get((tenant_id, job_id), [])
         adjustment = max(-1.5, min(1.5, sum(signal.weight for signal in job_signals)))
         ranked.append(
             FeedbackRankedJob(
+                tenant_id=tenant_id,
                 job_id=job_id,
                 base_score=base_score,
                 feedback_adjustment=adjustment,
@@ -80,17 +83,18 @@ def _correction_signals(conn: sqlite3.Connection) -> list[ScoringFeedbackSignal]
     if not _table_exists(conn, "job_scores"):
         return []
     rows = conn.execute(
-        """SELECT job_url, fit_score, correction_json, trace_json
+        """SELECT tenant_id, job_id, fit_score, correction_json, trace_json
            FROM job_scores
            WHERE correction_json IS NOT NULL AND correction_json != ''
-           ORDER BY job_url, version"""
+           ORDER BY tenant_id, job_id, version"""
     ).fetchall()
     signals: list[ScoringFeedbackSignal] = []
     for row in rows:
-        job_id = str(row["job_url"] if isinstance(row, sqlite3.Row) else row[0])
-        fit_score = float(row["fit_score"] if isinstance(row, sqlite3.Row) else row[1])
-        correction = _json_object(row["correction_json"] if isinstance(row, sqlite3.Row) else row[2])
-        trace = _json_object(row["trace_json"] if isinstance(row, sqlite3.Row) else row[3])
+        tenant_id = str(row["tenant_id"] if isinstance(row, sqlite3.Row) else row[0])
+        job_id = str(row["job_id"] if isinstance(row, sqlite3.Row) else row[1])
+        fit_score = float(row["fit_score"] if isinstance(row, sqlite3.Row) else row[2])
+        correction = _json_object(row["correction_json"] if isinstance(row, sqlite3.Row) else row[3])
+        trace = _json_object(row["trace_json"] if isinstance(row, sqlite3.Row) else row[4])
         history = trace.get("correction_history")
         latest_history = history[-1] if isinstance(history, list) and history else {}
         original_score = _float(
@@ -101,6 +105,7 @@ def _correction_signals(conn: sqlite3.Connection) -> list[ScoringFeedbackSignal]
         rationale = str(correction.get("rationale") or "score corrected").strip()
         signals.append(
             ScoringFeedbackSignal(
+                tenant_id=tenant_id,
                 job_id=job_id,
                 kind="score_correction",
                 weight=delta,
@@ -114,9 +119,9 @@ def _action_signals(conn: sqlite3.Connection) -> list[ScoringFeedbackSignal]:
     if not _table_exists(conn, "job_events"):
         return []
     rows = conn.execute(
-        """SELECT job_url, event_type, message
+        """SELECT tenant_id, job_id, event_type, message
            FROM job_events
-           WHERE job_url IS NOT NULL AND event_type IN (
+           WHERE job_id IS NOT NULL AND event_type IN (
              'ApplicationManuallyMarked',
              'StageSkipped',
              'JobDeleted',
@@ -127,11 +132,13 @@ def _action_signals(conn: sqlite3.Connection) -> list[ScoringFeedbackSignal]:
     ).fetchall()
     signals: list[ScoringFeedbackSignal] = []
     for row in rows:
-        job_id = str(row["job_url"] if isinstance(row, sqlite3.Row) else row[0])
-        event_type = str(row["event_type"] if isinstance(row, sqlite3.Row) else row[1])
-        message = str((row["message"] if isinstance(row, sqlite3.Row) else row[2]) or event_type)
+        tenant_id = str(row["tenant_id"] if isinstance(row, sqlite3.Row) else row[0])
+        job_id = str(row["job_id"] if isinstance(row, sqlite3.Row) else row[1])
+        event_type = str(row["event_type"] if isinstance(row, sqlite3.Row) else row[2])
+        message = str((row["message"] if isinstance(row, sqlite3.Row) else row[3]) or event_type)
         signals.append(
             ScoringFeedbackSignal(
+                tenant_id=tenant_id,
                 job_id=job_id,
                 kind=event_type,
                 weight=ACTION_WEIGHTS[event_type],
