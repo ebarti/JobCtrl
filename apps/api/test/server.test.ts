@@ -6067,7 +6067,10 @@ describe("local TypeScript API", () => {
       message: string;
     };
     db.close();
-    expect(job).toMatchObject({ fit_score: null, scored_at: null });
+    expect(job).toMatchObject({
+      fit_score: 8,
+      scored_at: "2026-04-29T10:02:00+00:00",
+    });
     expect(event).toMatchObject({ stage: "score", level: "info", message: "Retry reset requested for score" });
 
     await app.close();
@@ -6595,7 +6598,8 @@ describe("local TypeScript API", () => {
       enriched_at: string | null;
       extraction_tier: string | null;
     };
-    // Sanity: legacy columns are also nulled (existing behavior).
+    // Retired wide columns remain untouched; exact-v7 state lives in the
+    // canonical enrichment aggregate and stage rows.
     const legacyJob = db
       .prepare(
         "SELECT detail_scraped_at, detail_error FROM jobs WHERE url = ?",
@@ -6611,7 +6615,7 @@ describe("local TypeScript API", () => {
     expect(enrichment.application_url).toBeNull();
     expect(enrichment.enriched_at).toBeNull();
     expect(enrichment.extraction_tier).toBeNull();
-    expect(legacyJob.detail_scraped_at).toBeNull();
+    expect(legacyJob.detail_scraped_at).toBe("2026-04-29T10:01:00+00:00");
     expect(legacyJob.detail_error).toBeNull();
 
     await app.close();
@@ -6619,8 +6623,8 @@ describe("local TypeScript API", () => {
 
   it("retry-enrich is a no-op when no job_enrichments row exists", async () => {
     // Confirm ``resetEnrichmentAggregate`` doesn't crash when the
-    // aggregate row was never written (job in legacy-only state). The
-    // legacy column reset still fires; the JE update is a 0-row UPDATE.
+    // aggregate row was never written. Exact-v7 reset is a 0-row aggregate
+    // update and never falls back to retired wide job columns.
     const app = buildApp(options);
     const jobKey = encodeURIComponent("https://example.com/jobs/blocked-tailor");
     const response = await app.inject({
