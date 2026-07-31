@@ -540,7 +540,24 @@ def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
 def generate_interview_prep(params: dict[str, Any]) -> WorkflowStartSpec:
     """Build a workflow spec for user-triggered stored interview prep."""
     try:
-        return build_interview_prep_workflow_spec(params)
+        if "jobId" in params:
+            raise invalid_params("generate_interview_prep accepts jobUrl only at the RPC boundary")
+        tenant_id = TenantId(_tenant_id(params))
+        job_url = str(_require(params, "jobUrl"))
+        job_id = _job_id(
+            _load_current_job(
+                get_connection(),
+                tenant_id=tenant_id,
+                job_url=job_url,
+            )
+        )
+        spec_params = dict(params)
+        spec_params.pop("jobUrl", None)
+        spec_params["tenantId"] = str(tenant_id)
+        spec_params["jobId"] = str(job_id)
+        return build_interview_prep_workflow_spec(
+            spec_params
+        )
     except ValueError as exc:
         raise invalid_params(str(exc)) from exc
 
