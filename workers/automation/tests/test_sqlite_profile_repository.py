@@ -109,6 +109,35 @@ def test_profile_schema_is_normalized_without_blob_escape_hatch(tmp_path):
     assert root_columns.isdisjoint(forbidden)
 
 
+def test_profile_schema_initializer_does_not_repair_partial_legacy_table(tmp_path):
+    conn = sqlite3.connect(tmp_path / "legacy-profile.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE candidate_profiles (
+            tenant_id TEXT NOT NULL DEFAULT 'local',
+            profile_id TEXT NOT NULL DEFAULT 'default',
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, profile_id)
+        )
+        """
+    )
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+
+    ensure_profile_tables(conn)
+
+    root_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(candidate_profiles)")
+    }
+    assert "experience_target_track" not in root_columns
+    assert not any(
+        statement.lstrip().upper().startswith("ALTER TABLE CANDIDATE_PROFILES")
+        for statement in statements
+    )
+    conn.close()
+
+
 def test_save_and_load_round_trips_profile_through_relational_rows(tmp_path):
     repo, conn, events = _new_repo(tmp_path)
 

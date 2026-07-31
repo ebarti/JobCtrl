@@ -1047,7 +1047,6 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         ON candidate_profile_skill_categories(tenant_id, profile_id, position_index)
         """
     )
-    _ensure_candidate_profile_columns(conn)
     conn.commit()
     return [
         "candidate_profiles",
@@ -1064,29 +1063,6 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         "candidate_profile_required_skills",
         "candidate_profile_resume_constraint_metrics",
     ]
-
-
-_PROFILE_COLUMN_MIGRATIONS: dict[str, str] = {
-    "experience_target_track": "TEXT NOT NULL DEFAULT ''",
-    "experience_target_seniority_floor": "TEXT NOT NULL DEFAULT ''",
-    "experience_target_functions": "TEXT NOT NULL DEFAULT ''",
-    "experience_target_specializations": "TEXT NOT NULL DEFAULT ''",
-    "experience_target_locations": "TEXT NOT NULL DEFAULT ''",
-    "experience_target_work_models": "TEXT NOT NULL DEFAULT ''",
-    "tailoring_claim_mode": "TEXT NOT NULL DEFAULT 'evidence_reframing'",
-    "tailoring_auto_approvable_claim_modes_json": "TEXT NOT NULL DEFAULT '[\"verified_only\",\"evidence_reframing\"]'",
-    "tailoring_allow_adjacent_achievement_drafts": "INTEGER NOT NULL DEFAULT 0",
-    "revision_min_fit_score": "INTEGER NOT NULL DEFAULT 8",
-    "revision_must_have_coverage": "REAL NOT NULL DEFAULT 0.85",
-    "revision_max_attempts": "INTEGER NOT NULL DEFAULT 1",
-}
-
-
-def _ensure_candidate_profile_columns(conn: sqlite3.Connection) -> None:
-    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(candidate_profiles)").fetchall()}
-    for column, definition in _PROFILE_COLUMN_MIGRATIONS.items():
-        if column not in existing_cols:
-            conn.execute(f"ALTER TABLE candidate_profiles ADD COLUMN {column} {definition}")
 
 
 def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
