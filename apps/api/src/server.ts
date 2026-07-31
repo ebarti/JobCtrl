@@ -1381,8 +1381,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return undefined;
       }
       return withWritableDb(reply, options.dbPath, (db) => {
-        const { jobUrl } = correctScore(db, decodeRouteParam(request.params.jobKey), body);
-        const detail = getJobDetail(db, jobUrl);
+        const jobId = resolveJobId(db, "local", decodeRouteParam(request.params.jobKey));
+        if (!jobId) {
+          void reply.code(404);
+          return { ok: false, error: "job_not_found" };
+        }
+        correctScore(db, "local", jobId, body);
+        const detail = getJobDetail(db, jobId);
         if (!detail) {
           void reply.code(404);
           return { ok: false, error: "job_not_found" };
@@ -1397,7 +1402,17 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
-    return withWritableDb(reply, options.dbPath, (db) => resetStaleScoresForRescore(db, body));
+    return withWritableDb(reply, options.dbPath, (db) => {
+      const jobIds = [...new Set(
+        body.jobKeys
+          .map((jobKey) => resolveJobId(db, "local", jobKey))
+          .filter((jobId): jobId is string => jobId !== null),
+      )];
+      return resetStaleScoresForRescore(db, {
+        limit: body.limit,
+        ...(body.jobKeys.length > 0 ? { jobIds } : {}),
+      });
+    });
   });
 
   app.post<{ Params: { jobKey: string } }>(
