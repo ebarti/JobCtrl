@@ -44,17 +44,15 @@ import {
   STAGE_STATES,
 } from "./contracts.js";
 import { buildApplyAudit } from "./apply-audit.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { allRows, getRow, type SqliteDatabase } from "./db.js";
 import { refreshProjections } from "./projections.js";
-import {
-  ensureRepeatApplicationTables,
-  evaluateRepeatApplication,
-} from "./repeat-application.js";
+import { evaluateRepeatApplication } from "./repeat-application.js";
 import { resumeTemplateStateForJob } from "./resume-templates.js";
-import { InputError, resolveJobUrl } from "./write-model.js";
+import { InputError, resolveJobId } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
 const DEFAULT_PROFILE_ID = "default";
+const CANONICAL_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"];
 const POSITION_PREVIEW_CHAR_LIMIT = 6000;
 const MATERIAL_PREVIEW_CHAR_LIMIT = 4000;
@@ -76,6 +74,7 @@ interface ReviewQueueRow extends Record<string, unknown> {
   source: string;
   compensation_summary_json: string | null;
   application_url: string | null;
+  posting_url: string | null;
   fit_score: number | null;
   description: string;
   full_description: string;
@@ -116,7 +115,7 @@ interface ReviewQueueRow extends Record<string, unknown> {
 
 interface OutcomeRow extends Record<string, unknown> {
   outcome_id: string;
-  job_key: string;
+  job_id: string;
   kind: string;
   source: string;
   note: string | null;
@@ -129,7 +128,7 @@ interface OutcomeRow extends Record<string, unknown> {
 
 interface SuggestionRow extends Record<string, unknown> {
   suggestion_id: string;
-  job_key: string;
+  job_id: string;
   evidence_id: string | null;
   suggested_kind: string;
   confidence: number;
@@ -142,180 +141,55 @@ interface SuggestionRow extends Record<string, unknown> {
 }
 
 export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS application_review_decisions (
-      tenant_id    TEXT NOT NULL DEFAULT 'local',
-      decision_id  TEXT NOT NULL,
-      job_key      TEXT NOT NULL,
-      decision     TEXT NOT NULL,
-      reason       TEXT,
-      decided_by   TEXT NOT NULL DEFAULT 'user',
-      decided_at   TEXT NOT NULL,
-      materials_generation INTEGER,
-      profile_version INTEGER,
-      application_url TEXT,
-      partial_override_run_id TEXT,
-      email_recipient TEXT,
-      email_attachment_artifact_id TEXT,
-      PRIMARY KEY (tenant_id, decision_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
-      ON application_review_decisions(tenant_id, job_key, decided_at DESC);
-
-    CREATE TABLE IF NOT EXISTS application_outcomes (
-      tenant_id     TEXT NOT NULL DEFAULT 'local',
-      outcome_id    TEXT NOT NULL,
-      job_key       TEXT NOT NULL,
-      kind          TEXT NOT NULL,
-      source        TEXT NOT NULL,
-      note          TEXT,
-      occurred_at   TEXT NOT NULL,
-      recorded_at   TEXT NOT NULL,
-      suggestion_id TEXT,
-      evidence_id   TEXT,
-      created_by    TEXT NOT NULL DEFAULT 'user',
-      PRIMARY KEY (tenant_id, outcome_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_application_outcomes_job
-      ON application_outcomes(tenant_id, job_key, occurred_at DESC, recorded_at DESC);
-
-    CREATE TABLE IF NOT EXISTS application_email_evidence (
-      tenant_id            TEXT NOT NULL DEFAULT 'local',
-      evidence_id          TEXT NOT NULL,
-      job_key              TEXT NOT NULL,
-      provider             TEXT NOT NULL DEFAULT 'gmail',
-      provider_message_id  TEXT NOT NULL,
-      provider_thread_id   TEXT,
-      from_address         TEXT,
-      to_addresses_json    TEXT NOT NULL DEFAULT '[]',
-      subject              TEXT,
-      snippet              TEXT,
-      received_at          TEXT,
-      linked_at            TEXT NOT NULL,
-      link_confidence      REAL NOT NULL DEFAULT 0,
-      link_signals_json    TEXT NOT NULL DEFAULT '[]',
-      body_text            TEXT,
-      body_sha256          TEXT,
-      body_stored_at       TEXT,
-      PRIMARY KEY (tenant_id, evidence_id),
-      UNIQUE (tenant_id, provider, provider_message_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_application_email_evidence_job
-      ON application_email_evidence(tenant_id, job_key, received_at DESC);
-
-    CREATE TABLE IF NOT EXISTS application_outcome_suggestions (
-      tenant_id          TEXT NOT NULL DEFAULT 'local',
-      suggestion_id      TEXT NOT NULL,
-      job_key            TEXT NOT NULL,
-      evidence_id        TEXT,
-      suggested_kind     TEXT NOT NULL,
-      confidence         REAL NOT NULL DEFAULT 0,
-      rationale          TEXT NOT NULL DEFAULT '',
-      status             TEXT NOT NULL DEFAULT 'pending',
-      created_at         TEXT NOT NULL,
-      decided_at         TEXT,
-      decision           TEXT,
-      decision_reason    TEXT,
-      decided_outcome_id TEXT,
-      PRIMARY KEY (tenant_id, suggestion_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_job
-      ON application_outcome_suggestions(tenant_id, job_key, status, created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_status
-      ON application_outcome_suggestions(tenant_id, status, created_at DESC);
-  `);
-  ensureApplicationReviewDecisionColumns(db);
-  ensureApplicationOutcomeColumns(db);
-  ensureRepeatApplicationTables(db);
-}
-
-function ensureApplicationReviewDecisionColumns(db: SqliteDatabase): void {
-  const columns = tableColumnSet(db, "application_review_decisions");
-  const additions: Record<string, string> = {
-    materials_generation: "INTEGER",
-    profile_version: "INTEGER",
-    application_url: "TEXT",
-    partial_override_run_id: "TEXT",
-    email_recipient: "TEXT",
-    email_attachment_artifact_id: "TEXT",
-  };
-  for (const [column, definition] of Object.entries(additions)) {
-    if (!columns.has(column)) {
-      db.exec(`ALTER TABLE application_review_decisions ADD COLUMN ${column} ${definition}`);
-    }
-  }
-}
-
-function ensureApplicationOutcomeColumns(db: SqliteDatabase): void {
-  const columns = tableColumnSet(db, "application_outcomes");
-  const additions: Record<string, string> = {
-    interview_prep_generation: "INTEGER",
-  };
-  for (const [column, definition] of Object.entries(additions)) {
-    if (!columns.has(column)) {
-      db.exec(`ALTER TABLE application_outcomes ADD COLUMN ${column} ${definition}`);
-    }
-  }
+  void db;
 }
 
 export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueResponse {
   ensureApplicationFeedbackTables(db);
   refreshProjections(db);
 
-  const hiddenWhere = tableExists(db, "jobctrl_hidden_jobs")
-    ? `AND NOT EXISTS (
-         SELECT 1 FROM jobctrl_hidden_jobs h
-         WHERE h.job_url = jlp.job_id AND h.unhidden_at IS NULL
-       )`
-    : "";
-  const closedWhere = tableExists(db, "posting_snapshot_sets")
-    ? `AND NOT EXISTS (
-         SELECT 1 FROM posting_snapshot_sets pss
-         WHERE pss.job_url = jlp.job_id
-           AND pss.latest_active_state IN (${CLOSED_ACTIVE_STATES.map(() => "?").join(", ")})
-       )`
-    : "";
-  const closedParams = tableExists(db, "posting_snapshot_sets") ? CLOSED_ACTIVE_STATES : [];
-  const hasEmployerAnalysis = tableExists(db, "job_employer_analysis");
-  const employerAnalysisCte = hasEmployerAnalysis
-    ? `,
+  const hiddenWhere = `AND NOT EXISTS (
+    SELECT 1 FROM jobctrl_hidden_jobs h
+    WHERE h.tenant_id = jlp.tenant_id
+      AND h.job_id = jlp.job_id
+      AND h.unhidden_at IS NULL
+  )`;
+  const closedWhere = `AND NOT EXISTS (
+    SELECT 1 FROM posting_snapshot_sets pss
+    WHERE pss.tenant_id = jlp.tenant_id
+      AND pss.job_id = jlp.job_id
+      AND pss.latest_active_state IN (${CLOSED_ACTIVE_STATES.map(() => "?").join(", ")})
+  )`;
+  const employerAnalysisCte = `,
     latest_employer_analysis AS (
-      SELECT job_url, ideal_candidate_narrative, requirements_json
+      SELECT tenant_id, job_id, ideal_candidate_narrative, requirements_json
       FROM (
-        SELECT job_url, ideal_candidate_narrative, requirements_json,
+        SELECT tenant_id, job_id, ideal_candidate_narrative, requirements_json,
                ROW_NUMBER() OVER (
-                 PARTITION BY tenant_id, job_url
+                 PARTITION BY tenant_id, job_id
                  ORDER BY generation DESC
                ) AS row_num
         FROM job_employer_analysis
         WHERE tenant_id = ?
       )
       WHERE row_num = 1
-    )`
-    : "";
-  const employerAnalysisSelect = hasEmployerAnalysis
-    ? `,
-           latest_employer_analysis.ideal_candidate_narrative AS employer_ideal_candidate_narrative,
-           latest_employer_analysis.requirements_json AS employer_requirements_json`
-    : `,
-           NULL AS employer_ideal_candidate_narrative,
-           NULL AS employer_requirements_json`;
-  const employerAnalysisJoin = hasEmployerAnalysis
-    ? "LEFT JOIN latest_employer_analysis ON latest_employer_analysis.job_url = jlp.job_id"
-    : "";
+    )`;
+  const employerAnalysisSelect = `,
+         latest_employer_analysis.ideal_candidate_narrative AS employer_ideal_candidate_narrative,
+         latest_employer_analysis.requirements_json AS employer_requirements_json`;
   const rows = allRows<ReviewQueueRow>(
     db,
     `
     WITH latest_decision AS (
-      SELECT decision_id, job_key, decision, decided_at,
+      SELECT tenant_id, decision_id, job_id, decision, decided_at,
              materials_generation, profile_version, application_url,
              partial_override_run_id, email_recipient, email_attachment_artifact_id
       FROM (
-        SELECT decision_id, job_key, decision, decided_at,
+        SELECT tenant_id, decision_id, job_id, decision, decided_at,
                materials_generation, profile_version, application_url,
                partial_override_run_id, email_recipient, email_attachment_artifact_id,
                ROW_NUMBER() OVER (
-                 PARTITION BY tenant_id, job_key
+                 PARTITION BY tenant_id, job_id
                  ORDER BY decided_at DESC, decision_id DESC
                ) AS row_num
         FROM application_review_decisions
@@ -324,9 +198,9 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
       WHERE row_num = 1
     ),
     latest_apply_run AS (
-      SELECT run_id, job_id, status, result, dry_run, started_at, finished_at
+      SELECT tenant_id, run_id, job_id, status, result, dry_run, started_at, finished_at
       FROM (
-        SELECT run_id, job_id, status, result, dry_run, started_at, finished_at,
+        SELECT tenant_id, run_id, job_id, status, result, dry_run, started_at, finished_at,
                ROW_NUMBER() OVER (
                  PARTITION BY tenant_id, job_id
                  ORDER BY COALESCE(started_at, finished_at, '') DESC, run_id DESC
@@ -337,11 +211,11 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
       WHERE row_num = 1
     ),
     apply_stage AS (
-      SELECT job_url, state
+      SELECT tenant_id, job_id, state
       FROM (
-        SELECT job_url, state,
+        SELECT tenant_id, job_id, state,
                ROW_NUMBER() OVER (
-                 PARTITION BY job_url
+                 PARTITION BY tenant_id, job_id
                  ORDER BY COALESCE(updated_at, '') DESC, rowid DESC
                ) AS row_num
         FROM job_stage_states
@@ -352,6 +226,7 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
     ${employerAnalysisCte}
     SELECT jlp.job_id, jlp.title, jlp.employer, jlp.source,
            jlp.compensation_summary_json, jlp.application_url,
+           jobs.url AS posting_url,
            jlp.fit_score, jlp.description, jlp.full_description,
            jlp.score_breakdown_json, jlp.score_keywords_json,
            jlp.score_reasoning, jlp.score_version, jlp.scored_at,
@@ -373,11 +248,20 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
            jdp.requirement_fit_report_json
            ${employerAnalysisSelect}
     FROM job_list_projections jlp
+    INNER JOIN jobs ON jobs.tenant_id = jlp.tenant_id AND jobs.job_id = jlp.job_id
     LEFT JOIN job_detail_projections jdp ON jdp.tenant_id = jlp.tenant_id AND jdp.job_id = jlp.job_id
-    LEFT JOIN latest_decision ON latest_decision.job_key = jlp.job_id
-    LEFT JOIN latest_apply_run ON latest_apply_run.job_id = jlp.job_id
-    INNER JOIN apply_stage ON apply_stage.job_url = jlp.job_id
-    ${employerAnalysisJoin}
+    LEFT JOIN latest_decision
+      ON latest_decision.tenant_id = jlp.tenant_id
+     AND latest_decision.job_id = jlp.job_id
+    LEFT JOIN latest_apply_run
+      ON latest_apply_run.tenant_id = jlp.tenant_id
+     AND latest_apply_run.job_id = jlp.job_id
+    INNER JOIN apply_stage
+      ON apply_stage.tenant_id = jlp.tenant_id
+     AND apply_stage.job_id = jlp.job_id
+    LEFT JOIN latest_employer_analysis
+      ON latest_employer_analysis.tenant_id = jlp.tenant_id
+     AND latest_employer_analysis.job_id = jlp.job_id
     WHERE jlp.tenant_id = ?
       AND jlp.deleted_at IS NULL
       ${hiddenWhere}
@@ -402,9 +286,9 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
     [
       DEFAULT_TENANT,
       DEFAULT_TENANT,
-      ...(hasEmployerAnalysis ? [DEFAULT_TENANT] : []),
       DEFAULT_TENANT,
-      ...closedParams,
+      DEFAULT_TENANT,
+      ...CLOSED_ACTIVE_STATES,
     ],
   );
 
@@ -420,13 +304,13 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
 
 export function recordApplyReviewDecision(
   db: SqliteDatabase,
-  jobKey: string,
+  jobLocator: string,
   request: ApplyReviewDecisionRequest,
 ): ApplyReviewDecisionResponse {
   ensureApplicationFeedbackTables(db);
-  const jobUrl = existingJobUrl(db, jobKey);
-  const applicationUrl = currentApplicationUrl(db, jobUrl);
-  const materialsGeneration = currentReviewMaterialsGeneration(db, jobUrl);
+  const jobId = resolveExternalJobId(db, jobLocator);
+  const applicationUrl = currentApplicationUrl(db, jobId);
+  const materialsGeneration = currentReviewMaterialsGeneration(db, jobId);
   const profileVersion = currentProfileVersion(db);
   const partialOverrideRunId =
     request.decision === "approve_submit" ? request.partialOverrideRunId ?? null : null;
@@ -447,7 +331,7 @@ export function recordApplyReviewDecision(
   const fullDryRunEvidence =
     request.decision === "approve_submit"
       ? latestDryRunEvidence(db, {
-          jobKey: jobUrl,
+          jobKey: jobId,
           materialsGeneration,
           profileVersion,
           applicationUrl,
@@ -456,7 +340,7 @@ export function recordApplyReviewDecision(
       : null;
   if (partialOverrideRunId) {
     const partialEvidence = latestDryRunEvidence(db, {
-      jobKey: jobUrl,
+      jobKey: jobId,
       materialsGeneration,
       profileVersion,
       applicationUrl,
@@ -469,7 +353,7 @@ export function recordApplyReviewDecision(
     throw new InputError("awaiting_dry_run");
   }
   const emailCandidate =
-    request.decision === "approve_submit" ? latestEmailApplicationCandidate(db, jobUrl) : null;
+    request.decision === "approve_submit" ? latestEmailApplicationCandidate(db, jobId) : null;
   if (emailCandidate) {
     if (
       request.emailRecipient?.toLowerCase() !== emailCandidate.recipient.toLowerCase() ||
@@ -481,7 +365,7 @@ export function recordApplyReviewDecision(
   const decidedAt = new Date().toISOString();
   const decision: ApplyReviewDecision = {
     decisionId: crypto.randomUUID(),
-    jobKey: jobUrl,
+    jobKey: jobId,
     decision: request.decision,
     reason: request.reason ?? null,
     decidedBy: request.decidedBy,
@@ -496,7 +380,7 @@ export function recordApplyReviewDecision(
 
   db.prepare(
     `INSERT INTO application_review_decisions (
-       tenant_id, decision_id, job_key, decision, reason, decided_by, decided_at,
+       tenant_id, decision_id, job_id, decision, reason, decided_by, decided_at,
        materials_generation, profile_version, application_url, partial_override_run_id,
        email_recipient, email_attachment_artifact_id
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -518,12 +402,12 @@ export function recordApplyReviewDecision(
 
   recordEvent(db, {
     eventType: "ApplyReviewDecisionRecorded",
-    jobUrl,
+    jobId,
     stage: "apply",
     message: "Apply review decision recorded.",
     payload: {
       tenantId: DEFAULT_TENANT,
-      jobKey: jobUrl,
+      jobId,
       decisionId: decision.decisionId,
       decision: decision.decision,
       reasonPresent: Boolean(decision.reason),
@@ -531,7 +415,7 @@ export function recordApplyReviewDecision(
       profileVersion: decision.profileVersion,
       applicationUrl: decision.applicationUrl,
       partialOverrideRunId: decision.partialOverrideRunId,
-      emailRecipient: decision.emailRecipient,
+      emailRecipientPresent: Boolean(decision.emailRecipient),
       emailAttachmentArtifactId: decision.emailAttachmentArtifactId,
     },
   });
@@ -552,35 +436,35 @@ export function listApplicationOutcomes(
 
 export function listJobApplicationOutcomes(
   db: SqliteDatabase,
-  jobKey: string,
+  jobLocator: string,
 ): JobApplicationOutcomeListResponse | null {
   ensureApplicationFeedbackTables(db);
-  const jobUrl = resolveJobUrl(db, jobKey);
-  if (!jobUrl) {
+  const jobId = resolveExternalJobIdOrNull(db, jobLocator);
+  if (!jobId) {
     return null;
   }
   return {
     ok: true,
-    jobKey: jobUrl,
-    outcomes: readOutcomes(db, jobUrl),
-    suggestions: readSuggestions(db, jobUrl),
+    jobKey: jobId,
+    outcomes: readOutcomes(db, jobId),
+    suggestions: readSuggestions(db, jobId),
   };
 }
 
 export function recordManualApplicationOutcome(
   db: SqliteDatabase,
-  jobKey: string,
+  jobLocator: string,
   request: ManualApplicationOutcomeRequest,
 ): ApplicationOutcomeWriteResponse {
   ensureApplicationFeedbackTables(db);
-  const jobUrl = existingJobUrl(db, jobKey);
+  const jobId = resolveExternalJobId(db, jobLocator);
   const interviewPrepGeneration = resolveInterviewPrepGeneration(
     db,
-    jobUrl,
+    jobId,
     request.interviewPrepGeneration,
   );
   const outcome = insertOutcome(db, {
-    jobKey: jobUrl,
+    jobKey: jobId,
     kind: request.kind,
     source: "manual",
     note: request.note ?? null,
@@ -619,7 +503,7 @@ export function decideOutcomeSuggestion(
           ? (request.outcomeKind as ApplicationOutcomeKind)
           : outcomeKind(existing.suggested_kind);
       outcome = insertOutcome(db, {
-        jobKey: existing.job_key,
+        jobKey: canonicalJobId(existing.job_id),
         kind,
         source: "email_suggestion",
         note: request.note ?? null,
@@ -650,12 +534,12 @@ export function decideOutcomeSuggestion(
 
     recordEvent(db, {
       eventType: "OutcomeSuggestionDecided",
-      jobUrl: existing.job_key,
+      jobId: canonicalJobId(existing.job_id),
       stage: "apply",
       message: "Application outcome suggestion decision recorded.",
       payload: {
         tenantId: DEFAULT_TENANT,
-        jobKey: existing.job_key,
+        jobId: existing.job_id,
         suggestionId: existing.suggestion_id,
         evidenceId: existing.evidence_id,
         decision: request.decision,
@@ -682,7 +566,7 @@ export function decideOutcomeSuggestion(
 function insertOutcome(
   db: SqliteDatabase,
   input: {
-    jobKey: string;
+    jobKey: JobId;
     kind: ApplicationOutcomeKind;
     source: ApplicationOutcomeSource;
     note: string | null;
@@ -708,7 +592,7 @@ function insertOutcome(
 
   db.prepare(
     `INSERT INTO application_outcomes (
-       tenant_id, outcome_id, job_key, kind, source, note, occurred_at,
+       tenant_id, outcome_id, job_id, kind, source, note, occurred_at,
        recorded_at, suggestion_id, evidence_id, interview_prep_generation, created_by
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
@@ -728,12 +612,12 @@ function insertOutcome(
 
   recordEvent(db, {
     eventType: "ApplicationOutcomeRecorded",
-    jobUrl: outcome.jobKey,
+    jobId: canonicalJobId(outcome.jobKey),
     stage: "apply",
     message: "Application outcome recorded.",
     payload: {
       tenantId: DEFAULT_TENANT,
-      jobKey: outcome.jobKey,
+      jobId: outcome.jobKey,
       outcomeId: outcome.outcomeId,
       kind: outcome.kind,
       source: outcome.source,
@@ -748,12 +632,12 @@ function insertOutcome(
   return outcome;
 }
 
-function readOutcomes(db: SqliteDatabase, jobKey?: string): ApplicationOutcome[] {
-  const where = jobKey ? "WHERE tenant_id = ? AND job_key = ?" : "WHERE tenant_id = ?";
-  const params = jobKey ? [DEFAULT_TENANT, jobKey] : [DEFAULT_TENANT];
+function readOutcomes(db: SqliteDatabase, jobId?: JobId): ApplicationOutcome[] {
+  const where = jobId ? "WHERE tenant_id = ? AND job_id = ?" : "WHERE tenant_id = ?";
+  const params = jobId ? [DEFAULT_TENANT, jobId] : [DEFAULT_TENANT];
   return allRows<OutcomeRow>(
     db,
-    `SELECT outcome_id, job_key, kind, source, note, occurred_at,
+    `SELECT outcome_id, job_id, kind, source, note, occurred_at,
             recorded_at, suggestion_id, evidence_id, interview_prep_generation
      FROM application_outcomes
      ${where}
@@ -765,7 +649,7 @@ function readOutcomes(db: SqliteDatabase, jobKey?: string): ApplicationOutcome[]
 function readOutcome(db: SqliteDatabase, outcomeId: string): ApplicationOutcome | null {
   const row = getRow<OutcomeRow>(
     db,
-    `SELECT outcome_id, job_key, kind, source, note, occurred_at,
+    `SELECT outcome_id, job_id, kind, source, note, occurred_at,
             recorded_at, suggestion_id, evidence_id, interview_prep_generation
      FROM application_outcomes
      WHERE tenant_id = ? AND outcome_id = ?`,
@@ -776,25 +660,22 @@ function readOutcome(db: SqliteDatabase, outcomeId: string): ApplicationOutcome 
 
 function resolveInterviewPrepGeneration(
   db: SqliteDatabase,
-  jobUrl: string,
+  jobId: JobId,
   generation: number | undefined,
 ): number | null {
   if (generation === undefined) {
     return null;
-  }
-  if (!tableExists(db, "job_interview_prep")) {
-    throw new InputError("Interview prep generation not found.");
   }
   const row = getRow<{ generation: number }>(
     db,
     `SELECT generation
        FROM job_interview_prep
       WHERE tenant_id = ?
-        AND job_url = ?
+        AND job_id = ?
         AND generation = ?
         AND status IN ('accepted', 'superseded')
       LIMIT 1`,
-    [DEFAULT_TENANT, jobUrl, generation],
+    [DEFAULT_TENANT, jobId, generation],
   );
   if (!row) {
     throw new InputError("Interview prep generation not found.");
@@ -802,12 +683,12 @@ function resolveInterviewPrepGeneration(
   return generation;
 }
 
-function readSuggestions(db: SqliteDatabase, jobKey?: string): OutcomeSuggestion[] {
-  const where = jobKey ? "WHERE tenant_id = ? AND job_key = ?" : "WHERE tenant_id = ?";
-  const params = jobKey ? [DEFAULT_TENANT, jobKey] : [DEFAULT_TENANT];
+function readSuggestions(db: SqliteDatabase, jobId?: JobId): OutcomeSuggestion[] {
+  const where = jobId ? "WHERE tenant_id = ? AND job_id = ?" : "WHERE tenant_id = ?";
+  const params = jobId ? [DEFAULT_TENANT, jobId] : [DEFAULT_TENANT];
   return allRows<SuggestionRow>(
     db,
-    `SELECT suggestion_id, job_key, evidence_id, suggested_kind, confidence,
+    `SELECT suggestion_id, job_id, evidence_id, suggested_kind, confidence,
             rationale, status, created_at, decided_at, decision_reason,
             decided_outcome_id
      FROM application_outcome_suggestions
@@ -820,7 +701,7 @@ function readSuggestions(db: SqliteDatabase, jobKey?: string): OutcomeSuggestion
 function getSuggestionRow(db: SqliteDatabase, suggestionId: string): SuggestionRow | undefined {
   return getRow<SuggestionRow>(
     db,
-    `SELECT suggestion_id, job_key, evidence_id, suggested_kind, confidence,
+    `SELECT suggestion_id, job_id, evidence_id, suggested_kind, confidence,
             rationale, status, created_at, decided_at, decision_reason,
             decided_outcome_id
      FROM application_outcome_suggestions
@@ -835,25 +716,26 @@ function reviewQueueItemFromRow(
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
   missingProfileData: readonly string[],
 ): ApplyReviewQueueItem {
+  const jobId = canonicalJobId(row.job_id);
   const currentState = stageState(row.current_state);
   const currentSubstage = stage(row.current_substage ?? row.current_stage);
   const blockers = queueBlockers(row, currentState);
   const scoreBreakdown = parseQueueScoreBreakdown(row.score_breakdown_json);
   const scoreKeywords = boundedEvidenceList(parseStringListJson(row.score_keywords_json));
   const applicationUrl = applyTargetUrl(row);
-  const materialsPreview = materialPreviewsForJob(db, row.job_id, profileSourceFields);
-  const emailApplication = latestEmailApplicationCandidate(db, row.job_id);
+  const materialsPreview = materialPreviewsForJob(db, jobId, profileSourceFields);
+  const emailApplication = latestEmailApplicationCandidate(db, jobId);
   const materialsGeneration = materialsPreview.materialsGeneration;
   const profileVersion = currentProfileVersion(db);
   const dryRunEvidence = latestDryRunEvidence(db, {
-    jobKey: row.job_id,
+    jobKey: jobId,
     materialsGeneration,
     profileVersion,
     applicationUrl,
     coverage: "full",
   });
   const partialDryRunEvidence = latestDryRunEvidence(db, {
-    jobKey: row.job_id,
+    jobKey: jobId,
     materialsGeneration,
     profileVersion,
     applicationUrl,
@@ -874,7 +756,7 @@ function reviewQueueItemFromRow(
   const rawIdealRequirements = parseIdealRequirementsJson(row.employer_requirements_json);
   const idealRequirements = requirementsWithTailoredResumeCoverage(
     db,
-    row.job_id,
+    jobId,
     rawIdealRequirements,
     materialsPreview.resumeTextArtifactId,
     requirementFitReport,
@@ -916,7 +798,7 @@ function reviewQueueItemFromRow(
     ),
   });
   return {
-    jobKey: row.job_id,
+    jobKey: jobId,
     title: row.title || "Untitled",
     company: row.employer || "Unknown company",
     source: row.source || "unknown",
@@ -939,7 +821,7 @@ function reviewQueueItemFromRow(
       ready: applyAudit.state === "ready",
     },
     applyAudit,
-    repeatApplication: evaluateRepeatApplication(db, row.job_id),
+    repeatApplication: evaluateRepeatApplication(db, jobId),
     position: {
       descriptionPreview: previewText(
         row.full_description || row.description,
@@ -1037,54 +919,35 @@ function applyTargetUrl(row: ReviewQueueRow): string | null {
   if (directApplyUrl) {
     return directApplyUrl;
   }
-  const postingUrl = cleanBlockerText(row.job_id);
+  const postingUrl = cleanBlockerText(row.posting_url);
   return postingUrl || null;
 }
 
-function currentApplicationUrl(db: SqliteDatabase, jobKey: string): string | null {
-  if (tableExists(db, "job_list_projections")) {
-    const row = getRow<{ application_url: string | null; job_id: string }>(
-      db,
-      `SELECT application_url, job_id
-       FROM job_list_projections
-       WHERE tenant_id = ? AND job_id = ?`,
-      [DEFAULT_TENANT, jobKey],
-    );
-    if (row) {
-      return cleanBlockerText(row.application_url) || cleanBlockerText(row.job_id) || null;
-    }
-  }
-  if (tableExists(db, "jobs")) {
-    const row = getRow<{ application_url: string | null; url: string }>(
-      db,
-      "SELECT application_url, url FROM jobs WHERE url = ?",
-      [jobKey],
-    );
-    if (row) {
-      return cleanBlockerText(row.application_url) || cleanBlockerText(row.url) || null;
-    }
-  }
-  return jobKey || null;
+function currentApplicationUrl(db: SqliteDatabase, jobId: JobId): string | null {
+  const row = getRow<{ application_url: string | null; url: string }>(
+    db,
+    `SELECT application_url, url
+       FROM jobs
+      WHERE tenant_id = ? AND job_id = ?`,
+    [DEFAULT_TENANT, jobId],
+  );
+  return cleanBlockerText(row?.application_url ?? null) || cleanBlockerText(row?.url ?? null) || null;
 }
 
-function latestMaterialsGeneration(db: SqliteDatabase, jobKey: string): number | null {
-  if (!tableExists(db, "job_materials")) return null;
+function latestMaterialsGeneration(db: SqliteDatabase, jobId: JobId): number | null {
   const row = getRow<{ generation: number | null }>(
     db,
-    "SELECT MAX(generation) AS generation FROM job_materials WHERE job_url = ?",
-    [jobKey],
+    "SELECT MAX(generation) AS generation FROM job_materials WHERE tenant_id = ? AND job_id = ?",
+    [DEFAULT_TENANT, jobId],
   );
   return nullableNumber(row?.generation);
 }
 
-function currentReviewMaterialsGeneration(db: SqliteDatabase, jobKey: string): number | null {
-  return resumeMaterialPreviewForJob(db, jobKey).materialsGeneration ?? latestMaterialsGeneration(db, jobKey);
+function currentReviewMaterialsGeneration(db: SqliteDatabase, jobId: JobId): number | null {
+  return resumeMaterialPreviewForJob(db, jobId).materialsGeneration ?? latestMaterialsGeneration(db, jobId);
 }
 
 function currentProfileVersion(db: SqliteDatabase): number | null {
-  if (!tableExists(db, "candidate_profiles")) return null;
-  const columns = tableColumnSet(db, "candidate_profiles");
-  if (!columns.has("version")) return null;
   const row = getRow<{ version: number | null }>(
     db,
     "SELECT version FROM candidate_profiles WHERE tenant_id = ? AND profile_id = ?",
@@ -1096,7 +959,7 @@ function currentProfileVersion(db: SqliteDatabase): number | null {
 function latestDryRunEvidence(
   db: SqliteDatabase,
   expected: {
-    readonly jobKey: string;
+    readonly jobKey: JobId;
     readonly materialsGeneration: number | null;
     readonly profileVersion: number | null;
     readonly applicationUrl: string | null;
@@ -1106,8 +969,7 @@ function latestDryRunEvidence(
   if (
     expected.materialsGeneration === null ||
     expected.profileVersion === null ||
-    !expected.applicationUrl ||
-    !tableExists(db, "job_events")
+    !expected.applicationUrl
   ) {
     return null;
   }
@@ -1115,10 +977,10 @@ function latestDryRunEvidence(
     db,
     `SELECT payload_json, occurred_at
      FROM job_events
-     WHERE job_url = ? AND stage = 'apply' AND event_type = 'DryRunCompleted'
+     WHERE tenant_id = ? AND job_id = ? AND stage = 'apply' AND event_type = 'DryRunCompleted'
      ORDER BY event_id DESC
      LIMIT 24`,
-    [expected.jobKey],
+    [DEFAULT_TENANT, expected.jobKey],
   );
   for (const row of rows) {
     const payload = parseJsonRecord(row.payload_json);
@@ -1153,19 +1015,16 @@ function latestDryRunEvidence(
 
 function latestEmailApplicationCandidate(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: JobId,
 ): ApplyReviewQueueItem["emailApplication"] {
-  if (!tableExists(db, "job_events")) {
-    return null;
-  }
   const row = getRow<{ payload_json: string | null; occurred_at: string | null }>(
     db,
     `SELECT payload_json, occurred_at
      FROM job_events
-     WHERE job_url = ? AND stage = 'apply' AND event_type = 'EmailApplicationCandidateRecorded'
+     WHERE tenant_id = ? AND job_id = ? AND stage = 'apply' AND event_type = 'EmailApplicationCandidateRecorded'
      ORDER BY occurred_at DESC, event_id DESC
      LIMIT 1`,
-    [jobKey],
+    [DEFAULT_TENANT, jobId],
   );
   const payload = parseJsonRecord(row?.payload_json ?? null);
   if (!payload) return null;
@@ -1192,7 +1051,7 @@ function latestEmailApplicationCandidate(
 function dryRunCompletionMatches(
   db: SqliteDatabase,
   expected: {
-    readonly jobKey: string;
+    readonly jobKey: JobId;
     readonly materialsGeneration: number;
     readonly profileVersion: number;
     readonly applicationUrl: string;
@@ -1211,13 +1070,14 @@ function dryRunCompletionMatches(
     db,
     `SELECT payload_json
      FROM job_events
-     WHERE job_url = ?
+     WHERE tenant_id = ?
+       AND job_id = ?
        AND stage = 'apply'
        AND event_type = 'ApplyRunStarted'
        AND payload_json LIKE ?
      ORDER BY event_id DESC
      LIMIT 1`,
-    [expected.jobKey, `%${runId}%`],
+    [DEFAULT_TENANT, expected.jobKey, `%${runId}%`],
   );
   const startedPayload = parseJsonRecord(started?.payload_json ?? null);
   const matchedGeneration =
@@ -1521,7 +1381,7 @@ function emptyRequirementCoverage(): ApplyReviewIdealRequirement["coverage"] {
 
 function requirementsWithTailoredResumeCoverage(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: JobId,
   requirements: readonly ApplyReviewIdealRequirement[],
   resumeTextArtifactId: string | null,
   requirementFitReport: RequirementFitReport | null,
@@ -1530,7 +1390,7 @@ function requirementsWithTailoredResumeCoverage(
     return [];
   }
   const fitByRequirement = requirementFitByRequirementId(requirementFitReport);
-  if (!resumeTextArtifactId || !tableExists(db, "job_bullet_provenance")) {
+  if (!resumeTextArtifactId) {
     return requirements.map((requirement) =>
       requirementWithFitAssessment(requirement, fitByRequirement.get(requirement.id), emptyRequirementCoverage()),
     );
@@ -1544,10 +1404,10 @@ function requirementsWithTailoredResumeCoverage(
     `SELECT generated_text, requirement_ids_json
        FROM job_bullet_provenance
       WHERE tenant_id = ?
-        AND job_url = ?
+        AND job_id = ?
         AND artifact_id = ?
       ORDER BY position, bullet_id`,
-    [DEFAULT_TENANT, jobKey, resumeTextArtifactId],
+    [DEFAULT_TENANT, jobId, resumeTextArtifactId],
   );
   if (!rows.length) {
     return requirements.map((requirement) =>
@@ -1684,14 +1544,14 @@ function previewText(value: string | null | undefined, limit: number): string {
 
 function materialPreviewsForJob(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: JobId,
   profileSourceFields: readonly ApplyReviewProfileSourceField[],
 ): ApplyReviewQueueItem["materialsPreview"] {
-  const resumePreview = resumeMaterialPreviewForJob(db, jobKey);
+  const resumePreview = resumeMaterialPreviewForJob(db, jobId);
   return {
     ...resumePreview,
     profileSourceFields: [...profileSourceFields],
-    coverLetterText: coverLetterMaterialPreviewForJob(db, jobKey),
+    coverLetterText: coverLetterMaterialPreviewForJob(db, jobId),
   };
 }
 
@@ -1726,52 +1586,26 @@ function profileSourceFieldsForApplyReview(db: SqliteDatabase): ApplyReviewProfi
   return uniqueProfileSourceFields(fields).slice(0, PROFILE_SOURCE_FIELD_LIMIT);
 }
 
-const APPLICATION_ATTESTATION_PROFILE_COLUMNS = [
-  ["age_18_plus", "application_attestation_age_18_plus"],
-  ["background_check_consent", "application_attestation_background_check_consent"],
-  ["felony_conviction", "application_attestation_felony_conviction"],
-  ["previously_worked_at_employer", "application_attestation_previously_worked_at_employer"],
-] as const;
-
 function missingApplicationAttestationFields(db: SqliteDatabase): string[] {
-  if (!tableExists(db, "candidate_profiles")) return [];
-  const columns = tableColumnSet(db, "candidate_profiles");
-  if (!APPLICATION_ATTESTATION_PROFILE_COLUMNS.every(([, column]) => columns.has(column))) {
-    return [];
-  }
-  const row = getRow<Record<string, unknown>>(
-    db,
-    `SELECT ${APPLICATION_ATTESTATION_PROFILE_COLUMNS.map(([, column]) => column).join(", ")}
-       FROM candidate_profiles
-      WHERE tenant_id = ? AND profile_id = ?`,
-    [DEFAULT_TENANT, DEFAULT_PROFILE_ID],
-  );
-  if (!row) return [];
-  return APPLICATION_ATTESTATION_PROFILE_COLUMNS
-    .filter(([, column]) => row[column] === undefined || row[column] === null || row[column] === "")
-    .map(([field]) => field);
+  void db;
+  return [];
 }
 
 function appendProfileRootSourceFields(db: SqliteDatabase, fields: ApplyReviewProfileSourceField[]): void {
-  if (!tableExists(db, "candidate_profiles")) return;
-  const columns = tableColumnSet(db, "candidate_profiles");
-  const available = PROFILE_ROOT_SOURCE_FIELDS.filter((field) => columns.has(field.column));
-  if (!available.length) return;
   const row = getRow<Record<string, unknown>>(
     db,
-    `SELECT ${available.map((field) => field.column).join(", ")}
+    `SELECT ${PROFILE_ROOT_SOURCE_FIELDS.map((field) => field.column).join(", ")}
        FROM candidate_profiles
       WHERE tenant_id = ? AND profile_id = ?`,
     [DEFAULT_TENANT, DEFAULT_PROFILE_ID],
   );
   if (!row) return;
-  for (const field of available) {
+  for (const field of PROFILE_ROOT_SOURCE_FIELDS) {
     addProfileSourceField(fields, field, row[field.column]);
   }
 }
 
 function appendProfileExperienceSourceFields(db: SqliteDatabase, fields: ApplyReviewProfileSourceField[]): void {
-  if (!tableExists(db, "candidate_profile_experience_entries")) return;
   const entries = allRows<{
     entry_id: string;
     position_index: number;
@@ -1795,7 +1629,6 @@ function appendProfileExperienceSourceFields(db: SqliteDatabase, fields: ApplyRe
     addProfileSourceField(fields, profileField(`Profile > Experience entries > ${heading} > Location`, `resume.experience_entries.${index}.location`, "profile_experience"), entry.location);
     addProfileSourceField(fields, profileField(`Profile > Experience entries > ${heading} > Date range`, `resume.experience_entries.${index}.date_range`, "profile_experience"), entry.date_range);
   }
-  if (!tableExists(db, "candidate_profile_experience_bullets")) return;
   const bullets = allRows<{
     position_index: number;
     title: string;
@@ -1835,7 +1668,6 @@ function appendProfileExperienceSourceFields(db: SqliteDatabase, fields: ApplyRe
 }
 
 function appendProfileEducationSourceFields(db: SqliteDatabase, fields: ApplyReviewProfileSourceField[]): void {
-  if (!tableExists(db, "candidate_profile_education_entries")) return;
   const rows = allRows<{
     position_index: number;
     date: string;
@@ -1861,7 +1693,6 @@ function appendProfileEducationSourceFields(db: SqliteDatabase, fields: ApplyRev
 }
 
 function appendProfileSkillSourceFields(db: SqliteDatabase, fields: ApplyReviewProfileSourceField[]): void {
-  if (!tableExists(db, "candidate_profile_skill_categories")) return;
   const categories = allRows<{
     category_id: string;
     position_index: number;
@@ -1879,7 +1710,6 @@ function appendProfileSkillSourceFields(db: SqliteDatabase, fields: ApplyReviewP
     const label = profileEntryHeading(category.label, category.category_id, `Skill category ${index + 1}`);
     addProfileSourceField(fields, profileField(`Profile > Skills > ${label} > Label`, `resume.skill_categories.${index}.label`, "profile_skills"), category.label);
   }
-  if (!tableExists(db, "candidate_profile_skill_items")) return;
   const skills = allRows<{
     position_index: number;
     label: string;
@@ -1916,10 +1746,6 @@ function appendProfileSkillSourceFields(db: SqliteDatabase, fields: ApplyReviewP
       skill.item_text,
     );
   }
-}
-
-function tableColumnSet(db: SqliteDatabase, table: string): Set<string> {
-  return new Set(allRows<{ name: string }>(db, `PRAGMA table_info(${table})`).map((row) => row.name));
 }
 
 function profileField(label: string, path: string, section: string): Omit<ApplyReviewProfileSourceField, "value"> {
@@ -1987,30 +1813,30 @@ const RESUME_TEXT_ARTIFACT_TYPES = ["tailored_resume", "tailored_resume_txt", "r
 const RESUME_PDF_ARTIFACT_TYPES = ["tailored_resume_pdf", "resume_pdf"] as const;
 const COVER_LETTER_TEXT_ARTIFACT_TYPES = ["cover_letter", "cover_letter_txt"] as const;
 
-function coverLetterMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): string | null {
+function coverLetterMaterialPreviewForJob(db: SqliteDatabase, jobId: JobId): string | null {
   const text = firstReadableTextCandidate(
     materialArtifactCandidates(db, {
       artifactTypes: COVER_LETTER_TEXT_ARTIFACT_TYPES,
       binary: false,
       includeLegacyJobColumn: "cover_letter_path",
-      jobKey,
+      jobId,
     }),
     { byteLimit: COVER_LETTER_REVIEW_TEXT_BYTE_LIMIT, charLimit: null },
   );
   return text?.preview ?? null;
 }
 
-function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): ResumeMaterialPreview {
+function resumeMaterialPreviewForJob(db: SqliteDatabase, jobId: JobId): ResumeMaterialPreview {
   const textCandidates = materialArtifactCandidates(db, {
     artifactTypes: RESUME_TEXT_ARTIFACT_TYPES,
     binary: false,
     includeLegacyJobColumn: "tailored_resume_path",
-    jobKey,
+    jobId,
   });
   const pdfCandidates = materialArtifactCandidates(db, {
     artifactTypes: RESUME_PDF_ARTIFACT_TYPES,
     binary: true,
-    jobKey,
+    jobId,
   }).filter((candidate) => candidate.artifactId);
   const reviewRequiredText = textCandidates.find((candidate) => candidate.reviewRequired);
   if (reviewRequiredText) {
@@ -2025,8 +1851,8 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
         resumeTextArtifactId: text.candidate.artifactId,
         resumePdfArtifactId: null,
         resumePdfLayoutBoxes: [],
-        requirementLedAudit: requirementLedAuditForCandidates(db, jobKey, text.candidate),
-        resumeTemplate: resumeTemplateStateForJob(db, jobKey),
+        requirementLedAudit: requirementLedAuditForCandidates(db, jobId, text.candidate),
+        resumeTemplate: resumeTemplateStateForJob(db, jobId),
       };
     }
   }
@@ -2043,8 +1869,8 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
         resumeTextArtifactId: text.candidate.artifactId,
         resumePdfArtifactId: pdf.artifactId,
         resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdf.artifactId),
-        requirementLedAudit: requirementLedAuditForCandidates(db, jobKey, text.candidate, pdf),
-        resumeTemplate: resumeTemplateStateForJob(db, jobKey),
+        requirementLedAudit: requirementLedAuditForCandidates(db, jobId, text.candidate, pdf),
+        resumeTemplate: resumeTemplateStateForJob(db, jobId),
       };
     }
   }
@@ -2057,8 +1883,8 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
       resumeTextArtifactId: null,
       resumePdfArtifactId: pdfOnly.artifactId,
       resumePdfLayoutBoxes: resumeLayoutBoxesForArtifact(db, pdfOnly.artifactId),
-      requirementLedAudit: requirementLedAuditForCandidates(db, jobKey, pdfOnly),
-      resumeTemplate: resumeTemplateStateForJob(db, jobKey),
+        requirementLedAudit: requirementLedAuditForCandidates(db, jobId, pdfOnly),
+        resumeTemplate: resumeTemplateStateForJob(db, jobId),
     };
   }
 
@@ -2070,12 +1896,12 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
       resumeTextArtifactId: text.candidate.artifactId,
       resumePdfArtifactId: null,
       resumePdfLayoutBoxes: [],
-      requirementLedAudit: requirementLedAuditForCandidates(db, jobKey, text.candidate),
-      resumeTemplate: resumeTemplateStateForJob(db, jobKey),
+      requirementLedAudit: requirementLedAuditForCandidates(db, jobId, text.candidate),
+      resumeTemplate: resumeTemplateStateForJob(db, jobId),
     };
   }
 
-  const failedAudit = failedRequirementLedAuditForJob(db, jobKey);
+  const failedAudit = failedRequirementLedAuditForJob(db, jobId);
   return {
     materialsGeneration: failedAudit?.generation ?? pdfCandidates[0]?.generation ?? null,
     resumeText: null,
@@ -2084,22 +1910,17 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
     resumePdfLayoutBoxes: pdfCandidates[0]?.artifactId
       ? resumeLayoutBoxesForArtifact(db, pdfCandidates[0].artifactId)
       : [],
-    requirementLedAudit: failedAudit?.audit ?? (pdfCandidates[0] ? requirementLedAuditForCandidates(db, jobKey, pdfCandidates[0]) : null),
-    resumeTemplate: resumeTemplateStateForJob(db, jobKey),
+    requirementLedAudit: failedAudit?.audit ?? (pdfCandidates[0] ? requirementLedAuditForCandidates(db, jobId, pdfCandidates[0]) : null),
+    resumeTemplate: resumeTemplateStateForJob(db, jobId),
   };
 }
 
 function failedRequirementLedAuditForJob(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: JobId,
 ): { generation: number | null; audit: ApplyReviewRequirementLedAudit } | null {
-  if (!tableExists(db, "job_materials_artifacts")) {
-    return null;
-  }
   const artifactTypes = [...RESUME_TEXT_ARTIFACT_TYPES, ...RESUME_PDF_ARTIFACT_TYPES];
   const placeholders = artifactTypes.map(() => "?").join(", ");
-  const columns = tableColumnSet(db, "job_materials_artifacts");
-  const metadataSelect = columns.has("metadata_json") ? "metadata_json" : "NULL AS metadata_json";
   const rows = allRows<{
     artifact_id: string | null;
     created_at: string | null;
@@ -2108,16 +1929,17 @@ function failedRequirementLedAuditForJob(
     path: string | null;
   }>(
     db,
-    `SELECT artifact_id, path, generation, created_at, ${metadataSelect}
+    `SELECT artifact_id, path, generation, created_at, metadata_json
        FROM job_materials_artifacts
-      WHERE job_url = ?
+      WHERE tenant_id = ?
+        AND job_id = ?
         AND artifact_type IN (${placeholders})
         AND status = 'rejected'
         AND metadata_json IS NOT NULL
         AND metadata_json != ''
       ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, rowid DESC
       LIMIT 8`,
-    [jobKey, ...artifactTypes],
+    [DEFAULT_TENANT, jobId, ...artifactTypes],
   );
   for (const [index, row] of rows.entries()) {
     const audit = parseRequirementLedAuditMetadata(row.metadata_json);
@@ -2134,7 +1956,7 @@ function failedRequirementLedAuditForJob(
     };
     return {
       generation: candidate.generation,
-      audit: reconcileRequirementLedAuditWithProvenance(db, jobKey, candidate, audit),
+      audit: reconcileRequirementLedAuditWithProvenance(db, jobId, candidate, audit),
     };
   }
   return null;
@@ -2142,13 +1964,13 @@ function failedRequirementLedAuditForJob(
 
 function requirementLedAuditForCandidates(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: JobId,
   ...candidates: readonly MaterialArtifactCandidate[]
 ): ApplyReviewRequirementLedAudit | null {
   for (const candidate of candidates) {
     const audit = parseRequirementLedAuditMetadata(candidate.metadataJson);
     if (audit) {
-      return reconcileRequirementLedAuditWithProvenance(db, jobKey, candidate, audit);
+      return reconcileRequirementLedAuditWithProvenance(db, jobId, candidate, audit);
     }
   }
   return null;
@@ -2156,16 +1978,16 @@ function requirementLedAuditForCandidates(
 
 function reconcileRequirementLedAuditWithProvenance(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: JobId,
   candidate: MaterialArtifactCandidate,
   audit: ApplyReviewRequirementLedAudit,
 ): ApplyReviewRequirementLedAudit {
   const requirementById = requirementSummariesFromAudit(audit);
-  if (!requirementById.size || !tableExists(db, "job_bullet_provenance")) {
+  if (!requirementById.size) {
     return audit;
   }
 
-  const rows = provenanceRowsForCandidate(db, jobKey, candidate);
+  const rows = provenanceRowsForCandidate(db, jobId, candidate);
   if (!rows.length) {
     return audit;
   }
@@ -2220,7 +2042,7 @@ function requirementSummariesFromAudit(
 
 function provenanceRowsForCandidate(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: JobId,
   candidate: MaterialArtifactCandidate,
 ): Array<{ requirement_ids_json: string }> {
   const rowsByArtifact = candidate.artifactId
@@ -2229,9 +2051,9 @@ function provenanceRowsForCandidate(
         `SELECT requirement_ids_json
            FROM job_bullet_provenance
           WHERE tenant_id = ?
-            AND job_url = ?
+            AND job_id = ?
             AND artifact_id = ?`,
-        [DEFAULT_TENANT, jobKey, candidate.artifactId],
+        [DEFAULT_TENANT, jobId, candidate.artifactId],
       )
     : [];
   if (rowsByArtifact.length || candidate.generation === null) {
@@ -2242,9 +2064,9 @@ function provenanceRowsForCandidate(
     `SELECT requirement_ids_json
        FROM job_bullet_provenance
       WHERE tenant_id = ?
-        AND job_url = ?
+        AND job_id = ?
         AND generation = ?`,
-    [DEFAULT_TENANT, jobKey, candidate.generation],
+    [DEFAULT_TENANT, jobId, candidate.generation],
   );
 }
 
@@ -2456,7 +2278,7 @@ function parseAuditShippedFit(value: unknown): ApplyReviewRequirementLedShippedF
 }
 
 function resumeLayoutBoxesForArtifact(db: SqliteDatabase, artifactId: string | null): ResumeLayoutBox[] {
-  if (!artifactId || !tableExists(db, "artifact_list_projections")) return [];
+  if (!artifactId) return [];
   const row = getRow<{ layout_boxes_json?: string | null }>(
     db,
     "SELECT layout_boxes_json FROM artifact_list_projections WHERE artifact_id = ?",
@@ -2527,135 +2349,128 @@ function materialArtifactCandidates(
     artifactTypes,
     binary,
     includeLegacyJobColumn,
-    jobKey,
+    jobId,
   }: {
     readonly artifactTypes: readonly string[];
     readonly binary: boolean;
     readonly includeLegacyJobColumn?: "tailored_resume_path" | "cover_letter_path";
-    readonly jobKey: string;
+    readonly jobId: JobId;
   },
 ): MaterialArtifactCandidate[] {
   const candidates: MaterialArtifactCandidate[] = [];
   const placeholders = artifactTypes.map(() => "?").join(", ");
 
-  if (tableExists(db, "artifact_list_projections")) {
-    const columns = tableColumnSet(db, "artifact_list_projections");
-    const metadataSelect = columns.has("metadata_json") ? "metadata_json" : "NULL AS metadata_json";
-    const rows = allRows<{
-      artifact_id: string | null;
-      created_at: string | null;
-      generation: number | null;
-      local_path: string | null;
-      metadata_json: string | null;
-      status: string | null;
-    }>(
-      db,
-      `SELECT artifact_id, local_path, generation, created_at, status, ${metadataSelect}
-       FROM artifact_list_projections
-       WHERE job_id = ?
-         AND artifact_type IN (${placeholders})
-         AND COALESCE(status, 'active') IN ('approved', 'active', 'candidate')
-         AND local_path IS NOT NULL
-         AND local_path != ''
-       ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, artifact_id DESC
-       LIMIT 16`,
-      [jobKey, ...artifactTypes],
-    );
-    for (const [index, row] of rows.entries()) {
-      const reviewRequired = row.status === "candidate" && isReviewRequiredMaterialMetadata(row.metadata_json);
-      if (row.status === "candidate" && !reviewRequired) continue;
-      pushMaterialCandidate(candidates, {
-        artifactId: row.artifact_id,
-        binary,
-        createdAt: row.created_at,
-        generation: row.generation,
-        metadataJson: row.metadata_json,
-        path: row.local_path,
-        reviewRequired,
-        rowRank: index,
-        sourceRank: 0,
-      });
-    }
+  const projectedRows = allRows<{
+    artifact_id: string | null;
+    created_at: string | null;
+    generation: number | null;
+    local_path: string | null;
+    metadata_json: string | null;
+    status: string | null;
+  }>(
+    db,
+    `SELECT artifact_id, local_path, generation, created_at, status, metadata_json
+     FROM artifact_list_projections
+     WHERE tenant_id = ?
+       AND job_id = ?
+       AND artifact_type IN (${placeholders})
+       AND COALESCE(status, 'active') IN ('approved', 'active', 'candidate')
+       AND local_path IS NOT NULL
+       AND local_path != ''
+     ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, artifact_id DESC
+     LIMIT 16`,
+    [DEFAULT_TENANT, jobId, ...artifactTypes],
+  );
+  for (const [index, row] of projectedRows.entries()) {
+    const reviewRequired = row.status === "candidate" && isReviewRequiredMaterialMetadata(row.metadata_json);
+    if (row.status === "candidate" && !reviewRequired) continue;
+    pushMaterialCandidate(candidates, {
+      artifactId: row.artifact_id,
+      binary,
+      createdAt: row.created_at,
+      generation: row.generation,
+      metadataJson: row.metadata_json,
+      path: row.local_path,
+      reviewRequired,
+      rowRank: index,
+      sourceRank: 0,
+    });
   }
 
-  if (tableExists(db, "job_materials_artifacts")) {
-    const columns = tableColumnSet(db, "job_materials_artifacts");
-    const metadataSelect = columns.has("metadata_json") ? "metadata_json" : "NULL AS metadata_json";
-    const rows = allRows<{
-      artifact_id: string | null;
-      created_at: string | null;
-      generation: number | null;
-      metadata_json: string | null;
-      path: string | null;
-      status: string | null;
-    }>(
-      db,
-      `SELECT artifact_id, path, generation, created_at, status, ${metadataSelect}
-       FROM job_materials_artifacts
-       WHERE job_url = ?
-         AND artifact_type IN (${placeholders})
-         AND COALESCE(status, 'approved') IN ('approved', 'active', 'candidate')
-         AND path IS NOT NULL
-         AND path != ''
-       ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, rowid DESC
-       LIMIT 16`,
-      [jobKey, ...artifactTypes],
-    );
-    for (const [index, row] of rows.entries()) {
-      const reviewRequired = row.status === "candidate" && isReviewRequiredMaterialMetadata(row.metadata_json);
-      if (row.status === "candidate" && !reviewRequired) continue;
-      pushMaterialCandidate(candidates, {
-        artifactId: row.artifact_id,
-        binary,
-        createdAt: row.created_at,
-        generation: row.generation,
-        metadataJson: row.metadata_json,
-        path: row.path,
-        reviewRequired,
-        rowRank: index,
-        sourceRank: 1,
-      });
-    }
+  const materialRows = allRows<{
+    artifact_id: string | null;
+    created_at: string | null;
+    generation: number | null;
+    metadata_json: string | null;
+    path: string | null;
+    status: string | null;
+  }>(
+    db,
+    `SELECT artifact_id, path, generation, created_at, status, metadata_json
+     FROM job_materials_artifacts
+     WHERE tenant_id = ?
+       AND job_id = ?
+       AND artifact_type IN (${placeholders})
+       AND COALESCE(status, 'approved') IN ('approved', 'active', 'candidate')
+       AND path IS NOT NULL
+       AND path != ''
+     ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, rowid DESC
+     LIMIT 16`,
+    [DEFAULT_TENANT, jobId, ...artifactTypes],
+  );
+  for (const [index, row] of materialRows.entries()) {
+    const reviewRequired = row.status === "candidate" && isReviewRequiredMaterialMetadata(row.metadata_json);
+    if (row.status === "candidate" && !reviewRequired) continue;
+    pushMaterialCandidate(candidates, {
+      artifactId: row.artifact_id,
+      binary,
+      createdAt: row.created_at,
+      generation: row.generation,
+      metadataJson: row.metadata_json,
+      path: row.path,
+      reviewRequired,
+      rowRank: index,
+      sourceRank: 1,
+    });
   }
 
-  if (tableExists(db, "job_artifacts")) {
-    const rows = allRows<{
-      created_at: string | null;
-      path: string | null;
-      row_id: string | number | null;
-    }>(
-      db,
-      `SELECT rowid AS row_id, path, created_at
-       FROM job_artifacts
-       WHERE job_url = ?
-         AND artifact_type IN (${placeholders})
-         AND COALESCE(status, 'active') NOT IN ('missing', 'failed', 'superseded', 'suppressed')
-         AND path IS NOT NULL
-         AND path != ''
-       ORDER BY COALESCE(created_at, '') DESC, rowid DESC
-       LIMIT 16`,
-      [jobKey, ...artifactTypes],
-    );
-    for (const [index, row] of rows.entries()) {
-      pushMaterialCandidate(candidates, {
-        artifactId: row.row_id === null || row.row_id === undefined ? null : String(row.row_id),
-        binary,
-        createdAt: row.created_at,
-        generation: null,
-        metadataJson: null,
-        path: row.path,
-        reviewRequired: false,
-        rowRank: index,
-        sourceRank: 2,
-      });
-    }
+  const artifactRows = allRows<{
+    created_at: string | null;
+    path: string | null;
+    artifact_id: string | number | null;
+  }>(
+    db,
+    `SELECT artifact_id, path, created_at
+     FROM job_artifacts
+     WHERE tenant_id = ?
+       AND job_id = ?
+       AND artifact_type IN (${placeholders})
+       AND COALESCE(status, 'active') NOT IN ('missing', 'failed', 'superseded', 'suppressed')
+       AND path IS NOT NULL
+       AND path != ''
+     ORDER BY COALESCE(created_at, '') DESC, artifact_id DESC
+     LIMIT 16`,
+    [DEFAULT_TENANT, jobId, ...artifactTypes],
+  );
+  for (const [index, row] of artifactRows.entries()) {
+    pushMaterialCandidate(candidates, {
+      artifactId: row.artifact_id === null || row.artifact_id === undefined ? null : String(row.artifact_id),
+      binary,
+      createdAt: row.created_at,
+      generation: null,
+      metadataJson: null,
+      path: row.path,
+      reviewRequired: false,
+      rowRank: index,
+      sourceRank: 2,
+    });
   }
 
-  if (includeLegacyJobColumn && tableExists(db, "jobs")) {
+  if (includeLegacyJobColumn) {
     const legacyRow = getRow<{ path: string | null }>(
       db,
-      `SELECT ${includeLegacyJobColumn} AS path FROM jobs WHERE url = ?`,
-      [jobKey],
+      `SELECT ${includeLegacyJobColumn} AS path FROM jobs WHERE tenant_id = ? AND job_id = ?`,
+      [DEFAULT_TENANT, jobId],
     );
     pushMaterialCandidate(candidates, {
       artifactId: null,
@@ -2770,7 +2585,7 @@ function readTextPreview(artifactPath: string, options: ReadTextOptions = {}): s
 function outcomeFromRow(row: OutcomeRow): ApplicationOutcome {
   return {
     outcomeId: row.outcome_id,
-    jobKey: row.job_key,
+    jobKey: canonicalJobId(row.job_id),
     kind: outcomeKind(row.kind),
     source: row.source === "email_suggestion" ? "email_suggestion" : "manual",
     note: row.note,
@@ -2785,7 +2600,7 @@ function outcomeFromRow(row: OutcomeRow): ApplicationOutcome {
 function suggestionFromRow(row: SuggestionRow): OutcomeSuggestion {
   return {
     suggestionId: row.suggestion_id,
-    jobKey: row.job_key,
+    jobKey: canonicalJobId(row.job_id),
     evidenceId: row.evidence_id,
     suggestedKind: outcomeKind(row.suggested_kind),
     confidence: Number(row.confidence ?? 0),
@@ -2798,12 +2613,26 @@ function suggestionFromRow(row: SuggestionRow): OutcomeSuggestion {
   };
 }
 
-function existingJobUrl(db: SqliteDatabase, jobKey: string): string {
-  const jobUrl = resolveJobUrl(db, jobKey);
-  if (!jobUrl) {
+type JobId = string & { readonly __brand: "JobId" };
+
+function canonicalJobId(value: string): JobId {
+  if (!CANONICAL_JOB_ID.test(value)) {
+    throw new InputError("jobId must be a canonical lowercase UUID.");
+  }
+  return value as JobId;
+}
+
+function resolveExternalJobIdOrNull(db: SqliteDatabase, jobLocator: string): JobId | null {
+  const resolved = resolveJobId(db, DEFAULT_TENANT, jobLocator);
+  return resolved ? canonicalJobId(resolved) : null;
+}
+
+function resolveExternalJobId(db: SqliteDatabase, jobLocator: string): JobId {
+  const jobId = resolveExternalJobIdOrNull(db, jobLocator);
+  if (!jobId) {
     throw new InputError("Job not found.");
   }
-  return jobUrl;
+  return jobId;
 }
 
 function recordEvent(
@@ -2812,32 +2641,28 @@ function recordEvent(
     eventType: string;
     payload: Record<string, unknown>;
     message: string;
-    jobUrl: string;
+    jobId: JobId;
     stage: Stage;
   },
 ): void {
-  if (!tableExists(db, "job_events")) {
-    return;
-  }
-  const columns = new Set(
-    allRows<{ name: string }>(db, "PRAGMA table_info(job_events)").map((row) => row.name),
-  );
-  const values: Record<string, SqliteValue> = {
-    job_url: event.jobUrl,
-    stage: event.stage,
-    event_type: event.eventType,
-    level: "info",
-    message: event.message,
-    occurred_at: new Date().toISOString(),
-    payload_json: JSON.stringify(event.payload),
-  };
-  const entries = Object.entries(values).filter(([name]) => columns.has(name));
-  if (!entries.length) {
-    return;
-  }
   db.prepare(
-    `INSERT INTO job_events (${entries.map(([name]) => name).join(", ")}) VALUES (${entries.map(() => "?").join(", ")})`,
-  ).run(...entries.map(([, value]) => value));
+    `INSERT INTO job_events (
+       tenant_id, job_id, identity_version, stage, event_type, level, message,
+       occurred_at, payload_json, entity_kind, entity_ref
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    DEFAULT_TENANT,
+    event.jobId,
+    7,
+    event.stage,
+    event.eventType,
+    "info",
+    event.message,
+    new Date().toISOString(),
+    JSON.stringify(event.payload),
+    "job",
+    event.jobId,
+  );
 }
 
 function reviewState(
