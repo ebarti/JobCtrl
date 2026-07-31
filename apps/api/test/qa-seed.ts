@@ -5,9 +5,6 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 
-import { ensureApplicationFeedbackTables } from "../src/application-feedback.js";
-import { ensureDiscoveryControlTables } from "../src/discovery-controls.js";
-import { ensureOutreachTables } from "../src/outreach.js";
 import { writeProfileConfig } from "../src/profile-store.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { initializeExactV7Database } from "./v7-schema.js";
@@ -235,9 +232,6 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
   initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
-  ensureApplicationFeedbackTables(db);
-  ensureDiscoveryControlTables(db);
-  ensureOutreachTables(db);
   writeProfileConfig(db, {
     profile: QA_PROFILE,
     style: QA_RESUME_STYLE,
@@ -1241,13 +1235,13 @@ function seedResumeReviewDraft(db: Database.Database): void {
 function seedContacts(db: Database.Database): void {
   const insertContact = db.prepare(
     `INSERT INTO contacts (
-      tenant_id, contact_id, employer, job_url, role, created_at, updated_at
+      tenant_id, contact_id, employer, job_id, role, created_at, updated_at
     ) VALUES ('local', ?, ?, ?, ?, ?, ?)`,
   );
   insertContact.run(
     "qa-contact-hiring-manager",
     "GitLab",
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     "hiring_manager",
     QA_NOW,
     QA_NOW,
@@ -1255,7 +1249,7 @@ function seedContacts(db: Database.Database): void {
   insertContact.run(
     "qa-contact-recruiter",
     "GitLab",
-    QA_PLATFORM_JOB_URL,
+    QA_PLATFORM_JOB_ID,
     "recruiter",
     QA_NOW,
     QA_NOW,
@@ -1567,7 +1561,6 @@ function seedDiscoverySources(db: Database.Database): void {
 }
 
 function seedOutreachThread(db: Database.Database): void {
-  ensureOutreachTables(db);
   const threadId = "qa-outreach-hiring-manager";
   const approvedDraftId = "qa-outreach-approved-intro";
   const gateResults = JSON.stringify({
@@ -1608,7 +1601,7 @@ function seedOutreachThread(db: Database.Database): void {
 
   db.prepare(
     `INSERT INTO outreach_threads (
-      tenant_id, thread_id, contact_id, job_url, created_at, updated_at,
+      tenant_id, thread_id, contact_id, job_id, created_at, updated_at,
       follow_up_due_at, follow_up_basis, follow_up_state
     ) VALUES ('local', ?, 'qa-contact-hiring-manager', NULL, ?, ?, ?, 'manual', 'scheduled')`,
   ).run(
@@ -1684,12 +1677,13 @@ function seedWorkerHeartbeat(db: Database.Database, dbPath: string): void {
 function insertJob(db: Database.Database, job: QaJobSeed): void {
   db.prepare(
     `INSERT INTO jobs (
-      url, title, site, strategy, location, salary, discovered_at, application_url,
+      url, tenant_id, job_id, title, site, strategy, location, salary, discovered_at, application_url,
       description, full_description, detail_scraped_at, fit_score, score_reasoning,
       scored_at, tailored_resume_path, tailored_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     job.url,
+    qaJobId(job.url),
     job.title,
     job.site,
     job.strategy ?? "qa",
@@ -1706,6 +1700,11 @@ function insertJob(db: Database.Database, job: QaJobSeed): void {
     null,
     null,
   );
+}
+
+function qaJobId(jobUrl: string): string {
+  const digest = createHash("sha256").update(jobUrl).digest("hex");
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 }
 
 function insertStage(db: Database.Database, jobUrl: string, stage: string, state: string, errorCode: string | null = null): void {
