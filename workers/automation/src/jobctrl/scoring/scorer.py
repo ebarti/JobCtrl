@@ -609,7 +609,7 @@ def score_job_by_url(
 ) -> ScoreJobOutcome:
     """Resolve one tenant-scoped posting locator, then score its JobId."""
     conn = get_connection()
-    identity = SqliteJobIdentityResolver(conn).resolve_by_posting_url(
+    identity = SqliteJobIdentityResolver(conn).resolve_current_by_posting_url(
         tenant_id,
         PostingUrl(value=job_url),
     )
