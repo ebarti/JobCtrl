@@ -62,7 +62,7 @@ jobs:
       - name: Set up migration integration Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12.13"
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: workers/automation/pyproject.toml
 
