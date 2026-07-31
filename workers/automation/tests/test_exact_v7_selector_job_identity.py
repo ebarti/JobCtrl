@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from jobctrl.database import count_ready_to_apply, get_jobs_by_stage, init_db
+from jobctrl.database import count_ready_to_apply, get_jobs_by_stage, get_stats, init_db
 
 
 LOCAL_TENANT = "local"
@@ -21,6 +21,8 @@ SHARED_URL = "https://example.test/jobs/shared"
 TIMESTAMP = "2026-07-31T12:00:00+00:00"
 LOCAL_JOB_ID = "90000000-0000-4000-8000-000000000001"
 OTHER_JOB_ID = "90000000-0000-4000-8000-000000000002"
+TAILOR_JOB_ID = "90000000-0000-4000-8000-000000000003"
+TAILOR_URL = "https://example.test/jobs/tailor"
 
 
 @pytest.fixture()
@@ -28,14 +30,20 @@ def conn(tmp_path: Path) -> sqlite3.Connection:
     return init_db(tmp_path / "jobctrl.db")
 
 
-def _insert_job(conn: sqlite3.Connection, tenant_id: str, job_id: str) -> None:
+def _insert_job(
+    conn: sqlite3.Connection,
+    tenant_id: str,
+    job_id: str,
+    *,
+    url: str = SHARED_URL,
+) -> None:
     conn.execute(
         """
         INSERT INTO jobs (
             tenant_id, job_id, url, title, site, discovered_at
         ) VALUES (?, ?, ?, 'Engineer', 'Example', ?)
         """,
-        (tenant_id, job_id, SHARED_URL, TIMESTAMP),
+        (tenant_id, job_id, url, TIMESTAMP),
     )
 
 
@@ -258,3 +266,93 @@ def test_ready_apply_count_uses_exact_v7_stage_identity(
     conn.commit()
 
     assert count_ready_to_apply(conn, min_score=7) == 1
+
+
+def test_exact_v7_selectors_ignore_retired_wide_job_state(
+    conn: sqlite3.Connection,
+) -> None:
+    _insert_job(conn, OTHER_TENANT, OTHER_JOB_ID)
+    _insert_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    _insert_job(conn, LOCAL_TENANT, TAILOR_JOB_ID, url=TAILOR_URL)
+    _insert_enrichment(
+        conn,
+        LOCAL_TENANT,
+        LOCAL_JOB_ID,
+        application_url="https://apply.example.test/canonical",
+    )
+    _insert_enrichment(conn, LOCAL_TENANT, TAILOR_JOB_ID)
+    _insert_score(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    _insert_score(conn, LOCAL_TENANT, TAILOR_JOB_ID)
+    _insert_materials(
+        conn,
+        LOCAL_TENANT,
+        LOCAL_JOB_ID,
+        artifact_types=("tailored_resume", "resume_pdf"),
+    )
+    conn.execute(
+        """
+        UPDATE jobs
+        SET full_description = 'retired description',
+            application_url = 'https://apply.example.test/retired',
+            detail_scraped_at = ?, detail_error = 'retired detail error',
+            fit_score = 10, tailored_resume_path = '/tmp/retired-resume.txt',
+            cover_letter_path = '/tmp/retired-cover.txt',
+            tailor_attempts = 5, cover_attempts = 5,
+            applied_at = ?, apply_status = 'applied', apply_error = 'retired apply error'
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (TIMESTAMP, TIMESTAMP, OTHER_TENANT, OTHER_JOB_ID),
+    )
+    conn.execute(
+        """
+        UPDATE jobs
+        SET cover_letter_path = '/tmp/retired-cover.txt', cover_attempts = 5,
+            applied_at = ?, apply_status = 'applied', apply_error = 'retired apply error'
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (TIMESTAMP, LOCAL_TENANT, LOCAL_JOB_ID),
+    )
+    conn.execute(
+        """
+        UPDATE jobs
+        SET tailored_resume_path = '/tmp/retired-resume.txt', tailor_attempts = 5
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (LOCAL_TENANT, TAILOR_JOB_ID),
+    )
+    conn.commit()
+
+    pending_detail = get_jobs_by_stage(conn, "pending_detail")
+    assert _identities(pending_detail) == {
+        (OTHER_TENANT, OTHER_JOB_ID, SHARED_URL)
+    }
+    assert pending_detail[0]["full_description"] is None
+    assert pending_detail[0]["application_url"] is None
+    assert pending_detail[0]["fit_score"] is None
+    assert pending_detail[0]["tailored_resume_path"] is None
+    assert _identities(get_jobs_by_stage(conn, "pending_score")) == set()
+    assert _identities(get_jobs_by_stage(conn, "pending_tailor", min_score=7)) == {
+        (LOCAL_TENANT, TAILOR_JOB_ID, TAILOR_URL)
+    }
+    assert _identities(get_jobs_by_stage(conn, "pending_cover", min_score=7)) == {
+        (LOCAL_TENANT, LOCAL_JOB_ID, SHARED_URL)
+    }
+    pending_apply = get_jobs_by_stage(conn, "pending_apply", min_score=7)
+    assert _identities(pending_apply) == {(LOCAL_TENANT, LOCAL_JOB_ID, SHARED_URL)}
+    assert pending_apply[0]["applied_at"] is None
+    assert pending_apply[0]["apply_status"] is None
+    assert pending_apply[0]["cover_letter_path"] is None
+    assert _identities(get_jobs_by_stage(conn, "applied")) == set()
+    assert count_ready_to_apply(conn, min_score=7) == 1
+
+    stats = get_stats(conn)
+    assert stats["with_description"] == 2
+    assert stats["detail_errors"] == 0
+    assert stats["scored"] == 2
+    assert stats["tailored"] == 1
+    assert stats["with_cover_letter"] == 0
+    assert stats["tailor_exhausted"] == 0
+    assert stats["cover_exhausted"] == 0
+    assert stats["applied"] == 0
+    assert stats["apply_errors"] == 0
+    assert stats["ready_to_apply"] == 1
