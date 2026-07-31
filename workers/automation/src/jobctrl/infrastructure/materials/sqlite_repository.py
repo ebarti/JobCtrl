@@ -229,7 +229,7 @@ class SqliteMaterialsRepository:
         limit: int = 0,
         retailor: bool = False,
     ) -> list[JobId]:
-        """Return job URLs ready for tailoring per §4.5 lifecycle.
+        """Return JobIds ready for tailoring per §4.5 lifecycle.
 
         Eligibility:
 
@@ -242,67 +242,66 @@ class SqliteMaterialsRepository:
         will mint a new generation when it picks them up.
         """
         min_score = effective_tailoring_min_score(min_score)
-        params: list[Any] = [str(tenant_id)]
-        # Reuse the score subquery shape used elsewhere; keep it inline so
-        # this adapter stays self-contained.
-        score_join = (
-            "LEFT JOIN ("
-            "SELECT s.job_url AS sj_job_url, s.fit_score AS sj_fit_score, "
+        where = (
+            "AND approved_resumes.job_id IS NULL "
+            if not retailor
+            else ""
+        )
+        sql = (
+            "WITH latest_scores AS ("
+            "SELECT tenant_id, job_id, MAX(version) AS version "
+            "FROM job_scores WHERE tenant_id = ? "
+            "GROUP BY tenant_id, job_id"
+            "), scored_jobs AS ("
+            "SELECT s.tenant_id, s.job_id, s.fit_score, "
             "CASE WHEN json_valid(s.breakdown_json) "
             "THEN LOWER(COALESCE(CAST(json_extract(s.breakdown_json, '$.eligibility.status') AS TEXT), '')) "
-            "ELSE '' END AS sj_eligibility_status, "
+            "ELSE '' END AS eligibility_status, "
             "CASE WHEN json_valid(s.breakdown_json) "
             "THEN COALESCE("
             "json_array_length(s.breakdown_json, '$.eligibility.hard_blockers'), "
             "json_array_length(s.breakdown_json, '$.eligibility.hardBlockers'), "
             "json_array_length(s.breakdown_json, '$.eligibility.blockers'), "
-            "0) ELSE 0 END AS sj_hard_blocker_count "
+            "0) ELSE 0 END AS hard_blocker_count "
             "FROM job_scores s "
-            "INNER JOIN ("
-            "SELECT job_url, MAX(version) AS max_version FROM job_scores GROUP BY job_url"
-            ") latest ON latest.job_url = s.job_url AND latest.max_version = s.version "
-            "WHERE s.tenant_id = ?"
-            ") sj ON sj.sj_job_url = j.url"
-        )
-        materials_join = (
-            "LEFT JOIN ("
-            "SELECT DISTINCT m.job_url AS mj_job_url, tr.status AS mj_resume_status "
+            "INNER JOIN latest_scores latest "
+            "ON latest.tenant_id = s.tenant_id "
+            "AND latest.job_id = s.job_id "
+            "AND latest.version = s.version"
+            "), approved_resumes AS ("
+            "SELECT DISTINCT m.tenant_id, m.job_id "
             "FROM job_materials m "
-            "INNER JOIN job_materials_artifacts tr ON tr.job_url = m.job_url "
+            "INNER JOIN job_materials_artifacts tr "
+            "ON tr.tenant_id = m.tenant_id "
+            "AND tr.job_id = m.job_id "
             "AND tr.generation = m.generation "
             "AND tr.artifact_type = 'tailored_resume' "
             "AND tr.status = 'approved' "
             "WHERE m.tenant_id = ?"
-            ") mj ON mj.mj_job_url = j.url"
+            ") "
+            "SELECT j.job_id "
+            "FROM jobs j "
+            "INNER JOIN job_enrichments e "
+            "ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id "
+            "INNER JOIN scored_jobs s "
+            "ON s.tenant_id = j.tenant_id AND s.job_id = j.job_id "
+            "LEFT JOIN approved_resumes "
+            "ON approved_resumes.tenant_id = j.tenant_id "
+            "AND approved_resumes.job_id = j.job_id "
+            "WHERE j.tenant_id = ? "
+            "AND e.full_description IS NOT NULL "
+            "AND s.fit_score >= ? "
+            "AND s.eligibility_status != 'blocked' "
+            "AND s.hard_blocker_count = 0 "
+            f"{where}"
+            "ORDER BY s.fit_score DESC, j.discovered_at DESC"
         )
-        params.append(str(tenant_id))
-
-        if retailor:
-            where = (
-                "j.full_description IS NOT NULL "
-                "AND COALESCE(sj.sj_fit_score, j.fit_score) >= ? "
-                "AND COALESCE(sj.sj_eligibility_status, '') != 'blocked' "
-                "AND COALESCE(sj.sj_hard_blocker_count, 0) = 0"
-            )
-        else:
-            where = (
-                "j.full_description IS NOT NULL "
-                "AND COALESCE(sj.sj_fit_score, j.fit_score) >= ? "
-                "AND COALESCE(sj.sj_eligibility_status, '') != 'blocked' "
-                "AND COALESCE(sj.sj_hard_blocker_count, 0) = 0 "
-                "AND mj.mj_resume_status IS NULL"
-            )
-        params.append(int(min_score))
-        sql = (
-            f"SELECT j.url FROM jobs j {score_join} {materials_join} "
-            f"WHERE {where} "
-            "ORDER BY COALESCE(sj.sj_fit_score, j.fit_score) DESC, j.discovered_at DESC"
-        )
+        params: list[Any] = [str(tenant_id), str(tenant_id), str(tenant_id), int(min_score)]
         if limit > 0:
             sql += " LIMIT ?"
             params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
-        return [JobId(row[0]) for row in rows if row[0]]
+        return [canonical_job_id(str(row[0])) for row in rows]
 
     def list_pending_cover(
         self,
@@ -311,68 +310,72 @@ class SqliteMaterialsRepository:
         min_score: int = 7,
         limit: int = 0,
     ) -> list[JobId]:
-        """Return job URLs whose current approved generation has an approved
+        """Return JobIds whose current approved generation has an approved
         tailored resume PDF but no approved cover letter."""
         min_score = effective_tailoring_min_score(min_score)
-        params: list[Any] = [str(tenant_id)]
-        score_join = (
-            "LEFT JOIN ("
-            "SELECT s.job_url AS sj_job_url, s.fit_score AS sj_fit_score, "
+        sql = (
+            "WITH latest_scores AS ("
+            "SELECT tenant_id, job_id, MAX(version) AS version "
+            "FROM job_scores WHERE tenant_id = ? "
+            "GROUP BY tenant_id, job_id"
+            "), scored_jobs AS ("
+            "SELECT s.tenant_id, s.job_id, s.fit_score, "
             "CASE WHEN json_valid(s.breakdown_json) "
             "THEN LOWER(COALESCE(CAST(json_extract(s.breakdown_json, '$.eligibility.status') AS TEXT), '')) "
-            "ELSE '' END AS sj_eligibility_status, "
+            "ELSE '' END AS eligibility_status, "
             "CASE WHEN json_valid(s.breakdown_json) "
             "THEN COALESCE("
             "json_array_length(s.breakdown_json, '$.eligibility.hard_blockers'), "
             "json_array_length(s.breakdown_json, '$.eligibility.hardBlockers'), "
             "json_array_length(s.breakdown_json, '$.eligibility.blockers'), "
-            "0) ELSE 0 END AS sj_hard_blocker_count "
+            "0) ELSE 0 END AS hard_blocker_count "
             "FROM job_scores s "
-            "INNER JOIN ("
-            "SELECT job_url, MAX(version) AS max_version FROM job_scores GROUP BY job_url"
-            ") latest ON latest.job_url = s.job_url AND latest.max_version = s.version "
-            "WHERE s.tenant_id = ?"
-            ") sj ON sj.sj_job_url = j.url"
-        )
-        params.append(str(tenant_id))
-        materials_join = (
-            "INNER JOIN ("
-            "SELECT m.job_url AS mj_job_url, m.generation AS mj_gen, "
-            "tr.status AS mj_resume_status, rpdf.status AS mj_resume_pdf_status, "
-            "cl.status AS mj_cover_status "
-            "FROM job_materials m "
-            "INNER JOIN ("
-            "SELECT job_url, MAX(generation) AS mg "
+            "INNER JOIN latest_scores latest "
+            "ON latest.tenant_id = s.tenant_id "
+            "AND latest.job_id = s.job_id "
+            "AND latest.version = s.version"
+            "), approved_resume_generations AS ("
+            "SELECT tenant_id, job_id, MAX(generation) AS generation "
             "FROM job_materials_artifacts "
-            "WHERE artifact_type = 'tailored_resume' AND status = 'approved' "
-            "GROUP BY job_url"
-            ") latest ON latest.job_url = m.job_url AND latest.mg = m.generation "
-            "INNER JOIN job_materials_artifacts tr ON tr.job_url = m.job_url "
-            "AND tr.generation = m.generation AND tr.artifact_type = 'tailored_resume' "
-            "AND tr.status = 'approved' "
-            "INNER JOIN job_materials_artifacts rpdf ON rpdf.job_url = m.job_url "
-            "AND rpdf.generation = m.generation AND rpdf.artifact_type = 'resume_pdf' "
-            "AND rpdf.status = 'approved' "
-            "LEFT JOIN job_materials_artifacts cl ON cl.job_url = m.job_url "
-            "AND cl.generation = m.generation AND cl.artifact_type = 'cover_letter' "
-            "AND cl.status = 'approved' "
-            "WHERE m.tenant_id = ?"
-            ") mj ON mj.mj_job_url = j.url"
+            "WHERE tenant_id = ? "
+            "AND artifact_type = 'tailored_resume' AND status = 'approved' "
+            "GROUP BY tenant_id, job_id"
+            ") "
+            "SELECT j.job_id "
+            "FROM jobs j "
+            "INNER JOIN scored_jobs s "
+            "ON s.tenant_id = j.tenant_id AND s.job_id = j.job_id "
+            "INNER JOIN approved_resume_generations current "
+            "ON current.tenant_id = j.tenant_id AND current.job_id = j.job_id "
+            "INNER JOIN job_materials m "
+            "ON m.tenant_id = current.tenant_id "
+            "AND m.job_id = current.job_id "
+            "AND m.generation = current.generation "
+            "INNER JOIN job_materials_artifacts tr "
+            "ON tr.tenant_id = m.tenant_id AND tr.job_id = m.job_id "
+            "AND tr.generation = m.generation "
+            "AND tr.artifact_type = 'tailored_resume' AND tr.status = 'approved' "
+            "INNER JOIN job_materials_artifacts rpdf "
+            "ON rpdf.tenant_id = m.tenant_id AND rpdf.job_id = m.job_id "
+            "AND rpdf.generation = m.generation "
+            "AND rpdf.artifact_type = 'resume_pdf' AND rpdf.status = 'approved' "
+            "LEFT JOIN job_materials_artifacts cl "
+            "ON cl.tenant_id = m.tenant_id AND cl.job_id = m.job_id "
+            "AND cl.generation = m.generation "
+            "AND cl.artifact_type = 'cover_letter' AND cl.status = 'approved' "
+            "WHERE j.tenant_id = ? "
+            "AND s.fit_score >= ? "
+            "AND s.eligibility_status != 'blocked' "
+            "AND s.hard_blocker_count = 0 "
+            "AND cl.artifact_id IS NULL "
+            "ORDER BY s.fit_score DESC, j.discovered_at DESC"
         )
-        params.append(int(min_score))
-        sql = (
-            f"SELECT j.url FROM jobs j {score_join} {materials_join} "
-            "WHERE COALESCE(sj.sj_fit_score, j.fit_score) >= ? "
-            "AND COALESCE(sj.sj_eligibility_status, '') != 'blocked' "
-            "AND COALESCE(sj.sj_hard_blocker_count, 0) = 0 "
-            "AND mj.mj_cover_status IS NULL "
-            "ORDER BY COALESCE(sj.sj_fit_score, j.fit_score) DESC, j.discovered_at DESC"
-        )
+        params: list[Any] = [str(tenant_id), str(tenant_id), str(tenant_id), int(min_score)]
         if limit > 0:
             sql += " LIMIT ?"
             params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
-        return [JobId(row[0]) for row in rows if row[0]]
+        return [canonical_job_id(str(row[0])) for row in rows]
 
     def list_pending_pdf(
         self,
@@ -380,34 +383,40 @@ class SqliteMaterialsRepository:
         *,
         limit: int = 0,
     ) -> list[JobId]:
-        """Return job URLs whose current approved generation has text artifacts but
+        """Return JobIds whose current approved generation has text artifacts but
         is missing one or more PDFs."""
-        params: list[Any] = [str(tenant_id)]
         sql = (
-            "SELECT m.job_url FROM job_materials m "
-            "INNER JOIN ("
-            "SELECT job_url, MAX(generation) AS mg "
+            "WITH latest_text_generations AS ("
+            "SELECT tenant_id, job_id, MAX(generation) AS generation "
             "FROM job_materials_artifacts "
-            "WHERE status = 'approved' "
+            "WHERE tenant_id = ? AND status = 'approved' "
             "AND artifact_type IN ('tailored_resume', 'cover_letter') "
-            "GROUP BY job_url"
-            ") latest ON latest.job_url = m.job_url AND latest.mg = m.generation "
-            "INNER JOIN job_materials_artifacts tr ON tr.job_url = m.job_url "
+            "GROUP BY tenant_id, job_id"
+            ") "
+            "SELECT m.job_id FROM job_materials m "
+            "INNER JOIN latest_text_generations latest "
+            "ON latest.tenant_id = m.tenant_id "
+            "AND latest.job_id = m.job_id "
+            "AND latest.generation = m.generation "
+            "INNER JOIN job_materials_artifacts tr "
+            "ON tr.tenant_id = m.tenant_id AND tr.job_id = m.job_id "
             "AND tr.generation = m.generation AND tr.status = 'approved' "
             "AND tr.artifact_type IN ('tailored_resume', 'cover_letter') "
-            "LEFT JOIN job_materials_artifacts pdf ON pdf.job_url = m.job_url "
+            "LEFT JOIN job_materials_artifacts pdf "
+            "ON pdf.tenant_id = m.tenant_id AND pdf.job_id = m.job_id "
             "AND pdf.generation = m.generation AND pdf.status = 'approved' "
             "AND ((tr.artifact_type = 'tailored_resume' AND pdf.artifact_type = 'resume_pdf') "
             "  OR (tr.artifact_type = 'cover_letter' AND pdf.artifact_type = 'cover_letter_pdf')) "
             "WHERE m.tenant_id = ? AND pdf.path IS NULL "
-            "GROUP BY m.job_url "
+            "GROUP BY m.tenant_id, m.job_id "
             "ORDER BY MAX(m.updated_at) DESC"
         )
+        params: list[Any] = [str(tenant_id), str(tenant_id)]
         if limit > 0:
             sql += " LIMIT ?"
             params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
-        return [JobId(row[0]) for row in rows if row[0]]
+        return [canonical_job_id(str(row[0])) for row in rows]
 
     def list_by_status(
         self,
@@ -420,22 +429,27 @@ class SqliteMaterialsRepository:
         artifact carries the requested status."""
         if not isinstance(status, ArtifactStatus):
             raise TypeError(f"list_by_status requires ArtifactStatus, got {type(status).__name__}")
-        params: list[Any] = [str(tenant_id), status.value]
         sql = (
-            "SELECT m.job_url, m.generation, m.status, m.created_at, m.updated_at, "
+            "WITH latest_materials AS ("
+            "SELECT tenant_id, job_id, MAX(generation) AS generation "
+            "FROM job_materials WHERE tenant_id = ? "
+            "GROUP BY tenant_id, job_id"
+            ") "
+            "SELECT m.job_id, m.generation, m.status, m.created_at, m.updated_at, "
             "m.last_validation_json, m.last_verdict_json, m.metadata_json "
             "FROM job_materials m "
-            "INNER JOIN ("
-            "SELECT job_url, MAX(generation) AS mg FROM job_materials GROUP BY job_url"
-            ") latest ON latest.job_url = m.job_url AND latest.mg = m.generation "
-            "INNER JOIN job_materials_artifacts tr ON tr.job_url = m.job_url "
+            "INNER JOIN latest_materials latest "
+            "ON latest.tenant_id = m.tenant_id "
+            "AND latest.job_id = m.job_id "
+            "AND latest.generation = m.generation "
+            "INNER JOIN job_materials_artifacts tr "
+            "ON tr.tenant_id = m.tenant_id AND tr.job_id = m.job_id "
             "AND tr.generation = m.generation AND tr.artifact_type = 'tailored_resume' "
             "AND tr.status = ? "
             "WHERE m.tenant_id = ? "
             "ORDER BY m.updated_at DESC"
         )
-        # Param order in the WHERE: tr.status (status.value) then tenant_id
-        params = [status.value, str(tenant_id)]
+        params: list[Any] = [str(tenant_id), status.value, str(tenant_id)]
         if limit > 0:
             sql += " LIMIT ?"
             params.append(limit)
