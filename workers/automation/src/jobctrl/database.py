@@ -3010,9 +3010,12 @@ def _backfill_one_observation_row(
 # ---------------------------------------------------------------------------
 
 _ENRICHMENT_JOIN: str = (
-    "LEFT JOIN job_enrichments je ON je.job_url = jobs.url "
+    "LEFT JOIN job_enrichments je "
+    "ON je.tenant_id = jobs.tenant_id AND je.job_id = jobs.job_id "
     "LEFT JOIN job_stage_states jss_enrich "
-    "ON jss_enrich.job_url = jobs.url AND jss_enrich.stage = 'enrich'"
+    "ON jss_enrich.tenant_id = jobs.tenant_id "
+    "AND jss_enrich.job_id = jobs.job_id "
+    "AND jss_enrich.stage = 'enrich'"
 )
 
 _EFFECTIVE_FULL_DESCRIPTION: str = "COALESCE(je.full_description, jobs.full_description)"
@@ -3033,7 +3036,7 @@ _ENRICHMENT_DONE: str = "(je.current_status = 'enriched' OR jobs.detail_scraped_
 # rejects succeeded -> running. A reset clears the stage row back to pending,
 # so retries still work even when legacy detail columns remain populated.
 _ENRICHMENT_PENDING: str = (
-    "(je.job_url IS NULL OR je.current_status = 'pending') "
+    "(je.job_id IS NULL OR je.current_status = 'pending') "
     "AND COALESCE(jss_enrich.state, CASE WHEN jobs.detail_scraped_at IS NOT NULL THEN 'succeeded' ELSE 'pending' END) = 'pending'"
 )
 
@@ -3043,7 +3046,7 @@ _ENRICHMENT_PENDING: str = (
 _CLOSED_ACTIVE_STATES_SQL = "'closed', 'expired', 'removed', 'location_incompatible'"
 _ACTIVE_STATE_JOIN: str = (
     "LEFT JOIN posting_snapshot_sets pss "
-    "ON pss.tenant_id = 'local' AND pss.job_url = jobs.url"
+    "ON pss.tenant_id = jobs.tenant_id AND pss.job_id = jobs.job_id"
 )
 _NOT_CLOSED_ACTIVE_STATE: str = (
     f"(pss.latest_active_state IS NULL OR pss.latest_active_state NOT IN ({_CLOSED_ACTIVE_STATES_SQL}))"
@@ -3081,50 +3084,57 @@ _ENRICHMENT_NOT_QUARANTINED: str = (
 # cover-letter artifact paths under fixed aliases.
 _LATEST_MATERIALS_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT history.job_url AS jm_job_url, latest.max_generation AS jm_generation, "
+    "SELECT history.tenant_id AS jm_tenant_id, history.job_id AS jm_job_id, "
+    "latest.max_generation AS jm_generation, "
     "m.status AS jm_status, "
     "tr.path AS jm_tailored_path, tr.created_at AS jm_tailored_at, "
     "cl.path AS jm_cover_path, cl.created_at AS jm_cover_at, "
     "rpdf.path AS jm_resume_pdf_path, rpdf.artifact_id AS jm_resume_pdf_artifact_id, "
     "cpdf.path AS jm_cover_pdf_path "
-    "FROM (SELECT DISTINCT job_url FROM job_materials) history "
+    "FROM (SELECT DISTINCT tenant_id, job_id FROM job_materials) history "
     "LEFT JOIN ("
-    "SELECT job_url, MAX(generation) AS max_generation "
+    "SELECT tenant_id, job_id, MAX(generation) AS max_generation "
     "FROM job_materials_artifacts "
     "WHERE status = 'approved' "
     "AND artifact_type IN ('tailored_resume', 'cover_letter', 'resume_pdf', 'cover_letter_pdf') "
-    "GROUP BY job_url"
-    ") latest ON latest.job_url = history.job_url "
+    "GROUP BY tenant_id, job_id"
+    ") latest ON latest.tenant_id = history.tenant_id "
+    "AND latest.job_id = history.job_id "
     "LEFT JOIN job_materials m "
-    "ON m.job_url = history.job_url AND m.generation = latest.max_generation "
+    "ON m.tenant_id = history.tenant_id AND m.job_id = history.job_id "
+    "AND m.generation = latest.max_generation "
     "LEFT JOIN job_materials_artifacts tr "
-    "ON tr.job_url = history.job_url AND tr.generation = latest.max_generation "
+    "ON tr.tenant_id = history.tenant_id AND tr.job_id = history.job_id "
+    "AND tr.generation = latest.max_generation "
     "AND tr.artifact_type = 'tailored_resume' AND tr.status = 'approved' "
     "LEFT JOIN job_materials_artifacts cl "
-    "ON cl.job_url = history.job_url AND cl.generation = latest.max_generation "
+    "ON cl.tenant_id = history.tenant_id AND cl.job_id = history.job_id "
+    "AND cl.generation = latest.max_generation "
     "AND cl.artifact_type = 'cover_letter' AND cl.status = 'approved' "
     "LEFT JOIN job_materials_artifacts rpdf "
-    "ON rpdf.job_url = history.job_url AND rpdf.generation = latest.max_generation "
+    "ON rpdf.tenant_id = history.tenant_id AND rpdf.job_id = history.job_id "
+    "AND rpdf.generation = latest.max_generation "
     "AND rpdf.artifact_type = 'resume_pdf' AND rpdf.status = 'approved' "
     "LEFT JOIN job_materials_artifacts cpdf "
-    "ON cpdf.job_url = history.job_url AND cpdf.generation = latest.max_generation "
+    "ON cpdf.tenant_id = history.tenant_id AND cpdf.job_id = history.job_id "
+    "AND cpdf.generation = latest.max_generation "
     "AND cpdf.artifact_type = 'cover_letter_pdf' AND cpdf.status = 'approved'"
-    ") jm ON jm.jm_job_url = jobs.url"
+    ") jm ON jm.jm_tenant_id = jobs.tenant_id AND jm.jm_job_id = jobs.job_id"
 )
 
 _EFFECTIVE_TAILOR_PATH: str = (
-    "CASE WHEN jm.jm_job_url IS NOT NULL THEN jm.jm_tailored_path "
+    "CASE WHEN jm.jm_job_id IS NOT NULL THEN jm.jm_tailored_path "
     "ELSE jobs.tailored_resume_path END"
 )
 _EFFECTIVE_COVER_PATH: str = (
-    "CASE WHEN jm.jm_job_url IS NOT NULL THEN jm.jm_cover_path "
+    "CASE WHEN jm.jm_job_id IS NOT NULL THEN jm.jm_cover_path "
     "ELSE jobs.cover_letter_path END"
 )
 _READY_TAILORED_RESUME_WITH_PDF: str = (
-    "((jm.jm_job_url IS NOT NULL "
+    "((jm.jm_job_id IS NOT NULL "
     "AND jm.jm_tailored_path IS NOT NULL AND jm.jm_tailored_path != '' "
     "AND jm.jm_resume_pdf_path IS NOT NULL AND jm.jm_resume_pdf_path != '') "
-    "OR (jm.jm_job_url IS NULL "
+    "OR (jm.jm_job_id IS NULL "
     "AND jobs.tailored_resume_path IS NOT NULL AND jobs.tailored_resume_path != ''))"
 )
 
@@ -3144,13 +3154,17 @@ _READY_TAILORED_RESUME_WITH_PDF: str = (
 
 _LATEST_STAGE_ATTEMPTS_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT job_url AS jss_t_job_url, attempt_count AS jss_t_attempts, state AS jss_t_state "
+    "SELECT tenant_id AS jss_t_tenant_id, job_id AS jss_t_job_id, "
+    "attempt_count AS jss_t_attempts, state AS jss_t_state "
     "FROM job_stage_states WHERE stage = 'tailor'"
-    ") jss_t ON jss_t.jss_t_job_url = jobs.url "
+    ") jss_t ON jss_t.jss_t_tenant_id = jobs.tenant_id "
+    "AND jss_t.jss_t_job_id = jobs.job_id "
     "LEFT JOIN ("
-    "SELECT job_url AS jss_c_job_url, attempt_count AS jss_c_attempts, state AS jss_c_state "
+    "SELECT tenant_id AS jss_c_tenant_id, job_id AS jss_c_job_id, "
+    "attempt_count AS jss_c_attempts, state AS jss_c_state "
     "FROM job_stage_states WHERE stage = 'cover'"
-    ") jss_c ON jss_c.jss_c_job_url = jobs.url"
+    ") jss_c ON jss_c.jss_c_tenant_id = jobs.tenant_id "
+    "AND jss_c.jss_c_job_id = jobs.job_id"
 )
 
 # COALESCE picks the canonical (job_stage_states) counter first, falling
@@ -3169,17 +3183,20 @@ _COVER_NOT_EXHAUSTED: str = "(jss_c.jss_c_state IS NULL OR jss_c.jss_c_state != 
 # ``job_scores``, downstream work requires a succeeded score-stage row.
 _SCORE_DOWNSTREAM_STATE_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT job_url AS jss_s_job_url, state AS jss_s_state, "
+    "SELECT tenant_id AS jss_s_tenant_id, job_id AS jss_s_job_id, "
+    "state AS jss_s_state, "
     "attempt_count AS jss_s_attempts "
     "FROM job_stage_states WHERE stage = 'score'"
-    ") jss_s ON jss_s.jss_s_job_url = jobs.url "
+    ") jss_s ON jss_s.jss_s_tenant_id = jobs.tenant_id "
+    "AND jss_s.jss_s_job_id = jobs.job_id "
     "LEFT JOIN ("
-    "SELECT DISTINCT job_url AS jss_stale_job_url "
+    "SELECT DISTINCT tenant_id AS jss_stale_tenant_id, job_id AS jss_stale_job_id "
     "FROM job_score_staleness WHERE resolved = 0"
-    ") jss_stale ON jss_stale.jss_stale_job_url = jobs.url"
+    ") jss_stale ON jss_stale.jss_stale_tenant_id = jobs.tenant_id "
+    "AND jss_stale.jss_stale_job_id = jobs.job_id"
 )
 _SCORE_CURRENT_FOR_DOWNSTREAM: str = (
-    "(jss_stale.jss_stale_job_url IS NULL "
+    "(jss_stale.jss_stale_job_id IS NULL "
     "AND (jss_s.jss_s_state IS NULL "
     "OR jss_s.jss_s_state = 'succeeded' "
     "OR (js.js_fit_score IS NULL AND jss_s.jss_s_state != 'stale')))"
@@ -3206,7 +3223,8 @@ _EFFECTIVE_SCORE_ATTEMPTS: str = "COALESCE(jss_s.jss_s_attempts, 0)"
 
 _LATEST_SCORE_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT s.job_url AS js_job_url, s.fit_score AS js_fit_score, "
+    "SELECT s.tenant_id AS js_tenant_id, s.job_id AS js_job_id, "
+    "s.fit_score AS js_fit_score, "
     "CASE WHEN json_valid(s.breakdown_json) "
     "THEN LOWER(COALESCE(CAST(json_extract(s.breakdown_json, '$.eligibility.status') AS TEXT), '')) "
     "ELSE '' END AS js_eligibility_status, "
@@ -3218,9 +3236,11 @@ _LATEST_SCORE_JOIN: str = (
     "0) ELSE 0 END AS js_hard_blocker_count "
     "FROM job_scores s "
     "INNER JOIN ("
-    "SELECT job_url, MAX(version) AS max_version FROM job_scores GROUP BY job_url"
-    ") latest ON latest.job_url = s.job_url AND latest.max_version = s.version"
-    ") js ON js.js_job_url = jobs.url"
+    "SELECT tenant_id, job_id, MAX(version) AS max_version "
+    "FROM job_scores GROUP BY tenant_id, job_id"
+    ") latest ON latest.tenant_id = s.tenant_id AND latest.job_id = s.job_id "
+    "AND latest.max_version = s.version"
+    ") js ON js.js_tenant_id = jobs.tenant_id AND js.js_job_id = jobs.job_id"
 )
 
 _EFFECTIVE_FIT_SCORE: str = "COALESCE(js.js_fit_score, jobs.fit_score)"
@@ -3242,17 +3262,19 @@ _SCORE_ELIGIBLE_FOR_DOWNSTREAM: str = (
 # Tie-break by run_id when two apply runs share the same ``started_at``.
 _LATEST_APPLY_RUN_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT ar.job_id AS ar_job_url, ar.status AS ar_status, "
+    "SELECT ar.tenant_id AS ar_tenant_id, ar.job_id AS ar_job_id, "
+    "ar.status AS ar_status, "
     "ar.result AS ar_result, ar.finished_at AS ar_finished_at, "
     "ar.started_at AS ar_started_at, ar.run_id AS ar_run_id "
     "FROM apply_run_projections ar "
     "WHERE ar.run_id = ("
     "SELECT run_id FROM apply_run_projections ar_inner "
-    "WHERE ar_inner.job_id = ar.job_id "
+    "WHERE ar_inner.tenant_id = ar.tenant_id "
+    "AND ar_inner.job_id = ar.job_id "
     "ORDER BY ar_inner.started_at DESC, ar_inner.run_id DESC "
     "LIMIT 1"
     ")"
-    ") ar ON ar.ar_job_url = jobs.url"
+    ") ar ON ar.ar_tenant_id = jobs.tenant_id AND ar.ar_job_id = jobs.job_id"
 )
 
 # Applied = any apply run with status='succeeded' for the job (we
@@ -3455,13 +3477,16 @@ def count_ready_to_apply(
         _ENRICHMENT_NOT_QUARANTINED,
         "NOT EXISTS ("
         "SELECT 1 FROM job_stage_states jss_active "
-        "WHERE jss_active.job_url = jobs.url "
+        "WHERE jss_active.tenant_id = jobs.tenant_id "
+        "AND jss_active.job_id = jobs.job_id "
         "AND jss_active.stage = 'apply' "
         "AND jss_active.state IN ('running', 'succeeded')"
         ")",
         "COALESCE(("
         "SELECT jss_a.attempt_count FROM job_stage_states jss_a "
-        "WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply' LIMIT 1"
+        "WHERE jss_a.tenant_id = jobs.tenant_id "
+        "AND jss_a.job_id = jobs.job_id "
+        "AND jss_a.stage = 'apply' LIMIT 1"
         "), 0) < ?",
         "(ar.ar_status IS NULL OR ar.ar_status NOT IN ('starting', 'in_progress'))",
     ]
@@ -3826,7 +3851,7 @@ def get_jobs_by_stage(
     # round-trip through the repository.
     query = (
         f"SELECT jobs.*, js.js_fit_score AS js_fit_score, "
-        f"jm.jm_job_url AS jm_job_url, "
+        f"jm.jm_job_id AS jm_job_id, "
         f"jm.jm_tailored_path AS jm_tailored_path, "
         f"jm.jm_tailored_at AS jm_tailored_at, "
         f"jm.jm_cover_path AS jm_cover_path, "
@@ -3873,12 +3898,12 @@ def get_jobs_by_stage(
         js_value = record.pop("js_fit_score", None)
         if js_value is not None:
             record["fit_score"] = js_value
-        jm_job_url = record.pop("jm_job_url", None)
+        jm_job_id = record.pop("jm_job_id", None)
         jm_tailored = record.pop("jm_tailored_path", None)
         jm_tailored_at = record.pop("jm_tailored_at", None)
         jm_cover = record.pop("jm_cover_path", None)
         jm_cover_at = record.pop("jm_cover_at", None)
-        if jm_job_url is not None:
+        if jm_job_id is not None:
             record["tailored_resume_path"] = jm_tailored
             record["tailored_at"] = jm_tailored_at
             record["cover_letter_path"] = jm_cover
