@@ -6,12 +6,17 @@ from pathlib import Path
 import pytest
 
 from jobctrl.database import close_connection, init_db
+from jobctrl.domain.enrichment import EnrichmentError, ExtractionTier, JobEnrichment
+from jobctrl.domain.identifiers import canonical_job_id
+from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.enrichment import detail
 from jobctrl.enrichment.detail import (
     _detail_failure_retryable,
     _record_posting_snapshot_from_cascade,
+    _reset_authenticated_linkedin_retry_candidates,
     scrape_detail_page,
 )
+from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
 from jobctrl.infrastructure.network import PublicUrlDecision
 
 from .politeness_helpers import offline_gateway, offline_session
@@ -166,6 +171,109 @@ def test_verified_inactive_detail_failure_is_not_retryable() -> None:
             "verification_method": "http_status",
         }
     ) is False
+
+
+def test_authenticated_linkedin_retry_resets_only_exact_v7_aggregate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    job_id = canonical_job_id("d7ac9089-caf0-4eb9-82fb-f56b168e9707")
+    job_url = "https://www.linkedin.com/jobs/view/4375576106"
+    try:
+        conn.execute(
+            """
+            INSERT INTO jobs (
+                tenant_id, job_id, url, title, site, discovered_at,
+                detail_error, detail_scraped_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(LOCAL_TENANT),
+                str(job_id),
+                job_url,
+                "Director of Engineering",
+                "linkedin",
+                "2026-06-04T15:55:20+00:00",
+                "legacy error must remain untouched",
+                "2026-06-04T16:00:00+00:00",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_locators (
+                tenant_id, job_id, locator_kind, locator_value,
+                is_current, first_seen_at, last_seen_at
+            ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?)
+            """,
+            (
+                str(LOCAL_TENANT),
+                str(job_id),
+                job_url,
+                "2026-06-04T15:55:20+00:00",
+                "2026-06-04T15:55:20+00:00",
+            ),
+        )
+        failed = (
+            JobEnrichment.empty(
+                tenant_id=LOCAL_TENANT,
+                job_id=job_id,
+                updated_at="2026-06-04T16:00:00+00:00",
+            )
+            .start_attempt(
+                extraction_tier=ExtractionTier.CSS_SELECTORS,
+                started_at="2026-06-04T16:00:00+00:00",
+            )
+            .fail_attempt(
+                error=EnrichmentError(
+                    code="DETAIL_ERROR",
+                    message="login wall",
+                    retryable=True,
+                ),
+                finished_at="2026-06-04T16:00:01+00:00",
+            )
+        )
+        repo = SqliteEnrichmentRepository(conn)
+        repo.save(failed)
+
+        monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: True)
+
+        reset_count = _reset_authenticated_linkedin_retry_candidates(
+            conn,
+            job_urls=(job_url,),
+            session=offline_session(conn, site="linkedin"),
+        )
+
+        assert reset_count == 1
+        reset = repo.load(LOCAL_TENANT, job_id)
+        assert reset is not None and reset.is_pending
+        assert reset.attempt_count == 1
+        legacy_row = conn.execute(
+            "SELECT detail_error, detail_scraped_at FROM jobs "
+            "WHERE tenant_id = ? AND job_id = ?",
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()
+        assert tuple(legacy_row) == (
+            "legacy error must remain untouched",
+            "2026-06-04T16:00:00+00:00",
+        )
+        stage = conn.execute(
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()
+        assert stage is not None and stage["state"] == "pending"
+        event = conn.execute(
+            "SELECT job_id, payload_json FROM job_events "
+            "WHERE tenant_id = ? AND event_type = 'StageReset'",
+            (str(LOCAL_TENANT),),
+        ).fetchone()
+        assert event is not None and event["job_id"] == str(job_id)
+        payload = json.loads(event["payload_json"])
+        assert payload["jobId"] == str(job_id)
+        assert "jobUrl" not in payload
+    finally:
+        close_connection(db_path)
 
 
 def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_data(
