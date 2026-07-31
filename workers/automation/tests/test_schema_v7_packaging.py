@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import tarfile
 import zipfile
 from pathlib import Path
@@ -14,7 +15,16 @@ _SCHEMA_MEMBER = "jobctrl/infrastructure/migrations/schema_v7.sql"
 
 def test_exact_v7_schema_is_bundled_in_wheel_and_sdist(tmp_path: Path) -> None:
     subprocess.run(
-        ["uv", "build", "--wheel", "--sdist", "--out-dir", str(tmp_path)],
+        [
+            sys.executable,
+            "-m",
+            "build",
+            "--no-isolation",
+            "--wheel",
+            "--sdist",
+            "--outdir",
+            str(tmp_path),
+        ],
         cwd=_AUTOMATION_ROOT,
         check=True,
         capture_output=True,
