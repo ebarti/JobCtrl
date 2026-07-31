@@ -24,31 +24,30 @@ def scoring_current_policy_job_urls(
     current_version = _current_scoring_policy_version(conn, tenant_id)
     requested = _clean_job_urls(job_urls)
     requested_sql, requested_params = _requested_filter("j.url", requested)
-    active_sql = _active_job_filter(conn, "j.url")
+    active_sql = _active_job_filter("j.tenant_id", "j.job_id")
     limit_sql, limit_params = _limit_filter(limit)
 
     rows = conn.execute(
         f"""
         SELECT j.url
         FROM jobs j
-        LEFT JOIN job_enrichments je ON je.job_url = j.url
-        LEFT JOIN (
-            SELECT s.job_url, s.trace_json, s.correction_json
-            FROM job_scores s
-            INNER JOIN (
-                SELECT job_url, MAX(version) AS max_version
-                FROM job_scores
-                WHERE tenant_id = ?
-                GROUP BY job_url
-            ) latest
-              ON latest.job_url = s.job_url AND latest.max_version = s.version
-            WHERE s.tenant_id = ?
-        ) latest_score ON latest_score.job_url = j.url
-        WHERE COALESCE(je.full_description, j.full_description) IS NOT NULL
+        JOIN job_enrichments je
+          ON je.tenant_id = j.tenant_id AND je.job_id = j.job_id
+        LEFT JOIN job_scores latest_score
+          ON latest_score.tenant_id = j.tenant_id
+         AND latest_score.job_id = j.job_id
+         AND latest_score.version = (
+            SELECT MAX(candidate.version)
+            FROM job_scores candidate
+            WHERE candidate.tenant_id = j.tenant_id
+              AND candidate.job_id = j.job_id
+         )
+        WHERE j.tenant_id = ?
+          AND je.full_description IS NOT NULL
           {active_sql}
           {requested_sql}
           AND (
-            latest_score.job_url IS NULL
+            latest_score.job_id IS NULL
             OR (
               (latest_score.correction_json IS NULL OR TRIM(latest_score.correction_json) = '')
               AND {_score_policy_version_expr("latest_score.trace_json")} != ?
@@ -57,7 +56,7 @@ def scoring_current_policy_job_urls(
         ORDER BY j.discovered_at DESC
         {limit_sql}
         """,
-        (tenant_id, tenant_id, *requested_params, current_version, *limit_params),
+        (tenant_id, *requested_params, current_version, *limit_params),
     ).fetchall()
     return tuple(str(row[0]) for row in rows if row[0])
 
@@ -76,89 +75,76 @@ def tailoring_current_policy_job_urls(
     current_version = _current_tailoring_policy_version(conn, tenant_id)
     requested = _clean_job_urls(job_urls)
     requested_sql, requested_params = _requested_filter("j.url", requested)
-    active_sql = _active_job_filter(conn, "j.url")
+    active_sql = _active_job_filter("j.tenant_id", "j.job_id")
     limit_sql, limit_params = _limit_filter(limit)
     effective_tailor_path = (
-        "((lm.materials_job_url IS NOT NULL AND lm.tailored_resume_path IS NOT NULL "
-        "AND lm.tailored_resume_path != '') "
-        "OR (lm.materials_job_url IS NULL AND j.tailored_resume_path IS NOT NULL "
-        "AND j.tailored_resume_path != ''))"
+        "(tailored_resume.job_id IS NOT NULL "
+        "AND tailored_resume.path IS NOT NULL "
+        "AND tailored_resume.path != '')"
     )
 
     rows = conn.execute(
         f"""
         SELECT j.url
         FROM jobs j
-        LEFT JOIN job_enrichments je ON je.job_url = j.url
-        LEFT JOIN (
-            SELECT s.job_url, s.fit_score, s.breakdown_json
-            FROM job_scores s
-            INNER JOIN (
-                SELECT job_url, MAX(version) AS max_version
-                FROM job_scores
-                WHERE tenant_id = ?
-                GROUP BY job_url
-            ) latest
-              ON latest.job_url = s.job_url AND latest.max_version = s.version
-            WHERE s.tenant_id = ?
-        ) latest_score ON latest_score.job_url = j.url
-        LEFT JOIN (
-            SELECT job_url AS stale_job_url
-            FROM job_score_staleness
-            WHERE tenant_id = ? AND resolved = 0
-            GROUP BY job_url
-        ) stale_score ON stale_score.stale_job_url = j.url
+        JOIN job_enrichments je
+          ON je.tenant_id = j.tenant_id AND je.job_id = j.job_id
+        LEFT JOIN job_scores latest_score
+          ON latest_score.tenant_id = j.tenant_id
+         AND latest_score.job_id = j.job_id
+         AND latest_score.version = (
+            SELECT MAX(candidate.version)
+            FROM job_scores candidate
+            WHERE candidate.tenant_id = j.tenant_id
+              AND candidate.job_id = j.job_id
+         )
         LEFT JOIN job_stage_states score_state
-          ON score_state.job_url = j.url AND score_state.stage = 'score'
+          ON score_state.tenant_id = j.tenant_id
+         AND score_state.job_id = j.job_id
+         AND score_state.stage = 'score'
         LEFT JOIN job_stage_states tailor_state
-          ON tailor_state.job_url = j.url AND tailor_state.stage = 'tailor'
-        LEFT JOIN (
-            SELECT m.job_url AS materials_job_url, tr.path AS tailored_resume_path,
-                   tr.metadata_json AS tailored_resume_metadata
-            FROM job_materials m
-            INNER JOIN (
-                SELECT job_url, MAX(generation) AS max_generation
-                FROM job_materials
-                WHERE tenant_id = ?
-                GROUP BY job_url
-            ) latest
-              ON latest.job_url = m.job_url AND latest.max_generation = m.generation
-            LEFT JOIN job_materials_artifacts tr
-              ON tr.job_url = m.job_url
-             AND tr.generation = m.generation
-             AND tr.artifact_type = 'tailored_resume'
-             AND tr.status = 'approved'
-             AND tr.superseded_at IS NULL
-            WHERE m.tenant_id = ?
-        ) lm ON lm.materials_job_url = j.url
-        WHERE COALESCE(je.full_description, j.full_description) IS NOT NULL
+          ON tailor_state.tenant_id = j.tenant_id
+         AND tailor_state.job_id = j.job_id
+         AND tailor_state.stage = 'tailor'
+        LEFT JOIN job_materials_artifacts tailored_resume
+          ON tailored_resume.tenant_id = j.tenant_id
+         AND tailored_resume.job_id = j.job_id
+         AND tailored_resume.generation = (
+            SELECT MAX(candidate.generation)
+            FROM job_materials_artifacts candidate
+            WHERE candidate.tenant_id = j.tenant_id
+              AND candidate.job_id = j.job_id
+              AND candidate.artifact_type = 'tailored_resume'
+              AND candidate.status = 'approved'
+              AND candidate.superseded_at IS NULL
+         )
+         AND tailored_resume.artifact_type = 'tailored_resume'
+         AND tailored_resume.status = 'approved'
+         AND tailored_resume.superseded_at IS NULL
+        WHERE j.tenant_id = ?
+          AND je.full_description IS NOT NULL
           {active_sql}
           {requested_sql}
-          AND COALESCE(latest_score.fit_score, j.fit_score) >= ?
+          AND latest_score.fit_score >= ?
           AND {_score_eligible_expr("latest_score.breakdown_json")}
-          AND stale_score.stale_job_url IS NULL
-          AND (
-            score_state.state IS NULL
-            OR score_state.state = 'succeeded'
-            OR (latest_score.fit_score IS NULL AND score_state.state != 'stale')
+          AND NOT EXISTS (
+            SELECT 1
+            FROM job_score_staleness stale_score
+            WHERE stale_score.tenant_id = j.tenant_id
+              AND stale_score.job_id = j.job_id
+              AND stale_score.resolved = 0
           )
+          AND (score_state.state IS NULL OR score_state.state = 'succeeded')
           AND (tailor_state.state IS NULL OR tailor_state.state != 'exhausted')
-          AND (
-            {effective_tailor_path}
-            OR COALESCE(tailor_state.attempt_count, j.tailor_attempts, 0) < 5
-          )
+          AND COALESCE(tailor_state.attempt_count, 0) < 5
           AND (
             NOT {effective_tailor_path}
-            OR {_tailoring_policy_version_expr("lm.tailored_resume_metadata")} != ?
+            OR {_tailoring_policy_version_expr("tailored_resume.metadata_json")} != ?
           )
-        ORDER BY COALESCE(latest_score.fit_score, j.fit_score) DESC, j.discovered_at DESC
+        ORDER BY latest_score.fit_score DESC, j.discovered_at DESC
         {limit_sql}
         """,
         (
-            tenant_id,
-            tenant_id,
-            tenant_id,
-            tenant_id,
             tenant_id,
             *requested_params,
             min_score,
@@ -187,33 +173,32 @@ def _current_tailoring_policy_version(conn: sqlite3.Connection, tenant_id: str) 
     return _positive_int(row[0] if row else None, default=1)
 
 
-def _active_job_filter(conn: sqlite3.Connection, job_url_expr: str) -> str:
-    clauses: list[str] = []
-    if _table_exists(conn, "jobctrl_deleted_jobs"):
-        clauses.append(
-            "NOT EXISTS ("
-            "SELECT 1 FROM jobctrl_deleted_jobs d "
-            f"WHERE d.job_url = {job_url_expr} "
-            "AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
-            ")"
+def _active_job_filter(tenant_id_expr: str, job_id_expr: str) -> str:
+    return f"""
+        AND NOT EXISTS (
+            SELECT 1 FROM jobctrl_deleted_jobs deleted
+            WHERE deleted.tenant_id = {tenant_id_expr}
+              AND deleted.job_id = {job_id_expr}
+              AND (
+                deleted.restored_at IS NULL
+                OR julianday(deleted.restored_at) <= julianday(deleted.deleted_at)
+              )
         )
-    if _table_exists(conn, "jobctrl_hidden_jobs"):
-        clauses.append(
-            "NOT EXISTS ("
-            "SELECT 1 FROM jobctrl_hidden_jobs h "
-            f"WHERE h.job_url = {job_url_expr} AND h.unhidden_at IS NULL"
-            ")"
+        AND NOT EXISTS (
+            SELECT 1 FROM jobctrl_hidden_jobs hidden
+            WHERE hidden.tenant_id = {tenant_id_expr}
+              AND hidden.job_id = {job_id_expr}
+              AND hidden.unhidden_at IS NULL
         )
-    if _table_exists(conn, "posting_snapshot_sets"):
-        clauses.append(
-            "NOT EXISTS ("
-            "SELECT 1 FROM posting_snapshot_sets pss "
-            f"WHERE pss.tenant_id = 'local' AND pss.job_url = {job_url_expr} "
-            "AND pss.latest_active_state IN "
-            "('closed', 'expired', 'removed', 'location_incompatible')"
-            ")"
+        AND NOT EXISTS (
+            SELECT 1 FROM posting_snapshot_sets snapshots
+            WHERE snapshots.tenant_id = {tenant_id_expr}
+              AND snapshots.job_id = {job_id_expr}
+              AND snapshots.latest_active_state IN (
+                'closed', 'expired', 'removed', 'location_incompatible'
+              )
         )
-    return "".join(f" AND {clause}" for clause in clauses)
+    """
 
 
 def _requested_filter(column: str, job_urls: tuple[str, ...]) -> tuple[str, tuple[str, ...]]:
@@ -231,14 +216,6 @@ def _limit_filter(limit: int) -> tuple[str, tuple[int, ...]]:
 
 def _clean_job_urls(job_urls: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(url.strip() for url in job_urls if url and url.strip()))
-
-
-def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (name,),
-    ).fetchone()
-    return row is not None
 
 
 def _score_policy_version_expr(json_expr: str) -> str:
