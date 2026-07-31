@@ -9,6 +9,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.database import get_connection, init_db
+from jobctrl.domain.identifiers import JobId
 from jobctrl.infrastructure.compensation.workflow import (
     CompensationRefreshWorkflow,
     CompensationRefreshWorkflowInput,
@@ -54,7 +55,7 @@ async def _profile_import_missing_input(_payload: ProfileImportActivityInput) ->
 async def _refresh_compensation(payload: CompensationRefreshWorkflowInput) -> dict:
     return {
         "ok": True,
-        "jobUrl": payload.job_url,
+        "postingUrl": "https://example.test/job" if payload.job_id else None,
         "postedFactsRefreshed": 1,
         "estimatesRefreshed": 1,
     }
@@ -149,7 +150,7 @@ async def test_compensation_refresh_workflow_runs_activity_and_projects_succeede
                 CompensationRefreshWorkflow.run,
                 CompensationRefreshWorkflowInput(
                     tenant_id="local",
-                    job_url="https://example.test/job",
+                    job_id=JobId("11111111-1111-4111-8111-111111111111"),
                     expected_app_dir=app_dir,
                     expected_db_path=db_path,
                 ),

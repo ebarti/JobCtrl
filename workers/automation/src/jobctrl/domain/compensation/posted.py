@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Literal
 
+from jobctrl.domain.identifiers import JobId, canonical_job_id
+
 PARSER_VERSION = "posted-compensation-v1"
 SOURCE_TEXT_LIMIT = 280
 
@@ -88,7 +90,7 @@ class PostedCompensationFact:
     """Persistable posted compensation fact derived from bounded source text."""
 
     tenant_id: str
-    job_url: str
+    job_id: JobId | None
     source_field: str
     source_text: str | None
     legacy_raw_salary: str | None
@@ -112,12 +114,14 @@ def parse_posted_compensation(
     source_text: str | None,
     *,
     tenant_id: str = "local",
-    job_url: str = "",
+    job_id: JobId | None = None,
     source_field: str = "jobs.salary",
     parsed_at: str | None = None,
 ) -> PostedCompensationFact:
     """Parse a bounded salary/source string into a durable compensation fact."""
 
+    if job_id is not None:
+        job_id = canonical_job_id(str(job_id))
     now = parsed_at or datetime.now(timezone.utc).isoformat()
     bounded, truncated = _bounded_source_text(source_text)
     raw_fallback = bounded
@@ -129,7 +133,7 @@ def parse_posted_compensation(
     if bounded is None:
         return PostedCompensationFact(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             source_field=source_field,
             source_text=None,
             legacy_raw_salary=None,
@@ -162,7 +166,7 @@ def parse_posted_compensation(
     if not amounts:
         return _non_range_fact(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             source_field=source_field,
             source_text=bounded,
             raw_fallback=raw_fallback,
@@ -176,7 +180,7 @@ def parse_posted_compensation(
     if len(amounts) > 2:
         return _non_range_fact(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             source_field=source_field,
             source_text=bounded,
             raw_fallback=raw_fallback,
@@ -189,7 +193,7 @@ def parse_posted_compensation(
     if len(amounts) > 1 and (_has_mixed_compensation_components(lower) or _has_additive_component_phrase(lower)):
         return _non_range_fact(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             source_field=source_field,
             source_text=bounded,
             raw_fallback=raw_fallback,
@@ -210,7 +214,7 @@ def parse_posted_compensation(
     confidence = _confidence(period, currency, warnings)
     return PostedCompensationFact(
         tenant_id=tenant_id,
-        job_url=job_url,
+        job_id=job_id,
         source_field=source_field,
         source_text=bounded,
         legacy_raw_salary=raw_fallback,
@@ -234,7 +238,7 @@ def parse_posted_compensation(
 def _non_range_fact(
     *,
     tenant_id: str,
-    job_url: str,
+    job_id: JobId | None,
     source_field: str,
     source_text: str,
     raw_fallback: str | None,
@@ -246,7 +250,7 @@ def _non_range_fact(
 ) -> PostedCompensationFact:
     return PostedCompensationFact(
         tenant_id=tenant_id,
-        job_url=job_url,
+        job_id=job_id,
         source_field=source_field,
         source_text=source_text,
         legacy_raw_salary=raw_fallback,

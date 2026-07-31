@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from jobctrl.database import ensure_market_compensation_tables, init_db
+from jobctrl.database import init_db
 from jobctrl.domain.compensation import (
     ReportedCompensationObservation,
     estimate_market_compensation,
     not_requested_market_estimate,
     parse_posted_compensation,
 )
+from jobctrl.domain.identifiers import JobId
 from jobctrl.infrastructure.compensation import (
     LevelsFyiPublicTarget,
     SqliteMarketCompensationRepository,
@@ -39,12 +41,17 @@ def _seed_job(
     location: str = "Remote Europe",
     salary: str | None = "€100,000-€130,000/year",
 ) -> str:
+    job_id = _job_id(url)
     conn.execute(
-        "INSERT INTO jobs (url, title, site, location, salary, description, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (url, title, company, location, salary, "Synthetic job", "2026-06-19T10:00:00Z"),
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, location, salary, description, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("local", job_id, url, title, company, location, salary, "Synthetic job", "2026-06-19T10:00:00Z"),
     )
     conn.commit()
     return url
+
+
+def _job_id(url: str) -> JobId:
+    return JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{url}")))
 
 
 def _levels() -> ReportedCompensationObservation:
@@ -87,14 +94,47 @@ def test_schema_is_created_by_init_db(conn: sqlite3.Connection) -> None:
     ).fetchone()
 
     assert row is not None
-    assert ensure_market_compensation_tables(conn) == []
+
+
+def test_constructor_does_not_probe_or_mutate_healthy_schema(conn: sqlite3.Connection) -> None:
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+
+    SqliteMarketCompensationRepository(conn)
+
+    assert statements == []
+
+
+@pytest.mark.parametrize(
+    ("schema_sql", "error"),
+    (
+        (None, "no such table: job_market_compensation_estimates"),
+        (
+            "CREATE TABLE job_market_compensation_estimates (tenant_id TEXT, job_id TEXT)",
+            "no such column: estimate_state",
+        ),
+    ),
+)
+def test_missing_or_malformed_schema_fails_closed_on_first_operation(
+    schema_sql: str | None,
+    error: str,
+) -> None:
+    malformed_conn = sqlite3.connect(":memory:")
+    if schema_sql is not None:
+        malformed_conn.execute(schema_sql)
+
+    repo = SqliteMarketCompensationRepository(malformed_conn)
+
+    with pytest.raises(sqlite3.OperationalError, match=error):
+        repo.get_estimate("local", JobId("00000000-0000-0000-0000-000000000001"))
 
 
 def test_save_and_read_round_trip_estimated_company_role_range(conn: sqlite3.Connection) -> None:
     job_url = _seed_job(conn)
+    job_id = _job_id(job_url)
     repo = SqliteMarketCompensationRepository(conn)
     estimate = estimate_market_compensation(
-        job_url=job_url,
+        job_id=job_id,
         title="Senior Platform Engineer",
         company="Acme AI",
         location="Remote Europe",
@@ -103,7 +143,7 @@ def test_save_and_read_round_trip_estimated_company_role_range(conn: sqlite3.Con
     )
 
     repo.save_estimate(estimate)
-    loaded = repo.get_estimate("local", job_url)
+    loaded = repo.get_estimate("local", job_id)
 
     assert loaded is not None
     assert loaded.estimate_state == "estimated_range"
@@ -135,16 +175,17 @@ def test_repository_round_trips_non_range_states(
     conn: sqlite3.Connection,
 ) -> None:
     job_url = _seed_job(conn, url="https://example.com/jobs/missing_company", company="")
+    job_id = _job_id(job_url)
     repo = SqliteMarketCompensationRepository(conn)
     estimate = repo.estimate_and_save_job(
-        job_url=job_url,
+        job_id=job_id,
         title="Senior Platform Engineer",
         company="",
         location="Remote Europe",
         observations=(_levels(), _glassdoor()),
         estimated_at="2026-06-19T10:00:00Z",
     )
-    loaded = repo.get_estimate("local", job_url)
+    loaded = repo.get_estimate("local", job_id)
 
     assert loaded is not None
     assert loaded.estimate_state == "insufficient_evidence"
@@ -158,17 +199,18 @@ def test_repository_round_trips_fallback_ranges_and_confidence_interval(
     conn: sqlite3.Connection,
 ) -> None:
     job_url = _seed_job(conn, url="https://example.com/jobs/location-fallback", company="Different Company")
+    job_id = _job_id(job_url)
     repo = SqliteMarketCompensationRepository(conn)
 
     estimate = repo.estimate_and_save_job(
-        job_url=job_url,
+        job_id=job_id,
         title="Senior Platform Engineer",
         company="Different Company",
         location="Remote Europe",
         observations=(_levels(), _glassdoor()),
         estimated_at="2026-06-19T10:00:00Z",
     )
-    loaded = repo.get_estimate("local", job_url)
+    loaded = repo.get_estimate("local", job_id)
 
     assert loaded is not None
     assert loaded.estimate_state == "estimated_range"
@@ -183,17 +225,18 @@ def test_repository_round_trips_fallback_ranges_and_confidence_interval(
 
 def test_repository_does_not_persist_not_requested_marker(conn: sqlite3.Connection) -> None:
     job_url = _seed_job(conn, url="https://example.com/jobs/not-requested")
+    job_id = _job_id(job_url)
     repo = SqliteMarketCompensationRepository(conn)
 
     with pytest.raises(ValueError, match="not_requested"):
         repo.save_estimate(
             not_requested_market_estimate(
-                job_url=job_url,
+                job_id=job_id,
                 estimated_at="2026-06-19T10:00:00Z",
             )
         )
 
-    row = conn.execute("SELECT * FROM job_market_compensation_estimates WHERE job_url = ?", (job_url,)).fetchone()
+    row = conn.execute("SELECT * FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchone()
     assert row is None
 
 
@@ -201,11 +244,12 @@ def test_backfill_is_idempotent_and_preserves_existing_salary_and_posted_facts(
     conn: sqlite3.Connection,
 ) -> None:
     job_url = _seed_job(conn, salary="€100,000-€130,000/year")
+    job_id = _job_id(job_url)
     posted_repo = SqlitePostedCompensationRepository(conn)
     posted_repo.save_fact(
         parse_posted_compensation(
             "€100,000-€130,000/year",
-            job_url=job_url,
+            job_id=job_id,
             parsed_at="2026-06-19T10:00:00Z",
         )
     )
@@ -215,10 +259,10 @@ def test_backfill_is_idempotent_and_preserves_existing_salary_and_posted_facts(
     assert repo.backfill_from_jobs((_levels(), _glassdoor()), estimated_at="2026-06-19T10:00:00Z") == 1
 
     market_rows = conn.execute(
-        "SELECT * FROM job_market_compensation_estimates WHERE job_url = ?", (job_url,)
+        "SELECT * FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?", ("local", job_id)
     ).fetchall()
-    posted_rows = conn.execute("SELECT * FROM job_posted_compensation_facts WHERE job_url = ?", (job_url,)).fetchall()
-    salary = conn.execute("SELECT salary FROM jobs WHERE url = ?", (job_url,)).fetchone()["salary"]
+    posted_rows = conn.execute("SELECT * FROM job_posted_compensation_facts WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchall()
+    salary = conn.execute("SELECT salary FROM jobs WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchone()["salary"]
 
     assert len(market_rows) == 1
     assert len(posted_rows) == 1
@@ -229,13 +273,16 @@ def test_backfill_derives_market_range_from_posted_salary_fact_and_company_colum
     conn: sqlite3.Connection,
 ) -> None:
     job_url = "https://example.com/jobs/posted-market"
+    job_id = _job_id(job_url)
     conn.execute(
         """
         INSERT INTO jobs (
-            url, title, site, company, location, salary, description, discovered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, site, company, location, salary, description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            "local",
+            job_id,
             job_url,
             "Senior Platform Engineer",
             "indeed",
@@ -249,7 +296,7 @@ def test_backfill_derives_market_range_from_posted_salary_fact_and_company_colum
     SqlitePostedCompensationRepository(conn).save_fact(
         parse_posted_compensation(
             "€100,000-€130,000/year",
-            job_url=job_url,
+            job_id=job_id,
             parsed_at="2026-06-19T10:00:00Z",
         )
     )
@@ -257,7 +304,7 @@ def test_backfill_derives_market_range_from_posted_salary_fact_and_company_colum
 
     assert repo.backfill_from_jobs((), estimated_at="2026-06-19T10:00:00Z") == 1
 
-    estimate = repo.get_estimate("local", job_url)
+    estimate = repo.get_estimate("local", job_id)
     assert estimate is not None
     assert estimate.estimate_state == "estimated_range"
     assert estimate.component == "base_salary"
@@ -279,13 +326,16 @@ def test_posted_backfill_extracts_salary_text_from_full_description(
     conn: sqlite3.Connection,
 ) -> None:
     job_url = "https://example.com/jobs/full-description-salary"
+    job_id = _job_id(job_url)
     conn.execute(
         """
         INSERT INTO jobs (
-            url, title, site, company, location, salary, full_description, description, discovered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, site, company, location, salary, full_description, description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            "local",
+            job_id,
             job_url,
             "Senior Platform Engineer",
             "indeed",
@@ -299,9 +349,9 @@ def test_posted_backfill_extracts_salary_text_from_full_description(
     )
     repo = SqlitePostedCompensationRepository(conn)
 
-    assert repo.backfill_from_legacy_jobs(parsed_at="2026-06-19T10:00:00Z") == 1
+    assert repo.backfill_from_jobs(parsed_at="2026-06-19T10:00:00Z") == 1
 
-    fact = repo.get_fact("local", job_url)
+    fact = repo.get_fact("local", job_id)
     assert fact is not None
     assert fact.parse_state == "parsed_range"
     assert fact.source_field == "jobs.full_description"
@@ -320,10 +370,11 @@ def test_backfill_falls_back_to_posted_salary_when_reported_rows_are_too_weak(
         location="Remote Europe",
         salary="€100,000-€130,000/year",
     )
+    job_id = _job_id(job_url)
     SqlitePostedCompensationRepository(conn).save_fact(
         parse_posted_compensation(
             "€100,000-€130,000/year",
-            job_url=job_url,
+            job_id=job_id,
             parsed_at="2026-06-19T10:00:00Z",
         )
     )
@@ -359,7 +410,7 @@ def test_backfill_falls_back_to_posted_salary_when_reported_rows_are_too_weak(
 
     assert repo.backfill_from_jobs(weak_reported_observations, estimated_at="2026-06-19T10:00:00Z") == 1
 
-    estimate = repo.get_estimate("local", job_url)
+    estimate = repo.get_estimate("local", job_id)
     assert estimate is not None
     assert estimate.estimate_state == "estimated_range"
     assert estimate.component == "base_salary"
@@ -378,10 +429,11 @@ def test_backfill_uses_high_value_missing_period_salary_text_as_annual_market_ev
         company="Acme AI",
         salary="Salary to €120,000",
     )
+    job_id = _job_id(job_url)
     SqlitePostedCompensationRepository(conn).save_fact(
         parse_posted_compensation(
             "Salary to €120,000",
-            job_url=job_url,
+            job_id=job_id,
             parsed_at="2026-06-19T10:00:00Z",
         )
     )
@@ -389,7 +441,7 @@ def test_backfill_uses_high_value_missing_period_salary_text_as_annual_market_ev
 
     assert repo.backfill_from_jobs((), estimated_at="2026-06-19T10:00:00Z") == 1
 
-    estimate = repo.get_estimate("local", job_url)
+    estimate = repo.get_estimate("local", job_id)
     assert estimate is not None
     assert estimate.estimate_state == "estimated_range"
     assert estimate.minimum_amount == 120_000
@@ -408,10 +460,11 @@ def test_backfill_rejects_bonus_only_missing_period_salary_text_as_market_eviden
         company="Acme AI",
         salary="Referral Bonus: €1500",
     )
+    job_id = _job_id(job_url)
     SqlitePostedCompensationRepository(conn).save_fact(
         parse_posted_compensation(
             "Referral Bonus: €1500",
-            job_url=job_url,
+            job_id=job_id,
             parsed_at="2026-06-19T10:00:00Z",
         )
     )
@@ -419,7 +472,7 @@ def test_backfill_rejects_bonus_only_missing_period_salary_text_as_market_eviden
 
     assert repo.backfill_from_jobs((), estimated_at="2026-06-19T10:00:00Z") == 1
 
-    estimate = repo.get_estimate("local", job_url)
+    estimate = repo.get_estimate("local", job_id)
     assert estimate is not None
     assert estimate.estimate_state == "insufficient_evidence"
     assert estimate.minimum_amount is None
@@ -791,9 +844,10 @@ def test_euro_top_tech_importer_keeps_loaded_rows_when_later_page_is_throttled(
 
 def test_persisted_json_contains_safe_reported_source_fields(conn: sqlite3.Connection) -> None:
     job_url = _seed_job(conn)
+    job_id = _job_id(job_url)
     repo = SqliteMarketCompensationRepository(conn)
     repo.estimate_and_save_job(
-        job_url=job_url,
+        job_id=job_id,
         title="Senior Platform Engineer",
         company="Acme AI",
         location="Remote Europe",
@@ -804,9 +858,9 @@ def test_persisted_json_contains_safe_reported_source_fields(conn: sqlite3.Conne
     row = conn.execute(
         """
         SELECT source_snapshot_json, factor_reasons_json, insufficient_reasons_json, warnings_json
-        FROM job_market_compensation_estimates WHERE job_url = ?
+        FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?
         """,
-        (job_url,),
+        ("local", job_id),
     ).fetchone()
     serialized = " ".join(str(row[key]).lower() for key in row.keys())
 
@@ -820,20 +874,23 @@ def test_persisted_json_contains_safe_reported_source_fields(conn: sqlite3.Conne
     event = conn.execute(
         """
         SELECT payload_json FROM job_events
-        WHERE job_url = ? AND event_type = 'CompensationFactsUpdated'
+        WHERE tenant_id = ? AND job_id = ? AND event_type = 'CompensationFactsUpdated'
         ORDER BY event_id DESC LIMIT 1
         """,
-        (job_url,),
+        ("local", job_id),
     ).fetchone()
     payload = json.loads(event["payload_json"])
     assert payload == {
-        "jobId": job_url,
+        "jobId": str(job_id),
         "changedSections": ["market"],
         "postedRecordStatus": None,
         "postedParseState": None,
         "marketRecordStatus": "recorded",
         "marketEstimateState": "estimated_range",
         "updatedAt": "2026-06-19T10:00:00Z",
+        "stage": "enrich",
+        "level": "info",
+        "message": "Market compensation estimate updated",
     }
     assert "sources" not in payload
     assert "eurostat" not in json.dumps(payload).lower()
@@ -841,6 +898,7 @@ def test_persisted_json_contains_safe_reported_source_fields(conn: sqlite3.Conne
 
 def test_repository_preserves_public_and_licensed_levels_provenance(conn: sqlite3.Connection) -> None:
     job_url = _seed_job(conn, url="https://example.com/jobs/levels-provenance")
+    job_id = _job_id(job_url)
     public = ReportedCompensationObservation(
         source_id="levels_fyi",
         source_provenance="public",
@@ -865,7 +923,7 @@ def test_repository_preserves_public_and_licensed_levels_provenance(conn: sqlite
     repo = SqliteMarketCompensationRepository(conn)
 
     repo.estimate_and_save_job(
-        job_url=job_url,
+        job_id=job_id,
         title="Senior Platform Engineer",
         company="Acme AI",
         location="Remote Europe",
@@ -873,7 +931,7 @@ def test_repository_preserves_public_and_licensed_levels_provenance(conn: sqlite
         estimated_at="2026-07-13T10:00:00Z",
     )
 
-    loaded = repo.get_estimate("local", job_url)
+    loaded = repo.get_estimate("local", job_id)
     assert loaded is not None
     assert [(source.source_provenance, source.snapshot_version, source.attribution) for source in loaded.sources] == [
         (
@@ -887,8 +945,8 @@ def test_repository_preserves_public_and_licensed_levels_provenance(conn: sqlite
 
     stored = json.loads(
         conn.execute(
-            "SELECT source_snapshot_json FROM job_market_compensation_estimates WHERE job_url = ?",
-            (job_url,),
+            "SELECT source_snapshot_json FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?",
+            ("local", job_id),
         ).fetchone()["source_snapshot_json"]
     )
     assert [item["source_provenance"] for item in stored] == ["public", "licensed"]
@@ -896,11 +954,12 @@ def test_repository_preserves_public_and_licensed_levels_provenance(conn: sqlite
 
 def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.Connection) -> None:
     job_url = _seed_job(conn, url="https://example.com/jobs/stale-source-json")
+    job_id = _job_id(job_url)
     repo = SqliteMarketCompensationRepository(conn)
     conn.execute(
         """
         INSERT INTO job_market_compensation_estimates (
-            tenant_id, job_url, estimate_state, currency, period, component,
+            tenant_id, job_id, estimate_state, currency, period, component,
             minimum_amount, maximum_amount, confidence_band, confidence_score,
             source_count, sample_count, aggregate_bucket, geography_scope,
             occupation_code, occupation_label, seniority_label, source_snapshot_json,
@@ -911,7 +970,7 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
         """,
         (
             "local",
-            job_url,
+            job_id,
             "estimated_range",
             "EUR",
             "year",
@@ -955,7 +1014,7 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
     )
     conn.commit()
 
-    loaded = repo.get_estimate("local", job_url)
+    loaded = repo.get_estimate("local", job_id)
     serialized = str(loaded).casefold()
 
     assert loaded is not None

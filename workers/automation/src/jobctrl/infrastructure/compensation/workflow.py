@@ -11,6 +11,7 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.domain.identifiers import JobId, canonical_job_id
     from jobctrl.infrastructure.temporal.finalize import (
         emit_workflow_outcome,
         emit_workflow_started,
@@ -23,11 +24,15 @@ class CompensationRefreshWorkflowInput:
     tenant_id: str
     expected_app_dir: str | None = None
     expected_db_path: str | None = None
-    job_url: str | None = None
+    job_id: JobId | None = None
     limit: int = 0
     observations_json_path: str | None = None
     include_euro_top_tech: bool = True
     euro_top_tech_max_pages: int = 10
+
+    def __post_init__(self) -> None:
+        if self.job_id is not None:
+            object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
 @dataclass(frozen=True)
@@ -64,7 +69,7 @@ async def refresh_compensation_activity(
         return await run_blocking_with_heartbeat(
             lambda: refresh_compensation_facts(
                 tenant_id=payload.tenant_id,
-                job_url=payload.job_url,
+                job_id=payload.job_id,
                 limit=payload.limit,
                 observations_json_path=payload.observations_json_path,
                 include_euro_top_tech=payload.include_euro_top_tech,
@@ -168,8 +173,8 @@ class CompensationRefreshWorkflow:
 
 def _input_summary(payload: CompensationRefreshWorkflowInput) -> dict[str, Any]:
     return {
-        "jobUrl": payload.job_url,
-        "allJobs": payload.job_url is None,
+        "jobId": str(payload.job_id) if payload.job_id is not None else None,
+        "allJobs": payload.job_id is None,
         "limit": payload.limit,
         "includeEuroTopTech": payload.include_euro_top_tech,
     }

@@ -12,7 +12,6 @@ from jobctrl.infrastructure.projections.projection_builder import ProjectionBuil
 def test_compensation_audit_uses_explicit_job_id_without_legacy_job_key(tmp_path: Path) -> None:
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
-    locator = "https://example.com/jobs/legacy-locator"
     job_id = "123e4567-e89b-12d3-a456-426614174000"
     try:
         builder = ProjectionBuilder(conn_factory=lambda: conn)
@@ -21,14 +20,12 @@ def test_compensation_audit_uses_explicit_job_id_without_legacy_job_key(tmp_path
         with builder._bind(conn):
             _summary, absent_audit_json = builder._build_compensation_projection(
                 job_id=job_id,
-                job_locator=locator,
                 legacy_raw_salary="EUR 90000/year",
             )
 
-            _insert_recorded_compensation(conn, locator)
+            _insert_recorded_compensation(conn, job_id)
             _summary, recorded_audit_json = builder._build_compensation_projection(
                 job_id=job_id,
-                job_locator=locator,
                 legacy_raw_salary="EUR 90000/year",
             )
 
@@ -60,7 +57,7 @@ def _install_compensation_tables(conn) -> None:
         DROP TABLE job_posted_compensation_facts;
         DROP TABLE job_market_compensation_estimates;
         CREATE TABLE job_posted_compensation_facts (
-            tenant_id TEXT, job_url TEXT, source_field TEXT, source_text TEXT,
+            tenant_id TEXT, job_id TEXT, source_field TEXT, source_text TEXT,
             legacy_raw_salary TEXT, parse_state TEXT, currency TEXT, period TEXT,
             component TEXT, minimum_amount INTEGER, maximum_amount INTEGER,
             annualized_minimum_amount INTEGER, annualized_maximum_amount INTEGER,
@@ -68,7 +65,7 @@ def _install_compensation_tables(conn) -> None:
             parser_version TEXT, source_hash TEXT, parsed_at TEXT
         );
         CREATE TABLE job_market_compensation_estimates (
-            tenant_id TEXT, job_url TEXT, estimate_state TEXT, currency TEXT,
+            tenant_id TEXT, job_id TEXT, estimate_state TEXT, currency TEXT,
             period TEXT, component TEXT, minimum_amount INTEGER, maximum_amount INTEGER,
             confidence_interval_minimum_amount INTEGER,
             confidence_interval_maximum_amount INTEGER, confidence_band TEXT,
@@ -86,18 +83,18 @@ def _install_compensation_tables(conn) -> None:
     )
 
 
-def _insert_recorded_compensation(conn, locator: str) -> None:
+def _insert_recorded_compensation(conn, job_id: str) -> None:
     conn.execute(
         """
         INSERT INTO job_posted_compensation_facts (
-            tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+            tenant_id, job_id, source_field, source_text, legacy_raw_salary,
             parse_state, currency, period, component, confidence, warnings_json,
             parser_version, source_hash, parsed_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             "local",
-            locator,
+            job_id,
             "jobs.salary",
             "EUR 90000/year",
             "EUR 90000/year",
@@ -115,7 +112,7 @@ def _insert_recorded_compensation(conn, locator: str) -> None:
     conn.execute(
         """
         INSERT INTO job_market_compensation_estimates (
-            tenant_id, job_url, estimate_state, currency, period, component,
+            tenant_id, job_id, estimate_state, currency, period, component,
             confidence_band, confidence_score, source_count, source_snapshot_json,
             factor_reasons_json, selected_evidence_json, insufficient_reasons_json,
             unsupported_reasons_json, source_unavailable_reasons_json, warnings_json,
@@ -124,7 +121,7 @@ def _insert_recorded_compensation(conn, locator: str) -> None:
         """,
         (
             "local",
-            locator,
+            job_id,
             "estimated_range",
             "EUR",
             "year",

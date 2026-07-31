@@ -488,7 +488,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       result: {
         ok: true,
         status: "succeeded",
-        jobUrl: "https://example.com/jobs/current",
+        postingUrl: "https://example.com/jobs/current",
         postedFactsRefreshed: 1,
         reportedObservationsLoaded: 2,
         estimatesRefreshed: 1,
@@ -499,7 +499,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     const dispatcher = createActionDispatcher(fake);
     const command: ActionCommandPayload = {
       action: "refresh_compensation",
-      jobKey: "https://example.com/jobs/current",
+      jobKey: CANONICAL_JOB_ID,
       observationsJsonPath: "/tmp/reported-compensation.json",
     };
 
@@ -512,7 +512,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           tenantId: "local",
           expectedAppDir: "/tmp",
           expectedDbPath: "/tmp/jobctrl.db",
-          jobUrl: "https://example.com/jobs/current",
+          jobId: CANONICAL_JOB_ID,
           observationsJsonPath: "/tmp/reported-compensation.json",
         },
       },
@@ -523,7 +523,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     });
   });
 
-  it("maps all-jobs refresh_compensation without a jobUrl", async () => {
+  it("maps all-jobs refresh_compensation without a jobId", async () => {
     const fake = new FakeDispatcher();
     fake.setResponse({
       jsonrpc: "2.0",
@@ -531,7 +531,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       result: {
         ok: true,
         status: "succeeded",
-        jobUrl: null,
+        postingUrl: null,
         postedFactsRefreshed: 12,
         reportedObservationsLoaded: 4,
         estimatesRefreshed: 12,
@@ -566,7 +566,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     ]);
     expect(result).toMatchObject({
       status: "succeeded",
-      result: expect.objectContaining({ jobUrl: null, postedFactsRefreshed: 12, estimatesRefreshed: 12 }),
+      result: expect.objectContaining({ postingUrl: null, postedFactsRefreshed: 12, estimatesRefreshed: 12 }),
     });
   });
 
@@ -660,7 +660,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     await dispatcher({ action: "apply", jobKey: CANONICAL_JOB_ID, jobId: CANONICAL_JOB_ID }, context);
     await dispatcher({ action: "cancel", jobKey: "pipeline", runId: "run-1" }, context);
     await dispatcher({ action: "rescore_job", jobKey: CANONICAL_JOB_ID, jobId: CANONICAL_JOB_ID }, context);
-    await dispatcher({ action: "refresh_compensation", jobKey: "https://example.com/jobs/current" }, context);
+    await dispatcher({ action: "refresh_compensation", jobKey: CANONICAL_JOB_ID }, context);
     await dispatcher(
       { action: "generate_interview_prep", jobKey: CANONICAL_JOB_ID, jobId: CANONICAL_JOB_ID },
       context,

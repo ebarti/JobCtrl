@@ -86,15 +86,15 @@ def _server() -> JsonRpcServer:
     return server
 
 
+def _test_job_id(url: str) -> JobId:
+    return JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, url)))
+
+
 def _seed_job(db_path: Path, url: str = "https://example.com/job/1") -> None:
     conn = get_connection(db_path)
-    job_id = uuid.uuid5(uuid.NAMESPACE_URL, f"local:{url}")
     conn.execute(
-        """
-        INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
-        VALUES ('local', ?, ?, ?, datetime('now'))
-        """,
-        (str(job_id), url, "Test job"),
+        "INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at) VALUES (?, ?, ?, ?, datetime('now'))",
+        ("local", _test_job_id(url), url, "Test job"),
     )
     conn.commit()
 
@@ -327,15 +327,16 @@ def test_unknown_method_returns_method_not_found() -> None:
 def test_refresh_compensation_ignores_company_metric_money(tmp_db: Path) -> None:
     conn = get_connection(tmp_db)
     selected_url = "https://example.com/jobs/company-metrics"
+    selected_job_id = _test_job_id(selected_url)
     conn.execute(
         """
         INSERT INTO jobs (
-            tenant_id, job_id, url, title, site, location, salary, description,
-            full_description, discovered_at
-        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, site, location, salary, description, full_description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{selected_url}")),
+            "local",
+            selected_job_id,
             selected_url,
             "Senior Platform Engineer",
             "Moniepoint",
@@ -354,7 +355,7 @@ def test_refresh_compensation_ignores_company_metric_money(tmp_db: Path) -> None
 
     result = refresh_compensation_facts(
         tenant_id="local",
-        job_url=selected_url,
+        job_id=selected_job_id,
         include_euro_top_tech=False,
     )
 
@@ -364,9 +365,9 @@ def test_refresh_compensation_ignores_company_metric_money(tmp_db: Path) -> None
         """
         SELECT parse_state, source_field, minimum_amount, maximum_amount
         FROM job_posted_compensation_facts
-        WHERE job_url = ?
+        WHERE tenant_id = ? AND job_id = ?
         """,
-        (selected_url,),
+        ("local", selected_job_id),
     ).fetchone()
     assert selected_posted["parse_state"] == "missing"
     assert selected_posted["source_field"] == "jobs.salary"
@@ -377,15 +378,16 @@ def test_refresh_compensation_ignores_company_metric_money(tmp_db: Path) -> None
 def test_refresh_compensation_does_not_match_ote_inside_words(tmp_db: Path) -> None:
     conn = get_connection(tmp_db)
     selected_url = "https://example.com/jobs/remote-prose"
+    selected_job_id = _test_job_id(selected_url)
     conn.execute(
         """
         INSERT INTO jobs (
-            tenant_id, job_id, url, title, site, location, salary, description,
-            full_description, discovered_at
-        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, site, location, salary, description, full_description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{selected_url}")),
+            "local",
+            selected_job_id,
             selected_url,
             "Senior Platform Engineer",
             "Acme",
@@ -403,7 +405,7 @@ def test_refresh_compensation_does_not_match_ote_inside_words(tmp_db: Path) -> N
 
     result = refresh_compensation_facts(
         tenant_id="local",
-        job_url=selected_url,
+        job_id=selected_job_id,
         include_euro_top_tech=False,
     )
 
@@ -413,9 +415,9 @@ def test_refresh_compensation_does_not_match_ote_inside_words(tmp_db: Path) -> N
         """
         SELECT parse_state, source_field, minimum_amount, maximum_amount
         FROM job_posted_compensation_facts
-        WHERE job_url = ?
+        WHERE tenant_id = ? AND job_id = ?
         """,
-        (selected_url,),
+        ("local", selected_job_id),
     ).fetchone()
     assert selected_posted["parse_state"] == "missing"
     assert selected_posted["source_field"] == "jobs.salary"
@@ -465,7 +467,7 @@ def test_refresh_compensation_starts_workflow(tmp_db: Path, tmp_path: Path) -> N
         tenant_id="local",
         expected_app_dir="/tmp/jobctrl",
         expected_db_path="/tmp/jobctrl/jobctrl.db",
-        job_url=None,
+        job_id=None,
         limit=10,
         observations_json_path=str(observations_path),
         include_euro_top_tech=False,
@@ -477,15 +479,17 @@ def test_refresh_compensation_core_updates_one_job(tmp_db: Path, tmp_path: Path)
     conn = get_connection(tmp_db)
     selected_url = "https://example.com/jobs/platform"
     other_url = "https://example.com/jobs/other"
+    selected_job_id = _test_job_id(selected_url)
+    other_job_id = _test_job_id(other_url)
     conn.execute(
         """
         INSERT INTO jobs (
-            tenant_id, job_id, url, title, site, location, salary, description,
-            full_description, discovered_at
-        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, site, location, salary, description, full_description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{selected_url}")),
+            "local",
+            selected_job_id,
             selected_url,
             "Senior Platform Engineer",
             "Acme AI",
@@ -497,14 +501,10 @@ def test_refresh_compensation_core_updates_one_job(tmp_db: Path, tmp_path: Path)
         ),
     )
     conn.execute(
-        """
-        INSERT INTO jobs (
-            tenant_id, job_id, url, title, site, location, salary, description,
-            discovered_at
-        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, location, salary, description, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{other_url}")),
+            "local",
+            other_job_id,
             other_url,
             "Staff Platform Engineer",
             "Acme AI",
@@ -544,7 +544,7 @@ def test_refresh_compensation_core_updates_one_job(tmp_db: Path, tmp_path: Path)
 
     result = refresh_compensation_facts(
         tenant_id="local",
-        job_url=selected_url,
+        job_id=selected_job_id,
         observations_json_path=str(observations_path),
         include_euro_top_tech=False,
     )
@@ -558,17 +558,17 @@ def test_refresh_compensation_core_updates_one_job(tmp_db: Path, tmp_path: Path)
         """
         SELECT parse_state, source_field, minimum_amount, maximum_amount
         FROM job_posted_compensation_facts
-        WHERE job_url = ?
+        WHERE tenant_id = ? AND job_id = ?
         """,
-        (selected_url,),
+        ("local", selected_job_id),
     ).fetchone()
     other_posted = conn.execute(
-        "SELECT parse_state FROM job_posted_compensation_facts WHERE job_url = ?",
-        (other_url,),
+        "SELECT parse_state FROM job_posted_compensation_facts WHERE tenant_id = ? AND job_id = ?",
+        ("local", other_job_id),
     ).fetchone()
     estimate = conn.execute(
-        "SELECT estimate_state, minimum_amount, maximum_amount FROM job_market_compensation_estimates WHERE job_url = ?",
-        (selected_url,),
+        "SELECT estimate_state, minimum_amount, maximum_amount FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?",
+        ("local", selected_job_id),
     ).fetchone()
     assert selected_posted["parse_state"] == "parsed_range"
     assert selected_posted["source_field"] == "jobs.full_description"
@@ -584,15 +584,17 @@ def test_refresh_compensation_core_updates_all_jobs(tmp_db: Path, tmp_path: Path
     conn = get_connection(tmp_db)
     first_url = "https://example.com/jobs/platform"
     second_url = "https://example.com/jobs/other"
+    first_job_id = _test_job_id(first_url)
+    second_job_id = _test_job_id(second_url)
     conn.execute(
         """
         INSERT INTO jobs (
-            tenant_id, job_id, url, title, site, location, salary, description,
-            full_description, discovered_at
-        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, site, location, salary, description, full_description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{first_url}")),
+            "local",
+            first_job_id,
             first_url,
             "Senior Platform Engineer",
             "Acme AI",
@@ -604,14 +606,10 @@ def test_refresh_compensation_core_updates_all_jobs(tmp_db: Path, tmp_path: Path
         ),
     )
     conn.execute(
-        """
-        INSERT INTO jobs (
-            tenant_id, job_id, url, title, site, location, salary, description,
-            discovered_at
-        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, location, salary, description, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{second_url}")),
+            "local",
+            second_job_id,
             second_url,
             "Staff Platform Engineer",
             "Acme AI",
@@ -632,20 +630,22 @@ def test_refresh_compensation_core_updates_all_jobs(tmp_db: Path, tmp_path: Path
     )
 
     assert result["status"] == "succeeded"
-    assert result["jobUrl"] is None
+    assert result["postingUrl"] is None
     assert result["postedFactsRefreshed"] == 2
     assert result["reportedObservationsLoaded"] == 0
     assert result["estimatesRefreshed"] == 2
 
     posted_rows = conn.execute(
-        "SELECT job_url, parse_state FROM job_posted_compensation_facts ORDER BY job_url",
+        "SELECT job_id, parse_state FROM job_posted_compensation_facts WHERE tenant_id = ? ORDER BY job_id",
+        ("local",),
     ).fetchall()
     estimate_rows = conn.execute(
-        "SELECT job_url, estimate_state FROM job_market_compensation_estimates ORDER BY job_url",
+        "SELECT job_id, estimate_state FROM job_market_compensation_estimates WHERE tenant_id = ? ORDER BY job_id",
+        ("local",),
     ).fetchall()
-    assert [row["job_url"] for row in posted_rows] == sorted([first_url, second_url])
+    assert {row["job_id"] for row in posted_rows} == {first_job_id, second_job_id}
     assert [row["parse_state"] for row in posted_rows] == ["parsed_range", "parsed_range"]
-    assert [row["job_url"] for row in estimate_rows] == sorted([first_url, second_url])
+    assert {row["job_id"] for row in estimate_rows} == {first_job_id, second_job_id}
     assert [row["estimate_state"] for row in estimate_rows] == ["estimated_range", "estimated_range"]
 
 
@@ -655,15 +655,15 @@ def test_refresh_compensation_without_observations_uses_euro_top_tech_and_update
 ) -> None:
     conn = get_connection(tmp_db)
     job_url = "https://example.com/jobs/staff-engineer"
+    job_id = _test_job_id(job_url)
     conn.execute(
         """
-        INSERT INTO jobs (
-            tenant_id, job_id, url, title, site, location, salary, description,
-            discovered_at
-        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO jobs (tenant_id, job_id, url, title, site, location, salary, description, discovered_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{job_url}")),
+            "local",
+            job_id,
             job_url,
             "Staff Software Engineer",
             "Acme AI",
@@ -697,7 +697,7 @@ def test_refresh_compensation_without_observations_uses_euro_top_tech_and_update
 
     result = refresh_compensation_facts(
         tenant_id="local",
-        job_url=job_url,
+        job_id=job_id,
     )
 
     assert result["reportedObservationsLoaded"] == 1
@@ -707,9 +707,9 @@ def test_refresh_compensation_without_observations_uses_euro_top_tech_and_update
     estimate = conn.execute(
         """
         SELECT estimate_state, minimum_amount, maximum_amount, component, match_scope, source_snapshot_json
-        FROM job_market_compensation_estimates WHERE job_url = ?
+        FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?
         """,
-        (job_url,),
+        ("local", job_id),
     ).fetchone()
     assert estimate["estimate_state"] == "estimated_range"
     assert estimate["minimum_amount"] == 242_000
@@ -726,15 +726,15 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
 ) -> None:
     conn = get_connection(tmp_db)
     job_url = "https://example.com/jobs/platform"
+    job_id = _test_job_id(job_url)
     conn.execute(
         """
-        INSERT INTO jobs (
-            tenant_id, job_id, url, title, site, location, salary, description,
-            discovered_at
-        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO jobs (tenant_id, job_id, url, title, site, location, salary, description, discovered_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{job_url}")),
+            "local",
+            job_id,
             job_url,
             "Senior Platform Engineer",
             "Acme AI",
@@ -821,7 +821,7 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
 
     result = refresh_compensation_facts(
         tenant_id="local",
-        job_url=job_url,
+        job_id=job_id,
     )
 
     assert result["reportedObservationsLoaded"] == 3
@@ -832,9 +832,9 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
     estimate = conn.execute(
         """
         SELECT minimum_amount, maximum_amount, source_snapshot_json
-        FROM job_market_compensation_estimates WHERE job_url = ?
+        FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?
         """,
-        (job_url,),
+        ("local", job_id),
     ).fetchone()
     assert estimate["minimum_amount"] == 118_000
     assert estimate["maximum_amount"] == 160_000
@@ -1567,14 +1567,14 @@ def test_v7_apply_preserves_global_and_explicit_job_semantics(
     )
 
     assert explicit.workflow is ApplyWorkflow
-    assert explicit.workflow_id == f"apply-local-{job_url}"
+    assert explicit.workflow_id == f"apply-local-{job_id}"
     assert explicit.args == (
-        ApplyWorkflowInput(tenant_id="local", job_url=job_url, dry_run=True),
+        ApplyWorkflowInput(tenant_id="local", job_id=job_id, dry_run=True),
     )
     assert global_selection.workflow is ApplyWorkflow
     assert global_selection.workflow_id is None
     assert global_selection.args == (
-        ApplyWorkflowInput(tenant_id="local", job_url=None, dry_run=True),
+        ApplyWorkflowInput(tenant_id="local", job_id=None, dry_run=True),
     )
 
 

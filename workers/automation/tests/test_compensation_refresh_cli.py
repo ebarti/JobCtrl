@@ -20,7 +20,7 @@ def test_compensation_refresh_cli_starts_workflow_for_one_job(monkeypatch, tmp_p
     specs = []
     observations_path = tmp_path / "reported-comp.json"
     observations_path.write_text("[]", encoding="utf-8")
-    job_url = "https://example.com/jobs/platform"
+    job_id = "11111111-1111-4111-8111-111111111111"
 
     monkeypatch.setattr(cli, "_bootstrap", lambda: None)
     monkeypatch.setattr(
@@ -31,14 +31,14 @@ def test_compensation_refresh_cli_starts_workflow_for_one_job(monkeypatch, tmp_p
 
     result = CliRunner().invoke(
         app,
-        ["compensation-refresh", "--observations-json", str(observations_path), "--no-eurotoptech", "--url", job_url],
+        ["compensation-refresh", "--observations-json", str(observations_path), "--no-eurotoptech", "--job-id", job_id],
     )
 
     assert result.exit_code == 0, result.output
     assert '"postedFactsRefreshed": 1' in result.output
     payload = specs[0].args[0]
     assert specs[0].workflow.__name__ == "CompensationRefreshWorkflow"
-    assert payload.job_url == job_url
+    assert payload.job_id == job_id
     assert payload.observations_json_path == str(observations_path)
     assert payload.include_euro_top_tech is False
 
@@ -57,6 +57,6 @@ def test_compensation_refresh_cli_defaults_to_all_jobs(monkeypatch) -> None:
 
     assert result.exit_code == 0, result.output
     payload = specs[0].args[0]
-    assert payload.job_url is None
+    assert payload.job_id is None
     assert payload.limit == 5
     assert payload.include_euro_top_tech is True
