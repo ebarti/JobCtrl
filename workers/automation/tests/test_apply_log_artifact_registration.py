@@ -24,8 +24,13 @@ from jobctrl.infrastructure.projections.projection_builder import ProjectionBuil
 from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
 
+JOB_ID = JobId("10000000-0000-4000-8000-000000000001")
+POSTING_URL = "https://example.com/job"
+TIMESTAMP = "2026-07-31T12:00:00+00:00"
+
+
 def _insert_running_apply_job(
-    conn, *, url: str = "https://example.com/job"
+    conn, *, job_id: JobId = JOB_ID, url: str = POSTING_URL
 ) -> None:
     """Seed a job whose apply stage is already ``running`` — the only
     state from which ``mark_result`` can validly transition to
@@ -33,23 +38,37 @@ def _insert_running_apply_job(
     conn.execute(
         """
         INSERT INTO jobs (
-            url, title, site, full_description, application_url,
-            fit_score, tailored_resume_path, cover_letter_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, company, site, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            str(LOCAL_TENANT),
+            str(job_id),
             url,
             "Platform Engineer",
             "ExampleCo",
-            "Build distributed systems.",
-            "https://example.com/apply",
-            9,
-            "/tmp/resume.txt",
-            "/tmp/cover.txt",
+            "Example",
+            TIMESTAMP,
         ),
     )
-    ensure_job_stage_rows(conn, url)
-    set_stage_state(conn, url, "apply", "running", attempt_count=1)
+    conn.execute(
+        """
+        INSERT INTO job_locators (
+            tenant_id, job_id, locator_kind, locator_value,
+            is_current, first_seen_at, last_seen_at
+        ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?)
+        """,
+        (str(LOCAL_TENANT), str(job_id), url, TIMESTAMP, TIMESTAMP),
+    )
+    ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+    set_stage_state(
+        conn,
+        job_id,
+        "apply",
+        "running",
+        tenant_id=LOCAL_TENANT,
+        attempt_count=1,
+    )
     conn.commit()
 
 
@@ -58,8 +77,7 @@ def test_mark_result_applied_registers_apply_log_artifact(
 ):
     """A successful apply run records its per-worker log file as a
     ``job_artifacts`` row of kind ``apply_log``, with the worker_id
-    surfaced in metadata, and the artifact appears in
-    ``artifact_list_projections`` after the projection refresh fires.
+    surfaced in metadata.
     """
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
@@ -78,34 +96,44 @@ def test_mark_result_applied_registers_apply_log_artifact(
             lambda: get_connection(db_path),
         )
         mark_result(
-            "https://example.com/job",
+            JOB_ID,
             "applied",
             duration_ms=1234,
             task_id="run-applied",
             run_ctx={"run_id": "run-applied", "worker_id": 3, "model": "haiku"},
+            tenant_id=LOCAL_TENANT,
         )
 
         artifact_row = conn.execute(
-            "SELECT job_url, stage, artifact_type, status, path, size_bytes "
-            "FROM job_artifacts WHERE job_url = ? AND artifact_type = 'apply_log'",
-            ("https://example.com/job",),
+            "SELECT tenant_id, job_id, stage, artifact_type, status, path, size_bytes, "
+            "metadata_json FROM job_artifacts "
+            "WHERE tenant_id = ? AND job_id = ? AND artifact_type = 'apply_log'",
+            (str(LOCAL_TENANT), str(JOB_ID)),
         ).fetchone()
         assert artifact_row is not None
+        assert artifact_row["tenant_id"] == str(LOCAL_TENANT)
+        assert artifact_row["job_id"] == str(JOB_ID)
         assert artifact_row["stage"] == "apply"
         assert artifact_row["status"] == "active"
         assert artifact_row["path"] == str(log_dir / "worker-3.log")
         assert artifact_row["size_bytes"] == len("agent ran here\n")
+        assert json.loads(artifact_row["metadata_json"]) == {
+            "run_id": "run-applied",
+            "worker_id": 3,
+        }
 
         ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).refresh()
-        proj_rows = conn.execute(
-            "SELECT artifact_type, local_path, size_bytes "
-            "FROM artifact_list_projections "
-            "WHERE job_id = ? AND artifact_type = 'apply_log'",
-            ("https://example.com/job",),
+        projected_rows = conn.execute(
+            """
+            SELECT artifact_type, local_path, size_bytes
+            FROM artifact_list_projections
+            WHERE tenant_id = ? AND job_id = ? AND artifact_type = 'apply_log'
+            """,
+            (str(LOCAL_TENANT), str(JOB_ID)),
         ).fetchall()
-        assert len(proj_rows) == 1
-        assert proj_rows[0]["local_path"] == str(log_dir / "worker-3.log")
-        assert proj_rows[0]["size_bytes"] == len("agent ran here\n")
+        assert len(projected_rows) == 1
+        assert projected_rows[0]["local_path"] == str(log_dir / "worker-3.log")
+        assert projected_rows[0]["size_bytes"] == len("agent ran here\n")
     finally:
         close_connection(db_path)
 
@@ -130,19 +158,20 @@ def test_mark_result_failed_registers_apply_log_artifact(tmp_path, monkeypatch):
             lambda: get_connection(db_path),
         )
         mark_result(
-            "https://example.com/job",
+            JOB_ID,
             "failed",
             error="captcha",
             permanent=True,
             duration_ms=5678,
             task_id="run-failed",
             run_ctx={"run_id": "run-failed", "worker_id": 7},
+            tenant_id=LOCAL_TENANT,
         )
 
         row = conn.execute(
             "SELECT path, size_bytes FROM job_artifacts "
-            "WHERE job_url = ? AND artifact_type = 'apply_log'",
-            ("https://example.com/job",),
+            "WHERE tenant_id = ? AND job_id = ? AND artifact_type = 'apply_log'",
+            (str(LOCAL_TENANT), str(JOB_ID)),
         ).fetchone()
         assert row is not None
         assert row["path"] == str(log_dir / "worker-7.log")
@@ -172,17 +201,18 @@ def test_mark_result_dry_run_registers_apply_log_artifact(
             lambda: get_connection(db_path),
         )
         mark_result(
-            "https://example.com/job",
+            JOB_ID,
             "dry_run",
             duration_ms=42,
             task_id="run-dry",
             run_ctx={"run_id": "run-dry", "worker_id": 0, "dry_run": True},
+            tenant_id=LOCAL_TENANT,
         )
 
         row = conn.execute(
             "SELECT path FROM job_artifacts "
-            "WHERE job_url = ? AND artifact_type = 'apply_log'",
-            ("https://example.com/job",),
+            "WHERE tenant_id = ? AND job_id = ? AND artifact_type = 'apply_log'",
+            (str(LOCAL_TENANT), str(JOB_ID)),
         ).fetchone()
         assert row is not None
         assert row["path"] == str(log_dir / "worker-0.log")
@@ -210,7 +240,7 @@ def test_repository_persists_dry_run_blocked_channel_artifact(
         run = ApplyRun.start(
             tenant_id=LOCAL_TENANT,
             run_id=ApplyRunId("run-dry-blocked"),
-            job_id=JobId("https://example.com/job"),
+            job_id=JOB_ID,
             started_at="2026-07-06T10:00:00+00:00",
             worker_id=1,
             model="haiku",
@@ -246,8 +276,9 @@ def test_repository_persists_dry_run_blocked_channel_artifact(
 
         row = conn.execute(
             "SELECT path, metadata_json FROM job_artifacts "
-            "WHERE job_url = ? AND artifact_type = 'apply_dryrun_blocked'",
-            ("https://example.com/job",),
+            "WHERE tenant_id = ? AND job_id = ? "
+            "AND artifact_type = 'apply_dryrun_blocked'",
+            (str(LOCAL_TENANT), str(JOB_ID)),
         ).fetchone()
         assert row is not None
         artifact_path = Path(row["path"])
@@ -293,16 +324,17 @@ def test_mark_result_without_worker_id_skips_artifact_registration(
         )
         # No run_ctx -> worker_id is None.
         mark_result(
-            "https://example.com/job",
+            JOB_ID,
             "applied",
             duration_ms=0,
             task_id="run-manual",
+            tenant_id=LOCAL_TENANT,
         )
 
         rows = conn.execute(
-            "SELECT 1 FROM job_artifacts WHERE job_url = ? "
+            "SELECT 1 FROM job_artifacts WHERE tenant_id = ? AND job_id = ? "
             "AND artifact_type = 'apply_log'",
-            ("https://example.com/job",),
+            (str(LOCAL_TENANT), str(JOB_ID)),
         ).fetchall()
         assert rows == []
     finally:
@@ -333,12 +365,13 @@ def test_mark_result_apply_log_registration_is_idempotent(
             lambda: get_connection(db_path),
         )
         mark_result(
-            "https://example.com/job",
+            JOB_ID,
             "failed",
             error="captcha",
             duration_ms=10,
             task_id="run-1",
             run_ctx={"run_id": "run-1", "worker_id": 1},
+            tenant_id=LOCAL_TENANT,
         )
 
         # Reset back to running so the second mark_result is a valid
@@ -347,16 +380,18 @@ def test_mark_result_apply_log_registration_is_idempotent(
         # this test compresses those steps).
         set_stage_state(
             conn,
-            "https://example.com/job",
+            JOB_ID,
             "apply",
             "pending",
+            tenant_id=LOCAL_TENANT,
             validate_transition=False,
         )
         set_stage_state(
             conn,
-            "https://example.com/job",
+            JOB_ID,
             "apply",
             "running",
+            tenant_id=LOCAL_TENANT,
             attempt_count=2,
         )
         conn.commit()
@@ -367,17 +402,18 @@ def test_mark_result_apply_log_registration_is_idempotent(
             fh.write("second run\n")
 
         mark_result(
-            "https://example.com/job",
+            JOB_ID,
             "applied",
             duration_ms=20,
             task_id="run-2",
             run_ctx={"run_id": "run-2", "worker_id": 1},
+            tenant_id=LOCAL_TENANT,
         )
 
         rows = conn.execute(
             "SELECT path, size_bytes FROM job_artifacts "
-            "WHERE job_url = ? AND artifact_type = 'apply_log'",
-            ("https://example.com/job",),
+            "WHERE tenant_id = ? AND job_id = ? AND artifact_type = 'apply_log'",
+            (str(LOCAL_TENANT), str(JOB_ID)),
         ).fetchall()
         assert len(rows) == 1
         # Reflects the appended file size.
