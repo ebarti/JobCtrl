@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import NAMESPACE_URL, uuid5
 
 from typer.testing import CliRunner
 
@@ -36,36 +37,103 @@ from jobctrl.infrastructure.materials import HtmlResumePdfAdapter
 _JOB_ID = canonical_job_id("80000000-0000-4000-8000-000000000001")
 
 
-def _insert_job(conn, *, url: str, fit_score: int = 9, tailored_resume_path=None, tailor_attempts: int = 0) -> None:
+def _job_id_for_url(url: str):
+    return canonical_job_id(str(uuid5(NAMESPACE_URL, url)))
+
+
+def _insert_job(
+    conn,
+    *,
+    url: str,
+    fit_score: int = 9,
+    material_path: str | None = None,
+):
+    job_id = _job_id_for_url(url)
+    timestamp = "2026-06-01T00:00:00+00:00"
     conn.execute(
         """
         INSERT INTO jobs (
-            url, title, site, full_description, fit_score, tailored_resume_path, tailor_attempts
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, site, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
+            str(LOCAL_TENANT),
+            str(job_id),
             url,
             "Backend Engineer",
             "Acme",
-            "Build APIs and distributed systems.",
-            fit_score,
-            tailored_resume_path,
-            tailor_attempts,
+            timestamp,
         ),
     )
-    conn.commit()
-
-
-def _insert_blocked_score(conn, *, url: str, blocker: str = "No sponsorship.") -> None:
+    conn.execute(
+        """
+        INSERT INTO job_locators (
+            tenant_id, job_id, locator_kind, locator_value,
+            is_current, first_seen_at, last_seen_at
+        ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?)
+        """,
+        (str(LOCAL_TENANT), str(job_id), url, timestamp, timestamp),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_enrichments (
+            tenant_id, job_id, current_status, full_description, updated_at
+        ) VALUES (?, ?, 'enriched', ?, ?)
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
+            "Build APIs and distributed systems.",
+            timestamp,
+        ),
+    )
     conn.execute(
         """
         INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json,
-            keywords_json, scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, 1, 'local', 10, ?, '[]', ?, NULL, '{}', '{}')
+            tenant_id, job_id, version, fit_score, breakdown_json,
+            keywords_json, scored_at
+        ) VALUES (?, ?, 1, ?, '{}', '[]', ?)
+        """,
+        (str(LOCAL_TENANT), str(job_id), fit_score, timestamp),
+    )
+    if material_path is not None:
+        conn.execute(
+            """
+            INSERT INTO job_materials (
+                tenant_id, job_id, generation, status, created_at, updated_at
+            ) VALUES (?, ?, 1, 'approved', ?, ?)
+            """,
+            (str(LOCAL_TENANT), str(job_id), timestamp, timestamp),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_materials_artifacts (
+                tenant_id, job_id, generation, artifact_type, artifact_id,
+                status, path, render_format, created_at
+            ) VALUES (?, ?, 1, 'tailored_resume', ?, 'approved', ?, 'text', ?)
+            """,
+            (
+                str(LOCAL_TENANT),
+                str(job_id),
+                f"{job_id}:tailored_resume",
+                material_path,
+                timestamp,
+            ),
+        )
+    conn.commit()
+    return job_id
+
+
+def _insert_blocked_score(conn, *, url: str, blocker: str = "No sponsorship.") -> None:
+    job_id = _job_id_for_url(url)
+    conn.execute(
+        """
+        UPDATE job_scores
+        SET fit_score = ?, breakdown_json = ?
+        WHERE tenant_id = ? AND job_id = ?
         """,
         (
-            url,
+            10,
             json.dumps(
                 {
                     "reasoning": "Strong match but blocked.",
@@ -78,7 +146,8 @@ def _insert_blocked_score(conn, *, url: str, blocker: str = "No sponsorship.") -
                 },
                 sort_keys=True,
             ),
-            "2026-06-02T00:00:00+00:00",
+            str(LOCAL_TENANT),
+            str(job_id),
         ),
     )
     conn.commit()
@@ -89,19 +158,26 @@ def test_get_jobs_by_stage_retailor_includes_already_tailored_jobs(tmp_path):
     conn = init_db(db_path)
 
     try:
-        _insert_job(conn, url="https://example.com/new")
-        _insert_job(
+        new_job_id = _insert_job(conn, url="https://example.com/new")
+        existing_job_id = _insert_job(
             conn,
             url="https://example.com/existing",
-            tailored_resume_path="/tmp/existing.txt",
-            tailor_attempts=7,
+            material_path="/tmp/existing.txt",
         )
-        _insert_job(
+        exhausted_job_id = _insert_job(
             conn,
             url="https://example.com/exhausted",
-            tailored_resume_path=None,
-            tailor_attempts=5,
         )
+        ensure_job_stage_rows(conn, exhausted_job_id)
+        set_stage_state(
+            conn,
+            exhausted_job_id,
+            "tailor",
+            "exhausted",
+            attempt_count=5,
+            validate_transition=False,
+        )
+        conn.commit()
 
         pending = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7, limit=0)
         retailor_pending = get_jobs_by_stage(
@@ -112,10 +188,10 @@ def test_get_jobs_by_stage_retailor_includes_already_tailored_jobs(tmp_path):
             retailor=True,
         )
 
-        assert {job["url"] for job in pending} == {"https://example.com/new"}
-        assert {job["url"] for job in retailor_pending} == {
-            "https://example.com/new",
-            "https://example.com/existing",
+        assert {job["job_id"] for job in pending} == {str(new_job_id)}
+        assert {job["job_id"] for job in retailor_pending} == {
+            str(new_job_id),
+            str(existing_job_id),
         }
     finally:
         close_connection(db_path)
@@ -130,8 +206,7 @@ def test_count_pending_retailor_includes_already_tailored_jobs(tmp_path, monkeyp
         _insert_job(
             conn,
             url="https://example.com/existing",
-            tailored_resume_path="/tmp/existing.txt",
-            tailor_attempts=9,
+            material_path="/tmp/existing.txt",
         )
 
         monkeypatch.setattr("jobctrl.pipeline.runner.get_connection", lambda: get_connection(db_path))
@@ -151,7 +226,7 @@ def test_tailor_job_by_url_does_not_enumerate_unrelated_pending_jobs(tmp_path, m
 
     try:
         _insert_job(conn, url=target_url, fit_score=8)
-        _insert_job(conn, url=unrelated_url, fit_score=10)
+        unrelated_job_id = _insert_job(conn, url=unrelated_url, fit_score=10)
 
         def forbidden_batch_selector(*_args, **_kwargs):
             raise AssertionError("single-job tailoring must not call get_jobs_by_stage")
@@ -184,8 +259,9 @@ def test_tailor_job_by_url_does_not_enumerate_unrelated_pending_jobs(tmp_path, m
         assert result["status"] == "approved"
         assert calls == [target_url]
         unrelated_stage = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'tailor'",
-            (unrelated_url,),
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+            (str(LOCAL_TENANT), str(unrelated_job_id)),
         ).fetchone()
         assert unrelated_stage is None
     finally:
@@ -207,11 +283,23 @@ def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(
     target_url = "https://example.com/stale-cover"
 
     try:
-        _insert_job(conn, url=target_url, fit_score=8)
-        ensure_job_stage_rows(conn, target_url, discovered_at="2026-06-01T00:00:00+00:00")
+        target_job_id = _insert_job(conn, url=target_url, fit_score=8)
+        ensure_job_stage_rows(
+            conn,
+            target_job_id,
+            discovered_at="2026-06-01T00:00:00+00:00",
+        )
         set_stage_state(
             conn,
-            target_url,
+            target_job_id,
+            "score",
+            "succeeded",
+            attempt_count=1,
+            validate_transition=False,
+        )
+        set_stage_state(
+            conn,
+            target_job_id,
             "tailor",
             "succeeded",
             attempt_count=1,
@@ -220,7 +308,7 @@ def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(
         )
         set_stage_state(
             conn,
-            target_url,
+            target_job_id,
             "cover",
             "succeeded",
             attempt_count=2,
@@ -262,9 +350,9 @@ def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(
             SELECT state, attempt_count, started_at, finished_at, duration_ms,
                    error_code, error_message, next_action
             FROM job_stage_states
-            WHERE job_url = ? AND stage = 'cover'
+            WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
             """,
-            (target_url,),
+            (str(LOCAL_TENANT), str(target_job_id)),
         ).fetchone()
         assert dict(cover) == {
             "state": "pending",
@@ -280,11 +368,11 @@ def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(
             """
             SELECT event_type, message
             FROM job_events
-            WHERE job_url = ? AND stage = 'cover'
+            WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
             ORDER BY rowid DESC
             LIMIT 1
             """,
-            (target_url,),
+            (str(LOCAL_TENANT), str(target_job_id)),
         ).fetchone()
         assert event["event_type"] == "StageReset"
         assert event["message"] == "Cover stage reset after tailored resume generation"
@@ -298,7 +386,7 @@ def test_tailor_job_by_url_skips_score_five_by_default(tmp_path, monkeypatch):
     target_url = "https://example.com/low-fit"
 
     try:
-        _insert_job(conn, url=target_url, fit_score=5)
+        target_job_id = _insert_job(conn, url=target_url, fit_score=5)
 
         def fail_tailor_one_job(*_args, **_kwargs):
             raise AssertionError("score-five jobs must not tailor by default")
@@ -313,7 +401,12 @@ def test_tailor_job_by_url_skips_score_five_by_default(tmp_path, monkeypatch):
             llm_model=None,
         )
 
-        assert result == {"url": target_url, "status": "skipped", "reason": "not_eligible"}
+        assert result == {
+            "url": target_url,
+            "job_id": str(target_job_id),
+            "status": "skipped",
+            "reason": "not_eligible",
+        }
     finally:
         close_connection(db_path)
 
@@ -364,7 +457,7 @@ def test_tailor_job_by_url_surfaces_blocked_score_eligibility(tmp_path, monkeypa
     target_url = "https://example.com/blocked"
 
     try:
-        _insert_job(conn, url=target_url, fit_score=10)
+        target_job_id = _insert_job(conn, url=target_url, fit_score=10)
         _insert_blocked_score(conn, url=target_url)
 
         def fail_tailor_one_job(*_args, **_kwargs):
@@ -383,6 +476,7 @@ def test_tailor_job_by_url_surfaces_blocked_score_eligibility(tmp_path, monkeypa
 
         assert result == {
             "url": target_url,
+            "job_id": str(target_job_id),
             "status": "skipped",
             "reason": "score_eligibility_blocked",
         }
@@ -390,10 +484,11 @@ def test_tailor_job_by_url_surfaces_blocked_score_eligibility(tmp_path, monkeypa
             """
             SELECT stage, state, error_code, error_message, blocked_by_json, next_action
             FROM job_stage_states
-            WHERE job_url = ? AND stage IN ('tailor', 'cover', 'apply')
+            WHERE tenant_id = ? AND job_id = ?
+              AND stage IN ('tailor', 'cover', 'apply')
             ORDER BY stage
             """,
-            (target_url,),
+            (str(LOCAL_TENANT), str(target_job_id)),
         ).fetchall()
         assert {row["stage"]: row["state"] for row in rows} == {
             "apply": "blocked",
