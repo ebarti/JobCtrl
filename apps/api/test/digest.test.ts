@@ -4,11 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
-import { ensureApplicationFeedbackTables, listApplyReviewQueue } from "../src/application-feedback.js";
-import { ensureProjectionTables } from "../src/projections.js";
+import { listApplyReviewQueue } from "../src/application-feedback.js";
 import { buildDigest, readDigestState } from "../src/read-model.js";
+import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
 import { describe, expect, it } from "vitest";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 interface FixtureJob {
   jobId: string;
@@ -175,7 +176,7 @@ describe("daily digest read model", () => {
       expect(jobsResponse.statusCode).toBe(200);
       const jobs = jobsResponse.json() as { items: Array<{ jobKey: string }> };
       expect(jobs.items).toHaveLength(fixture.expected.newMatches.count);
-      expect(jobs.items.some((job) => job.jobKey === "https://example.com/jobs/post-watermark-scored")).toBe(
+      expect(jobs.items.some((job) => job.jobKey === fixtureJobId("https://example.com/jobs/post-watermark-scored"))).toBe(
         true,
       );
 
@@ -248,10 +249,9 @@ function makeTempDb(): { dbPath: string; configPath: string; tempDir: string; cl
 }
 
 function seedDigestDatabase(dbPath: string, tempDir: string): void {
+  initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
-  createDigestSchema(db);
-  ensureProjectionTables(db);
-  ensureApplicationFeedbackTables(db);
+  seedBuiltInResumeTemplate(db);
   seedJobs(db, tempDir);
   seedSourceQuality(db);
   seedOperationalAttempts(db);
@@ -265,170 +265,40 @@ function seedDigestDatabase(dbPath: string, tempDir: string): void {
   db.close();
 }
 
-function createDigestSchema(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE jobs (
-      url TEXT PRIMARY KEY,
-      title TEXT,
-      company TEXT,
-      site TEXT,
-      strategy TEXT,
-      location TEXT,
-      salary TEXT,
-      discovered_at TEXT,
-      application_url TEXT,
-      description TEXT,
-      full_description TEXT,
-      detail_scraped_at TEXT,
-      detail_error TEXT,
-      fit_score INTEGER,
-      score_reasoning TEXT,
-      scored_at TEXT,
-      tailored_resume_path TEXT,
-      tailored_at TEXT,
-      tailor_attempts INTEGER DEFAULT 0,
-      cover_letter_path TEXT,
-      cover_letter_at TEXT,
-      cover_attempts INTEGER DEFAULT 0,
-      apply_status TEXT,
-      apply_error TEXT,
-      applied_at TEXT
-    );
-    CREATE TABLE job_stage_states (
-      job_url TEXT NOT NULL,
-      stage TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'pending',
-      attempt_count INTEGER DEFAULT 0,
-      max_attempts INTEGER,
-      started_at TEXT,
-      updated_at TEXT NOT NULL DEFAULT '',
-      finished_at TEXT,
-      duration_ms INTEGER,
-      error_code TEXT,
-      error_message TEXT,
-      retryable INTEGER DEFAULT 1,
-      blocked_by_json TEXT,
-      next_action TEXT,
-      metadata_json TEXT,
-      version INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (job_url, stage)
-    );
-    CREATE TABLE job_events (
-      event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_url TEXT,
-      stage TEXT,
-      event_type TEXT NOT NULL DEFAULT '',
-      level TEXT NOT NULL DEFAULT 'info',
-      message TEXT,
-      occurred_at TEXT NOT NULL,
-      payload_json TEXT
-    );
-    CREATE TABLE job_scores (
-      job_url TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      fit_score INTEGER NOT NULL,
-      breakdown_json TEXT NOT NULL,
-      keywords_json TEXT NOT NULL,
-      scored_at TEXT NOT NULL,
-      correction_json TEXT,
-      criteria_json TEXT NOT NULL DEFAULT '{}',
-      trace_json TEXT NOT NULL DEFAULT '{}',
-      PRIMARY KEY (job_url, version)
-    );
-    CREATE TABLE job_score_staleness (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      stale_reason TEXT NOT NULL,
-      old_policy_id TEXT NOT NULL DEFAULT '',
-      old_policy_version INTEGER NOT NULL,
-      new_policy_id TEXT NOT NULL DEFAULT '',
-      new_policy_version INTEGER NOT NULL,
-      marked_at TEXT NOT NULL,
-      resolved INTEGER NOT NULL DEFAULT 0,
-      resolved_at TEXT,
-      resolved_by_score_version INTEGER,
-      PRIMARY KEY (
-        tenant_id, job_url, stale_reason,
-        old_policy_version, new_policy_version
-      )
-    );
-    CREATE TABLE job_materials (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      status TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY (job_url, generation)
-    );
-    CREATE TABLE job_materials_artifacts (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      artifact_type TEXT NOT NULL,
-      artifact_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      path TEXT NOT NULL,
-      render_format TEXT NOT NULL,
-      size_bytes INTEGER,
-      metadata_json TEXT,
-      created_at TEXT NOT NULL,
-      superseded_at TEXT,
-      PRIMARY KEY (job_url, generation, artifact_type)
-    );
-    CREATE TABLE jobctrl_hidden_jobs (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      hidden_at TEXT NOT NULL,
-      unhidden_at TEXT
-    );
-    CREATE TABLE posting_snapshot_sets (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      latest_active_state TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, job_url)
-    );
-    CREATE TABLE operational_attempt_metrics (
-      metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      occurred_at TEXT NOT NULL,
-      stage TEXT NOT NULL,
-      source_id TEXT,
-      source_kind TEXT,
-      source_priority TEXT,
-      source_role TEXT,
-      adapter TEXT,
-      attempt_kind TEXT NOT NULL,
-      outcome TEXT NOT NULL,
-      failure_category TEXT,
-      is_operational_failure INTEGER NOT NULL DEFAULT 0,
-      is_scrape_failure INTEGER NOT NULL DEFAULT 0,
-      is_retryable INTEGER NOT NULL DEFAULT 1,
-      run_id TEXT,
-      duration_ms INTEGER,
-      error_class TEXT
-    );
-  `);
+function seedBuiltInResumeTemplate(db: Database.Database): void {
+  db.prepare(
+    `INSERT INTO resume_templates (
+       tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+     ) VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)`,
+  ).run(fixture.now, fixture.now);
+  db.prepare(
+    `INSERT INTO resume_template_versions (
+       tenant_id, version_id, template_id, version_number, display_name, status,
+       theme_json, layout_json, content_hash, created_at
+     ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
+               'Modern HTML', 'active', ?, '{}', 'digest-fixture-template', ?)`,
+  ).run(JSON.stringify(BUILT_IN_RESUME_TEMPLATE_THEME), fixture.now);
 }
 
 function seedJobs(db: Database.Database, tempDir: string): void {
   const insertJob = db.prepare(
     `INSERT INTO jobs (
-       url, title, company, site, strategy, location, salary, discovered_at,
+       tenant_id, job_id, url, title, company, site, strategy, location, salary, discovered_at,
        application_url, description, full_description, detail_scraped_at,
        detail_error, fit_score, score_reasoning, scored_at, tailored_resume_path
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const insertScore = db.prepare(
     `INSERT INTO job_scores (
-       job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+       tenant_id, job_id, version, fit_score, breakdown_json, keywords_json,
        scored_at, correction_json, criteria_json, trace_json
-     ) VALUES (?, 1, 'local', ?, ?, ?, ?, NULL, '{}', '{}')`,
+     ) VALUES ('local', ?, 1, ?, ?, ?, ?, NULL, '{}', '{}')`,
   );
 
   for (const job of fixture.jobs) {
+    const jobId = fixtureJobId(job.jobId);
     insertJob.run(
+      jobId,
       job.jobId,
       job.title,
       job.employer,
@@ -469,7 +339,7 @@ function seedJobs(db: Database.Database, tempDir: string): void {
       transferable_signals: [],
     };
     insertScore.run(
-      job.jobId,
+      jobId,
       job.fitScore,
       JSON.stringify(scoreBreakdown),
       JSON.stringify(["typescript"]),
@@ -477,58 +347,59 @@ function seedJobs(db: Database.Database, tempDir: string): void {
     );
     if (job.hidden) {
       db.prepare(
-        "INSERT INTO jobctrl_hidden_jobs (tenant_id, job_url, hidden_at, unhidden_at) VALUES ('local', ?, ?, NULL)",
-      ).run(job.jobId, fixture.now);
+        "INSERT INTO jobctrl_hidden_jobs (tenant_id, job_id, hidden_at, unhidden_at) VALUES ('local', ?, ?, NULL)",
+      ).run(jobId, fixture.now);
     }
     if (job.activeState) {
       db.prepare(
-        "INSERT INTO posting_snapshot_sets (tenant_id, job_url, latest_active_state, updated_at) VALUES ('local', ?, ?, ?)",
-      ).run(job.jobId, job.activeState, fixture.now);
+        "INSERT INTO posting_snapshot_sets (tenant_id, job_id, snapshot_set_json, latest_active_state, updated_at) VALUES ('local', ?, '{}', ?, ?)",
+      ).run(jobId, job.activeState, fixture.now);
     }
   }
 
   for (const job of fixture.jobs) {
+    const jobId = fixtureJobId(job.jobId);
     if (job.currentStage === "apply") {
-      seedApplyStages(db, job.jobId);
+      seedApplyStages(db, jobId);
     } else if (job.currentStage === "score") {
-      seedScoreStages(db, job.jobId, job.currentState);
+      seedScoreStages(db, jobId, job.currentState);
     } else {
-      seedStage(db, job.jobId, "discover", job.currentState);
+      seedStage(db, jobId, "discover", job.currentState);
     }
     if (job.hasResume || job.hasPdf) {
-      seedMaterials(db, tempDir, job);
+      seedMaterials(db, tempDir, { ...job, jobId });
     }
   }
 }
 
-function seedApplyStages(db: Database.Database, jobUrl: string): void {
+function seedApplyStages(db: Database.Database, jobId: string): void {
   for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
-    seedStage(db, jobUrl, stage, "succeeded");
+    seedStage(db, jobId, stage, "succeeded");
   }
-  seedStage(db, jobUrl, "apply", "pending");
+  seedStage(db, jobId, "apply", "pending");
 }
 
-function seedScoreStages(db: Database.Database, jobUrl: string, scoreState: string): void {
+function seedScoreStages(db: Database.Database, jobId: string, scoreState: string): void {
   for (const stage of ["discover", "enrich"]) {
-    seedStage(db, jobUrl, stage, "succeeded");
+    seedStage(db, jobId, stage, "succeeded");
   }
-  seedStage(db, jobUrl, "score", scoreState);
+  seedStage(db, jobId, "score", scoreState);
 }
 
-function seedStage(db: Database.Database, jobUrl: string, stage: string, state: string): void {
+function seedStage(db: Database.Database, jobId: string, stage: string, state: string): void {
   db.prepare(
     `INSERT INTO job_stage_states (
-       job_url, stage, state, attempt_count, max_attempts, updated_at, retryable
-     ) VALUES (?, ?, ?, 1, 3, ?, 1)`,
-  ).run(jobUrl, stage, state, fixture.now);
+       tenant_id, job_id, stage, state, attempt_count, max_attempts, updated_at, retryable
+     ) VALUES ('local', ?, ?, ?, 1, 3, ?, 1)`,
+  ).run(jobId, stage, state, fixture.now);
 }
 
 function seedMaterials(db: Database.Database, tempDir: string, job: FixtureJob): void {
   const generation = 1;
   db.prepare(
     `INSERT INTO job_materials (
-       job_url, generation, tenant_id, status, created_at, updated_at
-     ) VALUES (?, ?, 'local', 'approved', ?, ?)`,
+       tenant_id, job_id, generation, status, created_at, updated_at
+     ) VALUES ('local', ?, ?, 'approved', ?, ?)`,
   ).run(job.jobId, generation, fixture.now, fixture.now);
 
   if (job.hasResume) {
@@ -545,7 +416,7 @@ function seedMaterials(db: Database.Database, tempDir: string, job: FixtureJob):
 
 function insertMaterialArtifact(
   db: Database.Database,
-  jobUrl: string,
+  jobId: string,
   generation: number,
   artifactType: string,
   renderFormat: string,
@@ -553,14 +424,14 @@ function insertMaterialArtifact(
 ): void {
   db.prepare(
     `INSERT INTO job_materials_artifacts (
-       job_url, generation, artifact_type, artifact_id, status, path,
+       tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
        render_format, size_bytes, metadata_json, created_at
-     ) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, '{}', ?)`,
+     ) VALUES ('local', ?, ?, ?, ?, 'approved', ?, ?, ?, '{}', ?)`,
   ).run(
-    jobUrl,
+    jobId,
     generation,
     artifactType,
-    `${slug(jobUrl)}-${artifactType}`,
+    `${slug(jobId)}-${artifactType}`,
     artifactPath,
     renderFormat,
     fs.statSync(artifactPath).size,
@@ -617,11 +488,11 @@ function seedOperationalAttempts(db: Database.Database): void {
 function seedReviewDecisions(db: Database.Database): void {
   const insert = db.prepare(
     `INSERT INTO application_review_decisions (
-       tenant_id, decision_id, job_key, decision, reason, decided_by, decided_at
+       tenant_id, decision_id, job_id, decision, reason, decided_by, decided_at
      ) VALUES ('local', ?, ?, ?, NULL, 'user', ?)`,
   );
   for (const decision of fixture.applicationReviewDecisions) {
-    insert.run(decision.decisionId, decision.jobKey, decision.decision, decision.decidedAt);
+    insert.run(decision.decisionId, fixtureJobId(decision.jobKey), decision.decision, decision.decidedAt);
   }
 }
 
@@ -635,7 +506,7 @@ function seedApplyRuns(db: Database.Database): void {
   for (const run of fixture.applyRuns) {
     insert.run(
       run.runId,
-      run.jobId,
+      fixtureJobId(run.jobId),
       run.status,
       run.result,
       run.dryRun ? 1 : 0,
@@ -648,7 +519,7 @@ function seedApplyRuns(db: Database.Database): void {
 function seedScoreStaleness(db: Database.Database): void {
   const insert = db.prepare(
     `INSERT INTO job_score_staleness (
-       tenant_id, job_url, stale_reason, old_policy_id, old_policy_version,
+       tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
        new_policy_id, new_policy_version, marked_at, resolved
      ) VALUES (
        'local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', ?,
@@ -656,19 +527,31 @@ function seedScoreStaleness(db: Database.Database): void {
      )`,
   );
   for (const stale of fixture.scoreStaleness) {
-    insert.run(stale.jobUrl, stale.scoreVersion, stale.scoreVersion + 1, fixture.now);
+    insert.run(fixtureJobId(stale.jobUrl), stale.scoreVersion, stale.scoreVersion + 1, fixture.now);
   }
 }
 
 function seedApplicationOutcomes(db: Database.Database): void {
   const insert = db.prepare(
     `INSERT INTO application_outcomes (
-       tenant_id, outcome_id, job_key, kind, source, note, occurred_at, recorded_at
+       tenant_id, outcome_id, job_id, kind, source, note, occurred_at, recorded_at
      ) VALUES ('local', ?, ?, ?, 'manual', NULL, ?, ?)`,
   );
   for (const outcome of fixture.applicationOutcomes) {
-    insert.run(outcome.outcomeId, outcome.jobKey, outcome.kind, outcome.occurredAt, outcome.occurredAt);
+    insert.run(
+      outcome.outcomeId,
+      fixtureJobId(outcome.jobKey),
+      outcome.kind,
+      outcome.occurredAt,
+      outcome.occurredAt,
+    );
   }
+}
+
+function fixtureJobId(url: string): string {
+  const index = fixture.jobs.findIndex((job) => job.jobId === url);
+  if (index < 0) throw new Error(`Unknown digest fixture job URL: ${url}`);
+  return `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
 }
 
 function slug(value: string): string {
