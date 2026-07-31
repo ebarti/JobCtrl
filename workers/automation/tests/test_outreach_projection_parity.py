@@ -32,17 +32,23 @@ _FIXTURE = (
 def _seed_canonical(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     tenant = fixture["tenantId"]
     for thread in fixture["threads"]:
+        job_id = thread["jobId"]
+        if job_id is not None:
+            conn.execute(
+                "INSERT INTO jobs (tenant_id, job_id, url) VALUES (?, ?, ?)",
+                (tenant, job_id, f"https://example.test/jobs/{job_id}"),
+            )
         conn.execute(
             """
             INSERT INTO outreach_threads (
-                tenant_id, thread_id, contact_id, job_url, created_at, updated_at
+                tenant_id, thread_id, contact_id, job_id, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 tenant,
                 thread["threadId"],
                 thread["contactId"],
-                thread["jobUrl"],
+                job_id,
                 thread["createdAt"],
                 thread["updatedAt"],
             ),

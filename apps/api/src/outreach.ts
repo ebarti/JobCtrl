@@ -35,8 +35,8 @@ import {
   OUTREACH_DRAFT_STATUSES,
   OUTREACH_SEND_CHANNELS,
 } from "./contracts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
-import { refreshOutreachProjections, refreshProjections } from "./projections.js";
+import { allRows, getRow, tableExists, type SqliteDatabase } from "./db.js";
+import { refreshOutreachProjections } from "./projections.js";
 
 // Conservative follow-up cadence (plan §16 res. 5), mirrored from the Python
 // domain (``FIRST_FOLLOW_UP_DAYS`` / ``SUBSEQUENT_NUDGE_DAYS``). Surfaced-only,
@@ -46,59 +46,11 @@ const SUBSEQUENT_NUDGE_DAYS = 14;
 
 const TENANT_ID = "local";
 const OUTREACH_SEND_CHANNEL_SET = new Set<string>(OUTREACH_SEND_CHANNELS);
+const CANONICAL_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export class OutreachNotFoundError extends Error {}
 export class OutreachInputError extends Error {}
 export class OutreachDraftGatesNotPassedError extends Error {}
-
-export function ensureOutreachTables(db: SqliteDatabase): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS outreach_threads (
-      tenant_id        TEXT NOT NULL DEFAULT 'local',
-      thread_id        TEXT NOT NULL,
-      contact_id       TEXT NOT NULL,
-      job_url          TEXT,
-      created_at       TEXT NOT NULL,
-      updated_at       TEXT NOT NULL,
-      follow_up_due_at TEXT,
-      follow_up_basis  TEXT,
-      follow_up_state  TEXT NOT NULL DEFAULT 'none',
-      PRIMARY KEY (tenant_id, thread_id)
-    );
-    CREATE TABLE IF NOT EXISTS outreach_drafts (
-      tenant_id         TEXT NOT NULL DEFAULT 'local',
-      draft_id          TEXT NOT NULL,
-      thread_id         TEXT NOT NULL,
-      generation        INTEGER NOT NULL DEFAULT 1,
-      kind              TEXT NOT NULL,
-      status            TEXT NOT NULL DEFAULT 'candidate',
-      body_text         TEXT,
-      gate_results_json TEXT,
-      provenance_json   TEXT,
-      created_at        TEXT NOT NULL,
-      approved_at       TEXT,
-      rejected_at       TEXT,
-      reason            TEXT,
-      PRIMARY KEY (tenant_id, draft_id)
-    );
-    CREATE TABLE IF NOT EXISTS outreach_send_logs (
-      tenant_id        TEXT NOT NULL DEFAULT 'local',
-      send_log_id      TEXT NOT NULL,
-      thread_id        TEXT NOT NULL,
-      draft_id         TEXT NOT NULL,
-      channel          TEXT NOT NULL,
-      sent_at          TEXT NOT NULL,
-      logged_at        TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, send_log_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_outreach_threads_contact
-      ON outreach_threads(tenant_id, contact_id);
-    CREATE INDEX IF NOT EXISTS idx_outreach_drafts_thread
-      ON outreach_drafts(tenant_id, thread_id, generation DESC);
-    CREATE INDEX IF NOT EXISTS idx_outreach_send_logs_thread
-      ON outreach_send_logs(tenant_id, thread_id);
-  `);
-}
 
 // ---------------------------------------------------------------------------
 // Reads (canonical join — the thread summary + every generation's full content)
@@ -109,9 +61,9 @@ export function getOutreachThreadForContact(
   contactId: string,
   jobId?: string | null,
 ): OutreachThreadDetail | null {
-  ensureOutreachTables(db);
-  refreshProjections(db, TENANT_ID);
-  const thread = loadThreadForContact(db, contactId, jobId ?? null);
+  const stableJobId = canonicalJobId(jobId);
+  refreshOutreachProjections(db, TENANT_ID);
+  const thread = loadThreadForContact(db, contactId, stableJobId);
   return thread ? buildThreadDetail(db, thread) : null;
 }
 
@@ -119,8 +71,7 @@ export function getOutreachThreadDetail(
   db: SqliteDatabase,
   threadId: string,
 ): OutreachThreadDetail | null {
-  ensureOutreachTables(db);
-  refreshProjections(db, TENANT_ID);
+  refreshOutreachProjections(db, TENANT_ID);
   const thread = loadThreadRow(db, threadId);
   return thread ? buildThreadDetail(db, thread) : null;
 }
@@ -131,8 +82,8 @@ export function findOutreachThreadIdForContact(
   contactId: string,
   jobId?: string | null,
 ): string | null {
-  ensureOutreachTables(db);
-  const thread = loadThreadForContact(db, contactId, jobId ?? null);
+  const stableJobId = canonicalJobId(jobId);
+  const thread = loadThreadForContact(db, contactId, stableJobId);
   return thread ? String(thread.thread_id) : null;
 }
 
@@ -145,7 +96,6 @@ export function approveOutreachDraft(
   threadId: string,
   draftId: string,
 ): OutreachThreadDetail {
-  ensureOutreachTables(db);
   const thread = loadThreadRow(db, threadId);
   if (!thread) {
     throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
@@ -166,7 +116,7 @@ export function approveOutreachDraft(
   }
 
   const now = new Date().toISOString();
-  const jobUrl = thread.job_url ?? null;
+  const jobId = thread.job_id ?? null;
   const transaction = db.transaction(() => {
     // Supersede the prior approved draft (if any). This is internal generation
     // bookkeeping — it emits no event, exactly like the Python repository.
@@ -182,7 +132,7 @@ export function approveOutreachDraft(
       `UPDATE outreach_threads SET updated_at = ? WHERE tenant_id = ? AND thread_id = ?`,
     ).run(now, TENANT_ID, threadId);
     recordEvent(db, {
-      jobUrl,
+      jobId,
       eventType: "OutreachDraftApproved",
       threadId,
       payload: {
@@ -196,7 +146,6 @@ export function approveOutreachDraft(
   });
   transaction();
 
-  refreshProjections(db, TENANT_ID);
   refreshOutreachProjections(db, TENANT_ID);
   return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
 }
@@ -207,7 +156,6 @@ export function rejectOutreachDraft(
   draftId: string,
   reason = "",
 ): OutreachThreadDetail {
-  ensureOutreachTables(db);
   const thread = loadThreadRow(db, threadId);
   if (!thread) {
     throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
@@ -223,7 +171,7 @@ export function rejectOutreachDraft(
   }
 
   const now = new Date().toISOString();
-  const jobUrl = thread.job_url ?? null;
+  const jobId = thread.job_id ?? null;
   const transaction = db.transaction(() => {
     db.prepare(
       `UPDATE outreach_drafts SET status = 'rejected', rejected_at = ?, reason = ?
@@ -233,7 +181,7 @@ export function rejectOutreachDraft(
       `UPDATE outreach_threads SET updated_at = ? WHERE tenant_id = ? AND thread_id = ?`,
     ).run(now, TENANT_ID, threadId);
     recordEvent(db, {
-      jobUrl,
+      jobId,
       eventType: "OutreachDraftRejected",
       threadId,
       payload: {
@@ -247,7 +195,6 @@ export function rejectOutreachDraft(
   });
   transaction();
 
-  refreshProjections(db, TENANT_ID);
   refreshOutreachProjections(db, TENANT_ID);
   return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
 }
@@ -269,7 +216,6 @@ export function logOutreachSend(
   channel: string,
   sentAt: string,
 ): OutreachThreadDetail {
-  ensureOutreachTables(db);
   const thread = loadThreadRow(db, threadId);
   if (!thread) {
     throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
@@ -295,7 +241,7 @@ export function logOutreachSend(
 
   const now = new Date().toISOString();
   const sendLogId = randomUUID();
-  const jobUrl = thread.job_url ?? null;
+  const jobId = thread.job_id ?? null;
   const transaction = db.transaction(() => {
     db.prepare(
       `INSERT INTO outreach_send_logs (
@@ -306,7 +252,7 @@ export function logOutreachSend(
       `UPDATE outreach_threads SET updated_at = ? WHERE tenant_id = ? AND thread_id = ?`,
     ).run(now, TENANT_ID, threadId);
     recordEvent(db, {
-      jobUrl,
+      jobId,
       eventType: "OutreachSendLogged",
       threadId,
       payload: {
@@ -321,7 +267,6 @@ export function logOutreachSend(
   });
   transaction();
 
-  refreshProjections(db, TENANT_ID);
   refreshOutreachProjections(db, TENANT_ID);
   return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
 }
@@ -335,7 +280,6 @@ export function scheduleOutreachFollowUp(
     hasLoggedReply?: boolean;
   } = {},
 ): OutreachThreadDetail {
-  ensureOutreachTables(db);
   const thread = loadThreadRow(db, threadId);
   if (!thread) {
     throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
@@ -360,7 +304,7 @@ export function scheduleOutreachFollowUp(
   basis = basis || "manual";
 
   const now = new Date().toISOString();
-  const jobUrl = thread.job_url ?? null;
+  const jobId = thread.job_id ?? null;
   const transaction = db.transaction(() => {
     db.prepare(
       `UPDATE outreach_threads
@@ -368,13 +312,13 @@ export function scheduleOutreachFollowUp(
        WHERE tenant_id = ? AND thread_id = ?`,
     ).run(dueAt, basis, now, TENANT_ID, threadId);
     recordEvent(db, {
-      jobUrl,
+      jobId,
       eventType: "FollowUpScheduled",
       threadId,
       payload: {
         tenantId: TENANT_ID,
         threadId,
-        jobId: jobUrl,
+        jobId,
         dueAt,
         basis,
         scheduledAt: now,
@@ -383,7 +327,6 @@ export function scheduleOutreachFollowUp(
   });
   transaction();
 
-  refreshProjections(db, TENANT_ID);
   refreshOutreachProjections(db, TENANT_ID);
   return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
 }
@@ -419,7 +362,6 @@ function transitionFollowUp(
     buildPayload: (now: string) => Record<string, unknown>;
   },
 ): OutreachThreadDetail {
-  ensureOutreachTables(db);
   const thread = loadThreadRow(db, threadId);
   if (!thread) {
     throw new OutreachNotFoundError(`Outreach thread ${threadId} not found`);
@@ -428,14 +370,14 @@ function transitionFollowUp(
     throw new OutreachInputError(`Outreach thread ${threadId} has no scheduled follow-up`);
   }
   const now = new Date().toISOString();
-  const jobUrl = thread.job_url ?? null;
+  const jobId = thread.job_id ?? null;
   const transaction = db.transaction(() => {
     db.prepare(
       `UPDATE outreach_threads SET follow_up_state = ?, updated_at = ?
        WHERE tenant_id = ? AND thread_id = ?`,
     ).run(spec.to, now, TENANT_ID, threadId);
     recordEvent(db, {
-      jobUrl,
+      jobId,
       eventType: spec.eventType,
       threadId,
       payload: spec.buildPayload(now),
@@ -443,7 +385,6 @@ function transitionFollowUp(
   });
   transaction();
 
-  refreshProjections(db, TENANT_ID);
   refreshOutreachProjections(db, TENANT_ID);
   return buildThreadDetail(db, loadThreadRow(db, threadId) ?? thread);
 }
@@ -454,8 +395,6 @@ function transitionFollowUp(
  * never an action. Only follow-ups whose date has arrived are returned.
  */
 export function getDueFollowUps(db: SqliteDatabase, now: Date = new Date()): DueFollowUpSummary[] {
-  ensureOutreachTables(db);
-  refreshProjections(db, TENANT_ID);
   refreshOutreachProjections(db, TENANT_ID);
   if (!tableExists(db, "due_follow_up_projections")) {
     return [];
@@ -520,8 +459,8 @@ function deriveFollowUpDueAt(opts: {
 }
 
 function latestApplicationSubmittedAt(db: SqliteDatabase, thread: ThreadRow): string {
-  const jobUrl = (thread.job_url ?? "").trim();
-  if (!jobUrl) {
+  const jobId = thread.job_id ?? "";
+  if (!jobId) {
     return "";
   }
   if (tableExists(db, "application_outcomes")) {
@@ -529,10 +468,10 @@ function latestApplicationSubmittedAt(db: SqliteDatabase, thread: ThreadRow): st
       db,
       `SELECT occurred_at
        FROM application_outcomes
-       WHERE tenant_id = ? AND job_key = ? AND kind = 'applied_confirmation'
+       WHERE tenant_id = ? AND job_id = ? AND kind = 'applied_confirmation'
        ORDER BY occurred_at DESC, recorded_at DESC
        LIMIT 1`,
-      [TENANT_ID, jobUrl],
+      [TENANT_ID, jobId],
     );
     if (outcome?.occurred_at) {
       return outcome.occurred_at;
@@ -543,10 +482,10 @@ function latestApplicationSubmittedAt(db: SqliteDatabase, thread: ThreadRow): st
       db,
       `SELECT occurred_at
        FROM job_events
-       WHERE job_url = ? AND event_type = 'ApplicationSubmitted'
+       WHERE tenant_id = ? AND job_id = ? AND event_type = 'ApplicationSubmitted'
        ORDER BY occurred_at DESC
        LIMIT 1`,
-      [jobUrl],
+      [TENANT_ID, jobId],
     );
     if (submitted?.occurred_at) {
       return submitted.occurred_at;
@@ -567,7 +506,7 @@ function addCalendarDays(iso: string, days: number): string {
 type ThreadRow = {
   thread_id: string;
   contact_id: string;
-  job_url: string | null;
+  job_id: string | null;
   created_at: string | null;
   updated_at: string | null;
   follow_up_due_at: string | null;
@@ -585,7 +524,7 @@ type SendLogRow = {
 };
 
 const THREAD_COLUMNS =
-  "thread_id, contact_id, job_url, created_at, updated_at, " +
+  "thread_id, contact_id, job_id, created_at, updated_at, " +
   "follow_up_due_at, follow_up_basis, follow_up_state";
 
 type DraftRow = {
@@ -631,7 +570,7 @@ function loadThreadForContact(
     return (
       getRow<ThreadRow>(
         db,
-        `SELECT ${THREAD_COLUMNS} FROM outreach_threads WHERE tenant_id = ? AND contact_id = ? AND job_url = ?`,
+        `SELECT ${THREAD_COLUMNS} FROM outreach_threads WHERE tenant_id = ? AND contact_id = ? AND job_id = ?`,
         [TENANT_ID, contactId, job],
       ) ?? null
     );
@@ -639,7 +578,7 @@ function loadThreadForContact(
   return (
     getRow<ThreadRow>(
       db,
-      `SELECT ${THREAD_COLUMNS} FROM outreach_threads WHERE tenant_id = ? AND contact_id = ? AND job_url IS NULL`,
+      `SELECT ${THREAD_COLUMNS} FROM outreach_threads WHERE tenant_id = ? AND contact_id = ? AND job_id IS NULL`,
       [TENANT_ID, contactId],
     ) ?? null
   );
@@ -729,7 +668,7 @@ function summarize(thread: ThreadRow, drafts: OutreachDraftDto[]): OutreachThrea
   return {
     threadId: String(thread.thread_id),
     contactId: String(thread.contact_id),
-    jobId: thread.job_url ?? null,
+    jobId: thread.job_id ?? null,
     draftCount: drafts.length,
     latestGeneration,
     hasApprovedDraft,
@@ -823,32 +762,39 @@ function normalizeStatus(value: string | null | undefined): OutreachDraftStatus 
 function recordEvent(
   db: SqliteDatabase,
   event: {
-    jobUrl: string | null;
+    jobId: string | null;
     eventType: string;
     threadId: string;
     payload: Record<string, unknown>;
   },
 ): void {
-  if (!tableExists(db, "job_events")) {
-    return;
-  }
-  const columns = new Set(
-    allRows<{ name: string }>(db, "PRAGMA table_info(job_events)").map((row) => row.name),
-  );
-  const values: Record<string, SqliteValue> = {
-    job_url: event.jobUrl,
-    stage: null,
-    event_type: event.eventType,
-    level: "info",
-    occurred_at: new Date().toISOString(),
-    payload_json: JSON.stringify(event.payload),
-    entity_kind: "outreach",
-    entity_ref: event.threadId,
-  };
-  const entries = Object.entries(values).filter(([name]) => columns.has(name));
   db.prepare(
-    `INSERT INTO job_events (${entries.map(([name]) => name).join(", ")}) VALUES (${entries
-      .map(() => "?")
-      .join(", ")})`,
-  ).run(...entries.map(([, value]) => value));
+    `INSERT INTO job_events (
+       tenant_id, job_id, identity_version, stage, event_type, level,
+       message, occurred_at, payload_json, entity_kind, entity_ref, idempotency_key
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    TENANT_ID,
+    event.jobId,
+    1,
+    null,
+    event.eventType,
+    "info",
+    null,
+    new Date().toISOString(),
+    JSON.stringify(event.payload),
+    "outreach",
+    event.threadId,
+    null,
+  );
+}
+
+function canonicalJobId(value: string | null | undefined): string | null {
+  if (value == null) {
+    return null;
+  }
+  if (!CANONICAL_JOB_ID.test(value)) {
+    throw new OutreachInputError("jobId must be a canonical UUID");
+  }
+  return value;
 }
