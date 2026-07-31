@@ -11,64 +11,20 @@ import {
   ManualCaptureImportError,
   type ManualCaptureImporter,
 } from "../src/manual-capture-worker.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 const CHROME_EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const FEEDBACK_JOB_ID = "40000000-0000-4000-8000-000000000001";
+const PREVIEW_JOB_ID = "40000000-0000-4000-8000-000000000002";
+const QUARANTINE_JOB_ID = "40000000-0000-4000-8000-000000000003";
+const MANUAL_CAPTURE_JOB_ID = "40000000-0000-4000-8000-000000000004";
+const EXTENSION_CAPTURE_JOB_ID = "40000000-0000-4000-8000-000000000005";
+const REPLAY_JOB_ID = "40000000-0000-4000-8000-000000000006";
 
 function withTempDb(): { dbPath: string; dir: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-discovery-controls-"));
   const dbPath = path.join(dir, "jobs.db");
-  const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE jobs (
-      url TEXT PRIMARY KEY,
-      title TEXT,
-      site TEXT,
-      strategy TEXT,
-      location TEXT,
-      salary TEXT,
-      discovered_at TEXT,
-      application_url TEXT,
-      description TEXT,
-      full_description TEXT,
-      detail_scraped_at TEXT,
-      detail_error TEXT,
-      fit_score INTEGER,
-      score_reasoning TEXT,
-      scored_at TEXT,
-      tailored_resume_path TEXT,
-      tailored_at TEXT,
-      tailor_attempts INTEGER DEFAULT 0,
-      cover_letter_path TEXT,
-      cover_letter_at TEXT,
-      cover_attempts INTEGER DEFAULT 0,
-      applied_at TEXT,
-      apply_status TEXT,
-      apply_error TEXT
-    );
-    CREATE TABLE job_events (
-      event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_url TEXT,
-      stage TEXT,
-      event_type TEXT NOT NULL DEFAULT '',
-      level TEXT,
-      message TEXT,
-      occurred_at TEXT NOT NULL,
-      payload_json TEXT
-    );
-    CREATE TABLE job_source_observations (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      source_observation_id TEXT NOT NULL,
-      job_url TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      source_native_id TEXT NOT NULL,
-      observed_url TEXT NOT NULL,
-      normalized_observed_url TEXT NOT NULL,
-      run_id TEXT NOT NULL DEFAULT '',
-      observed_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, source_observation_id)
-    );
-  `);
-  db.close();
+  initializeExactV7Database(dbPath);
   return {
     dbPath,
     dir,
@@ -81,6 +37,19 @@ function options(dbPath: string, dir: string) {
     dbPath,
     configPath: path.join(dir, "config.json"),
   };
+}
+
+function insertExactV7Job(
+  db: Database.Database,
+  jobId: string,
+  url: string,
+  title = "Fixture job",
+  site = "ExampleCo",
+): void {
+  db.prepare(
+    `INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at)
+     VALUES ('local', ?, ?, ?, ?, '2026-05-12T10:00:00+00:00')`,
+  ).run(jobId, url, title, site);
 }
 
 function manualCaptureHtml(): string {
@@ -119,14 +88,6 @@ describe("discovery product controls API", () => {
     const app = buildApp(options(dbPath, dir));
     try {
       const db = new Database(dbPath);
-      db.exec(`
-        CREATE TABLE discovery_settings (
-          tenant_id TEXT PRIMARY KEY,
-          search_config_json TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        );
-      `);
       db.prepare(
         `INSERT INTO discovery_settings (
            tenant_id, search_config_json, created_at, updated_at
@@ -237,20 +198,12 @@ describe("discovery product controls API", () => {
     try {
       await app.inject({ method: "GET", url: "/v1/discovery/sources" });
       const db = new Database(dbPath);
-      db.exec(`
-        CREATE TABLE candidate_profiles (
-          tenant_id TEXT NOT NULL,
-          profile_id TEXT NOT NULL,
-          experience_target_locations TEXT NOT NULL,
-          personal_city TEXT NOT NULL DEFAULT '',
-          personal_country TEXT NOT NULL DEFAULT ''
-        );
-      `);
       db.prepare(
         `INSERT INTO candidate_profiles (
-           tenant_id, profile_id, experience_target_locations, personal_city, personal_country
-         ) VALUES (?, ?, ?, ?, ?)`,
-      ).run("local", "default", "", "Barcelona", "Spain");
+           tenant_id, profile_id, experience_target_locations, personal_city, personal_country,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run("local", "default", "", "Barcelona", "Spain", "2026-05-15T10:00:00+00:00");
       const now = "2026-05-15T10:00:00+00:00";
       db.prepare(
         `INSERT INTO source_registry_entries (
@@ -450,12 +403,23 @@ describe("discovery product controls API", () => {
     const app = buildApp(options(dbPath, dir));
     try {
       const seedDb = new Database(dbPath);
+      insertExactV7Job(
+        seedDb,
+        FEEDBACK_JOB_ID,
+        "https://example.com/jobs/stale",
+        "Stale job",
+      );
       seedDb
         .prepare(
-          "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          `INSERT INTO job_events (
+             tenant_id, job_id, identity_version, stage, event_type, level,
+             message, occurred_at, payload_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
+          "local",
           null,
+          1,
           "discover",
           "DiscoveryRunFailed",
           "error",
@@ -504,7 +468,7 @@ describe("discovery product controls API", () => {
       db.close();
       const payload = JSON.parse(event.payload_json);
       expect(payload).toMatchObject({
-        jobId: "https://example.com/jobs/stale",
+        jobId: FEEDBACK_JOB_ID,
         sourceId: "greenhouse-example",
         kind: "bad_source",
       });
@@ -703,24 +667,27 @@ describe("discovery product controls API", () => {
     try {
       await app.inject({ method: "GET", url: "/v1/discovery/sources" });
       const db = new Database(dbPath);
-      db.prepare(
-        "INSERT INTO jobs (url, title, site, location, discovered_at) VALUES (?, ?, ?, ?, ?)",
-      ).run(
+      insertExactV7Job(
+        db,
+        PREVIEW_JOB_ID,
         "https://example.com/jobs/1",
         "Product Engineer",
         "ExampleCo",
+      );
+      db.prepare("UPDATE jobs SET location = ? WHERE tenant_id = ? AND job_id = ?").run(
         "Remote",
-        "2026-05-12T10:00:00+00:00",
+        "local",
+        PREVIEW_JOB_ID,
       );
       db.prepare(
         `INSERT INTO job_source_observations (
-           tenant_id, source_observation_id, job_url, source_id, source_native_id,
+           tenant_id, source_observation_id, job_id, source_id, source_native_id,
            observed_url, normalized_observed_url, run_id, observed_at
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         "local",
         "observation-1",
-        "https://example.com/jobs/1",
+        PREVIEW_JOB_ID,
         "greenhouse:example-com",
         "native-1",
         "https://example.com/jobs/1",
@@ -728,15 +695,21 @@ describe("discovery product controls API", () => {
         "run-1",
         "2026-05-12T10:01:00+00:00",
       );
+      insertExactV7Job(
+        db,
+        QUARANTINE_JOB_ID,
+        "https://example.com/jobs/quarantined",
+        "Quarantined Lead",
+        "ExampleCo",
+      );
       db.prepare(
         `INSERT INTO discovery_quarantine_entries (
-           tenant_id, job_id, job_key, title, company, source_id, posting_url,
+           tenant_id, job_id, title, company, source_id, posting_url,
            reason, confidence, snapshot_version, captured_at, notice_text, status
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         "local",
-        "quarantine-1",
-        "https://example.com/jobs/quarantined",
+        QUARANTINE_JOB_ID,
         "Quarantined Lead",
         "ExampleCo",
         "greenhouse:example-com",
@@ -783,7 +756,7 @@ describe("discovery product controls API", () => {
       return {
         ok: true,
         itemId,
-        jobKey: input.capturedUrl ?? "https://example.com/protected/job",
+        jobKey: MANUAL_CAPTURE_JOB_ID,
         importedAt: "2026-05-12T10:05:00+00:00",
         provenance: {
           sourceKind: "user_mediated_capture",
@@ -827,7 +800,7 @@ describe("discovery product controls API", () => {
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json()).toMatchObject({
         itemId: "manual-1",
-        jobKey: "https://example.com/protected/job",
+        jobKey: MANUAL_CAPTURE_JOB_ID,
         provenance: {
           sourceKind: "user_mediated_capture",
           captureMode: "pasted_text",
@@ -930,7 +903,7 @@ describe("discovery product controls API", () => {
       return {
         ok: true,
         itemId,
-        jobKey: input.capturedUrl ?? null,
+        jobKey: EXTENSION_CAPTURE_JOB_ID,
         importedAt: "2026-07-05T10:05:00+00:00",
         provenance: {
           sourceKind: "user_mediated_capture",
@@ -983,7 +956,7 @@ describe("discovery product controls API", () => {
       expect(response.statusCode, response.body).toBe(200);
       expect(response.headers["access-control-allow-origin"]).toBe(CHROME_EXTENSION_ORIGIN);
       expect(response.json()).toMatchObject({
-        jobKey: "https://example.com/jobs/extension?utm_source=newsletter",
+        jobKey: EXTENSION_CAPTURE_JOB_ID,
         provenance: {
           sourceKind: "user_mediated_capture",
           captureMode: "current_page",
@@ -1071,6 +1044,9 @@ describe("discovery product controls API", () => {
 
   it("returns imported extension capture replays without calling the pending importer", async () => {
     const { dbPath, dir, cleanup } = withTempDb();
+    const seedDb = new Database(dbPath);
+    insertExactV7Job(seedDb, REPLAY_JOB_ID, "https://example.com/jobs/replay");
+    seedDb.close();
     const itemIds: string[] = [];
     const importedAt = "2026-07-05T10:05:00+00:00";
     const manualCaptureImporter: ManualCaptureImporter = async (itemId, input, context) => {
@@ -1101,7 +1077,7 @@ describe("discovery product controls API", () => {
              content_length = ?,
              future_manual_action_required = ?,
              retry_context_json = ?,
-             job_key = ?
+             job_id = ?
          WHERE tenant_id = ? AND item_id = ?`,
       ).run(
         importedAt,
@@ -1111,7 +1087,7 @@ describe("discovery product controls API", () => {
         input.contentText?.length ?? 0,
         input.futureManualActionRequired ? 1 : 0,
         JSON.stringify(retryContext),
-        input.capturedUrl,
+        REPLAY_JOB_ID,
         "local",
         itemId,
       );
@@ -1119,7 +1095,7 @@ describe("discovery product controls API", () => {
       return {
         ok: true,
         itemId,
-        jobKey: input.capturedUrl ?? null,
+        jobKey: REPLAY_JOB_ID,
         importedAt,
         provenance: {
           sourceKind: "user_mediated_capture",
@@ -1242,7 +1218,7 @@ describe("discovery product controls API", () => {
               result: {
                 status: "succeeded",
                 item_id: "manual-2",
-                job_id: "https://example.com/protected/job",
+                job_id: MANUAL_CAPTURE_JOB_ID,
                 imported_at: "2026-05-12T10:05:00Z",
                 retry_context: {
                   manual_capture_provenance: {
@@ -1277,7 +1253,7 @@ describe("discovery product controls API", () => {
       expect(response.json()).toEqual({
         ok: true,
         itemId: "manual-2",
-        jobKey: "https://example.com/protected/job",
+        jobKey: MANUAL_CAPTURE_JOB_ID,
         importedAt: "2026-05-12T10:05:00Z",
         provenance: {
           sourceKind: "user_mediated_capture",
