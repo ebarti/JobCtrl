@@ -8,9 +8,11 @@ generation versioning (D-13), grounding re-validation before persist, and the
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
@@ -23,8 +25,14 @@ from jobctrl.domain.materials.analysis import (
 from jobctrl.domain.materials.analyze_use_case import AnalyzeJobUseCase, build_jd_snapshot
 from jobctrl.domain.tenant import LOCAL_TENANT
 
+def _job_id_for(url: str) -> JobId:
+    return canonical_job_id(str(uuid.uuid5(uuid.NAMESPACE_URL, url)))
+
+
+_JOB_URL = "https://example.com/jobs/staff"
 JOB = {
-    "url": "https://example.com/jobs/staff",
+    "job_id": str(_job_id_for(_JOB_URL)),
+    "url": _JOB_URL,
     "title": "Staff Engineer",
     "full_description": "Requires 8+ years in Go. Kafka is a plus.",
 }
@@ -140,9 +148,21 @@ class TestAnalyzeJobUseCase:
 
         assert result.cached is False
         assert result.analysis.generation == 1
+        assert result.analysis.job_id == JobId(JOB["job_id"])
+        assert result.analysis.job_id != JobId(JOB["url"])
         assert calls["count"] == 1
         assert len(repo.saved) == 1
         assert any(getattr(e, "event_type", "") == "EmployerAnalyzed" for e in publisher.events)
+
+    async def test_url_shaped_job_id_is_rejected_before_analysis(self) -> None:
+        runner, calls = _runner_returning(_outcome())
+        use_case = _use_case(repo=_InMemoryRepo(), runner=runner)
+        job = {**JOB, "job_id": JOB["url"]}
+
+        with pytest.raises(ValueError, match="canonical UUID"):
+            await use_case.execute_async(job=job, tenant_id=LOCAL_TENANT)
+
+        assert calls["count"] == 0
 
     async def test_second_run_same_snapshot_hits_cache_and_skips_ensemble(self) -> None:
         repo = _InMemoryRepo()
@@ -169,7 +189,7 @@ class TestAnalyzeJobUseCase:
         assert forced.analysis.generation == 2
         assert calls["count"] == 2
         # Prior generation retained as audit history (D-13).
-        assert repo.load(LOCAL_TENANT, JobId(JOB["url"]), generation=1) is not None
+        assert repo.load(LOCAL_TENANT, JobId(JOB["job_id"]), generation=1) is not None
 
     async def test_degraded_ensemble_is_persisted_with_completeness(self) -> None:
         from jobctrl.domain.materials.analysis import AnalysisFailure
@@ -222,8 +242,10 @@ class TestAnalyzeJobUseCase:
         # (formatting-tolerant) AND snap, so the saved record's spans are the JD's
         # verbatim text (D-15) even if a runner skipped snapping.
         repo = _InMemoryRepo()
+        job_url = "https://example.com/jobs/soc"
         job = {
-            "url": "https://example.com/jobs/soc",
+            "job_id": str(_job_id_for(job_url)),
+            "url": job_url,
             "title": "Head of Security Operations",
             "full_description": "You will run a high‑availability SOC and own IR.",
         }
@@ -267,8 +289,10 @@ class TestAnalyzeJobUseCase:
         # The runner returns a canonical that carries a protected-class
         # requirement whose evidence span IS grounded in the JD — so only the
         # EEO screen (not grounding) can stop it reaching the persisted record.
+        job_url = "https://example.com/jobs/grad"
         job = {
-            "url": "https://example.com/jobs/grad",
+            "job_id": str(_job_id_for(job_url)),
+            "url": job_url,
             "title": "Engineer",
             "full_description": "Requires 8+ years in Go. Seeking a recent grad.",
         }
