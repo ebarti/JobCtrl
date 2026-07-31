@@ -63,10 +63,12 @@ from jobctrl.domain.enrichment.value_objects import (
     ApplicationUrl,
     FullDescription,
 )
+from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
+from jobctrl.infrastructure.discovery.sqlite_identity_resolver import SqliteJobIdentityResolver
 from jobctrl.infrastructure.enrichment.sqlite_repository import (
     SqlitePostingSnapshotSetRepository,
 )
@@ -173,6 +175,17 @@ SKIP_DETAIL_SITES = {"glassdoor", "google", "Workopolis"}
 # Module-level proxy config (set from CLI or caller)
 _PROXY_CONFIG: ProxyConfig | None = None
 _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS = 3
+
+
+def _resolve_current_enrichment_job_id(conn: sqlite3.Connection, url: str) -> JobId:
+    """Resolve the external posting locator before enrichment persistence."""
+    identity = SqliteJobIdentityResolver(conn).resolve_current_by_posting_url(
+        LOCAL_TENANT,
+        PostingUrl(value=url),
+    )
+    if identity is None:
+        raise ValueError(f"no current JobId for enrichment locator: {url}")
+    return canonical_job_id(str(identity.job_id))
 
 
 def set_proxy(proxy_str: str | None) -> None:
@@ -754,7 +767,10 @@ def _make_llm_extractor() -> LlmExtractor:
 
 
 def _record_enrich_robots_blocked(
-    conn: sqlite3.Connection, url: str, decision: PolitenessDecision
+    conn: sqlite3.Connection,
+    job_id: JobId,
+    url: str,
+    decision: PolitenessDecision,
 ) -> None:
     """Fold a robots-disallowed navigation into the enrichment lifecycle.
 
@@ -775,10 +791,10 @@ def _record_enrich_robots_blocked(
 
     finished_at = utc_now()
     message = decision.reason or "robots.txt disallows automated fetch of this URL"
-    ensure_job_stage_rows(conn, url)
+    ensure_job_stage_rows(conn, job_id)
     set_stage_state(
         conn,
-        url,
+        job_id,
         "enrich",
         "blocked",
         error_code="ENRICH_ROBOTS_DISALLOWED",
@@ -791,7 +807,7 @@ def _record_enrich_robots_blocked(
     )
     record_job_event(
         conn,
-        url,
+        job_id,
         "enrich",
         "StageBlocked",
         level="warning",
@@ -806,7 +822,7 @@ def _record_enrich_robots_blocked(
     conn.commit()
 
 
-def _unblock_enrich_stage_if_blocked(conn: sqlite3.Connection, url: str) -> None:
+def _unblock_enrich_stage_if_blocked(conn: sqlite3.Connection, job_id: JobId) -> None:
     """Unblock a previously robots-blocked enrich stage before re-enrichment.
 
     A robots-disallowed job folds into ``enrich = blocked`` (see
@@ -823,18 +839,21 @@ def _unblock_enrich_stage_if_blocked(conn: sqlite3.Connection, url: str) -> None
     from jobctrl.state import record_job_event, set_stage_state
 
     row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        (url,),
+        """
+        SELECT state FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
     ).fetchone()
     if row is None:
         return
     current = row[0] if not isinstance(row, dict) else row["state"]
     if current != "blocked":
         return
-    set_stage_state(conn, url, "enrich", "pending")
+    set_stage_state(conn, job_id, "enrich", "pending")
     record_job_event(
         conn,
-        url,
+        job_id,
         "enrich",
         "StageReset",
         message="Re-evaluating robots for a previously robots-blocked job",
@@ -867,7 +886,7 @@ def _record_enrich_politeness_deferral(
     repo.save(failed)
     set_stage_state(
         conn,
-        url,
+        aggregate.job_id,
         "enrich",
         "failed",
         attempt_count=failed.attempt_count,
@@ -880,7 +899,7 @@ def _record_enrich_politeness_deferral(
     )
     record_job_event(
         conn,
-        url,
+        aggregate.job_id,
         "enrich",
         "StageFailed",
         level="warning",
@@ -893,7 +912,12 @@ def _record_enrich_politeness_deferral(
     )
 
 
-def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exception) -> None:
+def _record_enrich_job_failure(
+    conn: sqlite3.Connection,
+    job_id: JobId,
+    url: str,
+    exc: Exception,
+) -> None:
     """Record a single job's unexpected enrichment failure without aborting the batch.
 
     ``validate_transition=False`` because the failure-recording path must never
@@ -905,10 +929,10 @@ def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exceptio
         from jobctrl.state import record_job_event, set_stage_state, utc_now
 
         finished_at = utc_now()
-        _record_enrich_aggregate_failure(conn, url, message, finished_at=finished_at)
+        _record_enrich_aggregate_failure(conn, job_id, message, finished_at=finished_at)
         set_stage_state(
             conn,
-            url,
+            job_id,
             "enrich",
             "failed",
             error_code="ENRICH_INTERNAL_ERROR",
@@ -919,7 +943,7 @@ def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exceptio
         )
         record_job_event(
             conn,
-            url,
+            job_id,
             "enrich",
             "StageFailed",
             level="error",
@@ -937,14 +961,14 @@ def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exceptio
 
 def _record_enrich_aggregate_failure(
     conn: sqlite3.Connection,
-    url: str,
+    job_id: JobId,
     message: str,
     *,
     finished_at: str,
 ) -> None:
     """Persist the canonical failed JobEnrichment attempt for an isolated crash."""
     repo = SqliteEnrichmentRepository(conn)
-    existing = repo.load(LOCAL_TENANT, JobId(url))
+    existing = repo.load(LOCAL_TENANT, job_id)
     if existing is not None and existing.is_enriched:
         # Do not destroy an accepted enrichment artifact from a later audit-only
         # failure path. The stage event below still preserves the crash.
@@ -957,7 +981,7 @@ def _record_enrich_aggregate_failure(
     )
     aggregate = existing or JobEnrichment.empty(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=job_id,
         updated_at=finished_at,
     )
     running = (
@@ -1122,16 +1146,23 @@ def scrape_site_batch(
                     utc_now,
                 )
 
+                try:
+                    job_id = _resolve_current_enrichment_job_id(conn, url)
+                except ValueError:
+                    log.error("Skipping enrichment without a current JobId: %s", url)
+                    stats["error"] += 1
+                    continue
+
                 # Already-enriched rows need no navigation — reaffirm and skip
                 # before the gate so a robots change can't relabel finished work.
-                aggregate = repo.load(LOCAL_TENANT, JobId(url))
+                aggregate = repo.load(LOCAL_TENANT, job_id)
                 if aggregate is not None and aggregate.is_enriched:
                     stats["processed"] += 1
                     stats["ok"] += 1
-                    ensure_job_stage_rows(conn, url)
+                    ensure_job_stage_rows(conn, job_id)
                     set_stage_state(
                         conn,
-                        url,
+                        job_id,
                         "enrich",
                         "succeeded",
                         attempt_count=aggregate.attempt_count,
@@ -1157,24 +1188,30 @@ def scrape_site_batch(
                             site,
                         )
                         break
-                    _record_enrich_robots_blocked(conn, url, gate)
+                    _record_enrich_robots_blocked(conn, job_id, url, gate)
                     stats["blocked"] += 1
                     continue
 
                 try:
                     started_at = utc_now()
-                    ensure_job_stage_rows(conn, url)
+                    ensure_job_stage_rows(conn, job_id)
                     # A previously robots-blocked job re-enters here once robots
                     # allows again; Unblock (Blocked->Pending) before the running
                     # transition, which has no Blocked->Running edge and would
                     # otherwise strand the job as ENRICH_INTERNAL_ERROR.
-                    _unblock_enrich_stage_if_blocked(conn, url)
-                    set_stage_state(conn, url, "enrich", "running", started_at=started_at)
-                    record_job_event(conn, url, "enrich", "StageStarted", message="Enrichment started")
+                    _unblock_enrich_stage_if_blocked(conn, job_id)
+                    set_stage_state(conn, job_id, "enrich", "running", started_at=started_at)
+                    record_job_event(
+                        conn,
+                        job_id,
+                        "enrich",
+                        "StageStarted",
+                        message="Enrichment started",
+                    )
 
                     aggregate = aggregate or JobEnrichment.empty(
                         tenant_id=LOCAL_TENANT,
-                        job_id=JobId(url),
+                        job_id=job_id,
                         updated_at=started_at,
                     )
                     aggregate = aggregate.start_attempt(
@@ -1267,6 +1304,7 @@ def scrape_site_batch(
                         repo.save(succeeded)
                         _record_posting_snapshot_from_cascade(
                             conn,
+                            job_id=job_id,
                             url=url,
                             source_id=site or "enrichment",
                             title=title or "",
@@ -1275,7 +1313,7 @@ def scrape_site_batch(
                         )
                         set_stage_state(
                             conn,
-                            url,
+                            job_id,
                             "enrich",
                             "succeeded",
                             attempt_count=succeeded.attempt_count,
@@ -1309,7 +1347,7 @@ def scrape_site_batch(
                             )
                         record_job_event(
                             conn,
-                            url,
+                            job_id,
                             "enrich",
                             "StageCompleted",
                             message=f"Enrichment {status}: {desc_len} description chars",
@@ -1319,6 +1357,7 @@ def scrape_site_batch(
                         stats["error"] += 1
                         _record_posting_snapshot_from_cascade(
                             conn,
+                            job_id=job_id,
                             url=url,
                             source_id=site or "enrichment",
                             title=title or "",
@@ -1336,7 +1375,7 @@ def scrape_site_batch(
                         repo.save(failed)
                         set_stage_state(
                             conn,
-                            url,
+                            job_id,
                             "enrich",
                             "failed",
                             attempt_count=failed.attempt_count,
@@ -1348,7 +1387,7 @@ def scrape_site_batch(
                         )
                         record_job_event(
                             conn,
-                            url,
+                            job_id,
                             "enrich",
                             "StageFailed",
                             level="info",
@@ -1397,7 +1436,7 @@ def scrape_site_batch(
                         repo.save(failed)
                         set_stage_state(
                             conn,
-                            url,
+                            job_id,
                             "enrich",
                             "failed",
                             attempt_count=failed.attempt_count,
@@ -1410,7 +1449,7 @@ def scrape_site_batch(
                         )
                         record_job_event(
                             conn,
-                            url,
+                            job_id,
                             "enrich",
                             "StageFailed",
                             level="error",
@@ -1444,6 +1483,7 @@ def scrape_site_batch(
                         )
                         _record_posting_snapshot_failure_from_cascade(
                             conn,
+                            job_id=job_id,
                             url=url,
                             source_id=site or "enrichment",
                             cascade_result=cascade_result,
@@ -1472,7 +1512,7 @@ def scrape_site_batch(
                 except Exception as exc:
                     log.exception("Enrichment job failed: %s", url)
                     stats["error"] += 1
-                    _record_enrich_job_failure(conn, url, exc)
+                    _record_enrich_job_failure(conn, job_id, url, exc)
 
                 # No inter-job sleep: the shared host limiter (inside the gate)
                 # now paces each host by min-interval + concurrency across threads.
@@ -1501,6 +1541,7 @@ def _record_posting_snapshot_from_cascade(
     conn: sqlite3.Connection,
     *,
     url: str,
+    job_id: JobId | None = None,
     source_id: str,
     title: str,
     cascade_result: dict,
@@ -1510,12 +1551,17 @@ def _record_posting_snapshot_from_cascade(
     description = str(cascade_result.get("full_description") or "")
     if not description.strip():
         return
-    resolved_source_id = _source_id_for_enriched_job(conn, url, fallback=source_id)
+    job_id = (
+        _resolve_current_enrichment_job_id(conn, url)
+        if job_id is None
+        else canonical_job_id(str(job_id))
+    )
+    resolved_source_id = _source_id_for_enriched_job(conn, job_id, fallback=source_id)
     try:
         repo = SqlitePostingSnapshotSetRepository(conn)
-        snapshot_set = repo.load(LOCAL_TENANT, JobId(url)) or PostingSnapshotSet.empty(
+        snapshot_set = repo.load(LOCAL_TENANT, job_id) or PostingSnapshotSet.empty(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+            job_id=job_id,
             updated_at=captured_at,
         )
         previous_active = snapshot_set.latest_active_state
@@ -1563,18 +1609,16 @@ def _record_posting_snapshot_from_cascade(
 
         record_job_event(
             conn,
-            url,
+            job_id,
             "enrich",
             "PostingContentSnapshotCaptured",
             message="Posting content snapshot captured.",
             payload={
                 "tenantId": str(LOCAL_TENANT),
-                "job_id": url,
-                "jobId": url,
                 "snapshot_version": snapshot.snapshot_version,
                 "snapshotVersion": snapshot.snapshot_version,
-                "snapshot_ref": f"{url}:{snapshot.snapshot_version}",
-                "snapshotRef": f"{url}:{snapshot.snapshot_version}",
+                "snapshot_ref": f"{job_id}:{snapshot.snapshot_version}",
+                "snapshotRef": f"{job_id}:{snapshot.snapshot_version}",
                 "source_id": resolved_source_id,
                 "sourceId": resolved_source_id,
                 "extraction_tier": tier.value,
@@ -1587,18 +1631,18 @@ def _record_posting_snapshot_from_cascade(
                 "capturedAt": captured_at,
             },
             occurred_at=captured_at,
+            entity_kind="posting_snapshot",
+            entity_ref=f"{job_id}:{snapshot.snapshot_version}",
         )
         if previous_active is not active_state:
             record_job_event(
                 conn,
-                url,
+                job_id,
                 "enrich",
                 "JobActiveStateChanged",
                 message="Job active state changed.",
                 payload={
                     "tenantId": str(LOCAL_TENANT),
-                    "job_id": url,
-                    "jobId": url,
                     "active_state": active_state.value,
                     "activeState": active_state.value,
                     "previous_state": previous_active.value,
@@ -1615,11 +1659,11 @@ def _record_posting_snapshot_from_cascade(
             conn.execute(
                 """
                 INSERT INTO discovery_quarantine_entries (
-                    tenant_id, job_id, job_key, title, company, source_id,
+                    tenant_id, job_id, title, company, source_id,
                     posting_url, reason, confidence, snapshot_version,
                     captured_at, notice_text, status
-                ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, 'pending')
-                ON CONFLICT(tenant_id, job_key) DO UPDATE SET
+                ) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, 'pending')
+                ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                     title = excluded.title,
                     source_id = excluded.source_id,
                     posting_url = excluded.posting_url,
@@ -1632,8 +1676,7 @@ def _record_posting_snapshot_from_cascade(
                 """,
                 (
                     str(LOCAL_TENANT),
-                    url,
-                    url,
+                    str(job_id),
                     title,
                     resolved_source_id,
                     url,
@@ -1653,6 +1696,7 @@ def _record_posting_snapshot_failure_from_cascade(
     conn: sqlite3.Connection,
     *,
     url: str,
+    job_id: JobId | None = None,
     source_id: str,
     cascade_result: dict,
     failed_at: str,
@@ -1662,12 +1706,17 @@ def _record_posting_snapshot_failure_from_cascade(
     verification_method = str(cascade_result.get("verification_method") or "")
     if active_state is None or verification_method == "unknown":
         return
-    resolved_source_id = _source_id_for_enriched_job(conn, url, fallback=source_id)
+    job_id = (
+        _resolve_current_enrichment_job_id(conn, url)
+        if job_id is None
+        else canonical_job_id(str(job_id))
+    )
+    resolved_source_id = _source_id_for_enriched_job(conn, job_id, fallback=source_id)
     try:
         repo = SqlitePostingSnapshotSetRepository(conn)
-        snapshot_set = repo.load(LOCAL_TENANT, JobId(url)) or PostingSnapshotSet.empty(
+        snapshot_set = repo.load(LOCAL_TENANT, job_id) or PostingSnapshotSet.empty(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+            job_id=job_id,
             updated_at=failed_at,
         )
         error_class = str(cascade_result.get("error") or "DETAIL_ERROR")[:120]
@@ -1689,14 +1738,12 @@ def _record_posting_snapshot_failure_from_cascade(
 
         record_job_event(
             conn,
-            url,
+            job_id,
             "enrich",
             "PostingContentSnapshotFailed",
             message="Posting content snapshot failed.",
             payload={
                 "tenantId": str(LOCAL_TENANT),
-                "job_id": url,
-                "jobId": url,
                 "source_id": resolved_source_id,
                 "sourceId": resolved_source_id,
                 "error_class": error_class,
@@ -1728,14 +1775,12 @@ def _record_posting_snapshot_failure_from_cascade(
         if previous_active is not None:
             record_job_event(
                 conn,
-                url,
+                job_id,
                 "enrich",
                 "JobActiveStateChanged",
                 message="Job active state changed.",
                 payload={
                     "tenantId": str(LOCAL_TENANT),
-                    "job_id": url,
-                    "jobId": url,
                     "active_state": active_state.value,
                     "activeState": active_state.value,
                     "previous_state": previous_active.value,
@@ -1753,24 +1798,21 @@ def _record_posting_snapshot_failure_from_cascade(
 
 def _source_id_for_enriched_job(
     conn: sqlite3.Connection,
-    job_url: str,
+    job_id: JobId,
     *,
     fallback: str,
 ) -> str:
     """Return the discovery source id for an enriched job when available."""
-    try:
-        row = conn.execute(
-            """
-            SELECT source_id
-            FROM job_source_observations
-            WHERE tenant_id = ? AND job_url = ?
-            ORDER BY observed_at DESC, source_observation_id DESC
-            LIMIT 1
-            """,
-            (str(LOCAL_TENANT), job_url),
-        ).fetchone()
-    except sqlite3.OperationalError:
-        return fallback
+    row = conn.execute(
+        """
+        SELECT source_id
+        FROM job_source_observations
+        WHERE tenant_id = ? AND job_id = ?
+        ORDER BY observed_at DESC, source_observation_id DESC
+        LIMIT 1
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
     if row is None:
         return fallback
     source_id = str(row[0] or "").strip()

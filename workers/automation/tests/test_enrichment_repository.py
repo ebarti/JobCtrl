@@ -19,10 +19,14 @@ from jobctrl.domain.enrichment import (
     ExtractionTier,
     FullDescription,
     JobEnrichment,
+    PostingSnapshotSet,
 )
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
+from jobctrl.infrastructure.enrichment.sqlite_repository import (
+    SqlitePostingSnapshotSetRepository,
+)
 
 
 OTHER_TENANT = TenantId("other")
@@ -197,6 +201,38 @@ def test_repository_rejects_url_shaped_job_identity(conn: sqlite3.Connection) ->
                 updated_at="t0",
             )
         )
+
+
+def test_snapshot_set_repository_uses_tenant_scoped_job_id(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://example.test/jobs/snapshot"
+    job_id = _job_id(tenant_id=LOCAL_TENANT, url=url)
+    _insert_job(conn, tenant_id=LOCAL_TENANT, job_id=job_id, url=url)
+    repo = SqlitePostingSnapshotSetRepository(conn)
+    snapshot_set = PostingSnapshotSet.empty(
+        tenant_id=LOCAL_TENANT,
+        job_id=job_id,
+        updated_at="2026-07-31T12:00:00+00:00",
+    )
+
+    repo.save(snapshot_set)
+
+    loaded = repo.load(LOCAL_TENANT, job_id)
+    row = conn.execute(
+        """
+        SELECT job_id
+        FROM posting_snapshot_sets
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+
+    assert loaded == snapshot_set
+    assert row is not None and row["job_id"] == str(job_id)
+    assert "job_url" not in {
+        column["name"] for column in conn.execute("PRAGMA table_info(posting_snapshot_sets)")
+    }
 
 
 def test_list_pending_uses_tenant_scoped_job_ids(conn: sqlite3.Connection) -> None:
