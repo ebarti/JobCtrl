@@ -63,6 +63,9 @@ export function openReadOnlyDatabase(dbPath: string): SqliteDatabase {
 export function openDatabase(dbPath: string): SqliteDatabase {
   const db = new Database(dbPath, { fileMustExist: true });
   assertExactSchemaVersion(db);
+  // Exact-v7 permanent deletion relies on the sealed schema's cascade and
+  // RESTRICT constraints. SQLite enables those constraints per connection.
+  db.pragma("foreign_keys = ON");
   // L4 (round-1 review): now that read endpoints write (projection
   // refresh) and the worker process also writes to the same
   // ``*_projections`` tables + watermark, SQLite contention is more
