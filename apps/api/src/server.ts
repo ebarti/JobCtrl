@@ -305,7 +305,6 @@ import {
   restoreJobs,
   resolveJobId,
   resetStaleScoresForRescore,
-  resolveJobId,
   resolveJobUrl,
   softDeleteJob,
   softDeleteJobs,
