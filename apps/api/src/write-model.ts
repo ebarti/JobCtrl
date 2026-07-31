@@ -302,25 +302,21 @@ export function markJobApplied(
   jobKey: string,
   request: MarkJobActionRequest,
 ): { jobUrl: string; stage: StageSummary } {
-  const jobUrl = resolveJobUrl(db, jobKey);
-  if (!jobUrl) {
+  const job = resolveJobIdentity(db, LOCAL_TENANT, jobKey);
+  if (!job) {
     throw new InputError("Job not found.");
   }
   // Manual mark-applied — admin override, bypasses §8.5 (parity with the
   // Python JSON-RPC `mark_applied` handler).  The user is asserting they
   // applied externally; we trust them.
-  updateExistingJobColumns(db, jobUrl, {
-    apply_status: "applied",
-    apply_error: null,
-    applied_at: new Date().toISOString(),
-  });
-  upsertStageState(db, jobUrl, "apply", "succeeded", {
+  upsertStageStateById(db, LOCAL_TENANT, job.jobId, "apply", "succeeded", {
     retryable: false,
     finishedAt: new Date().toISOString(),
     skipValidation: true,
   });
-  recordActionEvent(db, {
-    jobUrl,
+  recordActionEventById(db, {
+    tenantId: LOCAL_TENANT,
+    jobId: job.jobId,
     stage: "apply",
     // H1 (round-1 review): align with the Python JSON-RPC handler
     // (`infrastructure/rpc/handlers.py::mark_applied`) which writes the
@@ -330,7 +326,10 @@ export function markJobApplied(
     message: "Job marked applied from the local API.",
     payload: { reason: request.reason ?? "" },
   });
-  return { jobUrl, stage: getStageState(db, jobUrl, "apply") };
+  return {
+    jobUrl: job.jobUrl,
+    stage: getStageStateById(db, LOCAL_TENANT, job.jobId, "apply"),
+  };
 }
 
 export function markJobSkipped(
@@ -338,23 +337,20 @@ export function markJobSkipped(
   jobKey: string,
   request: MarkJobActionRequest,
 ): { jobUrl: string; stage: StageSummary } {
-  const jobUrl = resolveJobUrl(db, jobKey);
-  if (!jobUrl) {
+  const job = resolveJobIdentity(db, LOCAL_TENANT, jobKey);
+  if (!job) {
     throw new InputError("Job not found.");
   }
   // Manual mark-skipped — admin override, bypasses §8.5 (parity with
   // Python's `mark_skipped` JSON-RPC handler).
-  updateExistingJobColumns(db, jobUrl, {
-    apply_status: "skipped",
-    apply_error: null,
-  });
-  upsertStageState(db, jobUrl, "apply", "skipped", {
+  upsertStageStateById(db, LOCAL_TENANT, job.jobId, "apply", "skipped", {
     retryable: false,
     finishedAt: new Date().toISOString(),
     skipValidation: true,
   });
-  recordActionEvent(db, {
-    jobUrl,
+  recordActionEventById(db, {
+    tenantId: LOCAL_TENANT,
+    jobId: job.jobId,
     stage: "apply",
     // H1 (round-1 review): align with domain catalog — `StageSkipped`
     // already exists in `domain/events/orchestration.py`.  The Python RPC
@@ -364,7 +360,10 @@ export function markJobSkipped(
     message: "Job marked skipped from the local API.",
     payload: { reason: request.reason ?? "" },
   });
-  return { jobUrl, stage: getStageState(db, jobUrl, "apply") };
+  return {
+    jobUrl: job.jobUrl,
+    stage: getStageStateById(db, LOCAL_TENANT, job.jobId, "apply"),
+  };
 }
 
 export function cancelJobAction(
@@ -372,23 +371,24 @@ export function cancelJobAction(
   jobKey: string,
   runId = "",
 ): { jobUrl: string; stage: StageSummary; cancelRequested: boolean } {
-  const jobUrl = resolveJobUrl(db, jobKey);
-  if (!jobUrl) {
+  const job = resolveJobIdentity(db, LOCAL_TENANT, jobKey);
+  if (!job) {
     throw new InputError("Job not found.");
   }
-  const stage = currentMutableStage(db, jobUrl);
-  const current = getStageState(db, jobUrl, stage);
+  const stage = currentMutableStageById(db, LOCAL_TENANT, job.jobId);
+  const current = getStageStateById(db, LOCAL_TENANT, job.jobId, stage);
   if (IMMUTABLE_CANCEL_STATES.has(current.state)) {
-    return { jobUrl, stage: current, cancelRequested: false };
+    return { jobUrl: job.jobUrl, stage: current, cancelRequested: false };
   }
   // Cancellation is a normal state-machine transition. Only queued/running
   // work may enter Canceled; terminal results remain inspectable and immutable.
-  upsertStageState(db, jobUrl, stage, "canceled", {
+  upsertStageStateById(db, LOCAL_TENANT, job.jobId, stage, "canceled", {
     retryable: true,
     finishedAt: new Date().toISOString(),
   });
-  recordActionEvent(db, {
-    jobUrl,
+  recordActionEventById(db, {
+    tenantId: LOCAL_TENANT,
+    jobId: job.jobId,
     stage,
     // Canonical `StageCanceled` catalog event (see
     // `domain/events/orchestration.py`).
@@ -397,7 +397,11 @@ export function cancelJobAction(
     message: "Cancel requested from the local API.",
     payload: { run_id: runId },
   });
-  return { jobUrl, stage: getStageState(db, jobUrl, stage), cancelRequested: true };
+  return {
+    jobUrl: job.jobUrl,
+    stage: getStageStateById(db, LOCAL_TENANT, job.jobId, stage),
+    cancelRequested: true,
+  };
 }
 
 export function correctScore(
@@ -1753,6 +1757,19 @@ function getStageStateById(db: SqliteDatabase, tenantId: string, jobId: string, 
     blockedBy: parseStringArray(nullableString(row.blocked_by_json)),
     nextAction: nullableString(row.next_action),
   };
+}
+
+function currentMutableStageById(db: SqliteDatabase, tenantId: string, jobId: string): Stage {
+  const rows = allRows<Record<string, unknown>>(
+    db,
+    "SELECT stage, state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? ORDER BY rowid",
+    [tenantId, jobId],
+  );
+  const active = rows.find((row) => ["queued", "running"].includes(String(row.state ?? "")));
+  if (active && STAGES.includes(active.stage as Stage)) {
+    return active.stage as Stage;
+  }
+  return "apply";
 }
 
 function currentFailedStageById(db: SqliteDatabase, tenantId: string, jobId: string): Stage | null {
