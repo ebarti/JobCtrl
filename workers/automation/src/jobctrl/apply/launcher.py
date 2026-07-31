@@ -88,6 +88,7 @@ from jobctrl.domain.apply.repeat_application import (
 )
 from jobctrl.domain.apply.value_objects import ApplyPrompt, ApplyRunId, new_apply_run_id
 from jobctrl.domain.discovery.value_objects import PostingUrl
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
@@ -417,15 +418,22 @@ def _dry_run_evidence_exists(
     return False
 
 
-def _apply_run_started_payload(conn, *, job_key: str, run_id: str) -> dict[str, Any]:
+def _apply_run_started_payload(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    run_id: str,
+) -> dict[str, Any]:
     rows = conn.execute(
         """
         SELECT payload_json FROM job_events
-        WHERE job_url = ? AND stage = 'apply' AND event_type = 'ApplyRunStarted'
+        WHERE tenant_id = ? AND job_id = ?
+          AND stage = 'apply' AND event_type = 'ApplyRunStarted'
         ORDER BY event_id DESC
         LIMIT 48
         """,
-        (job_key,),
+        (str(tenant_id), str(canonical_job_id(str(job_id)))),
     ).fetchall()
     for row in rows:
         payload = _payload_from_row(row)
@@ -437,17 +445,19 @@ def _apply_run_started_payload(conn, *, job_key: str, run_id: str) -> dict[str, 
 def _latest_dry_run_completion_payload(
     conn,
     *,
-    job_key: str,
+    tenant_id: TenantId,
+    job_id: JobId,
     run_id: str,
 ) -> dict[str, Any]:
     rows = conn.execute(
         """
         SELECT payload_json FROM job_events
-        WHERE job_url = ? AND stage = 'apply' AND event_type = 'DryRunCompleted'
+        WHERE tenant_id = ? AND job_id = ?
+          AND stage = 'apply' AND event_type = 'DryRunCompleted'
         ORDER BY event_id DESC
         LIMIT 24
         """,
-        (job_key,),
+        (str(tenant_id), str(canonical_job_id(str(job_id)))),
     ).fetchall()
     for row in rows:
         payload = _payload_from_row(row)
@@ -459,15 +469,22 @@ def _latest_dry_run_completion_payload(
 def _dry_run_completion_binding(
     conn,
     *,
-    job_key: str,
+    tenant_id: TenantId,
+    job_id: JobId,
     run_id: str,
     run_ctx: dict | None,
 ) -> dict[str, Any]:
     ctx = run_ctx or {}
-    started_payload = _apply_run_started_payload(conn, job_key=job_key, run_id=run_id)
+    started_payload = _apply_run_started_payload(
+        conn,
+        tenant_id=tenant_id,
+        job_id=job_id,
+        run_id=run_id,
+    )
     completion_payload = _latest_dry_run_completion_payload(
         conn,
-        job_key=job_key,
+        tenant_id=tenant_id,
+        job_id=job_id,
         run_id=run_id,
     )
     materials_generation = _payload_int(ctx, "materials_generation", "materialsGeneration")
@@ -987,8 +1004,9 @@ def acquire_job(
 
 def _register_apply_log_artifact(
     conn,
-    url: str,
+    job_id: JobId,
     *,
+    tenant_id: TenantId,
     worker_id: int | None,
     run_id: str,
     occurred_at: str,
@@ -1001,24 +1019,132 @@ def _register_apply_log_artifact(
     log_path = config.LOG_DIR / f"worker-{int(worker_id)}.log"
     record_job_artifact(
         conn,
-        url,
+        job_id,
         "apply",
         "apply_log",
         log_path,
+        tenant_id=tenant_id,
         status="active",
         created_at=occurred_at,
         metadata={"run_id": str(run_id), "worker_id": int(worker_id)},
     )
 
 
+def _resolve_apply_job_id(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id_or_url: JobId | str,
+) -> JobId:
+    """Resolve a legacy URL input once at the launcher boundary."""
+    value = str(job_id_or_url)
+    try:
+        return canonical_job_id(value)
+    except ValueError:
+        identity = SqliteJobIdentityResolver(conn).resolve_by_posting_url(
+            tenant_id,
+            PostingUrl(value=value),
+        )
+        if identity is None:
+            raise ValueError("Job not found.") from None
+        return identity.job_id
+
+
+def _posting_url_for_job_id(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> str | None:
+    row = conn.execute(
+        """
+        SELECT locator_value
+        FROM job_locators
+        WHERE tenant_id = ? AND job_id = ?
+          AND locator_kind = 'posting_url' AND is_current = 1
+        ORDER BY last_seen_at DESC
+        LIMIT 1
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if row is None:
+        row = conn.execute(
+            "SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ? LIMIT 1",
+            (str(tenant_id), str(job_id)),
+        ).fetchone()
+    if row is None:
+        return None
+    return str(row[0] or "") or None
+
+
+def _has_apply_event_for_job_id(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    run_id: str,
+    event_types: set[str],
+) -> bool:
+    placeholders = ",".join("?" for _ in event_types)
+    rows = conn.execute(
+        f"""
+        SELECT payload_json FROM job_events
+        WHERE tenant_id = ? AND job_id = ?
+          AND stage = 'apply' AND event_type IN ({placeholders})
+        """,
+        (str(tenant_id), str(job_id), *event_types),
+    ).fetchall()
+    for row in rows:
+        payload_json = row["payload_json"] if hasattr(row, "keys") else row[0]
+        try:
+            payload = json.loads(payload_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(payload, dict) and str(payload.get("run_id") or "") == run_id:
+            return True
+    return False
+
+
+def _record_apply_terminal_event_once(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    run_id: str,
+    event_type: str,
+    level: str = "info",
+    message: str,
+    payload: dict[str, Any],
+) -> None:
+    if _has_apply_event_for_job_id(
+        conn,
+        tenant_id=tenant_id,
+        job_id=job_id,
+        run_id=run_id,
+        event_types={event_type},
+    ):
+        return
+    record_job_event(
+        conn,
+        job_id,
+        "apply",
+        event_type,
+        tenant_id=tenant_id,
+        level=level,
+        message=message,
+        payload=payload,
+    )
+
+
 def mark_result(
-    url: str,
+    url: JobId | str,
     status: str,
     error: str | None = None,
     permanent: bool = False,
     duration_ms: int | None = None,
     task_id: str | None = None,
     run_ctx: dict | None = None,
+    tenant_id: TenantId | None = None,
 ) -> None:
     """Update a job's apply outcome.
 
@@ -1034,7 +1160,24 @@ def mark_result(
     """
     conn = get_connection()
     now = _utc_now()
-    ensure_job_stage_rows(conn, url)
+    stable_tenant_id = TenantId(
+        str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
+    )
+    stable_job_id = _resolve_apply_job_id(
+        conn,
+        tenant_id=stable_tenant_id,
+        job_id_or_url=url,
+    )
+    posting_url = _posting_url_for_job_id(
+        conn,
+        tenant_id=stable_tenant_id,
+        job_id=stable_job_id,
+    )
+    ensure_job_stage_rows(
+        conn,
+        stable_job_id,
+        tenant_id=stable_tenant_id,
+    )
 
     run_id = (
         task_id
@@ -1046,7 +1189,13 @@ def mark_result(
     dry_run = bool(run_ctx.get("dry_run")) if run_ctx else False
     submit_intent_recorded = (
         status not in {"applied", "dry_run"}
-        and _has_apply_submit_intent(conn, url, str(run_id))
+        and _has_apply_event_for_job_id(
+            conn,
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+            run_id=str(run_id),
+            event_types={"ApplySubmitIntended"},
+        )
     )
 
     if status == "applied":
@@ -1055,15 +1204,17 @@ def mark_result(
         # still want to record this completion. Skip canonical validation;
         # the launcher is the writer.
         set_stage_state(
-            conn, url, "apply", "succeeded",
+            conn, stable_job_id, "apply", "succeeded",
+            tenant_id=stable_tenant_id,
             finished_at=now, duration_ms=duration_ms,
             validate_transition=False,
         )
-        record_job_event(
+        _record_apply_terminal_event_once(
             conn,
-            url,
-            "apply",
-            "ApplicationSubmitted",
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+            run_id=str(run_id),
+            event_type="ApplicationSubmitted",
             message="Application submitted",
             payload={
                 "run_id": str(run_id),
@@ -1077,7 +1228,8 @@ def mark_result(
     elif status == "dry_run":
         binding = _dry_run_completion_binding(
             conn,
-            job_key=url,
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
             run_id=str(run_id),
             run_ctx=run_ctx,
         )
@@ -1085,22 +1237,24 @@ def mark_result(
         # convention (dry-run completed), not in the canonical §8.5 table.
         set_stage_state(
             conn,
-            url,
+            stable_job_id,
             "apply",
             "skipped",
+            tenant_id=stable_tenant_id,
             finished_at=now,
             duration_ms=duration_ms,
             error_code="DRY_RUN",
             error_message="Dry run completed without submitting.",
             retryable=True,
-            next_action=f"jobctrl apply --url {url}",
+            next_action=f"jobctrl apply --url {posting_url}" if posting_url else None,
             validate_transition=False,
         )
-        record_job_event(
+        _record_apply_terminal_event_once(
             conn,
-            url,
-            "apply",
-            "DryRunCompleted",
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+            run_id=str(run_id),
+            event_type="DryRunCompleted",
             message="Dry run completed without submitting",
             payload={
                 "run_id": str(run_id),
@@ -1122,9 +1276,10 @@ def mark_result(
         reason = (error or "unknown").strip()
         set_stage_state(
             conn,
-            url,
+            stable_job_id,
             "apply",
             "needs_verification",
+            tenant_id=stable_tenant_id,
             finished_at=now,
             duration_ms=duration_ms,
             error_code="APPLY_NEEDS_VERIFICATION",
@@ -1138,11 +1293,12 @@ def mark_result(
             ),
             validate_transition=False,
         )
-        record_job_event(
+        _record_apply_terminal_event_once(
             conn,
-            url,
-            "apply",
-            "ApplicationFailed",
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+            run_id=str(run_id),
+            event_type="ApplicationFailed",
             level="warn",
             message="Application outcome requires manual verification",
             payload={
@@ -1163,22 +1319,28 @@ def mark_result(
         # the writer is the launcher, transitions are runner-owned.
         set_stage_state(
             conn,
-            url,
+            stable_job_id,
             "apply",
             "failed",
+            tenant_id=stable_tenant_id,
             finished_at=now,
             duration_ms=duration_ms,
             error_code=str(status).upper(),
             error_message=reason,
             retryable=not permanent,
-            next_action=f"jobctrl apply --url {url}" if not permanent else None,
+            next_action=(
+                f"jobctrl apply --url {posting_url}"
+                if not permanent and posting_url
+                else None
+            ),
             validate_transition=False,
         )
-        record_job_event(
+        _record_apply_terminal_event_once(
             conn,
-            url,
-            "apply",
-            "ApplicationFailed",
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+            run_id=str(run_id),
+            event_type="ApplicationFailed",
             level="error",
             message=reason,
             payload={
@@ -1193,7 +1355,12 @@ def mark_result(
         )
 
     _register_apply_log_artifact(
-        conn, url, worker_id=worker_id, run_id=str(run_id), occurred_at=now
+        conn,
+        stable_job_id,
+        tenant_id=stable_tenant_id,
+        worker_id=worker_id,
+        run_id=str(run_id),
+        occurred_at=now,
     )
     conn.commit()
 
@@ -1226,24 +1393,68 @@ def _latest_apply_run_started_run_id(conn, url: str) -> str | None:
     return str(run_id) if run_id else None
 
 
-def release_lock(url: str, run_ctx: dict | None = None) -> None:
+def release_lock(
+    url: JobId | str,
+    run_ctx: dict | None = None,
+    *,
+    tenant_id: TenantId | None = None,
+) -> None:
     """Record that launcher cleanup ran without making retry decisions."""
     conn = get_connection()
+    stable_tenant_id = TenantId(
+        str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
+    )
+    stable_job_id = _resolve_apply_job_id(
+        conn,
+        tenant_id=stable_tenant_id,
+        job_id_or_url=url,
+    )
     ctx_run_id = run_ctx.get("run_id") if run_ctx else None
     run_id = (
         ctx_run_id
-        or _latest_apply_run_started_run_id(conn, url)
+        or _latest_apply_run_started_run_id_for_job_id(
+            conn,
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+        )
         or new_apply_run_id()
     )
     record_job_event(
         conn,
-        url,
+        stable_job_id,
         "apply",
         "LockReleased",
+        tenant_id=stable_tenant_id,
         message="Apply lock released",
         payload={"run_id": str(run_id)},
     )
     conn.commit()
+
+
+def _latest_apply_run_started_run_id_for_job_id(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> str | None:
+    row = conn.execute(
+        "SELECT payload_json FROM job_events "
+        "WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'apply' AND event_type = 'ApplyRunStarted' "
+        "ORDER BY event_id DESC LIMIT 1",
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if row is None:
+        return None
+    payload_json = row["payload_json"] if not isinstance(row, tuple) else row[0]
+    try:
+        payload = json.loads(payload_json)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    run_id = payload.get("run_id")
+    return str(run_id) if run_id else None
 
 
 def recover_ambiguous_running_apply(console: Console | None = None) -> int:
@@ -1376,17 +1587,34 @@ def _has_apply_event(conn, url: str, run_id: str, event_types: set[str]) -> bool
 # ---------------------------------------------------------------------------
 
 
-def mark_job(url: str, status: str, reason: str | None = None) -> None:
+def mark_job(
+    url: JobId | str,
+    status: str,
+    reason: str | None = None,
+    *,
+    tenant_id: TenantId | None = None,
+) -> None:
     """Manually mark a job's apply status."""
+    stable_tenant_id = tenant_id or LOCAL_TENANT
     if status == "applied":
         conn = get_connection()
         now = _utc_now()
-        ensure_job_stage_rows(conn, url)
+        stable_job_id = _resolve_apply_job_id(
+            conn,
+            tenant_id=stable_tenant_id,
+            job_id_or_url=url,
+        )
+        ensure_job_stage_rows(
+            conn,
+            stable_job_id,
+            tenant_id=stable_tenant_id,
+        )
         set_stage_state(
             conn,
-            url,
+            stable_job_id,
             "apply",
             "succeeded",
+            tenant_id=stable_tenant_id,
             finished_at=now,
             duration_ms=0,
             retryable=False,
@@ -1394,9 +1622,10 @@ def mark_job(url: str, status: str, reason: str | None = None) -> None:
         )
         record_job_event(
             conn,
-            url,
+            stable_job_id,
             "apply",
             "ApplicationManuallyMarked",
+            tenant_id=stable_tenant_id,
             message="Job manually marked as applied",
             payload={
                 "reason": reason or "",
@@ -1412,6 +1641,7 @@ def mark_job(url: str, status: str, reason: str | None = None) -> None:
             error=reason or "manual",
             permanent=True,
             duration_ms=0,
+            tenant_id=stable_tenant_id,
         )
 
 
@@ -1481,18 +1711,26 @@ def _load_profile_snapshot() -> ProfileSnapshot:
 # ---------------------------------------------------------------------------
 
 
-def _load_job_for_prompt(target_url: str, min_score: int) -> dict[str, Any] | None:
+def _load_job_for_prompt(
+    target_url: JobId | str,
+    min_score: int,
+    *,
+    tenant_id: TenantId,
+) -> dict[str, Any] | None:
     """Read one eligible job without creating an apply attempt or consuming authority."""
 
     conn = get_connection()
+    stable_job_id = _resolve_apply_job_id(
+        conn,
+        tenant_id=tenant_id,
+        job_id_or_url=target_url,
+    )
     common_columns, common_joins = _apply_candidate_select_parts()
-    like = f"%{target_url.split('?')[0].rstrip('/')}%"
     row = conn.execute(
         f"""
         SELECT {common_columns}
         FROM jobs {common_joins}
-        WHERE (jobs.url = ? OR {_EFFECTIVE_APPLICATION_URL} = ?
-               OR {_EFFECTIVE_APPLICATION_URL} LIKE ? OR jobs.url LIKE ?)
+        WHERE jobs.tenant_id = ? AND jobs.job_id = ?
           AND {_READY_TAILORED_RESUME_WITH_PDF}
           AND {_EFFECTIVE_FIT_SCORE} >= ?
           AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
@@ -1500,21 +1738,27 @@ def _load_job_for_prompt(target_url: str, min_score: int) -> dict[str, Any] | No
           AND {_NOT_CLOSED_ACTIVE_STATE}
         LIMIT 1
         """,
-        (target_url, target_url, like, like, min_score),
+        (str(tenant_id), str(stable_job_id), min_score),
     ).fetchone()
     return _row_to_job_dict(row) if row is not None else None
 
 
 def gen_prompt(
-    target_url: str,
+    target_url: JobId | str,
     min_score: int = 7,
     model: str = "default",
     worker_id: int = 0,
     snapshot: ProfileSnapshot | None = None,
+    *,
+    tenant_id: TenantId | None = None,
 ) -> Path | None:
     """Render an inspection-only dry-run prompt without claiming the job."""
 
-    job = _load_job_for_prompt(target_url, min_score)
+    job = _load_job_for_prompt(
+        target_url,
+        min_score,
+        tenant_id=tenant_id or LOCAL_TENANT,
+    )
     if not job:
         return None
 
@@ -2002,6 +2246,8 @@ def worker_loop(
             continue
 
         empty_polls = 0
+        job_id = canonical_job_id(str(job["job_id"]))
+        job_tenant_id = TenantId(str(job["tenant_id"]))
         try:
             result, duration_ms = run_job(
                 job,
@@ -2014,7 +2260,11 @@ def worker_loop(
             )
 
             if result == "skipped":
-                release_lock(job["url"], run_ctx=run_ctx)
+                release_lock(
+                    job_id,
+                    run_ctx=run_ctx,
+                    tenant_id=job_tenant_id,
+                )
                 add_event(
                     f"[W{worker_id} {run_ctx['run_id'][:8]}] Skipped: "
                     f"{(job.get('title') or '')[:30]}"
@@ -2022,11 +2272,12 @@ def worker_loop(
                 continue
             if result == "applied":
                 mark_result(
-                    job["url"],
+                    job_id,
                     "applied",
                     duration_ms=duration_ms,
                     task_id=run_ctx.get("run_id"),
                     run_ctx=run_ctx,
+                    tenant_id=job_tenant_id,
                 )
                 applied += 1
                 update_state(
@@ -2036,30 +2287,36 @@ def worker_loop(
                 )
             elif result == "dry_run":
                 mark_result(
-                    job["url"],
+                    job_id,
                     "dry_run",
                     duration_ms=duration_ms,
                     task_id=run_ctx.get("run_id"),
                     run_ctx=run_ctx,
+                    tenant_id=job_tenant_id,
                 )
                 update_state(worker_id, jobs_done=applied + failed)
             else:
                 reason = result.split(":", 1)[-1] if ":" in result else result
                 mark_result(
-                    job["url"],
+                    job_id,
                     "failed",
                     reason,
                     permanent=_is_permanent_failure(result),
                     duration_ms=duration_ms,
                     task_id=run_ctx.get("run_id"),
                     run_ctx=run_ctx,
+                    tenant_id=job_tenant_id,
                 )
                 failed += 1
                 update_state(
                     worker_id, jobs_failed=failed, jobs_done=applied + failed
                 )
         except KeyboardInterrupt:
-            release_lock(job["url"], run_ctx=run_ctx)
+            release_lock(
+                job_id,
+                run_ctx=run_ctx,
+                tenant_id=job_tenant_id,
+            )
             add_event(
                 f"[W{worker_id} {run_ctx['run_id'][:8]}] Job skipped (Ctrl+C)"
             )
@@ -2071,7 +2328,11 @@ def worker_loop(
             add_event(
                 f"[W{worker_id} {run_ctx['run_id'][:8]}] Launcher error: {str(exc)[:40]}"
             )
-            release_lock(job["url"], run_ctx=run_ctx)
+            release_lock(
+                job_id,
+                run_ctx=run_ctx,
+                tenant_id=job_tenant_id,
+            )
             failed += 1
             update_state(worker_id, jobs_failed=failed)
 
