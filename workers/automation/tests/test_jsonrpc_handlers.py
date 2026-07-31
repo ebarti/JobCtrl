@@ -1259,6 +1259,94 @@ def test_v7_job_url_workflow_locators_are_tenant_scoped(tmp_db: Path, monkeypatc
     ]
 
 
+@pytest.mark.parametrize("method", ("rescore_job", "retailor_job"))
+def test_v7_job_id_workflow_targets_are_loaded_directly_and_tenant_scoped(
+    tmp_db: Path,
+    method: str,
+) -> None:
+    tenant_id = TenantId("tenant-a")
+    job_id = _seed_v7_current_locator(
+        get_connection(tmp_db),
+        tenant_id=tenant_id,
+        job_url="https://example.com/jobs/direct-job-id",
+        job_id=JobId("50000000-0000-4000-8000-000000000005"),
+    )
+    conn = get_connection(tmp_db)
+    conn.execute(
+        "DELETE FROM job_locators WHERE tenant_id = ? AND job_id = ?",
+        (str(tenant_id), str(job_id)),
+    )
+    conn.commit()
+    seen: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        seen.append(spec)
+        return _StubHandle("job-preparation", "preparation-run")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+    response = server.dispatch(
+        JsonRpcRequest(
+            method=method,
+            params={"tenantId": str(tenant_id), "jobId": str(job_id)},
+            id=1,
+        )
+    )
+
+    assert response is not None
+    assert "error" not in response.to_dict()
+    (payload,) = seen[0].args
+    assert isinstance(payload, JobPreparationInput)
+    assert payload.tenant_id == str(tenant_id)
+    assert payload.job_id == job_id
+
+    wrong_tenant = server.dispatch(
+        JsonRpcRequest(
+            method=method,
+            params={"tenantId": "tenant-b", "jobId": str(job_id)},
+            id=2,
+        )
+    )
+    assert wrong_tenant is not None
+    assert wrong_tenant.to_dict()["error"] == {
+        "code": INVALID_PARAMS,
+        "message": f"unknown or inactive jobId: {job_id}",
+    }
+
+
+@pytest.mark.parametrize("method", ("rescore_job", "retailor_job"))
+@pytest.mark.parametrize(
+    ("params", "expected_message"),
+    [
+        ({"tenantId": "local"}, "provide exactly one of jobId or jobUrl"),
+        (
+            {
+                "tenantId": "local",
+                "jobId": "50000000-0000-4000-8000-000000000005",
+                "jobUrl": "https://example.com/jobs/both",
+            },
+            "provide exactly one of jobId or jobUrl",
+        ),
+        (
+            {"tenantId": "local", "jobId": "https://example.com/jobs/not-an-id"},
+            "invalid jobId",
+        ),
+    ],
+)
+def test_v7_direct_preparation_identity_requires_exactly_one_valid_locator(
+    tmp_db: Path,
+    method: str,
+    params: dict[str, object],
+    expected_message: str,
+) -> None:
+    response = _server().dispatch(JsonRpcRequest(method=method, params=params, id=1))
+
+    assert response is not None
+    body = response.to_dict()
+    assert body["error"]["code"] == INVALID_PARAMS
+    assert expected_message in body["error"]["message"]
+
+
 @pytest.mark.parametrize(
     "method",
     ("rescore_job", "tailor_job", "retailor_job", "analyze_job"),

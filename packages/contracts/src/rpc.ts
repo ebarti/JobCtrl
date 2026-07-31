@@ -90,6 +90,12 @@ export const RpcMethods = {
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
 
 const TenantParam = z.string().trim().min(1).default("local");
+const CanonicalJobIdParam = z
+  .string()
+  .regex(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    "jobId must be a canonical lowercase UUID",
+  );
 
 /* --- complex commands (delegated to Python JSON-RPC / Temporal) ---------- */
 
@@ -185,11 +191,15 @@ export const RescoreJobParamsSchema = z
     tenantId: TenantParam,
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
-    jobUrl: z.string().min(1),
+    jobId: CanonicalJobIdParam.optional(),
+    jobUrl: z.string().min(1).optional(),
     dryRun: z.boolean().default(false),
     reason: z.string().trim().max(400).optional(),
   })
-  .strict();
+  .strict()
+  .refine((params) => (params.jobId !== undefined) !== (params.jobUrl !== undefined), {
+    message: "provide exactly one of jobId or jobUrl",
+  });
 export type RescoreJobParams = z.infer<typeof RescoreJobParamsSchema>;
 
 export const RescoreJobsNotOnCurrentScoringPolicyParamsSchema = z
@@ -379,7 +389,8 @@ export const RetailorJobParamsSchema = z
     tenantId: TenantParam,
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
-    jobUrl: z.string().min(1),
+    jobId: CanonicalJobIdParam.optional(),
+    jobUrl: z.string().min(1).optional(),
     dryRun: z.boolean().default(false),
     suppressExistingArtifacts: z.boolean().default(true),
     reason: z.string().trim().max(400).optional(),
@@ -387,7 +398,10 @@ export const RetailorJobParamsSchema = z
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
     tailorJudgeMinScore: z.number().min(0).max(1).optional(),
   })
-  .strict();
+  .strict()
+  .refine((params) => (params.jobId !== undefined) !== (params.jobUrl !== undefined), {
+    message: "provide exactly one of jobId or jobUrl",
+  });
 export type RetailorJobParams = z.infer<typeof RetailorJobParamsSchema>;
 
 export const RetailorCurrentPolicyParamsSchema = z

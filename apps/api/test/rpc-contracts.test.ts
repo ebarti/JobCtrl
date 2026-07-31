@@ -25,6 +25,8 @@ import {
   TailorJobParamsSchema,
 } from "../src/contracts.js";
 
+const CANONICAL_JOB_ID = "11111111-1111-4111-8111-111111111111";
+
 describe("cancel_run RPC contract", () => {
   it("registers cancel_run in RpcMethods", () => {
     expect(RpcMethods.CancelRun).toBe("cancel_run");
@@ -228,6 +230,11 @@ describe("preparation RPC contracts", () => {
       jobUrl: "https://example.test/job/1",
       dryRun: false,
     });
+    expect(RescoreJobParamsSchema.parse({ jobId: CANONICAL_JOB_ID })).toEqual({
+      tenantId: "local",
+      jobId: CANONICAL_JOB_ID,
+      dryRun: false,
+    });
   });
 
   it("parses and rejects refresh_compensation payloads", () => {
@@ -339,6 +346,13 @@ describe("preparation RPC contracts", () => {
   it("rejects invalid rescore_job request payloads", () => {
     expect(() => RescoreJobParamsSchema.parse({})).toThrow();
     expect(() => RescoreJobParamsSchema.parse({ jobUrl: "" })).toThrow();
+    expect(() => RescoreJobParamsSchema.parse({ jobId: "https://example.test/job/1" })).toThrow();
+    expect(() =>
+      RescoreJobParamsSchema.parse({
+        jobId: CANONICAL_JOB_ID,
+        jobUrl: "https://example.test/job/1",
+      }),
+    ).toThrow();
   });
 
   it("parses and defaults bulk rescore request payloads", () => {
@@ -373,6 +387,13 @@ describe("preparation RPC contracts", () => {
       suppressExistingArtifacts: true,
       tailorModels: [],
     });
+    expect(RetailorJobParamsSchema.parse({ jobId: CANONICAL_JOB_ID })).toEqual({
+      tenantId: "local",
+      jobId: CANONICAL_JOB_ID,
+      dryRun: false,
+      suppressExistingArtifacts: true,
+      tailorModels: [],
+    });
   });
 
   it("parses and defaults tailor_job request payloads", () => {
@@ -401,6 +422,13 @@ describe("preparation RPC contracts", () => {
 
   it("rejects invalid retailor_job request payloads", () => {
     expect(() => RetailorJobParamsSchema.parse({})).toThrow();
+    expect(() => RetailorJobParamsSchema.parse({ jobId: "not-a-job-id" })).toThrow();
+    expect(() =>
+      RetailorJobParamsSchema.parse({
+        jobId: CANONICAL_JOB_ID,
+        jobUrl: "https://example.test/job/1",
+      }),
+    ).toThrow();
     expect(() =>
       RetailorJobParamsSchema.parse({
         jobUrl: "https://example.test/job/1",

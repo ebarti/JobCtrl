@@ -482,7 +482,7 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
         tenantId: "local",
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
-        jobUrl: command.jobKey,
+        ...(command.jobId ? { jobId: command.jobId } : { jobUrl: command.jobKey }),
         dryRun: Boolean(command.dryRun),
         ...(command.reason ? { reason: command.reason } : {}),
       },
@@ -511,7 +511,11 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
   if (command.action === "retailor_job") {
     return {
       method: "retailor_job",
-      params: retailorRpcParams(command, context, command.jobKey),
+      params: retailorRpcParams(
+        command,
+        context,
+        command.jobId ? { jobId: command.jobId } : { jobUrl: command.jobKey },
+      ),
     };
   }
   if (command.action === "retailor_current_policy") {
@@ -673,10 +677,12 @@ function tailorRpcParams(
   return params;
 }
 
+type PreparationJobLocator = { jobId: string } | { jobUrl: string };
+
 function retailorRpcParams(
   command: ActionCommandPayload,
   context: ActionDispatchContext,
-  jobUrl?: string,
+  locator?: PreparationJobLocator,
 ): Record<string, unknown> {
   const params: Record<string, unknown> = {
     tenantId: "local",
@@ -685,8 +691,8 @@ function retailorRpcParams(
     dryRun: Boolean(command.dryRun),
     suppressExistingArtifacts: Boolean(command.suppressExistingArtifacts),
   };
-  if (jobUrl) {
-    params.jobUrl = jobUrl;
+  if (locator) {
+    Object.assign(params, locator);
   } else {
     params.limit = command.limit ?? 100;
     params.jobUrls = command.jobKeys ?? [];
