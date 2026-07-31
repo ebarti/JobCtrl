@@ -17,6 +17,7 @@ from jobctrl.infrastructure.migrations.v6_to_v7_preflight import (
     _V6_AUXILIARY_DDL,
 )
 from tests.v6_migration_fixture import (
+    create_runtime_attestation_v6_database,
     create_shipped_v6_database,
     create_supported_upgrade_history_v6_database,
 )
@@ -220,6 +221,77 @@ def test_candidate_copy_requires_the_same_persisted_job_ids(tmp_path: Path) -> N
     try:
         with pytest.raises(CandidateCopyError, match="hydrated canonical jobs"):
             copy_direct_and_scalar_tables(source, candidate)
+    finally:
+        source.close()
+        candidate.close()
+
+
+def test_candidate_copy_defaults_profile_fields_absent_from_shipped_v6(
+    tmp_path: Path,
+) -> None:
+    source, candidate = _connections(tmp_path)
+    try:
+        source.execute(
+            "INSERT INTO candidate_profiles (updated_at) VALUES (?)",
+            ("2026-07-30T12:00:00+00:00",),
+        )
+
+        copy_direct_and_scalar_tables(source, candidate)
+
+        assert candidate.execute(
+            """
+            SELECT application_attestation_age_18_plus,
+                   application_attestation_background_check_consent,
+                   application_attestation_felony_conviction,
+                   application_attestation_previously_worked_at_employer,
+                   application_attestation_additional_json,
+                   application_preference_how_heard
+            FROM candidate_profiles
+            """
+        ).fetchone() == (None, None, None, None, "{}", "")
+    finally:
+        source.close()
+        candidate.close()
+
+
+def test_candidate_copy_preserves_runtime_profile_attestations(tmp_path: Path) -> None:
+    source_path = tmp_path / "runtime-attestations-v6.db"
+    create_runtime_attestation_v6_database(source_path)
+    source = sqlite3.connect(source_path)
+    source.execute("PRAGMA foreign_keys = ON")
+    candidate = sqlite3.connect(tmp_path / "candidate.db")
+    candidate.execute("PRAGMA foreign_keys = ON")
+    create_exact_v7_schema(candidate)
+    _hydrate_candidate_jobs(source, candidate)
+    try:
+        source.execute(
+            """
+            INSERT INTO candidate_profiles (
+                application_attestation_age_18_plus,
+                application_attestation_background_check_consent,
+                application_attestation_felony_conviction,
+                application_attestation_previously_worked_at_employer,
+                application_attestation_additional_json,
+                application_preference_how_heard,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (1, 1, 0, 0, '{"export_control":"accepted"}', "referral", "2026-07-30T12:00:00+00:00"),
+        )
+
+        copy_direct_and_scalar_tables(source, candidate)
+
+        assert candidate.execute(
+            """
+            SELECT application_attestation_age_18_plus,
+                   application_attestation_background_check_consent,
+                   application_attestation_felony_conviction,
+                   application_attestation_previously_worked_at_employer,
+                   application_attestation_additional_json,
+                   application_preference_how_heard
+            FROM candidate_profiles
+            """
+        ).fetchone() == (1, 1, 0, 0, '{"export_control":"accepted"}', "referral")
     finally:
         source.close()
         candidate.close()

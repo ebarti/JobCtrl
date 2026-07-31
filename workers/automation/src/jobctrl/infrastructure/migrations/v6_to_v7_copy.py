@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Final
 
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V7_MANIFEST,
@@ -20,6 +21,22 @@ from jobctrl.infrastructure.migrations.v6_to_v7_plan import (
 )
 from jobctrl.infrastructure.migrations.v6_to_v7_preflight import (
     assert_v6_migration_preflight,
+)
+
+
+# These six columns were added by the shipped v6 profile runtime without a
+# schema-version bump. The frozen target contains them, while the original v6
+# schema does not. A source with the exact runtime ALTER sequence retains its
+# values; the original shape receives these exact declared defaults.
+_CANDIDATE_PROFILE_V6_DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
+    {
+        "application_attestation_age_18_plus": None,
+        "application_attestation_background_check_consent": None,
+        "application_attestation_felony_conviction": None,
+        "application_attestation_previously_worked_at_employer": None,
+        "application_attestation_additional_json": "{}",
+        "application_preference_how_heard": "",
+    }
 )
 
 
@@ -262,7 +279,9 @@ def _column_bindings(
     source_set = set(source_columns)
     target_set = set(target_columns)
     if disposition is TableDisposition.DIRECT_COPY and source_set != target_set:
-        raise CandidateCopyError(f"direct-copy column drift for {table}")
+        allowed_source_columns = target_set - set(_CANDIDATE_PROFILE_V6_DEFAULTS)
+        if table != "candidate_profiles" or source_set != allowed_source_columns:
+            raise CandidateCopyError(f"direct-copy column drift for {table}")
 
     bindings: list[_Binding] = []
     consumed: set[str] = set()
@@ -280,6 +299,11 @@ def _column_bindings(
             source_column = "tenant_id" if target_column == "tenant_id" and "tenant_id" in source_set else None
         elif target_column in source_set:
             source_column = target_column
+        elif (
+            table == "candidate_profiles"
+            and target_column in _CANDIDATE_PROFILE_V6_DEFAULTS
+        ):
+            source_column = None
         else:
             raise CandidateCopyError(
                 f"candidate copy cannot bind {table}.{target_column}"
@@ -343,6 +367,11 @@ def _bound_value(
     if binding.role is ColumnRole.DERIVED:
         return _tenant_id(source_row.get("tenant_id"))
     if binding.source_column is None:
+        if (
+            table == "candidate_profiles"
+            and target_column in _CANDIDATE_PROFILE_V6_DEFAULTS
+        ):
+            return _CANDIDATE_PROFILE_V6_DEFAULTS[target_column]
         raise CandidateCopyError(
             f"candidate copy has no value source for {table}.{target_column}"
         )
