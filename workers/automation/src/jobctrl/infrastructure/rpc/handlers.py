@@ -23,9 +23,13 @@ import logging
 from typing import Any
 
 from jobctrl.database import get_connection
+from jobctrl.domain.discovery.value_objects import PostingUrl
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.rpc.messages import WorkflowStartSpec
 from jobctrl.domain.preparation import PreparationWorkItemKind
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
+from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
 from jobctrl.infrastructure.rpc.server import JsonRpcServer, invalid_params
 from jobctrl.infrastructure.rpc.workflow_starter import WorkflowCanceler
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -94,6 +98,34 @@ def _source_ids(params: dict[str, Any]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(str(item).strip() for item in raw if str(item).strip()))
 
 
+def _load_current_job(
+    conn: Any,
+    *,
+    tenant_id: TenantId,
+    job_url: str,
+) -> dict[str, Any]:
+    """Resolve an active URL locator and load its non-deleted canonical target."""
+
+    try:
+        posting_url = PostingUrl(value=job_url)
+    except ValueError as exc:
+        raise invalid_params(f"invalid jobUrl: {job_url}") from exc
+    identity = SqliteJobIdentityResolver(conn).resolve_current_by_posting_url(
+        tenant_id,
+        posting_url,
+    )
+    if identity is None:
+        raise invalid_params(f"unknown or inactive jobUrl: {job_url}")
+    job = SqlitePreparationTargetReader(conn).load(tenant_id, identity.job_id)
+    if job is None:
+        raise invalid_params(f"unknown or inactive jobUrl: {job_url}")
+    return job
+
+
+def _job_id(job: dict[str, Any]) -> JobId:
+    return canonical_job_id(str(job["job_id"]))
+
+
 # ---------------------------------------------------------------------------
 # Local-action wrappers (sync — return LocalActionResult dict)
 # ---------------------------------------------------------------------------
@@ -122,13 +154,18 @@ def rescore_job(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = TenantId(_tenant_id(params))
     job_url = str(_require(params, "jobUrl"))
     conn = get_connection()
+    job_id = _job_id(_load_current_job(conn, tenant_id=tenant_id, job_url=job_url))
     return build_preparation_workflow_spec(
         tenant_id=tenant_id,
-        job_url=job_url,
+        job_id=job_id,
         steps=["score"],
         kind=PreparationWorkItemKind.SCORE_JOB,
         target_version=current_scoring_policy_version(conn, tenant_id),
-        source_event_id=latest_source_event_id(conn, job_url),
+        source_event_id=latest_source_event_id(
+            conn,
+            tenant_id=tenant_id,
+            job_id=job_id,
+        ),
         rescore=True,
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
         expected_app_dir=params.get("expectedAppDir"),
@@ -151,14 +188,19 @@ def retailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = TenantId(_tenant_id(params))
     job_url = str(_require(params, "jobUrl"))
     conn = get_connection()
+    job_id = _job_id(_load_current_job(conn, tenant_id=tenant_id, job_url=job_url))
     raw_judge_min_score = params.get("tailorJudgeMinScore")
     return build_preparation_workflow_spec(
         tenant_id=tenant_id,
-        job_url=job_url,
+        job_id=job_id,
         steps=["tailor", "cover", "pdf"],
         kind=PreparationWorkItemKind.TAILOR_RESUME,
         target_version=current_tailoring_policy_version(conn, tenant_id),
-        source_event_id=latest_source_event_id(conn, job_url),
+        source_event_id=latest_source_event_id(
+            conn,
+            tenant_id=tenant_id,
+            job_id=job_id,
+        ),
         min_score=int(params.get("minScore", 7)),
         workers=int(params.get("workers", 1)),
         validation_mode=str(params.get("validationMode", "normal")),
@@ -185,14 +227,19 @@ def tailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = TenantId(_tenant_id(params))
     job_url = str(_require(params, "jobUrl"))
     conn = get_connection()
+    job_id = _job_id(_load_current_job(conn, tenant_id=tenant_id, job_url=job_url))
     raw_judge_min_score = params.get("tailorJudgeMinScore")
     return build_preparation_workflow_spec(
         tenant_id=tenant_id,
-        job_url=job_url,
+        job_id=job_id,
         steps=["tailor", "cover", "pdf"],
         kind=PreparationWorkItemKind.TAILOR_RESUME,
         target_version=current_tailoring_policy_version(conn, tenant_id),
-        source_event_id=latest_source_event_id(conn, job_url),
+        source_event_id=latest_source_event_id(
+            conn,
+            tenant_id=tenant_id,
+            job_id=job_id,
+        ),
         min_score=int(params.get("minScore", 7)),
         workers=int(params.get("workers", 1)),
         validation_mode=str(params.get("validationMode", "normal")),
@@ -224,25 +271,21 @@ def analyze_job(params: dict[str, Any]) -> dict[str, Any]:
     the persisted record's identity + the degraded-ensemble signal so a caller
     can see a degraded run immediately (D-08).
     """
-    tenant_id = _tenant_id(params)
+    tenant_id = TenantId(_tenant_id(params))
     job_url = str(_require(params, "jobUrl"))
     force = _bool_param(params, "force", default=False)
 
-    from jobctrl.database import get_connection, load_job_with_enrichment
-    from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.tailor import _build_analyze_use_case
 
     conn = get_connection()
-    job = load_job_with_enrichment(conn, job_url)
-    if job is None:
-        raise invalid_params(f"unknown jobUrl: {job_url}")
+    job = _load_current_job(conn, tenant_id=tenant_id, job_url=job_url)
     if not (job.get("full_description") or job.get("description")):
         raise invalid_params(
             f"job {job_url} has no description to analyze; enrich it first"
         )
 
     use_case = _build_analyze_use_case(conn=conn)
-    outcome = use_case.execute(job=job, tenant_id=TenantId(tenant_id), force=force)
+    outcome = use_case.execute(job=job, tenant_id=tenant_id, force=force)
     record = outcome.analysis
     return {
         "jobUrl": job_url,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,8 @@ from jobctrl.database import close_connection, get_connection, init_db
 from jobctrl.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
 from jobctrl.domain.compensation import ReportedCompensationObservation
 from jobctrl.domain.interview import INTERVIEW_PREP_ITEM_KINDS, INTERVIEW_PREP_STATUSES
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.compensation import refresh as compensation_refresh_mod
 from jobctrl.infrastructure.compensation import sqlite_market_repository as market_repository_mod
 from jobctrl.infrastructure.compensation.refresh import refresh_compensation_facts
@@ -1155,6 +1158,20 @@ def test_current_policy_maintenance_methods_start_pipeline_workflows(
         seen.append(spec)
         return _StubHandle("maintenance-wf", "maintenance-run")
 
+    if method in {"rescore_job", "tailor_job", "retailor_job"}:
+        job_url = str(params["jobUrl"])
+        job_id = _seed_v7_current_locator(
+            get_connection(tmp_db),
+            tenant_id=TenantId("local"),
+            job_url=job_url,
+        )
+        expected_payload = {
+            key: value
+            for key, value in expected_payload.items()
+            if key != "job_url"
+        }
+        expected_payload["job_id"] = job_id
+
     server = JsonRpcServer(workflow_starter=starter)
     register_default_handlers(server, canceler=_stub_canceler)
 
@@ -1181,6 +1198,199 @@ def test_current_policy_maintenance_methods_start_pipeline_workflows(
     for name, value in expected_payload.items():
         assert getattr(payload, name) == value
     assert payload.tenant_id == "local"
+
+
+def test_v7_job_url_workflow_locators_are_tenant_scoped(tmp_db: Path, monkeypatch) -> None:
+    tenant_a = TenantId("tenant-a")
+    tenant_b = TenantId("tenant-b")
+    job_url = "https://example.com/jobs/same-url"
+    job_id_a = _seed_v7_current_locator(
+        get_connection(tmp_db),
+        tenant_id=tenant_a,
+        job_url=job_url,
+        job_id=JobId("10000000-0000-4000-8000-000000000001"),
+    )
+    job_id_b = _seed_v7_current_locator(
+        get_connection(tmp_db),
+        tenant_id=tenant_b,
+        job_url=job_url,
+        job_id=JobId("20000000-0000-4000-8000-000000000002"),
+    )
+    source_event_calls: list[tuple[TenantId, JobId]] = []
+
+    def fake_latest_source_event_id(conn, *, tenant_id: TenantId, job_id: JobId) -> str:
+        source_event_calls.append((tenant_id, job_id))
+        return "source-event"
+
+    monkeypatch.setattr(handlers_mod, "latest_source_event_id", fake_latest_source_event_id)
+    seen: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        seen.append(spec)
+        return _StubHandle("job-preparation", "preparation-run")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+
+    for method, tenant_id, expected_job_id in (
+        ("rescore_job", tenant_a, job_id_a),
+        ("tailor_job", tenant_b, job_id_b),
+        ("retailor_job", tenant_a, job_id_a),
+    ):
+        response = server.dispatch(
+            JsonRpcRequest(
+                method=method,
+                params={"tenantId": str(tenant_id), "jobUrl": job_url},
+                id=1,
+            )
+        )
+
+        assert response is not None
+        assert "error" not in response.to_dict()
+        (payload,) = seen[-1].args
+        assert isinstance(payload, JobPreparationInput)
+        assert payload.tenant_id == str(tenant_id)
+        assert payload.job_id == expected_job_id
+
+    assert source_event_calls == [
+        (tenant_a, job_id_a),
+        (tenant_b, job_id_b),
+        (tenant_a, job_id_a),
+    ]
+
+
+@pytest.mark.parametrize(
+    "method",
+    ("rescore_job", "tailor_job", "retailor_job", "analyze_job"),
+)
+def test_v7_job_url_locators_reject_unknown_and_retired_jobs(
+    tmp_db: Path,
+    method: str,
+) -> None:
+    tenant_id = TenantId("tenant-a")
+    active_url = "https://example.com/jobs/active"
+    retired_url = "https://example.com/jobs/retired"
+    deleted_url = "https://example.com/jobs/deleted"
+    conn = get_connection(tmp_db)
+    _seed_v7_current_locator(conn, tenant_id=tenant_id, job_url=active_url)
+    retired_job_id = _seed_v7_current_locator(
+        conn,
+        tenant_id=tenant_id,
+        job_url=retired_url,
+    )
+    deleted_job_id = _seed_v7_current_locator(
+        conn,
+        tenant_id=tenant_id,
+        job_url=deleted_url,
+    )
+    conn.execute(
+        """
+        UPDATE job_locators
+        SET is_current = 0, retired_at = '2026-07-30T11:00:00+00:00'
+        WHERE tenant_id = ? AND job_id = ? AND locator_kind = 'posting_url'
+        """,
+        (str(tenant_id), str(retired_job_id)),
+    )
+    conn.execute(
+        """
+        INSERT INTO jobctrl_deleted_jobs (
+            tenant_id, job_id, deleted_at, reason
+        ) VALUES (?, ?, '2026-07-30T11:00:00+00:00', 'user_deleted')
+        """,
+        (str(tenant_id), str(deleted_job_id)),
+    )
+    conn.commit()
+    server = _server()
+
+    for job_url in (
+        "https://example.com/jobs/missing",
+        retired_url,
+        deleted_url,
+    ):
+        response = server.dispatch(
+            JsonRpcRequest(
+                method=method,
+                params={"tenantId": str(tenant_id), "jobUrl": job_url},
+                id=1,
+            )
+        )
+
+        assert response is not None
+        body = response.to_dict()
+        assert body["error"]["code"] == INVALID_PARAMS
+        assert "unknown or inactive jobUrl" in body["error"]["message"]
+
+
+def test_analyze_job_loads_the_canonical_tenant_scoped_target(
+    tmp_db: Path,
+    monkeypatch,
+) -> None:
+    tenant_a = TenantId("tenant-a")
+    tenant_b = TenantId("tenant-b")
+    job_url = "https://example.com/jobs/analyze"
+    job_id_a = _seed_v7_current_locator(
+        get_connection(tmp_db),
+        tenant_id=tenant_a,
+        job_url=job_url,
+        job_id=JobId("30000000-0000-4000-8000-000000000003"),
+        full_description="Tenant A canonical description",
+    )
+    _seed_v7_current_locator(
+        get_connection(tmp_db),
+        tenant_id=tenant_b,
+        job_url=job_url,
+        job_id=JobId("40000000-0000-4000-8000-000000000004"),
+        full_description="Tenant B canonical description",
+    )
+    captured: dict[str, object] = {}
+
+    class _UseCase:
+        def execute(self, *, job, tenant_id, force):
+            captured.update(job=job, tenant_id=tenant_id, force=force)
+            return SimpleNamespace(
+                analysis=SimpleNamespace(
+                    generation=2,
+                    cache_key="canonical-cache-key",
+                    legs_attempted=3,
+                    legs_succeeded=3,
+                    is_degraded=False,
+                ),
+                cached=False,
+            )
+
+    from jobctrl.scoring import tailor as tailor_mod
+
+    monkeypatch.setattr(tailor_mod, "_build_analyze_use_case", lambda **_kwargs: _UseCase())
+    response = _server().dispatch(
+        JsonRpcRequest(
+            method="analyze_job",
+            params={"tenantId": str(tenant_a), "jobUrl": job_url, "force": True},
+            id=1,
+        )
+    )
+
+    assert response is not None
+    assert response.to_dict()["result"]["cacheKey"] == "canonical-cache-key"
+    assert captured["tenant_id"] == tenant_a
+    assert captured["force"] is True
+    assert captured["job"] == {
+        "tenant_id": str(tenant_a),
+        "job_id": str(job_id_a),
+        "url": job_url,
+        "title": "Test job",
+        "company": "Acme",
+        "salary": None,
+        "description": "Summary",
+        "location": "Remote",
+        "site": "example",
+        "strategy": "search",
+        "discovered_at": "2026-07-30T10:00:00+00:00",
+        "enrichment_status": "enriched",
+        "full_description": "Tenant A canonical description",
+        "application_url": None,
+        "detail_scraped_at": "2026-07-30T10:01:00+00:00",
+        "extraction_tier": "high",
+    }
 
 
 def test_retailor_job_duplicate_dispatch_uses_existing_workflow_without_duplicate_artifacts(
@@ -1677,6 +1887,49 @@ def _seed_enriched_job(conn, url: str) -> None:
         (url, "Test job", "Full description", "2026-05-26T10:00:00+00:00"),
     )
     conn.commit()
+
+
+def _seed_v7_current_locator(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_url: str,
+    job_id: JobId | None = None,
+    full_description: str = "Full description",
+) -> JobId:
+    stable_job_id = job_id or JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, f"{tenant_id}:{job_url}")))
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, company, salary, description,
+            location, site, strategy, discovered_at
+        ) VALUES (?, ?, ?, 'Test job', 'Acme', NULL, 'Summary', 'Remote',
+                  'example', 'search', '2026-07-30T10:00:00+00:00')
+        """,
+        (str(tenant_id), str(stable_job_id), job_url),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_locators (
+            tenant_id, job_id, locator_kind, locator_value, is_current,
+            first_seen_at, last_seen_at, retired_at
+        ) VALUES (?, ?, 'posting_url', ?, 1, '2026-07-30T10:00:00+00:00',
+                  '2026-07-30T10:00:00+00:00', NULL)
+        """,
+        (str(tenant_id), str(stable_job_id), job_url),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_enrichments (
+            tenant_id, job_id, current_status, full_description,
+            application_url, enriched_at, extraction_tier, updated_at
+        ) VALUES (?, ?, 'enriched', ?, NULL, '2026-07-30T10:01:00+00:00',
+                  'high', '2026-07-30T10:01:00+00:00')
+        """,
+        (str(tenant_id), str(stable_job_id), full_description),
+    )
+    conn.commit()
+    return stable_job_id
 
 
 def _seed_scoring_policy(conn, *, version: int) -> None:
