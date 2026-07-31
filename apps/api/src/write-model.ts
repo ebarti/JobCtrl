@@ -193,6 +193,9 @@ function resetResolvedJobStage(
   // so even though we _call_ isValidTransition (via validateStageTransition)
   // when the gate is opt-in, this entry-point bypasses §8.5 — the user is
   // explicitly forcing the stage back to pending.
+  if (stage === "enrich") {
+    resetEnrichmentAggregate(db, LOCAL_TENANT, job.jobId);
+  }
   const stageOptions: Parameters<typeof upsertStageStateById>[5] = {
     retryable: true,
     clearTiming: true,
@@ -756,50 +759,6 @@ export function writeSettingsConfig(
   return readSettingsConfig(paths);
 }
 
-function updateLegacyJobColumnsForReset(
-  db: SqliteDatabase,
-  jobUrl: string,
-  stage: Stage,
-  resetAttempts: boolean,
-): void {
-  const updates: Record<string, SqliteValue> = {};
-  if (stage === "enrich") {
-    updates.detail_error = null;
-    updates.detail_scraped_at = null;
-    // Phase 7 (S-26 round-1 review B2): the new ``job_enrichments``
-    // table is the canonical source of "is this job enriched". Without
-    // resetting its row the worker's ``_ENRICHMENT_PENDING`` predicate
-    // permanently excludes the job and the API-driven retry-enrich
-    // silently no-ops. Mirror of Python's ``_reset_enrichment_aggregate``.
-    resetEnrichmentAggregate(db, jobUrl);
-  } else if (stage === "score") {
-    updates.fit_score = null;
-    updates.score_reasoning = null;
-    updates.scored_at = null;
-  } else if (stage === "tailor") {
-    updates.tailored_resume_path = null;
-    updates.tailored_at = null;
-    if (resetAttempts) {
-      updates.tailor_attempts = 0;
-    }
-  } else if (stage === "cover") {
-    updates.cover_letter_path = null;
-    updates.cover_letter_at = null;
-    if (resetAttempts) {
-      updates.cover_attempts = 0;
-    }
-  } else if (stage === "apply") {
-    updates.apply_status = null;
-    updates.apply_error = null;
-    updates.agent_id = null;
-    updates.apply_task_id = null;
-    if (resetAttempts) {
-      updates.apply_attempts = 0;
-    }
-  }
-  updateExistingJobColumns(db, jobUrl, updates);
-}
-
 /**
  * Phase 7 (S-26 round-1 review B2): reset the ``job_enrichments`` row
  * for one job back to the ``pending`` lifecycle state.
@@ -815,7 +774,7 @@ function updateLegacyJobColumnsForReset(
  * only clears the success-side fields plus rolls ``current_status``
  * back to ``pending``. Idempotent — safe to call when no row exists.
  */
-function resetEnrichmentAggregate(db: SqliteDatabase, jobUrl: string): void {
+function resetEnrichmentAggregate(db: SqliteDatabase, tenantId: string, jobId: string): void {
   if (!tableExists(db, "job_enrichments")) {
     return;
   }
@@ -828,8 +787,8 @@ function resetEnrichmentAggregate(db: SqliteDatabase, jobUrl: string): void {
            enriched_at = NULL,
            extraction_tier = NULL,
            updated_at = ?
-     WHERE job_url = ?`,
-  ).run(now, jobUrl);
+     WHERE tenant_id = ? AND job_id = ?`,
+  ).run(now, tenantId, jobId);
 }
 
 function mutableJobKeys(db: SqliteDatabase, request: BulkJobMutationRequest): string[] {
@@ -1364,16 +1323,6 @@ function appendCorrectionHistory(
     ...trace,
     correction_history: [...history.filter(isRecord), correction],
   };
-}
-
-function updateExistingJobColumns(db: SqliteDatabase, jobUrl: string, updates: Record<string, SqliteValue>): void {
-  const names = columnNames(db, "jobs");
-  const entries = Object.entries(updates).filter(([name]) => names.has(name));
-  if (!entries.length) {
-    return;
-  }
-  const assignments = entries.map(([name]) => `${name} = ?`).join(", ");
-  db.prepare(`UPDATE jobs SET ${assignments} WHERE url = ?`).run(...entries.map(([, value]) => value), jobUrl);
 }
 
 function parseObjectOrDefault(text: string): Record<string, unknown> {
