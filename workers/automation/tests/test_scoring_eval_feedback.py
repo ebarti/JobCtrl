@@ -5,10 +5,9 @@ import sqlite3
 from collections.abc import Sequence
 from typing import Any
 
-from jobctrl import database as database_module
 from jobctrl.apply import launcher as launcher_module
 from jobctrl.domain.identifiers import canonical_job_id
-from jobctrl.infrastructure.scoring import collect_feedback_signals, rank_jobs_with_feedback
+from jobctrl.infrastructure.scoring import collect_feedback_signals
 
 _TENANT_A = "tenant-a"
 _TENANT_B = "tenant-b"
@@ -93,32 +92,25 @@ def test_feedback_signals_use_canonical_corrections_and_actions_transparently() 
     )
 
     signals = collect_feedback_signals(conn)
-    ranked = rank_jobs_with_feedback(
-        {
-            (_TENANT_A, str(_JOB_A)): 7.5,
-            (_TENANT_A, str(_JOB_B)): 8.0,
-        },
-        signals,
-    )
-
     assert [signal.kind for signal in signals] == [
         "score_correction",
         "StageSkipped",
     ]
-    assert (ranked[0].tenant_id, ranked[0].job_id) == (
+    assert (signals[0].tenant_id, signals[0].job_id) == (
         _TENANT_A,
         str(_JOB_A),
     )
-    assert ranked[0].feedback_adjustment > 0
-    assert "Better leadership fit" in ranked[0].evidence[0]
-    assert ranked[1].feedback_adjustment < 0
-    assert "Skipped after review" in ranked[1].evidence[0]
+    assert "Better leadership fit" in signals[0].evidence
+    assert (signals[1].tenant_id, signals[1].job_id) == (
+        _TENANT_A,
+        str(_JOB_B),
+    )
+    assert "Skipped after review" in signals[1].evidence
 
 
-def test_feedback_ordering_isolates_same_job_id_across_tenants() -> None:
+def test_feedback_history_isolates_same_job_id_across_tenants() -> None:
     conn = _connection()
     shared_job_id = str(_JOB_A)
-    shared_url = "https://example.com/shared"
     _insert_corrected_score(
         conn,
         tenant_id=_TENANT_A,
@@ -131,29 +123,9 @@ def test_feedback_ordering_isolates_same_job_id_across_tenants() -> None:
         """,
         (_TENANT_B, shared_job_id),
     )
-    rows = conn.execute(
-        """
-        SELECT ? AS tenant_id, ? AS job_id, ? AS url,
-               7.5 AS js_fit_score, NULL AS fit_score
-        UNION ALL
-        SELECT ?, ?, ?, 8.0, NULL
-        """,
-        (
-            _TENANT_A,
-            shared_job_id,
-            shared_url,
-            _TENANT_B,
-            shared_job_id,
-            shared_url,
-        ),
-    ).fetchall()
+    signals = collect_feedback_signals(conn)
 
-    ordered = database_module._order_rows_by_feedback(conn, rows)
-
-    assert [
-        (str(row["tenant_id"]), str(row["job_id"]))
-        for row in ordered
-    ] == [
+    assert [(signal.tenant_id, signal.job_id) for signal in signals] == [
         (_TENANT_A, shared_job_id),
         (_TENANT_B, shared_job_id),
     ]
@@ -171,7 +143,7 @@ class _RowsCursor:
 
 
 class _AcquireConnection:
-    """Delegate feedback reads while supplying the apply candidate projection."""
+    """Supply the Apply candidate projection to the acquisition boundary."""
 
     def __init__(
         self,
@@ -204,7 +176,7 @@ class _AcquireConnection:
         self._conn.rollback()
 
 
-def test_acquire_job_orders_multiple_candidates_by_canonical_feedback(
+def test_acquire_job_does_not_apply_unaccepted_feedback_to_candidate_order(
     monkeypatch,
 ) -> None:
     conn = _connection()
@@ -215,26 +187,26 @@ def test_acquire_job_orders_multiple_candidates_by_canonical_feedback(
     )
     candidates = conn.execute(
         """
-        SELECT ? AS tenant_id, ? AS job_id, 'https://example.com/a' AS url,
-               'A' AS title, 'example' AS site,
-               'https://example.com/a/apply' AS application_url,
-               '/tmp/a.txt' AS tailored_resume_path,
-               '/tmp/a.pdf' AS resume_pdf_path,
-               'artifact-a' AS resume_pdf_artifact_id,
-               1 AS materials_generation, 7.5 AS fit_score,
-               7.5 AS js_fit_score, NULL AS location, NULL AS description,
+        SELECT ? AS tenant_id, ? AS job_id, 'https://example.com/b' AS url,
+               'B' AS title, 'example' AS site,
+               'https://example.com/b/apply' AS application_url,
+               '/tmp/b.txt' AS tailored_resume_path,
+               '/tmp/b.pdf' AS resume_pdf_path,
+               'artifact-b' AS resume_pdf_artifact_id,
+               1 AS materials_generation, 8.0 AS fit_score,
+               8.0 AS js_fit_score, NULL AS location, NULL AS description,
                NULL AS full_description, NULL AS cover_letter_path,
                NULL AS applied_at, NULL AS apply_status, 0 AS apply_attempts
         UNION ALL
-        SELECT ?, ?, 'https://example.com/b', 'B', 'example',
-               'https://example.com/b/apply', '/tmp/b.txt', '/tmp/b.pdf',
-               'artifact-b', 1, 8.0, 8.0, NULL, NULL, NULL, NULL, NULL, NULL, 0
+        SELECT ?, ?, 'https://example.com/a', 'A', 'example',
+               'https://example.com/a/apply', '/tmp/a.txt', '/tmp/a.pdf',
+               'artifact-a', 1, 7.5, 7.5, NULL, NULL, NULL, NULL, NULL, NULL, 0
         """,
         (
             _TENANT_A,
-            str(_JOB_A),
-            _TENANT_A,
             str(_JOB_B),
+            _TENANT_A,
+            str(_JOB_A),
         ),
     ).fetchall()
     conn.commit()
@@ -262,5 +234,5 @@ def test_acquire_job_orders_multiple_candidates_by_canonical_feedback(
     assert selected is not None
     assert (selected["tenant_id"], selected["job_id"]) == (
         _TENANT_A,
-        str(_JOB_A),
+        str(_JOB_B),
     )
