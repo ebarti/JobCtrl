@@ -86,7 +86,7 @@ def _seed_candidate_thread(
             tenant_id=LOCAL_TENANT,
             thread_id="t1",
             contact_id="c1",
-            job_id="https://job/1",
+            job_id="00000000-0000-4000-8000-000000000001",
             drafts=(_candidate_draft(draft_id),),
             created_at="2026-07-06T00:00:00Z",
             updated_at="2026-07-06T00:00:00Z",

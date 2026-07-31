@@ -143,7 +143,7 @@ def _seed_thread(repo: SqliteOutreachThreadRepository) -> None:
             tenant_id=LOCAL_TENANT,
             thread_id="t1",
             contact_id="c1",
-            job_id="https://job/1",
+            job_id="00000000-0000-4000-8000-000000000001",
             drafts=(draft,),
             created_at="c",
             updated_at="c",

@@ -19,7 +19,7 @@ Sensitivity (plan §6, §10.1): the draft ``body_text``, ``gate_results_json`` a
 ``outreach_drafts`` (canonical write side). Event payloads written to
 ``job_events`` carry ONLY ids, kinds, generation, and timestamps — never the body,
 gate text, or contact PII. Application-linked threads additionally key on the
-job's ``job_url``; contact-only threads carry ``entity_kind='outreach'`` /
+canonical ``JobId``; contact-only threads carry ``entity_kind='outreach'`` /
 ``entity_ref=<thread_id>``.
 """
 
@@ -29,7 +29,6 @@ import json
 import logging
 import sqlite3
 
-from jobctrl.database import ensure_contact_tables
 from jobctrl.domain.contact.outreach import (
     FollowUpSchedule,
     FollowUpState,
@@ -42,6 +41,7 @@ from jobctrl.domain.contact.outreach_gates import (
     DraftGateResults,
     OutreachClaimProvenance,
 )
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.value_objects import ArtifactStatus
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.tenant import TenantId
@@ -56,7 +56,6 @@ class SqliteOutreachThreadRepository:
     def __init__(self, conn: sqlite3.Connection, *, publisher: EventPublisher) -> None:
         self._conn = conn
         self._publisher = publisher
-        ensure_contact_tables(self._conn)
 
     # ------------------------------------------------------------------ load
 
@@ -70,22 +69,23 @@ class SqliteOutreachThreadRepository:
         return self._row_to_thread(tenant_id, row)
 
     def load_for_contact(
-        self, tenant_id: TenantId, contact_id: str, job_id: str | None = None
+        self, tenant_id: TenantId, contact_id: str, job_id: JobId | None = None
     ) -> OutreachThread | None:
-        if job_id:
+        if job_id is not None:
+            stable_job_id = canonical_job_id(str(job_id))
             row = self._conn.execute(
                 """
                 SELECT * FROM outreach_threads
-                WHERE tenant_id = ? AND contact_id = ? AND job_url = ?
+                WHERE tenant_id = ? AND contact_id = ? AND job_id = ?
                 ORDER BY updated_at DESC LIMIT 1
                 """,
-                (str(tenant_id), str(contact_id), str(job_id)),
+                (str(tenant_id), str(contact_id), str(stable_job_id)),
             ).fetchone()
         else:
             row = self._conn.execute(
                 """
                 SELECT * FROM outreach_threads
-                WHERE tenant_id = ? AND contact_id = ? AND job_url IS NULL
+                WHERE tenant_id = ? AND contact_id = ? AND job_id IS NULL
                 ORDER BY updated_at DESC LIMIT 1
                 """,
                 (str(tenant_id), str(contact_id)),
@@ -111,7 +111,7 @@ class SqliteOutreachThreadRepository:
             tenant_id=tenant_id,
             thread_id=thread_id,
             contact_id=str(row["contact_id"]),
-            job_id=row["job_url"],
+            job_id=canonical_job_id(str(row["job_id"])) if row["job_id"] else None,
             drafts=self._load_drafts(tenant_id, thread_id),
             created_at=str(row["created_at"] or ""),
             updated_at=str(row["updated_at"] or ""),
@@ -199,12 +199,12 @@ class SqliteOutreachThreadRepository:
             self._conn.execute(
                 """
                 INSERT INTO outreach_threads (
-                    tenant_id, thread_id, contact_id, job_url, created_at, updated_at,
+                    tenant_id, thread_id, contact_id, job_id, created_at, updated_at,
                     follow_up_due_at, follow_up_basis, follow_up_state
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tenant_id, thread_id) DO UPDATE SET
                     contact_id       = excluded.contact_id,
-                    job_url          = excluded.job_url,
+                    job_id           = excluded.job_id,
                     updated_at       = excluded.updated_at,
                     follow_up_due_at = excluded.follow_up_due_at,
                     follow_up_basis  = excluded.follow_up_basis,
@@ -281,7 +281,7 @@ class SqliteOutreachThreadRepository:
     ) -> None:
         tenant = str(tenant_id)
         thread_id = str(thread.thread_id)
-        job_url = thread.job_id or None
+        job_id = thread.job_id or None
         prior = {draft.draft_id: draft for draft in previous.drafts} if previous else {}
 
         for draft in thread.drafts:
@@ -289,7 +289,8 @@ class SqliteOutreachThreadRepository:
             if existing is None:
                 if draft.generation <= 1:
                     self._record(
-                        job_url,
+                        tenant_id,
+                        job_id,
                         thread_id,
                         "OutreachDraftGenerated",
                         "Outreach draft generated.",
@@ -306,7 +307,8 @@ class SqliteOutreachThreadRepository:
                     )
                 else:
                     self._record(
-                        job_url,
+                        tenant_id,
+                        job_id,
                         thread_id,
                         "OutreachDraftRevised",
                         "Outreach draft revised.",
@@ -323,7 +325,8 @@ class SqliteOutreachThreadRepository:
                 continue
             if draft.status is ArtifactStatus.APPROVED:
                 self._record(
-                    job_url,
+                    tenant_id,
+                    job_id,
                     thread_id,
                     "OutreachDraftApproved",
                     "Outreach draft approved.",
@@ -337,7 +340,8 @@ class SqliteOutreachThreadRepository:
                 )
             elif draft.status is ArtifactStatus.REJECTED:
                 self._record(
-                    job_url,
+                    tenant_id,
+                    job_id,
                     thread_id,
                     "OutreachDraftRejected",
                     "Outreach draft rejected.",
@@ -350,15 +354,16 @@ class SqliteOutreachThreadRepository:
                     },
                 )
 
-        self._emit_send_log_events(tenant, thread, previous, job_url)
-        self._emit_follow_up_events(tenant, thread, previous, job_url)
+        self._emit_send_log_events(tenant_id, tenant, thread, previous, job_id)
+        self._emit_follow_up_events(tenant_id, tenant, thread, previous, job_id)
 
     def _emit_send_log_events(
         self,
+        tenant_id: TenantId,
         tenant: str,
         thread: OutreachThread,
         previous: OutreachThread | None,
-        job_url: str | None,
+        job_id: JobId | None,
     ) -> None:
         """Emit ``OutreachSendLogged`` for each newly-recorded user-attested send.
 
@@ -371,7 +376,8 @@ class SqliteOutreachThreadRepository:
             if log.send_log_id in prior_ids:
                 continue
             self._record(
-                job_url,
+                tenant_id,
+                job_id,
                 thread.thread_id,
                 "OutreachSendLogged",
                 "Outreach send logged (user-attested).",
@@ -387,10 +393,11 @@ class SqliteOutreachThreadRepository:
 
     def _emit_follow_up_events(
         self,
+        tenant_id: TenantId,
         tenant: str,
         thread: OutreachThread,
         previous: OutreachThread | None,
-        job_url: str | None,
+        job_id: JobId | None,
     ) -> None:
         """Emit FollowUpScheduled/Completed/Dismissed on a follow-up state change.
 
@@ -403,7 +410,8 @@ class SqliteOutreachThreadRepository:
             prev.state is not FollowUpState.SCHEDULED or prev.due_at != current.due_at
         ):
             self._record(
-                job_url,
+                tenant_id,
+                job_id,
                 thread.thread_id,
                 "FollowUpScheduled",
                 "Outreach follow-up scheduled.",
@@ -418,7 +426,8 @@ class SqliteOutreachThreadRepository:
             )
         elif current.state is FollowUpState.COMPLETED and prev.state is not FollowUpState.COMPLETED:
             self._record(
-                job_url,
+                tenant_id,
+                job_id,
                 thread.thread_id,
                 "FollowUpCompleted",
                 "Outreach follow-up completed.",
@@ -430,7 +439,8 @@ class SqliteOutreachThreadRepository:
             )
         elif current.state is FollowUpState.DISMISSED and prev.state is not FollowUpState.DISMISSED:
             self._record(
-                job_url,
+                tenant_id,
+                job_id,
                 thread.thread_id,
                 "FollowUpDismissed",
                 "Outreach follow-up dismissed.",
@@ -444,7 +454,8 @@ class SqliteOutreachThreadRepository:
 
     def _record(
         self,
-        job_url: str | None,
+        tenant_id: TenantId,
+        job_id: JobId | None,
         thread_id: str,
         event_type: str,
         message: str,
@@ -452,9 +463,10 @@ class SqliteOutreachThreadRepository:
     ) -> None:
         record_job_event(
             self._conn,
-            job_url,
+            job_id,
             None,
             event_type,
+            tenant_id=tenant_id,
             message=message,
             payload=payload,
             publisher=self._publisher,

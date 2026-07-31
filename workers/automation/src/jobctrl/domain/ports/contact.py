@@ -86,7 +86,7 @@ class OutreachThreadRepository(Protocol):
         """Return the outreach thread (with all draft generations), or ``None``."""
 
     def load_for_contact(
-        self, tenant_id: TenantId, contact_id: str, job_id: str | None = None
+        self, tenant_id: TenantId, contact_id: str, job_id: JobId | None = None
     ) -> OutreachThread | None:
         """Return the thread for a ``(contact, optional application)``, or ``None``."""
 
