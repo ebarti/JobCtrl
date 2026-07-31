@@ -8,17 +8,20 @@ import {
   BUILT_IN_RESUME_TEMPLATE_THEME,
   createResumeTemplateVersion,
   ensureCurrentResumeTemplateMaterials,
-  ensureResumeTemplateTables,
   getResumeTemplateDetail,
   listResumeTemplates,
   resolveCurrentResumeArtifactIdForOpen,
   ResumeTemplateInputError,
+  resumeTemplateStateForJob,
   setDefaultResumeTemplate,
   setJobResumeTemplateAssignment,
 } from "../src/resume-templates.js";
 import type { ResumeHtmlPdfRenderer } from "../src/resume-pdf-render.js";
 
-const JOB_KEY = "https://example.com/jobs/template-engineer";
+const JOB_ID = "11111111-1111-4111-8111-11111111111a";
+const JOB_URL = "https://example.com/jobs/template-engineer";
+const UUID_SHAPED_URL = "22222222-2222-4222-8222-222222222222";
+const UUID_SHAPED_URL_OWNER_JOB_ID = "33333333-3333-4333-8333-333333333333";
 const NOW = "2026-06-24T10:00:00.000Z";
 
 // Stand-in for the Playwright HTML-to-PDF subprocess: it renders the exact HTML
@@ -44,7 +47,6 @@ afterEach(() => {
 
 describe("resume template service", () => {
   it("saves style-only template versions, default selection, and per-job overrides", () => {
-    ensureResumeTemplateTables(db);
     const initial = listResumeTemplates(db);
     expect(initial.templates).toHaveLength(1);
     expect(initial.templates[0]).toMatchObject({ builtIn: true, displayName: "Modern HTML" });
@@ -73,7 +75,7 @@ describe("resume template service", () => {
       templateId: saved.template.templateId,
     });
 
-    const assignment = setJobResumeTemplateAssignment(db, JOB_KEY, {
+    const assignment = setJobResumeTemplateAssignment(db, JOB_ID, {
       templateId: saved.template.templateId,
       versionId: saved.template.activeVersion.versionId,
     });
@@ -157,7 +159,7 @@ describe("resume template service", () => {
       versionId: saved.template.activeVersion.versionId,
     });
 
-    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_KEY, {}, renderHtmlToPdf);
+    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, renderHtmlToPdf);
     expect(refresh.status).toBe("completed");
     expect(refresh.generation).toBe(2);
     expect(refresh.templateState?.state).toBe("template_current");
@@ -221,7 +223,7 @@ describe("resume template service", () => {
       versionId: saved.template.activeVersion.versionId,
     });
 
-    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_KEY, {}, renderHtmlToPdf);
+    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, renderHtmlToPdf);
     expect(refresh.status).toBe("unavailable");
     expect(refresh.generation).toBeNull();
     expect(refresh.templateState?.state).toBe("refresh_unavailable");
@@ -263,7 +265,7 @@ describe("resume template service", () => {
       versionId: saved.template.activeVersion.versionId,
     });
 
-    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_KEY, {}, renderHtmlToPdf);
+    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, renderHtmlToPdf);
     expect(refresh.status).toBe("completed");
 
     const refreshedPdf = db
@@ -291,7 +293,7 @@ describe("resume template service", () => {
     const failingRenderer: ResumeHtmlPdfRenderer = () => {
       throw new Error("chromium unavailable");
     };
-    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_KEY, {}, failingRenderer);
+    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, failingRenderer);
     expect(refresh.status).toBe("failed");
     expect(refresh.generation).toBeNull();
     expect(refresh.templateState?.state).toBe("refresh_failed");
@@ -310,6 +312,66 @@ describe("resume template service", () => {
       .get() as { payload_json: string } | undefined;
     expect(failedEvent?.payload_json).toContain("failed");
   });
+
+  it("uses exact-v7 tenant and JobId keys for assignments, materials, layout, attempts, and events", () => {
+    const saved = createResumeTemplateVersion(db, {
+      displayName: "Tenant-isolated template",
+      theme: { ...BUILT_IN_RESUME_TEMPLATE_THEME, fontFamily: "serif" },
+      layout: {},
+    });
+    setJobResumeTemplateAssignment(db, JOB_ID, {
+      templateId: saved.template.templateId,
+      versionId: saved.template.activeVersion.versionId,
+    });
+    db.prepare(
+      `INSERT INTO job_resume_template_assignments (
+         tenant_id, job_id, template_id, version_id, updated_at
+       ) VALUES ('other', ?, 'built_in:modern-html', 'built_in:modern-html:v1', ?)`,
+    ).run(JOB_ID, NOW);
+
+    expect(resumeTemplateStateForJob(db, JOB_ID)?.effective.templateId).toBe(saved.template.templateId);
+    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, renderHtmlToPdf);
+    expect(refresh.status).toBe("completed");
+
+    expect(
+      db.prepare(
+        "SELECT tenant_id, job_id FROM job_resume_template_assignments WHERE job_id = ? ORDER BY tenant_id",
+      ).all(JOB_ID),
+    ).toEqual([
+      { tenant_id: "local", job_id: JOB_ID },
+      { tenant_id: "other", job_id: JOB_ID },
+    ]);
+    expect(
+      db.prepare(
+        "SELECT DISTINCT tenant_id, job_id FROM resume_template_refresh_attempts ORDER BY tenant_id, job_id",
+      ).all(),
+    ).toEqual([{ tenant_id: "local", job_id: JOB_ID }]);
+    expect(
+      db.prepare(
+        "SELECT DISTINCT tenant_id, job_id FROM job_material_layout_boxes ORDER BY tenant_id, job_id",
+      ).all(),
+    ).toEqual([{ tenant_id: "local", job_id: JOB_ID }]);
+    expect(
+      db.prepare(
+        "SELECT tenant_id, job_id, identity_version FROM job_events WHERE job_id = ?",
+      ).all(JOB_ID),
+    ).toEqual([
+      { tenant_id: "local", job_id: JOB_ID, identity_version: 1 },
+      { tenant_id: "local", job_id: JOB_ID, identity_version: 1 },
+    ]);
+  });
+
+  it("refuses invalid UUIDs and never treats posting or application URLs as identity", () => {
+    expect(() => setJobResumeTemplateAssignment(db, JOB_URL, { templateId: null })).toThrow(
+      "jobId must be a canonical lowercase UUID",
+    );
+    expect(() => resumeTemplateStateForJob(db, JOB_ID.toUpperCase())).toThrow(
+      "jobId must be a canonical lowercase UUID",
+    );
+    expect(() => ensureCurrentResumeTemplateMaterials(db, UUID_SHAPED_URL, {}, renderHtmlToPdf)).toThrow(
+      `Job not found: ${UUID_SHAPED_URL}`,
+    );
+  });
 });
 
 function seedDatabase(database: Database.Database): void {
@@ -327,82 +389,169 @@ function seedDatabase(database: Database.Database): void {
   fs.writeFileSync(pdfPath, "%PDF-1.4\n% template test\n");
   database.exec(`
     CREATE TABLE jobs (
-      url TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      url TEXT NOT NULL,
       title TEXT,
       company TEXT,
       application_url TEXT,
-      discovered_at TEXT
+      discovered_at TEXT,
+      PRIMARY KEY (tenant_id, job_id),
+      UNIQUE (tenant_id, url)
     );
     CREATE TABLE candidate_profiles (
-      tenant_id TEXT,
-      profile_id TEXT,
-      personal_full_name TEXT,
-      personal_email TEXT,
-      personal_phone TEXT,
-      personal_linkedin_url TEXT,
-      personal_github_url TEXT,
-      personal_portfolio_url TEXT,
-      personal_website_url TEXT,
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      personal_full_name TEXT NOT NULL DEFAULT '',
+      personal_email TEXT NOT NULL DEFAULT '',
+      personal_phone TEXT NOT NULL DEFAULT '',
+      personal_linkedin_url TEXT NOT NULL DEFAULT '',
+      personal_github_url TEXT NOT NULL DEFAULT '',
+      personal_portfolio_url TEXT NOT NULL DEFAULT '',
+      personal_website_url TEXT NOT NULL DEFAULT '',
       PRIMARY KEY (tenant_id, profile_id)
     );
     CREATE TABLE job_events (
       event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_url TEXT,
+      tenant_id TEXT NOT NULL,
+      job_id TEXT,
+      identity_version INTEGER NOT NULL,
       stage TEXT,
       event_type TEXT NOT NULL,
-      level TEXT NOT NULL,
+      level TEXT NOT NULL DEFAULT 'info',
       message TEXT,
       occurred_at TEXT NOT NULL,
-      payload_json TEXT
+      payload_json TEXT,
+      entity_kind TEXT,
+      entity_ref TEXT,
+      idempotency_key TEXT,
+      FOREIGN KEY (tenant_id, job_id) REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
     );
     CREATE TABLE job_materials (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      tenant_id TEXT,
-      status TEXT,
-      created_at TEXT,
-      updated_at TEXT,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT NOT NULL,
+      generation INTEGER NOT NULL CHECK(generation > 0),
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
       last_validation_json TEXT,
       last_verdict_json TEXT,
       metadata_json TEXT,
-      PRIMARY KEY (job_url, generation)
+      PRIMARY KEY (tenant_id, job_id, generation),
+      FOREIGN KEY (tenant_id, job_id) REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
     );
     CREATE TABLE job_materials_artifacts (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT NOT NULL,
+      generation INTEGER NOT NULL CHECK(generation > 0),
       artifact_type TEXT NOT NULL,
       artifact_id TEXT NOT NULL,
-      status TEXT,
-      path TEXT,
-      render_format TEXT,
+      status TEXT NOT NULL,
+      path TEXT NOT NULL,
+      render_format TEXT NOT NULL,
       size_bytes INTEGER,
       metadata_json TEXT,
-      created_at TEXT,
+      created_at TEXT NOT NULL,
       superseded_at TEXT,
-      PRIMARY KEY (job_url, generation, artifact_id)
+      PRIMARY KEY (tenant_id, job_id, generation, artifact_type),
+      FOREIGN KEY (tenant_id, job_id, generation)
+        REFERENCES job_materials(tenant_id, job_id, generation) ON DELETE CASCADE
     );
     CREATE TABLE job_material_layout_boxes (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT NOT NULL,
+      generation INTEGER NOT NULL CHECK(generation > 0),
       artifact_id TEXT NOT NULL,
       box_index INTEGER NOT NULL,
-      tenant_id TEXT,
-      semantic_id TEXT,
-      page_number INTEGER,
+      semantic_id TEXT NOT NULL,
+      page_number INTEGER NOT NULL,
       line_number INTEGER,
-      text_excerpt TEXT,
-      left_pct REAL,
-      top_pct REAL,
-      width_pct REAL,
-      height_pct REAL,
-      audit_target_json TEXT,
-      created_at TEXT,
-      PRIMARY KEY (job_url, generation, artifact_id, box_index)
+      text_excerpt TEXT NOT NULL,
+      left_pct REAL NOT NULL,
+      top_pct REAL NOT NULL,
+      width_pct REAL NOT NULL,
+      height_pct REAL NOT NULL,
+      audit_target_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, job_id, generation, artifact_id, box_index),
+      FOREIGN KEY (tenant_id, job_id, generation)
+        REFERENCES job_materials(tenant_id, job_id, generation) ON DELETE CASCADE
+    );
+    CREATE TABLE resume_templates (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      template_id TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      built_in INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, template_id)
+    );
+    CREATE TABLE resume_template_versions (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      version_id TEXT NOT NULL,
+      template_id TEXT NOT NULL,
+      version_number INTEGER NOT NULL,
+      display_name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      theme_json TEXT NOT NULL,
+      layout_json TEXT NOT NULL DEFAULT '{}',
+      content_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, version_id),
+      UNIQUE (tenant_id, template_id, version_number)
+    );
+    CREATE TABLE resume_template_defaults (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      profile_id TEXT NOT NULL DEFAULT 'default',
+      template_id TEXT NOT NULL,
+      version_id TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, profile_id)
+    );
+    CREATE TABLE job_resume_template_assignments (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT NOT NULL,
+      template_id TEXT NOT NULL,
+      version_id TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, job_id),
+      FOREIGN KEY (tenant_id, job_id) REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+    );
+    CREATE TABLE resume_template_refresh_attempts (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      attempt_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      from_generation INTEGER,
+      to_generation INTEGER,
+      template_id TEXT,
+      template_version_id TEXT,
+      template_hash TEXT,
+      error_message TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      completed_at TEXT,
+      PRIMARY KEY (tenant_id, attempt_id),
+      FOREIGN KEY (tenant_id, job_id) REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
     );
   `);
+  database.pragma("foreign_keys = ON");
   database
-    .prepare("INSERT INTO jobs (url, title, company, application_url, discovered_at) VALUES (?, ?, ?, ?, ?)")
-    .run(JOB_KEY, "Senior Platform Engineer", "Globex Infrastructure", "https://apply.example.com/globex", NOW);
+    .prepare(
+      "INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url, discovered_at) VALUES ('local', ?, ?, ?, ?, ?, ?)",
+    )
+    .run(JOB_ID, JOB_URL, "Senior Platform Engineer", "Globex Infrastructure", "https://apply.example.com/globex", NOW);
+  database
+    .prepare(
+      "INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url, discovered_at) VALUES ('local', ?, ?, ?, ?, ?, ?)",
+    )
+    .run(UUID_SHAPED_URL_OWNER_JOB_ID, UUID_SHAPED_URL, "URL-shaped locator", "Example", "https://apply.example.com/uuid", NOW);
+  database
+    .prepare(
+      "INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url, discovered_at) VALUES ('other', ?, ?, ?, ?, ?, ?)",
+    )
+    .run(JOB_ID, "https://other.example/jobs/template-engineer", "Other tenant job", "Other", "https://other.example/apply", NOW);
   database
     .prepare(
       `INSERT INTO candidate_profiles (
@@ -413,12 +562,12 @@ function seedDatabase(database: Database.Database): void {
   database
     .prepare(
       `INSERT INTO job_materials (
-         job_url, generation, tenant_id, status, created_at, updated_at,
+         tenant_id, job_id, generation, status, created_at, updated_at,
          last_validation_json, last_verdict_json, metadata_json
-       ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, ?, ?, ?)`,
+       ) VALUES ('local', ?, 1, 'resume_approved', ?, ?, ?, ?, ?)`,
     )
     .run(
-      JOB_KEY,
+      JOB_ID,
       NOW,
       NOW,
       JSON.stringify({ passed: true, errors: [], warnings: [] }),
@@ -437,12 +586,12 @@ function seedDatabase(database: Database.Database): void {
   database
     .prepare(
       `INSERT INTO job_materials_artifacts (
-         job_url, generation, artifact_type, artifact_id, status, path, render_format,
+         tenant_id, job_id, generation, artifact_type, artifact_id, status, path, render_format,
          size_bytes, metadata_json, created_at, superseded_at
-       ) VALUES (?, 1, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)`,
+       ) VALUES ('local', ?, 1, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)`,
     )
     .run(
-      JOB_KEY,
+      JOB_ID,
       "tailored_resume",
       "resume-text-v1",
       resumePath,
@@ -454,12 +603,12 @@ function seedDatabase(database: Database.Database): void {
   database
     .prepare(
       `INSERT INTO job_materials_artifacts (
-         job_url, generation, artifact_type, artifact_id, status, path, render_format,
+         tenant_id, job_id, generation, artifact_type, artifact_id, status, path, render_format,
          size_bytes, metadata_json, created_at, superseded_at
-       ) VALUES (?, 1, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)`,
+       ) VALUES ('local', ?, 1, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)`,
     )
     .run(
-      JOB_KEY,
+      JOB_ID,
       "resume_pdf",
       "resume-pdf-v1",
       pdfPath,
@@ -468,4 +617,24 @@ function seedDatabase(database: Database.Database): void {
       JSON.stringify({ resume_template: { templateId: "built_in:modern-html", templateVersionId: "built_in:modern-html:v1", templateVersionNumber: 1, templateName: "Modern HTML", templateHash: "seed-hash", assignmentSource: "built_in" } }),
       NOW,
     );
+  seedBuiltInTemplate(database);
+}
+
+function seedBuiltInTemplate(database: Database.Database): void {
+  database
+    .prepare(
+      `INSERT INTO resume_templates (
+         tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+       ) VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)`,
+    )
+    .run(NOW, NOW);
+  database
+    .prepare(
+      `INSERT INTO resume_template_versions (
+         tenant_id, version_id, template_id, version_number, display_name, status,
+         theme_json, layout_json, content_hash, created_at
+       ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
+                 'Modern HTML', 'active', ?, '{}', 'seed-hash', ?)`,
+    )
+    .run(JSON.stringify(BUILT_IN_RESUME_TEMPLATE_THEME), NOW);
 }
