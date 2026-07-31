@@ -3279,7 +3279,6 @@ _EFFECTIVE_APPLY_STATUS: str = (
 )
 
 
-_FEEDBACK_ORDERED_STAGES = frozenset({"scored", "pending_tailor", "pending_cover", "pending_apply"})
 LOW_FIT_TAILORING_MAX_SCORE = 5
 MIN_TAILORING_FIT_SCORE = LOW_FIT_TAILORING_MAX_SCORE + 1
 
@@ -3289,58 +3288,6 @@ def effective_tailoring_min_score(min_score: int | None = None) -> int:
     if min_score is None:
         return 7
     return max(MIN_TAILORING_FIT_SCORE, int(min_score))
-
-
-def _order_rows_by_feedback(
-    conn: sqlite3.Connection,
-    rows: list[sqlite3.Row],
-) -> list[sqlite3.Row]:
-    """Order score-backed selector rows using local feedback signals."""
-    if len(rows) < 2:
-        return rows
-
-    row_keys = set(rows[0].keys())
-    base_scores: dict[tuple[str, str], float] = {}
-    for row in rows:
-        raw_score = row["js_fit_score"] if "js_fit_score" in row_keys else None
-        if raw_score is None:
-            raw_score = row["fit_score"] if "fit_score" in row_keys else None
-        if raw_score is None:
-            continue
-        try:
-            base_scores[(str(row["tenant_id"]), str(row["job_id"]))] = float(raw_score)
-        except (TypeError, ValueError):
-            continue
-
-    if len(base_scores) < 2:
-        return rows
-
-    from jobctrl.infrastructure.scoring import collect_feedback_signals, rank_jobs_with_feedback
-
-    signals = collect_feedback_signals(conn)
-    if not signals:
-        return rows
-
-    ranked = rank_jobs_with_feedback(base_scores, signals)
-    rank_index = {
-        (item.tenant_id, item.job_id): index
-        for index, item in enumerate(ranked)
-    }
-    original_index = {
-        (str(row["tenant_id"]), str(row["job_id"])): index
-        for index, row in enumerate(rows)
-    }
-    fallback_index = len(rank_index)
-    return sorted(
-        rows,
-        key=lambda row: (
-            rank_index.get(
-                (str(row["tenant_id"]), str(row["job_id"])),
-                fallback_index,
-            ),
-            original_index[(str(row["tenant_id"]), str(row["job_id"]))],
-        ),
-    )
 
 
 def get_stats(conn: sqlite3.Connection | None = None) -> dict:
@@ -3906,16 +3853,11 @@ def get_jobs_by_stage(
         f"WHERE {where} "
         f"ORDER BY {_EFFECTIVE_FIT_SCORE} DESC NULLS LAST, discovered_at DESC"
     )
-    feedback_ordered = stage in _FEEDBACK_ORDERED_STAGES
-    if limit > 0 and not feedback_ordered:
+    if limit > 0:
         query += " LIMIT ?"
         params.append(limit)
 
     rows = conn.execute(query, params).fetchall()
-    if feedback_ordered:
-        rows = _order_rows_by_feedback(conn, rows)
-        if limit > 0:
-            rows = rows[:limit]
 
     # Convert sqlite3.Row objects to dicts. We promote ``js_fit_score``
     # into the legacy ``fit_score`` slot and ``jm_*_path`` into the

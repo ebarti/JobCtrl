@@ -1,18 +1,17 @@
-"""Transparent local scoring feedback signals.
+"""Auditable local scoring feedback signals.
 
 The collector reads existing local facts only: score corrections from
 ``job_scores`` and user/job actions from ``job_events``. It does not hide or
-overwrite score evidence; callers receive the evidence strings that produced
-each adjustment.
+overwrite score evidence or turn those facts into ranking adjustments. Policy
+changes are derived and accepted through the versioned learning flow.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -20,63 +19,16 @@ class ScoringFeedbackSignal:
     tenant_id: str
     job_id: str
     kind: str
-    weight: float
     evidence: str
 
 
-@dataclass(frozen=True)
-class FeedbackRankedJob:
-    tenant_id: str
-    job_id: str
-    base_score: float
-    feedback_adjustment: float
-    final_score: float
-    evidence: tuple[str, ...]
-
-
-ACTION_WEIGHTS = {
-    "ApplicationManuallyMarked": 0.75,
-    "StageSkipped": -0.75,
-    "JobDeleted": -1.0,
-    "ResumeApproved": 0.35,
-    "CoverLetterApproved": 0.35,
-}
-
-
 def collect_feedback_signals(conn: sqlite3.Connection) -> tuple[ScoringFeedbackSignal, ...]:
-    """Collect transparent feedback signals from local scoring/action tables."""
+    """Collect auditable feedback facts from local scoring/action tables."""
 
     signals: list[ScoringFeedbackSignal] = []
     signals.extend(_correction_signals(conn))
     signals.extend(_action_signals(conn))
     return tuple(signals)
-
-
-def rank_jobs_with_feedback(
-    base_scores: dict[tuple[str, str], float],
-    signals: Iterable[ScoringFeedbackSignal],
-) -> tuple[FeedbackRankedJob, ...]:
-    """Apply bounded, evidence-backed feedback adjustments to base scores."""
-
-    by_job: dict[tuple[str, str], list[ScoringFeedbackSignal]] = defaultdict(list)
-    for signal in signals:
-        by_job[(signal.tenant_id, signal.job_id)].append(signal)
-
-    ranked: list[FeedbackRankedJob] = []
-    for (tenant_id, job_id), base_score in base_scores.items():
-        job_signals = by_job.get((tenant_id, job_id), [])
-        adjustment = max(-1.5, min(1.5, sum(signal.weight for signal in job_signals)))
-        ranked.append(
-            FeedbackRankedJob(
-                tenant_id=tenant_id,
-                job_id=job_id,
-                base_score=base_score,
-                feedback_adjustment=adjustment,
-                final_score=base_score + adjustment,
-                evidence=tuple(signal.evidence for signal in job_signals),
-            )
-        )
-    return tuple(sorted(ranked, key=lambda item: (item.final_score, item.base_score), reverse=True))
 
 
 def _correction_signals(conn: sqlite3.Connection) -> list[ScoringFeedbackSignal]:
@@ -101,14 +53,12 @@ def _correction_signals(conn: sqlite3.Connection) -> list[ScoringFeedbackSignal]
             latest_history.get("original_score") if isinstance(latest_history, dict) else None,
             fit_score,
         )
-        delta = max(-1.5, min(1.5, (fit_score - original_score) / 2.0))
         rationale = str(correction.get("rationale") or "score corrected").strip()
         signals.append(
             ScoringFeedbackSignal(
                 tenant_id=tenant_id,
                 job_id=job_id,
                 kind="score_correction",
-                weight=delta,
                 evidence=f"score correction {original_score:g}->{fit_score:g}: {rationale}",
             )
         )
@@ -141,7 +91,6 @@ def _action_signals(conn: sqlite3.Connection) -> list[ScoringFeedbackSignal]:
                 tenant_id=tenant_id,
                 job_id=job_id,
                 kind=event_type,
-                weight=ACTION_WEIGHTS[event_type],
                 evidence=f"{event_type}: {message}",
             )
         )
