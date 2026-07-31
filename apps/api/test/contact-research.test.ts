@@ -173,7 +173,7 @@ describe("contact research API", () => {
     expect(starter).toHaveBeenCalledTimes(1);
     const input = starter.mock.calls[0]![0];
     expect(input.taskId).toBe(body.taskId);
-    expect(input.jobUrl).toBe(JOB_URL_ONE);
+    expect(input.jobId).toBe(JOB_ID_ONE);
     expect(input.sources).toEqual([{ category: "public_web_page", url: TEAM_URL, label: "" }]);
 
     // The queued task is readable immediately and emitted a start event.
@@ -221,6 +221,30 @@ describe("contact research API", () => {
       payload: { employer: "Acme", jobId: "https://jobs.example.test/not-an-id" },
     });
     expect(res.statusCode).toBe(400);
+    const db = new Database(dbPath, { readonly: true });
+    expect(
+      (db.prepare("SELECT COUNT(*) AS count FROM contact_research_tasks").get() as { count: number })
+        .count,
+    ).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS count FROM job_events").get() as { count: number }).count).toBe(0);
+    db.close();
+  });
+
+  it("rejects an unknown canonical JobId before dispatch", async () => {
+    const starter = vi.fn<ContactResearchStarter>();
+    const { app, dbPath } = withTempApp(starter);
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/contacts/research",
+      payload: {
+        employer: "Acme",
+        jobId: "00000000-0000-4000-8000-000000000099",
+        sources: [{ category: "public_web_page", url: TEAM_URL }],
+      },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual({ ok: false, error: "contact_research_job_not_found" });
+    expect(starter).not.toHaveBeenCalled();
     const db = new Database(dbPath, { readonly: true });
     expect(
       (db.prepare("SELECT COUNT(*) AS count FROM contact_research_tasks").get() as { count: number })
