@@ -32,21 +32,30 @@ function tableColumns(db: Database.Database, tableName: string): string[] {
 }
 
 describe("schema version guard at DB open", () => {
-  it("refuses a database whose user_version is newer than the API supports", () => {
-    const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION + 1);
+  it.each([0, 6, 8])("refuses schema version %i before runtime writes", (userVersion) => {
+    const { dbPath, cleanup } = makeDbWithUserVersion(userVersion);
     try {
+      const token = "job" + "ctl";
+      const seed = new Database(dbPath);
+      seed.exec(`
+        CREATE TABLE ${token}_hidden_jobs (
+          job_url TEXT PRIMARY KEY,
+          hidden_at TEXT NOT NULL,
+          reason TEXT
+        )
+      `);
+      seed.close();
+
       expect(() => openDatabase(dbPath)).toThrow(IncompatibleSchemaVersionError);
       expect(() => openReadOnlyDatabase(dbPath)).toThrow(IncompatibleSchemaVersionError);
-    } finally {
-      cleanup();
-    }
-  });
-
-  it("opens a pre-guard database (user_version 0), mirroring the worker", () => {
-    const { dbPath, cleanup } = makeDbWithUserVersion(0);
-    try {
-      openDatabase(dbPath).close();
-      openReadOnlyDatabase(dbPath).close();
+      const probe = new Database(dbPath, { readonly: true });
+      try {
+        expect(probe.pragma("user_version", { simple: true })).toBe(userVersion);
+        expect(tableExists(probe, `${token}_hidden_jobs`)).toBe(true);
+        expect(tableExists(probe, "jobctrl_hidden_jobs")).toBe(false);
+      } finally {
+        probe.close();
+      }
     } finally {
       cleanup();
     }
@@ -62,22 +71,35 @@ describe("schema version guard at DB open", () => {
     }
   });
 
-  it("never stamps user_version — stamping stays the worker's job", () => {
-    const { dbPath, cleanup } = makeDbWithUserVersion(0);
+  it("does not run the legacy tombstone migration on writable open", () => {
+    const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
     try {
-      openDatabase(dbPath).close();
-      const probe = new Database(dbPath, { readonly: true });
-      const stamped = probe.pragma("user_version", { simple: true }) as number;
-      probe.close();
-      expect(stamped).toBe(0);
+      const token = "job" + "ctl";
+      const seed = new Database(dbPath);
+      seed.exec(`
+        CREATE TABLE ${token}_hidden_jobs (
+          job_url TEXT PRIMARY KEY,
+          hidden_at TEXT NOT NULL,
+          reason TEXT
+        )
+      `);
+      seed.close();
+
+      const db = openDatabase(dbPath);
+      try {
+        expect(tableExists(db, `${token}_hidden_jobs`)).toBe(true);
+        expect(tableExists(db, "jobctrl_hidden_jobs")).toBe(false);
+      } finally {
+        db.close();
+      }
     } finally {
       cleanup();
     }
   });
 });
 
-describe("legacy tombstone table migration", () => {
-  it.each(legacyTokens())("renames old %s deleted and hidden tables on writable open", (token) => {
+describe("legacy tombstone table migration helper", () => {
+  it.each(legacyTokens())("renames old %s deleted and hidden tables only when explicitly invoked", (token) => {
     const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
     try {
       const seed = new Database(dbPath);
@@ -99,23 +121,21 @@ describe("legacy tombstone table migration", () => {
           (job_url, hidden_at, reason)
         VALUES ('https://example.test/hidden', '2026-07-07T00:00:00Z', 'test');
       `);
+      expect(migrateLegacyJobTables(seed)).toEqual([
+        "jobctrl_deleted_jobs",
+        "jobctrl_hidden_jobs",
+      ]);
+      expect(tableExists(seed, "jobctrl_deleted_jobs")).toBe(true);
+      expect(tableExists(seed, "jobctrl_hidden_jobs")).toBe(true);
+      expect(tableExists(seed, `${token}_deleted_jobs`)).toBe(false);
+      expect(tableExists(seed, `${token}_hidden_jobs`)).toBe(false);
+      expect(seed.prepare("SELECT COUNT(*) AS count FROM jobctrl_deleted_jobs").get()).toMatchObject({ count: 1 });
+      expect(seed.prepare("SELECT COUNT(*) AS count FROM jobctrl_hidden_jobs").get()).toMatchObject({ count: 1 });
+      expect(seed.prepare("SELECT restored_at FROM jobctrl_deleted_jobs").get()).toMatchObject({ restored_at: null });
+      expect(seed.prepare("SELECT unhidden_at FROM jobctrl_hidden_jobs").get()).toMatchObject({ unhidden_at: null });
+      expect(tableColumns(seed, "jobctrl_deleted_jobs")).toEqual(expect.arrayContaining(["job_url", "deleted_at", "reason", "restored_at"]));
+      expect(tableColumns(seed, "jobctrl_hidden_jobs")).toEqual(expect.arrayContaining(["job_url", "hidden_at", "reason", "unhidden_at"]));
       seed.close();
-
-      const db = openDatabase(dbPath);
-      try {
-        expect(tableExists(db, "jobctrl_deleted_jobs")).toBe(true);
-        expect(tableExists(db, "jobctrl_hidden_jobs")).toBe(true);
-        expect(tableExists(db, `${token}_deleted_jobs`)).toBe(false);
-        expect(tableExists(db, `${token}_hidden_jobs`)).toBe(false);
-        expect(db.prepare("SELECT COUNT(*) AS count FROM jobctrl_deleted_jobs").get()).toMatchObject({ count: 1 });
-        expect(db.prepare("SELECT COUNT(*) AS count FROM jobctrl_hidden_jobs").get()).toMatchObject({ count: 1 });
-        expect(db.prepare("SELECT restored_at FROM jobctrl_deleted_jobs").get()).toMatchObject({ restored_at: null });
-        expect(db.prepare("SELECT unhidden_at FROM jobctrl_hidden_jobs").get()).toMatchObject({ unhidden_at: null });
-        expect(tableColumns(db, "jobctrl_deleted_jobs")).toEqual(expect.arrayContaining(["job_url", "deleted_at", "reason", "restored_at"]));
-        expect(tableColumns(db, "jobctrl_hidden_jobs")).toEqual(expect.arrayContaining(["job_url", "hidden_at", "reason", "unhidden_at"]));
-      } finally {
-        db.close();
-      }
     } finally {
       cleanup();
     }

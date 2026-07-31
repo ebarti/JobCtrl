@@ -6,31 +6,29 @@ export type SqliteValue = string | number | bigint | null;
 
 // Mirror of the Python worker's ``SCHEMA_VERSION``
 // (workers/automation/src/jobctrl/database.py). The worker is the single
-// writer that stamps ``PRAGMA user_version``; the API only reads it to fail
-// closed on a database written by a newer build. Bump both constants together
-// whenever the schema shape changes.
-export const SUPPORTED_SCHEMA_VERSION = 6;
+// writer that stamps ``PRAGMA user_version``; the API only admits the exact
+// migrated schema shape. Bump both constants together whenever the schema
+// shape changes.
+export const SUPPORTED_SCHEMA_VERSION = 7;
 
 export class IncompatibleSchemaVersionError extends Error {
   constructor(current: number) {
     super(
-      `JobCtrl database schema version ${current} is newer than this API build `
-        + `supports (max ${SUPPORTED_SCHEMA_VERSION}); it was created by a newer `
-        + `JobCtrl build. Upgrade JobCtrl or restore a compatible backup `
+      `JobCtrl database schema version ${current} is incompatible with this API `
+        + `build (expected exactly ${SUPPORTED_SCHEMA_VERSION}). Upgrade JobCtrl `
+        + `or restore a compatible backup `
         + `('jobctrl backup').`,
     );
     this.name = "IncompatibleSchemaVersionError";
   }
 }
 
-function assertSchemaVersionSupported(db: SqliteDatabase): void {
+function assertExactSchemaVersion(db: SqliteDatabase): void {
   // The API never writes ``user_version`` — the Python worker owns stamping so
-  // the schema marker has a single writer. A pre-guard database (0) or one
-  // stamped at the supported version opens normally; a greater version fails
-  // closed so a stale API never additively writes a schema it cannot
-  // understand.
+  // the schema marker has a single writer. The v6-to-v7 migration is the only
+  // upgrade path; runtime admission accepts only the completed v7 shape.
   const current = db.pragma("user_version", { simple: true }) as number;
-  if (current > SUPPORTED_SCHEMA_VERSION) {
+  if (current !== SUPPORTED_SCHEMA_VERSION) {
     db.close();
     throw new IncompatibleSchemaVersionError(current);
   }
@@ -38,24 +36,23 @@ function assertSchemaVersionSupported(db: SqliteDatabase): void {
 
 export function openReadOnlyDatabase(dbPath: string): SqliteDatabase {
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  assertExactSchemaVersion(db);
   // Match the worker's PRAGMA so contended reads wait instead of failing
   // immediately with SQLITE_BUSY.  Worker writes hold the WAL briefly;
   // 5s gives the API process room to retry transparently.
   db.pragma("busy_timeout = 5000");
-  assertSchemaVersionSupported(db);
   return db;
 }
 
 export function openDatabase(dbPath: string): SqliteDatabase {
   const db = new Database(dbPath, { fileMustExist: true });
+  assertExactSchemaVersion(db);
   // L4 (round-1 review): now that read endpoints write (projection
   // refresh) and the worker process also writes to the same
   // ``*_projections`` tables + watermark, SQLite contention is more
   // likely.  Match the worker's ``PRAGMA busy_timeout=10000`` half-way
   // so the API doesn't fail with ``SQLITE_BUSY`` on a write conflict.
   db.pragma("busy_timeout = 5000");
-  assertSchemaVersionSupported(db);
-  migrateLegacyJobTables(db);
   return db;
 }
 
