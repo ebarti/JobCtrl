@@ -17,6 +17,8 @@ from jobctrl.infrastructure.migrations.v6_to_v7_preflight import (
     assert_v6_migration_preflight,
 )
 from tests.v6_migration_fixture import (
+    create_runtime_attestation_v6_database,
+    create_runtime_attestation_upgrade_history_v6_database,
     create_shipped_v6_database,
     create_supported_upgrade_history_v6_database,
 )
@@ -127,6 +129,39 @@ def test_supported_v1_3_to_v2_0_8_upgrade_history_passes_preflight(
     conn = sqlite3.connect(db_path)
     try:
         assert_v6_migration_preflight(conn)
+    finally:
+        conn.close()
+
+
+def test_preflight_admits_only_the_exact_runtime_candidate_profile_alter_sequence(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "runtime-attestations-v6.db"
+    create_runtime_attestation_v6_database(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        assert_v6_migration_preflight(conn)
+    finally:
+        conn.close()
+
+    history_path = tmp_path / "runtime-attestations-history-v6.db"
+    create_runtime_attestation_upgrade_history_v6_database(history_path)
+    conn = sqlite3.connect(history_path)
+    try:
+        assert_v6_migration_preflight(conn)
+    finally:
+        conn.close()
+
+    drift_path = tmp_path / "partial-runtime-attestations-v6.db"
+    create_shipped_v6_database(drift_path)
+    conn = sqlite3.connect(drift_path)
+    try:
+        conn.execute(
+            "ALTER TABLE candidate_profiles ADD COLUMN "
+            "application_attestation_age_18_plus INTEGER DEFAULT NULL"
+        )
+        with pytest.raises(V6MigrationPreflightError, match="shipped v6"):
+            assert_v6_migration_preflight(conn)
     finally:
         conn.close()
 

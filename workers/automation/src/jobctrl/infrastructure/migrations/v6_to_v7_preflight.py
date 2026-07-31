@@ -23,6 +23,21 @@ _V6_CORE_MANIFESTS = frozenset(
             87,
             "ac7d39828e3ad9e0dd1983ed21180686b81fab9d62c7a75409e903ae44256e89",
         ),
+        # v6's profile runtime added these six application attestation and
+        # preference columns without changing user_version.  This fingerprint
+        # admits only that exact shipped ALTER TABLE sequence.
+        (
+            161,
+            86,
+            "17526494e8a98d0a2a166502d605f063d5c9dc57397bc1109d7d8847c8e280b5",
+        ),
+        # The same runtime ALTER sequence can run after the separately
+        # admitted v1.3-to-v2.0.8 raw-schema history.
+        (
+            162,
+            87,
+            "51da7982e874bc3883a6765ad27ef33b4aa82237da96aceb9feb8c1b03ec2252",
+        ),
     }
 )
 

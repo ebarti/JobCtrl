@@ -10,6 +10,21 @@ _V6_SCHEMA_SQL = (
     Path(__file__).with_name("fixtures") / "shipped_v6_schema.sql"
 ).read_text(encoding="utf-8")
 
+_CANDIDATE_PROFILE_RUNTIME_ALTERS = (
+    "ALTER TABLE candidate_profiles ADD COLUMN "
+    "application_attestation_age_18_plus INTEGER DEFAULT NULL",
+    "ALTER TABLE candidate_profiles ADD COLUMN "
+    "application_attestation_background_check_consent INTEGER DEFAULT NULL",
+    "ALTER TABLE candidate_profiles ADD COLUMN "
+    "application_attestation_felony_conviction INTEGER DEFAULT NULL",
+    "ALTER TABLE candidate_profiles ADD COLUMN "
+    "application_attestation_previously_worked_at_employer INTEGER DEFAULT NULL",
+    "ALTER TABLE candidate_profiles ADD COLUMN "
+    "application_attestation_additional_json TEXT NOT NULL DEFAULT '{}'",
+    "ALTER TABLE candidate_profiles ADD COLUMN "
+    "application_preference_how_heard TEXT NOT NULL DEFAULT ''",
+)
+
 
 def create_shipped_v6_database(path: Path) -> None:
     """Create the exact shipped-v6 schema with deterministic synthetic data."""
@@ -24,6 +39,22 @@ def create_shipped_v6_database(path: Path) -> None:
                 "2026-07-30T09:00:00+00:00",
             ),
         )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def create_runtime_attestation_v6_database(path: Path) -> None:
+    """Create the exact v6 shape after the shipped profile ALTER sequence."""
+    create_shipped_v6_database(path)
+    _apply_candidate_profile_runtime_alters(path)
+
+
+def _apply_candidate_profile_runtime_alters(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    try:
+        for statement in _CANDIDATE_PROFILE_RUNTIME_ALTERS:
+            conn.execute(statement)
         conn.commit()
     finally:
         conn.close()
@@ -189,3 +220,9 @@ def create_supported_upgrade_history_v6_database(path: Path) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def create_runtime_attestation_upgrade_history_v6_database(path: Path) -> None:
+    """Create the named upgrade-history shape after the same runtime alters."""
+    create_supported_upgrade_history_v6_database(path)
+    _apply_candidate_profile_runtime_alters(path)
