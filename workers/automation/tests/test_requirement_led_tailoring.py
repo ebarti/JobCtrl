@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
@@ -59,6 +59,8 @@ from jobctrl.domain.scoring import (
 )
 from jobctrl.domain.tenant import LOCAL_TENANT
 
+_JOB_ID = canonical_job_id("40000000-0000-4000-8000-000000000001")
+
 
 def _employer_analysis(*keywords: str) -> EmployerAnalysis:
     canonical = JobAnalysis(
@@ -70,7 +72,7 @@ def _employer_analysis(*keywords: str) -> EmployerAnalysis:
     )
     return EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId("https://example.com/senior-backend"),
+        job_id=_JOB_ID,
         generation=1,
         snapshot_hash=compute_snapshot_hash(" ".join(keywords) or "jd"),
         canonical=canonical,
@@ -117,7 +119,7 @@ def _requirement_analysis() -> EmployerAnalysis:
     )
     return EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId("https://example.com/senior-backend"),
+        job_id=_JOB_ID,
         generation=1,
         snapshot_hash=compute_snapshot_hash("Python API Salesforce"),
         canonical=canonical,
@@ -143,7 +145,7 @@ def _requirement_fit_report(
         reason="No grounded Salesforce evidence.",
     )
     return RequirementFitReport(
-        job_id="https://example.com/senior-backend",
+        job_id=_JOB_ID,
         score_version=1,
         employer_analysis_generation=1,
         profile_snapshot_version=1,
@@ -260,6 +262,7 @@ def _profile() -> dict:
 
 def _senior_job() -> dict:
     return {
+        "job_id": str(_JOB_ID),
         "url": "https://example.com/senior-backend",
         "title": "Senior Backend Engineer",
         "skills": ["Python", "PostgreSQL", "API performance"],
@@ -392,6 +395,7 @@ def test_target_profile_adapter_uses_analysis_fit_and_profile_evidence() -> None
     target_profile = plan.target_profile
 
     assert target_profile is not None
+    assert target_profile.job_id == str(_JOB_ID)
     assert target_profile.target_role == "Senior Backend Engineer"
     assert target_profile.seniority == "senior"
     assert [item.requirement_id for item in target_profile.must_have_requirements] == [
@@ -450,7 +454,7 @@ def test_education_requirement_fit_evidence_is_claimable_in_coverage_graph() -> 
     )
     analysis = EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId("https://example.com/senior-backend"),
+        job_id=_JOB_ID,
         generation=1,
         snapshot_hash=compute_snapshot_hash("degree"),
         canonical=canonical,
@@ -460,7 +464,7 @@ def test_education_requirement_fit_evidence_is_claimable_in_coverage_graph() -> 
         legs_attempted=1,
     )
     report = RequirementFitReport(
-        job_id="https://example.com/senior-backend",
+        job_id=_JOB_ID,
         score_version=1,
         employer_analysis_generation=1,
         profile_snapshot_version=1,
@@ -928,7 +932,7 @@ def test_grounded_gate_reproduces_apply_review_contradiction_shape() -> None:
         for index in range(1, 10)
     )
     target = TargetProfile(
-        job_id="https://example.com/digital-hub-director",
+        job_id=str(_JOB_ID),
         target_role="Digital Hub Director",
         seniority="director",
         must_have_requirements=requirements[:8],

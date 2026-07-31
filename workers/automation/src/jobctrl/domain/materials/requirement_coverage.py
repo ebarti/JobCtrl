@@ -9,6 +9,7 @@ from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.materials.analysis import EmployerAnalysis
 from jobctrl.domain.materials.policy import RequirementLedTailoringControls
 
@@ -728,7 +729,7 @@ def build_target_profile(
     nice_to_have = tuple(requirement for requirement in requirements if requirement.tier != "must_have")
     job_skills = _clean_string_tuple(job.get("skills", ()))
     return TargetProfile(
-        job_id=str(job.get("url") or getattr(requirement_fit_report, "job_id", "") or ""),
+        job_id=str(canonical_job_id(str(job["job_id"]))),
         target_role=str(job.get("title") or job.get("role_title") or ""),
         seniority=str(employer_analysis.canonical.inferred_seniority or ""),
         must_have_requirements=must_have,

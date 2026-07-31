@@ -12,6 +12,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.materials.analysis import EmployerAnalysis
 from jobctrl.domain.materials.policy import (
     RequirementLedTailoringControls,
@@ -986,8 +987,8 @@ def _requirement_fit_report_matches(
 ) -> bool:
     if requirement_fit_report is None:
         return False
-    job_url = str(job.get("url") or "").strip()
-    if job_url and str(getattr(requirement_fit_report, "job_id", "") or "") != job_url:
+    job_id = canonical_job_id(str(job["job_id"]))
+    if getattr(requirement_fit_report, "job_id", None) != job_id:
         return False
     generation = int(getattr(requirement_fit_report, "employer_analysis_generation", 0) or 0)
     return generation == employer_analysis.generation

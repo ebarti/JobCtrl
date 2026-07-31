@@ -982,6 +982,69 @@ def _load_tailor_eligible_job_by_id(
     stable_job_id = canonical_job_id(str(job_id))
     if not str(job.get("full_description") or "").strip():
         return None
+    score_stage = conn.execute(
+        """
+        SELECT state
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'score'
+        """,
+        (str(tenant_id), str(stable_job_id)),
+    ).fetchone()
+    if score_stage is not None and str(score_stage["state"]) != "succeeded":
+        return None
+    if conn.execute(
+        """
+        SELECT 1
+        FROM job_score_staleness
+        WHERE tenant_id = ? AND job_id = ? AND resolved = 0
+        LIMIT 1
+        """,
+        (str(tenant_id), str(stable_job_id)),
+    ).fetchone() is not None:
+        return None
+    posting_state = conn.execute(
+        """
+        SELECT latest_active_state, latest_confidence, latest_quarantine_reason
+        FROM posting_snapshot_sets
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(tenant_id), str(stable_job_id)),
+    ).fetchone()
+    if posting_state is not None:
+        active_state = str(posting_state["latest_active_state"] or "").lower()
+        if active_state in {
+            "closed",
+            "expired",
+            "removed",
+            "location_incompatible",
+        }:
+            return None
+        confidence = str(posting_state["latest_confidence"] or "").lower()
+        quarantine_reason = str(
+            posting_state["latest_quarantine_reason"] or ""
+        ).lower()
+        if confidence == "low" and quarantine_reason not in {"", "none"}:
+            return None
+    tailor_stage = conn.execute(
+        """
+        SELECT state, attempt_count
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (str(tenant_id), str(stable_job_id)),
+    ).fetchone()
+    if tailor_stage is not None:
+        tailor_state = str(tailor_stage["state"])
+        attempt_count = int(tailor_stage["attempt_count"] or 0)
+        if tailor_state == "exhausted" or attempt_count >= 5:
+            return None
+        if not retailor and tailor_state not in {
+            "pending",
+            "running",
+            "failed",
+            "stale",
+        }:
+            return None
     score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
     if score is None:
         return None

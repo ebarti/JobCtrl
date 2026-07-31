@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from jobctrl.cli import app
 from jobctrl.database import close_connection, get_connection, get_jobs_by_stage, init_db
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.materials import (
     Artifact,
     ArtifactStatus,
@@ -32,6 +32,8 @@ from jobctrl.scoring.tailor import (
     tailor_job_by_url,
 )
 from jobctrl.infrastructure.materials import HtmlResumePdfAdapter
+
+_JOB_ID = canonical_job_id("80000000-0000-4000-8000-000000000001")
 
 
 def _insert_job(conn, *, url: str, fit_score: int = 9, tailored_resume_path=None, tailor_attempts: int = 0) -> None:
@@ -521,6 +523,7 @@ def test_tailor_one_job_surfaces_use_case_pdf_path(tmp_path):
     # The use case owns PDF rendering (it renders the approved resume before
     # superseding the prior generation). The runner only surfaces the outcome.
     job = {
+        "job_id": str(_JOB_ID),
         "url": "https://example.com/pdf-job",
         "title": "Platform Engineer",
         "site": "example",
@@ -530,7 +533,7 @@ def test_tailor_one_job_surfaces_use_case_pdf_path(tmp_path):
     text_path.write_text("tailored resume", encoding="utf-8")
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=_JOB_ID,
         created_at="2026-05-25T00:00:00+00:00",
     ).with_resume_attempt(
         Artifact.create(
@@ -566,6 +569,7 @@ def test_tailor_one_job_surfaces_use_case_pdf_failure(tmp_path):
     # A PDF render failure is handled inside the use case (it demotes the new
     # generation and returns an error outcome); the runner passes it through.
     job = {
+        "job_id": str(_JOB_ID),
         "url": "https://example.com/pdf-job",
         "title": "Platform Engineer",
         "site": "example",
@@ -575,7 +579,7 @@ def test_tailor_one_job_surfaces_use_case_pdf_failure(tmp_path):
     text_path.write_text("tailored resume", encoding="utf-8")
     rejected = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=_JOB_ID,
         created_at="2026-05-25T00:00:00+00:00",
     ).with_resume_attempt(
         Artifact.create(

@@ -104,6 +104,20 @@ def _seed_job(
             now,
         ),
     )
+    tailor_module.ensure_job_stage_rows(
+        conn,
+        job_id,
+        tenant_id=tenant_id,
+        discovered_at=now,
+    )
+    conn.execute(
+        """
+        UPDATE job_stage_states
+        SET state = 'succeeded'
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'score'
+        """,
+        (str(tenant_id), str(job_id)),
+    )
     conn.commit()
 
 
@@ -155,13 +169,14 @@ def test_tailor_job_by_id_is_tenant_scoped_and_writes_canonical_state(
         (str(_TENANT_A), str(_JOB_ID)),
     ).fetchone()
     assert state["state"] == "succeeded"
-    assert conn.execute(
+    other_tenant_state = conn.execute(
         """
-        SELECT 1 FROM job_stage_states
+        SELECT state FROM job_stage_states
         WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
         """,
         (str(_TENANT_B), str(_JOB_ID)),
-    ).fetchone() is None
+    ).fetchone()
+    assert other_tenant_state["state"] == "pending"
     event = conn.execute(
         """
         SELECT tenant_id, job_id, event_type FROM job_events
@@ -255,6 +270,203 @@ def test_tailor_job_by_id_skips_blocked_scores_without_generation(
         "cover": "blocked",
         "tailor": "blocked",
     }
+
+
+@pytest.mark.parametrize(
+    ("score_state", "seed_staleness"),
+    [
+        ("stale", False),
+        ("succeeded", True),
+    ],
+)
+def test_tailor_job_by_id_rejects_stale_score_state_before_generation(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    score_state: str,
+    seed_staleness: bool,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/stale-score")
+    tailor_module.ensure_job_stage_rows(
+        conn,
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        discovered_at="2026-07-31T12:00:00+00:00",
+    )
+    conn.execute(
+        """
+        UPDATE job_stage_states
+        SET state = ?
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'score'
+        """,
+        (score_state, str(_TENANT_A), str(_JOB_ID)),
+    )
+    if seed_staleness:
+        conn.execute(
+            """
+            INSERT INTO job_score_staleness (
+                tenant_id, job_id, stale_reason,
+                old_policy_version, new_policy_version, marked_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(_TENANT_A),
+                str(_JOB_ID),
+                "policy_changed",
+                1,
+                2,
+                "2026-07-31T12:00:01+00:00",
+            ),
+        )
+    conn.commit()
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(
+        tailor_module,
+        "_tailor_one_job",
+        lambda *_args, **_kwargs: pytest.fail("stale score reached generation"),
+    )
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+    )
+
+    assert result["reason"] == "not_eligible"
+
+
+@pytest.mark.parametrize(
+    ("active_state", "confidence", "quarantine_reason"),
+    [
+        ("closed", "high", None),
+        ("active", "low", "contradictory_snapshot"),
+    ],
+)
+def test_tailor_job_by_id_rejects_inactive_or_quarantined_postings(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    active_state: str,
+    confidence: str,
+    quarantine_reason: str | None,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/quarantined")
+    conn.execute(
+        """
+        INSERT INTO posting_snapshot_sets (
+            tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
+            latest_active_state, latest_confidence,
+            latest_quarantine_reason, updated_at
+        ) VALUES (?, ?, '{}', 1, ?, ?, ?, ?)
+        """,
+        (
+            str(_TENANT_A),
+            str(_JOB_ID),
+            active_state,
+            confidence,
+            quarantine_reason,
+            "2026-07-31T12:00:01+00:00",
+        ),
+    )
+    conn.commit()
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(
+        tailor_module,
+        "_tailor_one_job",
+        lambda *_args, **_kwargs: pytest.fail(
+            "inactive or quarantined posting reached generation"
+        ),
+    )
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+    )
+
+    assert result["reason"] == "not_eligible"
+
+
+def test_tailor_job_by_id_allows_explicit_low_confidence_override_state(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/override")
+    conn.execute(
+        """
+        INSERT INTO posting_snapshot_sets (
+            tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
+            latest_active_state, latest_confidence,
+            latest_quarantine_reason, updated_at
+        ) VALUES (?, ?, '{}', 1, 'active', 'low', 'none', ?)
+        """,
+        (
+            str(_TENANT_A),
+            str(_JOB_ID),
+            "2026-07-31T12:00:01+00:00",
+        ),
+    )
+    conn.commit()
+    calls: list[str] = []
+
+    def fake_tailor(job: dict, *_args, **_kwargs) -> dict:
+        calls.append(str(job["job_id"]))
+        return _fake_approved_result(job)
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", fake_tailor)
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+    )
+
+    assert result["status"] == "approved"
+    assert calls == [str(_JOB_ID)]
+
+
+@pytest.mark.parametrize("retry_state", ["running", "failed"])
+def test_tailor_job_by_id_allows_temporal_retry_to_reenter_generation(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    retry_state: str,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/retry")
+    conn.execute(
+        """
+        UPDATE job_stage_states
+        SET state = ?, attempt_count = 1
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (retry_state, str(_TENANT_A), str(_JOB_ID)),
+    )
+    conn.commit()
+    calls: list[str] = []
+
+    def fake_tailor(job: dict, *_args, **_kwargs) -> dict:
+        calls.append(str(job["job_id"]))
+        return _fake_approved_result(job)
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", fake_tailor)
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+    )
+
+    assert result["status"] == "approved"
+    assert calls == [str(_JOB_ID)]
 
 
 def test_tailor_job_by_id_rejects_deleted_and_url_shaped_targets_before_generation(

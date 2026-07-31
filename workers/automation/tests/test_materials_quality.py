@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
@@ -27,8 +27,13 @@ from jobctrl.domain.scoring import (
 )
 from jobctrl.domain.tenant import LOCAL_TENANT
 
+_JOB_ID = canonical_job_id("50000000-0000-4000-8000-000000000001")
+_OTHER_JOB_ID = canonical_job_id("50000000-0000-4000-8000-000000000002")
 
-def _employer_analysis(*keywords: str, job_url: str = "https://example.com/senior-backend") -> EmployerAnalysis:
+
+def _employer_analysis(
+    *keywords: str, job_id: JobId = _JOB_ID
+) -> EmployerAnalysis:
     """Minimal canonical analysis supplying the given job keywords (Phase 1, D-21).
 
     ``build_tailoring_plan`` now sources its keywords from the persisted
@@ -44,7 +49,7 @@ def _employer_analysis(*keywords: str, job_url: str = "https://example.com/senio
     )
     return EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job_url),
+        job_id=job_id,
         generation=1,
         snapshot_hash=compute_snapshot_hash(" ".join(keywords) or "jd"),
         canonical=canonical,
@@ -55,7 +60,7 @@ def _employer_analysis(*keywords: str, job_url: str = "https://example.com/senio
     )
 
 
-def _requirement_analysis(job_url: str = "https://example.com/senior-backend") -> EmployerAnalysis:
+def _requirement_analysis(job_id: JobId = _JOB_ID) -> EmployerAnalysis:
     canonical = JobAnalysis(
         role_framing="Backend ownership.",
         inferred_seniority="senior",
@@ -91,7 +96,7 @@ def _requirement_analysis(job_url: str = "https://example.com/senior-backend") -
     )
     return EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job_url),
+        job_id=job_id,
         generation=1,
         snapshot_hash=compute_snapshot_hash("Python API Salesforce"),
         canonical=canonical,
@@ -102,9 +107,9 @@ def _requirement_analysis(job_url: str = "https://example.com/senior-backend") -
     )
 
 
-def _requirement_fit_report(job_url: str = "https://example.com/senior-backend") -> RequirementFitReport:
+def _requirement_fit_report(job_id: JobId = _JOB_ID) -> RequirementFitReport:
     return RequirementFitReport(
-        job_id=job_url,
+        job_id=job_id,
         score_version=1,
         employer_analysis_generation=1,
         profile_snapshot_version=1,
@@ -235,6 +240,7 @@ def _profile() -> dict:
 
 def _senior_job() -> dict:
     return {
+        "job_id": str(_JOB_ID),
         "url": "https://example.com/senior-backend",
         "title": "Senior Backend Engineer",
         "skills": ["Python", "PostgreSQL", "API performance"],
@@ -315,7 +321,7 @@ def test_quality_counts_fixed_education_in_final_resume_evidence() -> None:
     )
     analysis = EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId("https://example.com/senior-backend"),
+        job_id=_JOB_ID,
         generation=1,
         snapshot_hash=compute_snapshot_hash("degree"),
         canonical=canonical,
@@ -325,7 +331,7 @@ def test_quality_counts_fixed_education_in_final_resume_evidence() -> None:
         legs_attempted=1,
     )
     report = RequirementFitReport(
-        job_id="https://example.com/senior-backend",
+        job_id=_JOB_ID,
         score_version=1,
         employer_analysis_generation=1,
         profile_snapshot_version=1,
@@ -464,6 +470,7 @@ def test_build_tailoring_plan_sources_keywords_from_canonical_analysis() -> None
     # D-21: keywords come from the persisted, evidence-grounded employer
     # analysis — the old _extract_job_keywords stopword heuristic is gone.
     job = {
+        "job_id": str(_JOB_ID),
         "url": "https://example.com/platform",
         "title": "Head of Platform Engineering",
         # Marketing copy in the JD must NOT leak into keywords; only the
@@ -475,7 +482,7 @@ def test_build_tailoring_plan_sources_keywords_from_canonical_analysis() -> None
         "kubernetes",
         "ci/cd",
         "observability",
-        job_url="https://example.com/platform",
+        job_id=_JOB_ID,
     )
 
     plan = build_tailoring_plan(_profile(), job, employer_analysis=analysis)
@@ -514,7 +521,7 @@ def test_build_tailoring_plan_uses_requirement_fit_directives() -> None:
 
 def test_build_tailoring_plan_ignores_stale_requirement_fit_report_for_coverage() -> None:
     analysis = _requirement_analysis()
-    stale_report = _requirement_fit_report("https://example.com/old-job")
+    stale_report = _requirement_fit_report(_OTHER_JOB_ID)
 
     plan = build_tailoring_plan(
         _profile(),
@@ -700,6 +707,7 @@ def test_quality_requires_seniority_signal_for_senior_roles_when_evidence_exists
 
 def test_mid_level_jobs_do_not_require_executive_framing() -> None:
     job = {
+        "job_id": str(_JOB_ID),
         "url": "https://example.com/backend",
         "title": "Backend Engineer",
         "skills": ["Python"],
@@ -722,6 +730,7 @@ def test_mid_level_jobs_do_not_require_executive_framing() -> None:
 
 def test_mid_level_jobs_warn_on_executive_style_overreach() -> None:
     job = {
+        "job_id": str(_JOB_ID),
         "url": "https://example.com/backend",
         "title": "Backend Engineer",
         "skills": ["Python"],
