@@ -21,10 +21,16 @@ describe("canonical job identity resolution", () => {
       CREATE TABLE job_locators (
         tenant_id TEXT NOT NULL,
         job_id TEXT NOT NULL,
-        locator_kind TEXT NOT NULL,
+        locator_kind TEXT NOT NULL CHECK (locator_kind = 'posting_url'),
         locator_value TEXT NOT NULL,
-        is_current INTEGER NOT NULL DEFAULT 1,
-        PRIMARY KEY (tenant_id, locator_kind, locator_value)
+        is_current INTEGER NOT NULL CHECK (is_current IN (0, 1)),
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        retired_at TEXT,
+        PRIMARY KEY (tenant_id, job_id, locator_kind, locator_value),
+        UNIQUE (tenant_id, locator_kind, locator_value),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
       );
     `);
     const insert = db.prepare(
