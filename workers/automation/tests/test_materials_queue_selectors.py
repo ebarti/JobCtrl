@@ -3,15 +3,14 @@
 Mirrors the Phase 5 ``test_score_queue_selectors`` pattern: after the
 :class:`SqliteMaterialsRepository` saves a MaterialsSet, the
 ``get_jobs_by_stage`` selectors (which back the worker queues +
-``pipeline.apply_jobs``) must reflect the new materials immediately —
-the legacy ``jobs.tailored_resume_path`` / ``jobs.cover_letter_path``
-columns stay empty on the new write path, so the LEFT JOIN is what
-keeps the pipeline observable.
+``pipeline.apply_jobs``) must reflect newly saved materials immediately,
+without writing the deprecated path columns on ``jobs``.
 """
 
 from __future__ import annotations
 
 import sqlite3
+import uuid
 from pathlib import Path
 
 import pytest
@@ -43,6 +42,35 @@ def _seed_job(conn: sqlite3.Connection, url: str, fit_score: int = 9) -> str:
     )
     conn.commit()
     return url
+
+
+def _selector_job_id(name: str) -> JobId:
+    return JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, f"jobctrl-selector-test:{name}")))
+
+
+def _seed_selector_job(
+    conn: sqlite3.Connection,
+    name: str,
+    fit_score: int = 9,
+) -> JobId:
+    job_id = _selector_job_id(name)
+    conn.execute(
+        "INSERT INTO jobs "
+        "(tenant_id, job_id, url, title, site, full_description, fit_score, discovered_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            LOCAL_TENANT,
+            job_id,
+            f"https://example.com/{name}",
+            "Engineer",
+            "Acme",
+            "desc",
+            fit_score,
+            "2024-01-01T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+    return job_id
 
 
 def _make_resume_artifact(path: str = "/tmp/r.txt") -> Artifact:
@@ -78,12 +106,12 @@ def _make_resume_pdf_artifact(path: str = "/tmp/r.pdf") -> Artifact:
 
 
 def test_pending_tailor_excludes_jobs_with_approved_resume(conn: sqlite3.Connection) -> None:
-    url_pending = _seed_job(conn, "https://example.com/pending")
-    url_done = _seed_job(conn, "https://example.com/done")
+    pending_job_id = _seed_selector_job(conn, "pending")
+    done_job_id = _seed_selector_job(conn, "done")
     repo = SqliteMaterialsRepository(conn)
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url_done),
+        job_id=done_job_id,
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         _make_resume_artifact(),
@@ -94,17 +122,17 @@ def test_pending_tailor_excludes_jobs_with_approved_resume(conn: sqlite3.Connect
     repo.save(materials)
 
     rows = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7, limit=0)
-    urls = {row["url"] for row in rows}
-    assert url_pending in urls
-    assert url_done not in urls
+    job_ids = {row["job_id"] for row in rows}
+    assert pending_job_id in job_ids
+    assert done_job_id not in job_ids
 
 
 def test_pending_tailor_with_retailor_includes_done_jobs(conn: sqlite3.Connection) -> None:
-    url_done = _seed_job(conn, "https://example.com/done")
+    done_job_id = _seed_selector_job(conn, "done")
     repo = SqliteMaterialsRepository(conn)
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url_done),
+        job_id=done_job_id,
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         _make_resume_artifact(),
@@ -117,20 +145,18 @@ def test_pending_tailor_with_retailor_includes_done_jobs(conn: sqlite3.Connectio
     rows = get_jobs_by_stage(
         conn=conn, stage="pending_tailor", min_score=7, limit=0, retailor=True
     )
-    assert url_done in {row["url"] for row in rows}
+    assert done_job_id in {row["job_id"] for row in rows}
 
 
-def test_pending_tailor_promotes_jm_path_into_legacy_dict_slot(
+def test_tailored_selector_exposes_canonical_material_path(
     conn: sqlite3.Connection,
 ) -> None:
-    """The dict surfaced to legacy callers carries the joined materials path
-    in the ``tailored_resume_path`` slot so untouched consumers (apply
-    launcher) keep working."""
-    url = _seed_job(conn, "https://example.com/done")
+    """The tailored selector exposes the canonical resume path to consumers."""
+    job_id = _seed_selector_job(conn, "done")
     repo = SqliteMaterialsRepository(conn)
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=job_id,
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         _make_resume_artifact("/tmp/specific-path.txt"),
@@ -142,7 +168,9 @@ def test_pending_tailor_promotes_jm_path_into_legacy_dict_slot(
 
     rows = get_jobs_by_stage(conn=conn, stage="tailored")
     assert any(
-        row["url"] == url and row.get("tailored_resume_path") == "/tmp/specific-path.txt"
+        row["tenant_id"] == LOCAL_TENANT
+        and row["job_id"] == job_id
+        and row["tailored_resume_path"] == "/tmp/specific-path.txt"
         for row in rows
     )
 
@@ -155,13 +183,13 @@ def test_pending_tailor_promotes_jm_path_into_legacy_dict_slot(
 def test_pending_cover_returns_only_jobs_with_resume_no_cover(
     conn: sqlite3.Connection,
 ) -> None:
-    url_resume = _seed_job(conn, "https://example.com/resume-only")
-    url_text_only = _seed_job(conn, "https://example.com/text-only")
-    url_full = _seed_job(conn, "https://example.com/full")
+    resume_job_id = _seed_selector_job(conn, "resume-only")
+    text_only_job_id = _seed_selector_job(conn, "text-only")
+    full_job_id = _seed_selector_job(conn, "full")
     repo = SqliteMaterialsRepository(conn)
     base = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url_resume),
+        job_id=resume_job_id,
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         _make_resume_artifact(),
@@ -175,7 +203,7 @@ def test_pending_cover_returns_only_jobs_with_resume_no_cover(
     repo.save(base)
     text_only = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url_text_only),
+        job_id=text_only_job_id,
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         _make_resume_artifact("/tmp/text-only-r.txt"),
@@ -186,7 +214,7 @@ def test_pending_cover_returns_only_jobs_with_resume_no_cover(
     repo.save(text_only)
     full = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url_full),
+        job_id=full_job_id,
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         _make_resume_artifact("/tmp/full-r.txt"),
@@ -204,10 +232,10 @@ def test_pending_cover_returns_only_jobs_with_resume_no_cover(
     repo.save(full)
 
     rows = get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7, limit=0)
-    urls = {row["url"] for row in rows}
-    assert url_resume in urls
-    assert url_text_only not in urls
-    assert url_full not in urls
+    job_ids = {row["job_id"] for row in rows}
+    assert resume_job_id in job_ids
+    assert text_only_job_id not in job_ids
+    assert full_job_id not in job_ids
 
 
 # ---------------------------------------------------------------------------
@@ -218,11 +246,11 @@ def test_pending_cover_returns_only_jobs_with_resume_no_cover(
 def test_pending_pdf_includes_jobs_with_text_but_missing_pdf(
     conn: sqlite3.Connection,
 ) -> None:
-    url = _seed_job(conn, "https://example.com/needs-pdf")
+    job_id = _seed_selector_job(conn, "needs-pdf")
     repo = SqliteMaterialsRepository(conn)
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=job_id,
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         _make_resume_artifact(),
@@ -233,7 +261,7 @@ def test_pending_pdf_includes_jobs_with_text_but_missing_pdf(
     repo.save(materials)
 
     rows = get_jobs_by_stage(conn=conn, stage="pending_pdf", limit=0)
-    assert url in {row["url"] for row in rows}
+    assert job_id in {row["job_id"] for row in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -242,14 +270,13 @@ def test_pending_pdf_includes_jobs_with_text_but_missing_pdf(
 
 
 def test_get_stats_tailored_count_reflects_materials_writes(conn: sqlite3.Connection) -> None:
-    """``stats['tailored']`` must reflect a freshly-saved MaterialsSet
-    even though new code never writes ``jobs.tailored_resume_path``."""
-    url = _seed_job(conn, "https://example.com/job")
+    """``stats['tailored']`` must reflect a freshly-saved MaterialsSet."""
+    job_id = _seed_selector_job(conn, "job")
     repo = SqliteMaterialsRepository(conn)
     repo.save(
         MaterialsSetFactory.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+            job_id=job_id,
             created_at="2024-01-01T00:00:00+00:00",
         ).with_resume_attempt(
             _make_resume_artifact(),
@@ -260,21 +287,20 @@ def test_get_stats_tailored_count_reflects_materials_writes(conn: sqlite3.Connec
     )
     stats = get_stats(conn)
     assert stats["tailored"] == 1
-    # Legacy column stays NULL on the new path.
-    legacy_count = conn.execute(
+    deprecated_count = conn.execute(
         "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL"
     ).fetchone()[0]
-    assert legacy_count == 0
+    assert deprecated_count == 0
 
 
 def test_get_stats_with_cover_letter_count_reflects_materials_writes(
     conn: sqlite3.Connection,
 ) -> None:
-    url = _seed_job(conn, "https://example.com/job")
+    job_id = _seed_selector_job(conn, "job")
     repo = SqliteMaterialsRepository(conn)
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=job_id,
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         _make_resume_artifact(),
@@ -293,16 +319,17 @@ def test_get_stats_with_cover_letter_count_reflects_materials_writes(
 
 def test_get_stats_ready_to_apply_reflects_materials_writes(conn: sqlite3.Connection) -> None:
     """``ready_to_apply`` requires tailored text, resume PDF, and application_url."""
-    url = _seed_job(conn, "https://example.com/job")
+    job_id = _seed_selector_job(conn, "job")
     conn.execute(
-        "UPDATE jobs SET application_url = 'https://example.com/apply' WHERE url = ?",
-        (url,),
+        "UPDATE jobs SET application_url = 'https://example.com/apply' "
+        "WHERE tenant_id = ? AND job_id = ?",
+        (LOCAL_TENANT, job_id),
     )
     repo = SqliteMaterialsRepository(conn)
     repo.save(
         MaterialsSetFactory.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+            job_id=job_id,
             created_at="2024-01-01T00:00:00+00:00",
         ).with_resume_attempt(
             _make_resume_artifact(),
@@ -321,16 +348,17 @@ def test_get_stats_ready_to_apply_reflects_materials_writes(conn: sqlite3.Connec
 def test_get_stats_ready_to_apply_excludes_text_only_tailored_materials(
     conn: sqlite3.Connection,
 ) -> None:
-    url = _seed_job(conn, "https://example.com/text-only")
+    job_id = _seed_selector_job(conn, "text-only")
     conn.execute(
-        "UPDATE jobs SET application_url = 'https://example.com/apply' WHERE url = ?",
-        (url,),
+        "UPDATE jobs SET application_url = 'https://example.com/apply' "
+        "WHERE tenant_id = ? AND job_id = ?",
+        (LOCAL_TENANT, job_id),
     )
     repo = SqliteMaterialsRepository(conn)
     repo.save(
         MaterialsSetFactory.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+            job_id=job_id,
             created_at="2024-01-01T00:00:00+00:00",
         ).with_resume_attempt(
             _make_resume_artifact(),
@@ -352,13 +380,13 @@ def test_pipeline_count_pending_cover_excludes_text_only_tailored_materials(
     from jobctrl import pipeline
     from jobctrl.pipeline import runner as pipeline_runner
 
-    url_text_only = _seed_job(conn, "https://example.com/text-only")
-    url_with_pdf = _seed_job(conn, "https://example.com/with-pdf")
+    text_only_job_id = _seed_selector_job(conn, "text-only")
+    with_pdf_job_id = _seed_selector_job(conn, "with-pdf")
     repo = SqliteMaterialsRepository(conn)
     repo.save(
         MaterialsSetFactory.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url_text_only),
+            job_id=text_only_job_id,
             created_at="2024-01-01T00:00:00+00:00",
         ).with_resume_attempt(
             _make_resume_artifact("/tmp/text-only-r.txt"),
@@ -370,7 +398,7 @@ def test_pipeline_count_pending_cover_excludes_text_only_tailored_materials(
     repo.save(
         MaterialsSetFactory.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url_with_pdf),
+            job_id=with_pdf_job_id,
             created_at="2024-01-01T00:00:00+00:00",
         ).with_resume_attempt(
             _make_resume_artifact("/tmp/with-pdf-r.txt"),
@@ -391,13 +419,13 @@ def test_get_stats_untailored_eligible_excludes_materials_tailored(
     conn: sqlite3.Connection,
 ) -> None:
     """Once a job is tailored via materials, ``untailored_eligible`` drops it."""
-    url_tailored = _seed_job(conn, "https://example.com/tailored")
-    url_pending = _seed_job(conn, "https://example.com/pending")
+    tailored_job_id = _seed_selector_job(conn, "tailored")
+    pending_job_id = _seed_selector_job(conn, "pending")
     repo = SqliteMaterialsRepository(conn)
     repo.save(
         MaterialsSetFactory.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url_tailored),
+            job_id=tailored_job_id,
             created_at="2024-01-01T00:00:00+00:00",
         ).with_resume_attempt(
             _make_resume_artifact(),
@@ -416,11 +444,11 @@ def test_get_stats_untailored_eligible_excludes_materials_tailored(
     from jobctrl.infrastructure.scoring import SqliteScoreRepository
 
     score_repo = SqliteScoreRepository(conn)
-    for url in (url_tailored, url_pending):
+    for job_id in (tailored_job_id, pending_job_id):
         score_repo.save(
             JobScore.initial(
                 tenant_id=LOCAL_TENANT,
-                job_id=JobId(url),
+                job_id=job_id,
                 fit_score=FitScore.create(9),
                 breakdown=ScoreBreakdown(reasoning="ok"),
                 matched_keywords=MatchedKeywords.from_iterable(["python"]),
@@ -434,18 +462,31 @@ def test_get_stats_untailored_eligible_excludes_materials_tailored(
 
 def test_get_stats_tailor_exhausted_reads_stage_state(conn: sqlite3.Connection) -> None:
     """``tailor_exhausted`` honours the new ``job_stage_states.state``."""
-    url = _seed_job(conn, "https://example.com/job")
+    job_id = _seed_selector_job(conn, "job")
     from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
-    ensure_job_stage_rows(conn, url, discovered_at="2024-01-01T00:00:00+00:00")
+    ensure_job_stage_rows(
+        conn,
+        job_id,
+        tenant_id=LOCAL_TENANT,
+        discovered_at="2024-01-01T00:00:00+00:00",
+    )
     # Walk the state machine: pending → running → failed → exhausted.
-    set_stage_state(conn, url, "tailor", "running", started_at="2024-01-02T00:00:00+00:00")
-    set_stage_state(conn, url, "tailor", "failed", attempt_count=4)
     set_stage_state(
         conn,
-        url,
+        job_id,
+        "tailor",
+        "running",
+        tenant_id=LOCAL_TENANT,
+        started_at="2024-01-02T00:00:00+00:00",
+    )
+    set_stage_state(conn, job_id, "tailor", "failed", tenant_id=LOCAL_TENANT, attempt_count=4)
+    set_stage_state(
+        conn,
+        job_id,
         "tailor",
         "exhausted",
+        tenant_id=LOCAL_TENANT,
         attempt_count=5,
         max_attempts=5,
         finished_at="2024-01-02T00:00:00+00:00",
@@ -464,24 +505,37 @@ def test_pending_tailor_excludes_exhausted_jobs_via_stage_state(
 ) -> None:
     """A job whose ``job_stage_states.state == 'exhausted'`` for tailor
     must NOT appear in the pending_tailor selector."""
-    url = _seed_job(conn, "https://example.com/exhausted")
+    job_id = _seed_selector_job(conn, "exhausted")
     from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
-    ensure_job_stage_rows(conn, url, discovered_at="2024-01-01T00:00:00+00:00")
+    ensure_job_stage_rows(
+        conn,
+        job_id,
+        tenant_id=LOCAL_TENANT,
+        discovered_at="2024-01-01T00:00:00+00:00",
+    )
     # Walk the state machine: pending → running → failed → exhausted.
-    set_stage_state(conn, url, "tailor", "running", started_at="2024-01-02T00:00:00+00:00")
-    set_stage_state(conn, url, "tailor", "failed", attempt_count=4)
     set_stage_state(
         conn,
-        url,
+        job_id,
+        "tailor",
+        "running",
+        tenant_id=LOCAL_TENANT,
+        started_at="2024-01-02T00:00:00+00:00",
+    )
+    set_stage_state(conn, job_id, "tailor", "failed", tenant_id=LOCAL_TENANT, attempt_count=4)
+    set_stage_state(
+        conn,
+        job_id,
         "tailor",
         "exhausted",
+        tenant_id=LOCAL_TENANT,
         attempt_count=5,
         max_attempts=5,
         finished_at="2024-01-02T00:00:00+00:00",
     )
     rows = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7, limit=0)
-    assert url not in {row["url"] for row in rows}
+    assert job_id not in {row["job_id"] for row in rows}
 
 
 def test_pending_tailor_excludes_jobs_with_high_attempt_count(
@@ -490,22 +544,35 @@ def test_pending_tailor_excludes_jobs_with_high_attempt_count(
     """A job whose ``job_stage_states.attempt_count >= 5`` for tailor
     must NOT appear in pending_tailor — even when ``state`` isn't yet
     'exhausted'."""
-    url = _seed_job(conn, "https://example.com/many-attempts")
+    job_id = _seed_selector_job(conn, "many-attempts")
     from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
-    ensure_job_stage_rows(conn, url, discovered_at="2024-01-01T00:00:00+00:00")
-    set_stage_state(conn, url, "tailor", "running", started_at="2024-01-02T00:00:00+00:00")
+    ensure_job_stage_rows(
+        conn,
+        job_id,
+        tenant_id=LOCAL_TENANT,
+        discovered_at="2024-01-01T00:00:00+00:00",
+    )
     set_stage_state(
         conn,
-        url,
+        job_id,
+        "tailor",
+        "running",
+        tenant_id=LOCAL_TENANT,
+        started_at="2024-01-02T00:00:00+00:00",
+    )
+    set_stage_state(
+        conn,
+        job_id,
         "tailor",
         "failed",
+        tenant_id=LOCAL_TENANT,
         attempt_count=5,
         max_attempts=5,
         finished_at="2024-01-02T00:00:00+00:00",
     )
     rows = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7, limit=0)
-    assert url not in {row["url"] for row in rows}
+    assert job_id not in {row["job_id"] for row in rows}
 
 
 # ---------------------------------------------------------------------------
