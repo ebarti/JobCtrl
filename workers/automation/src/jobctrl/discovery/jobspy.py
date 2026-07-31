@@ -34,8 +34,6 @@ from jobctrl.domain.job_content_identity import (
     job_content_fingerprint,
     normalize_identity_text,
 )
-from jobctrl.domain.identifiers import JobId
-
 # Phase 7 (S-27 round-1 review M1): ``parse_proxy`` lives under
 # ``jobctrl.infrastructure.network`` so the Enrichment context's
 # Playwright fetcher can import it without depending on this Discovery
@@ -690,14 +688,21 @@ def _record_jobspy_source_observation(
     normalized = normalize_observed_url(observed_url)
     source_native_id = normalized or observed_url
     observation_id = "jobspy:" + hashlib.sha256(f"{source_id}:{source_native_id}".encode("utf-8")).hexdigest()[:24]
-    SqliteJobRepository(
+    repository = SqliteJobRepository(
         conn,
         discovery_execution=discovery_execution,
         source_family=("jobspy" if discovery_execution is not None or search_unit_lease is not None else None),
         search_unit_lease=search_unit_lease,
-    ).attach_source_observation(
+    )
+    identity = repository.resolve_by_posting_url(
         LOCAL_TENANT,
-        JobId(job_url),
+        PostingUrl(value=job_url),
+    )
+    if identity is None:
+        raise LookupError(f"JobSpy observation references an unknown posting URL: {job_url!r}")
+    repository.attach_source_observation(
+        LOCAL_TENANT,
+        identity.job_id,
         JobSourceObservation(
             source_observation_id=observation_id,
             source_id=source_id,
@@ -712,14 +717,14 @@ def _record_jobspy_source_observation(
     _apply_write_fence(write_fence)
     record_job_event(
         conn,
-        job_url,
+        identity.job_id,
         "discover",
         "JobSourceObserved",
         message="Job source observed.",
         payload={
             "tenantId": "local",
-            "job_id": job_url,
-            "jobId": job_url,
+            "job_id": str(identity.job_id),
+            "jobId": str(identity.job_id),
             "source_observation_id": observation_id,
             "sourceObservationId": observation_id,
             "source_id": source_id,

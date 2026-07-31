@@ -28,7 +28,9 @@ from jobctrl.domain.job_content_identity import is_genuine_employer_identity
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.ports.events import EventHandler, Subscription
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctrl.discovery.jobspy import _record_jobspy_source_observation
 from jobctrl.infrastructure.discovery import SqliteJobRepository
+from jobctrl.infrastructure.discovery import production_wiring
 
 
 @pytest.fixture
@@ -156,6 +158,102 @@ def test_locator_resolution_does_not_treat_observation_urls_as_job_ids(conn: sql
     assert found is None
     canonical = repo.load(LOCAL_TENANT, job.job_id)
     assert canonical is not None
+
+
+def test_jobspy_source_observation_resolves_canonical_job_id_at_url_boundary(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _job("https://www.linkedin.com/jobs/view/123")
+    SqliteJobRepository(conn).save(job)
+    recorded_events: list[tuple[JobId, str, str, dict[str, object]]] = []
+
+    def record_event(
+        _conn: sqlite3.Connection,
+        job_id: JobId,
+        stage: str,
+        event_type: str,
+        **kwargs: object,
+    ) -> None:
+        payload = kwargs.get("payload")
+        assert isinstance(payload, dict)
+        recorded_events.append((job_id, stage, event_type, payload))
+
+    monkeypatch.setattr("jobctrl.state.record_job_event", record_event)
+
+    _record_jobspy_source_observation(
+        conn,
+        job_url=job.posting_url.value,
+        observed_url="https://www.linkedin.com/jobs/view/123?tracking=feed",
+        source_id="jobspy:linkedin",
+        run_id="jobspy:run-1",
+        observed_at="2026-05-12T01:00:00Z",
+    )
+
+    observation = conn.execute(
+        """
+        SELECT job_id
+        FROM job_source_observations
+        WHERE tenant_id = ? AND source_id = ?
+        """,
+        (
+            str(LOCAL_TENANT),
+            "jobspy:linkedin",
+        ),
+    ).fetchone()
+    assert observation is not None
+    assert observation["job_id"] == str(job.job_id)
+    assert len(recorded_events) == 1
+    assert recorded_events[0][:3] == (
+        job.job_id,
+        "discover",
+        "JobSourceObserved",
+    )
+    assert recorded_events[0][3]["job_id"] == str(job.job_id)
+    assert recorded_events[0][3]["jobId"] == str(job.job_id)
+
+
+def test_source_learning_resolves_canonical_job_id_at_url_boundary(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _job("https://www.linkedin.com/jobs/view/456")
+    SqliteJobRepository(conn).save(job)
+    resolved_events: list[JobId] = []
+
+    monkeypatch.setattr(production_wiring, "ensure_worker_discovery_tables", lambda _conn: None)
+    monkeypatch.setattr(
+        production_wiring,
+        "_record_canonical_identity_resolved_event",
+        lambda _conn, *, job_id, **_kwargs: resolved_events.append(job_id),
+    )
+    monkeypatch.setattr(
+        production_wiring,
+        "_source_id_from_locator_candidate",
+        lambda _conn, _candidate: "greenhouse:acme",
+    )
+    monkeypatch.setattr(
+        production_wiring,
+        "_promote_locator_candidate",
+        lambda _conn, _candidate, **_kwargs: True,
+    )
+
+    learned = production_wiring.learn_posting_source_from_url(
+        conn,
+        job_url=job.posting_url.value,
+        posting_url="https://boards.greenhouse.io/acme/jobs/456",
+        discovered_via_source_id="jobspy:linkedin",
+        observed_at="2026-05-12T01:00:00Z",
+    )
+
+    stored = conn.execute(
+        "SELECT job_id FROM job_canonical_identities WHERE tenant_id = ?",
+        (str(LOCAL_TENANT),),
+    ).fetchone()
+    assert stored is not None
+    assert stored["job_id"] == str(job.job_id)
+    assert resolved_events == [job.job_id]
+    assert learned.action == "promoted"
 
 
 def _job_id_for_url(repo: SqliteJobRepository, url: str) -> JobId:

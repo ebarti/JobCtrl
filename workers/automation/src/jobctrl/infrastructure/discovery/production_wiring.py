@@ -400,16 +400,22 @@ def learn_posting_source_from_url(
         confidence=0.82,
     )
     identity_repository = SqliteJobRepository(conn)
+    resolved_job = identity_repository.resolve_by_posting_url(
+        LOCAL_TENANT,
+        PostingUrl(value=job_url),
+    )
+    if resolved_job is None:
+        raise LookupError(f"Source learning references an unknown posting URL: {job_url!r}")
     _apply_optional_write_fence(write_fence)
     identity_repository.set_canonical_identity(
         LOCAL_TENANT,
-        JobId(job_url),
+        resolved_job.job_id,
         identity,
     )
     _apply_optional_write_fence(write_fence)
     _record_canonical_identity_resolved_event(
         conn,
-        job_url=job_url,
+        job_id=resolved_job.job_id,
         identity=identity,
         occurred_at=observed_at,
         idempotency_key=_event_idempotency_key(
@@ -1613,21 +1619,21 @@ def _record_source_registry_updated_event(
 def _record_canonical_identity_resolved_event(
     conn: sqlite3.Connection,
     *,
-    job_url: str,
+    job_id: JobId,
     identity: CanonicalJobIdentity,
     occurred_at: str,
     idempotency_key: str | None = None,
 ) -> None:
     record_job_event(
         conn,
-        job_url,
+        job_id,
         "discover",
         "CanonicalJobIdentityResolved",
         message="Canonical job identity resolved.",
         payload={
             "tenantId": str(LOCAL_TENANT),
-            "job_id": job_url,
-            "jobId": job_url,
+            "job_id": str(job_id),
+            "jobId": str(job_id),
             "canonical_url": identity.canonical_url,
             "canonicalUrl": identity.canonical_url,
             "ats_kind": identity.ats_kind.value,
