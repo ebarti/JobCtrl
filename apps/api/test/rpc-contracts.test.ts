@@ -234,7 +234,7 @@ describe("preparation RPC contracts", () => {
 
   it("parses and rejects refresh_compensation payloads", () => {
     const params = RefreshCompensationParamsSchema.parse({
-      jobUrl: "https://example.test/job/1",
+      jobId: CANONICAL_JOB_ID,
       observationsJsonPath: "/tmp/reported-compensation.json",
       includeEuroTopTech: true,
       euroTopTechMaxPages: 3,
@@ -242,7 +242,7 @@ describe("preparation RPC contracts", () => {
 
     expect(params).toEqual({
       tenantId: "local",
-      jobUrl: "https://example.test/job/1",
+      jobId: CANONICAL_JOB_ID,
       observationsJsonPath: "/tmp/reported-compensation.json",
       includeEuroTopTech: true,
       euroTopTechMaxPages: 3,
@@ -253,15 +253,18 @@ describe("preparation RPC contracts", () => {
     });
     expect(() => RefreshCompensationParamsSchema.parse({})).toThrow();
     expect(() =>
-      RefreshCompensationParamsSchema.parse({ jobUrl: "https://example.test/job/1", allJobs: true }),
+      RefreshCompensationParamsSchema.parse({ jobId: CANONICAL_JOB_ID, allJobs: true }),
     ).toThrow();
-    expect(() => RefreshCompensationParamsSchema.parse({ jobUrl: "", observationsJsonPath: "" })).toThrow();
+    expect(() => RefreshCompensationParamsSchema.parse({ jobId: "", observationsJsonPath: "" })).toThrow();
+    expect(() =>
+      RefreshCompensationParamsSchema.parse({ jobId: "https://example.test/job/1" }),
+    ).toThrow();
 
     expect(
       RefreshCompensationResultSchema.parse({
         ok: true,
         status: "succeeded",
-        jobUrl: "https://example.test/job/1",
+        postingUrl: "https://example.test/job/1",
         postedFactsRefreshed: 1,
         reportedObservationsLoaded: 2,
         estimatesRefreshed: 1,
@@ -270,7 +273,7 @@ describe("preparation RPC contracts", () => {
     ).toEqual({
       ok: true,
       status: "succeeded",
-      jobUrl: "https://example.test/job/1",
+      postingUrl: "https://example.test/job/1",
       postedFactsRefreshed: 1,
       reportedObservationsLoaded: 2,
       localReportedObservationsLoaded: 0,
@@ -287,14 +290,14 @@ describe("preparation RPC contracts", () => {
       RefreshCompensationResultSchema.parse({
         ok: true,
         status: "succeeded",
-        jobUrl: null,
+        postingUrl: null,
         postedFactsRefreshed: 2,
         reportedObservationsLoaded: 0,
         estimatesRefreshed: 2,
         tenantId: "local",
       }),
     ).toMatchObject({
-      jobUrl: null,
+      postingUrl: null,
       postedFactsRefreshed: 2,
       estimatesRefreshed: 2,
     });

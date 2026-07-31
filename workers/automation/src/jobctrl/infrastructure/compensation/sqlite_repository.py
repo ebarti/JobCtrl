@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from dataclasses import replace
 from typing import Any, Callable
 
-from jobctrl.database import ensure_posted_compensation_tables
 from jobctrl.domain.compensation import PostedCompensationFact, parse_posted_compensation
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 
 COMPENSATION_SOURCE_RE = re.compile(
     r"\b(?:salary|compensation|pay range|base pay|base salary|wage|remuneration|ote)\b|on[- ]target earnings",
@@ -33,7 +34,6 @@ class SqlitePostedCompensationRepository:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        ensure_posted_compensation_tables(conn)
 
     def save_fact(
         self,
@@ -42,16 +42,19 @@ class SqlitePostedCompensationRepository:
         event_idempotency_key: str | None = None,
         event_write_fence: Callable[[], None] | None = None,
     ) -> None:
+        if fact.job_id is None:
+            raise ValueError("JobId is required to persist a posted compensation fact")
+        fact = replace(fact, job_id=canonical_job_id(str(fact.job_id)))
         self._conn.execute(
             """
             INSERT INTO job_posted_compensation_facts (
-                tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+                tenant_id, job_id, source_field, source_text, legacy_raw_salary,
                 parse_state, currency, period, component, minimum_amount,
                 maximum_amount, annualized_minimum_amount, annualized_maximum_amount,
                 annualization_assumption, confidence, warnings_json, parser_version,
                 source_hash, parsed_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+            ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 source_field                 = excluded.source_field,
                 source_text                  = excluded.source_text,
                 legacy_raw_salary            = excluded.legacy_raw_salary,
@@ -72,7 +75,7 @@ class SqlitePostedCompensationRepository:
             """,
             (
                 fact.tenant_id,
-                fact.job_url,
+                fact.job_id,
                 fact.source_field,
                 fact.source_text,
                 fact.legacy_raw_salary,
@@ -100,24 +103,25 @@ class SqlitePostedCompensationRepository:
             idempotency_key=event_idempotency_key,
         )
 
-    def get_fact(self, tenant_id: str, job_url: str) -> PostedCompensationFact | None:
+    def get_fact(self, tenant_id: str, job_id: JobId) -> PostedCompensationFact | None:
+        job_id = canonical_job_id(str(job_id))
         row = self._conn.execute(
             """
-            SELECT tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+            SELECT tenant_id, job_id, source_field, source_text, legacy_raw_salary,
                    parse_state, currency, period, component, minimum_amount,
                    maximum_amount, annualized_minimum_amount, annualized_maximum_amount,
                    annualization_assumption, confidence, warnings_json, parser_version,
                    source_hash, parsed_at
             FROM job_posted_compensation_facts
-            WHERE tenant_id = ? AND job_url = ?
+            WHERE tenant_id = ? AND job_id = ?
             """,
-            (tenant_id, job_url),
+            (tenant_id, job_id),
         ).fetchone()
         return _row_to_fact(row) if row is not None else None
 
     def parse_and_save_job_salary(
         self,
-        job_url: str,
+        job_id: JobId,
         salary: str | None,
         *,
         tenant_id: str = "local",
@@ -126,10 +130,11 @@ class SqlitePostedCompensationRepository:
         event_idempotency_key: str | None = None,
         event_write_fence: Callable[[], None] | None = None,
     ) -> PostedCompensationFact:
+        job_id = canonical_job_id(str(job_id))
         fact = parse_posted_compensation(
             salary,
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             source_field=source_field,
             parsed_at=parsed_at,
         )
@@ -140,12 +145,15 @@ class SqlitePostedCompensationRepository:
         )
         return fact
 
-    def backfill_from_legacy_jobs(self, *, tenant_id: str = "local", parsed_at: str | None = None) -> int:
-        rows = self._conn.execute("SELECT url, salary, full_description, description FROM jobs ORDER BY url").fetchall()
+    def backfill_from_jobs(self, *, tenant_id: str = "local", parsed_at: str | None = None) -> int:
+        rows = self._conn.execute(
+            "SELECT job_id, salary, full_description, description FROM jobs WHERE tenant_id = ? ORDER BY url",
+            (tenant_id,),
+        ).fetchall()
         for row in rows:
             source_text, source_field = posted_compensation_source_from_job(row)
             self.parse_and_save_job_salary(
-                _row_value(row, "url"),
+                canonical_job_id(str(_row_value(row, "job_id"))),
                 source_text,
                 tenant_id=tenant_id,
                 source_field=source_field,
@@ -165,13 +173,14 @@ class SqlitePostedCompensationRepository:
 
             record_job_event(
                 self._conn,
-                fact.job_url,
+                fact.job_id,
                 "enrich",
                 "CompensationFactsUpdated",
+                tenant_id=fact.tenant_id,
                 message="Posted compensation fact updated",
                 occurred_at=fact.parsed_at,
                 payload={
-                    "jobId": fact.job_url,
+                    "jobId": str(fact.job_id),
                     "changedSections": ["posted"],
                     "postedRecordStatus": "recorded",
                     "postedParseState": fact.parse_state,
@@ -234,7 +243,7 @@ def _row_to_fact(row: sqlite3.Row | tuple[Any, ...]) -> PostedCompensationFact:
         warnings = []
     return PostedCompensationFact(
         tenant_id=str(_row_value(row, "tenant_id")),
-        job_url=str(_row_value(row, "job_url")),
+        job_id=canonical_job_id(str(_row_value(row, "job_id"))),
         source_field=str(_row_value(row, "source_field")),
         source_text=_nullable_str(_row_value(row, "source_text")),
         legacy_raw_salary=_nullable_str(_row_value(row, "legacy_raw_salary")),
@@ -260,7 +269,7 @@ def _row_value(row: sqlite3.Row | tuple[Any, ...], key: str) -> Any:
         return row[key]
     keys = (
         "tenant_id",
-        "job_url",
+        "job_id",
         "source_field",
         "source_text",
         "legacy_raw_salary",

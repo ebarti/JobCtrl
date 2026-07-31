@@ -35,6 +35,7 @@ from jobctrl.domain.job_content_identity import (
     normalize_identity_text,
 )
 from jobctrl.domain.identifiers import canonical_job_id
+
 # Phase 7 (S-27 round-1 review M1): ``parse_proxy`` lives under
 # ``jobctrl.infrastructure.network`` so the Enrichment context's
 # Playwright fetcher can import it without depending on this Discovery
@@ -310,6 +311,7 @@ def store_jobspy_results(
             )
             _upsert_posted_compensation_fact(
                 conn,
+                tenant_id=str(LOCAL_TENANT),
                 job_url=duplicate_url,
                 parsed_at=now,
                 write_fence=write_fence,
@@ -382,6 +384,7 @@ def store_jobspy_results(
             )
             _upsert_posted_compensation_fact(
                 conn,
+                tenant_id=str(LOCAL_TENANT),
                 job_url=stored_duplicate_url,
                 parsed_at=now,
                 write_fence=write_fence,
@@ -438,6 +441,7 @@ def store_jobspy_results(
             )
             _upsert_posted_compensation_fact(
                 conn,
+                tenant_id=str(LOCAL_TENANT),
                 job_url=url,
                 parsed_at=now,
                 write_fence=write_fence,
@@ -499,6 +503,7 @@ def _jobspy_posting_from_row(
 def _upsert_posted_compensation_fact(
     conn: sqlite3.Connection,
     *,
+    tenant_id: str,
     job_url: str,
     parsed_at: str,
     write_fence: Callable[[], None] | None = None,
@@ -508,13 +513,18 @@ def _upsert_posted_compensation_fact(
 
     repository = SqlitePostedCompensationRepository(conn)
     _apply_write_fence(write_fence)
-    row = conn.execute("SELECT salary FROM jobs WHERE url = ?", (job_url,)).fetchone()
+    row = conn.execute(
+        "SELECT job_id, salary FROM jobs WHERE tenant_id = ? AND url = ?",
+        (tenant_id, job_url),
+    ).fetchone()
     if row is None:
         return
-    salary = row["salary"] if isinstance(row, sqlite3.Row) else row[0]
+    job_id = canonical_job_id(str(row["job_id"] if isinstance(row, sqlite3.Row) else row[0]))
+    salary = row["salary"] if isinstance(row, sqlite3.Row) else row[1]
     repository.parse_and_save_job_salary(
-        job_url,
+        job_id,
         salary,
+        tenant_id=tenant_id,
         parsed_at=parsed_at,
         event_idempotency_key=idempotency_key,
         event_write_fence=write_fence,

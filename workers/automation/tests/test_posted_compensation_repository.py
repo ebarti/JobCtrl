@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from pathlib import Path
 
 import pytest
 
-from jobctrl.database import ensure_posted_compensation_tables, init_db
+from jobctrl.database import init_db
 from jobctrl.domain.compensation import parse_posted_compensation
+from jobctrl.domain.identifiers import JobId
 from jobctrl.infrastructure.compensation import SqlitePostedCompensationRepository
 
 
@@ -21,13 +23,14 @@ def _seed_job(
     *,
     url: str = "https://example.com/jobs/1",
     salary: str | None = "€80,000-€95,000/year",
-) -> str:
+) -> tuple[str, JobId]:
+    job_id = JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{url}")))
     conn.execute(
-        "INSERT INTO jobs (url, title, site, salary, description, discovered_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (url, "Platform Engineer", "Example", salary, "Synthetic job", "2026-06-19T10:00:00Z"),
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, salary, description, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("local", job_id, url, "Platform Engineer", "Example", salary, "Synthetic job", "2026-06-19T10:00:00Z"),
     )
     conn.commit()
-    return url
+    return url, job_id
 
 
 def test_schema_is_created_by_init_db(conn: sqlite3.Connection) -> None:
@@ -36,20 +39,52 @@ def test_schema_is_created_by_init_db(conn: sqlite3.Connection) -> None:
     ).fetchone()
 
     assert row is not None
-    assert ensure_posted_compensation_tables(conn) == []
+
+
+def test_constructor_does_not_probe_or_mutate_healthy_schema(conn: sqlite3.Connection) -> None:
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+
+    SqlitePostedCompensationRepository(conn)
+
+    assert statements == []
+
+
+@pytest.mark.parametrize(
+    ("schema_sql", "error"),
+    (
+        (None, "no such table: job_posted_compensation_facts"),
+        (
+            "CREATE TABLE job_posted_compensation_facts (tenant_id TEXT, job_id TEXT)",
+            "no such column: source_field",
+        ),
+    ),
+)
+def test_missing_or_malformed_schema_fails_closed_on_first_operation(
+    schema_sql: str | None,
+    error: str,
+) -> None:
+    malformed_conn = sqlite3.connect(":memory:")
+    if schema_sql is not None:
+        malformed_conn.execute(schema_sql)
+
+    repo = SqlitePostedCompensationRepository(malformed_conn)
+
+    with pytest.raises(sqlite3.OperationalError, match=error):
+        repo.get_fact("local", JobId("00000000-0000-0000-0000-000000000001"))
 
 
 def test_upsert_and_read_round_trip(conn: sqlite3.Connection) -> None:
-    job_url = _seed_job(conn)
+    _job_url, job_id = _seed_job(conn)
     repo = SqlitePostedCompensationRepository(conn)
     fact = parse_posted_compensation(
         "€80,000-€95,000/year",
-        job_url=job_url,
+        job_id=job_id,
         parsed_at="2026-06-19T10:00:00Z",
     )
 
     repo.save_fact(fact)
-    loaded = repo.get_fact("local", job_url)
+    loaded = repo.get_fact("local", job_id)
 
     assert loaded is not None
     assert loaded.parse_state == "parsed_range"
@@ -65,35 +100,38 @@ def test_upsert_and_read_round_trip(conn: sqlite3.Connection) -> None:
     event = conn.execute(
         """
         SELECT payload_json FROM job_events
-        WHERE job_url = ? AND event_type = 'CompensationFactsUpdated'
+        WHERE tenant_id = ? AND job_id = ? AND event_type = 'CompensationFactsUpdated'
         ORDER BY event_id DESC LIMIT 1
         """,
-        (job_url,),
+        ("local", job_id),
     ).fetchone()
     payload = json.loads(event["payload_json"])
     assert payload == {
-        "jobId": job_url,
+        "jobId": str(job_id),
         "changedSections": ["posted"],
         "postedRecordStatus": "recorded",
         "postedParseState": "parsed_range",
         "marketRecordStatus": None,
         "marketEstimateState": None,
         "updatedAt": "2026-06-19T10:00:00Z",
+        "stage": "enrich",
+        "level": "info",
+        "message": "Posted compensation fact updated",
     }
     assert "sourceText" not in payload
     assert "€80,000" not in json.dumps(payload)
 
 
 def test_backfill_is_idempotent_and_preserves_legacy_salary(conn: sqlite3.Connection) -> None:
-    job_url = _seed_job(conn, salary="$180,000/year")
+    job_url, job_id = _seed_job(conn, salary="$180,000/year")
     repo = SqlitePostedCompensationRepository(conn)
 
-    assert repo.backfill_from_legacy_jobs(parsed_at="2026-06-19T10:00:00Z") == 1
-    assert repo.backfill_from_legacy_jobs(parsed_at="2026-06-19T10:00:00Z") == 1
+    assert repo.backfill_from_jobs(parsed_at="2026-06-19T10:00:00Z") == 1
+    assert repo.backfill_from_jobs(parsed_at="2026-06-19T10:00:00Z") == 1
 
-    rows = conn.execute("SELECT * FROM job_posted_compensation_facts WHERE job_url = ?", (job_url,)).fetchall()
-    salary = conn.execute("SELECT salary FROM jobs WHERE url = ?", (job_url,)).fetchone()["salary"]
-    fact = repo.get_fact("local", job_url)
+    rows = conn.execute("SELECT * FROM job_posted_compensation_facts WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchall()
+    salary = conn.execute("SELECT salary FROM jobs WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchone()["salary"]
+    fact = repo.get_fact("local", job_id)
 
     assert len(rows) == 1
     assert salary == "$180,000/year"
@@ -103,12 +141,12 @@ def test_backfill_is_idempotent_and_preserves_legacy_salary(conn: sqlite3.Connec
 
 
 def test_backfill_records_missing_fact_without_erasing_blank_salary(conn: sqlite3.Connection) -> None:
-    job_url = _seed_job(conn, salary=None)
+    _job_url, job_id = _seed_job(conn, salary=None)
     repo = SqlitePostedCompensationRepository(conn)
 
-    repo.backfill_from_legacy_jobs(parsed_at="2026-06-19T10:00:00Z")
-    fact = repo.get_fact("local", job_url)
-    salary = conn.execute("SELECT salary FROM jobs WHERE url = ?", (job_url,)).fetchone()["salary"]
+    repo.backfill_from_jobs(parsed_at="2026-06-19T10:00:00Z")
+    fact = repo.get_fact("local", job_id)
+    salary = conn.execute("SELECT salary FROM jobs WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchone()["salary"]
 
     assert fact is not None
     assert fact.parse_state == "missing"
@@ -119,12 +157,12 @@ def test_backfill_records_missing_fact_without_erasing_blank_salary(conn: sqlite
 def test_backfill_persists_mixed_component_two_amount_text_as_ambiguous(
     conn: sqlite3.Connection,
 ) -> None:
-    job_url = _seed_job(conn, salary="Base €90k/year plus bonus €10k/year")
+    _job_url, job_id = _seed_job(conn, salary="Base €90k/year plus bonus €10k/year")
     repo = SqlitePostedCompensationRepository(conn)
 
-    repo.backfill_from_legacy_jobs(parsed_at="2026-06-19T10:00:00Z")
-    fact = repo.get_fact("local", job_url)
-    salary = conn.execute("SELECT salary FROM jobs WHERE url = ?", (job_url,)).fetchone()["salary"]
+    repo.backfill_from_jobs(parsed_at="2026-06-19T10:00:00Z")
+    fact = repo.get_fact("local", job_id)
+    salary = conn.execute("SELECT salary FROM jobs WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchone()["salary"]
 
     assert salary == "Base €90k/year plus bonus €10k/year"
     assert fact is not None
@@ -138,15 +176,15 @@ def test_backfill_persists_mixed_component_two_amount_text_as_ambiguous(
 def test_parse_and_save_job_salary_updates_fact_after_rediscovery_preserves_raw_fallback(
     conn: sqlite3.Connection,
 ) -> None:
-    job_url = _seed_job(conn, salary="€80,000/year")
+    _job_url, job_id = _seed_job(conn, salary="€80,000/year")
     repo = SqlitePostedCompensationRepository(conn)
 
-    repo.parse_and_save_job_salary(job_url, "€80,000/year", parsed_at="2026-06-19T10:00:00Z")
-    conn.execute("UPDATE jobs SET salary = COALESCE(NULLIF(?, ''), salary) WHERE url = ?", ("", job_url))
-    repo.parse_and_save_job_salary(job_url, conn.execute("SELECT salary FROM jobs WHERE url = ?", (job_url,)).fetchone()["salary"])
+    repo.parse_and_save_job_salary(job_id, "€80,000/year", parsed_at="2026-06-19T10:00:00Z")
+    conn.execute("UPDATE jobs SET salary = COALESCE(NULLIF(?, ''), salary) WHERE tenant_id = ? AND job_id = ?", ("", "local", job_id))
+    repo.parse_and_save_job_salary(job_id, conn.execute("SELECT salary FROM jobs WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchone()["salary"])
 
-    salary = conn.execute("SELECT salary FROM jobs WHERE url = ?", (job_url,)).fetchone()["salary"]
-    fact = repo.get_fact("local", job_url)
+    salary = conn.execute("SELECT salary FROM jobs WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchone()["salary"]
+    fact = repo.get_fact("local", job_id)
 
     assert salary == "€80,000/year"
     assert fact is not None
@@ -155,14 +193,14 @@ def test_parse_and_save_job_salary_updates_fact_after_rediscovery_preserves_raw_
 
 
 def test_source_text_is_bounded_in_persistence(conn: sqlite3.Connection) -> None:
-    job_url = _seed_job(conn, salary="€80,000/year " + ("with benefits " * 80))
+    _job_url, job_id = _seed_job(conn, salary="€80,000/year " + ("with benefits " * 80))
     repo = SqlitePostedCompensationRepository(conn)
 
-    repo.backfill_from_legacy_jobs()
-    fact = repo.get_fact("local", job_url)
+    repo.backfill_from_jobs()
+    fact = repo.get_fact("local", job_id)
     row = conn.execute(
-        "SELECT warnings_json, source_text FROM job_posted_compensation_facts WHERE job_url = ?",
-        (job_url,),
+        "SELECT warnings_json, source_text FROM job_posted_compensation_facts WHERE tenant_id = ? AND job_id = ?",
+        ("local", job_id),
     ).fetchone()
 
     assert fact is not None

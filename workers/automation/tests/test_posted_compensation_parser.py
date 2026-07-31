@@ -4,7 +4,7 @@ from jobctrl.domain.compensation import SOURCE_TEXT_LIMIT, parse_posted_compensa
 
 
 def test_missing_salary_returns_missing_state() -> None:
-    fact = parse_posted_compensation(None, job_url="job-1", parsed_at="2026-06-19T10:00:00Z")
+    fact = parse_posted_compensation(None, parsed_at="2026-06-19T10:00:00Z")
 
     assert fact.parse_state == "missing"
     assert fact.source_text is None
@@ -15,7 +15,7 @@ def test_missing_salary_returns_missing_state() -> None:
 
 
 def test_unparseable_salary_preserves_raw_fallback_and_warning() -> None:
-    fact = parse_posted_compensation("Competitive package", job_url="job-1", parsed_at="2026-06-19T10:00:00Z")
+    fact = parse_posted_compensation("Competitive package", parsed_at="2026-06-19T10:00:00Z")
 
     assert fact.parse_state == "unparseable"
     assert fact.source_text == "Competitive package"
@@ -31,7 +31,6 @@ def test_company_metric_amounts_are_not_posted_compensation() -> None:
             "in digital payment transaction value annually. More than 6 million "
             "businesses run their financial lives through Moniepoint."
         ),
-        job_url="job-1",
         source_field="jobs.full_description",
         parsed_at="2026-06-19T10:00:00Z",
     )
@@ -47,7 +46,6 @@ def test_company_metric_amounts_are_not_posted_compensation() -> None:
 def test_small_benefit_counts_are_not_salary_amounts() -> None:
     fact = parse_posted_compensation(
         "Strong base salary and competitive pay. Spend up to 30 days per year working remotely.",
-        job_url="job-1",
         source_field="jobs.full_description",
         parsed_at="2026-06-19T10:00:00Z",
     )
@@ -63,7 +61,6 @@ def test_small_benefit_counts_are_not_salary_amounts() -> None:
 def test_ambiguous_salary_when_multiple_components_compete() -> None:
     fact = parse_posted_compensation(
         "€70k base, €30k bonus, €100k OTE",
-        job_url="job-1",
         parsed_at="2026-06-19T10:00:00Z",
     )
 
@@ -77,7 +74,6 @@ def test_ambiguous_salary_when_multiple_components_compete() -> None:
 def test_two_amount_mixed_component_salary_is_ambiguous_not_range() -> None:
     fact = parse_posted_compensation(
         "Base €90k/year plus bonus €10k/year",
-        job_url="job-1",
         parsed_at="2026-06-19T10:00:00Z",
     )
 
@@ -90,7 +86,7 @@ def test_two_amount_mixed_component_salary_is_ambiguous_not_range() -> None:
 
 
 def test_two_amount_additive_bonus_without_base_label_is_ambiguous() -> None:
-    fact = parse_posted_compensation("€70k/year + €10k bonus", job_url="job-1")
+    fact = parse_posted_compensation("€70k/year + €10k bonus")
 
     assert fact.parse_state == "ambiguous"
     assert fact.minimum_amount is None
@@ -98,7 +94,7 @@ def test_two_amount_additive_bonus_without_base_label_is_ambiguous() -> None:
 
 
 def test_parses_annual_range_with_currency_and_assumption() -> None:
-    fact = parse_posted_compensation("€80k-€95k/year", job_url="job-1", parsed_at="2026-06-19T10:00:00Z")
+    fact = parse_posted_compensation("€80k-€95k/year", parsed_at="2026-06-19T10:00:00Z")
 
     assert fact.parse_state == "parsed_range"
     assert fact.currency == "EUR"
@@ -114,8 +110,8 @@ def test_parses_annual_range_with_currency_and_assumption() -> None:
 
 
 def test_parses_monthly_and_hourly_values_with_explicit_assumptions() -> None:
-    monthly = parse_posted_compensation("EUR 6,000/month", job_url="job-1", parsed_at="2026-06-19T10:00:00Z")
-    hourly = parse_posted_compensation("€40/hour", job_url="job-2", parsed_at="2026-06-19T10:00:00Z")
+    monthly = parse_posted_compensation("EUR 6,000/month", parsed_at="2026-06-19T10:00:00Z")
+    hourly = parse_posted_compensation("€40/hour", parsed_at="2026-06-19T10:00:00Z")
 
     assert monthly.period == "month"
     assert monthly.annualized_minimum_amount == 72_000
@@ -136,7 +132,6 @@ def test_truncated_mo_fragment_does_not_make_salary_monthly() -> None:
             "salary up to $190,900, plus a generous equity package. We offer "
             "26 weeks of parental leave for mo"
         ),
-        job_url="job-1",
         source_field="jobs.full_description",
         parsed_at="2026-06-19T10:00:00Z",
     )
@@ -150,8 +145,8 @@ def test_truncated_mo_fragment_does_not_make_salary_monthly() -> None:
 
 
 def test_one_sided_and_broad_ranges_are_warned() -> None:
-    one_sided = parse_posted_compensation("Up to €110,000/year", job_url="job-1")
-    broad = parse_posted_compensation("€40,000 - €140,000/year", job_url="job-2")
+    one_sided = parse_posted_compensation("Up to €110,000/year")
+    broad = parse_posted_compensation("€40,000 - €140,000/year")
 
     assert one_sided.minimum_amount is None
     assert one_sided.maximum_amount == 110_000
@@ -163,7 +158,7 @@ def test_one_sided_and_broad_ranges_are_warned() -> None:
 
 
 def test_missing_currency_and_missing_period_do_not_annualize() -> None:
-    fact = parse_posted_compensation("80k-95k", job_url="job-1")
+    fact = parse_posted_compensation("80k-95k")
 
     assert fact.parse_state == "parsed_range"
     assert fact.currency is None
@@ -177,10 +172,10 @@ def test_missing_currency_and_missing_period_do_not_annualize() -> None:
 
 
 def test_bonus_commission_equity_and_ote_warnings_are_visible() -> None:
-    bonus = parse_posted_compensation("Base €90k/year plus bonus", job_url="bonus")
-    commission = parse_posted_compensation("€70k/year plus commission", job_url="commission")
-    equity = parse_posted_compensation("€100k/year plus equity", job_url="equity")
-    ote = parse_posted_compensation("€120k OTE/year", job_url="ote")
+    bonus = parse_posted_compensation("Base €90k/year plus bonus")
+    commission = parse_posted_compensation("€70k/year plus commission")
+    equity = parse_posted_compensation("€100k/year plus equity")
+    ote = parse_posted_compensation("€120k OTE/year")
 
     assert "bonus_component" in bonus.warnings
     assert "commission_component" in commission.warnings
@@ -190,9 +185,9 @@ def test_bonus_commission_equity_and_ote_warnings_are_visible() -> None:
 
 
 def test_single_base_amount_with_variable_component_keeps_base_component() -> None:
-    bonus = parse_posted_compensation("Base €90k/year plus bonus", job_url="bonus")
-    commission = parse_posted_compensation("€70k/year salary plus commission", job_url="commission")
-    equity = parse_posted_compensation("Salary €100k/year plus equity", job_url="equity")
+    bonus = parse_posted_compensation("Base €90k/year plus bonus")
+    commission = parse_posted_compensation("€70k/year salary plus commission")
+    equity = parse_posted_compensation("Salary €100k/year plus equity")
 
     for fact in (bonus, commission, equity):
         assert fact.parse_state == "parsed_range"
@@ -206,7 +201,7 @@ def test_single_base_amount_with_variable_component_keeps_base_component() -> No
 
 def test_source_text_is_bounded_and_hashed() -> None:
     raw = "€80,000/year " + ("with benefits " * 80)
-    fact = parse_posted_compensation(raw, job_url="job-1")
+    fact = parse_posted_compensation(raw)
 
     assert fact.source_text is not None
     assert len(fact.source_text) <= SOURCE_TEXT_LIMIT
