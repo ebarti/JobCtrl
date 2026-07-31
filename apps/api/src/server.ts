@@ -1857,7 +1857,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (body.runId) {
         command.runId = body.runId;
       }
-      return { command, stage: canceled.stage };
+      return {
+        command,
+        stage: canceled.stage,
+        cancelRequested: canceled.cancelRequested,
+      };
     });
     if ("ok" in writeOutcome) {
       return writeOutcome;
@@ -1867,9 +1871,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     // cancellation signal. Without this, the SQLite event-flip succeeds
     // but the workflow keeps polling Chrome and the stage row drifts
     // back to running on the next worker_loop cycle.
-    const { command: cancelCommand, stage: cancelStage } = writeOutcome;
+    const {
+      command: cancelCommand,
+      stage: cancelStage,
+      cancelRequested,
+    } = writeOutcome;
     const runId = cancelCommand.runId;
-    if (runId) {
+    if (runId && cancelRequested) {
       try {
         await actionDispatcher(cancelCommand, actionContext);
       } catch (err) {
@@ -1881,7 +1889,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     return buildActionResponse(
       cancelCommand,
-      { status: "cancel_requested" },
+      {
+        status: cancelRequested ? "cancel_requested" : "already_terminal",
+        ...(runId ? { runId } : {}),
+      },
       { stage: cancelStage },
     );
   });

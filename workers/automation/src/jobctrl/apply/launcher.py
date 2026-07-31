@@ -1117,6 +1117,63 @@ def mark_result(
     stable_tenant_id = TenantId(
         str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
     )
+    run_id = (
+        task_id
+        or (run_ctx.get("run_id") if run_ctx else None)
+        or new_apply_run_id()
+    )
+    current_state = conn.execute(
+        """
+        SELECT state
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'
+        """,
+        (str(stable_tenant_id), str(stable_job_id)),
+    ).fetchone()
+    immutable_states = {
+        "succeeded",
+        "failed",
+        "skipped",
+        "exhausted",
+        "needs_verification",
+        "canceled",
+    }
+    state_value = (
+        str(current_state["state"])
+        if current_state is not None and hasattr(current_state, "keys")
+        else str(current_state[0])
+        if current_state is not None
+        else ""
+    )
+    requested_terminal_event = (
+        "ApplicationSubmitted"
+        if status == "applied"
+        else "DryRunCompleted"
+        if status == "dry_run"
+        else "ApplicationFailed"
+    )
+    terminal_event_types = {
+        event_type
+        for event_type in {
+            "ApplicationSubmitted",
+            "ApplicationFailed",
+            "DryRunCompleted",
+            "ApplyManualSkip",
+            "StageCanceled",
+        }
+        if _has_apply_event(
+            conn,
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+            run_id=str(run_id),
+            event_types={event_type},
+        )
+    }
+    if state_value in immutable_states or (
+        terminal_event_types
+        and terminal_event_types != {requested_terminal_event}
+    ):
+        return
     posting_url = _posting_url_for_job_id(
         conn,
         tenant_id=stable_tenant_id,
@@ -1128,7 +1185,6 @@ def mark_result(
         tenant_id=stable_tenant_id,
     )
 
-    run_id = task_id or (run_ctx.get("run_id") if run_ctx else None) or new_apply_run_id()
     worker_id = run_ctx.get("worker_id") if run_ctx else None
     model = run_ctx.get("model") if run_ctx else None
     dry_run = bool(run_ctx.get("dry_run")) if run_ctx else False
@@ -1143,10 +1199,9 @@ def mark_result(
     )
 
     if status == "applied":
-        # Launcher owns lock-release policy: if a competing process raced
-        # the row out of `running` (orphan rescue, mark-skipped, etc.) we
-        # still want to record this completion. Skip canonical validation;
-        # the launcher is the writer.
+        # The terminal guard above protects results written by cancellation,
+        # recovery, or manual action. The launcher still owns the normal
+        # Running -> Succeeded write for this active run.
         set_stage_state(
             conn,
             stable_job_id,
