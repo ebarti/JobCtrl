@@ -29,10 +29,10 @@ import type {
   TailoringFeedbackSignalKind,
   TailoringFeedbackSourceKind,
 } from "./contracts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { allRows, getRow, type SqliteDatabase } from "./db.js";
 import { defaultResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 import { ensureCurrentResumeTemplateMaterials } from "./resume-templates.js";
-import { InputError } from "./write-model.js";
+import { InputError, resolveJobId } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
 const TEXT_PREVIEW_BYTE_LIMIT = 128_000;
@@ -80,7 +80,7 @@ const RESUME_EDITOR_LEGACY_FONT_SIZE_STYLES: Record<string, string> = {
 
 interface ResumeReviewDraftRow extends Record<string, unknown> {
   draft_id: string;
-  job_key: string;
+  job_id: string;
   base_generation: number;
   base_resume_text_artifact_id: string | null;
   base_resume_pdf_artifact_id: string | null;
@@ -95,7 +95,7 @@ interface ResumeReviewDraftRow extends Record<string, unknown> {
 interface ResumeReviewDraftRevisionRow extends Record<string, unknown> {
   revision_id: string;
   draft_id: string;
-  job_key: string;
+  job_id: string;
   revision_number: number;
   plate_document_json: string | null;
   edited_text: string;
@@ -106,7 +106,7 @@ interface ResumeReviewEditDeltaRow extends Record<string, unknown> {
   delta_id: string;
   revision_id: string;
   draft_id: string;
-  job_key: string;
+  job_id: string;
   kind: string;
   section: string | null;
   semantic_id: string | null;
@@ -119,7 +119,7 @@ interface ResumeReviewEditDeltaRow extends Record<string, unknown> {
 interface ResumeCommentThreadRow extends Record<string, unknown> {
   thread_id: string;
   draft_id: string;
-  job_key: string;
+  job_id: string;
   base_artifact_id: string | null;
   semantic_id: string | null;
   line_anchor_json: string | null;
@@ -144,7 +144,7 @@ interface ResumeCommentReplyRow extends Record<string, unknown> {
 
 interface TailoringFeedbackSignalRow extends Record<string, unknown> {
   signal_id: string;
-  job_key: string;
+  job_id: string;
   draft_id: string;
   draft_revision_id: string | null;
   source_kind: string;
@@ -198,150 +198,40 @@ interface ResumeLayoutBoxDraft {
   heightPct: number;
 }
 
-export function ensureResumeReviewTables(db: SqliteDatabase): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS resume_review_drafts (
-      tenant_id                    TEXT NOT NULL DEFAULT 'local',
-      draft_id                     TEXT NOT NULL,
-      job_key                      TEXT NOT NULL,
-      base_generation              INTEGER NOT NULL,
-      base_resume_text_artifact_id TEXT,
-      base_resume_pdf_artifact_id  TEXT,
-      renderer_format              TEXT NOT NULL DEFAULT 'unknown',
-      state                        TEXT NOT NULL DEFAULT 'active',
-      current_revision_id          TEXT,
-      latest_revision_number       INTEGER NOT NULL DEFAULT 0,
-      created_at                   TEXT NOT NULL,
-      updated_at                   TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, draft_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_resume_review_drafts_job
-      ON resume_review_drafts(tenant_id, job_key, state, updated_at DESC);
-
-    CREATE TABLE IF NOT EXISTS resume_review_draft_revisions (
-      tenant_id           TEXT NOT NULL DEFAULT 'local',
-      revision_id         TEXT NOT NULL,
-      draft_id            TEXT NOT NULL,
-      job_key             TEXT NOT NULL,
-      revision_number     INTEGER NOT NULL,
-      plate_document_json TEXT,
-      edited_text         TEXT NOT NULL,
-      created_at          TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, revision_id),
-      UNIQUE (tenant_id, draft_id, revision_number)
-    );
-    CREATE INDEX IF NOT EXISTS idx_resume_review_revisions_draft
-      ON resume_review_draft_revisions(tenant_id, draft_id, revision_number DESC);
-
-    CREATE TABLE IF NOT EXISTS resume_review_edit_deltas (
-      tenant_id        TEXT NOT NULL DEFAULT 'local',
-      delta_id         TEXT NOT NULL,
-      revision_id      TEXT NOT NULL,
-      draft_id         TEXT NOT NULL,
-      job_key          TEXT NOT NULL,
-      kind             TEXT NOT NULL,
-      section          TEXT,
-      semantic_id      TEXT,
-      line_anchor_json TEXT,
-      before_text      TEXT NOT NULL DEFAULT '',
-      after_text       TEXT NOT NULL DEFAULT '',
-      created_at       TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, delta_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_resume_review_edit_deltas_revision
-      ON resume_review_edit_deltas(tenant_id, revision_id);
-
-    CREATE TABLE IF NOT EXISTS resume_review_comment_threads (
-      tenant_id        TEXT NOT NULL DEFAULT 'local',
-      thread_id        TEXT NOT NULL,
-      draft_id         TEXT NOT NULL,
-      job_key          TEXT NOT NULL,
-      base_artifact_id TEXT,
-      semantic_id      TEXT,
-      line_anchor_json TEXT,
-      source_pin_id    TEXT,
-      risk_label       TEXT,
-      comment_body     TEXT NOT NULL DEFAULT '',
-      lifecycle_state  TEXT NOT NULL DEFAULT 'open',
-      anchor_resolved  INTEGER NOT NULL DEFAULT 1,
-      created_at       TEXT NOT NULL,
-      updated_at       TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, thread_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_resume_review_comment_threads_draft
-      ON resume_review_comment_threads(tenant_id, draft_id, updated_at DESC);
-
-    CREATE TABLE IF NOT EXISTS resume_review_comment_replies (
-      tenant_id         TEXT NOT NULL DEFAULT 'local',
-      reply_id          TEXT NOT NULL,
-      thread_id         TEXT NOT NULL,
-      draft_revision_id TEXT,
-      author            TEXT NOT NULL DEFAULT 'user',
-      decision          TEXT NOT NULL,
-      body              TEXT NOT NULL,
-      created_at        TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, reply_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_resume_review_comment_replies_thread
-      ON resume_review_comment_replies(tenant_id, thread_id, created_at ASC);
-
-    CREATE TABLE IF NOT EXISTS tailoring_feedback_signals (
-      tenant_id         TEXT NOT NULL DEFAULT 'local',
-      signal_id         TEXT NOT NULL,
-      job_key           TEXT NOT NULL,
-      draft_id          TEXT NOT NULL,
-      draft_revision_id TEXT,
-      source_kind       TEXT NOT NULL,
-      source_id         TEXT NOT NULL,
-      signal_kind       TEXT NOT NULL,
-      status            TEXT NOT NULL DEFAULT 'candidate',
-      summary           TEXT NOT NULL DEFAULT '',
-      section           TEXT,
-      semantic_id       TEXT,
-      created_at        TEXT NOT NULL,
-      reviewed_at       TEXT,
-      PRIMARY KEY (tenant_id, signal_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_tailoring_feedback_signals_job
-      ON tailoring_feedback_signals(tenant_id, job_key, created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_tailoring_feedback_signals_draft
-      ON tailoring_feedback_signals(tenant_id, draft_id, created_at DESC);
-  `);
-}
-
 export function getResumeReviewDraftForJob(
   db: SqliteDatabase,
-  jobKey: string,
+  jobLocator: string,
 ): ResumeReviewDraftResponse | null {
-  ensureResumeReviewTables(db);
+  const jobId = resolveJobId(db, DEFAULT_TENANT, jobLocator);
+  if (!jobId) return null;
   const row = getRow<ResumeReviewDraftRow>(
     db,
     `SELECT * FROM resume_review_drafts
-     WHERE tenant_id = ? AND job_key = ? AND state = 'active'
+     WHERE tenant_id = ? AND job_id = ? AND state = 'active'
      ORDER BY updated_at DESC, draft_id DESC
      LIMIT 1`,
-    [DEFAULT_TENANT, jobKey],
+    [DEFAULT_TENANT, jobId],
   );
   return row ? { ok: true, draft: draftFromRow(db, row) } : null;
 }
 
 export function createOrLoadResumeReviewDraft(
   db: SqliteDatabase,
-  jobKey: string,
+  jobLocator: string,
   request: ResumeReviewDraftCreateRequest = {},
   renderPdf: ResumeHtmlPdfRenderer = defaultResumeHtmlPdfRenderer,
 ): ResumeReviewDraftResponse {
-  ensureResumeReviewTables(db);
-  const refresh = ensureCurrentResumeTemplateMaterials(db, jobKey, {}, renderPdf);
+  const jobId = requireExistingJobId(db, jobLocator);
+  const refresh = ensureCurrentResumeTemplateMaterials(db, jobId, {}, renderPdf);
   if (refresh.status === "failed" || refresh.status === "unavailable") {
     throw new InputError(refresh.message ?? "Resume template refresh did not complete.");
   }
-  const base = resolveBaseResumeMaterial(db, jobKey, request);
+  const base = resolveBaseResumeMaterial(db, jobId, request);
   const existing = getRow<ResumeReviewDraftRow>(
     db,
     `SELECT * FROM resume_review_drafts
      WHERE tenant_id = ?
-       AND job_key = ?
+       AND job_id = ?
        AND state = 'active'
        AND base_generation = ?
        AND base_resume_text_artifact_id IS ?
@@ -350,7 +240,7 @@ export function createOrLoadResumeReviewDraft(
      LIMIT 1`,
     [
       DEFAULT_TENANT,
-      jobKey,
+      jobId,
       base.generation,
       base.resumeTextArtifactId,
       base.resumePdfArtifactId,
@@ -364,7 +254,7 @@ export function createOrLoadResumeReviewDraft(
   const draftId = `resume_draft_${crypto.randomUUID()}`;
   db.prepare(
     `INSERT INTO resume_review_drafts (
-       tenant_id, draft_id, job_key, base_generation,
+       tenant_id, draft_id, job_id, base_generation,
        base_resume_text_artifact_id, base_resume_pdf_artifact_id,
        renderer_format, state, current_revision_id, latest_revision_number,
        created_at, updated_at
@@ -372,7 +262,7 @@ export function createOrLoadResumeReviewDraft(
   ).run(
     DEFAULT_TENANT,
     draftId,
-    jobKey,
+    jobId,
     base.generation,
     base.resumeTextArtifactId,
     base.resumePdfArtifactId,
@@ -393,7 +283,6 @@ export function saveResumeReviewDraftRevision(
   draftId: string,
   request: ResumeReviewDraftRevisionSaveRequest,
 ): ResumeReviewDraftRevisionResponse {
-  ensureResumeReviewTables(db);
   const tx = db.transaction(() => {
     const draft = getDraftRow(db, draftId);
     if (!draft) {
@@ -412,14 +301,14 @@ export function saveResumeReviewDraftRevision(
 
     db.prepare(
       `INSERT INTO resume_review_draft_revisions (
-         tenant_id, revision_id, draft_id, job_key, revision_number,
+         tenant_id, revision_id, draft_id, job_id, revision_number,
          plate_document_json, edited_text, created_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       DEFAULT_TENANT,
       revisionId,
       draft.draft_id,
-      draft.job_key,
+      draft.job_id,
       revisionNumber,
       request.plateDocument === undefined ? null : JSON.stringify(request.plateDocument),
       request.editedText,
@@ -429,7 +318,7 @@ export function saveResumeReviewDraftRevision(
     for (const delta of deltas) {
       db.prepare(
         `INSERT INTO resume_review_edit_deltas (
-           tenant_id, delta_id, revision_id, draft_id, job_key, kind, section,
+           tenant_id, delta_id, revision_id, draft_id, job_id, kind, section,
            semantic_id, line_anchor_json, before_text, after_text, created_at
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
@@ -437,7 +326,7 @@ export function saveResumeReviewDraftRevision(
         delta.deltaId,
         revisionId,
         draft.draft_id,
-        draft.job_key,
+        draft.job_id,
         delta.kind,
         delta.section,
         delta.semanticId,
@@ -447,7 +336,7 @@ export function saveResumeReviewDraftRevision(
         now,
       );
       insertFeedbackSignal(db, {
-        jobKey: draft.job_key,
+        jobId: draft.job_id,
         draftId: draft.draft_id,
         draftRevisionId: revisionId,
         sourceKind: "edit_delta",
@@ -490,7 +379,6 @@ export function seedResumeReviewCommentThreads(
   draftId: string,
   request: ResumeReviewCommentThreadSeedRequest,
 ): ResumeReviewCommentThreadSeedResponse {
-  ensureResumeReviewTables(db);
   const tx = db.transaction(() => {
     const draft = getDraftRow(db, draftId);
     if (!draft) {
@@ -531,7 +419,7 @@ export function seedResumeReviewCommentThreads(
       }
       db.prepare(
         `INSERT INTO resume_review_comment_threads (
-           tenant_id, thread_id, draft_id, job_key, base_artifact_id, semantic_id,
+           tenant_id, thread_id, draft_id, job_id, base_artifact_id, semantic_id,
            line_anchor_json, source_pin_id, risk_label, comment_body,
            lifecycle_state, anchor_resolved, created_at, updated_at
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)`,
@@ -539,7 +427,7 @@ export function seedResumeReviewCommentThreads(
         DEFAULT_TENANT,
         normalized.threadId,
         draft.draft_id,
-        draft.job_key,
+        draft.job_id,
         normalized.baseArtifactId,
         normalized.semanticId,
         normalized.lineAnchor ? JSON.stringify(normalized.lineAnchor) : null,
@@ -581,7 +469,6 @@ export function renderResumeReviewDraft(
   request: ResumeReviewDraftRenderRequest = {},
   renderPdf: ResumeHtmlPdfRenderer = defaultResumeHtmlPdfRenderer,
 ): ResumeReviewDraftRenderResponse {
-  ensureResumeReviewTables(db);
   const tx = db.transaction(() => {
     const draft = getDraftRow(db, draftId);
     if (!draft) {
@@ -599,7 +486,6 @@ export function renderResumeReviewDraft(
       };
     }
 
-    ensureMaterialStorageTables(db);
     const artifacts = persistRenderedDraftArtifacts(db, draft, revision, validation, renderPdf);
     const now = new Date().toISOString();
     markResidualCommentThreadsAfterAcceptance(db, draft.draft_id, now);
@@ -643,7 +529,6 @@ export function replyToResumeReviewComment(
   threadId: string,
   request: ResumeCommentReplyRequest,
 ): ResumeCommentReplyResponse {
-  ensureResumeReviewTables(db);
   const tx = db.transaction(() => {
     const thread = getThreadRow(db, threadId);
     if (!thread) {
@@ -675,7 +560,7 @@ export function replyToResumeReviewComment(
     ).run(now, DEFAULT_TENANT, thread.thread_id);
 
     const signal = insertFeedbackSignal(db, {
-      jobKey: thread.job_key,
+      jobId: thread.job_id,
       draftId: thread.draft_id,
       draftRevisionId: request.draftRevisionId ?? null,
       sourceKind: "comment_reply",
@@ -704,14 +589,22 @@ export function replyToResumeReviewComment(
 
 export function listResumeReviewFeedback(
   db: SqliteDatabase,
-  jobKey: string,
+  jobLocator: string,
 ): { ok: true; jobKey: string; feedbackSignals: TailoringFeedbackSignal[] } {
-  ensureResumeReviewTables(db);
+  const jobId = requireExistingJobId(db, jobLocator);
   return {
     ok: true,
-    jobKey,
-    feedbackSignals: feedbackSignalsForJob(db, jobKey),
+    jobKey: jobId,
+    feedbackSignals: feedbackSignalsForJob(db, jobId),
   };
+}
+
+function requireExistingJobId(db: SqliteDatabase, jobLocator: string): string {
+  const jobId = resolveJobId(db, DEFAULT_TENANT, jobLocator);
+  if (!jobId) {
+    throw new InputError(`Job not found: ${jobLocator}`);
+  }
+  return jobId;
 }
 
 function normalizeSeedThread(
@@ -880,7 +773,7 @@ function persistRenderedDraftArtifacts(
     throw new InputError("No base resume artifact path is available for rendering the edited draft.");
   }
   fs.mkdirSync(outputDir, { recursive: true });
-  const generation = nextMaterialGeneration(db, draft.job_key);
+  const generation = nextMaterialGeneration(db, draft.job_id);
   const artifactSuffix = stableHash([draft.draft_id, revision.revision_id, generation]).slice(0, 16);
   const resumeTextArtifactId = `resume_review_text_${artifactSuffix}`;
   const resumePdfArtifactId = `resume_review_pdf_${artifactSuffix}`;
@@ -896,50 +789,59 @@ function persistRenderedDraftArtifacts(
   fs.writeFileSync(htmlPath, htmlForEditedResume(editedText, parseJson(revision.plate_document_json)), "utf8");
   renderPdf({ htmlPath, pdfPath });
 
-  insertDynamicRow(db, "job_materials", {
-    job_url: draft.job_key,
+  db.prepare(
+    `INSERT INTO job_materials (
+       tenant_id, job_id, generation, status, created_at, updated_at,
+       last_validation_json, last_verdict_json, metadata_json
+     ) VALUES (?, ?, ?, 'resume_approved', ?, ?, ?, ?, ?)`,
+  ).run(
+    DEFAULT_TENANT,
+    draft.job_id,
     generation,
-    tenant_id: DEFAULT_TENANT,
-    status: "resume_approved",
-    created_at: now,
-    updated_at: now,
-    last_validation_json: JSON.stringify(validation),
-    last_verdict_json: JSON.stringify({ approved: true, source: DRAFT_RENDERER_METADATA_SOURCE }),
-    metadata_json: JSON.stringify({
+    now,
+    now,
+    JSON.stringify(validation),
+    JSON.stringify({ approved: true, source: DRAFT_RENDERER_METADATA_SOURCE }),
+    JSON.stringify({
       source: DRAFT_RENDERER_METADATA_SOURCE,
       draft_id: draft.draft_id,
       draft_revision_id: revision.revision_id,
       base_generation: draft.base_generation,
     }),
-  });
-  insertDynamicRow(db, "job_materials_artifacts", {
-    job_url: draft.job_key,
+  );
+  const insertArtifact = db.prepare(
+    `INSERT INTO job_materials_artifacts (
+       tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
+       render_format, size_bytes, metadata_json, created_at, superseded_at
+     ) VALUES (?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)`,
+  );
+  insertArtifact.run(
+    DEFAULT_TENANT,
+    draft.job_id,
     generation,
-    artifact_type: "tailored_resume",
-    artifact_id: resumeTextArtifactId,
-    status: "approved",
-    path: textPath,
-    render_format: "text",
-    size_bytes: fs.statSync(textPath).size,
-    metadata_json: JSON.stringify({
+    "tailored_resume",
+    resumeTextArtifactId,
+    textPath,
+    "text",
+    fs.statSync(textPath).size,
+    JSON.stringify({
       source: DRAFT_RENDERER_METADATA_SOURCE,
       draft_id: draft.draft_id,
       draft_revision_id: revision.revision_id,
       base_resume_text_artifact_id: draft.base_resume_text_artifact_id,
     }),
-    created_at: now,
-    superseded_at: null,
-  });
-  insertDynamicRow(db, "job_materials_artifacts", {
-    job_url: draft.job_key,
+    now,
+  );
+  insertArtifact.run(
+    DEFAULT_TENANT,
+    draft.job_id,
     generation,
-    artifact_type: "resume_pdf",
-    artifact_id: resumePdfArtifactId,
-    status: "approved",
-    path: pdfPath,
-    render_format: "html_pdf",
-    size_bytes: fs.statSync(pdfPath).size,
-    metadata_json: JSON.stringify({
+    "resume_pdf",
+    resumePdfArtifactId,
+    pdfPath,
+    "html_pdf",
+    fs.statSync(pdfPath).size,
+    JSON.stringify({
       source: DRAFT_RENDERER_METADATA_SOURCE,
       draft_id: draft.draft_id,
       draft_revision_id: revision.revision_id,
@@ -947,10 +849,9 @@ function persistRenderedDraftArtifacts(
       base_resume_pdf_artifact_id: draft.base_resume_pdf_artifact_id,
       layout_box_count: layoutBoxes.length,
     }),
-    created_at: now,
-    superseded_at: null,
-  });
-  replaceLayoutBoxes(db, draft.job_key, generation, resumePdfArtifactId, layoutBoxes, now);
+    now,
+  );
+  replaceLayoutBoxes(db, draft.job_id, generation, resumePdfArtifactId, layoutBoxes, now);
 
   return {
     generation,
@@ -961,8 +862,8 @@ function persistRenderedDraftArtifacts(
 }
 
 function renderOutputDirectory(db: SqliteDatabase, draft: ResumeReviewDraftRow): string | null {
-  const pdfPath = materialArtifactPath(db, draft.job_key, draft.base_generation, draft.base_resume_pdf_artifact_id);
-  const textPath = materialArtifactPath(db, draft.job_key, draft.base_generation, draft.base_resume_text_artifact_id);
+  const pdfPath = materialArtifactPath(db, draft.job_id, draft.base_generation, draft.base_resume_pdf_artifact_id);
+  const textPath = materialArtifactPath(db, draft.job_id, draft.base_generation, draft.base_resume_text_artifact_id);
   const basePath = pdfPath ?? textPath;
   if (!basePath) return null;
   return path.dirname(basePath);
@@ -970,46 +871,32 @@ function renderOutputDirectory(db: SqliteDatabase, draft: ResumeReviewDraftRow):
 
 function materialArtifactPath(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: string,
   generation: number,
   artifactId: string | null,
 ): string | null {
-  if (!artifactId || !tableExists(db, "job_materials_artifacts")) return null;
+  if (!artifactId) return null;
   const row = getRow<{ path: string | null }>(
     db,
     `SELECT path FROM job_materials_artifacts
-     WHERE job_url = ?
+     WHERE tenant_id = ? AND job_id = ?
        AND generation = ?
        AND artifact_id = ?
      LIMIT 1`,
-    [jobKey, generation, artifactId],
+    [DEFAULT_TENANT, jobId, generation, artifactId],
   );
   return row?.path?.trim() || null;
 }
 
-function nextMaterialGeneration(db: SqliteDatabase, jobKey: string): number {
-  const generations: number[] = [];
-  if (tableExists(db, "job_materials")) {
-    const row = getRow<{ max_generation: number | null }>(
-      db,
-      "SELECT MAX(generation) AS max_generation FROM job_materials WHERE job_url = ?",
-      [jobKey],
-    );
-    if (row?.max_generation !== null && row?.max_generation !== undefined) {
-      generations.push(Number(row.max_generation));
-    }
-  }
-  if (tableExists(db, "job_materials_artifacts")) {
-    const row = getRow<{ max_generation: number | null }>(
-      db,
-      "SELECT MAX(generation) AS max_generation FROM job_materials_artifacts WHERE job_url = ?",
-      [jobKey],
-    );
-    if (row?.max_generation !== null && row?.max_generation !== undefined) {
-      generations.push(Number(row.max_generation));
-    }
-  }
-  return Math.max(0, ...generations.filter(Number.isFinite)) + 1;
+function nextMaterialGeneration(db: SqliteDatabase, jobId: string): number {
+  const row = getRow<{ max_generation: number | null }>(
+    db,
+    `SELECT MAX(generation) AS max_generation
+       FROM job_materials
+      WHERE tenant_id = ? AND job_id = ?`,
+    [DEFAULT_TENANT, jobId],
+  );
+  return Number(row?.max_generation ?? 0) + 1;
 }
 
 function layoutBoxesForEditedText(editedText: string): ResumeLayoutBoxDraft[] {
@@ -1028,105 +915,46 @@ function layoutBoxesForEditedText(editedText: string): ResumeLayoutBoxDraft[] {
 
 function replaceLayoutBoxes(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: string,
   generation: number,
   artifactId: string,
   boxes: readonly ResumeLayoutBoxDraft[],
   createdAt: string,
 ): void {
-  if (!tableExists(db, "job_material_layout_boxes")) return;
   db.prepare(
-    "DELETE FROM job_material_layout_boxes WHERE job_url = ? AND generation = ? AND artifact_id = ?",
-  ).run(jobKey, generation, artifactId);
+    `DELETE FROM job_material_layout_boxes
+      WHERE tenant_id = ? AND job_id = ? AND generation = ? AND artifact_id = ?`,
+  ).run(DEFAULT_TENANT, jobId, generation, artifactId);
+  const insertBox = db.prepare(
+    `INSERT INTO job_material_layout_boxes (
+       tenant_id, job_id, generation, artifact_id, box_index, semantic_id,
+       page_number, line_number, text_excerpt, left_pct, top_pct, width_pct,
+       height_pct, audit_target_json, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
   for (const [index, box] of boxes.entries()) {
-    insertDynamicRow(db, "job_material_layout_boxes", {
-      job_url: jobKey,
+    insertBox.run(
+      DEFAULT_TENANT,
+      jobId,
       generation,
-      artifact_id: artifactId,
-      box_index: index,
-      tenant_id: DEFAULT_TENANT,
-      semantic_id: box.semanticId,
-      page_number: box.pageNumber,
-      line_number: box.lineNumber,
-      text_excerpt: box.textExcerpt,
-      left_pct: box.leftPct,
-      top_pct: box.topPct,
-      width_pct: box.widthPct,
-      height_pct: box.heightPct,
-      audit_target_json: JSON.stringify({
+      artifactId,
+      index,
+      box.semanticId,
+      box.pageNumber,
+      box.lineNumber,
+      box.textExcerpt,
+      box.leftPct,
+      box.topPct,
+      box.widthPct,
+      box.heightPct,
+      JSON.stringify({
         source: DRAFT_RENDERER_METADATA_SOURCE,
         semanticId: box.semanticId,
         lineNumber: box.lineNumber,
       }),
-      created_at: createdAt,
-    });
+      createdAt,
+    );
   }
-}
-
-function ensureMaterialStorageTables(db: SqliteDatabase): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS job_materials (
-      job_url             TEXT NOT NULL,
-      generation          INTEGER NOT NULL,
-      tenant_id           TEXT NOT NULL DEFAULT 'local',
-      status              TEXT NOT NULL,
-      created_at          TEXT NOT NULL,
-      updated_at          TEXT NOT NULL,
-      last_validation_json TEXT,
-      last_verdict_json    TEXT,
-      metadata_json       TEXT,
-      PRIMARY KEY (job_url, generation)
-    );
-    CREATE TABLE IF NOT EXISTS job_materials_artifacts (
-      job_url             TEXT NOT NULL,
-      generation          INTEGER NOT NULL,
-      artifact_type       TEXT NOT NULL,
-      artifact_id         TEXT NOT NULL,
-      status              TEXT NOT NULL,
-      path                TEXT NOT NULL,
-      render_format       TEXT NOT NULL,
-      size_bytes          INTEGER,
-      metadata_json       TEXT,
-      created_at          TEXT NOT NULL,
-      superseded_at       TEXT,
-      PRIMARY KEY (job_url, generation, artifact_type)
-    );
-    CREATE TABLE IF NOT EXISTS job_material_layout_boxes (
-      job_url             TEXT NOT NULL,
-      generation          INTEGER NOT NULL,
-      artifact_id         TEXT NOT NULL,
-      box_index           INTEGER NOT NULL,
-      tenant_id           TEXT NOT NULL DEFAULT 'local',
-      semantic_id         TEXT NOT NULL,
-      page_number         INTEGER NOT NULL,
-      line_number         INTEGER,
-      text_excerpt        TEXT NOT NULL,
-      left_pct            REAL NOT NULL,
-      top_pct             REAL NOT NULL,
-      width_pct           REAL NOT NULL,
-      height_pct          REAL NOT NULL,
-      audit_target_json   TEXT NOT NULL DEFAULT '{}',
-      created_at          TEXT NOT NULL,
-      PRIMARY KEY (job_url, generation, artifact_id, box_index)
-    );
-  `);
-}
-
-function insertDynamicRow(
-  db: SqliteDatabase,
-  tableName: string,
-  values: Record<string, SqliteValue>,
-): void {
-  const columns = tableColumnSet(db, tableName).filter((column) => Object.hasOwn(values, column));
-  if (!columns.length) return;
-  const placeholders = columns.map(() => "?").join(", ");
-  db.prepare(
-    `INSERT OR REPLACE INTO ${tableName} (${columns.join(", ")}) VALUES (${placeholders})`,
-  ).run(...columns.map((column) => values[column] ?? null));
-}
-
-function tableColumnSet(db: SqliteDatabase, tableName: string): string[] {
-  return allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name);
 }
 
 function htmlForEditedResume(editedText: string, plateDocument: unknown | null = null): string {
@@ -1403,33 +1231,27 @@ function stableHash(parts: readonly unknown[]): string {
 
 function resolveBaseResumeMaterial(
   db: SqliteDatabase,
-  jobKey: string,
+  jobId: string,
   request: ResumeReviewDraftCreateRequest,
 ): BaseResumeMaterial {
-  if (!tableExists(db, "job_materials_artifacts")) {
-    throw new InputError(`No material artifacts found for ${jobKey}.`);
-  }
-  const columns = tableColumnSet(db, "job_materials_artifacts");
-  const renderFormatSelect = columns.includes("render_format") ? "render_format" : "NULL AS render_format";
-  const createdAtSelect = columns.includes("created_at") ? "created_at" : "NULL AS created_at";
   const rows = allRows<MaterialArtifactRow>(
     db,
     `SELECT artifact_id, artifact_type, generation, path,
-            ${renderFormatSelect}, ${createdAtSelect}
+            render_format, created_at
        FROM job_materials_artifacts
-      WHERE job_url = ?
-        AND COALESCE(status, 'approved') IN ('approved', 'active')
+      WHERE tenant_id = ? AND job_id = ?
+        AND status IN ('approved', 'active')
         AND artifact_type IN (
           'tailored_resume', 'tailored_resume_txt', 'resume_txt',
           'tailored_resume_pdf', 'resume_pdf'
         )
-      ORDER BY COALESCE(generation, -1) DESC,
-               COALESCE(created_at, '') DESC,
+      ORDER BY generation DESC,
+               created_at DESC,
                artifact_id DESC`,
-    [jobKey],
+    [DEFAULT_TENANT, jobId],
   );
   if (rows.length === 0) {
-    throw new InputError(`No approved resume materials found for ${jobKey}.`);
+    throw new InputError(`No approved resume materials found for ${jobId}.`);
   }
 
   const requestedGeneration = request.generation;
@@ -1439,7 +1261,7 @@ function resolveBaseResumeMaterial(
     rows.find((row) => row.artifact_id === request.resumeTextArtifactId)?.generation ??
     rows[0]?.generation;
   if (generation === undefined) {
-    throw new InputError(`No approved resume materials found for ${jobKey}.`);
+    throw new InputError(`No approved resume materials found for ${jobId}.`);
   }
 
   const generationRows = rows.filter((row) => row.generation === generation);
@@ -1453,7 +1275,7 @@ function resolveBaseResumeMaterial(
     "resume_pdf",
   ]);
   if (!textRow && !pdfRow) {
-    throw new InputError(`No matching resume materials found for ${jobKey}.`);
+    throw new InputError(`No matching resume materials found for ${jobId}.`);
   }
 
   return {
@@ -1524,7 +1346,7 @@ function draftFromRow(db: SqliteDatabase, row: ResumeReviewDraftRow): ResumeRevi
     : undefined;
   return {
     draftId: row.draft_id,
-    jobKey: row.job_key,
+    jobKey: row.job_id,
     baseGeneration: Number(row.base_generation),
     baseResumeTextArtifactId: row.base_resume_text_artifact_id,
     baseResumePdfArtifactId: row.base_resume_pdf_artifact_id,
@@ -1536,7 +1358,7 @@ function draftFromRow(db: SqliteDatabase, row: ResumeReviewDraftRow): ResumeRevi
     updatedAt: row.updated_at,
     latestRevision: latestRevision ? revisionFromRow(db, latestRevision) : null,
     commentThreads: commentThreadsForDraft(db, row.draft_id),
-    feedbackSignals: feedbackSignalsForJob(db, row.job_key),
+    feedbackSignals: feedbackSignalsForJob(db, row.job_id),
   };
 }
 
@@ -1547,7 +1369,7 @@ function revisionFromRow(
   return {
     revisionId: row.revision_id,
     draftId: row.draft_id,
-    jobKey: row.job_key,
+    jobKey: row.job_id,
     revisionNumber: Number(row.revision_number),
     editedText: row.edited_text,
     plateDocument: parseJson(row.plate_document_json),
@@ -1600,7 +1422,7 @@ function threadFromRow(db: SqliteDatabase, row: ResumeCommentThreadRow): ResumeC
   return {
     threadId: row.thread_id,
     draftId: row.draft_id,
-    jobKey: row.job_key,
+    jobKey: row.job_id,
     baseArtifactId: row.base_artifact_id,
     semanticId: row.semantic_id,
     lineAnchor: parseLineAnchor(row.line_anchor_json),
@@ -1637,20 +1459,20 @@ function replyFromRow(row: ResumeCommentReplyRow): ResumeCommentReply {
   };
 }
 
-function feedbackSignalsForJob(db: SqliteDatabase, jobKey: string): TailoringFeedbackSignal[] {
+function feedbackSignalsForJob(db: SqliteDatabase, jobId: string): TailoringFeedbackSignal[] {
   return allRows<TailoringFeedbackSignalRow>(
     db,
     `SELECT * FROM tailoring_feedback_signals
-     WHERE tenant_id = ? AND job_key = ?
+     WHERE tenant_id = ? AND job_id = ?
      ORDER BY created_at DESC, signal_id DESC`,
-    [DEFAULT_TENANT, jobKey],
+    [DEFAULT_TENANT, jobId],
   ).map(feedbackSignalFromRow);
 }
 
 function insertFeedbackSignal(
   db: SqliteDatabase,
   input: {
-    readonly jobKey: string;
+    readonly jobId: string;
     readonly draftId: string;
     readonly draftRevisionId: string | null;
     readonly sourceKind: TailoringFeedbackSourceKind;
@@ -1665,13 +1487,13 @@ function insertFeedbackSignal(
   const signalId = `resume_feedback_${crypto.randomUUID()}`;
   db.prepare(
     `INSERT INTO tailoring_feedback_signals (
-       tenant_id, signal_id, job_key, draft_id, draft_revision_id, source_kind,
+       tenant_id, signal_id, job_id, draft_id, draft_revision_id, source_kind,
        source_id, signal_kind, status, summary, section, semantic_id, created_at, reviewed_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?, ?, ?, ?, NULL)`,
   ).run(
     DEFAULT_TENANT,
     signalId,
-    input.jobKey,
+    input.jobId,
     input.draftId,
     input.draftRevisionId,
     input.sourceKind,
@@ -1696,7 +1518,7 @@ function insertFeedbackSignal(
 function feedbackSignalFromRow(row: TailoringFeedbackSignalRow): TailoringFeedbackSignal {
   return {
     signalId: row.signal_id,
-    jobKey: row.job_key,
+    jobKey: row.job_id,
     draftId: row.draft_id,
     draftRevisionId: row.draft_revision_id,
     sourceKind: feedbackSourceKind(row.source_kind),
@@ -1759,16 +1581,16 @@ function latestRevisionText(db: SqliteDatabase, draft: ResumeReviewDraftRow): st
 }
 
 function readBaseResumeText(db: SqliteDatabase, draft: ResumeReviewDraftRow): string | null {
-  if (!draft.base_resume_text_artifact_id || !tableExists(db, "job_materials_artifacts")) {
+  if (!draft.base_resume_text_artifact_id) {
     return null;
   }
   const row = getRow<{ path: string | null }>(
     db,
     `SELECT path FROM job_materials_artifacts
-     WHERE job_url = ?
+     WHERE tenant_id = ? AND job_id = ?
        AND generation = ?
        AND artifact_id = ?`,
-    [draft.job_key, draft.base_generation, draft.base_resume_text_artifact_id],
+    [DEFAULT_TENANT, draft.job_id, draft.base_generation, draft.base_resume_text_artifact_id],
   );
   if (!row?.path || !fs.existsSync(row.path) || !fs.statSync(row.path).isFile()) {
     return null;
