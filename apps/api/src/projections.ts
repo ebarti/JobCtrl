@@ -311,12 +311,11 @@ function setWatermark(db: SqliteDatabase, projection: string, eventId: number): 
   ).run(projection, eventId, new Date().toISOString());
 }
 
-/**
- * Refresh the projections from canonical state, advancing the
- * shared watermark.  Called at the top of every read-model query so
- * dashboards, lists, and detail views always reflect the latest
- * worker writes (which also bump ``job_events``).
- */
+/** Force-rebuild contact summaries from exact-v7 canonical contact rows. */
+export function refreshContactProjections(db: SqliteDatabase, tenantId = "local"): void {
+  rebuildContactProjections(db, tenantId);
+}
+
 /**
  * Force-rebuild the research-task read model from canonical rows. Confirming a
  * candidate that leaves other candidates awaiting review advances no research
@@ -618,6 +617,12 @@ function rebuildPipelineStepProjections(db: SqliteDatabase, tenantId: string): v
   replace();
 }
 
+/**
+ * Refresh the projections from canonical state, advancing the
+ * shared watermark.  Called at the top of every read-model query so
+ * dashboards, lists, and detail views always reflect the latest
+ * worker writes (which also bump ``job_events``).
+ */
 export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void {
   const repairedDependencyJobs = reconcileDependencyBlockers(db, tenantId);
   const repairedCoverConflictJobs = reconcileObsoleteCoverGenerationConflicts(db, tenantId);
@@ -3614,9 +3619,6 @@ function contactsBackfillPending(db: SqliteDatabase, tenantId: string): boolean 
  * the Python ``ProjectionBuilder._rebuild_contacts`` for cross-runtime parity.
  */
 function rebuildContactProjections(db: SqliteDatabase, tenantId: string): void {
-  if (!tableExists(db, "contacts") || !tableExists(db, "contact_attributes")) {
-    return;
-  }
   const contacts = allRows<{
     contact_id: string;
     employer: string | null;
