@@ -78,8 +78,9 @@ class MaterialsRepository(Protocol):
       * :meth:`save` enforces that ``materials.generation`` is exactly one
         greater than the latest persisted generation for ``(tenant_id,
         job_id)`` — or ``1`` when none exists. The same generation may be
-        saved multiple times (idempotent overwrite within the generation;
-        artifact additions during the same generation use this path).
+        saved multiple times only when its collision-resistant lineage token
+        matches the persisted aggregate (idempotent enrichment within the
+        generation; artifact additions use this path).
       * :meth:`load` returns the LATEST generation by default. Pass
         ``generation=`` to read a specific historical row.
       * :meth:`load_current_approved` returns the newest generation whose
@@ -117,8 +118,9 @@ class MaterialsRepository(Protocol):
         The repository is responsible for:
 
           * Allocating ``generation`` monotonically per ``(tenant_id,
-            job_id)`` — re-saving the *same* generation overwrites the
-            row (used when adding artifacts mid-flow).
+            job_id)`` — re-saving the *same* generation updates the row only
+            when its collision-resistant lineage token matches (used when
+            adding artifacts mid-flow without admitting stale creators).
           * Persisting every artifact slot atomically with the parent
             row. SQLite uses a transaction; the cloud adapter will use
             an outbox.

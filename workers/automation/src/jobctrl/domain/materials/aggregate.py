@@ -26,6 +26,7 @@ Invariants enforced here:
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
@@ -99,6 +100,11 @@ class MaterialsSet:
     last_validation: ValidationResult | None = None
     last_verdict: JudgeVerdict | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    lineage_id: str = field(
+        default_factory=lambda: uuid.uuid4().hex,
+        repr=False,
+        compare=False,
+    )
 
     # ------------------------------------------------------------------
     # Invariants
@@ -122,6 +128,12 @@ class MaterialsSet:
             raise TypeError("MaterialsSet.updated_at must be a str")
         if not isinstance(self.metadata, dict):
             raise TypeError("MaterialsSet.metadata must be a dict")
+        try:
+            lineage_uuid = uuid.UUID(hex=self.lineage_id)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError("MaterialsSet.lineage_id must be a UUID hex string") from exc
+        if lineage_uuid.hex != self.lineage_id:
+            raise ValueError("MaterialsSet.lineage_id must be canonical lowercase UUID hex")
 
         # Type sanity per slot.
         for slot, expected in (
