@@ -58,6 +58,7 @@ from jobctrl.domain.contact.outreach_gates import (
     OutreachClaimProvenance,
 )
 from jobctrl.domain.materials.value_objects import ArtifactStatus
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.tenant import TenantId
 
 
@@ -383,7 +384,7 @@ class OutreachThread:
     tenant_id: TenantId
     thread_id: str
     contact_id: str
-    job_id: str | None = None
+    job_id: JobId | None = None
     drafts: tuple[OutreachDraft, ...] = field(default_factory=tuple)
     created_at: str = ""
     updated_at: str = ""
@@ -395,6 +396,8 @@ class OutreachThread:
             raise ValueError("OutreachThread.thread_id must be a non-empty string")
         if not isinstance(self.contact_id, str) or not self.contact_id.strip():
             raise ValueError("OutreachThread.contact_id must be a non-empty string")
+        if self.job_id is not None:
+            object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
         for draft in self.drafts:
             if not isinstance(draft, OutreachDraft):
                 raise ValueError("OutreachThread.drafts entries must be OutreachDraft")
@@ -435,7 +438,7 @@ class OutreachThread:
         tenant_id: TenantId,
         thread_id: str,
         contact_id: str,
-        job_id: str | None = None,
+        job_id: JobId | None = None,
         created_at: str,
     ) -> "OutreachThread":
         return cls(

@@ -151,7 +151,7 @@ def _setup(tmp_path: Path):
     thread_repo = SqliteOutreachThreadRepository(conn, publisher=bus)
     contact = CreateContactUseCase(contact_repo).execute(
         LOCAL_TENANT,
-        link=ContactLink(employer="Acme", job_id="https://job/1"),
+        link=ContactLink(employer="Acme", job_id="00000000-0000-4000-8000-000000000001"),
         role=ContactRole.RECRUITER,
         attributes=[
             AttributeInput("name", "Dana Lee"),
@@ -258,7 +258,7 @@ def test_generate_produces_gated_candidate_and_approves(tmp_path: Path) -> None:
         LOCAL_TENANT,
         thread_id="thread-1",
         contact_id=str(contact.contact_id),
-        job_id="https://job/1",
+        job_id="00000000-0000-4000-8000-000000000001",
         profile=_profile(),
         application_role="Staff Engineer",
     )
@@ -286,7 +286,7 @@ def test_fabricated_generate_cannot_be_approved(tmp_path: Path) -> None:
         LOCAL_TENANT,
         thread_id="thread-1",
         contact_id=str(contact.contact_id),
-        job_id="https://job/1",
+        job_id="00000000-0000-4000-8000-000000000001",
         profile=_profile(),
     )
     draft = thread.latest_draft
@@ -316,7 +316,7 @@ def test_revise_creates_new_generation_and_reruns_gates(tmp_path: Path) -> None:
         LOCAL_TENANT,
         thread_id="thread-1",
         contact_id=str(contact.contact_id),
-        job_id="https://job/1",
+        job_id="00000000-0000-4000-8000-000000000001",
         profile=_profile(),
     )
     # A user edit that introduces a fabrication RE-RUNS the gates and fails them.
@@ -348,7 +348,7 @@ def test_redraft_preserves_last_approved_until_replacement_approved(tmp_path: Pa
         LOCAL_TENANT,
         thread_id="thread-1",
         contact_id=str(contact.contact_id),
-        job_id="https://job/1",
+        job_id="00000000-0000-4000-8000-000000000001",
         profile=_profile(),
     )
     first_id = thread.latest_draft.draft_id
@@ -362,7 +362,7 @@ def test_redraft_preserves_last_approved_until_replacement_approved(tmp_path: Pa
         LOCAL_TENANT,
         thread_id="thread-1",
         contact_id=str(contact.contact_id),
-        job_id="https://job/1",
+        job_id="00000000-0000-4000-8000-000000000001",
         profile=_profile(),
     )
     reloaded = thread_repo.load(LOCAL_TENANT, "thread-1")
@@ -391,7 +391,7 @@ def test_reject_reason_stays_canonical_and_out_of_events(tmp_path: Path) -> None
         LOCAL_TENANT,
         thread_id="thread-1",
         contact_id=str(contact.contact_id),
-        job_id="https://job/1",
+        job_id="00000000-0000-4000-8000-000000000001",
         profile=_profile(),
     )
     draft_id = thread.latest_draft.draft_id
@@ -435,7 +435,7 @@ def test_revise_rejects_empty_body(tmp_path: Path) -> None:
         LOCAL_TENANT,
         thread_id="thread-1",
         contact_id=str(contact.contact_id),
-        job_id="https://job/1",
+        job_id="00000000-0000-4000-8000-000000000001",
         profile=_profile(),
     )
     with pytest.raises(OutreachDraftInputError):
