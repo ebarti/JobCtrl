@@ -39,14 +39,37 @@ def create_exact_v7_schema(
     _execute: Callable[[str], object] | None = None,
 ) -> None:
     """Install the complete target schema into an empty SQLite database."""
+    _create_exact_v7_schema(conn, stamp_version=True, _execute=_execute)
+
+
+def create_unstamped_exact_v7_candidate(
+    conn: sqlite3.Connection,
+    *,
+    _execute: Callable[[str], object] | None = None,
+) -> None:
+    """Build an exact-v7 migration candidate without stamping its version."""
+    _create_exact_v7_schema(conn, stamp_version=False, _execute=_execute)
+
+
+def _create_exact_v7_schema(
+    conn: sqlite3.Connection,
+    *,
+    stamp_version: bool,
+    _execute: Callable[[str], object] | None,
+) -> None:
     if schema_dump(conn):
         raise SchemaManifestError("exact v7 creation requires an empty schema")
+    if not stamp_version and conn.execute("PRAGMA user_version").fetchone()[0] != 0:
+        raise SchemaManifestError(
+            "unstamped exact v7 candidate creation requires user_version 0"
+        )
     execute = _execute or conn.execute
     conn.execute("SAVEPOINT exact_v7_schema")
     try:
         for statement in _schema_statements():
             execute(statement)
-        execute(f"PRAGMA user_version = {EXACT_V7_MANIFEST.version}")
+        if stamp_version:
+            execute(f"PRAGMA user_version = {EXACT_V7_MANIFEST.version}")
         assert_exact_manifest(conn, EXACT_V7_MANIFEST)
         conn.execute("RELEASE SAVEPOINT exact_v7_schema")
     except BaseException:
