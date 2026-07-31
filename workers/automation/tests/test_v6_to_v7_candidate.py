@@ -16,7 +16,9 @@ from jobctrl.infrastructure.migrations.schema_manifest import (
 )
 from jobctrl.infrastructure.migrations.v6_to_v7_candidate import (
     CandidatePopulationError,
+    candidate_logical_digest,
     populate_v7_candidate,
+    source_logical_digest,
 )
 from jobctrl.infrastructure.migrations.v6_to_v7_copy import CandidateCopyError
 from jobctrl.infrastructure.migrations.v6_to_v7_plan import target_tables
@@ -112,8 +114,23 @@ def _sequence_rows(conn: sqlite3.Connection) -> tuple[tuple[object, ...], ...]:
     return tuple(conn.execute("SELECT name, seq FROM sqlite_sequence ORDER BY name"))
 
 
-def _assert_successful_result(result: object, candidate: sqlite3.Connection) -> None:
+def _assert_successful_result(
+    result: object,
+    candidate: sqlite3.Connection,
+    *,
+    source_digest: str,
+    source_total_changes: int,
+) -> None:
     assert getattr(result, "migration_at") == _MIGRATION_AT
+    candidate_digest = getattr(result, "candidate_digest")
+    assert candidate_digest == candidate_logical_digest(candidate)
+    assert len(candidate_digest) == 64
+    assert int(candidate_digest, 16) >= 0
+    observed_source_digest = getattr(result, "source_digest")
+    assert observed_source_digest == source_digest
+    assert len(observed_source_digest) == 64
+    assert int(observed_source_digest, 16) >= 0
+    assert getattr(result, "source_total_changes") == source_total_changes
     receipts = tuple(getattr(result, "steps"))
     assert tuple(getattr(receipt, "step_id") for receipt in receipts) == _STEP_IDS
     assert len(receipts) == len(_STEP_IDS)
@@ -167,11 +184,23 @@ def test_population_builds_an_exact_unstamped_candidate_without_exposing_source_
             job_id_factory=_allocator(*_JOB_IDS),
         )
 
-        _assert_successful_result(result, candidate)
+        _assert_successful_result(
+            result,
+            candidate,
+            source_digest=source_logical_digest(source),
+            source_total_changes=int(before[2]),
+        )
         _assert_source_unchanged(source, before)
         assert source.execute("PRAGMA query_only").fetchone() == (1,)
         assert _SOURCE_URL not in repr(result)
         assert _SOURCE_TITLE not in repr(result)
+
+        candidate.execute("PRAGMA user_version = 7")
+        assert candidate_logical_digest(candidate) == result.candidate_digest
+        candidate.execute("PRAGMA user_version = 0")
+        candidate.execute("UPDATE dashboard_projections SET generated_at = 'tampered'")
+        candidate.commit()
+        assert candidate_logical_digest(candidate) != result.candidate_digest
     finally:
         source.close()
         candidate.close()
@@ -371,7 +400,12 @@ def test_population_accepts_an_empty_shipped_workspace_without_spurious_rows(
             job_id_factory=_allocator(*_JOB_IDS),
         )
 
-        _assert_successful_result(result, candidate)
+        _assert_successful_result(
+            result,
+            candidate,
+            source_digest=source_logical_digest(source),
+            source_total_changes=source.total_changes,
+        )
         nonempty_rows = {
             table: candidate.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
             for table in sorted(target_tables())
@@ -395,7 +429,12 @@ def test_population_accepts_only_empty_retired_upgrade_history_tables(
             migration_at=_MIGRATION_AT,
             job_id_factory=_allocator(*_JOB_IDS),
         )
-        _assert_successful_result(result, candidate)
+        _assert_successful_result(
+            result,
+            candidate,
+            source_digest=source_logical_digest(source),
+            source_total_changes=source.total_changes,
+        )
     finally:
         source.close()
         candidate.close()
