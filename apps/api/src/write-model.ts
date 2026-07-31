@@ -8,7 +8,6 @@ import type {
   DeleteJobRequest,
   JobMutationResponse,
   MarkJobActionRequest,
-  ResetStaleScoresForRescoreRequest,
   ResetStaleScoresForRescoreResponse,
   SettingsResponse,
   SettingsUpdateRequest,
@@ -387,21 +386,18 @@ export function cancelJobAction(db: SqliteDatabase, jobKey: string, runId = ""):
 
 export function correctScore(
   db: SqliteDatabase,
-  jobKey: string,
+  tenantId: string,
+  jobId: string,
   request: CorrectScoreRequest,
-): { jobUrl: string; version: number } {
-  const jobUrl = resolveJobUrl(db, jobKey);
-  if (!jobUrl) {
-    throw new InputError("Job not found.");
-  }
+): { jobId: string; version: number } {
   ensureJobScoresTable(db);
   ensureScoreStalenessTable(db);
   const latest = getRow<Record<string, unknown>>(
     db,
     `SELECT * FROM job_scores
-     WHERE tenant_id = 'local' AND job_url = ?
+     WHERE tenant_id = ? AND job_id = ?
      ORDER BY version DESC LIMIT 1`,
-    [jobUrl],
+    [tenantId, jobId],
   );
   if (!latest) {
     throw new InputError("Score correction requires an existing score.");
@@ -411,24 +407,25 @@ export function correctScore(
   const correction = {
     corrected_fit_score: request.correctedScore,
     rationale: request.reason,
-    corrected_by: "local",
+    corrected_by: tenantId,
     corrected_at: now,
   };
   const trace = appendCorrectionHistory(latest.trace_json, {
     original_score: Number(latest.fit_score ?? 0),
     corrected_score: request.correctedScore,
     rationale: request.reason,
-    corrected_by: "local",
+    corrected_by: tenantId,
     corrected_at: now,
   });
   const transaction = db.transaction(() => {
     db.prepare(
       `INSERT INTO job_scores (
-         job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+         tenant_id, job_id, version, fit_score, breakdown_json, keywords_json,
          scored_at, correction_json, criteria_json, trace_json
-       ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      jobUrl,
+      tenantId,
+      jobId,
       nextVersion,
       request.correctedScore,
       String(latest.breakdown_json ?? "{}"),
@@ -439,26 +436,27 @@ export function correctScore(
       JSON.stringify(trace),
     );
     const policyChange = persistScoringPolicyCorrection(db, {
-      jobUrl,
+      tenantId,
+      jobId,
       latest,
       correctedScore: request.correctedScore,
       correctedAt: now,
     });
     markComparableScoresStale(db, {
-      correctedJobUrl: jobUrl,
+      tenantId,
+      correctedJobId: jobId,
       markedAt: now,
-      newPolicyId: `local:scoring-policy-v${policyChange.newPolicyVersion}`,
+      newPolicyId: `${tenantId}:scoring-policy-v${policyChange.newPolicyVersion}`,
       newPolicyVersion: policyChange.newPolicyVersion,
     });
-    recordActionEvent(db, {
-      jobUrl,
+    recordActionEventById(db, {
+      tenantId,
+      jobId,
       stage: "score",
       eventType: "ScoreCorrected",
       level: "info",
       message: "Score corrected from the local API.",
       payload: {
-        tenantId: "local",
-        jobId: jobUrl,
         originalScore: Number(latest.fit_score ?? 0),
         correctedScore: request.correctedScore,
         reason: request.reason,
@@ -467,36 +465,39 @@ export function correctScore(
     });
   });
   transaction();
-  return { jobUrl, version: nextVersion };
+  return { jobId, version: nextVersion };
 }
 
 export function resetStaleScoresForRescore(
   db: SqliteDatabase,
-  request: ResetStaleScoresForRescoreRequest = { limit: 0, jobKeys: [] },
+  request: { limit?: number; jobIds?: readonly string[] } = {},
 ): ResetStaleScoresForRescoreResponse {
   ensureScoreStalenessTable(db);
   const limit = Math.max(0, Math.floor(request.limit ?? 0));
-  const jobKeysFilter = [...new Set((request.jobKeys ?? []).map((key) => key.trim()).filter(Boolean))];
-  const selectedWhere = jobKeysFilter.length
-    ? ` AND job_url IN (${jobKeysFilter.map(() => "?").join(", ")})`
-    : "";
+  const jobIdsFilter = [...new Set((request.jobIds ?? []).map((jobId) => jobId.trim()).filter(Boolean))];
+  const selectedWhere = request.jobIds === undefined
+    ? ""
+    : jobIdsFilter.length
+      ? ` AND job_id IN (${jobIdsFilter.map(() => "?").join(", ")})`
+      : " AND 0";
   const rows = allRows<Record<string, unknown>>(
     db,
-    `SELECT job_url, stale_reason, old_policy_version, new_policy_version
+    `SELECT tenant_id, job_id, stale_reason, old_policy_version, new_policy_version
      FROM job_score_staleness
-     WHERE tenant_id = 'local' AND resolved = 0
+     WHERE tenant_id = ? AND resolved = 0
        ${selectedWhere}
      ORDER BY marked_at ASC${limit > 0 ? " LIMIT ?" : ""}`,
-    [...jobKeysFilter, ...(limit > 0 ? [limit] : [])],
+    [LOCAL_TENANT, ...jobIdsFilter, ...(limit > 0 ? [limit] : [])],
   );
   const now = new Date().toISOString();
-  const jobKeys = rows.map((row) => String(row.job_url ?? "")).filter(Boolean);
+  const jobKeys = rows.map((row) => String(row.job_id ?? "")).filter(Boolean);
   for (const row of rows) {
-    const jobUrl = String(row.job_url ?? "");
-    if (!jobUrl) {
+    const tenantId = String(row.tenant_id ?? "");
+    const jobId = String(row.job_id ?? "");
+    if (!tenantId || !jobId) {
       continue;
     }
-    upsertStageState(db, jobUrl, "score", "pending", {
+    upsertStageStateById(db, tenantId, jobId, "score", "pending", {
       attemptCount: 0,
       clearTiming: true,
       skipValidation: true,
@@ -505,27 +506,27 @@ export function resetStaleScoresForRescore(
       `UPDATE job_score_staleness
           SET resolved = 1,
               resolved_at = ?
-        WHERE tenant_id = 'local'
-          AND job_url = ?
+        WHERE tenant_id = ?
+          AND job_id = ?
           AND stale_reason = ?
           AND old_policy_version = ?
           AND new_policy_version = ?`,
     ).run(
       now,
-      jobUrl,
+      tenantId,
+      jobId,
       String(row.stale_reason ?? ""),
       Number(row.old_policy_version ?? 0),
       Number(row.new_policy_version ?? 0),
     );
-    recordActionEvent(db, {
-      jobUrl,
+    recordActionEventById(db, {
+      tenantId,
+      jobId,
       stage: "score",
       eventType: "ScoreRescoreRequested",
       level: "info",
       message: "Stale score reset for explicit rescore.",
       payload: {
-        tenantId: "local",
-        jobId: jobUrl,
         staleReason: String(row.stale_reason ?? ""),
         oldPolicyVersion: Number(row.old_policy_version ?? 0),
         newPolicyVersion: Number(row.new_policy_version ?? 0),
@@ -887,33 +888,28 @@ function deleteWhere(db: SqliteDatabase, tableName: string, whereSql: string, pa
 function ensureJobScoresTable(db: SqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS job_scores (
-      job_url TEXT NOT NULL,
-      version INTEGER NOT NULL,
       tenant_id TEXT NOT NULL DEFAULT 'local',
-      fit_score INTEGER NOT NULL,
+      job_id TEXT NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      fit_score INTEGER NOT NULL CHECK(fit_score BETWEEN 1 AND 10),
       breakdown_json TEXT NOT NULL,
       keywords_json TEXT NOT NULL,
       scored_at TEXT NOT NULL,
       correction_json TEXT,
       criteria_json TEXT NOT NULL DEFAULT '{}',
       trace_json TEXT NOT NULL DEFAULT '{}',
-      PRIMARY KEY (job_url, version)
+      PRIMARY KEY (tenant_id, job_id, version),
+      FOREIGN KEY (tenant_id, job_id)
+        REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
     )
   `);
-  const columns = columnNames(db, "job_scores");
-  if (!columns.has("criteria_json")) {
-    db.exec("ALTER TABLE job_scores ADD COLUMN criteria_json TEXT NOT NULL DEFAULT '{}'");
-  }
-  if (!columns.has("trace_json")) {
-    db.exec("ALTER TABLE job_scores ADD COLUMN trace_json TEXT NOT NULL DEFAULT '{}'");
-  }
 }
 
 function ensureScoreStalenessTable(db: SqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS job_score_staleness (
       tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
+      job_id TEXT NOT NULL,
       stale_reason TEXT NOT NULL,
       old_policy_id TEXT NOT NULL DEFAULT '',
       old_policy_version INTEGER NOT NULL,
@@ -924,9 +920,11 @@ function ensureScoreStalenessTable(db: SqliteDatabase): void {
       resolved_at TEXT,
       resolved_by_score_version INTEGER,
       PRIMARY KEY (
-        tenant_id, job_url, stale_reason,
+        tenant_id, job_id, stale_reason,
         old_policy_version, new_policy_version
-      )
+      ),
+      FOREIGN KEY (tenant_id, job_id)
+        REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
     )
   `);
   db.exec(`
@@ -935,7 +933,7 @@ function ensureScoreStalenessTable(db: SqliteDatabase): void {
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_job_score_staleness_job
-    ON job_score_staleness(tenant_id, job_url, resolved)
+    ON job_score_staleness(tenant_id, job_id, resolved)
   `);
 }
 
@@ -960,28 +958,29 @@ function ensureScoringPoliciesTable(db: SqliteDatabase): void {
 function persistScoringPolicyCorrection(
   db: SqliteDatabase,
   input: {
-    jobUrl: string;
+    tenantId: string;
+    jobId: string;
     latest: Record<string, unknown>;
     correctedScore: number;
     correctedAt: string;
   },
 ): { previousPolicyVersion: number; newPolicyVersion: number } {
   ensureScoringPoliciesTable(db);
-  const current = getCurrentScoringPolicyRow(db, input.correctedAt);
+  const current = getCurrentScoringPolicyRow(db, input.tenantId, input.correctedAt);
   const previousTrace = parseObjectOrDefault(String(input.latest.trace_json ?? "{}"));
   const previousBreakdown = parseObjectOrDefault(String(input.latest.breakdown_json ?? "{}"));
   const originalScore = Number(input.latest.fit_score ?? 0);
   const correctionDelta = input.correctedScore - originalScore;
   const anchor = sanitizePolicyAnchor({
     anchor_id: correctionAnchorId({
-      tenant_id: "local",
-      job_id: input.jobUrl,
+      tenant_id: input.tenantId,
+      job_id: input.jobId,
       original_score: originalScore,
       corrected_score: input.correctedScore,
       corrected_at: input.correctedAt,
       source_policy_version: Number(previousTrace.scoring_policy_version ?? 0),
     }),
-    job_ref_hash: policyAnchorJobRefHash(input.jobUrl),
+    job_ref_hash: policyAnchorJobRefHash(input.tenantId, input.jobId),
     fit_score: input.correctedScore,
     original_fit_score: originalScore,
     corrected_fit_score: input.correctedScore,
@@ -998,8 +997,9 @@ function persistScoringPolicyCorrection(
   db.prepare(
     `INSERT INTO scoring_policies (
        tenant_id, version, rubric_json, anchors_json, created_at, created_from_event_id
-     ) VALUES ('local', ?, ?, ?, ?, NULL)`,
+     ) VALUES (?, ?, ?, ?, ?, NULL)`,
   ).run(
+    input.tenantId,
     Number(current.version) + 1,
     current.rubric_json,
     JSON.stringify(anchors),
@@ -1014,7 +1014,8 @@ function persistScoringPolicyCorrection(
 function markComparableScoresStale(
   db: SqliteDatabase,
   input: {
-    correctedJobUrl: string;
+    tenantId: string;
+    correctedJobId: string;
     markedAt: string;
     newPolicyId: string;
     newPolicyVersion: number;
@@ -1023,21 +1024,24 @@ function markComparableScoresStale(
   ensureScoreStalenessTable(db);
   const latestRows = allRows<Record<string, unknown>>(
     db,
-    `SELECT s.job_url, s.trace_json
+    `SELECT s.job_id, s.trace_json
      FROM job_scores s
      INNER JOIN (
-       SELECT job_url, MAX(version) AS max_version
+       SELECT tenant_id, job_id, MAX(version) AS max_version
        FROM job_scores
-       WHERE tenant_id = 'local'
-       GROUP BY job_url
+       WHERE tenant_id = ?
+       GROUP BY tenant_id, job_id
      ) latest
-       ON latest.job_url = s.job_url AND latest.max_version = s.version
-     WHERE s.tenant_id = 'local'
+       ON latest.tenant_id = s.tenant_id
+      AND latest.job_id = s.job_id
+      AND latest.max_version = s.version
+     WHERE s.tenant_id = ?
        AND (s.correction_json IS NULL OR TRIM(s.correction_json) = '')`,
+    [input.tenantId, input.tenantId],
   );
   for (const row of latestRows) {
-    const jobUrl = String(row.job_url ?? "");
-    if (!jobUrl || jobUrl === input.correctedJobUrl) {
+    const jobId = String(row.job_id ?? "");
+    if (!jobId || jobId === input.correctedJobId) {
       continue;
     }
     const trace = parseObjectOrDefault(String(row.trace_json ?? "{}"));
@@ -1050,14 +1054,15 @@ function markComparableScoresStale(
     const result = db
       .prepare(
         `INSERT OR IGNORE INTO job_score_staleness (
-           tenant_id, job_url, stale_reason,
+           tenant_id, job_id, stale_reason,
            old_policy_id, old_policy_version,
            new_policy_id, new_policy_version,
            marked_at, resolved, resolved_at, resolved_by_score_version
-         ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL)`,
       )
       .run(
-        jobUrl,
+        input.tenantId,
+        jobId,
         staleReason,
         oldPolicyId,
         oldPolicyVersion,
@@ -1068,7 +1073,7 @@ function markComparableScoresStale(
     if (result.changes <= 0) {
       continue;
     }
-    markScoreStageStale(db, jobUrl, {
+    markScoreStageStale(db, input.tenantId, jobId, {
       staleReason,
       oldPolicyId,
       oldPolicyVersion,
@@ -1081,7 +1086,8 @@ function markComparableScoresStale(
 
 function markScoreStageStale(
   db: SqliteDatabase,
-  jobUrl: string,
+  tenantId: string,
+  jobId: string,
   marker: {
     staleReason: string;
     oldPolicyId: string;
@@ -1093,21 +1099,20 @@ function markScoreStageStale(
 ): void {
   const current = getRow<{ state?: string }>(
     db,
-    "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-    [jobUrl],
+    "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'score'",
+    [tenantId, jobId],
   );
   if (!current || current.state === "succeeded") {
-    upsertStageState(db, jobUrl, "score", "stale");
+    upsertStageStateById(db, tenantId, jobId, "score", "stale");
   }
-  recordActionEvent(db, {
-    jobUrl,
+  recordActionEventById(db, {
+    tenantId,
+    jobId,
     stage: "score",
     eventType: "ScoreMarkedStale",
     level: "info",
     message: "Score marked stale after scoring policy changed.",
     payload: {
-      tenantId: "local",
-      jobId: jobUrl,
       staleReason: marker.staleReason,
       oldPolicyId: marker.oldPolicyId,
       oldPolicyVersion: marker.oldPolicyVersion,
@@ -1120,6 +1125,7 @@ function markScoreStageStale(
 
 function getCurrentScoringPolicyRow(
   db: SqliteDatabase,
+  tenantId: string,
   createdAt: string,
 ): {
   version: number;
@@ -1134,9 +1140,10 @@ function getCurrentScoringPolicyRow(
     db,
     `SELECT version, rubric_json, anchors_json
      FROM scoring_policies
-     WHERE tenant_id = 'local'
+     WHERE tenant_id = ?
      ORDER BY version DESC
      LIMIT 1`,
+    [tenantId],
   );
   if (latest) {
     return {
@@ -1149,8 +1156,8 @@ function getCurrentScoringPolicyRow(
   db.prepare(
     `INSERT INTO scoring_policies (
        tenant_id, version, rubric_json, anchors_json, created_at, created_from_event_id
-     ) VALUES ('local', 1, ?, '[]', ?, NULL)`,
-  ).run(rubricJson, createdAt);
+     ) VALUES (?, 1, ?, '[]', ?, NULL)`,
+  ).run(tenantId, rubricJson, createdAt);
   return { version: 1, rubric_json: rubricJson, anchors_json: "[]" };
 }
 
@@ -1240,8 +1247,8 @@ function correctionAnchorId(payload: Record<string, unknown>): string {
   return `correction-anchor-${digest}`;
 }
 
-function policyAnchorJobRefHash(jobUrl: string): string {
-  return `sha256:${stablePolicyHash({ tenant_id: "local", job_id: jobUrl })}`;
+function policyAnchorJobRefHash(tenantId: string, jobId: string): string {
+  return `sha256:${stablePolicyHash({ tenant_id: tenantId, job_id: jobId })}`;
 }
 
 function stablePolicyHash(payload: Record<string, unknown>): string {
