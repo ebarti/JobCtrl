@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +28,7 @@ import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 import { PROFILE_PREVIEW_SCRIPT, defaultActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 let tempDir = "";
 let options: BuildAppOptions;
@@ -294,9 +296,10 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("normalizes legacy lifecycle tables before health-only startup completes", async () => {
+  it("rejects legacy lifecycle tables before health-only startup completes", async () => {
+    const legacyDbPath = path.join(tempDir, "legacy-health.sqlite3");
     const token = "job" + "ctl";
-    const db = new Database(options.dbPath);
+    const db = new Database(legacyDbPath);
     db.exec(`
       CREATE TABLE ${token}_hidden_jobs (
         job_url TEXT PRIMARY KEY,
@@ -309,22 +312,7 @@ describe("local TypeScript API", () => {
     `);
     db.close();
 
-    const app = buildApp(options);
-    const response = await app.inject({ method: "GET", url: "/v1/health" });
-    expect(response.statusCode, response.body).toBe(200);
-    await app.close();
-
-    const verify = new Database(options.dbPath);
-    try {
-      expect(
-        verify.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(`${token}_hidden_jobs`),
-      ).toBeUndefined();
-      expect(
-        verify.prepare("SELECT COUNT(*) AS count FROM jobctrl_hidden_jobs").get(),
-      ).toMatchObject({ count: 1 });
-    } finally {
-      verify.close();
-    }
+    expect(() => buildApp({ ...options, dbPath: legacyDbPath })).toThrow("schema version 0");
   });
 
   it("reports today's LLM spend against the configured budget", async () => {
@@ -1294,7 +1282,7 @@ describe("local TypeScript API", () => {
     expect(body.activity[0]).toMatchObject({
       eventId: "1",
       eventType: "ActionFailed",
-      jobKey: "https://example.com/jobs/failed-score",
+      jobKey: jobIdFor("https://example.com/jobs/failed-score"),
       title: "Backend Engineer",
       company: "ExampleCo",
       stage: "score",
@@ -1332,11 +1320,11 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       db.prepare(
-        "UPDATE job_stage_states SET state = 'running', updated_at = ? WHERE job_url = ? AND stage = 'score'",
-      ).run("2999-01-01T00:00:00Z", "https://example.com/jobs/failed-score");
+        "UPDATE job_stage_states SET state = 'running', updated_at = ? WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'",
+      ).run("2999-01-01T00:00:00Z", jobIdFor("https://example.com/jobs/failed-score"));
       db.prepare(
-        "UPDATE job_stage_states SET state = 'running', updated_at = ? WHERE job_url = ? AND stage = 'tailor'",
-      ).run("2020-01-01T00:00:00Z", "https://example.com/jobs/blocked-tailor");
+        "UPDATE job_stage_states SET state = 'running', updated_at = ? WHERE tenant_id = 'local' AND job_id = ? AND stage = 'tailor'",
+      ).run("2020-01-01T00:00:00Z", jobIdFor("https://example.com/jobs/blocked-tailor"));
     } finally {
       db.close();
     }
@@ -1411,7 +1399,7 @@ describe("local TypeScript API", () => {
         stuckAfterSeconds: 150,
         stuckItems: [
           {
-            jobKey: "https://example.com/jobs/blocked-tailor",
+            jobKey: jobIdFor("https://example.com/jobs/blocked-tailor"),
             title: "Frontend Engineer",
             company: "Acme",
             stage: "tailor",
@@ -1428,7 +1416,7 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       db.prepare(
-        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
       ).run(
         null,
         "discover",
@@ -1508,7 +1496,7 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       db.prepare(
-        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
       ).run(
         null,
         "discover",
@@ -1596,7 +1584,7 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       db.prepare(
-        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
       ).run(
         null,
         "discover",
@@ -1681,7 +1669,7 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       db.prepare(
-        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
       ).run(
         null,
         "discover",
@@ -1748,7 +1736,7 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       db.prepare(
-        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
       ).run(
         null,
         "discover",
@@ -1807,7 +1795,7 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       db.prepare(
-        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
       ).run(
         null,
         "discover",
@@ -1850,7 +1838,7 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       db.prepare(
-        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
       ).run(
         null,
         "discover",
@@ -1961,7 +1949,7 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       const insertActivity = db.prepare(
-        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?",
       );
       for (let index = 0; index < 75; index += 1) {
         const suffix = String(index + 1).padStart(2, "0");
@@ -2001,10 +1989,11 @@ describe("local TypeScript API", () => {
 
   it("does not expose dashboard activity links for events whose job no longer exists", async () => {
     const db = new Database(options.dbPath);
+    db.pragma("foreign_keys = OFF");
     db.prepare(
-      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at) VALUES ('local', ?, 1, ?, ?, ?, ?, ?)",
     ).run(
-      "https://example.com/jobs/missing-parent",
+      jobIdFor("https://example.com/jobs/missing-parent"),
       "tailor",
       "StageFailed",
       "error",
@@ -2050,7 +2039,7 @@ describe("local TypeScript API", () => {
     expect(body.pagination).toMatchObject({ page: 1, pageSize: 1, total: 1, pages: 1 });
     expect(body.items).toHaveLength(1);
     expect(body.items[0]).toMatchObject({
-      jobKey: "https://example.com/jobs/failed-score",
+      jobKey: jobIdFor("https://example.com/jobs/failed-score"),
       title: "Backend Engineer",
       currentStage: "discover",
       currentState: "failed",
@@ -2095,7 +2084,7 @@ describe("local TypeScript API", () => {
     insertUnannualizedPostedCompensationFact(seedDb, "https://example.com/jobs/failed-score");
     insertMarketCompensationEstimate(seedDb, "https://example.com/jobs/ready");
     seedDb
-      .prepare("INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .prepare("INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?")
       .run(
         "https://example.com/jobs/ready",
         "enrich",
@@ -2131,7 +2120,7 @@ describe("local TypeScript API", () => {
     });
     expect(salarySorted.statusCode, salarySorted.body).toBe(200);
     expect(salarySorted.json().items[0]).toMatchObject({
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
       compensationSummary: {
         posted: {
           displayRange: "EUR 55000/year",
@@ -2149,7 +2138,7 @@ describe("local TypeScript API", () => {
     });
     expect(salaryMaxSorted.statusCode, salaryMaxSorted.body).toBe(200);
     expect(salaryMaxSorted.json().items[0]).toMatchObject({
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
     });
 
     const marketSorted = await app.inject({
@@ -2158,7 +2147,7 @@ describe("local TypeScript API", () => {
     });
     expect(marketSorted.statusCode, marketSorted.body).toBe(200);
     expect(marketSorted.json().items[0]).toMatchObject({
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
       compensationSummary: {
         market: { displayRange: "EUR 112000-142000/year" },
       },
@@ -2269,7 +2258,7 @@ describe("local TypeScript API", () => {
     const jobUrl = "https://example.com/jobs/ready";
     const db = new Database(options.dbPath);
     const insertAuditEvent = db.prepare(
-      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
     );
     insertAuditEvent.run(
       jobUrl,
@@ -2393,7 +2382,7 @@ describe("local TypeScript API", () => {
     const candidateUrl = "https://jobs.lever.co/acme/staff-platform-engineer-india";
     const db = new Database(options.dbPath);
     db.prepare(
-      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
     ).run(
       jobUrl,
       "discover",
@@ -2439,9 +2428,9 @@ describe("local TypeScript API", () => {
     const supersededUrl = "https://careers.acme.com/staff-platform-engineer";
     const db = new Database(options.dbPath);
     db.prepare(
-      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
     ).run(
-      null,
+      jobUrl,
       "discover",
       "DuplicateJobLinked",
       "info",
@@ -2450,7 +2439,7 @@ describe("local TypeScript API", () => {
       JSON.stringify({
         tenantId: "local",
         duplicate_link_id: "dup:linked-1",
-        surviving_job_id: jobUrl,
+        surviving_job_id: jobIdFor(jobUrl),
         superseded_job_or_observation_id: supersededUrl,
         reason: "content_fingerprint_match",
         confidence: 0.95,
@@ -2485,7 +2474,7 @@ describe("local TypeScript API", () => {
     const jobUrl = "https://example.com/jobs/ready";
     const db = new Database(options.dbPath);
     db.prepare(
-      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
     ).run(
       jobUrl,
       "enrich",
@@ -2545,14 +2534,14 @@ describe("local TypeScript API", () => {
     });
 
     expect(singleDelete.statusCode, singleDelete.body).toBe(200);
-    expect(singleDelete.json()).toMatchObject({ ok: true, count: 1, jobKeys: ["https://example.com/jobs/ready"] });
+    expect(singleDelete.json()).toMatchObject({ ok: true, count: 1, jobKeys: [jobIdFor("https://example.com/jobs/ready")] });
     expect(bulkDelete.statusCode, bulkDelete.body).toBe(200);
-    expect(bulkDelete.json()).toMatchObject({ ok: true, count: 1, jobKeys: ["https://example.com/jobs/failed-score"] });
+    expect(bulkDelete.json()).toMatchObject({ ok: true, count: 1, jobKeys: [jobIdFor("https://example.com/jobs/failed-score")] });
 
     const active = await app.inject({ method: "GET", url: "/v1/jobs" });
     expect(active.statusCode, active.body).toBe(200);
     expect(active.json().pagination.total).toBe(1);
-    expect(active.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual(["https://example.com/jobs/blocked-tailor"]);
+    expect(active.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([jobIdFor("https://example.com/jobs/blocked-tailor")]);
 
     const deleted = await app.inject({ method: "GET", url: "/v1/jobs?deleted=deleted&sort=title&dir=asc" });
     expect(deleted.statusCode, deleted.body).toBe(200);
@@ -2593,18 +2582,10 @@ describe("local TypeScript API", () => {
 
   it("treats stale restores before later deletes as deleted", async () => {
     const db = new Database(options.dbPath);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-        job_url TEXT PRIMARY KEY,
-        deleted_at TEXT NOT NULL,
-        reason TEXT,
-        restored_at TEXT
-      );
-    `);
     db.prepare(
-      "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at, reason, restored_at) VALUES ('local', ?, ?, ?, ?)",
     ).run(
-      "https://example.com/jobs/ready",
+      jobIdFor("https://example.com/jobs/ready"),
       "2026-05-25T23:10:33.870522+00:00",
       "discovery hygiene rejected source",
       "2026-05-25T21:35:55.879345+00:00",
@@ -2620,7 +2601,7 @@ describe("local TypeScript API", () => {
     expect(deleted.statusCode, deleted.body).toBe(200);
     expect(deleted.json().pagination.total).toBe(1);
     expect(deleted.json().items[0]).toMatchObject({
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
       deletedAt: "2026-05-25T23:10:33.870522+00:00",
     });
 
@@ -2646,7 +2627,7 @@ describe("local TypeScript API", () => {
     expect(active.statusCode, active.body).toBe(200);
     expect(active.json().pagination.total).toBe(2);
     expect(active.json().items.map((job: { jobKey: string }) => job.jobKey)).not.toContain(
-      "https://example.com/jobs/blocked-tailor",
+      jobIdFor("https://example.com/jobs/blocked-tailor"),
     );
 
     const deleted = await app.inject({ method: "GET", url: "/v1/jobs?deleted=deleted" });
@@ -2657,7 +2638,7 @@ describe("local TypeScript API", () => {
     expect(hidden.statusCode, hidden.body).toBe(200);
     expect(hidden.json().pagination.total).toBe(1);
     expect(hidden.json().items[0]).toMatchObject({
-      jobKey: "https://example.com/jobs/blocked-tailor",
+      jobKey: jobIdFor("https://example.com/jobs/blocked-tailor"),
       hiddenAt: expect.any(String),
       deletedAt: null,
     });
@@ -2680,32 +2661,21 @@ describe("local TypeScript API", () => {
 
   it("separates closed postings from active and deleted jobs", async () => {
     const db = new Database(options.dbPath);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS posting_snapshot_sets (
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        job_url TEXT NOT NULL,
-        snapshot_set_json TEXT NOT NULL,
-        latest_snapshot_version INTEGER NOT NULL DEFAULT 0,
-        latest_active_state TEXT NOT NULL DEFAULT 'unknown',
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, job_url)
-      );
-    `);
     db.prepare(
       `INSERT INTO posting_snapshot_sets (
-        tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+        tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
         latest_active_state, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(
       "local",
-      "https://example.com/jobs/failed-score",
-      JSON.stringify({ tenant_id: "local", job_id: "https://example.com/jobs/failed-score", latest_active_state: "removed" }),
+      jobIdFor("https://example.com/jobs/failed-score"),
+      JSON.stringify({ tenant_id: "local", job_id: jobIdFor("https://example.com/jobs/failed-score"), latest_active_state: "removed" }),
       0,
       "removed",
       "2026-05-29T10:00:00+00:00",
     );
     db.prepare(
-      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
     ).run(
       "https://example.com/jobs/failed-score",
       "enrich",
@@ -2714,7 +2684,7 @@ describe("local TypeScript API", () => {
       "Job active state changed.",
       "2026-05-29T10:00:00+00:00",
       JSON.stringify({
-        job_id: "https://example.com/jobs/failed-score",
+        job_id: jobIdFor("https://example.com/jobs/failed-score"),
         active_state: "removed",
         previous_state: "active",
       }),
@@ -2727,14 +2697,14 @@ describe("local TypeScript API", () => {
     expect(active.statusCode, active.body).toBe(200);
     expect(active.json().pagination.total).toBe(2);
     expect(active.json().items.map((job: { jobKey: string }) => job.jobKey)).not.toContain(
-      "https://example.com/jobs/failed-score",
+      jobIdFor("https://example.com/jobs/failed-score"),
     );
 
     const closed = await app.inject({ method: "GET", url: "/v1/jobs?deleted=closed" });
     expect(closed.statusCode, closed.body).toBe(200);
     expect(closed.json().pagination.total).toBe(1);
     expect(closed.json().items[0]).toMatchObject({
-      jobKey: "https://example.com/jobs/failed-score",
+      jobKey: jobIdFor("https://example.com/jobs/failed-score"),
       activeState: "removed",
       deletedAt: null,
       hiddenAt: null,
@@ -2780,13 +2750,17 @@ describe("local TypeScript API", () => {
       payload: { allMatching: false, jobKeys: [readyUrl, blockedUrl] },
     });
     expect(permanentDelete.statusCode, permanentDelete.body).toBe(200);
-    expect(permanentDelete.json()).toMatchObject({ ok: true, count: 2, jobKeys: [readyUrl, blockedUrl] });
+    expect(permanentDelete.json()).toMatchObject({
+      ok: true,
+      count: 2,
+      jobKeys: [jobIdFor(readyUrl), jobIdFor(blockedUrl)],
+    });
 
     const active = await app.inject({ method: "GET", url: "/v1/jobs?deleted=active&sort=title&dir=asc" });
     expect(active.statusCode, active.body).toBe(200);
     expect(active.json().pagination.total).toBe(1);
     expect(active.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
-      "https://example.com/jobs/failed-score",
+      jobIdFor("https://example.com/jobs/failed-score"),
     ]);
 
     const deleted = await app.inject({ method: "GET", url: "/v1/jobs?deleted=deleted" });
@@ -2799,10 +2773,10 @@ describe("local TypeScript API", () => {
 
     const db = new Database(options.dbPath);
     expect(countRows(db, "jobs", "url", readyUrl)).toBe(0);
-    expect(countRows(db, "jobctrl_deleted_jobs", "job_url", readyUrl)).toBe(0);
-    expect(countRows(db, "jobctrl_hidden_jobs", "job_url", blockedUrl)).toBe(0);
-    expect(countRows(db, "job_stage_states", "job_url", readyUrl)).toBe(0);
-    expect(countRows(db, "job_scores", "job_url", readyUrl)).toBe(0);
+    expect(countRows(db, "jobctrl_deleted_jobs", "job_id", jobIdFor(readyUrl))).toBe(0);
+    expect(countRows(db, "jobctrl_hidden_jobs", "job_id", jobIdFor(blockedUrl))).toBe(0);
+    expect(countRows(db, "job_stage_states", "job_id", jobIdFor(readyUrl))).toBe(0);
+    expect(countRows(db, "job_scores", "job_id", jobIdFor(readyUrl))).toBe(0);
 
     insertJob(db, {
       url: readyUrl,
@@ -2811,7 +2785,7 @@ describe("local TypeScript API", () => {
       fitScore: null,
     });
     db.prepare(
-      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?",
     ).run(readyUrl, "discover", "JobDiscovered", "info", "Rediscovered after permanent delete.", "2026-04-30T10:00:00+00:00");
     db.close();
 
@@ -2822,7 +2796,7 @@ describe("local TypeScript API", () => {
     expect(rediscovered.statusCode, rediscovered.body).toBe(200);
     expect(rediscovered.json().pagination.total).toBe(1);
     expect(rediscovered.json().items[0]).toMatchObject({
-      jobKey: readyUrl,
+      jobKey: jobIdFor(readyUrl),
       title: "Rediscovered Engineer",
       deletedAt: null,
       hiddenAt: null,
@@ -2851,7 +2825,7 @@ describe("local TypeScript API", () => {
         + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       "run-new-path",
-      newJobUrl,
+      jobIdFor(newJobUrl),
       "New Path Engineer",
       "NewPathCo",
       "succeeded",
@@ -2877,7 +2851,7 @@ describe("local TypeScript API", () => {
       // through the upstream stages — the apply-derivation contract
       // is what M2 is locking in.)
       expect(job).toMatchObject({
-        jobKey: newJobUrl,
+        jobKey: jobIdFor(newJobUrl),
         applyStatus: "applied",
         appliedAt: "2026-05-01T00:01:00+00:00",
       });
@@ -2891,7 +2865,7 @@ describe("local TypeScript API", () => {
       expect(appliedJobsBody.filter).toMatchObject({ applyStatus: "applied" });
       expect(appliedJobsBody.items).toHaveLength(1);
       expect(appliedJobsBody.items[0]).toMatchObject({
-        jobKey: newJobUrl,
+        jobKey: jobIdFor(newJobUrl),
         applyStatus: "applied",
         appliedAt: "2026-05-01T00:01:00+00:00",
       });
@@ -2934,7 +2908,7 @@ describe("local TypeScript API", () => {
     const body = response.json();
     expect(body.items).toHaveLength(1);
     expect(body.items[0]).toMatchObject({
-      jobKey: "https://example.com/jobs/unscored",
+      jobKey: jobIdFor("https://example.com/jobs/unscored"),
       currentStage: "discover",
       currentState: "pending",
       fitScore: null,
@@ -2951,7 +2925,7 @@ describe("local TypeScript API", () => {
     expect(response.statusCode).toBe(200);
     const body = response.json();
     expect(body.job).toMatchObject({
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
       currentStage: "apply",
       currentState: "pending",
       artifactCount: 2,
@@ -2994,7 +2968,7 @@ describe("local TypeScript API", () => {
     for (let index = 0; index < 12; index += 1) {
       insertApplyRun.run(
         `newer-run-${index}`,
-        `https://example.com/jobs/newer-${index}`,
+        jobIdFor(`https://example.com/jobs/newer-${index}`),
         `Newer role ${index}`,
         "ExampleCo",
         "succeeded",
@@ -3005,7 +2979,7 @@ describe("local TypeScript API", () => {
     }
     insertApplyRun.run(
       "active-run-older",
-      jobUrl,
+      jobIdFor(jobUrl),
       "Platform Engineer",
       "ExampleCo",
       "in_progress",
@@ -3053,9 +3027,9 @@ describe("local TypeScript API", () => {
       insertStage(db, jobUrl, stage, "succeeded");
     }
     insertStage(db, jobUrl, "tailor", "failed", "FAILED_VALIDATION");
-    db.prepare("UPDATE job_stage_states SET error_message = ? WHERE job_url = ? AND stage = ?").run(
+    db.prepare("UPDATE job_stage_states SET error_message = ? WHERE tenant_id = 'local' AND job_id = ? AND stage = ?").run(
       "Tailoring ended with status failed_validation",
-      jobUrl,
+      jobIdFor(jobUrl),
       "tailor",
     );
     db.close();
@@ -3108,12 +3082,12 @@ describe("local TypeScript API", () => {
     expect(list.statusCode, list.body).toBe(200);
     const items = list.json().items as Array<Record<string, unknown>>;
     expect(items.map((job) => job.jobKey)).toEqual([
-      "https://example.com/jobs/ready",
-      "https://example.com/jobs/failed-score",
-      "https://example.com/jobs/blocked-tailor",
+      jobIdFor("https://example.com/jobs/ready"),
+      jobIdFor("https://example.com/jobs/failed-score"),
+      jobIdFor("https://example.com/jobs/blocked-tailor"),
     ]);
     expect(items[0]).toMatchObject({
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
       fitScore: 9,
       salary: "€55,000/year",
       compensationSummary: {
@@ -3140,14 +3114,14 @@ describe("local TypeScript API", () => {
     });
     expect(filtered.statusCode, filtered.body).toBe(200);
     expect(filtered.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
-      "https://example.com/jobs/ready",
+      jobIdFor("https://example.com/jobs/ready"),
     ]);
 
     const detail = await app.inject({ method: "GET", url: `/v1/jobs/${readyKey}` });
     expect(detail.statusCode, detail.body).toBe(200);
     const detailBody = detail.json();
     expect(detailBody.job).toMatchObject({
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
       salary: "€55,000/year",
       fitScore: 9,
       compensationSummary: {
@@ -3168,7 +3142,7 @@ describe("local TypeScript API", () => {
       },
       market: {
         recordStatus: "not_requested",
-        jobKey: "https://example.com/jobs/ready",
+        jobId: jobIdFor("https://example.com/jobs/ready"),
       },
     });
     expect(detailBody.applyAudit).toMatchObject({
@@ -3217,12 +3191,12 @@ describe("local TypeScript API", () => {
     expect(list.statusCode, list.body).toBe(200);
     const items = list.json().items as Array<Record<string, unknown>>;
     expect(items.map((job) => job.jobKey)).toEqual([
-      "https://example.com/jobs/ready",
-      "https://example.com/jobs/failed-score",
-      "https://example.com/jobs/blocked-tailor",
+      jobIdFor("https://example.com/jobs/ready"),
+      jobIdFor("https://example.com/jobs/failed-score"),
+      jobIdFor("https://example.com/jobs/blocked-tailor"),
     ]);
     expect(items[0]).toMatchObject({
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
       fitScore: 9,
       salary: "€55,000/year",
       compensationSummary: {
@@ -3252,14 +3226,14 @@ describe("local TypeScript API", () => {
     });
     expect(filtered.statusCode, filtered.body).toBe(200);
     expect(filtered.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
-      "https://example.com/jobs/ready",
+      jobIdFor("https://example.com/jobs/ready"),
     ]);
 
     const detail = await app.inject({ method: "GET", url: `/v1/jobs/${readyKey}` });
     expect(detail.statusCode, detail.body).toBe(200);
     const detailBody = detail.json();
     expect(detailBody.job).toMatchObject({
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
       salary: "€55,000/year",
       fitScore: 9,
       compensationSummary: {
@@ -3320,16 +3294,17 @@ describe("local TypeScript API", () => {
   it("reconciles stale retryable stage projections from latest failure events", async () => {
     const seedDb = new Database(options.dbPath);
     seedDb
-      .prepare("UPDATE job_stage_states SET retryable = 1, next_action = ? WHERE job_url = ? AND stage = ?")
+      .prepare("UPDATE job_stage_states SET retryable = 1, next_action = ? WHERE tenant_id = 'local' AND job_id = ? AND stage = ?")
       .run(
         "jobctrl retry score https://example.com/jobs/failed-score",
-        "https://example.com/jobs/failed-score",
+        jobIdFor("https://example.com/jobs/failed-score"),
         "score",
       );
     seedDb
       .prepare(
-        `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO job_events (
+           tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+         ) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?`,
       )
       .run(
         "https://example.com/jobs/failed-score",
@@ -3359,17 +3334,6 @@ describe("local TypeScript API", () => {
     const legacyJobUrl = "https://example.com/jobs/private-legacy";
     const legacyReason = "Legacy correction mentioned a private resume detail.";
     const seedDb = new Database(options.dbPath);
-    seedDb.exec(`
-      CREATE TABLE IF NOT EXISTS scoring_policies (
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        version INTEGER NOT NULL,
-        rubric_json TEXT NOT NULL,
-        anchors_json TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL,
-        created_from_event_id INTEGER,
-        PRIMARY KEY (tenant_id, version)
-      )
-    `);
     seedDb
       .prepare(
         `INSERT INTO scoring_policies (
@@ -3432,11 +3396,11 @@ describe("local TypeScript API", () => {
         .prepare(
           `SELECT version, fit_score, correction_json, trace_json
            FROM job_scores
-           WHERE job_url = ?
+           WHERE tenant_id = 'local' AND job_id = ?
            ORDER BY version DESC
            LIMIT 1`,
         )
-        .get("https://example.com/jobs/ready") as {
+        .get(jobIdFor("https://example.com/jobs/ready")) as {
         version: number;
         fit_score: number;
         correction_json: string;
@@ -3458,7 +3422,7 @@ describe("local TypeScript API", () => {
         .get() as { event_type: string; payload_json: string };
       expect(event.event_type).toBe("ScoreCorrected");
       expect(JSON.parse(event.payload_json)).toMatchObject({
-        jobId: "https://example.com/jobs/ready",
+        jobId: jobIdFor("https://example.com/jobs/ready"),
         originalScore: 9,
         correctedScore: 6,
       });
@@ -3572,9 +3536,9 @@ describe("local TypeScript API", () => {
         .prepare(
           `SELECT stale_reason, old_policy_version, new_policy_version, resolved
            FROM job_score_staleness
-           WHERE job_url = ?`,
+           WHERE tenant_id = 'local' AND job_id = ?`,
         )
-        .get(comparableUrl) as {
+        .get(jobIdFor(comparableUrl)) as {
         stale_reason: string;
         old_policy_version: number;
         new_policy_version: number;
@@ -3588,19 +3552,23 @@ describe("local TypeScript API", () => {
       });
       const excludedRows = db
         .prepare(
-          `SELECT job_url
+          `SELECT job_id
            FROM job_score_staleness
-           WHERE job_url IN (?, ?, ?)`,
+           WHERE tenant_id = 'local' AND job_id IN (?, ?, ?)`,
         )
-        .all("https://example.com/jobs/ready", currentPolicyUrl, alreadyCorrectedUrl);
+        .all(
+          jobIdFor("https://example.com/jobs/ready"),
+          jobIdFor(currentPolicyUrl),
+          jobIdFor(alreadyCorrectedUrl),
+        );
       expect(excludedRows).toEqual([]);
       const staleStage = db
-        .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
-        .get(comparableUrl) as { state: string };
+        .prepare("SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'")
+        .get(jobIdFor(comparableUrl)) as { state: string };
       expect(staleStage.state).toBe("stale");
       const event = db
-        .prepare("SELECT event_type FROM job_events WHERE job_url = ? ORDER BY event_id DESC LIMIT 1")
-        .get(comparableUrl) as { event_type: string };
+        .prepare("SELECT event_type FROM job_events WHERE tenant_id = 'local' AND job_id = ? ORDER BY event_id DESC LIMIT 1")
+        .get(jobIdFor(comparableUrl)) as { event_type: string };
       expect(event.event_type).toBe("ScoreMarkedStale");
     } finally {
       db.close();
@@ -3611,17 +3579,6 @@ describe("local TypeScript API", () => {
   it("rolls back the whole score correction when a later staleness write fails", async () => {
     const comparableUrl = "https://example.com/jobs/comparable-atomic";
     const seedDb = new Database(options.dbPath);
-    seedDb.exec(`
-      CREATE TABLE IF NOT EXISTS scoring_policies (
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        version INTEGER NOT NULL,
-        rubric_json TEXT NOT NULL,
-        anchors_json TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL,
-        created_from_event_id INTEGER,
-        PRIMARY KEY (tenant_id, version)
-      )
-    `);
     seedDb
       .prepare(
         `INSERT INTO scoring_policies (tenant_id, version, rubric_json, anchors_json, created_at, created_from_event_id)
@@ -3632,19 +3589,21 @@ describe("local TypeScript API", () => {
     insertScore(seedDb, comparableUrl, 1, 7, { policyVersion: 1 });
     insertStage(seedDb, comparableUrl, "score", "succeeded");
     createScoreStalenessTable(seedDb);
+    seedDb.close();
+
+    const app = buildApp(options);
+    const faultDb = new Database(options.dbPath);
     // Force the staleness-marking step to abort mid-correction, mimicking a
     // SQLITE_BUSY / constraint failure from a concurrent worker write after the
     // new score version and policy row have already been inserted.
-    seedDb.exec(`
+    faultDb.exec(`
       CREATE TRIGGER fail_staleness_insert
       BEFORE INSERT ON job_score_staleness
       BEGIN
         SELECT RAISE(ABORT, 'forced staleness failure');
       END;
     `);
-    seedDb.close();
-
-    const app = buildApp(options);
+    faultDb.close();
     const jobKey = encodeURIComponent("https://example.com/jobs/ready");
     const response = await app.inject({
       method: "POST",
@@ -3658,8 +3617,8 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       const scores = db
-        .prepare("SELECT version FROM job_scores WHERE job_url = ? ORDER BY version")
-        .all("https://example.com/jobs/ready") as Array<{ version: number }>;
+        .prepare("SELECT version FROM job_scores WHERE tenant_id = 'local' AND job_id = ? ORDER BY version")
+        .all(jobIdFor("https://example.com/jobs/ready")) as Array<{ version: number }>;
       expect(scores.map((row) => row.version)).toEqual([1]);
       const policies = db
         .prepare("SELECT version FROM scoring_policies WHERE tenant_id = 'local' ORDER BY version")
@@ -3668,8 +3627,8 @@ describe("local TypeScript API", () => {
       const staleCount = db.prepare("SELECT COUNT(*) AS count FROM job_score_staleness").get() as { count: number };
       expect(staleCount.count).toBe(0);
       const comparableStage = db
-        .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
-        .get(comparableUrl) as { state: string };
+        .prepare("SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'")
+        .get(jobIdFor(comparableUrl)) as { state: string };
       expect(comparableStage.state).toBe("succeeded");
       const correctionEvents = db
         .prepare("SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ScoreCorrected'")
@@ -3696,12 +3655,12 @@ describe("local TypeScript API", () => {
     seedDb
       .prepare(
         `INSERT INTO job_score_staleness (
-           tenant_id, job_url, stale_reason, old_policy_id, old_policy_version,
+           tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
            new_policy_id, new_policy_version, marked_at, resolved
          ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
            'local:scoring-policy-v2', 2, '2026-04-29T10:07:00+00:00', 0)`,
       )
-      .run(staleUrl);
+      .run(jobIdFor(staleUrl));
     seedDb.close();
 
     const app = buildApp(options);
@@ -3722,17 +3681,17 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       const marker = db
-        .prepare("SELECT resolved, resolved_at FROM job_score_staleness WHERE job_url = ?")
-        .get(staleUrl) as { resolved: number; resolved_at: string | null };
+        .prepare("SELECT resolved, resolved_at FROM job_score_staleness WHERE tenant_id = 'local' AND job_id = ?")
+        .get(jobIdFor(staleUrl)) as { resolved: number; resolved_at: string | null };
       expect(marker.resolved).toBe(1);
       expect(marker.resolved_at).toBeTruthy();
       const stage = db
-        .prepare("SELECT state, attempt_count FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
-        .get(staleUrl) as { state: string; attempt_count: number };
+        .prepare("SELECT state, attempt_count FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'")
+        .get(jobIdFor(staleUrl)) as { state: string; attempt_count: number };
       expect(stage).toMatchObject({ state: "pending", attempt_count: 0 });
       const event = db
-        .prepare("SELECT event_type, payload_json FROM job_events WHERE job_url = ? ORDER BY event_id DESC LIMIT 1")
-        .get(staleUrl) as { event_type: string; payload_json: string };
+        .prepare("SELECT event_type, payload_json FROM job_events WHERE tenant_id = 'local' AND job_id = ? ORDER BY event_id DESC LIMIT 1")
+        .get(jobIdFor(staleUrl)) as { event_type: string; payload_json: string };
       expect(event.event_type).toBe("ScoreRescoreRequested");
       expect(JSON.parse(event.payload_json)).toMatchObject({
         nextAction: "jobctrl run score --rescore",
@@ -3759,12 +3718,12 @@ describe("local TypeScript API", () => {
     seedDb
       .prepare(
         `INSERT INTO job_score_staleness (
-           tenant_id, job_url, stale_reason, old_policy_id, old_policy_version,
+           tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
            new_policy_id, new_policy_version, marked_at, resolved
          ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
            'local:scoring-policy-v2', 2, '2026-04-29T10:07:00+00:00', 0)`,
       )
-      .run(staleUrl);
+      .run(jobIdFor(staleUrl));
     seedDb.close();
 
     const app = buildApp(options);
@@ -3777,7 +3736,9 @@ describe("local TypeScript API", () => {
 
       expect(listResponse.statusCode, listResponse.body).toBe(200);
       expect(detailResponse.statusCode, detailResponse.body).toBe(200);
-      const listJob = listResponse.json().items.find((job: { jobKey: string }) => job.jobKey === staleUrl);
+      const listJob = listResponse.json().items.find(
+        (job: { jobKey: string }) => job.jobKey === jobIdFor(staleUrl),
+      );
       expect(listJob).toMatchObject({
       scoreTrace: {
         scoringPolicyId: "local:scoring-policy-v1",
@@ -3794,7 +3755,7 @@ describe("local TypeScript API", () => {
         },
       });
       expect(detailResponse.json().job).toMatchObject({
-        jobKey: staleUrl,
+        jobKey: jobIdFor(staleUrl),
         scoreStaleness: listJob.scoreStaleness,
       scoreTrace: {
         scoringPolicyVersion: 1,
@@ -3818,7 +3779,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       artifact: {
-        jobKey: "https://example.com/jobs/ready",
+        jobKey: jobIdFor("https://example.com/jobs/ready"),
         type: "tailored_resume_txt",
         status: "active",
       },
@@ -3844,23 +3805,23 @@ describe("local TypeScript API", () => {
     seedDb
       .prepare(
         `INSERT OR REPLACE INTO job_materials (
-           job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-         ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}')`,
+           tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+         ) VALUES ('local', ?, 1, 'resume_approved', ?, ?, '{}')`,
       )
       .run(
-        "https://example.com/jobs/layout-resume",
+        jobIdFor("https://example.com/jobs/layout-resume"),
         "2026-05-26T10:00:00+00:00",
         "2026-05-26T10:00:00+00:00",
       );
     seedDb
       .prepare(
         `INSERT OR REPLACE INTO job_materials_artifacts (
-           job_url, generation, artifact_type, artifact_id, status, path,
+           tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
            render_format, size_bytes, metadata_json, created_at
-         ) VALUES (?, 1, 'resume_pdf', 'artifact-layout-resume-pdf', 'approved', ?, 'html_pdf', ?, '{}', ?)`,
+         ) VALUES ('local', ?, 1, 'resume_pdf', 'artifact-layout-resume-pdf', 'approved', ?, 'html_pdf', ?, '{}', ?)`,
       )
       .run(
-        "https://example.com/jobs/layout-resume",
+        jobIdFor("https://example.com/jobs/layout-resume"),
         resumePdfPath,
         fs.statSync(resumePdfPath).size,
         "2026-05-26T10:00:00+00:00",
@@ -3868,13 +3829,13 @@ describe("local TypeScript API", () => {
     seedDb
       .prepare(
         `INSERT OR REPLACE INTO job_material_layout_boxes (
-           job_url, generation, artifact_id, box_index, tenant_id,
+           tenant_id, job_id, generation, artifact_id, box_index,
            semantic_id, page_number, line_number, text_excerpt,
            left_pct, top_pct, width_pct, height_pct, audit_target_json, created_at
-         ) VALUES (?, 1, 'artifact-layout-resume-pdf', 0, 'local', ?, 1, 6, ?, 12.5, 24.0, 62.0, 2.4, '{}', ?)`,
+         ) VALUES ('local', ?, 1, 'artifact-layout-resume-pdf', 0, ?, 1, 6, ?, 12.5, 24.0, 62.0, 2.4, '{}', ?)`,
       )
       .run(
-        "https://example.com/jobs/layout-resume",
+        jobIdFor("https://example.com/jobs/layout-resume"),
         "experience:acme:bullet:1",
         "Cut latency.",
         "2026-05-26T10:00:00+00:00",
@@ -4445,27 +4406,6 @@ describe("local TypeScript API", () => {
     fs.writeFileSync(resumePath, "Resume with platform reliability and 35% latency improvement.");
     const seedDb = new Database(options.dbPath);
     createMaterialsTables(seedDb);
-    seedDb.exec(`
-      CREATE TABLE candidate_profile_experience_entries (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        entry_id TEXT NOT NULL,
-        position_index INTEGER NOT NULL,
-        date_range TEXT NOT NULL DEFAULT '',
-        title TEXT NOT NULL DEFAULT '',
-        company TEXT NOT NULL DEFAULT '',
-        location TEXT NOT NULL DEFAULT '',
-        PRIMARY KEY (tenant_id, profile_id, entry_id)
-      );
-      CREATE TABLE candidate_profile_experience_bullets (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        entry_id TEXT NOT NULL,
-        bullet_index INTEGER NOT NULL,
-        bullet_text TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, profile_id, entry_id, bullet_index)
-      );
-    `);
     seedDb.prepare(`
       INSERT INTO candidate_profile_experience_entries (
         tenant_id, profile_id, entry_id, position_index, title, company
@@ -4564,47 +4504,6 @@ describe("local TypeScript API", () => {
     fs.writeFileSync(resumePath, "Leadership: Team Building & Mentoring, Global Teams (30+ engineers)");
     const seedDb = new Database(options.dbPath);
     createMaterialsTables(seedDb);
-    seedDb.exec(`
-      CREATE TABLE candidate_profile_skill_categories (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        category_id TEXT NOT NULL,
-        position_index INTEGER NOT NULL,
-        label TEXT NOT NULL DEFAULT '',
-        PRIMARY KEY (tenant_id, profile_id, category_id)
-      );
-      CREATE TABLE candidate_profile_skill_items (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        category_id TEXT NOT NULL,
-        item_index INTEGER NOT NULL,
-        item_text TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, profile_id, category_id, item_index)
-      );
-      CREATE TABLE candidate_profile_required_skills (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        category_id TEXT NOT NULL,
-        skill_index INTEGER NOT NULL,
-        skill_text TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, profile_id, category_id, skill_index)
-      );
-      CREATE TABLE candidate_profile_achievement_evidence (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        entry_id TEXT NOT NULL,
-        evidence_index INTEGER NOT NULL,
-        evidence_id TEXT NOT NULL DEFAULT '',
-        source_text TEXT NOT NULL DEFAULT '',
-        scope TEXT NOT NULL DEFAULT '',
-        action TEXT NOT NULL DEFAULT '',
-        tools_json TEXT NOT NULL DEFAULT '[]',
-        metrics_json TEXT NOT NULL DEFAULT '[]',
-        outcome TEXT NOT NULL DEFAULT '',
-        seniority_signal TEXT NOT NULL DEFAULT '',
-        PRIMARY KEY (tenant_id, profile_id, entry_id, evidence_index)
-      );
-    `);
     seedDb.prepare(`
       INSERT INTO candidate_profile_skill_categories (
         tenant_id, profile_id, category_id, position_index, label
@@ -4831,33 +4730,10 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("returns null tailoring explanation for legacy material artifacts without metadata column", async () => {
+  it("returns null tailoring explanation for material artifacts without metadata", async () => {
     const resumePath = path.join(tempDir, "legacy-no-metadata-resume.txt");
     fs.writeFileSync(resumePath, "legacy tailored resume");
     const seedDb = new Database(options.dbPath);
-    seedDb.exec(`
-      CREATE TABLE IF NOT EXISTS job_materials (
-        job_url TEXT NOT NULL,
-        generation INTEGER NOT NULL,
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (job_url, generation)
-      );
-      CREATE TABLE IF NOT EXISTS job_materials_artifacts (
-        job_url TEXT NOT NULL,
-        generation INTEGER NOT NULL,
-        artifact_type TEXT NOT NULL,
-        artifact_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        path TEXT NOT NULL,
-        render_format TEXT NOT NULL,
-        size_bytes INTEGER,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (job_url, generation, artifact_type)
-      );
-    `);
     insertJob(seedDb, {
       url: "https://example.com/jobs/legacy-no-metadata",
       title: "Legacy Resume Engineer",
@@ -4868,23 +4744,23 @@ describe("local TypeScript API", () => {
     seedDb
       .prepare(
         `INSERT INTO job_materials (
-           job_url, generation, tenant_id, status, created_at, updated_at
-         ) VALUES (?, 1, 'local', 'resume_approved', ?, ?)`,
+           tenant_id, job_id, generation, status, created_at, updated_at
+         ) VALUES ('local', ?, 1, 'resume_approved', ?, ?)`,
       )
       .run(
-        "https://example.com/jobs/legacy-no-metadata",
+        jobIdFor("https://example.com/jobs/legacy-no-metadata"),
         "2026-05-26T10:00:00+00:00",
         "2026-05-26T10:00:00+00:00",
       );
     seedDb
       .prepare(
         `INSERT INTO job_materials_artifacts (
-           job_url, generation, artifact_type, artifact_id, status, path,
+           tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
            render_format, size_bytes, created_at
-         ) VALUES (?, 1, 'tailored_resume', 'artifact-legacy-no-metadata', 'approved', ?, 'text', ?, ?)`,
+         ) VALUES ('local', ?, 1, 'tailored_resume', 'artifact-legacy-no-metadata', 'approved', ?, 'text', ?, ?)`,
       )
       .run(
-        "https://example.com/jobs/legacy-no-metadata",
+        jobIdFor("https://example.com/jobs/legacy-no-metadata"),
         resumePath,
         fs.statSync(resumePath).size,
         "2026-05-26T10:00:00+00:00",
@@ -4961,7 +4837,7 @@ describe("local TypeScript API", () => {
       expect(detailResponse.statusCode, detailResponse.body).toBe(200);
       const detailBody = detailResponse.json();
       expect(detailBody.job).toMatchObject({
-        jobKey: suppressedUrl,
+        jobKey: jobIdFor(suppressedUrl),
         artifactCount: 0,
       });
       expect(detailBody.artifacts).toEqual([]);
@@ -4977,7 +4853,7 @@ describe("local TypeScript API", () => {
       expect(suppressedArtifactsResponse.json().items).toEqual([
         expect.objectContaining({
           artifactId: "artifact-suppressed-resume",
-          jobKey: suppressedUrl,
+          jobKey: jobIdFor(suppressedUrl),
           status: "suppressed",
           type: "tailored_resume",
         }),
@@ -5000,64 +4876,36 @@ describe("local TypeScript API", () => {
     const seedDb = new Database(options.dbPath);
     createScoreStalenessTable(seedDb);
     createMaterialsTables(seedDb);
-    seedDb.exec(`
-      CREATE TABLE scoring_policies (
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        version INTEGER NOT NULL,
-        rubric_json TEXT NOT NULL,
-        anchors_json TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL,
-        created_from_event_id INTEGER,
-        PRIMARY KEY (tenant_id, version)
-      );
-      CREATE TABLE tailoring_policies (
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        version INTEGER NOT NULL,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, version)
-      );
-      CREATE TABLE preparation_work_items (
-        item_id TEXT NOT NULL PRIMARY KEY,
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        job_id TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        target_version INTEGER NOT NULL,
-        source_event_id TEXT NOT NULL DEFAULT '',
-        state TEXT NOT NULL,
-        idempotency_key TEXT NOT NULL,
-        attempts INTEGER NOT NULL DEFAULT 0,
-        last_error TEXT NOT NULL DEFAULT '',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        available_at TEXT NOT NULL
-      );
-    `);
     const insertScoringPolicy = seedDb.prepare(
       "INSERT INTO scoring_policies (tenant_id, version, rubric_json, anchors_json, created_at) VALUES (?, ?, ?, ?, ?)",
     );
     insertScoringPolicy.run("local", 2, "{}", "[]", "2026-05-26T10:00:00+00:00");
     insertScoringPolicy.run("local", 3, "{}", "[]", "2026-05-26T10:05:00+00:00");
     seedDb
-      .prepare("INSERT INTO tailoring_policies (tenant_id, version, created_at) VALUES (?, ?, ?)")
-      .run("local", 2, "2026-05-26T10:00:00+00:00");
+      .prepare(`INSERT INTO tailoring_policies (
+        tenant_id, version, prompt_version, schema_version, judge_schema_version,
+        prompt_fingerprint, config_fingerprint, profile_policy_fingerprint,
+        custom_prompt_fingerprint, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run("local", 2, "test", "test", "test", "test", "test", "test", "test", "2026-05-26T10:00:00+00:00");
     seedDb
       .prepare(
         `INSERT INTO job_score_staleness (
-           tenant_id, job_url, stale_reason, old_policy_id, old_policy_version,
+           tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
            new_policy_id, new_policy_version, marked_at, resolved
          ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
            'local:scoring-policy-v2', 2, '2026-05-26T10:01:00+00:00', 0)`,
       )
-      .run("https://example.com/jobs/failed-score");
+      .run(jobIdFor("https://example.com/jobs/failed-score"));
     seedDb
       .prepare(
         `INSERT INTO job_score_staleness (
-           tenant_id, job_url, stale_reason, old_policy_id, old_policy_version,
+           tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
            new_policy_id, new_policy_version, marked_at, resolved
          ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
            'local:scoring-policy-v3', 3, '2026-05-26T10:06:00+00:00', 0)`,
       )
-      .run("https://example.com/jobs/failed-score");
+      .run(jobIdFor("https://example.com/jobs/failed-score"));
     insertMaterialsGeneration(seedDb, {
       jobUrl: "https://example.com/jobs/ready",
       artifactId: "artifact-ready-old-policy",
@@ -5080,7 +4928,7 @@ describe("local TypeScript API", () => {
         )
         .run(
           itemId,
-          jobId,
+          jobIdFor(jobId),
           state,
           `${itemId}-key`,
           "2026-05-26T10:02:00+00:00",
@@ -5106,19 +4954,8 @@ describe("local TypeScript API", () => {
     }
   });
 
-  it("does not count corrected old-policy scores as outdated when staleness markers are absent", async () => {
+  it("does not infer outdated scores when explicit staleness markers are absent", async () => {
     const seedDb = new Database(options.dbPath);
-    seedDb.exec(`
-      CREATE TABLE scoring_policies (
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        version INTEGER NOT NULL,
-        rubric_json TEXT NOT NULL,
-        anchors_json TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL,
-        created_from_event_id INTEGER,
-        PRIMARY KEY (tenant_id, version)
-      );
-    `);
     seedDb
       .prepare(
         "INSERT INTO scoring_policies (tenant_id, version, rubric_json, anchors_json, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -5150,7 +4987,7 @@ describe("local TypeScript API", () => {
     try {
       const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
       expect(response.statusCode, response.body).toBe(200);
-      expect(response.json().preparation.outdatedScoreCount).toBe(1);
+      expect(response.json().preparation.outdatedScoreCount).toBe(0);
     } finally {
       await app.close();
     }
@@ -5159,17 +4996,6 @@ describe("local TypeScript API", () => {
   it("does not count corrected latest scores as outdated when stale markers remain unresolved", async () => {
     const seedDb = new Database(options.dbPath);
     createScoreStalenessTable(seedDb);
-    seedDb.exec(`
-      CREATE TABLE scoring_policies (
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        version INTEGER NOT NULL,
-        rubric_json TEXT NOT NULL,
-        anchors_json TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL,
-        created_from_event_id INTEGER,
-        PRIMARY KEY (tenant_id, version)
-      );
-    `);
     seedDb
       .prepare(
         "INSERT INTO scoring_policies (tenant_id, version, rubric_json, anchors_json, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -5189,12 +5015,12 @@ describe("local TypeScript API", () => {
     seedDb
       .prepare(
         `INSERT INTO job_score_staleness (
-           tenant_id, job_url, stale_reason, old_policy_id, old_policy_version,
+           tenant_id, job_id, stale_reason, old_policy_id, old_policy_version,
            new_policy_id, new_policy_version, marked_at, resolved
          ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
            'local:scoring-policy-v3', 3, '2026-05-26T10:06:00+00:00', 0)`,
       )
-      .run("https://example.com/jobs/stale-but-corrected");
+      .run(jobIdFor("https://example.com/jobs/stale-but-corrected"));
     seedDb.close();
 
     const app = buildApp(options);
@@ -5253,7 +5079,7 @@ describe("local TypeScript API", () => {
       expect(run).toMatchObject({
         workflowId: "run-1",
         runId: "run-1",
-        jobKey: "https://example.com/jobs/ready",
+        jobKey: jobIdFor("https://example.com/jobs/ready"),
         title: "Platform Engineer",
         company: "ExampleCo",
         // Seed inserts `status: "finished"`, the read-model normalizes
@@ -5843,7 +5669,7 @@ describe("local TypeScript API", () => {
       insertPipelineWorkflowEvent(db, { eventType: "WorkflowStarted", occurredAt: DISCOVER_NEW_START, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, startedAt: DISCOVER_NEW_START });
       insertPipelineWorkflowEvent(db, { eventType: "WorkflowFailed", occurredAt: DISCOVER_FAILED_AT, workflowId: "discover-local", temporalRunId: DISCOVER_NEW_TEMPORAL_RUN, errorCode: "activity_task_failed", errorMessage: "Activity task failed", retryable: true, finishedAt: DISCOVER_FAILED_AT });
       db.prepare(
-        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
       ).run(
         null,
         "discover",
@@ -6004,14 +5830,14 @@ describe("local TypeScript API", () => {
       createMaterialsTables(db);
       db.prepare(
         `INSERT OR REPLACE INTO job_materials (
-           job_url, generation, tenant_id, status, created_at, updated_at
-         ) VALUES (?, 99, 'local', 'resume_approved', ?, ?)`,
+           tenant_id, job_id, generation, status, created_at, updated_at
+         ) VALUES ('local', ?, 99, 'resume_approved', ?, ?)`,
       ).run(artifact.jobKey, now, now);
       db.prepare(
         `INSERT OR REPLACE INTO job_materials_artifacts (
-           job_url, generation, artifact_type, artifact_id, status, path,
+           tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
            render_format, size_bytes, metadata_json, created_at
-         ) VALUES (?, 99, 'resume_pdf', ?, 'approved', ?, 'html_pdf', ?, '{}', ?)`,
+         ) VALUES ('local', ?, 99, 'resume_pdf', ?, 'approved', ?, 'html_pdf', ?, '{}', ?)`,
       ).run(artifact.jobKey, artifact.artifactId, artifact.localPath, fs.statSync(artifact.localPath).size, now);
       db.close();
 
@@ -6051,7 +5877,7 @@ describe("local TypeScript API", () => {
       ok: true,
       artifact: {
         artifactId: artifact.artifactId,
-        jobKey: "https://example.com/jobs/ready",
+        jobKey: jobIdFor("https://example.com/jobs/ready"),
         type: "tailored_resume_pdf",
       },
     });
@@ -6084,14 +5910,14 @@ describe("local TypeScript API", () => {
     createMaterialsTables(db);
     db.prepare(
       `INSERT OR REPLACE INTO job_materials (
-         job_url, generation, tenant_id, status, created_at, updated_at
-       ) VALUES (?, 99, 'local', 'resume_approved', ?, ?)`,
+         tenant_id, job_id, generation, status, created_at, updated_at
+       ) VALUES ('local', ?, 99, 'resume_approved', ?, ?)`,
     ).run(artifact.jobKey, now, now);
     db.prepare(
       `INSERT OR REPLACE INTO job_materials_artifacts (
-         job_url, generation, artifact_type, artifact_id, status, path,
+         tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
          render_format, size_bytes, metadata_json, created_at
-       ) VALUES (?, 99, 'resume_pdf', ?, 'approved', ?, 'html_pdf', ?, '{}', ?)`,
+       ) VALUES ('local', ?, 99, 'resume_pdf', ?, 'approved', ?, 'html_pdf', ?, '{}', ?)`,
     ).run(artifact.jobKey, artifact.artifactId, artifact.localPath, fs.statSync(artifact.localPath).size, now);
     db.close();
 
@@ -6111,7 +5937,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("serves sibling HTML preview for legacy artifact tables without render_format", async () => {
+  it("serves sibling HTML preview for an exact artifact with HTML render metadata", async () => {
     const app = buildApp(options);
     const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });
     const artifact = listResponse.json().items[0];
@@ -6123,39 +5949,15 @@ describe("local TypeScript API", () => {
     createMaterialsTables(db);
     db.prepare(
       `INSERT OR REPLACE INTO job_materials (
-         job_url, generation, tenant_id, status, created_at, updated_at
-       ) VALUES (?, 99, 'local', 'resume_approved', ?, ?)`,
+         tenant_id, job_id, generation, status, created_at, updated_at
+       ) VALUES ('local', ?, 99, 'resume_approved', ?, ?)`,
     ).run(artifact.jobKey, now, now);
     db.prepare(
       `INSERT OR REPLACE INTO job_materials_artifacts (
-         job_url, generation, artifact_type, artifact_id, status, path,
+         tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
          render_format, size_bytes, metadata_json, created_at
-       ) VALUES (?, 99, 'resume_pdf', ?, 'approved', ?, 'html_pdf', ?, '{}', ?)`,
+       ) VALUES ('local', ?, 99, 'resume_pdf', ?, 'approved', ?, 'html_pdf', ?, '{}', ?)`,
     ).run(artifact.jobKey, artifact.artifactId, artifact.localPath, fs.statSync(artifact.localPath).size, now);
-    db.exec(`
-      ALTER TABLE job_materials_artifacts RENAME TO job_materials_artifacts_with_render_format;
-      CREATE TABLE job_materials_artifacts (
-        job_url TEXT NOT NULL,
-        generation INTEGER NOT NULL,
-        artifact_type TEXT NOT NULL,
-        artifact_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        path TEXT NOT NULL,
-        size_bytes INTEGER,
-        metadata_json TEXT,
-        created_at TEXT NOT NULL,
-        superseded_at TEXT,
-        PRIMARY KEY (job_url, generation, artifact_id)
-      );
-      INSERT INTO job_materials_artifacts (
-        job_url, generation, artifact_type, artifact_id, status, path,
-        size_bytes, metadata_json, created_at, superseded_at
-      )
-      SELECT job_url, generation, artifact_type, artifact_id, status, path,
-             size_bytes, metadata_json, created_at, superseded_at
-        FROM job_materials_artifacts_with_render_format;
-      DROP TABLE job_materials_artifacts_with_render_format;
-    `);
     db.close();
 
     const response = await app.inject({
@@ -6179,14 +5981,14 @@ describe("local TypeScript API", () => {
     createMaterialsTables(db);
     db.prepare(
       `INSERT OR REPLACE INTO job_materials (
-         job_url, generation, tenant_id, status, created_at, updated_at
-       ) VALUES (?, 99, 'local', 'resume_approved', ?, ?)`,
+         tenant_id, job_id, generation, status, created_at, updated_at
+       ) VALUES ('local', ?, 99, 'resume_approved', ?, ?)`,
     ).run(artifact.jobKey, now, now);
     db.prepare(
       `INSERT OR REPLACE INTO job_materials_artifacts (
-         job_url, generation, artifact_type, artifact_id, status, path,
+         tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
          render_format, size_bytes, metadata_json, created_at
-       ) VALUES (?, 99, 'resume_pdf', ?, 'approved', ?, 'latex_pdf', ?, '{}', ?)`,
+       ) VALUES ('local', ?, 99, 'resume_pdf', ?, 'approved', ?, 'latex_pdf', ?, '{}', ?)`,
     ).run(artifact.jobKey, artifact.artifactId, artifact.localPath, fs.statSync(artifact.localPath).size, now);
     db.close();
 
@@ -6287,12 +6089,12 @@ describe("local TypeScript API", () => {
           `SELECT state, attempt_count, updated_at, error_code, error_message,
                   retryable, blocked_by_json
              FROM job_stage_states
-            WHERE job_url = ? AND stage = 'tailor'`,
+            WHERE tenant_id = 'local' AND job_id = ? AND stage = 'tailor'`,
         )
-        .get(jobUrl);
+        .get(jobIdFor(jobUrl));
       const eventCount = db
-        .prepare("SELECT COUNT(*) AS count FROM job_events WHERE job_url = ? AND stage = 'tailor'")
-        .get(jobUrl) as { count: number };
+        .prepare("SELECT COUNT(*) AS count FROM job_events WHERE tenant_id = 'local' AND job_id = ? AND stage = 'tailor'")
+        .get(jobIdFor(jobUrl)) as { count: number };
       db.close();
       return { stage, eventCount: eventCount.count };
     };
@@ -6338,14 +6140,14 @@ describe("local TypeScript API", () => {
 
     const db = new Database(options.dbPath);
     const failed = db
-      .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
-      .get("https://example.com/jobs/failed-score") as { state: string };
+      .prepare("SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'")
+      .get(jobIdFor("https://example.com/jobs/failed-score")) as { state: string };
     const ready = db
-      .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
-      .get("https://example.com/jobs/ready") as { state: string };
+      .prepare("SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'")
+      .get(jobIdFor("https://example.com/jobs/ready")) as { state: string };
     const event = db
-      .prepare("SELECT message FROM job_events WHERE job_url = ? ORDER BY event_id DESC LIMIT 1")
-      .get("https://example.com/jobs/failed-score") as { message: string };
+      .prepare("SELECT message FROM job_events WHERE tenant_id = 'local' AND job_id = ? ORDER BY event_id DESC LIMIT 1")
+      .get(jobIdFor("https://example.com/jobs/failed-score")) as { message: string };
     db.close();
 
     expect(failed.state).toBe("pending");
@@ -6441,17 +6243,17 @@ describe("local TypeScript API", () => {
 
     const db = new Database(options.dbPath);
     const states = db
-      .prepare("SELECT job_url, state FROM job_stage_states WHERE stage = 'score' AND job_url IN (?, ?) ORDER BY job_url")
-      .all("https://example.com/jobs/failed-score", secondFailedUrl) as Array<{ job_url: string; state: string }>;
+      .prepare("SELECT job_id, state FROM job_stage_states WHERE tenant_id = 'local' AND stage = 'score' AND job_id IN (?, ?) ORDER BY job_id")
+      .all(jobIdFor("https://example.com/jobs/failed-score"), jobIdFor(secondFailedUrl)) as Array<{ job_id: string; state: string }>;
     const queuedEvents = db
-      .prepare("SELECT job_url, event_type, payload_json FROM job_events WHERE event_type = 'StageQueued' ORDER BY job_url")
-      .all() as Array<{ job_url: string; event_type: string; payload_json: string }>;
+      .prepare("SELECT job_id, event_type, payload_json FROM job_events WHERE tenant_id = 'local' AND event_type = 'StageQueued' ORDER BY job_id")
+      .all() as Array<{ job_id: string; event_type: string; payload_json: string }>;
     db.close();
 
     expect(states).toEqual([
-      { job_url: "https://example.com/jobs/failed-score", state: "queued" },
-      { job_url: secondFailedUrl, state: "queued" },
-    ]);
+      { job_id: jobIdFor(secondFailedUrl), state: "queued" },
+      { job_id: jobIdFor("https://example.com/jobs/failed-score"), state: "queued" },
+    ].sort((left, right) => left.job_id.localeCompare(right.job_id)));
     expect(queuedEvents).toHaveLength(2);
     expect(JSON.parse(queuedEvents[0]!.payload_json)).toMatchObject({
       source: "bulk_retry_failed",
@@ -6601,31 +6403,31 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     const queuedStates = db
       .prepare(
-        `SELECT job_url, stage, state FROM job_stage_states
-         WHERE job_url IN (?, ?, ?) AND state = 'queued'
-         ORDER BY job_url`,
+        `SELECT job_id, stage, state FROM job_stage_states
+         WHERE tenant_id = 'local' AND job_id IN (?, ?, ?) AND state = 'queued'
+         ORDER BY job_id`,
       )
-      .all(pendingEnrichUrl, pendingScoreUrl, pendingTailorUrl) as Array<{
-        job_url: string;
+      .all(jobIdFor(pendingEnrichUrl), jobIdFor(pendingScoreUrl), jobIdFor(pendingTailorUrl)) as Array<{
+        job_id: string;
         stage: string;
         state: string;
       }>;
     const failed = db
-      .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
-      .get("https://example.com/jobs/failed-score") as { state: string };
+      .prepare("SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'")
+      .get(jobIdFor("https://example.com/jobs/failed-score")) as { state: string };
     const apply = db
-      .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'")
-      .get(pendingApplyUrl) as { state: string };
+      .prepare("SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'apply'")
+      .get(jobIdFor(pendingApplyUrl)) as { state: string };
     const queuedEvent = db
-      .prepare("SELECT payload_json FROM job_events WHERE event_type = 'StageQueued' AND job_url = ?")
-      .get(pendingScoreUrl) as { payload_json: string };
+      .prepare("SELECT payload_json FROM job_events WHERE tenant_id = 'local' AND event_type = 'StageQueued' AND job_id = ?")
+      .get(jobIdFor(pendingScoreUrl)) as { payload_json: string };
     db.close();
 
     expect(queuedStates).toEqual([
-      { job_url: pendingEnrichUrl, stage: "enrich", state: "queued" },
-      { job_url: pendingScoreUrl, stage: "score", state: "queued" },
-      { job_url: pendingTailorUrl, stage: "tailor", state: "queued" },
-    ]);
+      { job_id: jobIdFor(pendingEnrichUrl), stage: "enrich", state: "queued" },
+      { job_id: jobIdFor(pendingScoreUrl), stage: "score", state: "queued" },
+      { job_id: jobIdFor(pendingTailorUrl), stage: "tailor", state: "queued" },
+    ].sort((left, right) => left.job_id.localeCompare(right.job_id)));
     expect(failed.state).toBe("failed");
     expect(apply.state).toBe("pending");
     expect(JSON.parse(queuedEvent.payload_json)).toMatchObject({
@@ -6641,8 +6443,9 @@ describe("local TypeScript API", () => {
     const seedDb = new Database(options.dbPath);
     seedDb
       .prepare(
-        `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO job_events (
+           tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+         ) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?`,
       )
       .run(
         "https://example.com/jobs/failed-score",
@@ -6674,8 +6477,8 @@ describe("local TypeScript API", () => {
 
     const db = new Database(options.dbPath);
     const failed = db
-      .prepare("SELECT state, retryable FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
-      .get("https://example.com/jobs/failed-score") as { state: string; retryable: number };
+      .prepare("SELECT state, retryable FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'")
+      .get(jobIdFor("https://example.com/jobs/failed-score")) as { state: string; retryable: number };
     db.close();
 
     expect(failed).toMatchObject({ state: "failed", retryable: 1 });
@@ -6695,13 +6498,14 @@ describe("local TypeScript API", () => {
     insertStage(seedDb, jobUrl, "enrich", "failed", "DETAIL_ERROR");
     seedDb
       .prepare(
-        "UPDATE job_stage_states SET retryable = 0 WHERE job_url = ? AND stage = 'enrich'",
+        "UPDATE job_stage_states SET retryable = 0 WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'",
       )
-      .run(jobUrl);
+      .run(jobIdFor(jobUrl));
     seedDb
       .prepare(
-        `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO job_events (
+           tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+         ) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?`,
       )
       .run(
         jobUrl,
@@ -6733,8 +6537,8 @@ describe("local TypeScript API", () => {
 
     const db = new Database(options.dbPath);
     const enrich = db
-      .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'")
-      .get(jobUrl) as { state: string };
+      .prepare("SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'")
+      .get(jobIdFor(jobUrl)) as { state: string };
     db.close();
 
     expect(enrich.state).toBe("pending");
@@ -6755,12 +6559,12 @@ describe("local TypeScript API", () => {
     const seedDb = new Database(options.dbPath);
     seedDb.prepare(
       `INSERT INTO job_enrichments (
-         job_url, tenant_id, current_status, full_description,
+         job_id, tenant_id, current_status, full_description,
          application_url, enriched_at, extraction_tier,
          attempts_json, updated_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      "https://example.com/jobs/failed-score",
+      jobIdFor("https://example.com/jobs/failed-score"),
       "local",
       "enriched",
       "The full job description.",
@@ -6787,9 +6591,9 @@ describe("local TypeScript API", () => {
       .prepare(
         `SELECT current_status, full_description, application_url,
                 enriched_at, extraction_tier
-         FROM job_enrichments WHERE job_url = ?`,
+         FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?`,
       )
-      .get("https://example.com/jobs/failed-score") as {
+      .get(jobIdFor("https://example.com/jobs/failed-score")) as {
       current_status: string;
       full_description: string | null;
       application_url: string | null;
@@ -6833,8 +6637,8 @@ describe("local TypeScript API", () => {
 
     const db = new Database(options.dbPath);
     const count = db
-      .prepare("SELECT COUNT(*) AS c FROM job_enrichments WHERE job_url = ?")
-      .get("https://example.com/jobs/blocked-tailor") as { c: number };
+      .prepare("SELECT COUNT(*) AS c FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?")
+      .get(jobIdFor("https://example.com/jobs/blocked-tailor")) as { c: number };
     db.close();
     expect(count.c).toBe(0); // still no row — UPDATE was a no-op
     await app.close();
@@ -7335,8 +7139,8 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       const events = db
-        .prepare("SELECT event_type FROM job_events WHERE job_url = ? ORDER BY event_id DESC")
-        .all("https://example.com/jobs/ready")
+        .prepare("SELECT event_type FROM job_events WHERE tenant_id = 'local' AND job_id = ? ORDER BY event_id DESC")
+        .all(jobIdFor("https://example.com/jobs/ready"))
         .map((row) => (row as { event_type: string }).event_type);
       expect(events).toContain("TailorRequested");
       expect(events).toContain("RetailorRequested");
@@ -7479,7 +7283,7 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       db.prepare(
-        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
       ).run(
         null,
         "discover",
@@ -7503,24 +7307,6 @@ describe("local TypeScript API", () => {
           },
         }),
       );
-      db.exec(`
-        CREATE TABLE discovery_runs (
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          run_id TEXT NOT NULL,
-          source_ids_json TEXT NOT NULL DEFAULT '[]',
-          profile_snapshot_id TEXT,
-          status TEXT NOT NULL,
-          counts_json TEXT NOT NULL DEFAULT '{}',
-          progress_json TEXT NOT NULL DEFAULT '{}',
-          error_classes_json TEXT NOT NULL DEFAULT '[]',
-          started_at TEXT NOT NULL,
-          updated_at TEXT,
-          completed_at TEXT,
-          failed_at TEXT,
-          workflow_id TEXT,
-          PRIMARY KEY (tenant_id, run_id)
-        );
-      `);
       db.prepare(
         `INSERT INTO discovery_runs (
           tenant_id, run_id, source_ids_json, status, counts_json, progress_json,
@@ -8320,6 +8106,15 @@ describe("local TypeScript API", () => {
   });
 
   it("records profile updates and starts an event-driven re-tailoring run", async () => {
+    const seedDb = new Database(options.dbPath);
+    insertMaterialsGeneration(seedDb, {
+      jobUrl: "https://example.com/jobs/ready",
+      artifactId: "artifact-profile-update-retailor",
+      artifactType: "tailored_resume",
+      status: "approved",
+      path: path.join(tempDir, "ready-resume.txt"),
+    });
+    seedDb.close();
     const dispatch = vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-retailor" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
     const response = await app.inject({
@@ -8347,11 +8142,11 @@ describe("local TypeScript API", () => {
     try {
       const event = db
         .prepare(
-          "SELECT job_url, stage, event_type, payload_json FROM job_events WHERE event_type = 'ProfileUpdated' ORDER BY event_id DESC LIMIT 1",
+          "SELECT job_id, stage, event_type, payload_json FROM job_events WHERE event_type = 'ProfileUpdated' ORDER BY event_id DESC LIMIT 1",
         )
-        .get() as { job_url: string | null; stage: string | null; event_type: string; payload_json: string };
+        .get() as { job_id: string | null; stage: string | null; event_type: string; payload_json: string };
       expect(event).toMatchObject({
-        job_url: null,
+        job_id: null,
         stage: null,
         event_type: "ProfileUpdated",
       });
@@ -9756,13 +9551,9 @@ function seedExactV7CompensationDatabase(
   dbPath: string,
   job?: { jobId: string; postingUrl: string },
 ): void {
-  const schemaPath = path.resolve(
-    process.cwd(),
-    "../../workers/automation/src/jobctrl/infrastructure/migrations/schema_v7.sql",
-  );
+  initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
-  db.exec(fs.readFileSync(schemaPath, "utf8"));
-  db.pragma(`user_version = ${SUPPORTED_SCHEMA_VERSION}`);
+  seedBuiltInResumeTemplate(db);
   if (job) {
     db.prepare(
       `INSERT INTO jobs (
@@ -9783,129 +9574,29 @@ function seedExactV7CompensationDatabase(
   db.close();
 }
 
+function seedBuiltInResumeTemplate(db: Database.Database): void {
+  const now = "2026-04-29T10:00:00+00:00";
+  db.prepare(
+    `INSERT INTO resume_templates (
+       tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+     ) VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)`,
+  ).run(now, now);
+  db.prepare(
+    `INSERT INTO resume_template_versions (
+       tenant_id, version_id, template_id, version_number, display_name, status,
+       theme_json, layout_json, content_hash, created_at
+     ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
+               'Modern HTML', 'active', ?, '{}', 'server-seed-hash', ?)`,
+  ).run(JSON.stringify(BUILT_IN_RESUME_TEMPLATE_THEME), now);
+}
+
 function seedDatabase(dbPath: string): void {
   const artifactPath = path.join(path.dirname(dbPath), "ready-resume.txt");
   fs.writeFileSync(artifactPath, "hello world!");
 
+  initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE jobs (
-      url TEXT PRIMARY KEY,
-      title TEXT,
-      site TEXT,
-      strategy TEXT,
-      location TEXT,
-      salary TEXT,
-      discovered_at TEXT,
-      application_url TEXT,
-      description TEXT,
-      full_description TEXT,
-      detail_scraped_at TEXT,
-      detail_error TEXT,
-      fit_score INTEGER,
-      score_reasoning TEXT,
-      scored_at TEXT,
-      tailored_resume_path TEXT,
-      tailored_at TEXT,
-      tailor_attempts INTEGER,
-      cover_letter_path TEXT,
-      cover_letter_at TEXT,
-      cover_attempts INTEGER,
-      apply_status TEXT,
-      apply_error TEXT,
-      applied_at TEXT
-    );
-    CREATE TABLE job_stage_states (
-      job_url TEXT,
-      stage TEXT,
-      state TEXT,
-      attempt_count INTEGER,
-      max_attempts INTEGER,
-      started_at TEXT,
-      updated_at TEXT,
-      finished_at TEXT,
-      duration_ms INTEGER,
-      error_code TEXT,
-      error_message TEXT,
-      retryable INTEGER,
-      blocked_by_json TEXT,
-      next_action TEXT
-    );
-    CREATE TABLE job_artifacts (
-      job_url TEXT,
-      stage TEXT,
-      artifact_type TEXT,
-      status TEXT,
-      path TEXT,
-      created_at TEXT,
-      size_bytes INTEGER
-    );
-    CREATE TABLE job_events (
-      event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_url TEXT,
-      stage TEXT,
-      event_type TEXT NOT NULL DEFAULT '',
-      level TEXT,
-      message TEXT,
-      occurred_at TEXT,
-      payload_json TEXT
-    );
-    CREATE TABLE job_scores (
-      job_url TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      fit_score INTEGER NOT NULL,
-      breakdown_json TEXT NOT NULL,
-      keywords_json TEXT NOT NULL,
-      scored_at TEXT NOT NULL,
-      correction_json TEXT,
-      criteria_json TEXT NOT NULL DEFAULT '{}',
-      trace_json TEXT NOT NULL DEFAULT '{}',
-      PRIMARY KEY (job_url, version)
-    );
-    CREATE TABLE job_enrichments (
-      job_url TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      current_status TEXT NOT NULL,
-      full_description TEXT,
-      application_url TEXT,
-      enriched_at TEXT,
-      extraction_tier TEXT,
-      attempts_json TEXT NOT NULL DEFAULT '[]',
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE apply_run_projections (
-      run_id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_id TEXT NOT NULL,
-      job_title TEXT NOT NULL DEFAULT '',
-      job_employer TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT '',
-      result TEXT,
-      dry_run INTEGER NOT NULL DEFAULT 0,
-      worker_id INTEGER,
-      model TEXT,
-      started_at TEXT,
-      finished_at TEXT,
-      duration_ms INTEGER,
-      events_json TEXT NOT NULL DEFAULT '[]'
-    );
-    CREATE TABLE workflow_run_projections (
-      workflow_id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      workflow_type TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'in_progress',
-      input_summary_json TEXT NOT NULL DEFAULT '{}',
-      error_code TEXT,
-      error_message TEXT,
-      retryable INTEGER NOT NULL DEFAULT 0,
-      started_at TEXT,
-      finished_at TEXT,
-      duration_ms INTEGER,
-      temporal_run_id TEXT,
-      events_json TEXT NOT NULL DEFAULT '[]'
-    );
-  `);
+  seedBuiltInResumeTemplate(db);
 
   insertJob(db, {
     url: "https://example.com/jobs/ready",
@@ -9914,9 +9605,6 @@ function seedDatabase(dbPath: string): void {
     fitScore: 9,
     tailoredPath: artifactPath,
   });
-  insertScore(db, "https://example.com/jobs/ready", 1, 9);
-  insertScore(db, "https://example.com/jobs/failed-score", 1, 8);
-  insertScore(db, "https://example.com/jobs/blocked-tailor", 1, 6);
   insertJob(db, {
     url: "https://example.com/jobs/failed-score",
     title: "Backend Engineer",
@@ -9929,6 +9617,9 @@ function seedDatabase(dbPath: string): void {
     site: "Acme",
     fitScore: 6,
   });
+  insertScore(db, "https://example.com/jobs/ready", 1, 9);
+  insertScore(db, "https://example.com/jobs/failed-score", 1, 8);
+  insertScore(db, "https://example.com/jobs/blocked-tailor", 1, 6);
 
   for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
     insertStage(db, "https://example.com/jobs/ready", stage, "succeeded");
@@ -9943,9 +9634,9 @@ function seedDatabase(dbPath: string): void {
   insertStage(db, "https://example.com/jobs/blocked-tailor", "tailor", "blocked", "MIN_SCORE");
 
   db.prepare(
-    "INSERT INTO job_artifacts (job_url, stage, artifact_type, status, path, created_at, size_bytes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
   ).run(
-    "https://example.com/jobs/ready",
+    jobIdFor("https://example.com/jobs/ready"),
     "tailor",
     "tailored_resume_txt",
     "active",
@@ -9954,9 +9645,20 @@ function seedDatabase(dbPath: string): void {
     12,
   );
   db.prepare(
-    "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
   ).run(
-    "https://example.com/jobs/failed-score",
+    jobIdFor("https://example.com/jobs/ready"),
+    "tailor",
+    "tailored_resume_pdf",
+    "active",
+    artifactPath,
+    "2026-04-29T10:05:00+00:00",
+    12,
+  );
+  db.prepare(
+    "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at) VALUES ('local', ?, 1, ?, ?, ?, ?, ?)",
+  ).run(
+    jobIdFor("https://example.com/jobs/failed-score"),
     "score",
     "ActionFailed",
     "error",
@@ -9967,7 +9669,7 @@ function seedDatabase(dbPath: string): void {
     "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, events_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     "run-1",
-    "https://example.com/jobs/ready",
+    jobIdFor("https://example.com/jobs/ready"),
     "Platform Engineer",
     "ExampleCo",
     "finished",
@@ -10039,8 +9741,8 @@ function insertPipelineWorkflowEvent(
     if (value !== undefined) payload[key] = value;
   }
   db.prepare(
-    "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).run(null, "workflow", event.eventType, "info", event.message ?? null, event.occurredAt, JSON.stringify(payload));
+    "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) VALUES ('local', NULL, 1, ?, ?, ?, ?, ?, ?)",
+  ).run("workflow", event.eventType, "info", event.message ?? null, event.occurredAt, JSON.stringify(payload));
 }
 
 function insertDiscoverWorkflowRunRow(
@@ -10143,11 +9845,12 @@ function insertJob(
 ): void {
   db.prepare(
     `INSERT INTO jobs (
-      url, title, site, strategy, location, salary, discovered_at, application_url,
+      tenant_id, job_id, url, title, site, strategy, location, salary, discovered_at, application_url,
       description, full_description, detail_scraped_at, fit_score, score_reasoning,
       scored_at, tailored_resume_path, tailored_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
+    jobIdFor(job.url),
     job.url,
     job.title,
     job.site,
@@ -10167,41 +9870,22 @@ function insertJob(
   );
 }
 
+function jobIdFor(jobUrl: string): string {
+  const digest = createHash("sha256").update(jobUrl).digest("hex");
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+
 function insertPostedCompensationFact(db: Database.Database, jobUrl: string): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS job_posted_compensation_facts (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      source_field TEXT NOT NULL DEFAULT 'jobs.salary',
-      source_text TEXT,
-      legacy_raw_salary TEXT,
-      parse_state TEXT NOT NULL,
-      currency TEXT,
-      period TEXT NOT NULL DEFAULT 'unknown',
-      component TEXT NOT NULL DEFAULT 'unknown',
-      minimum_amount INTEGER,
-      maximum_amount INTEGER,
-      annualized_minimum_amount INTEGER,
-      annualized_maximum_amount INTEGER,
-      annualization_assumption TEXT,
-      confidence TEXT NOT NULL DEFAULT 'none',
-      warnings_json TEXT NOT NULL DEFAULT '[]',
-      parser_version TEXT NOT NULL,
-      source_hash TEXT NOT NULL,
-      parsed_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, job_url)
-    );
-  `);
   db.prepare(
     `INSERT INTO job_posted_compensation_facts (
-      tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+      tenant_id, job_id, source_field, source_text, legacy_raw_salary,
       parse_state, currency, period, component, minimum_amount, maximum_amount,
       annualized_minimum_amount, annualized_maximum_amount, annualization_assumption,
       confidence, warnings_json, parser_version, source_hash, parsed_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
-    jobUrl,
+    jobIdFor(jobUrl),
     "jobs.salary",
     "€55,000/year",
     "€55,000/year",
@@ -10225,14 +9909,14 @@ function insertPostedCompensationFact(db: Database.Database, jobUrl: string): vo
 function insertUnannualizedPostedCompensationFact(db: Database.Database, jobUrl: string): void {
   db.prepare(
     `INSERT INTO job_posted_compensation_facts (
-      tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+      tenant_id, job_id, source_field, source_text, legacy_raw_salary,
       parse_state, currency, period, component, minimum_amount, maximum_amount,
       annualized_minimum_amount, annualized_maximum_amount, annualization_assumption,
       confidence, warnings_json, parser_version, source_hash, parsed_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
-    jobUrl,
+    jobIdFor(jobUrl),
     "jobs.full_description",
     "EUR 120000-130000",
     "EUR 120000-130000",
@@ -10254,45 +9938,9 @@ function insertUnannualizedPostedCompensationFact(db: Database.Database, jobUrl:
 }
 
 function insertMarketCompensationEstimate(db: Database.Database, jobUrl: string): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS job_market_compensation_estimates (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      estimate_state TEXT NOT NULL,
-      currency TEXT,
-      period TEXT NOT NULL DEFAULT 'year',
-      component TEXT NOT NULL DEFAULT 'total_compensation',
-      minimum_amount INTEGER,
-      maximum_amount INTEGER,
-      confidence_band TEXT NOT NULL DEFAULT 'none',
-      confidence_score REAL NOT NULL DEFAULT 0,
-      source_count INTEGER NOT NULL DEFAULT 0,
-      sample_count INTEGER,
-      aggregate_bucket TEXT,
-      geography_scope TEXT,
-      occupation_code TEXT,
-      occupation_label TEXT,
-      seniority_label TEXT,
-      source_snapshot_json TEXT NOT NULL DEFAULT '[]',
-      factor_reasons_json TEXT NOT NULL DEFAULT '[]',
-      insufficient_reasons_json TEXT NOT NULL DEFAULT '[]',
-      unsupported_reasons_json TEXT NOT NULL DEFAULT '[]',
-      source_unavailable_reasons_json TEXT NOT NULL DEFAULT '[]',
-      warnings_json TEXT NOT NULL DEFAULT '[]',
-      estimator_version TEXT NOT NULL,
-      estimated_at TEXT NOT NULL,
-      company_name TEXT,
-      normalized_company TEXT,
-      role_title TEXT,
-      normalized_role TEXT,
-      company_tier TEXT NOT NULL DEFAULT 'unknown',
-      match_scope TEXT NOT NULL DEFAULT 'none',
-      PRIMARY KEY (tenant_id, job_url)
-    );
-  `);
   db.prepare(
     `INSERT INTO job_market_compensation_estimates (
-      tenant_id, job_url, estimate_state, currency, period, component,
+      tenant_id, job_id, estimate_state, currency, period, component,
       minimum_amount, maximum_amount, confidence_band, confidence_score,
       source_count, sample_count, aggregate_bucket, geography_scope,
       occupation_code, occupation_label, seniority_label, source_snapshot_json,
@@ -10302,7 +9950,7 @@ function insertMarketCompensationEstimate(db: Database.Database, jobUrl: string)
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
-    jobUrl,
+    jobIdFor(jobUrl),
     "estimated_range",
     "EUR",
     "year",
@@ -10385,11 +10033,11 @@ function insertScore(
 ): void {
   db.prepare(
     `INSERT INTO job_scores (
-      job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+      tenant_id, job_id, version, fit_score, breakdown_json, keywords_json,
     scored_at, correction_json, criteria_json, trace_json
-    ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    jobUrl,
+    jobIdFor(jobUrl),
     version,
     fitScore,
     JSON.stringify({
@@ -10437,95 +10085,11 @@ function insertScore(
 }
 
 function createScoreStalenessTable(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS job_score_staleness (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      stale_reason TEXT NOT NULL,
-      old_policy_id TEXT NOT NULL DEFAULT '',
-      old_policy_version INTEGER NOT NULL,
-      new_policy_id TEXT NOT NULL DEFAULT '',
-      new_policy_version INTEGER NOT NULL,
-      marked_at TEXT NOT NULL,
-      resolved INTEGER NOT NULL DEFAULT 0,
-      resolved_at TEXT,
-      resolved_by_score_version INTEGER,
-      PRIMARY KEY (
-        tenant_id, job_url, stale_reason,
-        old_policy_version, new_policy_version
-      )
-    )
-  `);
+  void db;
 }
 
 function createMaterialsTables(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS job_materials (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      status TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      last_validation_json TEXT,
-      last_verdict_json TEXT,
-      metadata_json TEXT,
-      PRIMARY KEY (job_url, generation)
-    );
-    CREATE TABLE IF NOT EXISTS job_materials_artifacts (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      artifact_type TEXT NOT NULL,
-      artifact_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      path TEXT NOT NULL,
-      render_format TEXT NOT NULL,
-      size_bytes INTEGER,
-      metadata_json TEXT,
-      created_at TEXT NOT NULL,
-      superseded_at TEXT,
-      PRIMARY KEY (job_url, generation, artifact_type)
-    );
-    CREATE TABLE IF NOT EXISTS job_bullet_provenance (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      bullet_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      artifact_id TEXT NOT NULL,
-      section TEXT NOT NULL,
-      source_id TEXT,
-      evidence_ids_json TEXT NOT NULL DEFAULT '[]',
-      requirement_ids_json TEXT NOT NULL DEFAULT '[]',
-      matched_keywords_json TEXT NOT NULL DEFAULT '[]',
-      transform_type TEXT NOT NULL,
-      control TEXT NOT NULL,
-      rationale TEXT NOT NULL DEFAULT '',
-      generated_text TEXT NOT NULL,
-      position INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      coverage_json TEXT,
-      voice_json TEXT,
-      PRIMARY KEY (job_url, generation, bullet_id)
-    );
-    CREATE TABLE IF NOT EXISTS job_material_layout_boxes (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      artifact_id TEXT NOT NULL,
-      box_index INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      semantic_id TEXT NOT NULL,
-      page_number INTEGER NOT NULL,
-      line_number INTEGER,
-      text_excerpt TEXT NOT NULL,
-      left_pct REAL NOT NULL,
-      top_pct REAL NOT NULL,
-      width_pct REAL NOT NULL,
-      height_pct REAL NOT NULL,
-      audit_target_json TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (job_url, generation, artifact_id, box_index)
-    );
-  `);
+  void db;
 }
 
 /**
@@ -10558,13 +10122,13 @@ function insertBulletProvenanceRow(
 ): void {
   db.prepare(
     `INSERT OR REPLACE INTO job_bullet_provenance (
-       job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+       tenant_id, job_id, generation, bullet_id, artifact_id, section, source_id,
        evidence_ids_json, requirement_ids_json, matched_keywords_json,
        transform_type, control, rationale, generated_text, position, created_at,
        coverage_json, voice_json
-     ) VALUES (?, ?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    row.jobUrl,
+    jobIdFor(row.jobUrl),
     row.generation ?? 1,
     row.bulletId,
     row.artifactId,
@@ -10713,10 +10277,10 @@ function insertMaterialsGeneration(
 ): void {
   db.prepare(
     `INSERT OR REPLACE INTO job_materials (
-       job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-     ) VALUES (?, 1, 'local', ?, ?, ?, ?)`,
+       tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+     ) VALUES ('local', ?, 1, ?, ?, ?, ?)`,
   ).run(
-    artifact.jobUrl,
+    jobIdFor(artifact.jobUrl),
     artifact.status === "suppressed" ? "suppressed" : "resume_approved",
     "2026-05-26T10:00:00+00:00",
     "2026-05-26T10:00:00+00:00",
@@ -10724,11 +10288,11 @@ function insertMaterialsGeneration(
   );
   db.prepare(
     `INSERT OR REPLACE INTO job_materials_artifacts (
-       job_url, generation, artifact_type, artifact_id, status, path,
+       tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
        render_format, size_bytes, metadata_json, created_at
-     ) VALUES (?, 1, ?, ?, ?, ?, 'text', ?, ?, ?)`,
+     ) VALUES ('local', ?, 1, ?, ?, ?, ?, 'text', ?, ?, ?)`,
   ).run(
-    artifact.jobUrl,
+    jobIdFor(artifact.jobUrl),
     artifact.artifactType,
     artifact.artifactId,
     artifact.status,
@@ -10748,11 +10312,11 @@ function insertStage(
 ): void {
   db.prepare(
     `INSERT INTO job_stage_states (
-      job_url, stage, state, attempt_count, max_attempts, updated_at,
+      tenant_id, job_id, stage, state, attempt_count, max_attempts, updated_at,
       error_code, error_message, retryable, blocked_by_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    jobUrl,
+    jobIdFor(jobUrl),
     stage,
     state,
     state === "failed" ? 1 : 0,
