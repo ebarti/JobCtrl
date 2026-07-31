@@ -12,7 +12,8 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { PROJECTION_WATERMARK_NAME } from "../src/contracts.js";
-import { ensureProjectionTables, refreshProjections } from "../src/projections.js";
+import { refreshProjections } from "../src/projections.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 const FIXTURE_PATH = fileURLToPath(
   new URL(
@@ -36,40 +37,36 @@ interface Fixture {
 
 const fixture = JSON.parse(fs.readFileSync(FIXTURE_PATH, "utf8")) as Fixture;
 const databases: Database.Database[] = [];
+const directories: string[] = [];
 
 afterEach(() => {
   while (databases.length) {
     databases.pop()?.close();
   }
+  while (directories.length) {
+    fs.rmSync(directories.pop()!, { recursive: true, force: true });
+  }
 });
 
 function emptyDb(): Database.Database {
-  const db = new Database(":memory:");
+  const directory = fs.mkdtempSync("/tmp/jobctrl-api-pipeline-step-");
+  directories.push(directory);
+  const dbPath = `${directory}/jobctrl.db`;
+  initializeExactV7Database(dbPath);
+  const db = new Database(dbPath);
   databases.push(db);
-  db.exec(`
-    CREATE TABLE job_events (
-      event_id      INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_url       TEXT,
-      stage         TEXT,
-      event_type    TEXT NOT NULL,
-      level         TEXT NOT NULL DEFAULT 'info',
-      message       TEXT,
-      occurred_at   TEXT NOT NULL,
-      payload_json  TEXT
-    );
-  `);
   return db;
 }
 
 function seedEvents(db: Database.Database): void {
   const insert = db.prepare(
     `INSERT INTO job_events (
-       event_id, job_url, stage, event_type, level, message, occurred_at,
-       payload_json
-     ) VALUES (?, NULL, 'workflow', ?, 'info', NULL, ?, ?)`,
+       event_id, tenant_id, job_id, identity_version, stage, event_type,
+       level, message, occurred_at, payload_json
+     ) VALUES (?, ?, NULL, 1, 'workflow', ?, 'info', NULL, ?, ?)`,
   );
   fixture.events.forEach((event, index) => {
-    insert.run(index + 1, event.eventType, event.occurredAt, JSON.stringify(event.payload));
+    insert.run(index + 1, fixture.tenantId, event.eventType, event.occurredAt, JSON.stringify(event.payload));
   });
 }
 
@@ -139,7 +136,6 @@ describe("pipeline_step_projections cross-runtime parity", () => {
 
   it("backfills lifecycle rows after another runtime advanced the watermark", () => {
     const db = seededDb();
-    ensureProjectionTables(db);
     const maxEventId = fixture.events.length;
     db.prepare(
       `INSERT INTO event_watermarks (projection_name, last_event_id, updated_at)
