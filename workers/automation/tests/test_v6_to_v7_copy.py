@@ -263,7 +263,7 @@ def test_candidate_copy_preserves_runtime_profile_attestations(tmp_path: Path) -
     source.execute("PRAGMA foreign_keys = ON")
     candidate = sqlite3.connect(tmp_path / "candidate.db")
     candidate.execute("PRAGMA foreign_keys = ON")
-    create_exact_v7_schema(candidate)
+    create_unstamped_exact_v7_candidate(candidate)
     _hydrate_candidate_jobs(source, candidate)
     try:
         source.execute(
