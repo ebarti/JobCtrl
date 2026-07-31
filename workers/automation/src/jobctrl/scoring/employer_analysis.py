@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import sqlite3
 
+from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.ports.events import EventPublisher
+from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.materials import SqliteEmployerAnalysisRepository
 from jobctrl.infrastructure.setup_probes import analysis_sdk_set_version, enabled_analysis_legs
 from jobctrl.state import record_job_event
@@ -26,15 +28,18 @@ class EmployerAnalyzedEventRecorder:
         if getattr(event, "event_type", None) != "EmployerAnalyzed":
             return
         payload = dict(getattr(event, "payload", {}) or {})
-        job_url = str(payload.get("job_id") or "")
-        if not job_url:
+        raw_job_id = str(payload.get("job_id") or "")
+        if not raw_job_id:
             return
+        job_id = canonical_job_id(raw_job_id)
+        tenant_id = TenantId(str(getattr(event, "tenant_id", "")))
         completeness = f"{payload.get('legs_succeeded')}/{payload.get('legs_attempted')}"
         record_job_event(
             self._conn,
-            job_url,
+            job_id,
             self._stage,
             "EmployerAnalyzed",
+            tenant_id=tenant_id,
             message=f"Employer analysis generation {payload.get('generation')} ({completeness} legs)",
             payload=payload,
         )
@@ -81,10 +86,13 @@ def build_analyze_use_case(
     if "antigravity" in enabled_legs:
         adapters.append(AntigravityAnalysisAdapter())
     adapter_providers = {
-        "claude" if isinstance(adapter, ClaudeAnalysisAdapter) else
-        "codex" if isinstance(adapter, CodexAnalysisAdapter) else
-        "google" if isinstance(adapter, AntigravityAnalysisAdapter) else
-        "local"
+        "claude"
+        if isinstance(adapter, ClaudeAnalysisAdapter)
+        else "codex"
+        if isinstance(adapter, CodexAnalysisAdapter)
+        else "google"
+        if isinstance(adapter, AntigravityAnalysisAdapter)
+        else "local"
         for adapter in adapters
     }
     if selected_provider == "claude" and "claude" not in adapter_providers:
