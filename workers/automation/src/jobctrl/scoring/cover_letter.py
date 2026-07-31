@@ -21,7 +21,9 @@ import time
 from pathlib import Path
 
 from jobctrl.config import COVER_LETTER_DIR
-from jobctrl.database import effective_tailoring_min_score, get_connection, get_jobs_by_stage
+from jobctrl.database import effective_tailoring_min_score, get_connection
+from jobctrl.domain.discovery.value_objects import PostingUrl
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.services import ContentValidator
 from jobctrl.domain.materials.use_cases import (
     CoverLetterOutcome,
@@ -36,14 +38,19 @@ from jobctrl.domain.ports.materials import (
 )
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctrl.domain.materials.value_objects import ArtifactStatus
+from jobctrl.infrastructure.discovery.sqlite_identity_resolver import SqliteJobIdentityResolver
 from jobctrl.infrastructure.llm import LlmAdapter, get_llm_adapter
 from jobctrl.infrastructure.materials import (
     PlaywrightHtmlPdfAdapter,
     SqliteEmployerAnalysisRepository,
     SqliteMaterialsRepository,
 )
+from jobctrl.infrastructure.preparation.sqlite_repository import SqlitePreparationTargetReader
+from jobctrl.infrastructure.scoring import SqliteScoreRepository
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.state import (
+    MAX_ATTEMPTS,
     ensure_job_stage_rows,
     record_job_event,
     set_stage_state,
@@ -51,6 +58,8 @@ from jobctrl.state import (
 )
 
 log = logging.getLogger(__name__)
+
+_COVER_MAX_ATTEMPTS = int(MAX_ATTEMPTS["cover"] or 5)
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +146,7 @@ def generate_cover_letter(
     use_case._max_retries = max_retries  # noqa: SLF001 — DI seam
     outcome = use_case.execute(
         job=job,
+        job_id=canonical_job_id(str(job["job_id"])),
         profile_snapshot=snapshot,
         cover_letter_dir=COVER_LETTER_DIR,
         validation_mode=validation_mode,
@@ -149,8 +159,8 @@ def generate_cover_letter(
     return ""
 
 
-def cover_letter_by_url(
-    job_url: str,
+def cover_letter_by_id(
+    job_id: JobId,
     *,
     min_score: int = 7,
     validation_mode: str = "normal",
@@ -162,38 +172,48 @@ def cover_letter_by_url(
     pdf_renderer: PdfRendererPort | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
 ) -> dict:
-    """Generate one cover letter by URL and commit its state immediately."""
+    """Generate exactly one eligible cover letter by tenant-scoped JobId."""
+    stable_job_id = canonical_job_id(str(job_id))
+    conn = get_connection()
+    job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
+    if job is None:
+        return _skipped_result(stable_job_id, reason="job_not_found")
+
+    if repository is None:
+        repository = SqliteMaterialsRepository(conn)
+    min_score = effective_tailoring_min_score(min_score)
+
+    eligibility_reason = _cover_eligibility_reason(
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        job=job,
+        min_score=min_score,
+    )
+    if eligibility_reason is not None:
+        return _skipped_result(
+            stable_job_id,
+            reason=eligibility_reason,
+            url=str(job.get("url") or ""),
+        )
+
+    materials = repository.load_current_approved(tenant_id, stable_job_id)
+    if materials is None or not materials.is_resume_approved:
+        return _skipped_result(stable_job_id, reason="missing_approved_resume", url=str(job.get("url") or ""))
+    if materials.resume_pdf is None or materials.resume_pdf.status is not ArtifactStatus.APPROVED:
+        return _skipped_result(stable_job_id, reason="missing_approved_resume_pdf", url=str(job.get("url") or ""))
+    if materials.cover_letter is not None and materials.cover_letter.status is ArtifactStatus.APPROVED:
+        return _skipped_result(stable_job_id, reason="already_done", url=str(job.get("url") or ""), status="already_done")
+    if _cover_stage_succeeded(conn, tenant_id=tenant_id, job_id=stable_job_id):
+        return _skipped_result(stable_job_id, reason="already_done", url=str(job.get("url") or ""), status="already_done")
+
     if snapshot is None:
         from jobctrl.infrastructure.profile import get_profile_repository
 
         snapshot = get_profile_repository().load_snapshot(tenant_id)
 
-    conn = get_connection()
-    if repository is None:
-        repository = SqliteMaterialsRepository(conn)
-    min_score = effective_tailoring_min_score(min_score)
-
-    jobs = get_jobs_by_stage(
-        conn=conn,
-        stage="pending_cover",
-        min_score=min_score,
-        limit=0,
-    )
-    job = next((item for item in jobs if str(item.get("url") or "") == str(job_url)), None)
-    already_done = _cover_stage_succeeded(conn, job_url)
-    if job is None:
-        log.info("No cover letter work is currently eligible for %s.", job_url)
-        return {
-            "url": job_url,
-            "status": "already_done" if already_done else "skipped",
-            "reason": "already_done" if already_done else "not_eligible",
-            "generated": 0,
-            "errors": 0,
-            "elapsed": 0.0,
-        }
-
     COVER_LETTER_DIR.mkdir(parents=True, exist_ok=True)
-    log.info("Generating cover letter for %s (score >= %d)...", job_url, min_score)
+    log.info("Generating cover letter for %s (score >= %d)...", stable_job_id, min_score)
     t0 = time.time()
     use_case = _build_use_case(
         repository=repository,
@@ -204,21 +224,38 @@ def cover_letter_by_url(
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
 
-    url = str(job["url"])
-    ensure_job_stage_rows(conn, url, discovered_at=job.get("discovered_at"))
+    url = str(job.get("url") or "")
+    ensure_job_stage_rows(
+        conn,
+        stable_job_id,
+        tenant_id=tenant_id,
+        discovered_at=job.get("discovered_at"),
+    )
     started_at = utc_now()
-    # Runner owns the restart policy: failed-cover jobs are re-selected for
-    # retry, so allow Failed -> Running. Canonical state machine table only
-    # permits Failed -> Pending via explicit reset.
+    prior_attempts = _cover_attempt_count(
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+    )
+    current_attempt = prior_attempts + 1
     set_stage_state(
         conn,
-        url,
+        stable_job_id,
         "cover",
         "running",
+        tenant_id=tenant_id,
+        attempt_count=current_attempt,
         started_at=started_at,
         validate_transition=False,
     )
-    record_job_event(conn, url, "cover", "StageStarted", message="Cover letter generation started")
+    record_job_event(
+        conn,
+        stable_job_id,
+        "cover",
+        "StageStarted",
+        tenant_id=tenant_id,
+        message="Cover letter generation started",
+    )
     conn.commit()
 
     try:
@@ -228,6 +265,7 @@ def cover_letter_by_url(
             cover_letter_dir=COVER_LETTER_DIR,
             validation_mode=validation_mode,
             tenant_id=tenant_id,
+            job_id=stable_job_id,
         )
     except Exception as exc:  # noqa: BLE001
         outcome = CoverLetterOutcome(
@@ -260,23 +298,26 @@ def cover_letter_by_url(
 
         set_stage_state(
             conn,
-            url,
+            stable_job_id,
             "cover",
             "succeeded",
-            attempt_count=1,
+            tenant_id=tenant_id,
+            attempt_count=current_attempt,
             started_at=started_at,
             finished_at=finished_at,
         )
         record_job_event(
             conn,
-            url,
+            stable_job_id,
             "cover",
             "StageCompleted",
+            tenant_id=tenant_id,
             message="Cover letter generated",
         )
         conn.commit()
         log.info("Cover letter done in %.1fs: generated for %s", elapsed, url)
         return {
+            "jobId": str(stable_job_id),
             "url": url,
             "status": "ok",
             "generated": 1,
@@ -285,29 +326,40 @@ def cover_letter_by_url(
             "materialsGeneration": getattr(outcome.materials, "generation", None),
         }
 
+    failed_attempts = current_attempt
+    exhausted = failed_attempts >= _COVER_MAX_ATTEMPTS
     set_stage_state(
         conn,
-        url,
+        stable_job_id,
         "cover",
-        "failed",
-        attempt_count=1,
+        "exhausted" if exhausted else "failed",
+        tenant_id=tenant_id,
+        attempt_count=failed_attempts,
+        max_attempts=_COVER_MAX_ATTEMPTS,
         started_at=started_at,
         finished_at=finished_at,
         error_code="COVER_FAILED",
         error_message=outcome.error or f"Cover letter generation failed ({outcome.status})",
-        retryable=True,
-        next_action=f"jobctrl retry cover {url}",
+        retryable=not exhausted,
+        next_action=(
+            f"jobctrl retry cover {url or stable_job_id} --reset-attempts"
+            if exhausted
+            else f"jobctrl retry cover {url or stable_job_id}"
+        ),
+        validate_transition=False,
     )
     record_job_event(
         conn,
-        url,
+        stable_job_id,
         "cover",
         "StageFailed",
+        tenant_id=tenant_id,
         level="error",
         message=outcome.error or f"Cover letter generation failed ({outcome.status})",
     )
     conn.commit()
     return {
+        "jobId": str(stable_job_id),
         "url": url,
         "status": outcome.status,
         "generated": 0,
@@ -317,18 +369,158 @@ def cover_letter_by_url(
     }
 
 
-def _cover_stage_succeeded(conn, job_url: str) -> bool:
+def cover_letter_by_url(
+    job_url: str,
+    **kwargs,
+) -> dict:
+    """Resolve one current posting locator before using the JobId runtime path."""
+    tenant_id = kwargs.get("tenant_id", LOCAL_TENANT)
+    conn = get_connection()
+    resolved = SqliteJobIdentityResolver(conn).resolve_current_by_posting_url(
+        tenant_id,
+        PostingUrl(str(job_url)),
+    )
+    if resolved is None:
+        return _skipped_result(None, reason="job_not_found", url=str(job_url))
+    return cover_letter_by_id(resolved.job_id, **kwargs)
+
+
+def _skipped_result(
+    job_id: JobId | None,
+    *,
+    reason: str,
+    url: str = "",
+    status: str = "skipped",
+) -> dict:
+    return {
+        "jobId": str(job_id) if job_id is not None else None,
+        "url": url,
+        "status": status,
+        "reason": reason,
+        "generated": 0,
+        "errors": 0,
+        "elapsed": 0.0,
+    }
+
+
+def _cover_stage_succeeded(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> bool:
     row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'cover'",
-        (job_url,),
+        "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
+        (str(tenant_id), str(canonical_job_id(str(job_id)))),
     ).fetchone()
     if row is None:
         return False
     return str(row["state"] if hasattr(row, "keys") else row[0]) == "succeeded"
 
 
+def _cover_eligibility_reason(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    job: dict,
+    min_score: int,
+) -> str | None:
+    """Return the durable admission reason that prevents cover generation."""
+    if not str(job.get("full_description") or "").strip():
+        return "missing_description"
+
+    score_stage = conn.execute(
+        """
+        SELECT state
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'score'
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if score_stage is not None and str(score_stage["state"]) != "succeeded":
+        return "score_not_current"
+    if conn.execute(
+        """
+        SELECT 1
+        FROM job_score_staleness
+        WHERE tenant_id = ? AND job_id = ? AND resolved = 0
+        LIMIT 1
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone() is not None:
+        return "score_stale"
+
+    posting_state = conn.execute(
+        """
+        SELECT latest_active_state, latest_confidence, latest_quarantine_reason
+        FROM posting_snapshot_sets
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if posting_state is not None:
+        active_state = str(posting_state["latest_active_state"] or "").lower()
+        if active_state in {"closed", "expired", "removed", "location_incompatible"}:
+            return "posting_inactive"
+        confidence = str(posting_state["latest_confidence"] or "").lower()
+        quarantine_reason = str(
+            posting_state["latest_quarantine_reason"] or ""
+        ).lower()
+        if confidence == "low" and quarantine_reason not in {"", "none"}:
+            return "posting_quarantined"
+
+    cover_stage = conn.execute(
+        """
+        SELECT state, attempt_count
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if cover_stage is not None:
+        cover_state = str(cover_stage["state"])
+        attempt_count = int(cover_stage["attempt_count"] or 0)
+        if cover_state == "succeeded":
+            return None
+        if cover_state == "exhausted" or attempt_count >= _COVER_MAX_ATTEMPTS:
+            return "cover_exhausted"
+        if cover_state not in {"pending", "running", "failed", "stale"}:
+            return "cover_not_retryable"
+
+    score = SqliteScoreRepository(conn).load(tenant_id, job_id)
+    if score is None:
+        return "missing_score"
+    if score.fit_score.value < min_score:
+        return "below_min_score"
+    eligibility = score.breakdown.eligibility
+    if eligibility.status == "blocked" or eligibility.hard_blockers:
+        return "score_ineligible"
+    return None
+
+
+def _cover_attempt_count(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> int:
+    row = conn.execute(
+        """
+        SELECT attempt_count
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if row is None:
+        return 0
+    return int(row["attempt_count"] if hasattr(row, "keys") else row[0] or 0)
+
+
 __all__ = [
     "_get_resume_text_for_job",
+    "cover_letter_by_id",
     "cover_letter_by_url",
     "generate_cover_letter",
 ]

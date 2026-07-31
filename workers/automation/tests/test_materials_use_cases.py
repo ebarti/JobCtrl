@@ -19,7 +19,7 @@ from typing import Any, Iterable
 
 import pytest
 
-from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.materials import (
     Artifact,
     ArtifactStatus,
@@ -52,6 +52,9 @@ from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
+
+
+_COVER_JOB_ID = canonical_job_id("50000000-0000-4000-8000-000000000005")
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +150,7 @@ def snapshot() -> ProfileSnapshot:
 @pytest.fixture()
 def job() -> dict:
     return {
-        "job_id": "10000000-0000-4000-8000-000000000001",
+        "job_id": _COVER_JOB_ID,
         "url": "https://example.com/job/1",
         "title": "Backend Engineer",
         "site": "Acme",
@@ -2051,7 +2054,12 @@ def test_cover_letter_use_case_requires_existing_materials(
         llm=_ScriptedLlm([]),
         validator=ContentValidator(),
     )
-    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+    outcome = use_case.execute(
+        job=job,
+        job_id=job["job_id"],
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
+    )
     assert outcome.status == "error"
     assert "tailor" in outcome.error.lower()
 
@@ -2062,7 +2070,7 @@ def test_cover_letter_use_case_requires_approved_resume(
     repo = _FakeRepository()
     in_progress = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=job["job_id"],
         created_at="2024-01-01T00:00:00+00:00",
     )
     repo.save(in_progress)
@@ -2071,7 +2079,12 @@ def test_cover_letter_use_case_requires_approved_resume(
         llm=_ScriptedLlm([]),
         validator=ContentValidator(),
     )
-    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+    outcome = use_case.execute(
+        job=job,
+        job_id=job["job_id"],
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
+    )
     assert outcome.status == "error"
 
 
@@ -2083,7 +2096,7 @@ def test_cover_letter_use_case_requires_approved_resume_pdf(
     resume_path.write_text("Tailored resume body", encoding="utf-8")
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=job["job_id"],
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         Artifact.create(
@@ -2103,7 +2116,12 @@ def test_cover_letter_use_case_requires_approved_resume_pdf(
         validator=ContentValidator(),
     )
 
-    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+    outcome = use_case.execute(
+        job=job,
+        job_id=job["job_id"],
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
+    )
 
     assert outcome.status == "error"
     assert "resume pdf" in outcome.error.lower()
@@ -2118,7 +2136,7 @@ def test_cover_letter_use_case_happy_path(
     resume_path.write_text("Tailored resume body", encoding="utf-8")
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=job["job_id"],
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         Artifact.create(
@@ -2155,7 +2173,10 @@ def test_cover_letter_use_case_happy_path(
         publisher=publisher,
     )
     outcome = use_case.execute(
-        job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path
+        job=job,
+        job_id=job["job_id"],
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
     )
     assert outcome.status == "ok"
     assert outcome.text_path is not None
@@ -2176,7 +2197,7 @@ def test_cover_letter_use_case_retries_when_completion_marker_missing(
     resume_path.write_text("Tailored resume body", encoding="utf-8")
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=job["job_id"],
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         Artifact.create(
@@ -2213,7 +2234,10 @@ def test_cover_letter_use_case_retries_when_completion_marker_missing(
     )
 
     outcome = use_case.execute(
-        job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path
+        job=job,
+        job_id=job["job_id"],
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
     )
 
     assert outcome.status == "ok"
@@ -2239,7 +2263,7 @@ def _seed_approved_cover_materials(repo: _FakeRepository, job: dict, tmp_path: P
     resume_path.write_text("Tailored resume body", encoding="utf-8")
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=job["job_id"],
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         Artifact.create(
@@ -2314,6 +2338,7 @@ def test_cover_letter_failed_refresh_preserves_last_approved_artifact(
 
     outcome = use_case.execute(
         job=job,
+        job_id=job["job_id"],
         profile_snapshot=snapshot,
         cover_letter_dir=tmp_path,
     )
@@ -2326,7 +2351,7 @@ def test_cover_letter_failed_refresh_preserves_last_approved_artifact(
     assert "300%" in rejected_path.read_text(encoding="utf-8")
     assert approved_path.read_text(encoding="utf-8") == approved_text
 
-    current = repo.load_current_approved(LOCAL_TENANT, JobId(job["url"]))
+    current = repo.load_current_approved(LOCAL_TENANT, job["job_id"])
     assert current is not None
     assert current.status == MaterialsLifecycle.COVER_LETTER_READY
     assert current.cover_letter == approved.cover_letter
@@ -2359,12 +2384,13 @@ def test_cover_letter_refresh_persistence_failure_preserves_approved_bytes(
     with pytest.raises(RuntimeError, match="forced repository failure"):
         use_case.execute(
             job=job,
+            job_id=job["job_id"],
             profile_snapshot=snapshot,
             cover_letter_dir=tmp_path,
         )
 
     assert approved_path.read_text(encoding="utf-8") == approved_text
-    current = repo.load_current_approved(LOCAL_TENANT, JobId(job["url"]))
+    current = repo.load_current_approved(LOCAL_TENANT, job["job_id"])
     assert current is approved
     assert current.cover_letter == approved.cover_letter
 
@@ -2413,6 +2439,7 @@ def test_cover_letter_refresh_drops_stale_pdf_before_renderer_failure(
 
     refreshed = use_case.execute(
         job=job,
+        job_id=job["job_id"],
         profile_snapshot=snapshot,
         cover_letter_dir=tmp_path,
     )
@@ -2427,10 +2454,10 @@ def test_cover_letter_refresh_drops_stale_pdf_before_renderer_failure(
         repository=repo,
         resume_renderer=renderer,
         cover_letter_renderer=renderer,
-    ).execute(job_id=JobId(job["url"]))
+    ).execute(job_id=job["job_id"])
     assert render_outcome.status == "noop"
     assert renderer.cover_calls == 1
-    current = repo.load_current_approved(LOCAL_TENANT, JobId(job["url"]))
+    current = repo.load_current_approved(LOCAL_TENANT, job["job_id"])
     assert current is not None
     assert current.cover_letter_pdf is not None
     assert current.cover_letter_pdf.status is ArtifactStatus.SUPERSEDED
@@ -2460,7 +2487,12 @@ def test_cover_letter_use_case_rejects_fabricated_skill(
         max_retries=0,
     )
 
-    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+    outcome = use_case.execute(
+        job=job,
+        job_id=job["job_id"],
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
+    )
 
     assert outcome.status == "failed_validation"
     assert outcome.materials is not None
@@ -2503,7 +2535,12 @@ def test_cover_letter_use_case_rejects_fabricated_metric(
         max_retries=0,
     )
 
-    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+    outcome = use_case.execute(
+        job=job,
+        job_id=job["job_id"],
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
+    )
 
     assert outcome.status == "failed_validation"
     cover = outcome.materials.cover_letter
@@ -2533,7 +2570,12 @@ def test_cover_letter_use_case_rejects_fabricated_employer(
         max_retries=0,
     )
 
-    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+    outcome = use_case.execute(
+        job=job,
+        job_id=job["job_id"],
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
+    )
 
     assert outcome.status == "failed_validation"
     cover = outcome.materials.cover_letter
@@ -2563,7 +2605,12 @@ def test_cover_letter_use_case_rejects_fabricated_title(
         max_retries=0,
     )
 
-    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+    outcome = use_case.execute(
+        job=job,
+        job_id=job["job_id"],
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
+    )
 
     assert outcome.status == "failed_validation"
     cover = outcome.materials.cover_letter
@@ -2600,7 +2647,12 @@ def test_cover_letter_use_case_accepts_grounded_letter_and_persists_audit(
         ),
     )
 
-    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+    outcome = use_case.execute(
+        job=job,
+        job_id=job["job_id"],
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
+    )
 
     assert outcome.status == "ok"
     cover = outcome.materials.cover_letter
@@ -2655,7 +2707,12 @@ def test_cover_letter_gate_inherits_concept_scope_and_word_form_grounding(
             analysis_repository=analysis_repository,
             max_retries=0,
         )
-        return use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+        return use_case.execute(
+            job=job,
+            job_id=job["job_id"],
+            profile_snapshot=snapshot,
+            cover_letter_dir=tmp_path,
+        )
 
     # Concept keywords in varied word forms are NOT false-rejected.
     grounded = _run(
@@ -2701,7 +2758,12 @@ def test_cover_letter_exempts_target_company_but_flags_fabricated_lookalike(
             validator=ContentValidator(),
             max_retries=0,
         )
-        return use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+        return use_case.execute(
+            job=job,
+            job_id=job["job_id"],
+            profile_snapshot=snapshot,
+            cover_letter_dir=tmp_path,
+        )
 
     # The real target company (with a corporate suffix) stays exempted -> accepted.
     exempt = _run("I am applying for the backend role at Acme Corporation.")
