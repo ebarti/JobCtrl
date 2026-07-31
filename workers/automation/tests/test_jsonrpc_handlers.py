@@ -1929,11 +1929,34 @@ def test_current_policy_score_activity_skips_current_policy_scores(
     outdated_url = "https://example.com/job/outdated-score"
     corrected_url = "https://example.com/job/corrected-score"
     missing_url = "https://example.com/job/missing-score"
-    for url in (current_url, outdated_url, corrected_url, missing_url):
-        _seed_enriched_job(conn, url)
-    _seed_score(conn, current_url, policy_version=2)
-    _seed_score(conn, outdated_url, policy_version=1)
-    _seed_score(conn, corrected_url, policy_version=1, correction={"fit_score": 9})
+    job_ids = {
+        url: _seed_v7_current_locator(
+            conn,
+            tenant_id=TenantId("local"),
+            job_url=url,
+        )
+        for url in (current_url, outdated_url, corrected_url, missing_url)
+    }
+    _seed_v7_score(conn, job_ids[current_url], policy_version=2)
+    _seed_v7_score(conn, job_ids[outdated_url], policy_version=1)
+    _seed_v7_score(
+        conn,
+        job_ids[corrected_url],
+        policy_version=1,
+        correction={"fit_score": 9},
+    )
+    _seed_v7_current_locator(
+        conn,
+        tenant_id=TenantId("other"),
+        job_url=missing_url,
+        job_id=job_ids[missing_url],
+    )
+    _seed_v7_score(
+        conn,
+        job_ids[missing_url],
+        tenant_id=TenantId("other"),
+        policy_version=2,
+    )
 
     calls: list[str] = []
 
@@ -2032,13 +2055,66 @@ def test_current_policy_tailor_activity_skips_current_policy_artifacts(
     outdated_url = "https://example.com/job/outdated-tailor"
     missing_url = "https://example.com/job/missing-tailor"
     low_fit_url = "https://example.com/job/low-fit-tailor"
-    for url in (current_url, outdated_url, missing_url):
-        _seed_enriched_job(conn, url)
-        _seed_score(conn, url, policy_version=2, fit_score=9)
-    _seed_enriched_job(conn, low_fit_url)
-    _seed_score(conn, low_fit_url, policy_version=2, fit_score=5)
-    _seed_tailored_artifact(conn, current_url, policy_version=2)
-    _seed_tailored_artifact(conn, outdated_url, policy_version=1)
+    exhausted_url = "https://example.com/job/exhausted-tailor"
+    job_ids = {
+        url: _seed_v7_current_locator(
+            conn,
+            tenant_id=TenantId("local"),
+            job_url=url,
+        )
+        for url in (
+            current_url,
+            outdated_url,
+            missing_url,
+            low_fit_url,
+            exhausted_url,
+        )
+    }
+    for url in (current_url, outdated_url, missing_url, exhausted_url):
+        _seed_v7_score(conn, job_ids[url], policy_version=2, fit_score=9)
+    _seed_v7_score(conn, job_ids[low_fit_url], policy_version=2, fit_score=5)
+    _seed_v7_tailored_artifact(
+        conn,
+        job_ids[current_url],
+        policy_version=2,
+    )
+    _seed_v7_tailored_artifact(
+        conn,
+        job_ids[outdated_url],
+        policy_version=1,
+    )
+    _seed_v7_rejected_tailoring_generation(conn, job_ids[current_url], generation=2)
+    _seed_v7_rejected_tailoring_generation(conn, job_ids[outdated_url], generation=2)
+    _seed_v7_tailored_artifact(
+        conn,
+        job_ids[exhausted_url],
+        policy_version=1,
+    )
+    _seed_v7_tailor_stage(
+        conn,
+        job_ids[exhausted_url],
+        state="failed",
+        attempt_count=5,
+    )
+    _seed_v7_current_locator(
+        conn,
+        tenant_id=TenantId("other"),
+        job_url=missing_url,
+        job_id=job_ids[missing_url],
+    )
+    _seed_v7_score(
+        conn,
+        job_ids[missing_url],
+        tenant_id=TenantId("other"),
+        policy_version=2,
+        fit_score=9,
+    )
+    _seed_v7_tailored_artifact(
+        conn,
+        job_ids[missing_url],
+        tenant_id=TenantId("other"),
+        policy_version=2,
+    )
 
     calls: list[tuple[str, dict[str, object]]] = []
 
@@ -2212,6 +2288,43 @@ def _seed_scoring_policy(conn, *, version: int) -> None:
     conn.commit()
 
 
+def _seed_v7_score(
+    conn,
+    job_id: JobId,
+    *,
+    tenant_id: TenantId = TenantId("local"),
+    policy_version: int,
+    fit_score: int = 8,
+    correction: dict[str, object] | None = None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_scores (
+            tenant_id, job_id, version, fit_score, breakdown_json, keywords_json,
+            scored_at, correction_json, criteria_json, trace_json
+        ) VALUES (?, ?, 1, ?, ?, '[]', '2026-07-30T10:02:00+00:00',
+                  ?, '{}', ?)
+        """,
+        (
+            str(tenant_id),
+            str(job_id),
+            fit_score,
+            json.dumps(
+                {
+                    "reasoning": "ok",
+                    "eligibility": {
+                        "status": "eligible",
+                        "hard_blockers": [],
+                    },
+                }
+            ),
+            json.dumps(correction) if correction is not None else None,
+            json.dumps({"scoring_policy_version": policy_version}),
+        ),
+    )
+    conn.commit()
+
+
 def _seed_tailoring_policy(conn, *, version: int) -> None:
     conn.execute(
         """
@@ -2226,6 +2339,102 @@ def _seed_tailoring_policy(conn, *, version: int) -> None:
             '{}', '{}', '{}', NULL, '', '2026-05-26T10:00:00+00:00', NULL)
         """,
         (version,),
+    )
+    conn.commit()
+
+
+def _seed_v7_tailored_artifact(
+    conn,
+    job_id: JobId,
+    *,
+    tenant_id: TenantId = TenantId("local"),
+    policy_version: int,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            tenant_id, job_id, generation, status, created_at, updated_at,
+            metadata_json
+        ) VALUES (?, ?, 1, 'resume_approved',
+                  '2026-07-30T10:03:00+00:00',
+                  '2026-07-30T10:03:00+00:00', '{}')
+        """,
+        (str(tenant_id), str(job_id)),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials_artifacts (
+            tenant_id, job_id, generation, artifact_type, artifact_id, status,
+            path, render_format, size_bytes, metadata_json, created_at,
+            superseded_at
+        ) VALUES (?, ?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?,
+                  '2026-07-30T10:03:00+00:00', NULL)
+        """,
+        (
+            str(tenant_id),
+            str(job_id),
+            f"artifact-{policy_version}-{job_id}",
+            f"/tmp/{job_id}.txt",
+            json.dumps({"tailoring_policy_version": policy_version}),
+        ),
+    )
+    conn.commit()
+
+
+def _seed_v7_rejected_tailoring_generation(
+    conn,
+    job_id: JobId,
+    *,
+    tenant_id: TenantId = TenantId("local"),
+    generation: int,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            tenant_id, job_id, generation, status, created_at, updated_at,
+            metadata_json
+        ) VALUES (?, ?, ?, 'resume_rejected',
+                  '2026-07-30T10:04:00+00:00',
+                  '2026-07-30T10:04:00+00:00', '{}')
+        """,
+        (str(tenant_id), str(job_id), generation),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials_artifacts (
+            tenant_id, job_id, generation, artifact_type, artifact_id, status,
+            path, render_format, size_bytes, metadata_json, created_at,
+            superseded_at
+        ) VALUES (?, ?, ?, 'tailored_resume', ?, 'rejected', ?, 'text', 12, '{}',
+                  '2026-07-30T10:04:00+00:00', NULL)
+        """,
+        (
+            str(tenant_id),
+            str(job_id),
+            generation,
+            f"artifact-rejected-{generation}-{job_id}",
+            f"/tmp/{job_id}-rejected-{generation}.txt",
+        ),
+    )
+    conn.commit()
+
+
+def _seed_v7_tailor_stage(
+    conn,
+    job_id: JobId,
+    *,
+    tenant_id: TenantId = TenantId("local"),
+    state: str,
+    attempt_count: int,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_stage_states (
+            tenant_id, job_id, stage, state, attempt_count, max_attempts,
+            updated_at, retryable
+        ) VALUES (?, ?, 'tailor', ?, ?, 5, '2026-07-30T10:05:00+00:00', 1)
+        """,
+        (str(tenant_id), str(job_id), state, attempt_count),
     )
     conn.commit()
 
