@@ -5476,7 +5476,6 @@ export const ContactAttributeInputSchema = z
 export type ContactAttributeInput = z.infer<typeof ContactAttributeInputSchema>;
 
 const contactEmployerField = z.string().trim().min(1).max(200).nullish();
-const contactJobIdField = z.string().trim().min(1).max(2000).nullish();
 const contactApiJobIdField = z
   .string()
   .trim()
@@ -5664,7 +5663,7 @@ export type ContactResearchSourceRequest = z.infer<typeof ContactResearchSourceR
 export const RunContactResearchRequestSchema = z
   .object({
     employer: contactEmployerField,
-    jobId: contactJobIdField,
+    jobId: contactApiJobIdField,
     sources: z.array(ContactResearchSourceRequestSchema).max(25).default([]),
     llmModel: z.string().trim().min(1).max(120).optional(),
   })
@@ -5677,7 +5676,7 @@ export type RunContactResearchRequest = z.infer<typeof RunContactResearchRequest
 
 export const ContactResearchListQuerySchema = z
   .object({
-    jobId: optionalText,
+    jobId: contactApiJobIdField,
     employer: optionalText,
   })
   .strict();

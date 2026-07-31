@@ -1,9 +1,4 @@
-"""Exact-v7 coverage for ``contact_research_task_projections`` (R6 Phase 2).
-
-The shared parity fixture remains on the legacy TypeScript projection contract.
-This test derives a local exact-v7 fixture using canonical JobIds, then asserts
-the projection rows and the sensitive-value boundary.
-"""
+"""Cross-runtime exact-v7 coverage for ``contact_research_task_projections``."""
 
 from __future__ import annotations
 
@@ -12,9 +7,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from jobctrl.database import init_db
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
+from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobctrl.infrastructure.projections.sqlite_projection_store import SqliteProjectionStore
 
@@ -22,36 +17,19 @@ _FIXTURE = (
     Path(__file__).resolve().parents[3]
     / "packages/domain-types/test/fixtures/contact_research_projection_parity.json"
 )
-_V7_JOB_IDS = {
-    "https://job/1": "11111111-1111-4111-8111-111111111111",
-    "https://job/2": "22222222-2222-4222-8222-222222222222",
-}
 
 
-def _exact_v7_fixture() -> dict[str, Any]:
-    fixture = json.loads(_FIXTURE.read_text())
-    for task in fixture["tasks"]:
-        job_url = task.pop("jobUrl")
-        task["jobId"] = _V7_JOB_IDS[job_url] if job_url else None
-    for expected in fixture["expected"]:
-        job_url = expected.get("jobId")
-        expected["jobId"] = _V7_JOB_IDS[job_url] if job_url else None
-    return fixture
-
-
-def _seed_canonical(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
-    tenant = fixture["tenantId"]
-    for task in fixture["tasks"]:
-        if task["jobId"] is None:
-            continue
+def _seed_canonical(conn: sqlite3.Connection, tenant: dict[str, Any]) -> None:
+    tenant_id = tenant["tenantId"]
+    for job in tenant["jobs"]:
         conn.execute(
             """
             INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
             VALUES (?, ?, ?, 'Fixture job', '2026-07-31T12:00:00Z')
             """,
-            (tenant, task["jobId"], f"https://fixtures.example/{task['taskId']}"),
+            (tenant_id, job["jobId"], job["url"]),
         )
-    for task in fixture["tasks"]:
+    for task in tenant["tasks"]:
         conn.execute(
             """
             INSERT INTO contact_research_tasks (
@@ -60,7 +38,7 @@ def _seed_canonical(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                tenant,
+                tenant_id,
                 task["taskId"],
                 task["employer"],
                 task["jobId"],
@@ -74,7 +52,7 @@ def _seed_canonical(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 task["errorClass"],
             ),
         )
-    for candidate in fixture["candidates"]:
+    for candidate in tenant["candidates"]:
         conn.execute(
             """
             INSERT INTO contact_candidates (
@@ -84,7 +62,7 @@ def _seed_canonical(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                tenant,
+                tenant_id,
                 candidate["candidateId"],
                 candidate["taskId"],
                 candidate["role"],
@@ -99,7 +77,6 @@ def _seed_canonical(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 candidate["confirmedAt"],
             ),
         )
-    conn.commit()
 
 
 def _normalize(row: sqlite3.Row) -> dict[str, Any]:
@@ -122,23 +99,38 @@ def _normalize(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def test_contact_research_projection_exact_v7_fixture(tmp_path: Path) -> None:
-    fixture = _exact_v7_fixture()
-    conn = init_db(tmp_path / "jobctrl.db")
-    conn.row_factory = sqlite3.Row
-    _seed_canonical(conn, fixture)
-
-    builder = ProjectionBuilder(conn_factory=lambda: conn, tenant_id=LOCAL_TENANT)
+def _projected(conn: sqlite3.Connection, tenant: dict[str, Any]) -> list[dict[str, Any]]:
+    tenant_id = TenantId(tenant["tenantId"])
+    builder = ProjectionBuilder(conn_factory=lambda: conn, tenant_id=tenant_id)
     builder.subscribe_to(InProcessEventBus())
     builder.refresh()
+    rows = SqliteProjectionStore(conn).fetch_contact_research_tasks(str(tenant_id))
+    return sorted((_normalize(row) for row in rows), key=lambda item: item["taskId"])
 
-    rows = SqliteProjectionStore(conn).fetch_contact_research_tasks("local")
-    projected = sorted((_normalize(row) for row in rows), key=lambda item: item["taskId"])
-    expected = sorted(fixture["expected"], key=lambda item: item["taskId"])
-    assert projected == expected
+
+def _expected(tenant: dict[str, Any]) -> list[dict[str, Any]]:
+    return sorted(tenant["expected"], key=lambda item: item["taskId"])
+
+
+def test_contact_research_projection_exact_v7_fixture_is_tenant_scoped() -> None:
+    fixture = json.loads(_FIXTURE.read_text())
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    create_exact_v7_schema(conn)
+    for tenant in fixture["tenants"]:
+        _seed_canonical(conn, tenant)
+
+    local, other = fixture["tenants"]
+    assert _projected(conn, local) == _expected(local)
+    assert SqliteProjectionStore(conn).fetch_contact_research_tasks(other["tenantId"]) == []
+    assert _projected(conn, other) == _expected(other)
+    assert _projected(conn, local) == _expected(local)
 
     projection_text = " ".join(
-        " ".join(str(value) for value in tuple(row)) for row in rows
+        " ".join(str(value) for value in tuple(row))
+        for row in SqliteProjectionStore(conn).fetch_contact_research_tasks(local["tenantId"])
+        + SqliteProjectionStore(conn).fetch_contact_research_tasks(other["tenantId"])
     )
     for secret in fixture["sensitiveValues"]:
         assert secret not in projection_text

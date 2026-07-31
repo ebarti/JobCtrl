@@ -31,53 +31,14 @@ import type {
   ResearchTaskStatus,
 } from "./contracts.js";
 import { CONTACT_ROLES } from "@jobctrl/domain-types";
-import { ensureContactTables, getContactDetail } from "./contacts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
-import { refreshContactResearchProjections, refreshProjections } from "./projections.js";
+import { getContactDetail } from "./contacts.js";
+import { allRows, getRow, type SqliteDatabase, type SqliteValue } from "./db.js";
 
 const TENANT_ID = "local";
+const CANONICAL_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export class ContactResearchNotFoundError extends Error {}
 export class ContactResearchInputError extends Error {}
-
-export function ensureContactResearchTables(db: SqliteDatabase): void {
-  ensureContactTables(db);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS contact_research_tasks (
-      tenant_id            TEXT NOT NULL DEFAULT 'local',
-      task_id              TEXT NOT NULL,
-      employer             TEXT,
-      job_url              TEXT,
-      status               TEXT NOT NULL DEFAULT 'queued',
-      source_attempts_json TEXT NOT NULL DEFAULT '[]',
-      started_at           TEXT,
-      updated_at           TEXT NOT NULL,
-      needs_review_at      TEXT,
-      completed_at         TEXT,
-      failed_at            TEXT,
-      error_class          TEXT,
-      PRIMARY KEY (tenant_id, task_id)
-    );
-    CREATE TABLE IF NOT EXISTS contact_candidates (
-      tenant_id            TEXT NOT NULL DEFAULT 'local',
-      candidate_id         TEXT NOT NULL,
-      task_id              TEXT NOT NULL,
-      role                 TEXT NOT NULL DEFAULT 'other',
-      attributes_json      TEXT,
-      source_kind          TEXT NOT NULL,
-      source_ref           TEXT NOT NULL,
-      capture_method       TEXT NOT NULL,
-      confidence           REAL NOT NULL DEFAULT 0,
-      status               TEXT NOT NULL DEFAULT 'needs_review',
-      proposed_at          TEXT NOT NULL,
-      confirmed_contact_id TEXT,
-      confirmed_at         TEXT,
-      PRIMARY KEY (tenant_id, candidate_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_contact_candidates_task
-      ON contact_candidates(tenant_id, task_id, status);
-  `);
-}
 
 // ---------------------------------------------------------------------------
 // Reads (projection-backed list; canonical join for candidate values)
@@ -103,8 +64,7 @@ export function listResearchTasks(
   db: SqliteDatabase,
   query: ContactResearchListQuery = { jobId: "", employer: "" },
 ): ContactResearchTaskSummary[] {
-  ensureContactResearchTables(db);
-  refreshProjections(db, TENANT_ID);
+  refreshContactResearchTaskProjections(db, TENANT_ID);
   const filters: string[] = ["tenant_id = ?"];
   const params: SqliteValue[] = [TENANT_ID];
   const jobId = (query.jobId ?? "").trim();
@@ -130,8 +90,7 @@ export function getResearchTaskDetail(
   db: SqliteDatabase,
   taskId: string,
 ): ContactResearchTaskDetail | null {
-  ensureContactResearchTables(db);
-  refreshProjections(db, TENANT_ID);
+  refreshContactResearchTaskProjections(db, TENANT_ID);
   const task = loadTaskRow(db, taskId);
   if (!task) {
     return null;
@@ -154,16 +113,16 @@ export function createQueuedResearchTask(
   db: SqliteDatabase,
   input: { taskId: string; employer: string | null; jobId: string | null },
 ): ContactResearchTaskSummary {
-  ensureContactResearchTables(db);
+  const jobId = canonicalJobId(input.jobId);
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO contact_research_tasks (
-       tenant_id, task_id, employer, job_url, status, source_attempts_json, started_at, updated_at
+       tenant_id, task_id, employer, job_id, status, source_attempts_json, started_at, updated_at
      ) VALUES (?, ?, ?, ?, 'queued', '[]', ?, ?)
      ON CONFLICT(tenant_id, task_id) DO NOTHING`,
-  ).run(TENANT_ID, input.taskId, input.employer, input.jobId, now, now);
+  ).run(TENANT_ID, input.taskId, input.employer, jobId, now, now);
   recordEvent(db, {
-    jobUrl: input.jobId,
+    jobId,
     eventType: "ContactResearchTaskStarted",
     entityKind: "contact_research",
     entityRef: input.taskId,
@@ -171,18 +130,18 @@ export function createQueuedResearchTask(
       tenantId: TENANT_ID,
       taskId: input.taskId,
       employer: input.employer,
-      jobId: input.jobId,
+      jobId,
       startedAt: now,
     },
   });
-  refreshContactResearchProjections(db, TENANT_ID);
+  refreshContactResearchTaskProjections(db, TENANT_ID);
   const task = loadTaskRow(db, input.taskId);
   return task
     ? taskSummaryFromCanonical(task, [])
     : ({
         taskId: input.taskId,
         employer: input.employer,
-        jobId: input.jobId,
+        jobId,
         status: "queued",
         candidateCount: 0,
         needsReviewCount: 0,
@@ -206,7 +165,6 @@ export function confirmContactCandidate(
   candidateId: string,
   role?: ContactRole,
 ): ConfirmContactCandidateResponse {
-  ensureContactResearchTables(db);
   const task = loadTaskRow(db, taskId);
   if (!task) {
     throw new ContactResearchNotFoundError(`Research task ${taskId} not found`);
@@ -228,11 +186,11 @@ export function confirmContactCandidate(
   const attributes = parseCandidateAttributes(candidate.attributes_json);
   const contactRole = role ?? normalizeRole(candidate.role);
   const employer = task.employer ?? null;
-  const jobId = task.job_url ?? null;
+  const jobId = task.job_id ?? null;
 
   const transaction = db.transaction(() => {
     db.prepare(
-      `INSERT INTO contacts (tenant_id, contact_id, employer, job_url, role, created_at, updated_at, deleted_at)
+      `INSERT INTO contacts (tenant_id, contact_id, employer, job_id, role, created_at, updated_at, deleted_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
     ).run(TENANT_ID, contactId, employer, jobId, contactRole, now, now);
     const insertAttr = db.prepare(
@@ -242,7 +200,7 @@ export function confirmContactCandidate(
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     );
     recordEvent(db, {
-      jobUrl: jobId,
+      jobId,
       eventType: "ContactCreated",
       entityKind: "contact",
       entityRef: contactId,
@@ -263,7 +221,7 @@ export function confirmContactCandidate(
         now,
       );
       recordEvent(db, {
-        jobUrl: jobId,
+        jobId,
         eventType: "ContactAttributeRecorded",
         entityKind: "contact",
         entityRef: contactId,
@@ -304,7 +262,7 @@ export function confirmContactCandidate(
         "UPDATE contact_research_tasks SET status = 'completed', completed_at = ?, updated_at = ? WHERE tenant_id = ? AND task_id = ?",
       ).run(now, now, TENANT_ID, taskId);
       recordEvent(db, {
-        jobUrl: jobId,
+        jobId,
         eventType: "ContactResearchTaskCompleted",
         entityKind: "contact_research",
         entityRef: taskId,
@@ -318,8 +276,7 @@ export function confirmContactCandidate(
   });
   transaction();
 
-  refreshProjections(db, TENANT_ID);
-  refreshContactResearchProjections(db, TENANT_ID);
+  refreshContactResearchTaskProjections(db, TENANT_ID);
 
   const contact = getContactDetail(db, contactId);
   if (!contact) {
@@ -335,6 +292,114 @@ export function confirmContactCandidate(
   } satisfies ConfirmContactCandidateResponse;
 }
 
+/** Materialise research summaries directly from exact-v7 canonical rows. */
+export function refreshContactResearchTaskProjections(
+  db: SqliteDatabase,
+  tenantId = TENANT_ID,
+): void {
+  const tasks = allRows<TaskRow>(
+    db,
+    `SELECT task_id, employer, job_id, status, source_attempts_json,
+            started_at, updated_at, needs_review_at, completed_at, failed_at, error_class
+     FROM contact_research_tasks
+     WHERE tenant_id = ?`,
+    [tenantId],
+  );
+  const liveIds = new Set<string>();
+  const upsert = db.prepare(
+    `INSERT INTO contact_research_task_projections (
+       tenant_id, task_id, employer, job_id, status,
+       candidate_count, needs_review_count, confirmed_count,
+       source_attempts_json, candidates_json, started_at, updated_at,
+       needs_review_at, completed_at, failed_at, error_class, last_updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(tenant_id, task_id) DO UPDATE SET
+       employer             = excluded.employer,
+       job_id               = excluded.job_id,
+       status               = excluded.status,
+       candidate_count      = excluded.candidate_count,
+       needs_review_count   = excluded.needs_review_count,
+       confirmed_count      = excluded.confirmed_count,
+       source_attempts_json = excluded.source_attempts_json,
+       candidates_json      = excluded.candidates_json,
+       started_at           = excluded.started_at,
+       updated_at           = excluded.updated_at,
+       needs_review_at      = excluded.needs_review_at,
+       completed_at         = excluded.completed_at,
+       failed_at            = excluded.failed_at,
+       error_class          = excluded.error_class,
+       last_updated_at      = excluded.last_updated_at`,
+  );
+  for (const task of tasks) {
+    const taskId = String(task.task_id);
+    liveIds.add(taskId);
+    const candidateRows = allRows<CandidateRow>(
+      db,
+      `SELECT candidate_id, task_id, role, attributes_json, source_kind, source_ref,
+              capture_method, confidence, status, proposed_at, confirmed_contact_id, confirmed_at
+       FROM contact_candidates
+       WHERE tenant_id = ? AND task_id = ?
+       ORDER BY proposed_at ASC, candidate_id ASC`,
+      [tenantId, taskId],
+    );
+    let needsReview = 0;
+    let confirmed = 0;
+    const candidates = candidateRows.map((candidate) => {
+      const status = String(candidate.status ?? "needs_review");
+      if (status === "needs_review") {
+        needsReview += 1;
+      } else if (status === "confirmed") {
+        confirmed += 1;
+      }
+      return {
+        candidateId: String(candidate.candidate_id),
+        role: String(candidate.role ?? "other"),
+        sourceKind: String(candidate.source_kind),
+        sourceRef: String(candidate.source_ref),
+        captureMethod: String(candidate.capture_method ?? "llm_assisted"),
+        confidence: Number(candidate.confidence ?? 0),
+        status,
+        proposedAt: String(candidate.proposed_at ?? ""),
+        confirmedContactId: candidate.confirmed_contact_id ?? null,
+        confirmedAt: candidate.confirmed_at ?? null,
+        attributeKinds: projectionAttributeKinds(candidate.attributes_json),
+      };
+    });
+    upsert.run(
+      tenantId,
+      taskId,
+      task.employer,
+      task.job_id,
+      String(task.status ?? "queued"),
+      candidateRows.length,
+      needsReview,
+      confirmed,
+      JSON.stringify(parseJsonArray(task.source_attempts_json)),
+      JSON.stringify(candidates),
+      task.started_at,
+      task.updated_at,
+      task.needs_review_at,
+      task.completed_at,
+      task.failed_at,
+      task.error_class,
+      task.updated_at,
+    );
+  }
+  const existing = allRows<{ task_id: string }>(
+    db,
+    "SELECT task_id FROM contact_research_task_projections WHERE tenant_id = ?",
+    [tenantId],
+  );
+  const drop = db.prepare(
+    "DELETE FROM contact_research_task_projections WHERE tenant_id = ? AND task_id = ?",
+  );
+  for (const row of existing) {
+    if (!liveIds.has(String(row.task_id))) {
+      drop.run(tenantId, String(row.task_id));
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
@@ -342,7 +407,7 @@ export function confirmContactCandidate(
 type TaskRow = {
   task_id: string;
   employer: string | null;
-  job_url: string | null;
+  job_id: string | null;
   status: string | null;
   source_attempts_json: string | null;
   started_at: string | null;
@@ -431,7 +496,7 @@ function taskSummaryFromCanonical(
   return {
     taskId: String(task.task_id),
     employer: task.employer ?? null,
-    jobId: task.job_url ?? null,
+    jobId: task.job_id ?? null,
     status: normalizeStatus(task.status),
     candidateCount: candidates.length,
     needsReviewCount: candidates.filter((candidate) => candidate.status === "needs_review").length,
@@ -498,6 +563,30 @@ function parseJsonArray(raw: string | null): unknown[] {
   }
 }
 
+function projectionAttributeKinds(attributesJson: string | null): string[] {
+  const kinds: string[] = [];
+  for (const item of parseJsonArray(attributesJson)) {
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      const kind = String((item as Record<string, unknown>).kind ?? "").trim();
+      if (kind) {
+        kinds.push(kind);
+      }
+    }
+  }
+  return kinds;
+}
+
+function canonicalJobId(value: string | null | undefined): string | null {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (!CANONICAL_JOB_ID.test(trimmed)) {
+    throw new ContactResearchInputError("jobId must be a canonical UUID");
+  }
+  return trimmed;
+}
+
 function normalizeRole(value: string | null | undefined): ContactRole {
   const text = (value ?? "").trim().toLowerCase();
   return (CONTACT_ROLES as readonly string[]).includes(text) ? (text as ContactRole) : "other";
@@ -518,33 +607,25 @@ function normalizeCandidateStatus(value: string | null | undefined): CandidateSt
 function recordEvent(
   db: SqliteDatabase,
   event: {
-    jobUrl: string | null;
+    jobId: string | null;
     eventType: string;
     entityKind: string;
     entityRef: string;
     payload: Record<string, unknown>;
   },
 ): void {
-  if (!tableExists(db, "job_events")) {
-    return;
-  }
-  const columns = new Set(
-    allRows<{ name: string }>(db, "PRAGMA table_info(job_events)").map((row) => row.name),
-  );
-  const values: Record<string, SqliteValue> = {
-    job_url: event.jobUrl,
-    stage: null,
-    event_type: event.eventType,
-    level: "info",
-    occurred_at: new Date().toISOString(),
-    payload_json: JSON.stringify(event.payload),
-    entity_kind: event.entityKind,
-    entity_ref: event.entityRef,
-  };
-  const entries = Object.entries(values).filter(([name]) => columns.has(name));
   db.prepare(
-    `INSERT INTO job_events (${entries.map(([name]) => name).join(", ")}) VALUES (${entries
-      .map(() => "?")
-      .join(", ")})`,
-  ).run(...entries.map(([, value]) => value));
+    `INSERT INTO job_events (
+       tenant_id, job_id, identity_version, stage, event_type, level,
+       message, occurred_at, payload_json, entity_kind, entity_ref, idempotency_key
+     ) VALUES (?, ?, 1, NULL, ?, 'info', NULL, ?, ?, ?, ?, NULL)`,
+  ).run(
+    TENANT_ID,
+    event.jobId,
+    event.eventType,
+    new Date().toISOString(),
+    JSON.stringify(event.payload),
+    event.entityKind,
+    event.entityRef,
+  );
 }

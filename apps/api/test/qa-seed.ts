@@ -300,6 +300,7 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
 
   seedPipelineOperations(db, dbPath);
   seedContacts(db);
+  seedContactResearch(db);
   if (options.includeDocumentationAnalytics) {
     seedOutcomeAnalytics(db);
   }
@@ -1271,6 +1272,23 @@ function seedContacts(db: Database.Database): void {
   ] as const) {
     insertAttribute.run(attributeId, contactId, kind, JSON.stringify(value), QA_NOW);
   }
+}
+
+function seedContactResearch(db: Database.Database): void {
+  db.prepare(
+    `INSERT INTO contact_research_tasks (
+       tenant_id, task_id, employer, job_id, status, source_attempts_json,
+       started_at, updated_at
+     ) VALUES ('local', ?, 'GitLab', ?, 'queued', '[]', ?, ?)`,
+  ).run("qa-contact-research-platform", QA_PLATFORM_JOB_ID, QA_NOW, QA_NOW);
+  db.prepare(
+    `INSERT INTO contact_research_task_projections (
+       tenant_id, task_id, employer, job_id, status,
+       candidate_count, needs_review_count, confirmed_count,
+       source_attempts_json, candidates_json, started_at, updated_at,
+       needs_review_at, completed_at, failed_at, error_class, last_updated_at
+     ) VALUES ('local', ?, 'GitLab', ?, 'queued', 0, 0, 0, '[]', '[]', ?, ?, NULL, NULL, NULL, NULL, ?)`,
+  ).run("qa-contact-research-platform", QA_PLATFORM_JOB_ID, QA_NOW, QA_NOW, QA_NOW);
 }
 
 function seedOutcomeAnalytics(db: Database.Database): void {
