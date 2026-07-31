@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.pipeline.aggregate import JobPipelineState
 from jobctrl.domain.tenant import TenantId
 
@@ -14,8 +15,8 @@ from jobctrl.domain.tenant import TenantId
 class PipelineStateRepository(Protocol):
     """Port: persist and retrieve JobPipelineState aggregates."""
 
-    def load(self, tenant_id: TenantId, job_url: str) -> JobPipelineState | None:
-        """Load the aggregate for *job_url*, or ``None`` if not found."""
+    def load(self, tenant_id: TenantId, job_id: JobId) -> JobPipelineState | None:
+        """Load the aggregate for *job_id*, or ``None`` if not found."""
         ...
 
     def save(self, state: JobPipelineState) -> None:

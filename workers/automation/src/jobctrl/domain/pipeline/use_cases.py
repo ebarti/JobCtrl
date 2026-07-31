@@ -6,6 +6,7 @@ No event publication yet (Phase 3 territory).
 
 from __future__ import annotations
 
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.pipeline.repository import PipelineStateRepository
 from jobctrl.domain.pipeline.state_machine import (
     StageTransition,
@@ -35,7 +36,7 @@ class CancelStageUseCase:
     def execute(
         self,
         tenant_id: TenantId,
-        job_url: str,
+        job_id: JobId,
         stage: str,
         *,
         canceled_at: str = "",
@@ -47,9 +48,10 @@ class CancelStageUseCase:
         Raises ``StageNotFoundError`` if no aggregate exists.
         Raises ``ValueError`` if the transition is rejected.
         """
-        agg = self._repo.load(tenant_id, job_url)
+        stable_job_id = canonical_job_id(str(job_id))
+        agg = self._repo.load(tenant_id, stable_job_id)
         if agg is None:
-            raise StageNotFoundError(f"No pipeline state for {job_url}")
+            raise StageNotFoundError(f"No pipeline state for {stable_job_id}")
 
         domain_stage = deserialize_stage(stage)
         current = agg.get_stage_state(domain_stage)
@@ -80,7 +82,7 @@ class RetryStageUseCase:
     def execute(
         self,
         tenant_id: TenantId,
-        job_url: str,
+        job_id: JobId,
         stage: str,
         *,
         reset_attempts: bool = False,
@@ -92,9 +94,10 @@ class RetryStageUseCase:
         Raises ``StageNotFoundError`` if no aggregate exists.
         Raises ``ValueError`` if the transition is rejected.
         """
-        agg = self._repo.load(tenant_id, job_url)
+        stable_job_id = canonical_job_id(str(job_id))
+        agg = self._repo.load(tenant_id, stable_job_id)
         if agg is None:
-            raise StageNotFoundError(f"No pipeline state for {job_url}")
+            raise StageNotFoundError(f"No pipeline state for {stable_job_id}")
 
         domain_stage = deserialize_stage(stage)
         current = agg.get_stage_state(domain_stage)

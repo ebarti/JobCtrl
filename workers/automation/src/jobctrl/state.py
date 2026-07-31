@@ -18,10 +18,11 @@ from typing import Any
 
 from jobctrl import config
 from jobctrl.domain.events.base import create_domain_event
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.pipeline.aggregate import OptimisticLockError
 from jobctrl.domain.pipeline.state_machine import is_valid_transition
 from jobctrl.domain.ports.events import EventPublisher
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.domain.pipeline_types import deserialize_stage_state_kind
 
 log = logging.getLogger(__name__)
@@ -67,9 +68,7 @@ _DEPENDENCY_BLOCKER_MESSAGES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]]
 SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE = "SCORE_ELIGIBILITY_BLOCKED"
 SCORE_ELIGIBILITY_BLOCKED_MESSAGE_PREFIX = "Score eligibility blocks tailoring"
 _SCORE_ELIGIBILITY_DOWNSTREAM_STAGES: tuple[str, ...] = ("tailor", "cover", "apply")
-_TERMINAL_DOWNSTREAM_STATES: frozenset[str] = frozenset(
-    {"succeeded", "skipped", "exhausted", "canceled"}
-)
+_TERMINAL_DOWNSTREAM_STATES: frozenset[str] = frozenset({"succeeded", "skipped", "exhausted", "canceled"})
 
 
 def utc_now() -> str:
@@ -157,10 +156,7 @@ def _discovery_source_label(source: str) -> str:
 
 def _orphaned_discovery_run_internal_message(source: str) -> str:
     if source:
-        return (
-            f"Discovery source {source} was left running by a prior worker "
-            "and has been marked failed for retry."
-        )
+        return f"Discovery source {source} was left running by a prior worker and has been marked failed for retry."
     return "Discovery run was left running by a prior worker and has been marked failed for retry."
 
 
@@ -204,7 +200,13 @@ def _orphaned_discovery_progress_payload(source: str, message: str) -> dict[str,
 # ---------------------------------------------------------------------------
 
 
-def _validate_stage_transition(conn, job_url: str, stage: str, target_state: str) -> None:
+def _validate_stage_transition(
+    conn,
+    tenant_id: TenantId,
+    job_id: JobId,
+    stage: str,
+    target_state: str,
+) -> None:
     """Check the §8.5 state machine allows the transition.
 
     Reads the current state from DB. If no row exists yet (INSERT path),
@@ -212,8 +214,8 @@ def _validate_stage_transition(conn, job_url: str, stage: str, target_state: str
     already the target, the call is idempotent — also allowed.
     """
     row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
-        (job_url, stage),
+        "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = ?",
+        (str(tenant_id), str(job_id), stage),
     ).fetchone()
     if row is None:
         # No existing row — this is an INSERT, always valid.
@@ -240,12 +242,19 @@ def _validate_stage_transition(conn, job_url: str, stage: str, target_state: str
 
 
 # ---------------------------------------------------------------------------
-# Public state API — signatures preserved for backward compatibility
+# Public state API
 # ---------------------------------------------------------------------------
 
 
-def ensure_job_stage_rows(conn, job_url: str, *, discovered_at: str | None = None) -> None:
+def ensure_job_stage_rows(
+    conn,
+    job_id: JobId,
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
+    discovered_at: str | None = None,
+) -> None:
     """Ensure a row exists for every stage for one job."""
+    stable_job_id = canonical_job_id(str(job_id))
     now = utc_now()
     for stage in STAGE_ORDER:
         state = "succeeded" if stage == "discover" else "pending"
@@ -255,19 +264,31 @@ def ensure_job_stage_rows(conn, job_url: str, *, discovered_at: str | None = Non
         conn.execute(
             """
             INSERT OR IGNORE INTO job_stage_states (
-                job_url, stage, state, attempt_count, max_attempts, started_at, updated_at, finished_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                tenant_id, job_id, stage, state, attempt_count, max_attempts,
+                started_at, updated_at, finished_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (job_url, stage, state, attempt_count, MAX_ATTEMPTS.get(stage), started_at, now, finished_at),
+            (
+                str(tenant_id),
+                str(stable_job_id),
+                stage,
+                state,
+                attempt_count,
+                MAX_ATTEMPTS.get(stage),
+                started_at,
+                now,
+                finished_at,
+            ),
         )
 
 
 def set_stage_state(
     conn,
-    job_url: str,
+    job_id: JobId,
     stage: str,
     state: str,
     *,
+    tenant_id: TenantId = LOCAL_TENANT,
     attempt_count: int | None = None,
     max_attempts: int | None = None,
     started_at: str | None = None,
@@ -302,9 +323,10 @@ def set_stage_state(
         raise ValueError(f"unknown stage: {stage}")
     if state not in STATE_VALUES:
         raise ValueError(f"unknown state: {state}")
+    stable_job_id = canonical_job_id(str(job_id))
 
     if validate_transition:
-        _validate_stage_transition(conn, job_url, stage, state)
+        _validate_stage_transition(conn, tenant_id, stable_job_id, stage, state)
 
     now = utc_now()
     max_attempts = MAX_ATTEMPTS.get(stage) if max_attempts is None else max_attempts
@@ -314,25 +336,22 @@ def set_stage_state(
     metadata_json = _json_dumps(metadata)
 
     new_version = 0 if expected_version is None else expected_version + 1
-    version_guard = (
-        " WHERE job_stage_states.version = :expected_version"
-        if expected_version is not None
-        else ""
-    )
+    version_guard = " WHERE job_stage_states.version = :expected_version" if expected_version is not None else ""
 
     cur = conn.execute(
         f"""
         INSERT INTO job_stage_states (
-            job_url, stage, state, attempt_count, max_attempts, started_at, updated_at,
-            finished_at, duration_ms, error_code, error_message, retryable,
-            blocked_by_json, next_action, metadata_json, version
+            tenant_id, job_id, stage, state, attempt_count, max_attempts,
+            started_at, updated_at, finished_at, duration_ms, error_code,
+            error_message, retryable, blocked_by_json, next_action,
+            metadata_json, version
         ) VALUES (
-            :job_url, :stage, :state, COALESCE(:attempt_count, 0), :max_attempts,
-            :started_at, :now, :finished_at, :duration, :error_code, :error_message,
-            COALESCE(:retry_value, 1), :blocked_by_json, :next_action, :metadata_json,
-            :new_version
+            :tenant_id, :job_id, :stage, :state, COALESCE(:attempt_count, 0),
+            :max_attempts, :started_at, :now, :finished_at, :duration,
+            :error_code, :error_message, COALESCE(:retry_value, 1),
+            :blocked_by_json, :next_action, :metadata_json, :new_version
         )
-        ON CONFLICT(job_url, stage) DO UPDATE SET
+        ON CONFLICT(tenant_id, job_id, stage) DO UPDATE SET
             state = excluded.state,
             attempt_count = COALESCE(excluded.attempt_count, job_stage_states.attempt_count),
             max_attempts = COALESCE(excluded.max_attempts, job_stage_states.max_attempts),
@@ -353,7 +372,8 @@ def set_stage_state(
         {version_guard}
         """,
         {
-            "job_url": job_url,
+            "tenant_id": str(tenant_id),
+            "job_id": str(stable_job_id),
             "stage": stage,
             "state": state,
             "attempt_count": attempt_count,
@@ -375,22 +395,27 @@ def set_stage_state(
 
     if expected_version is not None and cur.rowcount == 0:
         existing = conn.execute(
-            "SELECT version FROM job_stage_states WHERE job_url = ? AND stage = ?",
-            (job_url, stage),
+            "SELECT version FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = ?",
+            (str(tenant_id), str(stable_job_id), stage),
         ).fetchone()
-        actual = 0 if existing is None else (
-            existing[0] if not isinstance(existing, dict) else existing["version"]
-        )
-        raise OptimisticLockError(job_url, expected_version, actual or 0)
+        actual = 0 if existing is None else (existing[0] if not isinstance(existing, dict) else existing["version"])
+        raise OptimisticLockError(stable_job_id, expected_version, actual or 0)
 
     if state == "succeeded":
-        reconcile_dependency_blockers(conn, job_url=job_url, completed_stage=stage, now=now)
+        reconcile_dependency_blockers(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+            completed_stage=stage,
+            now=now,
+        )
 
 
 def reconcile_dependency_blockers(
     conn,
     *,
-    job_url: str | None = None,
+    tenant_id: TenantId = LOCAL_TENANT,
+    job_id: JobId | None = None,
     completed_stage: str | None = None,
     now: str | None = None,
 ) -> int:
@@ -405,27 +430,25 @@ def reconcile_dependency_blockers(
     if completed_stage is not None and completed_stage not in _DEPENDENCY_BLOCKER_MESSAGES:
         return 0
 
-    completed_stages = (
-        (completed_stage,)
-        if completed_stage is not None
-        else tuple(_DEPENDENCY_BLOCKER_MESSAGES)
-    )
+    completed_stages = (completed_stage,) if completed_stage is not None else tuple(_DEPENDENCY_BLOCKER_MESSAGES)
     updated_at = now or utc_now()
+    stable_job_id = canonical_job_id(str(job_id)) if job_id is not None else None
     repaired = 0
     for upstream in completed_stages:
         for downstream, messages in _DEPENDENCY_BLOCKER_MESSAGES[upstream]:
             message_placeholders = ", ".join("?" for _ in messages)
-            params: list[Any] = [downstream, *messages]
+            params: list[Any] = [str(tenant_id), downstream, *messages]
             job_filter = ""
-            if job_url is not None:
-                job_filter = "AND downstream.job_url = ?"
-                params.append(job_url)
+            if stable_job_id is not None:
+                job_filter = "AND downstream.job_id = ?"
+                params.append(str(stable_job_id))
             params.append(upstream)
             rows = conn.execute(
                 f"""
-                SELECT downstream.job_url, downstream.stage, downstream.attempt_count
+                SELECT downstream.job_id, downstream.stage, downstream.attempt_count
                   FROM job_stage_states AS downstream
-                 WHERE downstream.stage = ?
+                 WHERE downstream.tenant_id = ?
+                   AND downstream.stage = ?
                    AND downstream.state = 'blocked'
                    AND downstream.error_code = 'BLOCKED'
                    AND downstream.error_message IN ({message_placeholders})
@@ -433,7 +456,8 @@ def reconcile_dependency_blockers(
                    AND EXISTS (
                        SELECT 1
                          FROM job_stage_states AS upstream
-                        WHERE upstream.job_url = downstream.job_url
+                        WHERE upstream.tenant_id = downstream.tenant_id
+                          AND upstream.job_id = downstream.job_id
                           AND upstream.stage = ?
                           AND upstream.state = 'succeeded'
                    )
@@ -441,19 +465,21 @@ def reconcile_dependency_blockers(
                 params,
             ).fetchall()
             for row in rows:
-                blocked_job_url = str(row["job_url"])
+                blocked_job_id = canonical_job_id(str(row["job_id"]))
                 set_stage_state(
                     conn,
-                    blocked_job_url,
+                    blocked_job_id,
                     downstream,
                     "pending",
+                    tenant_id=tenant_id,
                     attempt_count=int(row["attempt_count"] or 0),
                 )
                 record_job_event(
                     conn,
-                    blocked_job_url,
+                    blocked_job_id,
                     downstream,
                     "StageReset",
+                    tenant_id=tenant_id,
                     message=f"{downstream} unblocked after {upstream} completed.",
                     occurred_at=updated_at,
                     payload={
@@ -644,19 +670,16 @@ def _material_generation_completed_stage(conn, job_url: str, stage: str) -> int 
     ).fetchone()
     if row is None:
         return None
-    return int(
-        row["generation"]
-        if hasattr(row, "keys") and "generation" in row.keys()
-        else row[0]
-    )
+    return int(row["generation"] if hasattr(row, "keys") and "generation" in row.keys() else row[0])
 
 
 def record_job_event(
     conn,
-    job_url: str | None,
+    job_id: JobId | None,
     stage: str | None,
     event_type: str,
     *,
+    tenant_id: TenantId = LOCAL_TENANT,
     level: str = "info",
     message: str | None = None,
     payload: dict[str, Any] | None = None,
@@ -688,28 +711,50 @@ def record_job_event(
        adapter-only change — every ``record_job_event`` caller is a
        de-facto producer.
 
-    Note on payload composition: caller-supplied ``payload`` keys override
-    the envelope keys (``job_url``, ``stage``, ``level``, ``message``).  This
-    is intentional but worth knowing — don't shadow envelope keys
-    accidentally (round-1 review L3).
+    Canonical envelope keys override caller payload data. Root-level legacy
+    identity aliases are removed so untrusted content cannot spoof the
+    persisted or published JobId.
     """
+    stable_job_id = canonical_job_id(str(job_id)) if job_id is not None else None
+    current_payload = dict(payload or {})
+    for identity_alias in (
+        "jobId",
+        "job_id",
+        "jobUrl",
+        "job_url",
+        "jobKey",
+        "job_key",
+    ):
+        current_payload.pop(identity_alias, None)
+    current_payload.update(
+        {
+            "stage": stage,
+            "level": level,
+            "message": message or "",
+        }
+    )
+    if stable_job_id is not None:
+        current_payload["jobId"] = str(stable_job_id)
     ts = occurred_at or utc_now()
     cursor = conn.execute(
         """
         INSERT INTO job_events (
-            job_url, stage, event_type, level, message, occurred_at, payload_json,
-            entity_kind, entity_ref, idempotency_key
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, identity_version, stage, event_type, level,
+            message, occurred_at, payload_json, entity_kind, entity_ref,
+            idempotency_key
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT DO NOTHING
         """,
         (
-            job_url,
+            str(tenant_id),
+            str(stable_job_id) if stable_job_id is not None else None,
+            1,
             stage,
             event_type,
             level,
             message,
             ts,
-            _json_dumps(payload),
+            _json_dumps(current_payload),
             entity_kind,
             entity_ref,
             idempotency_key,
@@ -727,14 +772,8 @@ def record_job_event(
         publisher = get_default_publisher()
     event = create_domain_event(
         event_type=event_type,
-        tenant_id=LOCAL_TENANT,
-        payload={
-            "job_url": job_url,
-            "stage": stage,
-            "level": level,
-            "message": message or "",
-            **(payload or {}),
-        },
+        tenant_id=tenant_id,
+        payload=current_payload,
         occurred_at=ts,
     )
     publisher.publish(event)
@@ -921,11 +960,7 @@ def _resettable_material_generation(conn, job_url: str, stage: str) -> int | Non
         return None
     if row is None:
         return None
-    return int(
-        row["generation"]
-        if hasattr(row, "keys") and "generation" in row.keys()
-        else row[0]
-    )
+    return int(row["generation"] if hasattr(row, "keys") and "generation" in row.keys() else row[0])
 
 
 def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
@@ -964,8 +999,7 @@ def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
     )
     if new_status is not None:
         conn.execute(
-            "UPDATE job_materials SET status = ?, updated_at = ? "
-            "WHERE job_url = ? AND generation = ?",
+            "UPDATE job_materials SET status = ?, updated_at = ? WHERE job_url = ? AND generation = ?",
             (new_status, utc_now(), job_url, generation),
         )
 
@@ -1037,7 +1071,10 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
     if stage == "enrich":
         _reset_enrichment_aggregate(conn, job_url)
     set_stage_state(
-        conn, job_url, stage, "pending",
+        conn,
+        job_url,
+        stage,
+        "pending",
         attempt_count=0 if reset_attempts else None,
         validate_transition=False,  # admin override — reset bypasses normal machine
     )
