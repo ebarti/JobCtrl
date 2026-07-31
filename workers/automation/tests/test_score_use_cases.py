@@ -7,6 +7,7 @@ behaviour is observable without a real DB or LLM.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import pytest
@@ -38,7 +39,7 @@ from jobctrl.domain.scoring.use_cases import (
     CorrectScoreUseCase,
     ScoreJobUseCase,
 )
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.profile.factory import build_profile_repository
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
 
@@ -228,8 +229,14 @@ def profile_snapshot(tmp_path):
     return repo.load_snapshot(LOCAL_TENANT)
 
 
+def _job_id_for(url: str) -> JobId:
+    return JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, url)))
+
+
 def _job(url: str = "https://example.com/job/1") -> dict[str, Any]:
     return {
+        "tenant_id": str(LOCAL_TENANT),
+        "job_id": str(_job_id_for(url)),
         "url": url,
         "title": "Senior Engineer",
         "site": "Acme",
@@ -299,7 +306,11 @@ def _profile_snapshot_with_education(tmp_path):
     return repo.load_snapshot(LOCAL_TENANT)
 
 
-def _employer_analysis(job_url: str = "https://example.com/job/1") -> EmployerAnalysis:
+def _employer_analysis(
+    job_id: JobId = _job_id_for("https://example.com/job/1"),
+    *,
+    tenant_id=LOCAL_TENANT,
+) -> EmployerAnalysis:
     canonical = JobAnalysis(
         role_framing="Platform ownership.",
         inferred_seniority="director",
@@ -322,8 +333,8 @@ def _employer_analysis(job_url: str = "https://example.com/job/1") -> EmployerAn
         ],
     )
     return EmployerAnalysis.build(
-        tenant_id=LOCAL_TENANT,
-        job_id=JobId(job_url),
+        tenant_id=tenant_id,
+        job_id=job_id,
         generation=3,
         snapshot_hash=compute_snapshot_hash("Python platform reliability"),
         canonical=canonical,
@@ -565,12 +576,41 @@ def test_score_job_happy_path_persists_and_publishes(profile_snapshot) -> None:
     assert outcome.score.fit_score.value == 8
     assert outcome.score.matched_keywords.values == ("python", "fastapi")
 
-    persisted = repo.load(LOCAL_TENANT, JobId(_job()["url"]))
+    persisted = repo.load(LOCAL_TENANT, JobId(_job()["job_id"]))
     assert persisted is not None and persisted.version == 1
+    assert persisted.job_id != JobId(_job()["url"])
+    assert repo.load(LOCAL_TENANT, JobId(_job()["url"])) is None
 
     assert len(received) == 1
     assert received[0].event_type == "JobScored"
     assert received[0].payload["fit_score"] == 8
+
+
+def test_score_job_rejects_url_shaped_job_id(profile_snapshot) -> None:
+    job = _job()
+    job["job_id"] = job["url"]
+    llm = _ScriptedLlm(_strong_llm_response())
+
+    with pytest.raises(ValueError, match="canonical UUID"):
+        ScoreJobUseCase(
+            repository=_MemoryRepo(),
+            llm=llm,
+        ).score(job=job, profile_snapshot=profile_snapshot)
+
+    assert llm.calls == []
+
+
+def test_compute_rejects_cross_tenant_job_before_llm(profile_snapshot) -> None:
+    llm = _ScriptedLlm(_strong_llm_response())
+
+    with pytest.raises(ValueError, match="tenant_id"):
+        ScoreJobUseCase(repository=_MemoryRepo(), llm=llm).compute(
+            job=_job(),
+            profile_snapshot=profile_snapshot,
+            tenant_id=TenantId("another-tenant"),
+        )
+
+    assert llm.calls == []
 
 
 def test_score_job_omits_structured_output_token_cap(profile_snapshot) -> None:
@@ -619,7 +659,7 @@ def test_requirement_fit_prompt_includes_education_evidence(tmp_path) -> None:
     )
     analysis = EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=JobId(job["job_id"]),
         generation=1,
         snapshot_hash=compute_snapshot_hash(job["full_description"]),
         canonical=canonical,
@@ -707,7 +747,7 @@ def test_score_job_includes_criteria_in_prompt_and_persists_snapshot(profile_sna
     assert "Prioritize platform security leadership." in prompt_payload
     assert "Remote infrastructure roles." in prompt_payload
     assert '"target_work_models": "remote"' in prompt_payload
-    persisted = repo.load(LOCAL_TENANT, JobId(_job()["url"]))
+    persisted = repo.load(LOCAL_TENANT, JobId(_job()["job_id"]))
     assert persisted is not None
     assert persisted.criteria.criteria_text == "Prioritize platform security leadership."
     assert persisted.criteria.target_criteria == "Remote infrastructure roles."
@@ -725,7 +765,7 @@ def test_score_job_includes_requirement_fit_inputs_in_prompt(tmp_path) -> None:
     outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
         job=job,
         profile_snapshot=snapshot,
-        employer_analysis=_employer_analysis(job["url"]),
+        employer_analysis=_employer_analysis(JobId(job["job_id"])),
     )
 
     assert outcome.ok is True
@@ -737,6 +777,26 @@ def test_score_job_includes_requirement_fit_inputs_in_prompt(tmp_path) -> None:
     assert '"weight": 0.95' in prompt_payload
     assert '"id": "ev_python_platform"' in prompt_payload
     assert "Led Python platform reliability for distributed APIs." in prompt_payload
+
+
+def test_score_job_ignores_cross_tenant_employer_analysis(tmp_path) -> None:
+    repo = _MemoryRepo()
+    llm = _ScriptedLlm(_strong_llm_response())
+    job = _job("https://example.com/job/cross-tenant-analysis")
+    analysis = _employer_analysis(
+        JobId(job["job_id"]),
+        tenant_id=TenantId("another-tenant"),
+    )
+
+    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+        job=job,
+        profile_snapshot=_profile_snapshot_with_evidence(tmp_path),
+        employer_analysis=analysis,
+    )
+
+    assert outcome.ok is True
+    assert "REQUIREMENT FIT INPUTS" not in llm.calls[0][1].content
+    assert outcome.score is not None
 
 
 def test_score_job_persists_resolved_requirement_fit_report(tmp_path) -> None:
@@ -771,7 +831,7 @@ def test_score_job_persists_resolved_requirement_fit_report(tmp_path) -> None:
     ).score(
         job=job,
         profile_snapshot=snapshot,
-        employer_analysis=_employer_analysis(job["url"]),
+        employer_analysis=_employer_analysis(JobId(job["job_id"])),
     )
 
     assert outcome.ok is True
@@ -784,7 +844,7 @@ def test_score_job_persists_resolved_requirement_fit_report(tmp_path) -> None:
     assert len(report_repo.saved) == 1
     tenant, report = report_repo.saved[0]
     assert tenant == str(LOCAL_TENANT)
-    assert report.job_id == job["url"]
+    assert report.job_id == job["job_id"]
     assert report.score_version == 1
     assert report.employer_analysis_generation == 3
     assert report.profile_snapshot_version == snapshot.version
@@ -832,7 +892,7 @@ def test_score_job_requirement_fit_missing_must_have_drives_low_score(tmp_path) 
     ).score(
         job=job,
         profile_snapshot=snapshot,
-        employer_analysis=_employer_analysis(job["url"]),
+        employer_analysis=_employer_analysis(JobId(job["job_id"])),
     )
 
     assert outcome.ok is True
@@ -1176,7 +1236,7 @@ def test_score_job_returns_error_on_unparseable_response(profile_snapshot) -> No
     assert outcome.ok is False
     assert outcome.score is None
     assert "missing" in outcome.error.lower()
-    assert repo.load(LOCAL_TENANT, JobId(_job()["url"])) is None
+    assert repo.load(LOCAL_TENANT, JobId(_job()["job_id"])) is None
 
 
 def test_score_job_handles_llm_error_as_parse_failure(profile_snapshot) -> None:
@@ -1186,7 +1246,7 @@ def test_score_job_handles_llm_error_as_parse_failure(profile_snapshot) -> None:
     outcome = use_case.score(job=_job(), profile_snapshot=profile_snapshot)
     assert outcome.ok is False
     assert "provider down" in outcome.error
-    assert repo.load(LOCAL_TENANT, JobId(_job()["url"])) is None
+    assert repo.load(LOCAL_TENANT, JobId(_job()["job_id"])) is None
 
 
 def test_score_job_bumps_version_on_rescore(profile_snapshot) -> None:
@@ -1307,7 +1367,7 @@ def test_correct_score_updates_policy_and_subsequent_score_traces_anchor(
 
     CorrectScoreUseCase(repository=repo, policy_repository=policy_repo).execute(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=_job_id_for(url),
         corrected_fit_score=FitScore.create(8),
         rationale="Manual review found stronger platform evidence.",
         corrected_at="2024-01-02T00:00:00+00:00",

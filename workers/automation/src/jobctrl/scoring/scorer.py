@@ -428,6 +428,7 @@ def run_scoring(
                 use_case.compute,
                 job=job,
                 profile_snapshot=profile_snapshot,
+                tenant_id=tenant_id,
                 resume_text=resume_text,
                 criteria=criteria,
                 employer_analysis=analyses_by_job.get(str(job.get("url") or "")),
