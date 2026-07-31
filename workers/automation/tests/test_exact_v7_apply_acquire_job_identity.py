@@ -718,6 +718,132 @@ def test_dry_run_completion_binds_to_exact_v7_job(
     assert payload["application_url"] == f"{SHARED_URL}/apply"
 
 
+def test_late_apply_completion_does_not_overwrite_cancellation(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    conn.execute(
+        """
+        INSERT INTO job_stage_states (
+            tenant_id, job_id, stage, state, attempt_count, updated_at
+        ) VALUES (?, ?, 'apply', 'canceled', 1, ?)
+        """,
+        (LOCAL_TENANT, LOCAL_JOB_ID, TIMESTAMP),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type,
+            occurred_at, payload_json
+        ) VALUES (?, ?, 1, 'apply', 'StageCanceled', ?, ?)
+        """,
+        (
+            LOCAL_TENANT,
+            LOCAL_JOB_ID,
+            TIMESTAMP,
+            json.dumps({"run_id": "apply-run-canceled"}),
+        ),
+    )
+    conn.commit()
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+
+    mark_result(
+        JobId(LOCAL_JOB_ID),
+        "applied",
+        run_ctx={"run_id": "apply-run-canceled", "tenant_id": LOCAL_TENANT},
+        tenant_id=TenantId(LOCAL_TENANT),
+    )
+
+    state = conn.execute(
+        """
+        SELECT state FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'
+        """,
+        (LOCAL_TENANT, LOCAL_JOB_ID),
+    ).fetchone()
+    assert state is not None
+    assert state["state"] == "canceled"
+    assert conn.execute(
+        """
+        SELECT COUNT(*) FROM job_events
+        WHERE tenant_id = ? AND job_id = ?
+          AND event_type = 'ApplicationSubmitted'
+        """,
+        (LOCAL_TENANT, LOCAL_JOB_ID),
+    ).fetchone()[0] == 0
+
+
+def test_matching_terminal_event_reconciles_running_state_without_duplication(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _insert_ready_job(conn, LOCAL_TENANT, LOCAL_JOB_ID)
+    conn.execute(
+        """
+        INSERT INTO job_stage_states (
+            tenant_id, job_id, stage, state, attempt_count, updated_at
+        ) VALUES (?, ?, 'apply', 'running', 1, ?)
+        """,
+        (LOCAL_TENANT, LOCAL_JOB_ID, TIMESTAMP),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type,
+            occurred_at, payload_json
+        ) VALUES (?, ?, 1, 'apply', 'DryRunCompleted', ?, ?)
+        """,
+        (
+            LOCAL_TENANT,
+            LOCAL_JOB_ID,
+            TIMESTAMP,
+            json.dumps(
+                {
+                    "run_id": "dry-run-reconcile",
+                    "result": "dry_run_complete",
+                    "dry_run": True,
+                    "materials_generation": 1,
+                    "profile_version": 3,
+                    "application_url": f"{SHARED_URL}/apply",
+                }
+            ),
+        ),
+    )
+    conn.commit()
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+
+    mark_result(
+        JobId(LOCAL_JOB_ID),
+        "dry_run",
+        run_ctx={
+            "run_id": "dry-run-reconcile",
+            "tenant_id": LOCAL_TENANT,
+            "materials_generation": 1,
+            "profile_version": 3,
+            "application_url": f"{SHARED_URL}/apply",
+        },
+        tenant_id=TenantId(LOCAL_TENANT),
+    )
+
+    state = conn.execute(
+        """
+        SELECT state FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'
+        """,
+        (LOCAL_TENANT, LOCAL_JOB_ID),
+    ).fetchone()
+    assert state["state"] == "skipped"
+    assert conn.execute(
+        """
+        SELECT COUNT(*) FROM job_events
+        WHERE tenant_id = ? AND job_id = ?
+          AND event_type = 'DryRunCompleted'
+        """,
+        (LOCAL_TENANT, LOCAL_JOB_ID),
+    ).fetchone()[0] == 1
+
+
 def _record_submitted_application(
     conn: sqlite3.Connection,
     tenant_id: str,

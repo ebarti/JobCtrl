@@ -52,6 +52,15 @@ interface ResolvedJobIdentity {
   readonly jobUrl: string;
 }
 
+const IMMUTABLE_CANCEL_STATES: ReadonlySet<StageState> = new Set([
+  "succeeded",
+  "failed",
+  "skipped",
+  "exhausted",
+  "needs_verification",
+  "canceled",
+]);
+
 const DEFAULT_SCORING_RUBRIC_VERSION = "default-scoring-rubric-v1";
 const DEFAULT_SCORING_DIMENSIONS = [
   { name: "technical_fit", weight: 0.45 },
@@ -358,18 +367,25 @@ export function markJobSkipped(
   return { jobUrl, stage: getStageState(db, jobUrl, "apply") };
 }
 
-export function cancelJobAction(db: SqliteDatabase, jobKey: string, runId = ""): { jobUrl: string; stage: StageSummary } {
+export function cancelJobAction(
+  db: SqliteDatabase,
+  jobKey: string,
+  runId = "",
+): { jobUrl: string; stage: StageSummary; cancelRequested: boolean } {
   const jobUrl = resolveJobUrl(db, jobKey);
   if (!jobUrl) {
     throw new InputError("Job not found.");
   }
   const stage = currentMutableStage(db, jobUrl);
-  // Manual cancel — admin override, bypasses §8.5.  Cancel from any state is
-  // permitted when the user explicitly requests it from the UI.
+  const current = getStageState(db, jobUrl, stage);
+  if (IMMUTABLE_CANCEL_STATES.has(current.state)) {
+    return { jobUrl, stage: current, cancelRequested: false };
+  }
+  // Cancellation is a normal state-machine transition. Only queued/running
+  // work may enter Canceled; terminal results remain inspectable and immutable.
   upsertStageState(db, jobUrl, stage, "canceled", {
     retryable: true,
     finishedAt: new Date().toISOString(),
-    skipValidation: true,
   });
   recordActionEvent(db, {
     jobUrl,
@@ -381,7 +397,7 @@ export function cancelJobAction(db: SqliteDatabase, jobKey: string, runId = ""):
     message: "Cancel requested from the local API.",
     payload: { run_id: runId },
   });
-  return { jobUrl, stage: getStageState(db, jobUrl, stage) };
+  return { jobUrl, stage: getStageState(db, jobUrl, stage), cancelRequested: true };
 }
 
 export function correctScore(
@@ -1429,7 +1445,6 @@ function cleanJsonRecord(value: Record<string, unknown>): Record<string, unknown
  *   - `resetJobStage`        — user retry, mirrors Python `reset_job_stage`
  *   - `markJobApplied`       — user assertion "I applied externally"
  *   - `markJobSkipped`       — user assertion "skip this one"
- *   - `cancelJobAction`      — user-initiated cancel from any state
  *   - `resetStaleScoresForRescore` — explicit stale-score rescore request
  *
  * **Automated pipeline writes (Phase 9 / S-34 onward) MUST NOT pass
@@ -1449,7 +1464,7 @@ function upsertStageState(
     retryable?: boolean;
     /**
      * S-12: skip the §8.5 validation gate. Admin overrides (manual
-     * mark-applied, mark-skipped, cancel, reset) set this to mirror
+     * mark-applied, mark-skipped, reset) set this to mirror
      * Python's `set_stage_state(... validate_transition=False)` —
      * see `state.py::reset_job_stage`. Automated/normal writes leave
      * this `false` (default) and pay the cost of the gate.
