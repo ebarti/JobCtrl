@@ -21,6 +21,8 @@ from jobctrl.infrastructure.migrations.v6_to_v7_preflight import (
     _V6_AUXILIARY_TABLE_VARIANTS,
 )
 from tests.v6_migration_fixture import (
+    create_runtime_attestation_v6_database,
+    create_runtime_attestation_upgrade_history_v6_database,
     create_shipped_v6_database,
     create_supported_upgrade_history_v6_database,
 )
@@ -69,6 +71,20 @@ def test_registry_covers_all_admitted_source_and_target_tables_and_columns(
         source = _tables(v6)
     assert set(source) == required_source_tables()
     _assert_covered(source, "source")
+
+    with _open_fixture(
+        tmp_path,
+        "runtime-attestations-v6",
+        create_runtime_attestation_v6_database,
+    ) as runtime_attestations:
+        _assert_covered(_tables(runtime_attestations), "source")
+
+    with _open_fixture(
+        tmp_path,
+        "runtime-attestations-history-v6",
+        create_runtime_attestation_upgrade_history_v6_database,
+    ) as runtime_attestations_history:
+        _assert_covered(_tables(runtime_attestations_history), "source")
 
     history_path = tmp_path / "upgrade-history.db"
     create_supported_upgrade_history_v6_database(history_path)
@@ -195,6 +211,16 @@ def test_transformation_sensitive_columns_are_explicitly_classified() -> None:
     assert classify_column("workflow_run_projections", "events_json", "source") is structured
     assert classify_column("jobctrl_deleted_jobs", "tenant_id", "target") is ColumnRole.DERIVED
     assert classify_column("jobctrl_hidden_jobs", "tenant_id", "target") is ColumnRole.DERIVED
+    for column in (
+        "application_attestation_age_18_plus",
+        "application_attestation_background_check_consent",
+        "application_attestation_felony_conviction",
+        "application_attestation_previously_worked_at_employer",
+        "application_attestation_additional_json",
+        "application_preference_how_heard",
+    ):
+        assert classify_column("candidate_profiles", column, "source") is ColumnRole.PRESERVE
+        assert classify_column("candidate_profiles", column, "target") is ColumnRole.PRESERVE
 
 
 def test_registry_rejects_unknown_tables_and_columns() -> None:
