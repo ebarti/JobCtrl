@@ -37,6 +37,7 @@ from jobctrl.workflow_specs import build_manual_capture_import_workflow_spec
 
 
 _CAPTURE_URL = "https://example.test/jobs/staff-engineer"
+_MANUAL_JOB_ID = "00000000-0000-4000-8000-000000000042"
 _CAPTURE_HTML = """
 <html>
   <head>
@@ -77,7 +78,7 @@ async def _successful_manual_capture_import(
     return ManualCaptureImportActivityOutput(
         status="succeeded",
         item_id=payload.item_id,
-        job_id=_CAPTURE_URL,
+        job_id=_MANUAL_JOB_ID,
         imported_at="2026-07-10T10:00:00+00:00",
         retry_context={
             "manual_capture_provenance": {
@@ -125,7 +126,12 @@ def _pending_payload(item_id: str = "manual-1") -> ManualCaptureImportWorkflowIn
     )
 
 
-def _seed_pending(db_path: Path, *, item_id: str = "manual-1"):
+def _seed_pending(
+    db_path: Path,
+    *,
+    tenant_id: str = "local",
+    item_id: str = "manual-1",
+):
     conn = init_db(db_path)
     conn.execute(
         """
@@ -135,7 +141,7 @@ def _seed_pending(db_path: Path, *, item_id: str = "manual-1"):
         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
         """,
         (
-            "local",
+            tenant_id,
             item_id,
             _CAPTURE_URL,
             "manual:test",
@@ -162,7 +168,7 @@ def _isolate_runtime(
     return str(tmp_path), str(db_path)
 
 
-def test_activity_reconstructs_exact_result_after_import_commit(tmp_path: Path) -> None:
+def test_activity_imports_and_replays_against_exact_v7_schema(tmp_path: Path) -> None:
     db_path = tmp_path / "jobctrl.db"
     conn = _seed_pending(db_path)
     payload = _pending_payload()
@@ -172,35 +178,73 @@ def test_activity_reconstructs_exact_result_after_import_commit(tmp_path: Path) 
             "SELECT COUNT(*) FROM job_events"
         ).fetchone()[0]
         snapshot_version_before_replay = conn.execute(
-            "SELECT latest_snapshot_version FROM posting_snapshot_sets WHERE job_url = ?",
-            (_CAPTURE_URL,),
+            "SELECT latest_snapshot_version FROM posting_snapshot_sets WHERE tenant_id = ? AND job_id = ?",
+            ("local", first.job_id),
         ).fetchone()[0]
         replay = execute_manual_capture_import(payload, conn=conn)
         events_after_replay = conn.execute(
             "SELECT COUNT(*) FROM job_events"
         ).fetchone()[0]
         snapshot_version_after_replay = conn.execute(
-            "SELECT latest_snapshot_version FROM posting_snapshot_sets WHERE job_url = ?",
-            (_CAPTURE_URL,),
+            "SELECT latest_snapshot_version FROM posting_snapshot_sets WHERE tenant_id = ? AND job_id = ?",
+            ("local", first.job_id),
         ).fetchone()[0]
         row = conn.execute(
-            "SELECT status, content_sha256, imported_at FROM manual_capture_queue "
+            "SELECT status, job_id, captured_url, content_sha256, imported_at FROM manual_capture_queue "
             "WHERE tenant_id = 'local' AND item_id = 'manual-1'"
         ).fetchone()
+        columns = {
+            column["name"] for column in conn.execute("PRAGMA table_info(manual_capture_queue)")
+        }
     finally:
         close_connection(db_path)
 
     assert replay == first
     assert first.status == "succeeded"
     assert first.item_id == "manual-1"
-    assert first.job_id == _CAPTURE_URL
+    assert uuid.UUID(first.job_id).version == 4
     assert first.imported_at == row["imported_at"]
     assert row["status"] == "imported"
+    assert row["job_id"] == first.job_id
+    assert row["captured_url"] == _CAPTURE_URL
+    assert "job_key" not in columns
     assert row["content_sha256"] == hashlib.sha256(
         _CAPTURE_HTML.encode("utf-8")
     ).hexdigest()
     assert events_after_replay == events_before_replay
     assert snapshot_version_after_replay == snapshot_version_before_replay
+
+
+def test_activity_scopes_same_capture_to_tenant_canonical_job_ids(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = _seed_pending(db_path, tenant_id="local")
+    _seed_pending(db_path, tenant_id="other")
+    local_payload = _pending_payload()
+    other_payload = replace(local_payload, tenant_id="other")
+    try:
+        local_first = execute_manual_capture_import(local_payload, conn=conn)
+        other_first = execute_manual_capture_import(other_payload, conn=conn)
+        local_replay = execute_manual_capture_import(local_payload, conn=conn)
+        rows = conn.execute(
+            """
+            SELECT queue.tenant_id, queue.job_id, jobs.url
+            FROM manual_capture_queue queue
+            JOIN jobs
+              ON jobs.tenant_id = queue.tenant_id
+             AND jobs.job_id = queue.job_id
+            WHERE queue.item_id = ?
+            ORDER BY queue.tenant_id
+            """,
+            (local_payload.item_id,),
+        ).fetchall()
+    finally:
+        close_connection(db_path)
+
+    assert local_replay == local_first
+    assert local_first.job_id != other_first.job_id
+    assert {row["tenant_id"] for row in rows} == {"local", "other"}
+    assert {row["job_id"] for row in rows} == {local_first.job_id, other_first.job_id}
+    assert {row["url"] for row in rows} == {_CAPTURE_URL}
 
 
 @pytest.mark.parametrize(
@@ -356,7 +400,7 @@ def test_jsonrpc_handler_awaits_manual_capture_workflow_result() -> None:
     result_payload = {
         "status": "succeeded",
         "item_id": "manual-1",
-        "job_id": _CAPTURE_URL,
+        "job_id": _MANUAL_JOB_ID,
         "imported_at": "2026-07-10T10:00:00+00:00",
         "retry_context": {"manual_capture_provenance": {"source_kind": "user_mediated_capture"}},
         "error": None,
