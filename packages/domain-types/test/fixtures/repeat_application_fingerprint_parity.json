@@ -1,11 +1,11 @@
 {
-  "targetJobKey": "https://careers.example.test/Target-role",
+  "targetJobId": "70000000-0000-4000-8000-000000000001",
   "matches": [
     {
       "relationship": "same_employer_equivalent_role",
       "reason": "The employer identity matches exactly and the normalized role titles are materially equivalent.",
       "priorApplication": {
-        "jobKey": "https://jobs.example.test/a-role",
+        "jobId": "70000000-0000-4000-8000-000000000002",
         "title": "Senior Platform Engineer",
         "company": "Acme",
         "applicationUrl": "https://jobs.example.test/a-role/apply",
@@ -22,7 +22,7 @@
       "relationship": "canonical_identity",
       "reason": "The canonical ATS identity matches the previously applied opening.",
       "priorApplication": {
-        "jobKey": "https://jobs.example.test/Å-role",
+        "jobId": "70000000-0000-4000-8000-000000000003",
         "title": "Platform Engineer",
         "company": "Acme",
         "applicationUrl": null,
@@ -38,7 +38,7 @@
       "relationship": "same_employer_equivalent_role",
       "reason": "The employer identity matches exactly and the normalized role titles are materially equivalent.",
       "priorApplication": {
-        "jobKey": "https://jobs.example.test/B-role",
+        "jobId": "70000000-0000-4000-8000-000000000004",
         "title": "Platform Senior Eng",
         "company": "ACME, INC.",
         "applicationUrl": "https://jobs.example.test/B-role/apply",
@@ -52,5 +52,37 @@
       ]
     }
   ],
-  "expectedFingerprint": "b975c68b1b1a6025ea9fdd784bd4bf5e4d703fb05ed74949c5bad2533921d17b"
+  "invalidVectors": [
+    {
+      "name": "URL target identifier",
+      "targetJobId": "https://careers.example.test/target",
+      "matches": [],
+      "error": "canonical UUID"
+    },
+    {
+      "name": "URL prior identifier",
+      "targetJobId": "70000000-0000-4000-8000-000000000001",
+      "matches": [
+        {
+          "priorApplication": {
+            "jobId": "https://jobs.example.test/prior"
+          }
+        }
+      ],
+      "error": "canonical UUID"
+    },
+    {
+      "name": "legacy prior locator key",
+      "targetJobId": "70000000-0000-4000-8000-000000000001",
+      "matches": [
+        {
+          "priorApplication": {
+            "jobKey": "https://jobs.example.test/prior"
+          }
+        }
+      ],
+      "error": "priorApplication.jobId"
+    }
+  ],
+  "expectedFingerprint": "543fc30706d672acce8fb0a0001214f9739e45626cb492a028e88222f66c68df"
 }
