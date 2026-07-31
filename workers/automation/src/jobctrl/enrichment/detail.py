@@ -63,9 +63,9 @@ from jobctrl.domain.enrichment.value_objects import (
     ApplicationUrl,
     FullDescription,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
 from jobctrl.infrastructure.enrichment.sqlite_repository import (
     SqlitePostingSnapshotSetRepository,
@@ -1884,9 +1884,11 @@ def _reset_authenticated_linkedin_retry_candidates(
 
     rows = conn.execute(
         f"""
-        SELECT j.url, e.current_status, e.application_url, e.attempts_json
+        SELECT j.tenant_id, j.job_id, j.url,
+               e.current_status, e.application_url, e.attempts_json
         FROM jobs j
-        JOIN job_enrichments e ON e.job_url = j.url
+        JOIN job_enrichments e
+          ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
         WHERE {' AND '.join(where)}
         ORDER BY e.updated_at DESC
         """,
@@ -1908,15 +1910,21 @@ def _reset_authenticated_linkedin_retry_candidates(
     try:
         for row in rows:
             try:
-                attempts_json = row["attempts_json"] if isinstance(row, sqlite3.Row) else row[3]
+                attempts_json = row["attempts_json"] if isinstance(row, sqlite3.Row) else row[5]
                 if _attempt_count_from_json(attempts_json) >= _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS:
                     continue
-                current_status = row["current_status"] if isinstance(row, sqlite3.Row) else row[1]
+                current_status = row["current_status"] if isinstance(row, sqlite3.Row) else row[3]
                 if str(current_status) == "failed" and not _last_failed_attempt_retryable(attempts_json):
                     continue
-                url = str(row["url"] if isinstance(row, sqlite3.Row) else row[0])
+                tenant_id = TenantId(
+                    str(row["tenant_id"] if isinstance(row, sqlite3.Row) else row[0])
+                )
+                job_id = canonical_job_id(
+                    str(row["job_id"] if isinstance(row, sqlite3.Row) else row[1])
+                )
+                url = str(row["url"] if isinstance(row, sqlite3.Row) else row[2])
                 now = utc_now()
-                aggregate = repo.load(LOCAL_TENANT, JobId(url))
+                aggregate = repo.load(tenant_id, job_id)
                 if aggregate is None:
                     continue
 
@@ -1973,9 +1981,10 @@ def _reset_authenticated_linkedin_retry_candidates(
                     )
                     record_job_event(
                         conn,
-                        url,
+                        job_id,
                         "enrich",
                         "StageProgress",
+                        tenant_id=tenant_id,
                         message=(
                             "LinkedIn authenticated apply URL recovered"
                             if recovered is not None
@@ -2001,23 +2010,21 @@ def _reset_authenticated_linkedin_retry_candidates(
                     continue
 
                 repo.save(aggregate.reset(reset_at=now))
-                conn.execute(
-                    "UPDATE jobs SET detail_error = NULL, detail_scraped_at = NULL WHERE url = ?",
-                    (url,),
-                )
-                ensure_job_stage_rows(conn, url)
+                ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
                 set_stage_state(
                     conn,
-                    url,
+                    job_id,
                     "enrich",
                     "pending",
+                    tenant_id=tenant_id,
                     validate_transition=False,
                 )
                 record_job_event(
                     conn,
-                    url,
+                    job_id,
                     "enrich",
                     "StageReset",
+                    tenant_id=tenant_id,
                     message="LinkedIn authenticated enrichment retry queued",
                     payload={
                         "reason": "linkedin_authenticated_apply_url",
