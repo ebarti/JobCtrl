@@ -33,7 +33,7 @@ from jobctrl.domain.events import (
     EmployerAnalyzedPayload,
     create_employer_analyzed,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.analysis import (
     PROMPT_VERSION,
     SDK_SET_VERSION,
@@ -135,7 +135,7 @@ class AnalyzeJobUseCase:
         tenant_id: TenantId = LOCAL_TENANT,
         force: bool = False,
     ) -> AnalyzeJobOutcome:
-        job_id = JobId(str(job["url"]))
+        job_id = canonical_job_id(str(job["job_id"]))
         jd_snapshot = build_jd_snapshot(job)
         snapshot_hash = compute_snapshot_hash(jd_snapshot)
         from jobctrl.domain.materials.analysis import cache_key as _cache_key
