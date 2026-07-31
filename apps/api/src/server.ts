@@ -305,6 +305,7 @@ import {
   restoreJobs,
   resolveJobId,
   resetStaleScoresForRescore,
+  resolveJobId,
   resolveJobUrl,
   softDeleteJob,
   softDeleteJobs,
@@ -1423,8 +1424,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return undefined;
       }
       const outcome = await withWritableDb(reply, options.dbPath, async (db) => {
-        const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
-        if (!jobUrl) {
+        const jobId = resolveExistingJobId(reply, db, decodeRouteParam(request.params.jobKey));
+        if (!jobId) {
           return { ok: false, error: "job_not_found" };
         }
         const jobId = requireJobId(db, jobUrl);
@@ -1724,8 +1725,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return undefined;
       }
       const outcome = await withWritableDb(reply, options.dbPath, async (db) => {
-        const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
-        if (!jobUrl) {
+        const jobId = resolveExistingJobId(reply, db, decodeRouteParam(request.params.jobKey));
+        if (!jobId) {
           return { ok: false, error: "job_not_found" };
         }
         const jobId = requireJobId(db, jobUrl);
@@ -1743,7 +1744,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           command.tailorJudgeMinScore = body.tailorJudgeMinScore;
         }
         insertJobEvent(db, {
-          jobUrl,
+          jobUrl: jobId,
           stage: "tailor",
           eventType: "RetailorRequested",
           level: "info",
@@ -4292,6 +4293,19 @@ function resolveExistingJob(
     return null;
   }
   return jobUrl;
+}
+
+function resolveExistingJobId(
+  reply: { code: (statusCode: number) => unknown },
+  db: ReturnType<typeof openDatabase>,
+  jobKey: string,
+): string | null {
+  const jobId = resolveJobId(db, "local", jobKey);
+  if (!jobId) {
+    void reply.code(404);
+    return null;
+  }
+  return jobId;
 }
 
 function decodeBase64Pdf(value: string): Buffer {
