@@ -124,6 +124,170 @@ def _rejected(generation: int) -> MaterialsSet:
     )
 
 
+def _seed_resume_template(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    template_id: str,
+    version_id: str,
+    name: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO resume_templates (
+            tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+        ) VALUES (?, ?, ?, 'active', ?, ?, ?)
+        """,
+        (
+            str(tenant_id),
+            template_id,
+            name,
+            int(template_id.startswith("built_in:")),
+            CREATED_AT,
+            CREATED_AT,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO resume_template_versions (
+            tenant_id, version_id, template_id, version_number, display_name,
+            status, theme_json, layout_json, content_hash, created_at
+        ) VALUES (?, ?, ?, 1, ?, 'active', ?, '{}', ?, ?)
+        """,
+        (
+            str(tenant_id),
+            version_id,
+            template_id,
+            name,
+            '{"template": "' + template_id + '"}',
+            f"hash:{template_id}",
+            CREATED_AT,
+        ),
+    )
+
+
+def test_fresh_v7_resolves_the_builtin_template_without_runtime_setup(
+    conn: sqlite3.Connection,
+) -> None:
+    resolved = SqliteMaterialsRepository(conn).resolve_effective_resume_template(
+        LOCAL_TENANT,
+        JOB_ID,
+    )
+
+    assert resolved["metadata"]["templateId"] == "built_in:modern-html"
+    assert resolved["metadata"]["assignmentSource"] == "built_in"
+
+
+def test_effective_template_resolution_uses_v7_identity_and_precedence(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteMaterialsRepository(conn)
+    _seed_resume_template(
+        conn,
+        tenant_id=LOCAL_TENANT,
+        template_id="profile-template",
+        version_id="profile-version",
+        name="Profile default",
+    )
+    _seed_resume_template(
+        conn,
+        tenant_id=LOCAL_TENANT,
+        template_id="job-template",
+        version_id="job-version",
+        name="Job override",
+    )
+    conn.execute(
+        """
+        INSERT INTO resume_template_defaults (
+            tenant_id, profile_id, template_id, version_id, updated_at
+        ) VALUES (?, 'default', 'profile-template', 'profile-version', ?)
+        """,
+        (str(LOCAL_TENANT), CREATED_AT),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_resume_template_assignments (
+            tenant_id, job_id, template_id, version_id, updated_at
+        ) VALUES (?, ?, 'job-template', 'job-version', ?)
+        """,
+        (str(LOCAL_TENANT), str(JOB_ID), CREATED_AT),
+    )
+    conn.commit()
+
+    override = repo.resolve_effective_resume_template(LOCAL_TENANT, JOB_ID)
+    assert override["metadata"]["templateId"] == "job-template"
+    assert override["metadata"]["assignmentSource"] == "job_override"
+
+    conn.execute("DELETE FROM job_resume_template_assignments")
+    default = repo.resolve_effective_resume_template(LOCAL_TENANT, JOB_ID)
+    assert default["metadata"]["templateId"] == "profile-template"
+    assert default["metadata"]["assignmentSource"] == "profile_default"
+
+    conn.execute("DELETE FROM resume_template_defaults")
+    built_in = repo.resolve_effective_resume_template(LOCAL_TENANT, JOB_ID)
+    assert built_in["metadata"]["templateId"] == "built_in:modern-html"
+    assert built_in["metadata"]["assignmentSource"] == "built_in"
+
+    with pytest.raises(ValueError, match="canonical UUID"):
+        repo.resolve_effective_resume_template(LOCAL_TENANT, JobId(JOB_URL))
+
+
+def test_effective_template_resolution_is_tenant_scoped(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, site)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (str(OTHER_TENANT), str(JOB_ID), JOB_URL, "Materials Engineer", "Example"),
+    )
+    _seed_resume_template(
+        conn,
+        tenant_id=LOCAL_TENANT,
+        template_id="local-template",
+        version_id="local-version",
+        name="Local default",
+    )
+    _seed_resume_template(
+        conn,
+        tenant_id=OTHER_TENANT,
+        template_id="other-template",
+        version_id="other-version",
+        name="Other default",
+    )
+    conn.executemany(
+        """
+        INSERT INTO resume_template_defaults (
+            tenant_id, profile_id, template_id, version_id, updated_at
+        ) VALUES (?, 'default', ?, ?, ?)
+        """,
+        (
+            (str(LOCAL_TENANT), "local-template", "local-version", CREATED_AT),
+            (str(OTHER_TENANT), "other-template", "other-version", CREATED_AT),
+        ),
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_resume_template_assignments (
+            tenant_id, job_id, template_id, version_id, updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            (str(LOCAL_TENANT), str(JOB_ID), "local-template", "local-version", CREATED_AT),
+            (str(OTHER_TENANT), str(JOB_ID), "other-template", "other-version", CREATED_AT),
+        ),
+    )
+    conn.commit()
+
+    resolved = SqliteMaterialsRepository(conn).resolve_effective_resume_template(
+        OTHER_TENANT,
+        JOB_ID,
+    )
+
+    assert resolved["metadata"]["templateId"] == "other-template"
+    assert resolved["metadata"]["assignmentSource"] == "job_override"
+    assert resolved["theme"] == {"template": "other-template"}
+
+
 def test_exact_v7_round_trip_persists_artifact_and_layout_identity(
     conn: sqlite3.Connection,
 ) -> None:

@@ -1699,7 +1699,11 @@ class TailorResumeUseCase:
             validation_mode=validation_mode,
             tenant_id=tenant_id,
         )
-        resume_template = _resolve_effective_resume_template(self._repository, job_id)
+        resume_template = _resolve_effective_resume_template(
+            self._repository,
+            tenant_id,
+            job_id,
+        )
         policy_metadata = tailoring_policy.as_artifact_metadata()
         tailoring_metadata = {
             "validation_mode": validation_mode,
@@ -3331,13 +3335,14 @@ def _load_current_approved_materials(
 
 def _resolve_effective_resume_template(
     repository: MaterialsRepository,
+    tenant_id: TenantId,
     job_id: JobId,
 ) -> dict[str, Any] | None:
     resolver = getattr(repository, "resolve_effective_resume_template", None)
     if not callable(resolver):
         return None
     try:
-        resolved = resolver(job_id)
+        resolved = resolver(tenant_id, job_id)
     except Exception:  # noqa: BLE001 -- template metadata must not block tailoring
         log.exception("Failed to resolve effective resume template for %s", job_id)
         return None
@@ -3750,7 +3755,11 @@ class RenderPdfUseCase:
         ):
             text_path = Path(materials.tailored_resume.path)
             pdf_path = text_path.with_suffix(".pdf")
-            resume_template = _resolve_effective_resume_template(self._repository, job_id)
+            resume_template = _resolve_effective_resume_template(
+                self._repository,
+                tenant_id,
+                job_id,
+            )
             try:
                 pdf_artifact = self._resume_renderer.render_resume_to_pdf(
                     tailored_payload=tailored_payload,

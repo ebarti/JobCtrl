@@ -1844,50 +1844,12 @@ def ensure_resume_template_tables(conn: sqlite3.Connection | None = None) -> lis
         """
     )
 
-    import hashlib
+    from jobctrl.infrastructure.migrations.resume_template_seed import (
+        seed_builtin_resume_template,
+    )
 
-    theme = {
-        "pageSize": "a4",
-        "fontFamily": "sans",
-        "fontScale": 1,
-        "density": "balanced",
-        "marginMm": {"top": 16.5, "right": 17.5, "bottom": 18, "left": 17.5},
-        "headerLayout": "centered",
-        "sectionHeadingStyle": "rule",
-        "alignment": "justified",
-        "bulletSpacing": "normal",
-        "accentColor": "#111111",
-        "sectionOrder": ["summary", "experience", "education", "skills"],
-        "hiddenSections": [],
-    }
-    layout: dict[str, object] = {}
-    content_hash = hashlib.sha256(
-        json.dumps([theme, layout], separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
     now = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO resume_templates (
-            tenant_id, template_id, display_name, status, built_in, created_at, updated_at
-        ) VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)
-        """,
-        (now, now),
-    )
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO resume_template_versions (
-            tenant_id, version_id, template_id, version_number, display_name, status,
-            theme_json, layout_json, content_hash, created_at
-        ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
-                  'Modern HTML', 'active', ?, ?, ?, ?)
-        """,
-        (
-            json.dumps(theme, sort_keys=True),
-            json.dumps(layout, sort_keys=True),
-            content_hash,
-            now,
-        ),
-    )
+    seed_builtin_resume_template(conn, created_at=now)
     conn.commit()
     return [
         "resume_templates",

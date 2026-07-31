@@ -6,6 +6,9 @@ import sqlite3
 from collections.abc import Callable
 from importlib.resources import files
 
+from jobctrl.infrastructure.migrations.resume_template_seed import (
+    seed_builtin_resume_template,
+)
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V7_MANIFEST,
     SchemaManifestError,
@@ -69,6 +72,7 @@ def _create_exact_v7_schema(
         for statement in _schema_statements():
             execute(statement)
         if stamp_version:
+            seed_builtin_resume_template(conn)
             execute(f"PRAGMA user_version = {EXACT_V7_MANIFEST.version}")
         assert_exact_manifest(conn, EXACT_V7_MANIFEST)
         conn.execute("RELEASE SAVEPOINT exact_v7_schema")
