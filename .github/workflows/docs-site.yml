@@ -10,6 +10,15 @@ on:
       - "scripts/check-install-asset.mjs"
       - "scripts/get"
       - ".github/workflows/docs-site.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "docs/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "scripts/check-install-asset.mjs"
+      - "scripts/get"
+      - ".github/workflows/docs-site.yml"
   workflow_dispatch:
 
 permissions:
@@ -17,6 +26,7 @@ permissions:
 
 jobs:
   build:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: Build (dead-link gate)
     runs-on: ubuntu-latest
 
