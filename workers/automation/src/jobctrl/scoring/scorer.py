@@ -513,7 +513,13 @@ def run_scoring(
                 message=f"Fit score {outcome.score.fit_score.value}/10",
                 payload={"keywords": list(outcome.score.matched_keywords)},
             )
-            _sync_score_eligibility_stage_state(conn, url, outcome.score, now=finished_at)
+            _sync_score_eligibility_stage_state(
+                conn,
+                tenant_id=tenant_id,
+                job_id=outcome.score.job_id,
+                score=outcome.score,
+                now=finished_at,
+            )
         else:
             set_stage_state(
                 conn,
@@ -625,6 +631,7 @@ def score_job_by_url(
                 conn,
                 job=job,
                 score=outcome.score,
+                tenant_id=tenant_id,
                 started_at=utc_now(),
                 validate_transition=False,
             )
@@ -702,7 +709,13 @@ def score_job_by_url(
             message=f"Fit score {outcome.score.fit_score.value}/10",
             payload={"keywords": list(outcome.score.matched_keywords)},
         )
-        _sync_score_eligibility_stage_state(conn, job_url, outcome.score, now=finished_at)
+        _sync_score_eligibility_stage_state(
+            conn,
+            tenant_id=tenant_id,
+            job_id=outcome.score.job_id,
+            score=outcome.score,
+            now=finished_at,
+        )
     else:
         set_stage_state(
             conn,
@@ -749,7 +762,12 @@ def _ensure_existing_score_stage_succeeded(
     ).fetchone()
     state = _row_value(row, "state", 0)
     if state == "succeeded":
-        _sync_score_eligibility_stage_state(conn, job_url, score)
+        _sync_score_eligibility_stage_state(
+            conn,
+            tenant_id=tenant_id,
+            job_id=score.job_id,
+            score=score,
+        )
         conn.commit()
         return
 
@@ -774,7 +792,13 @@ def _ensure_existing_score_stage_succeeded(
         message=f"Fit score {score.fit_score.value}/10",
         payload={"keywords": list(score.matched_keywords)},
     )
-    _sync_score_eligibility_stage_state(conn, job_url, score, now=finished_at)
+    _sync_score_eligibility_stage_state(
+        conn,
+        tenant_id=tenant_id,
+        job_id=score.job_id,
+        score=score,
+        now=finished_at,
+    )
     conn.commit()
 
 
@@ -783,6 +807,7 @@ def _record_score_stage_succeeded(
     *,
     job: dict[str, Any],
     score: JobScore,
+    tenant_id: TenantId,
     started_at: str | None = None,
     finished_at: str | None = None,
     validate_transition: bool = False,
@@ -809,21 +834,29 @@ def _record_score_stage_succeeded(
         payload={"keywords": list(score.matched_keywords)},
         occurred_at=finished_at,
     )
-    _sync_score_eligibility_stage_state(conn, job_url, score, now=finished_at)
+    _sync_score_eligibility_stage_state(
+        conn,
+        tenant_id=tenant_id,
+        job_id=score.job_id,
+        score=score,
+        now=finished_at,
+    )
     conn.commit()
 
 
 def _sync_score_eligibility_stage_state(
     conn: sqlite3.Connection,
-    job_url: str,
-    score: JobScore,
     *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    score: JobScore,
     now: str | None = None,
 ) -> None:
     eligibility = score.breakdown.eligibility
     reconcile_score_eligibility_blockers(
         conn,
-        job_url=job_url,
+        tenant_id=tenant_id,
+        job_id=job_id,
         eligibility_status=eligibility.status,
         hard_blockers=list(eligibility.hard_blockers),
         now=now,

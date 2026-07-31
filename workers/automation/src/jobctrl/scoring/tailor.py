@@ -788,14 +788,20 @@ def _reconcile_score_eligibility_skip(
     if eligibility.status != "blocked" and not eligibility.hard_blockers:
         return False
     row = conn.execute(
-        "SELECT discovered_at FROM jobs WHERE url = ?",
-        (job_url,),
+        "SELECT discovered_at FROM jobs WHERE tenant_id = ? AND job_id = ?",
+        (str(tenant_id), str(score.job_id)),
     ).fetchone()
     discovered_at = row["discovered_at"] if row is not None else None
-    ensure_job_stage_rows(conn, job_url, discovered_at=discovered_at)
+    ensure_job_stage_rows(
+        conn,
+        score.job_id,
+        tenant_id=tenant_id,
+        discovered_at=discovered_at,
+    )
     reconcile_score_eligibility_blockers(
         conn,
-        job_url=job_url,
+        tenant_id=tenant_id,
+        job_id=score.job_id,
         eligibility_status=eligibility.status,
         hard_blockers=list(eligibility.hard_blockers),
     )
