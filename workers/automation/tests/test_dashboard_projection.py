@@ -10,7 +10,10 @@ from typing import Iterator
 import pytest
 
 from jobctrl.database import close_connection, init_db
-from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobctrl.infrastructure.projections.projection_builder import (
+    ProjectionBuilder,
+    _template_conversion_sort_key,
+)
 from jobctrl.state import record_job_event, set_stage_state, utc_now
 
 
@@ -767,6 +770,32 @@ def test_outcome_conversion_counts_by_material_and_feedback_rows(conn: sqlite3.C
         "corrected": 1,
         "ignored": 1,
     }
+
+
+def test_outcome_conversion_breaks_template_name_ties_by_id() -> None:
+    fixture = json.loads(
+        (
+            Path(__file__).parents[3]
+            / "packages/domain-types/test/fixtures/dashboard_template_order.json"
+        ).read_text()
+    )
+    buckets = [
+        (
+            entry["templateId"],
+            {
+                "templateName": entry["templateName"],
+                "counts": {"applied": entry["applied"]},
+            },
+        )
+        for entry in fixture["entries"]
+    ]
+
+    assert [
+        template_id
+        for template_id, _ in sorted(
+            buckets, key=_template_conversion_sort_key
+        )
+    ] == fixture["expectedTemplateIds"]
 
 
 def test_outcome_conversion_uses_artifact_metadata_without_parent_material_table(
