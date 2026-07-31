@@ -24,6 +24,7 @@ import type {
 import type { JsonRpcResponse, RpcMethod } from "../src/contracts.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const CANONICAL_JOB_ID = "11111111-1111-4111-8111-111111111111";
 
 class FakeDispatcher implements JsonRpcDispatcher {
   public readonly calls: Array<{ method: RpcMethod; params: Record<string, unknown> }> = [];
@@ -342,6 +343,55 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           jobUrls: ["https://example.com/jobs/current"],
           dryRun: false,
           suppressExistingArtifacts: false,
+        },
+      },
+    ]);
+  });
+
+  it("dispatches canonical job ids for direct rescore and retailor actions", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+    const context = { appDir: "/tmp", dbPath: "/tmp/jobctrl.db" };
+
+    await dispatcher(
+      {
+        action: "rescore_job",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
+        dryRun: true,
+      },
+      context,
+    );
+    await dispatcher(
+      {
+        action: "retailor_job",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
+        suppressExistingArtifacts: true,
+      },
+      context,
+    );
+
+    expect(fake.calls).toEqual([
+      {
+        method: "rescore_job",
+        params: {
+          tenantId: "local",
+          expectedAppDir: "/tmp",
+          expectedDbPath: "/tmp/jobctrl.db",
+          jobId: CANONICAL_JOB_ID,
+          dryRun: true,
+        },
+      },
+      {
+        method: "retailor_job",
+        params: {
+          tenantId: "local",
+          expectedAppDir: "/tmp",
+          expectedDbPath: "/tmp/jobctrl.db",
+          jobId: CANONICAL_JOB_ID,
+          dryRun: false,
+          suppressExistingArtifacts: true,
         },
       },
     ]);

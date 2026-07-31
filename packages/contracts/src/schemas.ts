@@ -3957,6 +3957,7 @@ export interface ActionCommandPayload {
     | "mark_skipped"
     | "profile_import";
   jobKey: string;
+  jobId?: string;
   stage?: Stage;
   stages?: Stage[];
   resetAttempts?: boolean;
