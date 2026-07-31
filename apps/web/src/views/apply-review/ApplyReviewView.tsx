@@ -1362,17 +1362,17 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
   const assessment = item.repeatApplication;
   const mutation = useRepeatApplicationOverrideMutation();
   const [reason, setReason] = useState("");
-  const [selectedPriorJobKey, setSelectedPriorJobKey] = useState<string | null>(null);
+  const [selectedPriorJobId, setSelectedPriorJobId] = useState<string | null>(null);
   const needsConfirmation = ["blocked", "confirmation_required", "override_consumed"].includes(
     assessment.status,
   );
   const selectedPrior = assessment.matches.find(
-    (match) => match.priorApplication.jobKey === selectedPriorJobKey,
+    (match) => match.priorApplication.jobId === selectedPriorJobId,
   ) ?? (assessment.matches.length === 1 ? assessment.matches[0] ?? null : null);
 
   useEffect(() => {
     setReason("");
-    setSelectedPriorJobKey(null);
+    setSelectedPriorJobId(null);
     mutation.reset();
   }, [item.jobKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1415,8 +1415,8 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
             </p>
             <p className="meta">{match.reason}</p>
             <a
-              href={`/jobs/${encodeURIComponent(match.priorApplication.jobKey)}`}
-              aria-label={`Inspect prior application: ${match.priorApplication.jobKey}`}
+              href={`/jobs/${encodeURIComponent(match.priorApplication.jobId)}`}
+              aria-label={`Inspect prior application: ${match.priorApplication.jobId}`}
             >
               Inspect prior application
             </a>
@@ -1453,8 +1453,8 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
             <FieldLegend>Select the prior application for this confirmation</FieldLegend>
             <FieldGroup data-slot="radio-group" className="repeat-application-prior-options">
               {assessment.matches.map((match) => {
-                const priorJobKey = match.priorApplication.jobKey;
-                const controlId = `repeat-application-prior-${encodeURIComponent(item.jobKey)}-${encodeURIComponent(priorJobKey)}`;
+                const priorJobId = match.priorApplication.jobId;
+                const controlId = `repeat-application-prior-${encodeURIComponent(item.jobKey)}-${encodeURIComponent(priorJobId)}`;
                 return (
                   <Field
                     className="repeat-application-prior"
@@ -1462,15 +1462,15 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
                     orientation="horizontal"
                   >
                     <Input
-                      checked={selectedPrior?.priorApplication.jobKey === priorJobKey}
+                      checked={selectedPrior?.priorApplication.jobId === priorJobId}
                       id={controlId}
                       name={`repeat-application-prior-${encodeURIComponent(item.jobKey)}`}
-                      onChange={() => setSelectedPriorJobKey(priorJobKey)}
+                      onChange={() => setSelectedPriorJobId(priorJobId)}
                       type="radio"
-                      value={priorJobKey}
+                      value={priorJobId}
                     />
                     <FieldLabel htmlFor={controlId}>
-                      Confirm prior application: {priorJobKey}
+                      Confirm prior application: {priorJobId}
                     </FieldLabel>
                   </Field>
                 );
@@ -1497,7 +1497,7 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
                 jobId: item.jobKey,
                 body: {
                   evidenceFingerprint: assessment.evidenceFingerprint!,
-                  priorJobKey: selectedPrior.priorApplication.jobKey,
+                  priorJobId: selectedPrior.priorApplication.jobId,
                   reason: reason.trim(),
                   confirmedBy: "user",
                 },
@@ -1536,22 +1536,22 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
                 </p>
                 <details>
                   <summary>Inspect recorded evidence</summary>
-                  {entry.priorJobKey ? (
-                    <a href={`/jobs/${encodeURIComponent(entry.priorJobKey)}`}>
+                  {entry.priorJobId ? (
+                    <a href={`/jobs/${encodeURIComponent(entry.priorJobId)}`}>
                       Inspect selected prior application
                     </a>
                   ) : null}
                   <ul>
                     {entry.evidence.map((match) => (
                       <li key={`${entry.auditId}:${match.relationship}:${match.priorApplication.factId}`}>
-                        <a href={`/jobs/${encodeURIComponent(match.priorApplication.jobKey)}`}>
+                        <a href={`/jobs/${encodeURIComponent(match.priorApplication.jobId)}`}>
                           {match.priorApplication.title}
                         </a>{" "}at {match.priorApplication.company}
                         {" — "}{relationshipLabel(match.relationship)}; {match.reason}; fact {match.priorApplication.factId}
                       </li>
                     ))}
                     <li>evidence fingerprint: {entry.evidenceFingerprint}</li>
-                    <li>target: {entry.targetJobKey}</li>
+                    <li>target: {entry.targetJobId}</li>
                   </ul>
                 </details>
               </li>
