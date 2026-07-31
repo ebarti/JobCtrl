@@ -306,7 +306,7 @@ def _limited_job_urls(job_urls: tuple[str, ...], limit: int) -> tuple[str, ...]:
 
 @activity.defn(name="tailor_job")
 async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActivityOutput:
-    """Tailor one job by URL for ``JobPreparationWorkflow``."""
+    """Tailor one canonical JobId for ``JobPreparationWorkflow``."""
     from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
 
     try:
@@ -335,9 +335,9 @@ async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActiv
 
 def _tailor_one_job(payload: TailorJobActivityInput) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
-    from jobctrl.scoring.tailor import tailor_job_by_url
+    from jobctrl.scoring.tailor import tailor_job_by_id
 
-    return tailor_job_by_url(
+    return tailor_job_by_id(
         payload.job_id,
         min_score=payload.min_score,
         validation_mode=payload.validation_mode,
