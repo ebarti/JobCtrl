@@ -5477,6 +5477,14 @@ export type ContactAttributeInput = z.infer<typeof ContactAttributeInputSchema>;
 
 const contactEmployerField = z.string().trim().min(1).max(200).nullish();
 const contactJobIdField = z.string().trim().min(1).max(2000).nullish();
+const contactApiJobIdField = z
+  .string()
+  .trim()
+  .uuid()
+  .refine((value) => value === value.toLowerCase(), {
+    message: "jobId must be a canonical UUID",
+  })
+  .nullish();
 const outreachJobIdField = z
   .string()
   .trim()
@@ -5490,7 +5498,7 @@ export const ContactCreateRequestSchema = z
   .object({
     role: ContactRoleSchema.default("other"),
     employer: contactEmployerField,
-    jobId: contactJobIdField,
+    jobId: contactApiJobIdField,
     attributes: z.array(ContactAttributeInputSchema).max(50).default([]),
   })
   .strict()
@@ -5504,7 +5512,7 @@ export const ContactUpdateRequestSchema = z
   .object({
     role: ContactRoleSchema.optional(),
     employer: contactEmployerField,
-    jobId: contactJobIdField,
+    jobId: contactApiJobIdField,
     attributes: z.array(ContactAttributeInputSchema).max(50).optional(),
   })
   .strict();
@@ -5520,7 +5528,7 @@ export type ContactImportRequest = z.infer<typeof ContactImportRequestSchema>;
 
 export const ContactListQuerySchema = z
   .object({
-    jobId: optionalText,
+    jobId: contactApiJobIdField,
     employer: optionalText,
   })
   .strict();

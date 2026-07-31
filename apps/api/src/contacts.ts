@@ -33,11 +33,12 @@ import type {
   ContactUpdateRequest,
 } from "./contracts.js";
 import { CONTACT_ROLES } from "@jobctrl/domain-types";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
-import { refreshProjections } from "./projections.js";
+import { allRows, getRow, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { refreshContactProjections } from "./projections.js";
 
 const TENANT_ID = "local";
 const USER_ENTERED_REF = "user_entered";
+const CANONICAL_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export class ContactInputError extends Error {}
 export class ContactNotFoundError extends Error {}
@@ -56,38 +57,12 @@ interface AttributeSeed {
   value: string;
 }
 
-export function ensureContactTables(db: SqliteDatabase): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS contacts (
-      tenant_id   TEXT NOT NULL DEFAULT 'local',
-      contact_id  TEXT NOT NULL,
-      employer    TEXT,
-      job_url     TEXT,
-      role        TEXT NOT NULL DEFAULT 'other',
-      created_at  TEXT NOT NULL,
-      updated_at  TEXT NOT NULL,
-      deleted_at  TEXT,
-      PRIMARY KEY (tenant_id, contact_id)
-    );
-    CREATE TABLE IF NOT EXISTS contact_attributes (
-      tenant_id      TEXT NOT NULL DEFAULT 'local',
-      attribute_id   TEXT NOT NULL,
-      contact_id     TEXT NOT NULL,
-      attribute_kind TEXT NOT NULL,
-      value_json     TEXT,
-      source_kind    TEXT NOT NULL,
-      source_ref     TEXT NOT NULL,
-      capture_method TEXT NOT NULL,
-      confidence     REAL NOT NULL DEFAULT 0,
-      user_confirmed INTEGER NOT NULL DEFAULT 0,
-      recorded_at    TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, attribute_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_contacts_lookup ON contacts(tenant_id, employer, job_url);
-    CREATE INDEX IF NOT EXISTS idx_contact_attributes_contact
-      ON contact_attributes(tenant_id, contact_id);
-  `);
-}
+/**
+ * Retained as an exact-v7 no-op for the deferred contact-research module.
+ * The stopped-runtime migration owns table creation and API admission verifies
+ * the complete v7 manifest before this module is called.
+ */
+export function ensureContactTables(_db: SqliteDatabase): void {}
 
 // ---------------------------------------------------------------------------
 // Reads
@@ -97,8 +72,7 @@ export function listContacts(
   db: SqliteDatabase,
   query: ContactListQuery = { jobId: "", employer: "" },
 ): ContactSummary[] {
-  ensureContactTables(db);
-  refreshProjections(db, TENANT_ID);
+  refreshContactProjections(db, TENANT_ID);
   const filters: string[] = ["tenant_id = ?"];
   const params: SqliteValue[] = [TENANT_ID];
   const jobId = (query.jobId ?? "").trim();
@@ -121,8 +95,7 @@ export function listContacts(
 }
 
 export function getContactDetail(db: SqliteDatabase, contactId: string): ContactDetail | null {
-  ensureContactTables(db);
-  refreshProjections(db, TENANT_ID);
+  refreshContactProjections(db, TENANT_ID);
   const row = getRow<ContactProjectionRow>(
     db,
     "SELECT * FROM contact_projections WHERE tenant_id = ? AND contact_id = ?",
@@ -157,9 +130,8 @@ function requireContactDetail(db: SqliteDatabase, contactId: string): ContactDet
 // ---------------------------------------------------------------------------
 
 export function createContact(db: SqliteDatabase, request: ContactCreateRequest): ContactDetail {
-  ensureContactTables(db);
   const employer = normalizeLink(request.employer);
-  const jobId = normalizeLink(request.jobId);
+  const jobId = canonicalJobId(request.jobId);
   if (!employer && !jobId) {
     throw new ContactInputError("A contact must link to at least one of employer or jobId.");
   }
@@ -177,7 +149,7 @@ export function createContact(db: SqliteDatabase, request: ContactCreateRequest)
     insertContactRow(db, { contactId, employer, jobId, role: request.role, createdAt: now, updatedAt: now });
     insertAttributes(db, contactId, attributes, provenance, now);
     recordContactEvent(db, {
-      jobUrl: jobId,
+      jobId,
       eventType: "ContactCreated",
       contactId,
       payload: {
@@ -202,7 +174,6 @@ export function updateContact(
   contactId: string,
   request: ContactUpdateRequest,
 ): ContactDetail {
-  ensureContactTables(db);
   const existing = getRow<ContactRow>(
     db,
     "SELECT * FROM contacts WHERE tenant_id = ? AND contact_id = ? AND deleted_at IS NULL",
@@ -213,7 +184,7 @@ export function updateContact(
   }
   const employer =
     request.employer !== undefined ? normalizeLink(request.employer) : existing.employer ?? null;
-  const jobId = request.jobId !== undefined ? normalizeLink(request.jobId) : existing.job_url ?? null;
+  const jobId = request.jobId !== undefined ? canonicalJobId(request.jobId) : existing.job_id ?? null;
   if (!employer && !jobId) {
     throw new ContactInputError("A contact must link to at least one of employer or jobId.");
   }
@@ -235,7 +206,7 @@ export function updateContact(
     request.attributes !== undefined ? seedAttributes(request.attributes) : null;
   const transaction = db.transaction(() => {
     db.prepare(
-      `UPDATE contacts SET employer = ?, job_url = ?, role = ?, updated_at = ?
+      `UPDATE contacts SET employer = ?, job_id = ?, role = ?, updated_at = ?
        WHERE tenant_id = ? AND contact_id = ?`,
     ).run(employer, jobId, role, now, TENANT_ID, contactId);
     if (nextAttributes !== null) {
@@ -279,7 +250,7 @@ export function updateContact(
       insertAttributeRows(db, contactId, rows);
     }
     recordContactEvent(db, {
-      jobUrl: jobId,
+      jobId,
       eventType: "ContactUpdated",
       contactId,
       payload: { tenantId: TENANT_ID, contactId, changedFields: changed, updatedAt: now },
@@ -301,7 +272,6 @@ export function deleteContact(
   contactId: string,
   reason = "",
 ): ContactDeleteResponse {
-  ensureContactTables(db);
   const deletedAt = new Date().toISOString();
   const result = db
     .prepare(
@@ -313,12 +283,12 @@ export function deleteContact(
     throw new ContactNotFoundError(`Contact ${contactId} not found`);
   }
   recordContactEvent(db, {
-    jobUrl: null,
+    jobId: null,
     eventType: "ContactDeleted",
     contactId,
     payload: { tenantId: TENANT_ID, contactId, reason, deletedAt },
   });
-  refreshProjections(db, TENANT_ID);
+  refreshContactProjections(db, TENANT_ID);
   return { ok: true, contactId, deletedAt };
 }
 
@@ -326,7 +296,6 @@ export function importContacts(
   db: SqliteDatabase,
   request: ContactImportRequest,
 ): ContactImportResponse {
-  ensureContactTables(db);
   const filename = request.filename.trim() || "import.csv";
   const now = new Date().toISOString();
   const provenance: ProvenanceSeed = {
@@ -343,7 +312,7 @@ export function importContacts(
   const transaction = db.transaction(() => {
     for (const row of rows) {
       const employer = normalizeLink(firstColumn(row, EMPLOYER_COLUMNS));
-      const jobId = normalizeLink(firstColumn(row, JOB_COLUMNS));
+      const jobId = canonicalJobId(firstColumn(row, JOB_COLUMNS));
       if (!employer && !jobId) {
         skipped += 1;
         continue;
@@ -354,7 +323,7 @@ export function importContacts(
       insertContactRow(db, { contactId, employer, jobId, role, createdAt: now, updatedAt: now });
       insertAttributes(db, contactId, attributes, provenance, now);
       recordContactEvent(db, {
-        jobUrl: jobId,
+        jobId,
         eventType: "ContactCreated",
         contactId,
         payload: { tenantId: TENANT_ID, contactId, employer, jobId, role, createdAt: now },
@@ -367,7 +336,7 @@ export function importContacts(
     }
   });
   transaction();
-  refreshProjections(db, TENANT_ID);
+  refreshContactProjections(db, TENANT_ID);
   return { ok: true, imported, skipped, contactIds };
 }
 
@@ -378,7 +347,7 @@ export function importContacts(
 type ContactRow = {
   contact_id: string;
   employer: string | null;
-  job_url: string | null;
+  job_id: string | null;
   role: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -422,7 +391,7 @@ const ATTRIBUTE_COLUMNS: Record<string, string> = {
   notes: "note",
 };
 const EMPLOYER_COLUMNS = ["employer", "company"] as const;
-const JOB_COLUMNS = ["job_id", "jobid", "job_url", "joburl"] as const;
+const JOB_COLUMNS = ["job_id", "jobid"] as const;
 
 function toSummary(db: SqliteDatabase, row: ContactProjectionRow): ContactSummary {
   const attributeCount = Number(row.attribute_count ?? 0);
@@ -494,7 +463,7 @@ function insertContactRow(
   },
 ): void {
   db.prepare(
-    `INSERT INTO contacts (tenant_id, contact_id, employer, job_url, role, created_at, updated_at, deleted_at)
+    `INSERT INTO contacts (tenant_id, contact_id, employer, job_id, role, created_at, updated_at, deleted_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
   ).run(TENANT_ID, input.contactId, input.employer, input.jobId, input.role, input.createdAt, input.updatedAt);
 }
@@ -554,13 +523,13 @@ function insertAttributes(
 function recordAttributeEvent(
   db: SqliteDatabase,
   contactId: string,
-  jobUrl: string | null,
+  jobId: string | null,
   attribute: AttributeSeed,
   provenance: ProvenanceSeed,
   recordedAt: string,
 ): void {
   recordContactEvent(db, {
-    jobUrl,
+    jobId,
     eventType: "ContactAttributeRecorded",
     contactId,
     payload: {
@@ -581,34 +550,25 @@ function recordAttributeEvent(
 function recordContactEvent(
   db: SqliteDatabase,
   event: {
-    jobUrl: string | null;
+    jobId: string | null;
     eventType: string;
     contactId: string;
     payload: Record<string, unknown>;
   },
 ): void {
-  if (!tableExists(db, "job_events")) {
-    return;
-  }
-  const columns = new Set(
-    allRows<{ name: string }>(db, "PRAGMA table_info(job_events)").map((row) => row.name),
-  );
-  const values: Record<string, SqliteValue> = {
-    job_url: event.jobUrl,
-    stage: null,
-    event_type: event.eventType,
-    level: "info",
-    occurred_at: new Date().toISOString(),
-    payload_json: JSON.stringify(event.payload),
-    entity_kind: "contact",
-    entity_ref: event.contactId,
-  };
-  const entries = Object.entries(values).filter(([name]) => columns.has(name));
   db.prepare(
-    `INSERT INTO job_events (${entries.map(([name]) => name).join(", ")}) VALUES (${entries
-      .map(() => "?")
-      .join(", ")})`,
-  ).run(...entries.map(([, value]) => value));
+    `INSERT INTO job_events (
+       tenant_id, job_id, identity_version, stage, event_type, level,
+       message, occurred_at, payload_json, entity_kind, entity_ref, idempotency_key
+     ) VALUES (?, ?, 1, NULL, ?, 'info', NULL, ?, ?, 'contact', ?, NULL)`,
+  ).run(
+    TENANT_ID,
+    event.jobId,
+    event.eventType,
+    new Date().toISOString(),
+    JSON.stringify(event.payload),
+    event.contactId,
+  );
 }
 
 function seedAttributes(inputs: ContactAttributeInput[]): AttributeSeed[] {
@@ -646,7 +606,7 @@ function changedFields(
   if ((existing.employer ?? null) !== next.employer) {
     changed.push("employer");
   }
-  if ((existing.job_url ?? null) !== next.jobId) {
+  if ((existing.job_id ?? null) !== next.jobId) {
     changed.push("jobId");
   }
   if (attributesReplaced) {
@@ -668,6 +628,17 @@ function firstColumn(row: Record<string, string>, columns: readonly string[]): s
 function normalizeLink(value: string | null | undefined): string | null {
   const trimmed = (value ?? "").trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function canonicalJobId(value: string | null | undefined): string | null {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (!CANONICAL_JOB_ID.test(trimmed)) {
+    throw new ContactInputError("jobId must be a canonical UUID");
+  }
+  return trimmed;
 }
 
 function normalizeRole(value: string | null | undefined): ContactRole {
