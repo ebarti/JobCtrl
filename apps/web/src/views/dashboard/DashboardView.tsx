@@ -1,7 +1,10 @@
 import { IconAlertTriangle } from "@tabler/icons-react";
 
 import { OutcomeSuggestionsPanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
-import { LearningRecommendationReviewPanel } from "../../contexts/materials/index.js";
+import {
+  LearningRecommendationReviewPanel,
+  TailoringPolicyHistoryPanel,
+} from "../../contexts/materials/index.js";
 import { useApplicationOutcomesQuery } from "../../contexts/operations/hooks/useApplicationOutcomesQuery.js";
 import { useDashboardSummaryQuery } from "../../contexts/operations/hooks/useDashboardSummaryQuery.js";
 import { useWorkflowRunsListQuery } from "../../contexts/operations/hooks/useWorkflowRunsListQuery.js";
@@ -80,6 +83,7 @@ export function DashboardView() {
             <RecentActivityCard summary={summary} />
             <ApplyRunsCard summary={summary} />
             <LearningRecommendationReviewPanel />
+            <TailoringPolicyHistoryPanel />
             <section className="card col-span-full">
               <CardHeader
                 title="Outcome suggestions"
