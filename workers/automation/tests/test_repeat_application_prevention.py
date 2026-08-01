@@ -43,6 +43,15 @@ PRIOR_JOB_ID = _job_id_for(PRIOR)
 TARGET_JOB_ID = _job_id_for(TARGET)
 
 
+def _target_job_id(conn: sqlite3.Connection, url: str) -> str:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ? LIMIT 1",
+        (url,),
+    ).fetchone()
+    assert row is not None
+    return str(row["job_id"])
+
+
 def _insert_job(
     conn: sqlite3.Connection,
     *,
@@ -447,9 +456,7 @@ def test_manual_mark_is_a_user_attested_confirmed_fact_not_a_submission(
     conn = init_db(db_path)
     _insert_job(conn, url=PRIOR, title="Senior Backend Engineer", company="Acme")
     _insert_job(conn, url=TARGET, title="Senior Backend Engineer", company="Acme")
-    monkeypatch.setattr(
-        "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-    )
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
 
     mark_job(
         PRIOR_JOB_ID,
@@ -468,18 +475,19 @@ def test_manual_mark_is_a_user_attested_confirmed_fact_not_a_submission(
     ).fetchall()
     assert [row["event_type"] for row in events] == ["ApplicationManuallyMarked"]
     assert json.loads(events[0]["payload_json"])["source"] == "user_attestation"
-    assert conn.execute(
-        """
+    assert (
+        conn.execute(
+            """
         SELECT state FROM job_stage_states
         WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'
         """,
-        (str(LOCAL_TENANT), str(PRIOR_JOB_ID)),
-    ).fetchone()[0] == "succeeded"
+            (str(LOCAL_TENANT), str(PRIOR_JOB_ID)),
+        ).fetchone()[0]
+        == "succeeded"
+    )
     assessment = _evaluate(conn)
     assert assessment["status"] == "confirmation_required"
-    assert assessment["matches"][0]["priorApplication"]["factKind"] == (
-        "application_manually_marked"
-    )
+    assert assessment["matches"][0]["priorApplication"]["factKind"] == ("application_manually_marked")
 
 
 def test_authoritative_claim_blocks_direct_dispatch_and_repeated_standing_polls(
@@ -492,7 +500,7 @@ def test_authoritative_claim_blocks_direct_dispatch_and_repeated_standing_polls(
 
     assert (
         acquire_job(
-            target_url=TARGET,
+            target_job_id=_target_job_id(conn, TARGET),
             worker_id=1,
             approval_required=False,
             run_ctx={"dry_run": False, "run_id": "direct-bypass"},
@@ -526,7 +534,7 @@ def test_authoritative_claim_blocks_direct_dispatch_and_repeated_standing_polls(
     )
 
     dry_run = acquire_job(
-        target_url=TARGET,
+        target_job_id=_target_job_id(conn, TARGET),
         worker_id=3,
         approval_required=False,
         run_ctx={"dry_run": True, "run_id": "safe-dry-run"},
@@ -603,19 +611,20 @@ def test_protected_queue_audit_survives_lower_candidate_approval_refusal(
         ready=True,
         fit_score=8,
     )
-    monkeypatch.setattr(
-        "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-    )
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
 
     assert acquire_job(worker_id=51, approval_required=True) is None
-    assert conn.execute(
-        """
+    assert (
+        conn.execute(
+            """
         SELECT COUNT(*) FROM application_repeat_audit
         WHERE tenant_id = ? AND target_job_id = ?
           AND action = 'confirmation_required'
         """,
-        (str(LOCAL_TENANT), str(TARGET_JOB_ID)),
-    ).fetchone()[0] == 1
+            (str(LOCAL_TENANT), str(TARGET_JOB_ID)),
+        ).fetchone()[0]
+        == 1
+    )
 
 
 def test_standing_loop_skips_protected_candidate_and_processes_distinct_role(
@@ -839,6 +848,7 @@ def test_override_is_consumed_once_under_concurrent_claims(
     conn = _seed_equivalent_repeat(db_path)
     assessment = _evaluate(conn)
     _insert_override(conn, assessment)
+    target_job_id = _target_job_id(conn, TARGET)
     close_connection(db_path)
     monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
 
@@ -850,7 +860,7 @@ def test_override_is_consumed_once_under_concurrent_claims(
         ready.wait()
         try:
             result = acquire_job(
-                target_url=TARGET,
+                target_job_id=target_job_id,
                 worker_id=worker_id,
                 approval_required=False,
                 run_ctx={"dry_run": False, "run_id": f"concurrent-{worker_id}"},
@@ -901,7 +911,7 @@ def test_stale_apply_approval_does_not_consume_repeat_override(
     conn.commit()
     monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
 
-    assert acquire_job(target_url=TARGET, worker_id=4, approval_required=True) is None
+    assert acquire_job(target_job_id=_target_job_id(conn, TARGET), worker_id=4, approval_required=True) is None
     assert conn.execute("SELECT COUNT(*) FROM application_repeat_override_consumptions").fetchone()[0] == 0
 
 
@@ -940,20 +950,12 @@ def test_repeat_application_tables_are_exact_v7_and_preserve_application_facts(
         "application_repeat_override_consumptions",
         "application_repeat_audit",
     ):
-        columns = {
-            str(row[1])
-            for row in conn.execute(
-                f"PRAGMA table_info({table_name})"
-            ).fetchall()
-        }
+        columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
         assert "tenant_id" in columns
         assert conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
             (table_name,),
         ).fetchone()
     assert {"target_job_id", "prior_job_id"} <= {
-        str(row[1])
-        for row in conn.execute(
-            "PRAGMA table_info(application_repeat_overrides)"
-        ).fetchall()
+        str(row[1]) for row in conn.execute("PRAGMA table_info(application_repeat_overrides)").fetchall()
     }

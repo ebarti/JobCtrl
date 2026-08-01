@@ -311,18 +311,10 @@ def retailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
         workers=int(params.get("workers", 1)),
         validation_mode=str(params.get("validationMode", "normal")),
         retailor=True,
-        suppress_existing_artifacts=_bool_param(
-            params, "suppressExistingArtifacts", default=False
-        ),
+        suppress_existing_artifacts=_bool_param(params, "suppressExistingArtifacts", default=False),
         tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
-        tailor_judge_model=(
-            str(params["tailorJudgeModel"])
-            if params.get("tailorJudgeModel")
-            else None
-        ),
-        tailor_judge_min_score=(
-            float(raw_judge_min_score) if raw_judge_min_score is not None else None
-        ),
+        tailor_judge_model=(str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None),
+        tailor_judge_min_score=(float(raw_judge_min_score) if raw_judge_min_score is not None else None),
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
@@ -356,18 +348,10 @@ def tailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
         workers=int(params.get("workers", 1)),
         validation_mode=str(params.get("validationMode", "normal")),
         retailor=False,
-        allow_low_fit_override=_bool_param(
-            params, "allowLowFitOverride", default=True
-        ),
+        allow_low_fit_override=_bool_param(params, "allowLowFitOverride", default=True),
         tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
-        tailor_judge_model=(
-            str(params["tailorJudgeModel"])
-            if params.get("tailorJudgeModel")
-            else None
-        ),
-        tailor_judge_min_score=(
-            float(raw_judge_min_score) if raw_judge_min_score is not None else None
-        ),
+        tailor_judge_model=(str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None),
+        tailor_judge_min_score=(float(raw_judge_min_score) if raw_judge_min_score is not None else None),
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
@@ -461,8 +445,7 @@ def _browser_status_payload(status: Any) -> dict[str, object]:
         "detail": status.detail,
         "mutable": status.id != "core-browser",
         "enabled": status.id == "core-browser" or status.status != "disabled",
-        "profileCopyReady": status.id == "authenticated-linkedin-browser"
-        and status.status == "ready",
+        "profileCopyReady": status.id == "authenticated-linkedin-browser" and status.status == "ready",
     }
 
 
@@ -473,10 +456,7 @@ def _browser_capabilities_payload() -> dict[str, object]:
 
     return {
         "capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()],
-        "detectedBrowsers": [
-            {"id": browser.id, "label": browser.label}
-            for browser in detect_supported_browsers()
-        ],
+        "detectedBrowsers": [{"id": browser.id, "label": browser.label} for browser in detect_supported_browsers()],
     }
 
 
@@ -567,9 +547,7 @@ def retailor_current_policy(params: dict[str, Any]) -> WorkflowStartSpec:
         retailor=True,
         job_ids=_job_ids(params),
         tailor_current_policy_only=True,
-        suppress_existing_artifacts=_bool_param(
-            params, "suppressExistingArtifacts", default=False
-        ),
+        suppress_existing_artifacts=_bool_param(params, "suppressExistingArtifacts", default=False),
     )
 
 
@@ -629,19 +607,20 @@ def manual_capture_import(params: dict[str, Any]) -> WorkflowStartSpec:
 # ---------------------------------------------------------------------------
 
 
-def _apply_workflow_id(tenant_id: str, job_key: str) -> str:
-    """Deterministic ``apply-{tenant}-{jobKey}`` id so a double-click apply for one job
+def _apply_workflow_id(tenant_id: str, job_id: str) -> str:
+    """Deterministic ``apply-{tenant}-{jobId}`` id so a double-click apply for one job
     attaches to the running workflow (USE_EXISTING) instead of double-submitting.
     """
-    return apply_workflow_id(tenant_id, job_key)
+    return apply_workflow_id(tenant_id, job_id)
 
 
 def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
     """Build a :class:`WorkflowStartSpec` for :class:`ApplyWorkflow`."""
     try:
+        _reject_job_url_params(params)
         if "jobIds" in params:
             raise invalid_params("jobIds is not supported by apply; use jobId")
-        return build_apply_workflow_spec(_legacy_workflow_locator_params(params))
+        return build_apply_workflow_spec(params)
     except ValueError as exc:
         raise invalid_params(str(exc)) from exc
 

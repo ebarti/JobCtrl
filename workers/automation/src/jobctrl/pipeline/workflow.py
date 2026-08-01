@@ -10,6 +10,8 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
+from jobctrl.domain.identifiers import JobId, canonical_job_id
+
 with workflow.unsafe.imports_passed_through():
     from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
     from jobctrl.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
@@ -65,6 +67,8 @@ class JobPipelineWorkflowInput:
     tailor_judge_min_score: float | None = None
     job_url: str | None = None
     job_urls: tuple[str, ...] = ()
+    apply_job_id: JobId | None = None
+    apply_selector_keys: tuple[str, ...] = ()
     source_ids: tuple[str, ...] = ()
     score_current_policy_only: bool = False
     tailor_current_policy_only: bool = False
@@ -74,6 +78,14 @@ class JobPipelineWorkflowInput:
     model: str = "default"
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     continuous: bool = False
+
+    def __post_init__(self) -> None:
+        if self.apply_job_id is not None:
+            object.__setattr__(
+                self,
+                "apply_job_id",
+                canonical_job_id(str(self.apply_job_id)),
+            )
 
 
 @dataclass(frozen=True)
@@ -198,9 +210,7 @@ class JobPipelineWorkflow:
             )
         return result
 
-    async def _execute_stages(
-        self, payload: JobPipelineWorkflowInput
-    ) -> JobPipelineWorkflowResult:
+    async def _execute_stages(self, payload: JobPipelineWorkflowInput) -> JobPipelineWorkflowResult:
         completed: list[str] = []
         failed: list[str] = []
         failure: str | None = None
@@ -353,13 +363,14 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
             retry_policy=_COVER_RETRY,
         )
     if stage == "apply":
+        apply_job_id = _apply_child_job_id(payload)
         return await workflow.execute_child_workflow(
             ApplyWorkflow.run,
             ApplyWorkflowInput(
                 tenant_id=payload.tenant_id,
                 expected_app_dir=payload.expected_app_dir,
                 expected_db_path=payload.expected_db_path,
-                job_url=payload.job_url,
+                job_id=apply_job_id,
                 dry_run=payload.dry_run,
                 headless=payload.headless,
                 model=payload.model,
@@ -436,6 +447,24 @@ def _selected_job_urls(payload: JobPipelineWorkflowInput) -> tuple[str, ...]:
 
 def _has_selected_job_scope(payload: JobPipelineWorkflowInput) -> bool:
     return bool(payload.job_url or payload.job_urls)
+
+
+def _apply_child_job_id(payload: JobPipelineWorkflowInput) -> JobId | None:
+    """Validate the preserved selector shape before starting an Apply child."""
+
+    selector_keys = tuple(payload.apply_selector_keys)
+    legacy_scope_present = payload.job_url is not None or bool(payload.job_urls)
+    if not selector_keys:
+        if payload.apply_job_id is None and not legacy_scope_present:
+            return None
+    elif selector_keys == ("jobId",):
+        if payload.apply_job_id is not None and not legacy_scope_present:
+            return canonical_job_id(str(payload.apply_job_id))
+
+    raise ApplicationError(
+        "apply accepts only a canonical jobId; omit all selector keys for batch apply",
+        non_retryable=True,
+    )
 
 
 def _approved_tailor_job_urls(result: Any) -> tuple[str, ...] | None:

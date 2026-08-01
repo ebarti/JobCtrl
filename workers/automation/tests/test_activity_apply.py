@@ -21,6 +21,14 @@ from jobctrl.apply.activities import (
 )
 
 
+JOB_ID = "90000000-0000-4000-8000-000000000001"
+
+
+def test_apply_activity_input_rejects_url_shaped_job_id() -> None:
+    with pytest.raises(ValueError, match="canonical UUID"):
+        ApplyActivityInput(tenant_id="local", job_id="https://example.com/job")
+
+
 @pytest.fixture(autouse=True)
 def permit_browser_for_existing_apply_activity_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     """Activity behavior tests run after the separate capability check."""
@@ -66,7 +74,7 @@ async def test_apply_activity_invokes_apply_main_and_returns_ok():
                     _ApplyHarness.run,
                     ApplyActivityInput(
                         tenant_id="local",
-                        job_url="https://example.com/job",
+                        job_id=JOB_ID,
                         limit=2,
                         min_score=8,
                         model="haiku",
@@ -79,7 +87,8 @@ async def test_apply_activity_invokes_apply_main_and_returns_ok():
     apply_main_mock.assert_called_once()
     kwargs = apply_main_mock.call_args.kwargs
     assert kwargs["limit"] == 2
-    assert kwargs["target_url"] == "https://example.com/job"
+    assert kwargs["target_job_id"] == JOB_ID
+    assert kwargs["tenant_id"] == "local"
     assert kwargs["min_score"] == 8
     assert kwargs["headless"] is True
     assert kwargs["model"] == "haiku"

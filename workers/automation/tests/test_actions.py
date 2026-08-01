@@ -1,3 +1,4 @@
+import json
 from io import StringIO
 from pathlib import Path
 
@@ -11,6 +12,9 @@ from jobctrl.actions import LocalActionRequest, run_local_action
 from jobctrl.cli import app
 from jobctrl.database import close_connection, get_connection, init_db
 from jobctrl.workflow_specs import StartedWorkflowResult, build_run_stage_workflow_spec
+
+APPLY_JOB_ID = "90000000-0000-4000-8000-000000000001"
+APPLY_URL = "https://example.com/job"
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +35,26 @@ def _started(result: dict | None = None) -> StartedWorkflowResult:
         first_execution_run_id="first-test",
         result=result or {"status": "succeeded"},
     )
+
+
+def _insert_apply_target(conn) -> None:
+    conn.execute(
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+        VALUES ('local', ?, ?, 'Platform Engineer', 'Example', 'Example', '2026-07-31T12:00:00+00:00')
+        """,
+        (APPLY_JOB_ID, APPLY_URL),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_locators (
+            tenant_id, job_id, locator_kind, locator_value, is_current,
+            first_seen_at, last_seen_at
+        ) VALUES ('local', ?, 'posting_url', ?, 1, '2026-07-31T12:00:00+00:00', '2026-07-31T12:00:00+00:00')
+        """,
+        (APPLY_JOB_ID, APPLY_URL),
+    )
+    conn.commit()
 
 
 def test_local_stage_action_records_events(tmp_path, monkeypatch):
@@ -111,9 +135,7 @@ def test_tailor_action_fails_when_pipeline_reports_quality_gate_failure(tmp_path
     try:
         result = run_local_action(LocalActionRequest(stage="tailor"))
         conn = get_connection(db_path)
-        failure = conn.execute(
-            "SELECT event_type, level FROM job_events ORDER BY event_id DESC LIMIT 1"
-        ).fetchone()
+        failure = conn.execute("SELECT event_type, level FROM job_events ORDER BY event_id DESC LIMIT 1").fetchone()
 
         assert result.ok is False
         assert result.status == "failed"
@@ -137,7 +159,9 @@ def test_local_action_returns_structured_failure(tmp_path, monkeypatch):
 
     try:
         result = run_local_action(LocalActionRequest(stage="tailor"))
-        failure = conn.execute("SELECT event_type, level, message FROM job_events ORDER BY event_id DESC LIMIT 1").fetchone()
+        failure = conn.execute(
+            "SELECT event_type, level, message FROM job_events ORDER BY event_id DESC LIMIT 1"
+        ).fetchone()
 
         assert result.ok is False
         assert result.status == "failed"
@@ -219,7 +243,8 @@ def test_profile_import_dry_run_returns_plan_without_starting_workflow(monkeypat
 
 def test_apply_action_propagates_failed_count(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
-    init_db(db_path)
+    conn = init_db(db_path)
+    _insert_apply_target(conn)
 
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
     monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
@@ -230,7 +255,7 @@ def test_apply_action_propagates_failed_count(tmp_path, monkeypatch):
     )
 
     try:
-        result = run_local_action(LocalActionRequest(stage="apply", job_url="https://example.com/job", limit=1))
+        result = run_local_action(LocalActionRequest(stage="apply", job_url=APPLY_URL, limit=1))
 
         assert result.ok is False
         assert result.status == "failed"
@@ -241,7 +266,8 @@ def test_apply_action_propagates_failed_count(tmp_path, monkeypatch):
 
 def test_apply_action_uses_single_job_default_limit(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
-    init_db(db_path)
+    conn = init_db(db_path)
+    _insert_apply_target(conn)
     specs = []
 
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
@@ -253,19 +279,59 @@ def test_apply_action_uses_single_job_default_limit(tmp_path, monkeypatch):
     )
 
     try:
-        result = run_local_action(LocalActionRequest(stage="apply", job_url="https://example.com/job"))
+        result = run_local_action(LocalActionRequest(stage="apply", job_url=APPLY_URL))
 
         assert result.ok is True
         payload = specs[0].args[0]
+        assert payload.job_id == APPLY_JOB_ID
         assert payload.limit == 1
         assert payload.continuous is False
+        event_job_ids = [
+            row["job_id"]
+            for row in conn.execute("SELECT job_id FROM job_events WHERE stage = 'apply' ORDER BY event_id")
+        ]
+        assert event_job_ids == [APPLY_JOB_ID, APPLY_JOB_ID]
+    finally:
+        close_connection(db_path)
+
+
+def test_unresolved_apply_locator_records_sanitized_stage_level_failure(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
+    monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
+
+    try:
+        locator = "https://example.com/missing?private-token=do-not-persist"
+        result = run_local_action(LocalActionRequest(stage="apply", job_url=locator))
+        failure = conn.execute(
+            """
+            SELECT event_type, job_id, level, message, payload_json
+            FROM job_events
+            ORDER BY event_id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+        assert result.ok is False
+        assert result.error == "apply_job_locator_unresolved"
+        assert (failure["event_type"], failure["job_id"], failure["level"]) == (
+            "ActionFailed",
+            None,
+            "error",
+        )
+        payload = json.loads(failure["payload_json"])
+        assert payload["error"] == "apply_job_locator_unresolved"
+        assert locator not in f"{failure['message']} {failure['payload_json']}"
     finally:
         close_connection(db_path)
 
 
 def test_action_cli_passes_apply_model_and_headless_options(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
-    init_db(db_path)
+    conn = init_db(db_path)
+    _insert_apply_target(conn)
     specs = []
 
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
@@ -283,7 +349,7 @@ def test_action_cli_passes_apply_model_and_headless_options(tmp_path, monkeypatc
                 "action",
                 "apply",
                 "--url",
-                "https://example.com/job",
+                APPLY_URL,
                 "--model",
                 "sonnet",
                 "--headless",
@@ -292,6 +358,7 @@ def test_action_cli_passes_apply_model_and_headless_options(tmp_path, monkeypatc
 
         assert result.exit_code == 0
         payload = specs[0].args[0]
+        assert payload.job_id == APPLY_JOB_ID
         assert payload.model == "sonnet"
         assert payload.headless is True
     finally:

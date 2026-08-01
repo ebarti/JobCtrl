@@ -139,10 +139,7 @@ def _validate_validation_mode(validation: str) -> str:
     """Validate the tailor/cover validation mode option."""
     valid_modes = ("strict", "normal", "lenient")
     if validation not in valid_modes:
-        console.print(
-            f"[red]Invalid --validation value:[/red] '{validation}'. "
-            f"Choose from: {', '.join(valid_modes)}"
-        )
+        console.print(f"[red]Invalid --validation value:[/red] '{validation}'. Choose from: {', '.join(valid_modes)}")
         raise typer.Exit(code=1)
     return validation
 
@@ -699,10 +696,13 @@ def _run_stage_command(
 # Commands
 # ---------------------------------------------------------------------------
 
+
 @app.callback()
 def main(
     version: bool = typer.Option(
-        False, "--version", "-V",
+        False,
+        "--version",
+        "-V",
         help="Show version and exit.",
         callback=_version_callback,
         is_eager=True,
@@ -818,7 +818,9 @@ def capability_enable(
             default=False,
         )
         if not consent_copy_profile:
-            console.print("[yellow]Browser capability was not enabled because profile-copy consent was not granted.[/yellow]")
+            console.print(
+                "[yellow]Browser capability was not enabled because profile-copy consent was not granted.[/yellow]"
+            )
             raise typer.Exit(code=2)
 
     try:
@@ -857,7 +859,9 @@ def capability_disable(name: str = typer.Argument(..., help="Optional capability
 
 @app.command()
 def action(
-    stage: str = typer.Argument(..., help=f"Action stage. Valid: {', '.join((*VALID_STAGES, 'apply', 'profile_import'))}."),
+    stage: str = typer.Argument(
+        ..., help=f"Action stage. Valid: {', '.join((*VALID_STAGES, 'apply', 'profile_import'))}."
+    ),
     url: Optional[str] = typer.Option(None, "--url", help="Target job URL for targeted actions."),
     limit: int = typer.Option(0, "--limit", help="Maximum records to process. 0 means stage default."),
     workers: int = typer.Option(1, "--workers", "-w", help="Worker count for supported actions."),
@@ -865,9 +869,15 @@ def action(
     validation: str = typer.Option("normal", "--validation", help="Validation mode for material generation."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Return the planned action without executing."),
     pdf_path: Optional[str] = typer.Option(None, "--pdf", help="Resume PDF path for profile_import."),
-    model: str = typer.Option("default", "--model", "-m", help="Apply action model. 'default' uses the local Claude Code default."),
-    tailor_models: str = typer.Option("", "--tailor-models", help="Comma-separated LLM specs for tailor candidate generation."),
-    tailor_judge_model: str = typer.Option("", "--tailor-judge-model", help="Optional LLM spec for the structured tailoring judge."),
+    model: str = typer.Option(
+        "default", "--model", "-m", help="Apply action model. 'default' uses the local Claude Code default."
+    ),
+    tailor_models: str = typer.Option(
+        "", "--tailor-models", help="Comma-separated LLM specs for tailor candidate generation."
+    ),
+    tailor_judge_model: str = typer.Option(
+        "", "--tailor-judge-model", help="Optional LLM spec for the structured tailoring judge."
+    ),
     tailor_judge_min_score: float | None = typer.Option(
         None,
         "--tailor-judge-min-score",
@@ -971,14 +981,8 @@ def setup(
         console.print("[bold]JobCtrl Setup[/bold]")
 
     if not skip_system:
-        rows = (
-            [("Bundled payload", True, str(payload_dir()))]
-            if bundled
-            else _setup_toolchain_rows()
-        )
-        summary["toolchain"] = [
-            {"name": name, "ok": ok, "note": note} for name, ok, note in rows
-        ]
+        rows = [("Bundled payload", True, str(payload_dir()))] if bundled else _setup_toolchain_rows()
+        summary["toolchain"] = [{"name": name, "ok": ok, "note": note} for name, ok, note in rows]
         if not json_output:
             console.print("\n[bold]Toolchain[/bold]")
             for name, ok, note in rows:
@@ -987,15 +991,19 @@ def setup(
 
     commands: list[list[str]] = []
     if not bundled and not skip_dependencies:
-        commands.extend([
-            ["corepack", "pnpm", "install", "--frozen-lockfile"],
-            ["uv", "--project", "workers/automation", "sync", "--extra", "dev"],
-        ])
+        commands.extend(
+            [
+                ["corepack", "pnpm", "install", "--frozen-lockfile"],
+                ["uv", "--project", "workers/automation", "sync", "--extra", "dev"],
+            ]
+        )
     if not bundled and not skip_browsers:
-        commands.extend([
-            ["corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "install", "chromium"],
-            ["uv", "--project", "workers/automation", "run", "playwright", "install", "chromium"],
-        ])
+        commands.extend(
+            [
+                ["corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "install", "chromium"],
+                ["uv", "--project", "workers/automation", "run", "playwright", "install", "chromium"],
+            ]
+        )
 
     if commands:
         if not json_output:
@@ -1024,11 +1032,13 @@ def setup(
     if not json_output:
         console.print("\n[bold]Analysis Vendor Auth[/bold]")
     for probe in probe_analysis_setup():
-        summary["analysis"].append({
-            "name": probe.name,
-            "ok": probe.ok,
-            "note": probe.note,
-        })
+        summary["analysis"].append(
+            {
+                "name": probe.name,
+                "ok": probe.ok,
+                "note": probe.note,
+            }
+        )
         if not json_output:
             status = "[green]OK[/green]" if probe.ok else "[yellow]WARN[/yellow]"
             console.print(f"  {probe.name:<28} {status}  [dim]{probe.note}[/dim]")
@@ -1047,7 +1057,9 @@ def setup(
             if key.strip():
                 env_updates["ANTHROPIC_API_KEY"] = key.strip()
                 authenticated_legs.append("claude")
-        elif _confirm_setup_action("Skip the Claude analysis leg for now?", yes=yes, non_interactive=non_interactive, default=True):
+        elif _confirm_setup_action(
+            "Skip the Claude analysis leg for now?", yes=yes, non_interactive=non_interactive, default=True
+        ):
             pass
         else:
             authenticated_legs.append("claude")
@@ -1060,11 +1072,15 @@ def setup(
             key = os.environ.get("OPENAI_API_KEY") or os.environ.get("CODEX_API_KEY")
             command: list[str] | None = None
             stdin: str | None = None
-            if key and launch_logins and _confirm_setup_action(
-                "Enroll the current OpenAI key into JobCtrl's Codex CLI home now?",
-                yes=yes,
-                non_interactive=non_interactive,
-                default=False,
+            if (
+                key
+                and launch_logins
+                and _confirm_setup_action(
+                    "Enroll the current OpenAI key into JobCtrl's Codex CLI home now?",
+                    yes=yes,
+                    non_interactive=non_interactive,
+                    default=False,
+                )
             ):
                 command = [str(resolve_codex_binary()), "login", "--with-api-key"]
                 stdin = key + "\n"
@@ -1130,7 +1146,9 @@ def setup(
             if key.strip():
                 env_updates["GEMINI_API_KEY"] = key.strip()
                 authenticated_legs.append("antigravity")
-        elif _confirm_setup_action("Skip the Antigravity analysis leg for now?", yes=yes, non_interactive=non_interactive, default=True):
+        elif _confirm_setup_action(
+            "Skip the Antigravity analysis leg for now?", yes=yes, non_interactive=non_interactive, default=True
+        ):
             pass
         else:
             authenticated_legs.append("antigravity")
@@ -1146,16 +1164,15 @@ def setup(
             authenticated_legs.remove("antigravity")
 
     if authenticated_legs:
-        persisted_legs = [
-            "google" if leg == "antigravity" else leg
-            for leg in authenticated_legs
-        ]
+        persisted_legs = ["google" if leg == "antigravity" else leg for leg in authenticated_legs]
         if not dry_run:
             update_config_file({"analysis_legs": persisted_legs})
         summary["configUpdates"] = ["analysis_legs"]
     elif configured_legs:
         if not json_output:
-            console.print("[yellow]No analysis leg is authenticated; leaving existing leg configuration unchanged.[/yellow]")
+            console.print(
+                "[yellow]No analysis leg is authenticated; leaving existing leg configuration unchanged.[/yellow]"
+            )
     _write_env_updates(get_env_path(), env_updates, dry_run=dry_run, quiet=json_output)
     summary["envUpdates"] = sorted(env_updates)
 
@@ -1165,9 +1182,7 @@ def setup(
     if not core_probe.ok:
         summary["analysisNotReadyReason"] = core_probe.note
         if not json_output:
-            console.print(
-                f"[red]Core AI stages are NOT ready:[/red] {core_probe.note}"
-            )
+            console.print(f"[red]Core AI stages are NOT ready:[/red] {core_probe.note}")
     elif not json_output:
         console.print("[green]Core AI provider ready.[/green]")
 
@@ -1228,11 +1243,7 @@ def provider_pack_install(
 def run(
     stages: Optional[list[str]] = typer.Argument(
         None,
-        help=(
-            "Pipeline stages to run. "
-            f"Valid: {', '.join(VALID_STAGES)}, all. "
-            "Defaults to 'all' if omitted."
-        ),
+        help=(f"Pipeline stages to run. Valid: {', '.join(VALID_STAGES)}, all. Defaults to 'all' if omitted."),
     ),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for tailor/cover stages."),
     workers: int = typer.Option(
@@ -1288,10 +1299,7 @@ def run(
     # Validate stage names
     for s in stage_list:
         if s != "all" and s not in VALID_STAGES:
-            console.print(
-                f"[red]Unknown stage:[/red] '{s}'. "
-                f"Valid stages: {', '.join(VALID_STAGES)}, all"
-            )
+            console.print(f"[red]Unknown stage:[/red] '{s}'. Valid stages: {', '.join(VALID_STAGES)}, all")
             raise typer.Exit(code=1)
 
     # Discovery now drains scoring/tailoring preparation work, so explicit
@@ -1333,7 +1341,9 @@ def run(
 
 @app.command()
 def discover(
-    workers: int = typer.Option(1, "--workers", "-w", help="Parallel threads for discovery backends and detail enrichment."),
+    workers: int = typer.Option(
+        1, "--workers", "-w", help="Parallel threads for discovery backends and detail enrichment."
+    ),
     limit: int = typer.Option(0, "--limit", help="Maximum jobs to discover. 0 means all eligible jobs."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the stage without executing."),
 ) -> None:
@@ -1485,17 +1495,23 @@ def compensation_refresh(
 
 @app.command()
 def apply(
-    limit: Optional[int] = typer.Option(None, "--limit", "-l", help="Max applications to submit (default: all ready jobs)."),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", "-l", help="Max applications to submit (default: all ready jobs)."
+    ),
     workers: int = typer.Option(1, "--workers", "-w", help="Number of parallel browser workers."),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for job selection."),
-    model: str = typer.Option("default", "--model", "-m", help="Claude model name. 'default' uses the local Claude Code default."),
+    model: str = typer.Option(
+        "default", "--model", "-m", help="Claude model name. 'default' uses the local Claude Code default."
+    ),
     continuous: bool = typer.Option(False, "--continuous", "-c", help="Run forever, polling for new jobs."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview actions without submitting."),
     headless: bool = typer.Option(False, "--headless", help="Run browsers in headless mode."),
     url: Optional[str] = typer.Option(None, "--url", help="Apply to a specific job URL."),
     gen: bool = typer.Option(False, "--gen", help="Generate an inspection-only dry-run prompt instead of running."),
     mark_applied: Optional[str] = typer.Option(None, "--mark-applied", help="Manually mark a job URL as applied."),
-    mark_failed: Optional[str] = typer.Option(None, "--mark-failed", help="Manually mark a job URL as failed (provide URL)."),
+    mark_failed: Optional[str] = typer.Option(
+        None, "--mark-failed", help="Manually mark a job URL as failed (provide URL)."
+    ),
     fail_reason: Optional[str] = typer.Option(None, "--fail-reason", help="Reason for --mark-failed."),
     reset_failed: bool = typer.Option(False, "--reset-failed", help="Reset all failed jobs for retry."),
 ) -> None:
@@ -1504,25 +1520,48 @@ def apply(
 
     from jobctrl.config import check_tier
     from jobctrl.database import count_ready_to_apply, get_connection
+    from jobctrl.domain.discovery.value_objects import PostingUrl
+    from jobctrl.domain.identifiers import JobId
     from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
     from jobctrl.infrastructure.profile import get_profile_repository
 
     # --- Utility modes (no Chrome/Claude needed) ---
 
+    def resolve_job_id(posting_url: str) -> JobId:
+        identity = SqliteJobIdentityResolver(get_connection()).resolve_current_by_posting_url(
+            LOCAL_TENANT,
+            PostingUrl(value=posting_url),
+        )
+        if identity is None:
+            raise typer.BadParameter(
+                f"No current job found for URL: {posting_url}",
+                param_hint="--url",
+            )
+        return identity.job_id
+
     if mark_applied:
         from jobctrl.apply.launcher import mark_job
-        mark_job(mark_applied, "applied")
+
+        mark_job(resolve_job_id(mark_applied), "applied", tenant_id=LOCAL_TENANT)
         console.print(f"[green]Marked as applied:[/green] {mark_applied}")
         return
 
     if mark_failed:
         from jobctrl.apply.launcher import mark_job
-        mark_job(mark_failed, "failed", reason=fail_reason)
+
+        mark_job(
+            resolve_job_id(mark_failed),
+            "failed",
+            reason=fail_reason,
+            tenant_id=LOCAL_TENANT,
+        )
         console.print(f"[yellow]Marked as failed:[/yellow] {mark_failed} ({fail_reason or 'manual'})")
         return
 
     if reset_failed:
         from jobctrl.apply.launcher import reset_failed as do_reset
+
         count = do_reset()
         console.print(f"[green]Reset {count} failed job(s) for retry.[/green]")
         return
@@ -1538,10 +1577,7 @@ def apply(
     except FileNotFoundError:
         profile = None
     if profile is None:
-        console.print(
-            "[red]Profile not found.[/red]\n"
-            "Run [bold]jobctrl init[/bold] to create your profile first."
-        )
+        console.print("[red]Profile not found.[/red]\nRun [bold]jobctrl init[/bold] to create your profile first.")
         raise typer.Exit(code=1)
 
     # Check 3: Tailored resumes exist (skip for --gen with --url)
@@ -1562,11 +1598,17 @@ def apply(
 
     if gen:
         from jobctrl.apply.launcher import gen_prompt
+
         target = url or ""
         if not target:
             console.print("[red]--gen requires --url to specify which job.[/red]")
             raise typer.Exit(code=1)
-        prompt_file = gen_prompt(target, min_score=min_score, model=model)
+        prompt_file = gen_prompt(
+            resolve_job_id(target),
+            min_score=min_score,
+            model=model,
+            tenant_id=LOCAL_TENANT,
+        )
         if not prompt_file:
             console.print("[red]No matching job found for that URL.[/red]")
             raise typer.Exit(code=1)
@@ -1585,9 +1627,12 @@ def apply(
     else:
         # Default: apply to all currently ready jobs
         effective_limit = ready
+    target_job_id = resolve_job_id(url) if url else None
 
     console.print("\n[bold blue]Launching Auto-Apply[/bold blue]")
-    console.print(f"  Limit:    {'unlimited' if continuous else f'{effective_limit} (all ready)'  if limit is None else effective_limit}")
+    console.print(
+        f"  Limit:    {'unlimited' if continuous else f'{effective_limit} (all ready)' if limit is None else effective_limit}"
+    )
     console.print(f"  Workers:  {workers}")
     console.print(f"  Model:    {model}")
     console.print(f"  Headless: {headless}")
@@ -1600,7 +1645,7 @@ def apply(
         build_apply_workflow_spec(
             {
                 "tenantId": "local",
-                "jobUrl": url,
+                **({"jobId": str(target_job_id)} if target_job_id else {}),
                 "limit": effective_limit,
                 "minScore": min_score,
                 "headless": headless,
@@ -1616,15 +1661,24 @@ def apply(
 
 @app.command()
 def job(
-    url: str = typer.Argument(..., help="URL of the job to process. Automatically enriched if not already in the database."),
+    url: str = typer.Argument(
+        ..., help="URL of the job to process. Automatically enriched if not already in the database."
+    ),
     tailor_flag: bool = typer.Option(False, "--tailor", "-t", help="Only tailor resume + cover letter (skip apply)."),
-    apply_flag: bool = typer.Option(False, "--apply", "-a", help="Only apply (skip tailoring). Job must already be tailored."),
+    apply_flag: bool = typer.Option(
+        False, "--apply", "-a", help="Only apply (skip tailoring). Job must already be tailored."
+    ),
     validation: str = typer.Option(
         "normal",
         "--validation",
         help="Validation strictness for tailor/cover. strict | normal | lenient.",
     ),
-    model: str = typer.Option("default", "--model", "-m", help="Claude model name for auto-apply. 'default' uses the local Claude Code default."),
+    model: str = typer.Option(
+        "default",
+        "--model",
+        "-m",
+        help="Claude model name for auto-apply. 'default' uses the local Claude Code default.",
+    ),
     headless: bool = typer.Option(False, "--headless", help="Run browser in headless mode."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without executing."),
 ) -> None:
@@ -1653,9 +1707,11 @@ def job(
     # Gate on required tiers
     if do_tailor:
         from jobctrl.config import check_tier
+
         check_tier(2, "resume tailoring")
     if do_apply:
         from jobctrl.config import check_tier
+
         check_tier(3, "auto-apply")
 
     actions = []
@@ -1665,10 +1721,12 @@ def job(
         actions.append("apply")
 
     console.print()
-    console.print(Panel.fit(
-        f"[bold]Single Job[/bold] — {' + '.join(actions)}",
-        border_style="blue",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]Single Job[/bold] — {' + '.join(actions)}",
+            border_style="blue",
+        )
+    )
     console.print(f"  URL:        {url}")
     console.print(f"  Validation: {validation}")
     if do_apply:
@@ -1735,9 +1793,7 @@ def digest(
 
     if json_output:
         payload = (
-            {"digest": digest_payload, "acknowledge": acknowledge_payload}
-            if acknowledge_payload
-            else digest_payload
+            {"digest": digest_payload, "acknowledge": acknowledge_payload} if acknowledge_payload else digest_payload
         )
         console.print_json(data=payload)
         return
@@ -1837,9 +1893,7 @@ def _blocked_source_note(blocked_sources: dict[str, Any]) -> str:
     if not isinstance(sources, list) or not sources:
         return "No blocked or failing sources"
     names = [
-        str(_dict(source).get("sourceId") or "")
-        for source in sources[:3]
-        if str(_dict(source).get("sourceId") or "")
+        str(_dict(source).get("sourceId") or "") for source in sources[:3] if str(_dict(source).get("sourceId") or "")
     ]
     extra = len(sources) - len(names)
     if extra > 0:
@@ -1966,13 +2020,13 @@ def retry(
 
     retry_stages = (*VALID_STAGES, "enrich", "apply")
     if stage not in retry_stages:
-        console.print(
-            f"[red]Unknown stage:[/red] '{stage}'. "
-            f"Valid stages: {', '.join(retry_stages)}"
-        )
+        console.print(f"[red]Unknown stage:[/red] '{stage}'. Valid stages: {', '.join(retry_stages)}")
         raise typer.Exit(code=1)
 
     from jobctrl.database import get_connection
+    from jobctrl.domain.discovery.value_objects import PostingUrl
+    from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
     from jobctrl.state import reset_job_stage
 
     try:
@@ -1984,11 +2038,18 @@ def retry(
     console.print(f"[green]Reset {stage} for retry:[/green] {job_url}")
     if run_after:
         if stage == "apply":
+            identity = SqliteJobIdentityResolver(get_connection()).resolve_current_by_posting_url(
+                LOCAL_TENANT,
+                PostingUrl(value=job_url),
+            )
+            if identity is None:
+                console.print(f"[red]No current job found for URL:[/red] {job_url}")
+                raise typer.Exit(code=1)
             _run_workflow_spec_from_cli(
                 build_apply_workflow_spec(
                     {
                         "tenantId": "local",
-                        "jobUrl": job_url,
+                        "jobId": str(identity.job_id),
                         "limit": 1,
                     }
                 ),
@@ -2063,11 +2124,7 @@ def runs(
         selected = next((run for run in runs if run.get("run_id", "").startswith(run_id)), None)
     else:
         selected = next(
-            (
-                run
-                for run in runs
-                if (run.get("status") or "").upper() in {"FAILED", "ERROR", "IN_PROGRESS", "RUNNING"}
-            ),
+            (run for run in runs if (run.get("status") or "").upper() in {"FAILED", "ERROR", "IN_PROGRESS", "RUNNING"}),
             recent[0],
         )
 
@@ -2220,6 +2277,7 @@ def worker(
         current_runtime_identity,
         write_worker_heartbeat,
     )
+
     queue = task_queue or JOBCTRL_TASK_QUEUE
 
     async def _run() -> None:
@@ -2283,8 +2341,7 @@ def worker(
         )
         if startup_auto_apply.changed:
             console.print(
-                f"[yellow]Auto-apply loop {startup_auto_apply.action}: "
-                f"{startup_auto_apply.workflow_id}.[/yellow]"
+                f"[yellow]Auto-apply loop {startup_auto_apply.action}: {startup_auto_apply.workflow_id}.[/yellow]"
             )
         try:
             await worker.run()
@@ -2317,18 +2374,14 @@ async def _worker_heartbeat_loop(
         await asyncio.sleep(interval_seconds)
         try:
             queue_observation = (
-                await _safe_task_queue_observation(temporal_client, task_queue)
-                if temporal_client is not None
-                else None
+                await _safe_task_queue_observation(temporal_client, task_queue) if temporal_client is not None else None
             )
             _worker_heartbeat_iteration(
                 task_queue,
                 worker_id,
                 worker_started_at=worker_started_at,
                 max_concurrent_activities=max_concurrent_activities,
-                activity_snapshot=(
-                    activity_inventory.snapshot() if activity_inventory is not None else None
-                ),
+                activity_snapshot=(activity_inventory.snapshot() if activity_inventory is not None else None),
                 task_queue_observation=queue_observation,
             )
         except Exception:
@@ -2344,10 +2397,7 @@ async def _worker_heartbeat_loop(
                 log.warning("Workflow-run reconciler iteration failed; will retry", exc_info=True)
             else:
                 if reconciled:
-                    console.print(
-                        f"[yellow]Reconciler updated {reconciled} workflow "
-                        "run(s).[/yellow]"
-                    )
+                    console.print(f"[yellow]Reconciler updated {reconciled} workflow run(s).[/yellow]")
             try:
                 recovered = await _reconcile_legacy_discovery_executions(temporal_client)
             except Exception:
@@ -2358,8 +2408,7 @@ async def _worker_heartbeat_loop(
             else:
                 if recovered:
                     console.print(
-                        f"[yellow]Recovered durable tracking for {recovered} legacy "
-                        "Discover execution(s).[/yellow]"
+                        f"[yellow]Recovered durable tracking for {recovered} legacy Discover execution(s).[/yellow]"
                     )
             try:
                 from jobctrl.apply.auto_apply import reconcile_auto_apply_loop
@@ -2376,10 +2425,7 @@ async def _worker_heartbeat_loop(
                 log.warning("Auto-apply loop reconciler iteration failed; will retry", exc_info=True)
             else:
                 if auto_apply.changed:
-                    console.print(
-                        f"[yellow]Auto-apply loop {auto_apply.action}: "
-                        f"{auto_apply.workflow_id}.[/yellow]"
-                    )
+                    console.print(f"[yellow]Auto-apply loop {auto_apply.action}: {auto_apply.workflow_id}.[/yellow]")
 
 
 def _worker_heartbeat_iteration(
@@ -2556,11 +2602,7 @@ async def _reconcile_legacy_discovery_executions(
                 exc_info=True,
             )
             continue
-        if (
-            result.activities_recovered
-            or result.jobs_linked
-            or result.work_plans_recovered
-        ):
+        if result.activities_recovered or result.jobs_linked or result.work_plans_recovered:
             changed += 1
     return changed
 
@@ -2654,8 +2696,7 @@ async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> 
         return False
     temporal_run_id = str(run.get("temporal_run_id") or "") or None
     missing_history_terminal = (
-        str(run.get("status") or "") == "terminated"
-        and str(run.get("error_code") or "") == "reconciled_not_found"
+        str(run.get("status") or "") == "terminated" and str(run.get("error_code") or "") == "reconciled_not_found"
     )
     try:
         handle = temporal_client.get_workflow_handle(
@@ -2838,10 +2879,7 @@ def _record_reconciled_outcome(
             "SELECT status FROM workflow_run_projections WHERE workflow_id = ?",
             (workflow_id,),
         ).fetchone()
-        if (
-            existing is not None
-            and str(existing["status"]) in SqliteProjectionStore.WORKFLOW_TERMINAL_STATUSES
-        ):
+        if existing is not None and str(existing["status"]) in SqliteProjectionStore.WORKFLOW_TERMINAL_STATUSES:
             if own_txn:
                 conn.rollback()
             return
@@ -2932,21 +2970,25 @@ def politeness_doctor_notices(conn, search_cfg: dict) -> list[tuple[str, str, st
     rows: list[tuple[str, str, str]] = []
 
     user_agent = resolve_honest_user_agent().header_value()
-    rows.append((
-        "crawl user-agent",
-        "ok",
-        f"{user_agent} — review before real crawls; edit it in Discovery runtime settings",
-    ))
+    rows.append(
+        (
+            "crawl user-agent",
+            "ok",
+            f"{user_agent} — review before real crawls; edit it in Discovery runtime settings",
+        )
+    )
 
     boards = resolve_jobspy_boards(search_cfg, warn=False)
     active_broad = [board for board in boards if board in _BROAD_BOARDS]
     if active_broad:
-        rows.append((
-            "broad-board discovery",
-            "warn",
-            f"active: {', '.join(active_broad)} — JobStreaming owns their transport; "
-            "only invocation-boundary budget + pacing apply (D3)",
-        ))
+        rows.append(
+            (
+                "broad-board discovery",
+                "warn",
+                f"active: {', '.join(active_broad)} — JobStreaming owns their transport; "
+                "only invocation-boundary budget + pacing apply (D3)",
+            )
+        )
     else:
         rows.append(("broad-board discovery", "ok", "no broad boards active"))
 
@@ -2954,11 +2996,13 @@ def politeness_doctor_notices(conn, search_cfg: dict) -> list[tuple[str, str, st
     if blocked:
         preview = ", ".join(sorted(blocked)[:5])
         extra = "" if len(blocked) <= 5 else f" (+{len(blocked) - 5} more)"
-        rows.append((
-            "robots/rate-limited sources",
-            "warn",
-            f"{len(blocked)} source(s) recently blocked: {preview}{extra}",
-        ))
+        rows.append(
+            (
+                "robots/rate-limited sources",
+                "warn",
+                f"{len(blocked)} source(s) recently blocked: {preview}{extra}",
+            )
+        )
     else:
         rows.append(("robots/rate-limited sources", "ok", "none recently blocked"))
 
@@ -2971,7 +3015,10 @@ def doctor() -> None:
     import os
     import shutil
     from jobctrl.config import (
-        load_env, DB_PATH, RESUME_PATH, RESUME_PDF_PATH,
+        load_env,
+        DB_PATH,
+        RESUME_PATH,
+        RESUME_PDF_PATH,
         load_search_config,
         gmail_mcp_auth_status,
     )
@@ -3056,21 +3103,23 @@ def doctor() -> None:
                 "felony_conviction",
                 "previously_worked_at_employer",
             )
-            missing_attestations = [
-                key for key in required_attestations if attestations.get(key) is None
-            ]
+            missing_attestations = [key for key in required_attestations if attestations.get(key) is None]
             if missing_attestations:
-                results.append((
-                    "application attestations",
-                    warn_mark,
-                    "incomplete; live applies may fail on screening questions",
-                ))
+                results.append(
+                    (
+                        "application attestations",
+                        warn_mark,
+                        "incomplete; live applies may fail on screening questions",
+                    )
+                )
             else:
-                results.append((
-                    "application attestations",
-                    ok_mark,
-                    "typed screening attestations complete",
-                ))
+                results.append(
+                    (
+                        "application attestations",
+                        ok_mark,
+                        "typed screening attestations complete",
+                    )
+                )
     except FileNotFoundError:
         results.append(("candidate profile", fail_mark, "Run 'jobctrl init' to create"))
     except Exception:  # noqa: BLE001 - doctor should report validation problems instead of crashing
@@ -3088,11 +3137,13 @@ def doctor() -> None:
 
     browser_capabilities = {item.id: item for item in list_browser_capabilities()}
     core_browser = browser_capabilities["core-browser"]
-    results.append((
-        "core browser (scraping + PDF)",
-        ok_mark if core_browser.status == "ready" else fail_mark,
-        core_browser.detail,
-    ))
+    results.append(
+        (
+            "core browser (scraping + PDF)",
+            ok_mark if core_browser.status == "ready" else fail_mark,
+            core_browser.detail,
+        )
+    )
     auto_apply_browser = browser_capabilities["auto-apply-browser"]
     linkedin_browser = browser_capabilities["authenticated-linkedin-browser"]
     capability_marks = {
@@ -3103,11 +3154,13 @@ def doctor() -> None:
         "unavailable": fail_mark,
     }
     for capability in (auto_apply_browser, linkedin_browser):
-        results.append((
-            f"{capability.id} capability",
-            capability_marks[capability.status],
-            capability.detail,
-        ))
+        results.append(
+            (
+                f"{capability.id} capability",
+                capability_marks[capability.status],
+                capability.detail,
+            )
+        )
 
     try:
         search_cfg = load_search_config()
@@ -3141,11 +3194,13 @@ def doctor() -> None:
             if _claude_supports_budget_flag(claude_bin, bare=bundled):
                 results.append(("Claude apply budget flag", ok_mark, "--max-budget-usd available"))
             else:
-                results.append((
-                    "Claude apply budget flag",
-                    warn_mark,
-                    "installed Claude runtime does not advertise --max-budget-usd",
-                ))
+                results.append(
+                    (
+                        "Claude apply budget flag",
+                        warn_mark,
+                        "installed Claude runtime does not advertise --max-budget-usd",
+                    )
+                )
         else:
             results.append(("Claude apply runtime", fail_mark, "set JOBCTRL_CLAUDE_BIN or install dependencies"))
     except Exception as exc:  # noqa: BLE001 - doctor is diagnostic
@@ -3169,8 +3224,7 @@ def doctor() -> None:
         if npx_bin:
             results.append(("Node.js (npx)", ok_mark, npx_bin))
         else:
-            results.append(("Node.js (npx)", fail_mark,
-                            "Install Node.js 18+ from nodejs.org (needed for auto-apply)"))
+            results.append(("Node.js (npx)", fail_mark, "Install Node.js 18+ from nodejs.org (needed for auto-apply)"))
 
     # Gmail connector is optional, but apply runs that hit email verification need it
     # to stay browser-independent and finish automatically.
@@ -3178,39 +3232,52 @@ def doctor() -> None:
     if gmail_ok:
         results.append(("Gmail connector auth", ok_mark, gmail_note))
     else:
-        results.append((
-            "Gmail connector auth",
-            warn_mark,
-            f"{gmail_note}; email verification will stop as login_issue and email applications cannot send",
-        ))
+        results.append(
+            (
+                "Gmail connector auth",
+                warn_mark,
+                f"{gmail_note}; email verification will stop as login_issue and email applications cannot send",
+            )
+        )
 
     # CapSolver (optional; the owned solve_captcha tool fails closed when absent)
     capsolver = os.environ.get("CAPSOLVER_API_KEY")
     if capsolver:
-        results.append((
-            "CapSolver API key",
-            "[dim]configured[/dim]",
-            "owned solve_captcha tool can handle supported widgets",
-        ))
+        results.append(
+            (
+                "CapSolver API key",
+                "[dim]configured[/dim]",
+                "owned solve_captcha tool can handle supported widgets",
+            )
+        )
     else:
-        results.append(("CapSolver API key", "[dim]optional[/dim]",
-                        "not required; unsupported or unconfigured CAPTCHA flows fail closed"))
+        results.append(
+            (
+                "CapSolver API key",
+                "[dim]optional[/dim]",
+                "not required; unsupported or unconfigured CAPTCHA flows fail closed",
+            )
+        )
 
     # The gate defaults on. If an operator has explicitly disabled it, make the
     # resulting live-submission posture visible in the same preflight that
     # reports the other preserved automation capabilities.
     if read_apply_approval_required(default=True):
-        results.append((
-            "apply approval gate",
-            ok_mark,
-            "required before eligible live submissions",
-        ))
+        results.append(
+            (
+                "apply approval gate",
+                ok_mark,
+                "required before eligible live submissions",
+            )
+        )
     else:
-        results.append((
-            "apply approval gate",
-            warn_mark,
-            "disabled; eligible live runs may submit without human review",
-        ))
+        results.append(
+            (
+                "apply approval gate",
+                warn_mark,
+                "disabled; eligible live runs may submit without human review",
+            )
+        )
 
     # Temporal dev server (workflow engine)
     from jobctrl.infrastructure.temporal import get_temporal_client
@@ -3222,8 +3289,7 @@ def doctor() -> None:
         asyncio.run(_probe_temporal())
         results.append(("Temporal", ok_mark, "reachable"))
     except (Exception, asyncio.TimeoutError):  # noqa: BLE001 — any failure ⇒ unreachable
-        results.append(("Temporal", fail_mark,
-                        "unreachable (start with: temporal server start-dev)"))
+        results.append(("Temporal", fail_mark, "unreachable (start with: temporal server start-dev)"))
 
     # Langfuse OTLP ingest (observability target)
     # Skip the network probe entirely if LANGFUSE_DISABLE is set — it's the
@@ -3238,11 +3304,13 @@ def doctor() -> None:
         lf_sec = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
         lf_url = os.environ.get("LANGFUSE_BASE_URL", "").strip().rstrip("/")
         if not (lf_pub and lf_sec and lf_url):
-            results.append((
-                "Langfuse",
-                fail_mark,
-                "MISSING (set LANGFUSE_PUBLIC_KEY/SECRET_KEY/BASE_URL)",
-            ))
+            results.append(
+                (
+                    "Langfuse",
+                    fail_mark,
+                    "MISSING (set LANGFUSE_PUBLIC_KEY/SECRET_KEY/BASE_URL)",
+                )
+            )
         else:
             try:
                 resp = httpx.head(f"{lf_url}/api/public/otel/v1/traces", timeout=2.0)
@@ -3252,11 +3320,13 @@ def doctor() -> None:
                 if resp.status_code < 500:
                     results.append(("Langfuse", ok_mark, "reachable"))
                 else:
-                    results.append((
-                        "Langfuse",
-                        fail_mark,
-                        f"unreachable (status={resp.status_code})",
-                    ))
+                    results.append(
+                        (
+                            "Langfuse",
+                            fail_mark,
+                            f"unreachable (status={resp.status_code})",
+                        )
+                    )
             except Exception:  # noqa: BLE001 — any failure ⇒ unreachable
                 results.append(("Langfuse", fail_mark, "unreachable"))
 
@@ -3292,15 +3362,20 @@ def doctor() -> None:
 
     # Tier summary
     from jobctrl.config import get_tier, TIER_LABELS
+
     tier = get_tier()
     console.print(f"[bold]Current tier: Tier {tier} — {TIER_LABELS[tier]}[/bold]")
 
     if tier == 1:
         console.print("[dim]  → Tier 2 unlocks: scoring, tailoring, cover letters (needs an LLM provider)[/dim]")
-        tier3_tools = "Claude apply runtime + an explicitly enabled auto-apply browser capability" + ("" if bundled else " + Node.js")
+        tier3_tools = "Claude apply runtime + an explicitly enabled auto-apply browser capability" + (
+            "" if bundled else " + Node.js"
+        )
         console.print(f"[dim]  → Tier 3 unlocks: auto-apply (needs {tier3_tools})[/dim]")
     elif tier == 2:
-        tier3_tools = "Claude apply runtime + an explicitly enabled auto-apply browser capability" + ("" if bundled else " + Node.js")
+        tier3_tools = "Claude apply runtime + an explicitly enabled auto-apply browser capability" + (
+            "" if bundled else " + Node.js"
+        )
         console.print(f"[dim]  → Tier 3 unlocks: auto-apply (needs {tier3_tools})[/dim]")
 
     console.print()
@@ -3308,10 +3383,16 @@ def doctor() -> None:
 
 @app.command("migrate-resume-html")
 def migrate_resume_html(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Report matching resume PDFs without writing files or DB rows."),
-    force: bool = typer.Option(False, "--force", help="Refresh already-HTML resume PDFs from their sibling text source."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Report matching resume PDFs without writing files or DB rows."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Refresh already-HTML resume PDFs from their sibling text source."
+    ),
     job_url: Optional[str] = typer.Option(None, "--job-url", help="Limit migration to one job URL."),
-    limit: Optional[int] = typer.Option(None, "--limit", min=1, help="Maximum number of resume PDFs to migrate or refresh."),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", min=1, help="Maximum number of resume PDFs to migrate or refresh."
+    ),
 ) -> None:
     """Migrate or refresh approved resume PDFs as HTML/CSS-rendered artifacts."""
     _bootstrap()
