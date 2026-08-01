@@ -3123,6 +3123,10 @@ function isDefaultVisibleArtifact(artifact: Pick<ArtifactRow, "status">): boolea
   return String(artifact.status ?? "").toLowerCase() !== "suppressed";
 }
 
+function isAvailableMaterialArtifact(artifact: Pick<ArtifactRow, "status">): boolean {
+  return ["active", "approved"].includes(String(artifact.status ?? "").toLowerCase());
+}
+
 function preferredArtifactSource(
   artifacts: ArtifactRow[],
   artifactTypes: string[],
@@ -3130,7 +3134,7 @@ function preferredArtifactSource(
 ): ArtifactRow | undefined {
   const typeSet = new Set(artifactTypes);
   return artifacts
-    .filter((artifact) => typeSet.has(artifact.artifactType) && isDefaultVisibleArtifact(artifact))
+    .filter((artifact) => typeSet.has(artifact.artifactType) && isAvailableMaterialArtifact(artifact))
     .sort((left, right) => {
       const leftPreferred = left.generation === preferredGeneration ? 1 : 0;
       const rightPreferred = right.generation === preferredGeneration ? 1 : 0;

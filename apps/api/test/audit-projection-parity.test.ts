@@ -138,6 +138,27 @@ function withExactV7JobIds<T>(value: T): T {
   return value;
 }
 
+function withExactV7ProjectionContract(
+  value: Record<ProjectionTable, Record<string, unknown>>,
+): Record<ProjectionTable, Record<string, unknown>> {
+  const converted = withExactV7JobIds(value);
+  converted.jobList.apply_mode = "automated_live";
+  const outcomeConversion = converted.dashboard.outcome_conversion_json as {
+    byApplyMode: Array<Record<string, unknown>>;
+  };
+  outcomeConversion.byApplyMode = [
+    {
+      applyMode: "automated_live",
+      applied: 3,
+      reply: 3,
+      interview: 2,
+      offer: 1,
+      rejection: 1,
+    },
+  ];
+  return converted;
+}
+
 function withTempDb(): { dbPath: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-audit-parity-"));
   const dbPath = path.join(dir, "jobs.db");
@@ -145,6 +166,21 @@ function withTempDb(): { dbPath: string; cleanup: () => void } {
     dbPath,
     cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
   };
+}
+
+function insertApplyRunProjection(
+  db: Database.Database,
+  jobId: string,
+  startedAt: string,
+  finishedAt: string,
+): void {
+  const runId = `apply:${jobId}`;
+  db.prepare(
+    `INSERT INTO apply_run_projections (
+       run_id, tenant_id, job_id, job_title, job_employer, status, result,
+       dry_run, started_at, finished_at, events_json
+     ) VALUES (?, 'local', ?, '', '', 'succeeded', 'applied', 0, ?, ?, '[]')`,
+  ).run(runId, jobId, startedAt, finishedAt);
 }
 
 /** Seed the canonical rows exactly as the Python repositories write them. */
@@ -290,6 +326,7 @@ function seedRows(dbPath: string): void {
        tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
      ) VALUES ('local', ?, 1, 'tailor', 'ResumeApproved', 'info', 'approved', ?, '{}')`,
   ).run(jobId, createdAt);
+  insertApplyRunProjection(db, jobId, fixture.job.discoveredAt, fixture.job.appliedAt);
   db.prepare(
     `INSERT INTO resume_templates (
        tenant_id, template_id, display_name, status, built_in, created_at, updated_at
@@ -381,6 +418,12 @@ function seedRows(dbPath: string): void {
     `INSERT INTO jobs (tenant_id, job_id, url, title, site, fit_score, apply_status, applied_at, discovered_at)
      VALUES ('local', @job_id, @url, @title, @site, @fit_score, 'applied', @applied_at, @discovered_at)`,
   );
+  const insertConversionScore = db.prepare(
+    `INSERT INTO job_scores (
+       job_id, version, tenant_id, fit_score, breakdown_json, keywords_json,
+       scored_at, correction_json, criteria_json, trace_json
+     ) VALUES (@job_id, 1, 'local', @fit_score, '{}', '[]', @scored_at, NULL, '{}', '{}')`,
+  );
   const insertConversionStage = db.prepare(
     `INSERT INTO job_stage_states (
        job_id, stage, state, attempt_count, max_attempts, started_at, updated_at,
@@ -398,6 +441,12 @@ function seedRows(dbPath: string): void {
       applied_at: job.appliedAt,
       discovered_at: job.discoveredAt,
     });
+    insertConversionScore.run({
+      job_id: conversionJobId,
+      fit_score: job.fitScore,
+      scored_at: job.appliedAt,
+    });
+    insertApplyRunProjection(db, conversionJobId, String(job.discoveredAt), String(job.appliedAt));
     for (const [stage, maxAttempts] of conversionStages) {
       insertConversionStage.run({
         job_id: conversionJobId,
@@ -638,7 +687,7 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
             expect(row, `${table} projection row missing`).toBeTruthy();
             const jsonCols = fixture.projectionParity.jsonColumns[table];
             const nonDet = fixture.projectionParity.nonDeterministicColumns[table];
-            const expectedCols = fixture.expectedProjections[table];
+            const expectedCols = withExactV7ProjectionContract(fixture.expectedProjections)[table];
 
             // Column-set parity guard: the columns the builder emits must be
             // exactly the fixture's deterministic keys plus the wall-clock columns.
@@ -651,11 +700,9 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
             for (const column of nonDet) {
               expect(row![column], `${table}.${column} not populated`).toBeTruthy();
             }
-            const expected = withExactV7JobIds(
-              table === "jobList"
-                ? { ...expectedCols, artifact_count: fixture.rows.artifacts.length }
-                : expectedCols,
-            );
+            const expected = table === "jobList"
+              ? { ...expectedCols, artifact_count: fixture.rows.artifacts.length }
+              : expectedCols;
             expect(normalizeRow(row!, jsonCols, nonDet)).toEqual(expected);
           }
         } finally {
