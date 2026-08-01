@@ -10,6 +10,7 @@ from jobctrl.domain.operations.feedback import (
     DiscoveryFeedbackSignal,
     RoleMatchApprovalFeedbackSignal,
     ScoreCorrectionFeedbackSignal,
+    TailoringFeedbackSignal,
 )
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.projections.sqlite_feedback_signals import (
@@ -31,6 +32,7 @@ _PRIVATE_SENTINELS = (
     "private mail body",
     "/Users/private/resume.pdf",
 )
+_PRIVATE_TAILORING_SUMMARY = "private tailoring edit and generated resume text"
 
 
 def test_reads_only_explicit_reviewed_feedback_as_closed_typed_facts(
@@ -41,6 +43,7 @@ def test_reads_only_explicit_reviewed_feedback_as_closed_typed_facts(
     _seed_score_correction(conn)
     _seed_discovery_feedback(conn)
     _seed_role_suggestions(conn)
+    _seed_tailoring_feedback(conn, tenant_id="local", job_id=_JOB_C)
     conn.commit()
 
     signals = SqliteFeedbackSignalReader(conn).list_accepted(LOCAL_TENANT)
@@ -49,6 +52,7 @@ def test_reads_only_explicit_reviewed_feedback_as_closed_typed_facts(
         ScoreCorrectionFeedbackSignal,
         DiscoveryFeedbackSignal,
         RoleMatchApprovalFeedbackSignal,
+        TailoringFeedbackSignal,
     ]
     score = signals[0]
     assert isinstance(score, ScoreCorrectionFeedbackSignal)
@@ -73,6 +77,16 @@ def test_reads_only_explicit_reviewed_feedback_as_closed_typed_facts(
     assert role.rule_value == "account executive"
     assert role.source_ids == ("source-a", "source-b")
 
+    tailoring = signals[3]
+    assert isinstance(tailoring, TailoringFeedbackSignal)
+    assert tailoring.job_ids == (_JOB_C,)
+    assert tailoring.source_id == "tailoring-signal"
+    assert tailoring.source_revision == 1
+    assert tailoring.signal_kind == "factual_correction"
+    assert tailoring.rule_key == "fact_handling"
+    assert tailoring.rule_value == "require_source_match"
+    assert tailoring.allowlist_version == 1
+
     close_connection(tmp_path / "jobctrl.db")
 
 
@@ -84,14 +98,15 @@ def test_private_source_text_and_outcomes_never_enter_the_signal_union(
     _seed_score_correction(conn)
     _seed_discovery_feedback(conn)
     _seed_role_suggestions(conn)
+    _seed_tailoring_feedback(conn, tenant_id="local", job_id=_JOB_C)
     _seed_outcome_and_mail(conn)
     conn.commit()
 
     signals = SqliteFeedbackSignalReader(conn).list_accepted(LOCAL_TENANT)
     serialized = json.dumps([asdict(signal) for signal in signals], sort_keys=True)
 
-    assert len(signals) == 3
-    for sentinel in _PRIVATE_SENTINELS:
+    assert len(signals) == 4
+    for sentinel in (*_PRIVATE_SENTINELS, _PRIVATE_TAILORING_SUMMARY):
         assert sentinel not in serialized
     assert "application_outcome" not in serialized
     assert "application_email_evidence" not in serialized
@@ -105,6 +120,29 @@ def test_application_outcomes_alone_never_create_a_feedback_signal(
     conn = _exact_v7_connection(tmp_path)
     _seed_jobs(conn)
     _seed_outcome_and_mail(conn)
+    conn.commit()
+
+    assert SqliteFeedbackSignalReader(conn).list_accepted(LOCAL_TENANT) == ()
+
+    close_connection(tmp_path / "jobctrl.db")
+
+
+def test_latest_tailoring_review_must_be_accepted(tmp_path: Path) -> None:
+    conn = _exact_v7_connection(tmp_path)
+    _seed_jobs(conn)
+    _seed_tailoring_feedback(conn, tenant_id="local", job_id=_JOB_C)
+    conn.execute(
+        """
+        INSERT INTO tailoring_feedback_signal_reviews (
+            tenant_id, review_id, signal_id, revision, decision, signal_kind,
+            rule_key, rule_value, allowlist_version, reviewed_at
+        ) VALUES (
+            'local', 'tailoring-review-rejected', 'tailoring-signal', 2,
+            'rejected', 'factual_correction', NULL, NULL, 1,
+            '2026-08-01T12:01:00Z'
+        )
+        """
+    )
     conn.commit()
 
     assert SqliteFeedbackSignalReader(conn).list_accepted(LOCAL_TENANT) == ()
@@ -195,18 +233,36 @@ def test_signal_reads_are_tenant_scoped_and_deterministic(tmp_path: Path) -> Non
             "2026-08-01T09:00:00Z",
         ),
     )
+    _seed_tailoring_feedback(
+        conn,
+        tenant_id="tenant-a",
+        job_id=_JOB_A,
+        signal_id="shared-tailoring-signal",
+        reviewed_at="2026-08-01T10:00:00Z",
+    )
+    _seed_tailoring_feedback(
+        conn,
+        tenant_id="tenant-b",
+        job_id=_JOB_A,
+        signal_id="shared-tailoring-signal",
+        reviewed_at="2026-08-01T10:00:01Z",
+    )
     conn.commit()
 
     reader = SqliteFeedbackSignalReader(conn)
     tenant_a = reader.list_accepted(TenantId("tenant-a"))
     tenant_b = reader.list_accepted(TenantId("tenant-b"))
 
-    assert len(tenant_a) == len(tenant_b) == 1
+    assert len(tenant_a) == len(tenant_b) == 2
     assert tenant_a == reader.list_accepted(TenantId("tenant-a"))
     assert isinstance(tenant_a[0], ScoreCorrectionFeedbackSignal)
     assert isinstance(tenant_b[0], ScoreCorrectionFeedbackSignal)
     assert tenant_a[0].corrected_fit_score == 8
     assert tenant_b[0].corrected_fit_score == 4
+    assert isinstance(tenant_a[1], TailoringFeedbackSignal)
+    assert isinstance(tenant_b[1], TailoringFeedbackSignal)
+    assert tenant_a[1].tenant_id == TenantId("tenant-a")
+    assert tenant_b[1].tenant_id == TenantId("tenant-b")
 
     close_connection(tmp_path / "jobctrl.db")
 
@@ -327,6 +383,58 @@ def _seed_role_suggestions(conn: sqlite3.Connection) -> None:
                 _PRIVATE_SENTINELS[3],
             ),
         )
+
+
+def _seed_tailoring_feedback(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    job_id: str,
+    signal_id: str = "tailoring-signal",
+    reviewed_at: str = "2026-08-01T12:00:00Z",
+) -> None:
+    draft_id = f"tailoring-draft-{tenant_id}-{signal_id}"
+    conn.execute(
+        """
+        INSERT INTO resume_review_drafts (
+            tenant_id, draft_id, job_id, base_generation, renderer_format,
+            state, latest_revision_number, created_at, updated_at
+        ) VALUES (?, ?, ?, 1, 'text', 'active', 0, ?, ?)
+        """,
+        (tenant_id, draft_id, job_id, reviewed_at, reviewed_at),
+    )
+    conn.execute(
+        """
+        INSERT INTO tailoring_feedback_signals (
+            tenant_id, signal_id, job_id, draft_id, source_kind, source_id,
+            signal_kind, status, summary, created_at, reviewed_at
+        ) VALUES (
+            ?, ?, ?, ?, 'edit_delta', 'private-delta',
+            'factual_correction', 'accepted', ?, ?, ?
+        )
+        """,
+        (
+            tenant_id,
+            signal_id,
+            job_id,
+            draft_id,
+            _PRIVATE_TAILORING_SUMMARY,
+            reviewed_at,
+            reviewed_at,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO tailoring_feedback_signal_reviews (
+            tenant_id, review_id, signal_id, revision, decision, signal_kind,
+            rule_key, rule_value, allowlist_version, reviewed_at
+        ) VALUES (
+            ?, ?, ?, 1, 'accepted', 'factual_correction',
+            'fact_handling', 'require_source_match', 1, ?
+        )
+        """,
+        (tenant_id, f"tailoring-review-{tenant_id}-{signal_id}", signal_id, reviewed_at),
+    )
 
 
 def _seed_outcome_and_mail(conn: sqlite3.Connection) -> None:

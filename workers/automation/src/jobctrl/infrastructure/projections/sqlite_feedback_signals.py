@@ -13,6 +13,11 @@ from jobctrl.domain.operations.feedback import (
     FeedbackSignal,
     RoleMatchApprovalFeedbackSignal,
     ScoreCorrectionFeedbackSignal,
+    TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION,
+    TailoringFeedbackRuleKey,
+    TailoringFeedbackRuleValue,
+    TailoringFeedbackSignal,
+    TailoringFeedbackSignalKind,
 )
 from jobctrl.domain.tenant import TenantId
 
@@ -44,6 +49,7 @@ class SqliteFeedbackSignalReader:
         signals.extend(self._score_corrections(tenant_id))
         signals.extend(self._discovery_feedback(tenant_id))
         signals.extend(self._approved_role_matches(tenant_id))
+        signals.extend(self._accepted_tailoring_feedback(tenant_id))
         return tuple(sorted(signals, key=lambda signal: (signal.recorded_at, signal.signal_id)))
 
     def _score_corrections(
@@ -215,6 +221,76 @@ class SqliteFeedbackSignalReader:
             if source_id and source_id not in grouped[suggestion_id]:
                 grouped[suggestion_id].append(source_id)
         return {key: tuple(values) for key, values in grouped.items()}
+
+    def _accepted_tailoring_feedback(self, tenant_id: TenantId) -> tuple[TailoringFeedbackSignal, ...]:
+        rows = self._conn.execute(
+            """
+            WITH latest_reviews AS (
+                SELECT review.signal_id, review.revision, review.decision,
+                       review.signal_kind, review.rule_key, review.rule_value,
+                       review.allowlist_version, review.reviewed_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY review.tenant_id, review.signal_id
+                           ORDER BY review.revision DESC
+                       ) AS latest_rank
+                FROM tailoring_feedback_signal_reviews AS review
+                WHERE review.tenant_id = ?
+            )
+            SELECT source.signal_id, source.job_id, review.revision,
+                   review.signal_kind, review.rule_key, review.rule_value,
+                   review.allowlist_version, review.reviewed_at
+            FROM latest_reviews AS review
+            JOIN tailoring_feedback_signals AS source
+              ON source.tenant_id = ?
+             AND source.signal_id = review.signal_id
+             AND source.signal_kind = review.signal_kind
+            JOIN jobs AS job
+              ON job.tenant_id = ?
+             AND job.job_id = source.job_id
+            WHERE review.latest_rank = 1
+              AND review.decision = 'accepted'
+              AND review.allowlist_version = ?
+              AND (
+                (review.signal_kind = 'style_preference'
+                  AND review.rule_key = 'style_guidance'
+                  AND review.rule_value = 'preserve_user_edit_pattern')
+                OR (review.signal_kind = 'factual_correction'
+                  AND review.rule_key = 'fact_handling'
+                  AND review.rule_value = 'require_source_match')
+                OR (review.signal_kind = 'claim_policy_correction'
+                  AND review.rule_key = 'claim_policy'
+                  AND review.rule_value = 'omit_unsupported_claims')
+                OR (review.signal_kind = 'keyword_strategy'
+                  AND review.rule_key = 'keyword_strategy'
+                  AND review.rule_value = 'use_supported_terms_only')
+                OR (review.signal_kind = 'provenance_dispute'
+                  AND review.rule_key = 'provenance_policy'
+                  AND review.rule_value = 'require_direct_evidence')
+              )
+            ORDER BY source.signal_id
+            """,
+            (
+                str(tenant_id),
+                str(tenant_id),
+                str(tenant_id),
+                TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION,
+            ),
+        ).fetchall()
+        return tuple(
+            TailoringFeedbackSignal(
+                signal_id=(f"tailoring-feedback:{row['signal_id']}:{int(row['revision'])}"),
+                tenant_id=tenant_id,
+                job_id=canonical_job_id(str(row["job_id"])),
+                source_id=str(row["signal_id"]),
+                source_revision=int(row["revision"]),
+                recorded_at=str(row["reviewed_at"]),
+                signal_kind=cast(TailoringFeedbackSignalKind, str(row["signal_kind"])),
+                rule_key=cast(TailoringFeedbackRuleKey, str(row["rule_key"])),
+                rule_value=cast(TailoringFeedbackRuleValue, str(row["rule_value"])),
+                allowlist_version=int(row["allowlist_version"]),
+            )
+            for row in rows
+        )
 
 
 def _optional_text(value: Any) -> str | None:

@@ -1005,6 +1005,50 @@ export const TAILORING_FEEDBACK_SIGNAL_KINDS = [
 ] as const;
 export type TailoringFeedbackSignalKind = (typeof TAILORING_FEEDBACK_SIGNAL_KINDS)[number];
 
+export const TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION = 1 as const;
+export const TAILORING_FEEDBACK_RULE_KEYS = [
+  "style_guidance",
+  "fact_handling",
+  "claim_policy",
+  "keyword_strategy",
+  "provenance_policy",
+] as const;
+export type TailoringFeedbackRuleKey = (typeof TAILORING_FEEDBACK_RULE_KEYS)[number];
+export const TAILORING_FEEDBACK_RULE_VALUES = [
+  "preserve_user_edit_pattern",
+  "require_source_match",
+  "omit_unsupported_claims",
+  "use_supported_terms_only",
+  "require_direct_evidence",
+] as const;
+export type TailoringFeedbackRuleValue = (typeof TAILORING_FEEDBACK_RULE_VALUES)[number];
+
+export const TAILORING_FEEDBACK_RULE_ALLOWLIST = {
+  style_preference: {
+    ruleKey: "style_guidance",
+    ruleValue: "preserve_user_edit_pattern",
+  },
+  factual_correction: {
+    ruleKey: "fact_handling",
+    ruleValue: "require_source_match",
+  },
+  claim_policy_correction: {
+    ruleKey: "claim_policy",
+    ruleValue: "omit_unsupported_claims",
+  },
+  keyword_strategy: {
+    ruleKey: "keyword_strategy",
+    ruleValue: "use_supported_terms_only",
+  },
+  provenance_dispute: {
+    ruleKey: "provenance_policy",
+    ruleValue: "require_direct_evidence",
+  },
+} as const satisfies Record<
+  TailoringFeedbackSignalKind,
+  { readonly ruleKey: TailoringFeedbackRuleKey; readonly ruleValue: TailoringFeedbackRuleValue }
+>;
+
 export const TAILORING_FEEDBACK_SIGNAL_STATUSES = [
   "candidate",
   "accepted",
@@ -1086,6 +1130,20 @@ export interface TailoringFeedbackSignal {
   semanticId: string | null;
   createdAt: string;
   reviewedAt: string | null;
+}
+
+export type TailoringFeedbackReviewDecision = "accepted" | "rejected";
+
+export interface TailoringFeedbackSignalReview {
+  reviewId: string;
+  signalId: string;
+  revision: number;
+  decision: TailoringFeedbackReviewDecision;
+  signalKind: TailoringFeedbackSignalKind;
+  ruleKey: TailoringFeedbackRuleKey | null;
+  ruleValue: TailoringFeedbackRuleValue | null;
+  allowlistVersion: typeof TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION;
+  reviewedAt: string;
 }
 
 export interface ResumeReviewDraft {
@@ -1256,6 +1314,25 @@ export interface ResumeReviewFeedbackListResponse {
   ok: true;
   jobKey: string;
   feedbackSignals: TailoringFeedbackSignal[];
+}
+
+export const TailoringFeedbackSignalReviewRequestSchema = z.discriminatedUnion("decision", [
+  z
+    .object({
+      decision: z.literal("accepted"),
+      ruleKey: z.enum(TAILORING_FEEDBACK_RULE_KEYS),
+      ruleValue: z.enum(TAILORING_FEEDBACK_RULE_VALUES),
+    })
+    .strict(),
+  z.object({ decision: z.literal("rejected") }).strict(),
+]);
+export type TailoringFeedbackSignalReviewRequest = z.infer<
+  typeof TailoringFeedbackSignalReviewRequestSchema
+>;
+
+export interface TailoringFeedbackSignalReviewResponse {
+  ok: true;
+  review: TailoringFeedbackSignalReview;
 }
 
 export const APPLICATION_OUTCOME_KINDS = [

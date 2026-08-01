@@ -8,7 +8,8 @@ policy or copy private rationale, notes, job text, or model output.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, TypeAlias
+from types import MappingProxyType
+from typing import Literal, Mapping, TypeAlias
 
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.tenant import TenantId
@@ -27,6 +28,39 @@ DiscoveryFeedbackKind: TypeAlias = Literal[
     "irrelevant",
 ]
 ScoreCorrectionDirection: TypeAlias = Literal["increase", "decrease", "unchanged"]
+TailoringFeedbackSignalKind: TypeAlias = Literal[
+    "style_preference",
+    "factual_correction",
+    "claim_policy_correction",
+    "keyword_strategy",
+    "provenance_dispute",
+]
+TailoringFeedbackRuleKey: TypeAlias = Literal[
+    "style_guidance",
+    "fact_handling",
+    "claim_policy",
+    "keyword_strategy",
+    "provenance_policy",
+]
+TailoringFeedbackRuleValue: TypeAlias = Literal[
+    "preserve_user_edit_pattern",
+    "require_source_match",
+    "omit_unsupported_claims",
+    "use_supported_terms_only",
+    "require_direct_evidence",
+]
+
+TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION = 1
+TAILORING_FEEDBACK_RULE_ALLOWLIST: Mapping[
+    TailoringFeedbackSignalKind,
+    tuple[TailoringFeedbackRuleKey, TailoringFeedbackRuleValue],
+] = MappingProxyType({
+    "style_preference": ("style_guidance", "preserve_user_edit_pattern"),
+    "factual_correction": ("fact_handling", "require_source_match"),
+    "claim_policy_correction": ("claim_policy", "omit_unsupported_claims"),
+    "keyword_strategy": ("keyword_strategy", "use_supported_terms_only"),
+    "provenance_dispute": ("provenance_policy", "require_direct_evidence"),
+})
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -141,10 +175,54 @@ class RoleMatchApprovalFeedbackSignal:
         for source_id in self.source_ids:
             _require_nonempty("source_id", source_id)
 
+
+@dataclass(frozen=True, kw_only=True)
+class TailoringFeedbackSignal:
+    """One explicitly accepted tailoring rule without its private source text."""
+
+    signal_id: str
+    tenant_id: TenantId
+    job_id: JobId
+    source_id: str
+    source_revision: int
+    recorded_at: str
+    signal_kind: TailoringFeedbackSignalKind
+    rule_key: TailoringFeedbackRuleKey
+    rule_value: TailoringFeedbackRuleValue
+    allowlist_version: int
+    context: Literal["materials"] = field(default="materials", init=False)
+    kind: Literal["tailoring_feedback"] = field(
+        default="tailoring_feedback", init=False
+    )
+    source_kind: Literal["tailoring_feedback_signal"] = field(
+        default="tailoring_feedback_signal", init=False
+    )
+    source_action: Literal["accepted"] = field(default="accepted", init=False)
+
+    def __post_init__(self) -> None:
+        _require_nonempty("signal_id", self.signal_id)
+        _require_nonempty("source_id", self.source_id)
+        _require_nonempty("recorded_at", self.recorded_at)
+        if self.source_revision < 1:
+            raise ValueError("source_revision must be positive")
+        if self.allowlist_version != TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION:
+            raise ValueError("unsupported tailoring feedback rule allowlist version")
+        if TAILORING_FEEDBACK_RULE_ALLOWLIST[self.signal_kind] != (
+            self.rule_key,
+            self.rule_value,
+        ):
+            raise ValueError("tailoring feedback rule is not allowlisted for its kind")
+
+    @property
+    def job_ids(self) -> tuple[JobId, ...]:
+        return (self.job_id,)
+
+
 FeedbackSignal: TypeAlias = (
     ScoreCorrectionFeedbackSignal
     | DiscoveryFeedbackSignal
     | RoleMatchApprovalFeedbackSignal
+    | TailoringFeedbackSignal
 )
 
 
@@ -160,4 +238,10 @@ __all__ = [
     "RoleMatchApprovalFeedbackSignal",
     "ScoreCorrectionDirection",
     "ScoreCorrectionFeedbackSignal",
+    "TAILORING_FEEDBACK_RULE_ALLOWLIST",
+    "TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION",
+    "TailoringFeedbackRuleKey",
+    "TailoringFeedbackRuleValue",
+    "TailoringFeedbackSignal",
+    "TailoringFeedbackSignalKind",
 ]
