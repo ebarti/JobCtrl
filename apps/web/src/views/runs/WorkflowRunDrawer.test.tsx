@@ -176,4 +176,71 @@ describe("<WorkflowRunDrawer>", () => {
       "Reconstructed from the run failure record",
     );
   });
+
+  it("cancels an active run from the detail workspace and refreshes its detail", async () => {
+    const user = userEvent.setup();
+    const workflowRun = vi.fn(async () =>
+      makeWorkflowRunDetail({
+        status: "in_progress",
+        errorCode: null,
+        errorMessage: null,
+        retryable: false,
+        finishedAt: null,
+        durationMs: null,
+        events: [],
+      }),
+    );
+    const cancelWorkflowRun = vi.fn(async (runId: string) => ({
+      ok: true as const,
+      runId,
+      actionId: runId,
+      action: "cancel" as const,
+      status: "canceling",
+      jobKey: "pipeline",
+      command: { action: "cancel" as const, jobKey: "pipeline", runId },
+    }));
+    const ports = buildTestPorts({ api: { workflowRun, cancelWorkflowRun } });
+    const harness = buildProviderHarness({ ports });
+    const router = buildRouter();
+    render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Stop workflow run run-pipeline-1",
+      }),
+    );
+
+    expect(await screen.findByText("Cancellation requested")).toBeDisabled();
+    expect(cancelWorkflowRun).toHaveBeenCalledWith("run-pipeline-1");
+    expect(workflowRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a terminal workflow result inspectable without a stop action", async () => {
+    const workflowRun = vi.fn(async () =>
+      makeWorkflowRunDetail({
+        status: "canceled",
+        result: "Canceled by user",
+        errorCode: null,
+        errorMessage: null,
+        retryable: false,
+      }),
+    );
+    const ports = buildTestPorts({ api: { workflowRun } });
+    const harness = buildProviderHarness({ ports });
+    const router = buildRouter();
+    render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+
+    const workspace = await screen.findByRole("article", {
+      name: "Workflow run details",
+    });
+    const details = within(workspace)
+      .getByRole("heading", { level: 2, name: "Run details" })
+      .closest("section");
+    expect(details).not.toBeNull();
+    expect(within(details!).getByText("Result")).toBeInTheDocument();
+    expect(within(details!).getByText("Canceled by user")).toBeInTheDocument();
+    expect(
+      within(workspace).queryByRole("button", { name: /Stop workflow run/ }),
+    ).not.toBeInTheDocument();
+  });
 });

@@ -24,6 +24,7 @@ export function useCancelWorkflowRunMutation(): UseMutationResult<
     onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: workflowRunsKeys.lists(tenantId) }),
+        queryClient.invalidateQueries({ queryKey: workflowRunsKeys.details(tenantId) }),
         queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
         queryClient.invalidateQueries({ queryKey: pipelineKeys.operations(tenantId) }),
       ]);
