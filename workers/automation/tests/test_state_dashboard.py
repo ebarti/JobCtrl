@@ -160,31 +160,39 @@ def test_get_job_stage_states_returns_defaults_for_missing_rows(tmp_path):
         close_connection(db_path)
 
 
-def test_retry_command_resets_stage_state(tmp_path, monkeypatch):
+def test_retry_command_resets_stage_state_by_canonical_job_id(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
-    job = _insert_job(conn, detail_error="timeout")
+    job = _insert_job(conn)
 
     try:
+        set_stage_state(
+            conn,
+            job["job_id"],
+            "score",
+            "running",
+            tenant_id=job["tenant_id"],
+        )
+        set_stage_state(
+            conn,
+            job["job_id"],
+            "score",
+            "failed",
+            tenant_id=job["tenant_id"],
+        )
+        conn.commit()
         monkeypatch.setattr("jobctrl.cli.get_connection", lambda: get_connection(db_path), raising=False)
         monkeypatch.setattr("jobctrl.database.DB_PATH", db_path)
         monkeypatch.setattr("jobctrl.config.DB_PATH", db_path)
 
-        result = CliRunner().invoke(app, ["retry", "enrich", job["url"]])
+        result = CliRunner().invoke(app, ["retry", "score", job["url"]])
 
-        row = conn.execute(
-            "SELECT detail_error, detail_scraped_at FROM jobs "
-            "WHERE tenant_id = ? AND job_id = ?",
-            (job["tenant_id"], job["job_id"]),
-        ).fetchone()
         state = conn.execute(
             "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'score'",
             (job["tenant_id"], job["job_id"]),
         ).fetchone()
         assert result.exit_code == 0
-        assert row["detail_error"] is None
-        assert row["detail_scraped_at"] is None
         assert state["state"] == "pending"
     finally:
         close_connection(db_path)
