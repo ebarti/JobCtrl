@@ -89,6 +89,8 @@ import type {
   LearningRecommendationListQuery,
   LearningRecommendationReviewRequest,
   LearningRecommendationReviewResponse,
+  TailoringPolicyRevisionListQuery,
+  TailoringPolicyRevisionListResponse,
   JobMutationResponse,
   JobSummary,
   MarkJobActionRequest,
@@ -164,6 +166,7 @@ import {
   LearningRecommendationEvidenceListResponseSchema,
   LearningRecommendationListResponseSchema,
   LearningRecommendationReviewResponseSchema,
+  TailoringPolicyRevisionListResponseSchema,
 } from "@jobctrl/contracts";
 
 type QueryValue = boolean | number | string | null | undefined;
@@ -285,6 +288,14 @@ export class JobCtrlApiClient {
         `/v1/learning/recommendations/${encodeURIComponent(recommendationId)}/reviews`,
         body,
       ),
+    );
+  }
+
+  async tailoringPolicyRevisions(
+    query: Partial<TailoringPolicyRevisionListQuery> = {},
+  ): Promise<TailoringPolicyRevisionListResponse> {
+    return TailoringPolicyRevisionListResponseSchema.parse(
+      await this.get("/v1/learning/policies/materials", query),
     );
   }
 
