@@ -28,8 +28,13 @@ import { artifactsKeys } from "../operations/artifactsKeys.js";
 import { applyReviewKeys } from "../operations/applyReviewKeys.js";
 import { dashboardKeys } from "../operations/dashboardKeys.js";
 import { digestKeys } from "../operations/digestKeys.js";
-import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
+import {
+  invalidate,
+  patchQuery,
+  type InvalidationItem,
+} from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
+import { patchWorkflowRunDetail } from "../operations/realtimePatches.js";
 import { workflowRunsKeys } from "../operations/workflowRunsKeys.js";
 import { pipelineKeys } from "./queryKeys.js";
 
@@ -168,8 +173,16 @@ type WorkflowLifecycleEvent =
 const workflowLifecycleHandler = (
   event: WorkflowLifecycleEvent,
 ): readonly InvalidationItem[] => [
+  // Lifecycle payloads own status/timing/error fields for an existing run.
+  // Lists can cross status filters and dashboard rows may be absent, so both
+  // families retain tenant-bounded invalidation after the immediate patch.
+  patchQuery(
+    workflowRunsKeys.detail(event.tenantId, event.payload.workflowId),
+    (current) => patchWorkflowRunDetail(current, event),
+  ),
   invalidate(workflowRunsKeys.lists(event.tenantId)),
   invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.workflowId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
   pipelineOperationsInvalidation(event.tenantId),
 ];
 
@@ -181,7 +194,6 @@ export const workflowCanceledHandler = (
 ): readonly InvalidationItem[] => [
   ...workflowLifecycleHandler(event),
   invalidate(applyReviewKeys.queue(event.tenantId)),
-  invalidate(dashboardKeys.summary(event.tenantId)),
 ];
 export const workflowTimedOutHandler = workflowLifecycleHandler;
 export const workflowTerminatedHandler = workflowLifecycleHandler;
