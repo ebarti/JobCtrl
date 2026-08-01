@@ -1818,14 +1818,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     return withWritableDb(reply, options.dbPath, async (db) => {
       const jobLocator = decodeRouteParam(request.params.jobKey);
       const jobId = resolveJobId(db, "local", jobLocator);
-      const jobUrl = resolveExistingJob(reply, db, jobLocator);
-      if (!jobId || !jobUrl) {
+      if (!jobId) {
         return { ok: false, error: "job_not_found" };
       }
       if (!body.dryRun) {
         assertLiveApplicationMayDispatch(db, jobId);
       }
-      const jobId = requireJobId(db, jobUrl);
       const command: ActionCommandPayload = {
         action: "apply" as const,
         jobKey: jobId,
