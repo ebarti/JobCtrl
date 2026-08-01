@@ -1371,6 +1371,7 @@ class ProjectionBuilder:
         layout_boxes_by_artifact = self._load_layout_boxes_by_artifact(job_id)
         enrichment = self._load_enrichment(job_id)
         apply_run = self._load_latest_apply_run(job_id)
+        explicit_application = self._load_explicit_application(job_id)
         deleted_at = self._load_deleted_at(job_id)
         artifacts = self._load_artifacts(job_id)
 
@@ -1429,20 +1430,21 @@ class ProjectionBuilder:
         # Apply state:
         ar_status = apply_run.get("status") if apply_run else None
         ar_finished = apply_run.get("finished_at") if apply_run else None
-        apply_status = _derive_apply_status(
-            ar_status,
-            None,
-        )
+        apply_status = _derive_apply_status(ar_status, None)
         applied_at: str | None
         if ar_status == "succeeded":
             applied_at = ar_finished
+        elif explicit_application is not None:
+            apply_status = "applied"
+            applied_at = explicit_application[1]
         else:
             applied_at = None
-        apply_mode = self._derive_apply_mode(
-            job_id,
-            apply_run,
-            None,
-            None,
+        apply_mode = (
+            "automated_live"
+            if ar_status == "succeeded" and not apply_run.get("dry_run")
+            else explicit_application[0]
+            if explicit_application is not None
+            else None
         )
 
         # description fallbacks
@@ -2573,53 +2575,42 @@ class ProjectionBuilder:
             "duration_ms": _row_nullable_int(row, "duration_ms"),
         }
 
-    def _derive_apply_mode(
-        self,
-        job_id: str,
-        apply_run: dict,
-        legacy_status: str | None,
-        legacy_applied_at: str | None,
-    ) -> str | None:
-        if apply_run.get("status") == "succeeded" and not apply_run.get("dry_run"):
-            return "automated_live"
-        is_applied = bool(legacy_applied_at) or legacy_status == "applied"
-        if not is_applied:
-            return None
-        if self._has_job_event(job_id, "ApplicationManuallyMarked"):
-            return "manual_marked"
-        if self._has_application_outcome_kind(job_id, "applied_confirmation"):
-            return "external_confirmed"
-        return "manual_marked"
-
-    def _has_job_event(self, job_id: str, event_type: str) -> bool:
+    def _load_explicit_application(self, job_id: str) -> tuple[str, str] | None:
         try:
             row = self._conn.execute(
                 """
-                SELECT COUNT(*) AS c
+                SELECT occurred_at
                 FROM job_events AS events
                 WHERE events.tenant_id = ?
                   AND events.job_id = ?
-                  AND events.event_type = ?
+                  AND events.event_type = 'ApplicationManuallyMarked'
+                ORDER BY events.occurred_at DESC, events.event_id DESC
+                LIMIT 1
                 """,
-                (str(self._tenant_id), job_id, event_type),
+                (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
-            return False
-        return int(_row_nullable_int(row, "c") or 0) > 0
-
-    def _has_application_outcome_kind(self, job_id: str, kind: str) -> bool:
+            row = None
+        occurred_at = _row_nullable_str(row, "occurred_at")
+        if occurred_at:
+            return ("manual_marked", occurred_at)
         try:
             row = self._conn.execute(
                 """
-                SELECT COUNT(*) AS c
+                SELECT occurred_at
                 FROM application_outcomes
-                WHERE tenant_id = ? AND job_id = ? AND kind = ?
+                WHERE tenant_id = ?
+                  AND job_id = ?
+                  AND kind = 'applied_confirmation'
+                ORDER BY occurred_at DESC, outcome_id DESC
+                LIMIT 1
                 """,
-                (str(self._tenant_id), job_id, kind),
+                (str(self._tenant_id), job_id),
             ).fetchone()
         except sqlite3.OperationalError:
-            return False
-        return int(_row_nullable_int(row, "c") or 0) > 0
+            return None
+        occurred_at = _row_nullable_str(row, "occurred_at")
+        return ("external_confirmed", occurred_at) if occurred_at else None
 
     def _load_deleted_at(self, job_id: str) -> str | None:
         try:

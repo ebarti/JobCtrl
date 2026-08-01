@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from pathlib import Path
 from typing import Iterator
 
@@ -17,6 +18,13 @@ from jobctrl.infrastructure.projections.projection_builder import (
 from jobctrl.state import record_job_event, set_stage_state, utc_now
 
 
+LOCAL_TENANT = "local"
+
+
+def _job_id_for(url: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"dashboard-projection:{url}"))
+
+
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     db_path = tmp_path / "jobs.db"
@@ -25,30 +33,56 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     close_connection(db_path)
 
 
-def _seed_job(conn: sqlite3.Connection, url: str, *, site: str = "ExampleCo") -> None:
+def _seed_job(conn: sqlite3.Connection, url: str, *, site: str = "ExampleCo") -> str:
+    job_id = _job_id_for(url)
+    now = "2026-05-04T12:00:00+00:00"
     conn.execute(
         """
-        INSERT INTO jobs (url, title, site, strategy, location, salary,
-                          discovered_at, application_url, description)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, site, strategy, location, salary,
+            discovered_at, application_url, description
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (url, "Engineer", site, "jobspy", "Remote", "", "2026-05-04T12:00:00+00:00", url, "desc"),
+        (
+            LOCAL_TENANT,
+            job_id,
+            url,
+            "Engineer",
+            site,
+            "jobspy",
+            "Remote",
+            "",
+            now,
+            url,
+            "desc",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_locators (
+            tenant_id, job_id, locator_kind, locator_value,
+            is_current, first_seen_at, last_seen_at
+        ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?)
+        """,
+        (LOCAL_TENANT, job_id, url, now, now),
     )
     conn.commit()
+    return job_id
 
 
 def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> None:
+    job_id = _job_id_for(url)
     conn.execute(
         """
         INSERT INTO posting_snapshot_sets (
-            tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+            tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
             latest_active_state, updated_at
-        ) VALUES ('local', ?, '{}', 0, ?, ?)
-        ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+        ) VALUES (?, ?, '{}', 0, ?, ?)
+        ON CONFLICT(tenant_id, job_id) DO UPDATE SET
             latest_active_state = excluded.latest_active_state,
             updated_at = excluded.updated_at
         """,
-        (url, state, utc_now()),
+        (LOCAL_TENANT, job_id, state, utc_now()),
     )
     conn.commit()
 
@@ -81,8 +115,8 @@ def test_dashboard_starts_empty(conn: sqlite3.Connection) -> None:
 def test_total_jobs_reflects_active_jobs(conn: sqlite3.Connection) -> None:
     _seed_job(conn, "https://example.com/a")
     _seed_job(conn, "https://example.com/b")
-    record_job_event(conn, "https://example.com/a", "discover", "JobDiscovered")
-    record_job_event(conn, "https://example.com/b", "discover", "JobDiscovered")
+    record_job_event(conn, _job_id_for("https://example.com/a"), "discover", "JobDiscovered")
+    record_job_event(conn, _job_id_for("https://example.com/b"), "discover", "JobDiscovered")
     conn.commit()
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
     row = _dashboard(conn)
@@ -94,15 +128,17 @@ def test_dashboard_excludes_closed_jobs_from_active_counts(conn: sqlite3.Connect
     closed_url = "https://example.com/closed"
     _seed_job(conn, active_url)
     _seed_job(conn, closed_url)
-    set_stage_state(conn, active_url, "discover", "succeeded", finished_at=utc_now())
-    set_stage_state(conn, active_url, "enrich", "succeeded", finished_at=utc_now())
-    set_stage_state(conn, active_url, "score", "succeeded", finished_at=utc_now())
-    set_stage_state(conn, active_url, "tailor", "blocked", validate_transition=False)
-    set_stage_state(conn, closed_url, "discover", "succeeded", finished_at=utc_now())
-    set_stage_state(conn, closed_url, "enrich", "succeeded", finished_at=utc_now())
-    set_stage_state(conn, closed_url, "score", "failed", validate_transition=False)
-    record_job_event(conn, active_url, "tailor", "StageBlocked")
-    record_job_event(conn, closed_url, "score", "StageFailed")
+    active_job_id = _job_id_for(active_url)
+    closed_job_id = _job_id_for(closed_url)
+    set_stage_state(conn, active_job_id, "discover", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, active_job_id, "enrich", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, active_job_id, "score", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, active_job_id, "tailor", "blocked", validate_transition=False)
+    set_stage_state(conn, closed_job_id, "discover", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, closed_job_id, "enrich", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, closed_job_id, "score", "failed", validate_transition=False)
+    record_job_event(conn, active_job_id, "tailor", "StageBlocked")
+    record_job_event(conn, closed_job_id, "score", "StageFailed")
     _mark_closed(conn, closed_url)
     conn.commit()
 
@@ -117,10 +153,11 @@ def test_dashboard_excludes_closed_jobs_from_active_counts(conn: sqlite3.Connect
 def test_failures_count_includes_failed_and_exhausted(conn: sqlite3.Connection) -> None:
     url = "https://example.com/c"
     _seed_job(conn, url)
-    set_stage_state(conn, url, "discover", "succeeded", finished_at=utc_now())
-    set_stage_state(conn, url, "enrich", "succeeded", finished_at=utc_now())
-    set_stage_state(conn, url, "score", "failed", validate_transition=False)
-    record_job_event(conn, url, "score", "StageFailed")
+    job_id = _job_id_for(url)
+    set_stage_state(conn, job_id, "discover", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, job_id, "enrich", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, job_id, "score", "failed", validate_transition=False)
+    record_job_event(conn, job_id, "score", "StageFailed")
     conn.commit()
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
     row = _dashboard(conn)
@@ -130,11 +167,12 @@ def test_failures_count_includes_failed_and_exhausted(conn: sqlite3.Connection) 
 def test_blocked_count(conn: sqlite3.Connection) -> None:
     url = "https://example.com/d"
     _seed_job(conn, url)
-    set_stage_state(conn, url, "discover", "succeeded", finished_at=utc_now())
-    set_stage_state(conn, url, "enrich", "succeeded", finished_at=utc_now())
-    set_stage_state(conn, url, "score", "succeeded", finished_at=utc_now())
-    set_stage_state(conn, url, "tailor", "blocked", validate_transition=False)
-    record_job_event(conn, url, "tailor", "StageBlocked")
+    job_id = _job_id_for(url)
+    set_stage_state(conn, job_id, "discover", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, job_id, "enrich", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, job_id, "score", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, job_id, "tailor", "blocked", validate_transition=False)
+    record_job_event(conn, job_id, "tailor", "StageBlocked")
     conn.commit()
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
     row = _dashboard(conn)
@@ -147,14 +185,14 @@ def test_applied_count_via_apply_status(conn: sqlite3.Connection) -> None:
     finished = utc_now()
     record_job_event(
         conn,
-        "https://example.com/e",
+        _job_id_for("https://example.com/e"),
         "apply",
         "ApplyRunStarted",
         payload={"run_id": "run-e", "started_at": started},
     )
     record_job_event(
         conn,
-        "https://example.com/e",
+        _job_id_for("https://example.com/e"),
         "apply",
         "ApplicationSubmitted",
         payload={"run_id": "run-e", "finished_at": finished, "result": "applied"},
@@ -174,13 +212,13 @@ def test_score_distribution_groups_by_score(conn: sqlite3.Connection) -> None:
         _seed_job(conn, url)
         conn.execute(
             """
-            INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+            INSERT INTO job_scores (tenant_id, job_id, version, fit_score,
                                     breakdown_json, keywords_json, scored_at)
-            VALUES (?, 1, 'local', ?, ?, ?, ?)
+            VALUES (?, ?, 1, ?, ?, ?, ?)
             """,
-            (url, score, json.dumps({}), json.dumps([]), utc_now()),
+            (LOCAL_TENANT, _job_id_for(url), score, json.dumps({}), json.dumps([]), utc_now()),
         )
-        record_job_event(conn, url, "score", "JobScored")
+        record_job_event(conn, _job_id_for(url), "score", "JobScored")
     conn.commit()
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
     row = _dashboard(conn)
@@ -197,30 +235,30 @@ def test_artifact_projection_preserves_material_metadata(conn: sqlite3.Connectio
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-        ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}')
+            tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+        ) VALUES (?, ?, 1, 'resume_approved', ?, ?, '{}')
         """,
-        (url, utc_now(), utc_now()),
+        (LOCAL_TENANT, _job_id_for(url), utc_now(), utc_now()),
     )
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
+            tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
             render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'tailored_resume', 'artifact-1', 'approved', ?, 'text', 12, ?, ?)
+        ) VALUES (?, ?, 1, 'tailored_resume', 'artifact-1', 'approved', ?, 'text', 12, ?, ?)
         """,
-        (url, "/tmp/resume.txt", json.dumps(metadata), utc_now()),
+        (LOCAL_TENANT, _job_id_for(url), "/tmp/resume.txt", json.dumps(metadata), utc_now()),
     )
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
+            tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
             render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'resume_pdf', 'artifact-pdf', 'approved', ?, 'pdf', 120, '{}', ?)
+        ) VALUES (?, ?, 1, 'resume_pdf', 'artifact-pdf', 'approved', ?, 'pdf', 120, '{}', ?)
         """,
-        (url, "/tmp/resume.pdf", utc_now()),
+        (LOCAL_TENANT, _job_id_for(url), "/tmp/resume.pdf", utc_now()),
     )
-    record_job_event(conn, url, "tailor", "MaterialsGenerated")
+    record_job_event(conn, _job_id_for(url), "tailor", "MaterialsGenerated")
     conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
@@ -233,15 +271,15 @@ def test_artifact_projection_preserves_material_metadata(conn: sqlite3.Connectio
     ).fetchone()
 
     assert json.loads(_row_value(row, "metadata_json", "{}")) == metadata
-    synthetic_pdf = conn.execute(
+    registered_pdf = conn.execute(
         """
         SELECT metadata_json
         FROM artifact_list_projections
-        WHERE tenant_id = 'local' AND artifact_type = 'tailored_resume_pdf'
+        WHERE tenant_id = 'local' AND artifact_id = 'artifact-pdf'
         """
     ).fetchone()
 
-    assert json.loads(_row_value(synthetic_pdf, "metadata_json", "{}")) == metadata
+    assert json.loads(_row_value(registered_pdf, "metadata_json", "{}")) == {}
 
 
 def test_artifact_projection_includes_resume_layout_boxes(conn: sqlite3.Connection) -> None:
@@ -251,32 +289,32 @@ def test_artifact_projection_includes_resume_layout_boxes(conn: sqlite3.Connecti
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-        ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}')
+            tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+        ) VALUES (?, ?, 1, 'resume_approved', ?, ?, '{}')
         """,
-        (url, now, now),
+        (LOCAL_TENANT, _job_id_for(url), now, now),
     )
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
+            tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
             render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'resume_pdf', 'artifact-pdf', 'approved', ?, 'html_pdf', 120, '{}', ?)
+        ) VALUES (?, ?, 1, 'resume_pdf', 'artifact-pdf', 'approved', ?, 'html_pdf', 120, '{}', ?)
         """,
-        (url, "/tmp/resume.pdf", now),
+        (LOCAL_TENANT, _job_id_for(url), "/tmp/resume.pdf", now),
     )
     conn.execute(
         """
         INSERT INTO job_material_layout_boxes (
-            job_url, generation, artifact_id, box_index, tenant_id,
+            tenant_id, job_id, generation, artifact_id, box_index,
             semantic_id, page_number, line_number, text_excerpt,
             left_pct, top_pct, width_pct, height_pct, audit_target_json,
             created_at
-        ) VALUES (?, 1, 'artifact-pdf', 0, 'local', ?, 1, 6, ?, 12.5, 24.0, 62.0, 2.4, '{}', ?)
+        ) VALUES (?, ?, 1, 'artifact-pdf', 0, ?, 1, 6, ?, 12.5, 24.0, 62.0, 2.4, '{}', ?)
         """,
-        (url, "experience:acme:bullet:1", "Cut latency.", now),
+        (LOCAL_TENANT, _job_id_for(url), "experience:acme:bullet:1", "Cut latency.", now),
     )
-    record_job_event(conn, url, "tailor", "PdfRendered")
+    record_job_event(conn, _job_id_for(url), "tailor", "PdfRendered")
     conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
@@ -306,11 +344,12 @@ def test_artifact_projection_includes_resume_layout_boxes(conn: sqlite3.Connecti
 def test_funnel_counts_per_stage(conn: sqlite3.Connection) -> None:
     url = "https://example.com/funnel"
     _seed_job(conn, url)
-    set_stage_state(conn, url, "discover", "succeeded", finished_at=utc_now())
-    set_stage_state(conn, url, "enrich", "succeeded", finished_at=utc_now())
-    set_stage_state(conn, url, "score", "succeeded", finished_at=utc_now())
-    set_stage_state(conn, url, "tailor", "running")
-    record_job_event(conn, url, "tailor", "StageStarted")
+    job_id = _job_id_for(url)
+    set_stage_state(conn, job_id, "discover", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, job_id, "enrich", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, job_id, "score", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, job_id, "tailor", "running")
+    record_job_event(conn, job_id, "tailor", "StageStarted")
     conn.commit()
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
@@ -329,7 +368,7 @@ def test_by_source_counts(conn: sqlite3.Connection) -> None:
     _seed_job(conn, "https://example.com/y", site="OneCo")
     _seed_job(conn, "https://example.com/z", site="TwoCo")
     for url in ("https://example.com/x", "https://example.com/y", "https://example.com/z"):
-        record_job_event(conn, url, "discover", "JobDiscovered")
+        record_job_event(conn, _job_id_for(url), "discover", "JobDiscovered")
     conn.commit()
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
@@ -359,7 +398,7 @@ def test_by_source_orders_ties_by_source_name(conn: sqlite3.Connection) -> None:
     ]
     for url, site in seeded:
         _seed_job(conn, url, site=site)
-        record_job_event(conn, url, "discover", "JobDiscovered")
+        record_job_event(conn, _job_id_for(url), "discover", "JobDiscovered")
     conn.commit()
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
@@ -378,21 +417,22 @@ def _apply_job(
 ) -> None:
     _seed_job(conn, url, site=site)
     at = applied_at or utc_now()
+    job_id = _job_id_for(url)
     conn.execute(
         """
-        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+        INSERT INTO job_scores (tenant_id, job_id, version, fit_score,
                                 breakdown_json, keywords_json, scored_at)
-        VALUES (?, 1, 'local', ?, '{}', '[]', ?)
+        VALUES (?, ?, 1, ?, '{}', '[]', ?)
         """,
-        (url, fit_score, utc_now()),
+        (LOCAL_TENANT, job_id, fit_score, utc_now()),
     )
     run_id = f"run-{url}"
     record_job_event(
-        conn, url, "apply", "ApplyRunStarted",
+        conn, job_id, "apply", "ApplyRunStarted",
         payload={"run_id": run_id, "started_at": at},
     )
     record_job_event(
-        conn, url, "apply", "ApplicationSubmitted",
+        conn, job_id, "apply", "ApplicationSubmitted",
         payload={"run_id": run_id, "finished_at": at, "result": "applied"},
     )
 
@@ -407,19 +447,22 @@ def _mark_manual_applied(
 ) -> None:
     _seed_job(conn, url, site=site)
     at = applied_at or utc_now()
+    job_id = _job_id_for(url)
     conn.execute(
         """
-        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+        INSERT INTO job_scores (tenant_id, job_id, version, fit_score,
                                 breakdown_json, keywords_json, scored_at)
-        VALUES (?, 1, 'local', ?, '{}', '[]', ?)
+        VALUES (?, ?, 1, ?, '{}', '[]', ?)
         """,
-        (url, fit_score, utc_now()),
+        (LOCAL_TENANT, job_id, fit_score, utc_now()),
     )
-    conn.execute(
-        "UPDATE jobs SET apply_status = 'applied', applied_at = ? WHERE url = ?",
-        (at, url),
+    record_job_event(
+        conn,
+        job_id,
+        "apply",
+        "ApplicationManuallyMarked",
+        occurred_at=at,
     )
-    record_job_event(conn, url, "apply", "ApplicationManuallyMarked")
 
 
 def _mark_external_confirmed(
@@ -432,17 +475,14 @@ def _mark_external_confirmed(
 ) -> None:
     _seed_job(conn, url, site=site)
     at = applied_at or utc_now()
+    job_id = _job_id_for(url)
     conn.execute(
         """
-        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+        INSERT INTO job_scores (tenant_id, job_id, version, fit_score,
                                 breakdown_json, keywords_json, scored_at)
-        VALUES (?, 1, 'local', ?, '{}', '[]', ?)
+        VALUES (?, ?, 1, ?, '{}', '[]', ?)
         """,
-        (url, fit_score, utc_now()),
-    )
-    conn.execute(
-        "UPDATE jobs SET apply_status = 'applied', applied_at = ? WHERE url = ?",
-        (at, url),
+        (LOCAL_TENANT, job_id, fit_score, utc_now()),
     )
     _record_outcome(conn, url, "applied_confirmation", occurred_at=at)
 
@@ -451,12 +491,12 @@ def _record_fit_band(conn: sqlite3.Connection, url: str, fit_score: int, fit_ban
     conn.execute(
         """
         INSERT INTO job_requirement_fit_reports (
-            job_url, score_version, tenant_id, employer_analysis_generation,
+            tenant_id, job_id, score_version, employer_analysis_generation,
             profile_snapshot_version, scoring_policy_version, formula_version,
             resolved_fit_score, fit_band, confidence, summary_json, created_at
-        ) VALUES (?, 1, 'local', 1, 1, 1, 'test', ?, ?, 'medium', '{}', ?)
+        ) VALUES (?, ?, 1, 1, 1, 1, 'test', ?, ?, 'medium', '{}', ?)
         """,
-        (url, fit_score, fit_band, utc_now()),
+        (LOCAL_TENANT, _job_id_for(url), fit_score, fit_band, utc_now()),
     )
 
 
@@ -471,10 +511,10 @@ def _record_outcome(
     conn.execute(
         """
         INSERT INTO application_outcomes (
-            tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at
-        ) VALUES ('local', ?, ?, ?, 'manual', ?, ?)
+            tenant_id, outcome_id, job_id, kind, source, occurred_at, recorded_at
+        ) VALUES (?, ?, ?, ?, 'manual', ?, ?)
         """,
-        (f"outcome-{url}-{kind}", url, kind, at, at),
+        (LOCAL_TENANT, f"outcome-{url}-{kind}", _job_id_for(url), kind, at, at),
     )
 
 
@@ -499,20 +539,21 @@ def _record_material_metadata(
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-        ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}')
+            tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+        ) VALUES (?, ?, 1, 'resume_approved', ?, ?, '{}')
         """,
-        (url, utc_now(), utc_now()),
+        (LOCAL_TENANT, _job_id_for(url), utc_now(), utc_now()),
     )
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
+            tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
             render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?, ?)
+        ) VALUES (?, ?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?, ?)
         """,
         (
-            url,
+            LOCAL_TENANT,
+            _job_id_for(url),
             f"resume-{url}",
             f"/tmp/{url.rsplit('/', 1)[-1]}.txt",
             json.dumps(metadata),
@@ -525,11 +566,12 @@ def _record_replacement_material_metadata(conn: sqlite3.Connection, url: str) ->
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-        ) VALUES (?, 2, 'local', 'resume_approved', ?, ?, ?)
+            tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+        ) VALUES (?, ?, 2, 'resume_approved', ?, ?, ?)
         """,
         (
-            url,
+            LOCAL_TENANT,
+            _job_id_for(url),
             utc_now(),
             utc_now(),
             json.dumps({"source": "resume_review_draft", "base_generation": 1}),
@@ -538,12 +580,13 @@ def _record_replacement_material_metadata(conn: sqlite3.Connection, url: str) ->
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
+            tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
             render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 2, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?, ?)
+        ) VALUES (?, ?, 2, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?, ?)
         """,
         (
-            url,
+            LOCAL_TENANT,
+            _job_id_for(url),
             f"replacement-{url}",
             f"/tmp/{url.rsplit('/', 1)[-1]}-replacement.txt",
             json.dumps(
@@ -562,13 +605,14 @@ def _record_suggestion(conn: sqlite3.Connection, index: int, status: str) -> Non
     conn.execute(
         """
         INSERT INTO application_outcome_suggestions (
-            tenant_id, suggestion_id, job_key, suggested_kind, confidence, rationale,
+            tenant_id, suggestion_id, job_id, suggested_kind, confidence, rationale,
             status, created_at, decided_at, decision
-        ) VALUES ('local', ?, ?, 'recruiter_reply', 0.9, '', ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, 'recruiter_reply', 0.9, '', ?, ?, ?, ?)
         """,
         (
+            LOCAL_TENANT,
             f"suggestion-{index}",
-            f"https://example.com/suggestion-{index}",
+            _job_id_for("https://example.com/live-1"),
             status,
             utc_now(),
             utc_now(),
@@ -798,7 +842,7 @@ def test_outcome_conversion_breaks_template_name_ties_by_id() -> None:
     ] == fixture["expectedTemplateIds"]
 
 
-def test_outcome_conversion_uses_artifact_metadata_without_parent_material_table(
+def test_outcome_conversion_does_not_fallback_without_material_registry(
     conn: sqlite3.Connection,
 ) -> None:
     from jobctrl.infrastructure.gmail.feedback import ensure_application_feedback_tables
@@ -822,9 +866,10 @@ def test_outcome_conversion_uses_artifact_metadata_without_parent_material_table
     conversion = json.loads(_row_value(row, "outcome_conversion_json", "{}"))
 
     by_template = {entry["templateId"]: entry for entry in conversion["byTemplate"]}
-    assert by_template["template-compat"] == {
-        "templateId": "template-compat",
-        "templateName": "Compatibility resume",
+    assert "template-compat" not in by_template
+    assert by_template["unreported"] == {
+        "templateId": "unreported",
+        "templateName": None,
         "applied": 5,
         "reply": 0,
         "interview": 0,
@@ -832,13 +877,19 @@ def test_outcome_conversion_uses_artifact_metadata_without_parent_material_table
         "rejection": 0,
     }
     by_policy = {entry["policyLabel"]: entry for entry in conversion["byPolicy"]}
-    assert by_policy["Policy v7"]["tailoringPolicyVersion"] == 7
-    assert by_policy["Policy v7"]["applied"] == 5
+    assert "Policy v7" not in by_policy
+    assert by_policy["Unreported"]["tailoringPolicyVersion"] is None
+    assert by_policy["Unreported"]["applied"] == 5
 
 
 def test_outcome_conversion_empty_when_no_applied_jobs(conn: sqlite3.Connection) -> None:
     _seed_job(conn, "https://example.com/discovered-only")
-    record_job_event(conn, "https://example.com/discovered-only", "discover", "JobDiscovered")
+    record_job_event(
+        conn,
+        _job_id_for("https://example.com/discovered-only"),
+        "discover",
+        "JobDiscovered",
+    )
     conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
