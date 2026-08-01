@@ -27,6 +27,9 @@ describe("DashboardView", () => {
     expect(screen.getByText("Job scored 8/10")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Daily digest" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Outcome suggestions" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Learning recommendations" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Recruiter reply indicates an interview request.")).toBeInTheDocument();
     expect(screen.getByText("stuck").querySelector("svg")).toHaveClass("tabler-icon-ban");
     expect(screen.getByText("in progress").querySelector("svg")).toHaveClass("tabler-icon-clock");

@@ -29,6 +29,10 @@ import {
   makeOutreachThreadResponse,
 } from "../fixtures/outreach.js";
 import {
+  sampleLearningRecommendationEvidence,
+  sampleLearningRecommendationList,
+} from "../fixtures/learning.js";
+import {
   makeArtifactDetail,
   makeArtifactTailoringExplanation,
   makeActivityPage,
@@ -260,6 +264,34 @@ export const handlers = [
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
   http.get("*/v1/dashboard/summary", () => HttpResponse.json(sampleDashboardSummary)),
   http.get("*/v1/analytics/outcomes", () => HttpResponse.json(sampleOutcomeAnalyticsSummary)),
+  http.get("*/v1/learning/recommendations", () =>
+    HttpResponse.json(sampleLearningRecommendationList),
+  ),
+  http.get("*/v1/learning/recommendations/:recommendationId/evidence", ({ params }) =>
+    HttpResponse.json({
+      ...sampleLearningRecommendationEvidence,
+      recommendationId: String(params["recommendationId"]),
+    }),
+  ),
+  http.post(
+    "*/v1/learning/recommendations/:recommendationId/reviews",
+    async ({ params, request }) => {
+      const body = (await request.json()) as { decision: "accepted" | "rejected" };
+      return HttpResponse.json({
+        ok: true,
+        reviewId: `learning-recommendation-review:${
+          body.decision === "accepted" ? "c".repeat(64) : "d".repeat(64)
+        }`,
+        recommendationId: String(params["recommendationId"]),
+        revision: 1,
+        decision: body.decision,
+        context: "materials",
+        policyKind: "tailoring_rule",
+        policyVersion: body.decision === "accepted" ? 2 : null,
+        reviewedAt: "2026-08-01T12:05:00.000Z",
+      });
+    },
+  ),
   http.get("*/v1/digest", () => HttpResponse.json(sampleDailyDigest)),
   http.post("*/v1/digest/acknowledge", async ({ request }) => {
     const body = (await request.json().catch(() => ({}))) as { acknowledgedAt?: string };

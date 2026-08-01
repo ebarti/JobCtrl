@@ -58,4 +58,26 @@ describe("learning recommendation queries", () => {
       pageSize: 25,
     });
   });
+
+  it("defers evidence reads until inspection is enabled", async () => {
+    const learningRecommendationEvidence = vi.fn(async () => evidenceList);
+    const { result, rerender } = renderHookWithProviders(
+      ({ enabled }: { enabled: boolean }) =>
+        useLearningRecommendationEvidenceQuery(
+          recommendationId,
+          { page: 1, pageSize: 25 },
+          enabled,
+        ),
+      {
+        initialProps: { enabled: false },
+        ports: buildTestPorts({ api: { learningRecommendationEvidence } }),
+      },
+    );
+
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(learningRecommendationEvidence).not.toHaveBeenCalled();
+    rerender({ enabled: true });
+    await waitFor(() => expect(result.current.data).toBe(evidenceList));
+    expect(learningRecommendationEvidence).toHaveBeenCalledTimes(1);
+  });
 });
