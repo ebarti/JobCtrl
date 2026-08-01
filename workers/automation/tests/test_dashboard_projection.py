@@ -282,6 +282,129 @@ def test_artifact_projection_preserves_material_metadata(conn: sqlite3.Connectio
     assert json.loads(_row_value(registered_pdf, "metadata_json", "{}")) == {}
 
 
+def test_artifact_projection_prunes_unregistered_siblings_after_reopen(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "artifact-refresh.db"
+    conn = init_db(db_path)
+    url = "https://example.com/artifact-refresh"
+    job_id = _seed_job(conn, url)
+    now = utc_now()
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+        ) VALUES (?, ?, 1, 'resume_approved', ?, ?, '{}')
+        """,
+        (LOCAL_TENANT, job_id, now, now),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials_artifacts (
+            tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
+            render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, ?, 1, 'tailored_resume', 'registered-resume', 'approved',
+                  '/tmp/registered-resume.txt', 'text', 12, '{}', ?)
+        """,
+        (LOCAL_TENANT, job_id, now),
+    )
+    generic_artifact_id = str(
+        conn.execute(
+            """
+            INSERT INTO job_artifacts (
+                tenant_id, job_id, stage, artifact_type, status, path, created_at,
+                size_bytes
+            ) VALUES (?, ?, 'apply', 'application_log', 'completed',
+                      '/tmp/registered-application.log', ?, 24)
+            """,
+            (LOCAL_TENANT, job_id, now),
+        ).lastrowid
+    )
+    shadowed_generic_artifact_id = str(
+        conn.execute(
+            """
+            INSERT INTO job_artifacts (
+                tenant_id, job_id, stage, artifact_type, status, path, created_at,
+                size_bytes
+            ) VALUES (?, ?, 'tailor', 'tailored_resume', 'completed',
+                      '/tmp/registered-resume.txt', ?, 12)
+            """,
+            (LOCAL_TENANT, job_id, now),
+        ).lastrowid
+    )
+    conn.commit()
+    assert ProjectionBuilder(conn_factory=lambda: conn).refresh() == 1
+
+    conn.execute(
+        """
+        INSERT INTO artifact_list_projections (
+            artifact_id, tenant_id, job_id, job_title, job_employer, artifact_type,
+            status, local_path
+        ) VALUES (?, ?, ?, 'Engineer', 'Unknown company', 'tailored_resume',
+                  'completed', '/tmp/registered-resume.txt')
+        """,
+        (shadowed_generic_artifact_id, LOCAL_TENANT, job_id),
+    )
+    conn.execute(
+        """
+        INSERT INTO artifact_list_projections (
+            artifact_id, tenant_id, job_id, job_title, job_employer, artifact_type,
+            status, local_path, generation
+        ) VALUES ('phantom-resume-pdf', ?, ?, 'Engineer', 'Unknown company',
+                  'resume_pdf', 'approved', '/tmp/registered-resume.pdf', 1)
+        """,
+        (LOCAL_TENANT, job_id),
+    )
+    conn.commit()
+    close_connection(db_path)
+
+    reopened = init_db(db_path)
+    try:
+        assert ProjectionBuilder(conn_factory=lambda: reopened).refresh() == 1
+        rows = reopened.execute(
+            """
+            SELECT artifact_id, artifact_type, local_path
+            FROM artifact_list_projections
+            WHERE tenant_id = ? AND job_id = ?
+            ORDER BY artifact_id
+            """,
+            (LOCAL_TENANT, job_id),
+        ).fetchall()
+        assert [tuple(row) for row in rows] == [
+            (
+                generic_artifact_id,
+                "application_log",
+                "/tmp/registered-application.log",
+            ),
+            ("registered-resume", "tailored_resume", "/tmp/registered-resume.txt"),
+        ]
+    finally:
+        close_connection(db_path)
+
+    reopened_again = init_db(db_path)
+    try:
+        assert ProjectionBuilder(conn_factory=lambda: reopened_again).refresh() == 0
+        rows = reopened_again.execute(
+            """
+            SELECT artifact_id, artifact_type, local_path
+            FROM artifact_list_projections
+            WHERE tenant_id = ? AND job_id = ?
+            ORDER BY artifact_id
+            """,
+            (LOCAL_TENANT, job_id),
+        ).fetchall()
+        assert [tuple(row) for row in rows] == [
+            (
+                generic_artifact_id,
+                "application_log",
+                "/tmp/registered-application.log",
+            ),
+            ("registered-resume", "tailored_resume", "/tmp/registered-resume.txt"),
+        ]
+    finally:
+        close_connection(db_path)
+
+
 def test_artifact_projection_includes_resume_layout_boxes(conn: sqlite3.Connection) -> None:
     url = "https://example.com/materials-layout"
     _seed_job(conn, url)

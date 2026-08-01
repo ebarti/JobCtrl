@@ -875,6 +875,7 @@ class ProjectionBuilder:
                 # to backfill.
                 pass
         dirty_job_ids.update(self._stale_deleted_projection_jobs())
+        dirty_job_ids.update(self._stale_artifact_projection_jobs())
         dirty_job_ids.update(self._stale_stage_projection_jobs())
 
         # One-time score-audit backfill (see SCORE_AUDIT_BACKFILL): rebuild any
@@ -2640,6 +2641,61 @@ class ProjectionBuilder:
                 WHERE p.tenant_id = ?
                   AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
                   AND (p.deleted_at IS NULL OR p.deleted_at != d.deleted_at)
+                """,
+                (str(self._tenant_id),),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return set()
+        return {
+            str(row["job_id"] if not isinstance(row, tuple) else row[0])
+            for row in rows
+            if (row["job_id"] if not isinstance(row, tuple) else row[0])
+        }
+
+    def _stale_artifact_projection_jobs(self) -> set[str]:
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT DISTINCT p.job_id
+                  FROM artifact_list_projections p
+                 WHERE p.tenant_id = ?
+                   AND NOT EXISTS (
+                     SELECT 1
+                       FROM job_materials_artifacts a
+                      WHERE a.tenant_id = p.tenant_id
+                        AND a.job_id = p.job_id
+                        AND COALESCE(
+                              NULLIF(a.artifact_id, ''),
+                              a.artifact_type || ':' || a.path
+                            ) = p.artifact_id
+                        AND COALESCE(
+                              NULLIF(a.artifact_type, ''), 'artifact'
+                            ) = p.artifact_type
+                        AND a.path = p.local_path
+                   )
+                   AND NOT EXISTS (
+                     SELECT 1
+                       FROM job_artifacts a
+                      WHERE a.tenant_id = p.tenant_id
+                        AND a.job_id = p.job_id
+                        AND CAST(a.artifact_id AS TEXT) = p.artifact_id
+                        AND COALESCE(
+                              NULLIF(a.artifact_type, ''), 'artifact'
+                            ) = p.artifact_type
+                        AND a.path = p.local_path
+                        AND NOT EXISTS (
+                          SELECT 1
+                            FROM job_materials_artifacts m
+                           WHERE m.tenant_id = a.tenant_id
+                             AND m.job_id = a.job_id
+                             AND COALESCE(
+                                   NULLIF(m.artifact_type, ''), 'artifact'
+                                 ) = COALESCE(
+                                   NULLIF(a.artifact_type, ''), 'artifact'
+                                 )
+                             AND m.path = a.path
+                        )
+                   )
                 """,
                 (str(self._tenant_id),),
             ).fetchall()

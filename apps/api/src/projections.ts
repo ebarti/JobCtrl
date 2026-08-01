@@ -34,7 +34,6 @@ import { getPostedCompensationFact } from "./posted-compensation-facts.js";
 
 const STAGE_ORDER: readonly string[] = STAGES;
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"] as const;
-const SOURCE_BOARD_NAMES = new Set(["greenhouse", "linkedin", "talent.com"]);
 const SOURCE_QUALITY_EVENT_TYPES = new Set([
   "DiscoveryRunStarted",
   "DiscoveryRunCompleted",
@@ -711,6 +710,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
     }
   }
   for (const jobId of staleDeletedProjectionJobs(db, tenantId)) {
+    dirtyJobs.add(jobId);
+  }
+  for (const jobId of staleArtifactProjectionJobs(db, tenantId)) {
     dirtyJobs.add(jobId);
   }
   for (const jobId of staleArtifactMetadataProjectionJobs(db, tenantId)) {
@@ -2238,6 +2240,44 @@ function staleDeletedProjectionJobs(db: SqliteDatabase, tenantId: string): strin
   return rows.map((row) => row.job_id).filter(Boolean);
 }
 
+function staleArtifactProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
+  const rows = allRows<{ job_id: string }>(
+    db,
+    `SELECT DISTINCT p.job_id
+       FROM artifact_list_projections p
+      WHERE p.tenant_id = ?
+        AND NOT EXISTS (
+          SELECT 1
+            FROM job_materials_artifacts a
+           WHERE a.tenant_id = p.tenant_id
+             AND a.job_id = p.job_id
+             AND COALESCE(NULLIF(a.artifact_id, ''), a.artifact_type || ':' || a.path) = p.artifact_id
+             AND COALESCE(NULLIF(a.artifact_type, ''), 'artifact') = p.artifact_type
+             AND a.path = p.local_path
+        )
+        AND NOT EXISTS (
+          SELECT 1
+            FROM job_artifacts a
+           WHERE a.tenant_id = p.tenant_id
+             AND a.job_id = p.job_id
+             AND CAST(a.artifact_id AS TEXT) = p.artifact_id
+             AND COALESCE(NULLIF(a.artifact_type, ''), 'artifact') = p.artifact_type
+             AND a.path = p.local_path
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM job_materials_artifacts m
+                WHERE m.tenant_id = a.tenant_id
+                  AND m.job_id = a.job_id
+                  AND COALESCE(NULLIF(m.artifact_type, ''), 'artifact') =
+                      COALESCE(NULLIF(a.artifact_type, ''), 'artifact')
+                  AND m.path = a.path
+             )
+        )`,
+    [tenantId],
+  );
+  return rows.map((row) => row.job_id).filter(Boolean);
+}
+
 function staleArtifactMetadataProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
   const rows = allRows<{ job_id: string }>(
     db,
@@ -2426,9 +2466,8 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
 
   const title = stringField(job.title) || "Untitled";
   const site = stringField(job.site);
-  const jobUrl = stringField(job.url);
   const applicationUrl = enrichment.applicationUrl ?? nullableString(job.application_url);
-  const employer = stringField(job.company) || companyName(site, applicationUrl ?? jobUrl);
+  const employer = stringField(job.company).trim() || "Unknown company";
 
   const firstActionable =
     stages.find((s) => !["succeeded", "skipped"].includes(s.state)) ?? stages[stages.length - 1];
@@ -4690,44 +4729,6 @@ function hasApplicationOutcomeKind(
     [tenantId, jobId, kind],
   );
   return Number(row?.c ?? 0) > 0;
-}
-
-function companyName(site: string, postingUrl: string): string {
-  const inferred = inferredCompanyFromUrl(postingUrl);
-  if (inferred) return inferred;
-  if (!site || SOURCE_BOARD_NAMES.has(site.toLowerCase())) return "Unknown company";
-  return site;
-}
-
-function inferredCompanyFromUrl(rawUrl: string): string {
-  if (!rawUrl) return "";
-  try {
-    const parsed = new URL(rawUrl);
-    const segments = parsed.pathname.split("/").filter(Boolean);
-    if (parsed.hostname.endsWith("greenhouse.io") && segments[0]) {
-      return titleFromSlug(segments[0]);
-    }
-    if (parsed.hostname === "jobs.lever.co" && segments[0]) {
-      return titleFromSlug(segments[0]);
-    }
-    if (parsed.hostname === "jobs.ashbyhq.com" && segments[0]) {
-      return titleFromSlug(segments[0]);
-    }
-  } catch {
-    return "";
-  }
-  return "";
-}
-
-function titleFromSlug(value: string): string {
-  const known: Record<string, string> = { gitlab: "GitLab" };
-  const lower = value.toLowerCase();
-  if (known[lower]) return known[lower]!;
-  return value
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }
 
 // Suppress unused import warning for SqliteValue (re-exported for consumers).

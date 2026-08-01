@@ -1566,6 +1566,9 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       seedSchema(dbPath);
       const db = new Database(dbPath);
       db.prepare(
+        "UPDATE jobs SET company = 'Acme', site = 'greenhouse' WHERE tenant_id = 'local' AND job_id = ?",
+      ).run(EVENT_JOB_ID);
+      db.prepare(
         `INSERT INTO job_source_observations (
           tenant_id, source_observation_id, job_id, source_id,
           source_native_id, observed_url, normalized_observed_url,
@@ -1609,17 +1612,37 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           .json()
           .items.find((j: { jobKey: string }) => j.jobKey === EVENT_JOB_ID);
         expect(item).toMatchObject({
+          company: "Acme",
+          source: "greenhouse",
           discoverySource: "jobspy:linkedin",
           postingSource: "greenhouse:acme",
           postingSourceUrl: "https://boards.greenhouse.io/acme/jobs/123456",
         });
 
+        const companyFilteredRes = await app.inject({
+          method: "GET",
+          url: "/v1/jobs?company=Acme",
+        });
+        expect(companyFilteredRes.statusCode, companyFilteredRes.body).toBe(200);
+        expect(companyFilteredRes.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
+          EVENT_JOB_ID,
+        ]);
+
         const sourceFilteredRes = await app.inject({
+          method: "GET",
+          url: "/v1/jobs?source=greenhouse",
+        });
+        expect(sourceFilteredRes.statusCode, sourceFilteredRes.body).toBe(200);
+        expect(sourceFilteredRes.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
+          EVENT_JOB_ID,
+        ]);
+
+        const postingSourceFilteredRes = await app.inject({
           method: "GET",
           url: "/v1/jobs?source=greenhouse%3Aacme&q=event",
         });
-        expect(sourceFilteredRes.statusCode, sourceFilteredRes.body).toBe(200);
-        expect(sourceFilteredRes.json().items).toEqual(
+        expect(postingSourceFilteredRes.statusCode, postingSourceFilteredRes.body).toBe(200);
+        expect(postingSourceFilteredRes.json().items).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
               jobKey: EVENT_JOB_ID,
@@ -1627,6 +1650,22 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             }),
           ]),
         );
+
+        const combinedFilteredRes = await app.inject({
+          method: "GET",
+          url: "/v1/jobs?company=Acme&source=greenhouse",
+        });
+        expect(combinedFilteredRes.statusCode, combinedFilteredRes.body).toBe(200);
+        expect(combinedFilteredRes.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
+          EVENT_JOB_ID,
+        ]);
+
+        const crossedFilterRes = await app.inject({
+          method: "GET",
+          url: "/v1/jobs?company=greenhouse&source=Acme",
+        });
+        expect(crossedFilterRes.statusCode, crossedFilterRes.body).toBe(200);
+        expect(crossedFilterRes.json().items).toEqual([]);
 
         const detailRes = await app.inject({
           method: "GET",

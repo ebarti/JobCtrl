@@ -10,6 +10,8 @@ import { EXACT_V7_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest
 import { initializeExactV7Database } from "./v7-schema.js";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000071";
+const ARTIFACT_JOB_ID = "00000000-0000-4000-8000-000000000072";
+const UNKNOWN_COMPANY_JOB_ID = "00000000-0000-4000-8000-000000000073";
 const cleanups: Array<() => void> = [];
 
 afterEach(() => {
@@ -140,6 +142,160 @@ describe("exact-v7 projection refresh", () => {
     expect(
       db.prepare("SELECT job_id FROM due_follow_up_projections WHERE tenant_id = 'local' AND thread_id = 'thread-local'").get(),
     ).toEqual({ job_id: JOB_ID });
+    db.close();
+  });
+
+  it("removes unregistered artifact siblings and preserves both registered artifact sources after reopen", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-v7-artifact-refresh-"));
+    cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const dbPath = path.join(dir, "jobs.db");
+    initializeExactV7Database(dbPath);
+    const db = new Database(dbPath);
+    db.pragma("foreign_keys = ON");
+
+    db.prepare(
+      `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+       VALUES ('local', ?, 'https://jobs.example.test/artifacts', 'Artifact title', 'Example', 'greenhouse', ?)`,
+    ).run(ARTIFACT_JOB_ID, "2026-07-31T12:00:00Z");
+    db.prepare(
+      `INSERT INTO job_materials (
+         tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+       ) VALUES ('local', ?, 1, 'resume_approved', ?, ?, '{}')`,
+    ).run(ARTIFACT_JOB_ID, "2026-07-31T12:00:00Z", "2026-07-31T12:00:00Z");
+    db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
+         render_format, size_bytes, metadata_json, created_at
+       ) VALUES ('local', ?, 1, 'tailored_resume', 'registered-resume', 'approved',
+                 '/tmp/registered-resume.txt', 'text', 12, '{}', ?)`,
+    ).run(ARTIFACT_JOB_ID, "2026-07-31T12:00:00Z");
+    const genericArtifactId = String(
+      db
+        .prepare(
+          `INSERT INTO job_artifacts (
+             tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes
+           ) VALUES ('local', ?, 'apply', 'application_log', 'completed',
+                     '/tmp/registered-application.log', ?, 24)`,
+        )
+        .run(ARTIFACT_JOB_ID, "2026-07-31T12:00:00Z").lastInsertRowid,
+    );
+    const shadowedGenericArtifactId = String(
+      db
+        .prepare(
+          `INSERT INTO job_artifacts (
+             tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes
+           ) VALUES ('local', ?, 'tailor', 'tailored_resume', 'completed',
+                     '/tmp/registered-resume.txt', ?, 12)`,
+        )
+        .run(ARTIFACT_JOB_ID, "2026-07-31T12:00:00Z").lastInsertRowid,
+    );
+
+    refreshProjections(db, "local");
+    db.prepare(
+      `INSERT INTO artifact_list_projections (
+         artifact_id, tenant_id, job_id, job_title, job_employer, artifact_type,
+         status, local_path
+       ) VALUES (?, 'local', ?, 'Artifact title', 'Example', 'tailored_resume',
+                 'completed', '/tmp/registered-resume.txt')`,
+    ).run(shadowedGenericArtifactId, ARTIFACT_JOB_ID);
+    db.prepare(
+      `INSERT INTO artifact_list_projections (
+         artifact_id, tenant_id, job_id, job_title, job_employer, artifact_type,
+         status, local_path, generation
+       ) VALUES ('phantom-resume-pdf', 'local', ?, 'Artifact title', 'Example',
+                 'resume_pdf', 'approved', '/tmp/registered-resume.pdf', 1)`,
+    ).run(ARTIFACT_JOB_ID);
+
+    refreshProjections(db, "local");
+    expect(
+      db
+        .prepare(
+          `SELECT artifact_id, artifact_type, local_path
+             FROM artifact_list_projections
+            WHERE tenant_id = 'local' AND job_id = ?
+            ORDER BY artifact_id`,
+        )
+        .all(ARTIFACT_JOB_ID),
+    ).toEqual([
+      {
+        artifact_id: genericArtifactId,
+        artifact_type: "application_log",
+        local_path: "/tmp/registered-application.log",
+      },
+      {
+        artifact_id: "registered-resume",
+        artifact_type: "tailored_resume",
+        local_path: "/tmp/registered-resume.txt",
+      },
+    ]);
+    db.close();
+
+    const reopened = new Database(dbPath);
+    reopened.pragma("foreign_keys = ON");
+    refreshProjections(reopened, "local");
+    expect(
+      reopened
+        .prepare(
+          `SELECT artifact_id, artifact_type, local_path
+             FROM artifact_list_projections
+            WHERE tenant_id = 'local' AND job_id = ?
+            ORDER BY artifact_id`,
+        )
+        .all(ARTIFACT_JOB_ID),
+    ).toEqual([
+      {
+        artifact_id: genericArtifactId,
+        artifact_type: "application_log",
+        local_path: "/tmp/registered-application.log",
+      },
+      {
+        artifact_id: "registered-resume",
+        artifact_type: "tailored_resume",
+        local_path: "/tmp/registered-resume.txt",
+      },
+    ]);
+    reopened.close();
+  });
+
+  it("uses explicit company truth without deriving employer from source or URL", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-v7-company-projection-"));
+    cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const dbPath = path.join(dir, "jobs.db");
+    initializeExactV7Database(dbPath);
+    const db = new Database(dbPath);
+    db.pragma("foreign_keys = ON");
+
+    const insertJob = db.prepare(
+      `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+       VALUES ('local', ?, ?, ?, ?, 'greenhouse', '2026-07-31T12:00:00Z')`,
+    );
+    insertJob.run(
+      JOB_ID,
+      "https://boards.greenhouse.io/acme/jobs/1",
+      "Explicit company",
+      "Acme",
+    );
+    insertJob.run(
+      UNKNOWN_COMPANY_JOB_ID,
+      "https://boards.greenhouse.io/fabricated-company/jobs/2",
+      "Missing company",
+      null,
+    );
+
+    refreshProjections(db, "local");
+    expect(
+      db
+        .prepare(
+          `SELECT job_id, employer, source
+             FROM job_list_projections
+            WHERE tenant_id = 'local'
+            ORDER BY job_id`,
+        )
+        .all(),
+    ).toEqual([
+      { job_id: JOB_ID, employer: "Acme", source: "greenhouse" },
+      { job_id: UNKNOWN_COMPANY_JOB_ID, employer: "Unknown company", source: "greenhouse" },
+    ]);
     db.close();
   });
 });
