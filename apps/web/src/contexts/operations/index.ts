@@ -133,6 +133,7 @@ export { useJobsListQuery } from "./hooks/useJobsListQuery.js";
 export {
   useLearningRecommendationEvidenceQuery,
   useLearningRecommendationsQuery,
+  useTailoringPolicyRevisionsQuery,
 } from "./hooks/useLearningRecommendationsQuery.js";
 export { usePipelineOperationsQuery } from "./hooks/usePipelineOperationsQuery.js";
 export { useWorkflowRunsListQuery } from "./hooks/useWorkflowRunsListQuery.js";

@@ -45,6 +45,16 @@ export class FetchApiClientAdapter implements ApiClientPort {
   ) {
     return this.client.reviewLearningRecommendation(recommendationId, body);
   }
+  tailoringPolicyRevisions(
+    query: Parameters<JobCtrlApiClient["tailoringPolicyRevisions"]>[0] = {},
+  ) {
+    return this.client.tailoringPolicyRevisions(query);
+  }
+  rollbackTailoringPolicy(
+    body: Parameters<JobCtrlApiClient["rollbackTailoringPolicy"]>[0],
+  ) {
+    return this.client.rollbackTailoringPolicy(body);
+  }
   digest() {
     return this.client.digest();
   }
