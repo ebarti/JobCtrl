@@ -12,6 +12,7 @@ from jobctrl.domain.operations.feedback import (
     ScoreCorrectionFeedbackSignal,
     TailoringFeedbackSignal,
 )
+from jobctrl.domain.operations.learning import derive_tailoring_recommendations
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.projections.sqlite_feedback_signals import (
     SqliteFeedbackSignalReader,
@@ -146,6 +147,34 @@ def test_latest_tailoring_review_must_be_accepted(tmp_path: Path) -> None:
     conn.commit()
 
     assert SqliteFeedbackSignalReader(conn).list_accepted(LOCAL_TENANT) == ()
+
+    close_connection(tmp_path / "jobctrl.db")
+
+
+def test_reviewed_tailoring_signals_feed_thresholded_recommendation_derivation(
+    tmp_path: Path,
+) -> None:
+    conn = _exact_v7_connection(tmp_path)
+    _seed_jobs(conn)
+    _seed_tailoring_feedback(
+        conn, tenant_id="local", job_id=_JOB_A, signal_id="tailoring-signal-1"
+    )
+    _seed_tailoring_feedback(
+        conn, tenant_id="local", job_id=_JOB_A, signal_id="tailoring-signal-2"
+    )
+    _seed_tailoring_feedback(
+        conn, tenant_id="local", job_id=_JOB_B, signal_id="tailoring-signal-3"
+    )
+    conn.commit()
+
+    recommendation = derive_tailoring_recommendations(
+        SqliteFeedbackSignalReader(conn).list_accepted(LOCAL_TENANT),
+        contradictions={},
+    )[0]
+
+    assert recommendation.observed_signal_count == 3
+    assert recommendation.job_ids == (_JOB_A, _JOB_B)
+    assert recommendation.status == "pending"
 
     close_connection(tmp_path / "jobctrl.db")
 

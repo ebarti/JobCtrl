@@ -42,6 +42,18 @@ from jobctrl.domain.operations.feedback import (
     TailoringFeedbackSignal,
     TailoringFeedbackSignalKind,
 )
+from jobctrl.domain.operations.learning import (
+    LearningRecommendation,
+    RecommendationEvidenceRef,
+    TAILORING_RECOMMENDATION_DERIVATION_VERSION,
+    TAILORING_RECOMMENDATION_EVALUATION_FIXTURE_VERSION,
+    TAILORING_RECOMMENDATION_MIN_JOB_COUNT,
+    TAILORING_RECOMMENDATION_MIN_SIGNAL_COUNT,
+    TailoringContradictionEvidence,
+    TailoringRecommendationScope,
+    TailoringRuleEffect,
+    derive_tailoring_recommendations,
+)
 
 __all__ = [
     "ApplyRunProjection",
@@ -58,14 +70,24 @@ __all__ = [
     "FeedbackSignal",
     "JobDetailProjection",
     "JobListProjection",
+    "LearningRecommendation",
+    "RecommendationEvidenceRef",
     "RoleMatchApprovalFeedbackSignal",
     "ScoreCorrectionDirection",
     "ScoreCorrectionFeedbackSignal",
     "TAILORING_FEEDBACK_RULE_ALLOWLIST",
     "TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION",
+    "TAILORING_RECOMMENDATION_DERIVATION_VERSION",
+    "TAILORING_RECOMMENDATION_EVALUATION_FIXTURE_VERSION",
+    "TAILORING_RECOMMENDATION_MIN_JOB_COUNT",
+    "TAILORING_RECOMMENDATION_MIN_SIGNAL_COUNT",
     "StageProjection",
     "TailoringFeedbackRuleKey",
     "TailoringFeedbackRuleValue",
     "TailoringFeedbackSignal",
     "TailoringFeedbackSignalKind",
+    "TailoringContradictionEvidence",
+    "TailoringRecommendationScope",
+    "TailoringRuleEffect",
+    "derive_tailoring_recommendations",
 ]
