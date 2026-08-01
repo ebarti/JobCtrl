@@ -132,6 +132,24 @@ finally:
 	return nil
 }
 
+func reopenMigratedV7WithTypeScriptAPI(database string) error {
+	apiRoot, err := filepath.Abs(filepath.Join("..", "..", "..", "apps", "api"))
+	if err != nil {
+		return err
+	}
+	runner, err := exec.LookPath("node")
+	if err != nil {
+		return fmt.Errorf("locate Node.js for TypeScript API reopen probe: %w", err)
+	}
+	probe := filepath.Join(apiRoot, "test", "support", "reopen-exact-v7.ts")
+	command := exec.Command(runner, "--import", "tsx", probe, database)
+	command.Dir = apiRoot
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("TypeScript API failed to reopen exact v7: %w: %s", err, output)
+	}
+	return nil
+}
+
 func reopenRestoredV6WithPriorRuntime(ctx launchContext, database string) error {
 	python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
 	code := `import pathlib,sqlite3,sys
@@ -179,6 +197,46 @@ func syntheticV7CandidateBuilder(t *testing.T, python string) func(launchContext
 			return "", errors.New(strings.TrimSpace(string(output)))
 		}
 		return path, nil
+	}
+}
+
+func postStampFailureCandidateBuilder() func(launchContext, databasePair, string) (string, error) {
+	return func(candidate launchContext, pair databasePair, journalID string) (string, error) {
+		source, err := pairedDatabasePath(candidate.Instance.StateDir, pair, "jobctrl.db", legacyJobCtrlSchemaVersion)
+		if err != nil {
+			return "", err
+		}
+		path := v7CandidatePath(candidate.Instance.StateDir, journalID)
+		python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
+		code := `import sys
+from jobctrl.infrastructure.migrations.v6_to_v7_execute import CandidateExecutionError, execute_v6_to_v7_candidate
+reached_after_stamp = False
+def fail_after_stamp():
+    global reached_after_stamp
+    reached_after_stamp = True
+    raise RuntimeError("synthetic post-stamp verification failure")
+try:
+    execute_v6_to_v7_candidate(
+        sys.argv[1],
+        sys.argv[2],
+        migration_at="2026-07-31T14:00:00+00:00",
+        _after_stamp=fail_after_stamp,
+    )
+except CandidateExecutionError:
+    if reached_after_stamp:
+        print("post_stamp_failure")
+        raise SystemExit(1)
+raise SystemExit(2)`
+		command := exec.Command(python, "-I", "-B", "-c", code, source, path)
+		command.Env = candidate.Environment
+		command.Dir = candidate.Instance.StateDir
+		output, runErr := command.CombinedOutput()
+		if runErr == nil || string(output) != "post_stamp_failure\n" {
+			cleanupV7Candidate(candidate.Instance.StateDir, journalID)
+			return "", errors.New("post-stamp verification failure did not reach the verifier seam")
+		}
+		cleanupV7Candidate(candidate.Instance.StateDir, journalID)
+		return "", errors.New("synthetic post-stamp verification failure")
 	}
 }
 
@@ -322,13 +380,18 @@ func TestV6ToV7NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T)
 		t.Fatal(err)
 	}
 	createShippedV6Fixture(t, python, database)
+	next := installLifecycleRelease(t, fixture.runtime, "local-v7-next-build-0003", 3, python)
 
 	// Temporal quiescence has its own real gated-process regression below. This
 	// test keeps that network boundary closed while crossing the production Go
 	// candidate builder, private Python module, atomic install, runtime reopen,
 	// retained-pair rollback, and prior-runtime reopen in one transaction.
 	temporalQuiescenceProof = func(_, _ launchContext) error { return nil }
-	sealedV7CandidateBuilder = buildSealedV7Candidate
+	migrationBuilds := 0
+	sealedV7CandidateBuilder = func(candidate launchContext, pair databasePair, journalID string) (string, error) {
+		migrationBuilds++
+		return buildSealedV7Candidate(candidate, pair, journalID)
+	}
 	sealedV7CandidateInstaller = installSealedV7Candidate
 	candidateStarts, oldStarts := 0, 0
 	startReleaseCommand = func(base launchContext, receipt release.Receipt, journalID string) error {
@@ -341,9 +404,12 @@ func TestV6ToV7NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T)
 		}
 		runtimeContext := verifiedReleaseContext(base, verified)
 		switch receipt.BuildID {
-		case fixture.candidate.BuildID:
+		case fixture.candidate.BuildID, next.BuildID:
 			candidateStarts++
-			return reopenMigratedV7WithCandidateRuntime(runtimeContext, database)
+			if err := reopenMigratedV7WithCandidateRuntime(runtimeContext, database); err != nil {
+				return err
+			}
+			return reopenMigratedV7WithTypeScriptAPI(database)
 		case fixture.old.BuildID:
 			oldStarts++
 			return reopenRestoredV6WithPriorRuntime(runtimeContext, database)
@@ -357,8 +423,8 @@ func TestV6ToV7NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T)
 		t.Fatalf("native v6-to-v7 activation: %v", err)
 	}
 	active, err := fixture.store.ReadActive()
-	if err != nil || active.Receipt != fixture.candidate || candidateStarts != 1 || oldStarts != 0 {
-		t.Fatalf("native v7 activation = active:%#v candidate starts:%d old starts:%d err:%v", active, candidateStarts, oldStarts, err)
+	if err != nil || active.Receipt != fixture.candidate || candidateStarts != 1 || oldStarts != 0 || migrationBuilds != 1 {
+		t.Fatalf("native v7 activation = active:%#v candidate starts:%d old starts:%d migration builds:%d err:%v", active, candidateStarts, oldStarts, migrationBuilds, err)
 	}
 	pair, err := retainedPairForReceipt(fixture.state, fixture.old)
 	if err != nil {
@@ -379,16 +445,95 @@ func TestV6ToV7NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T)
 	if err := reopenRestoredV6WithPriorRuntime(verifiedReleaseContext(fixture.ctx, verifiedOld), backup); err != nil {
 		t.Fatalf("paired backup did not preserve the shipped v6 source: %v", err)
 	}
+	if err := promoteExisting(fixture.ctx, fixture.store, active, next.BuildID, "update", &output); err != nil {
+		t.Fatalf("native exact-v7 promotion: %v", err)
+	}
+	active, err = fixture.store.ReadActive()
+	if err != nil || active.Receipt != next || candidateStarts != 2 || oldStarts != 0 || migrationBuilds != 1 {
+		t.Fatalf("native exact-v7 promotion = active:%#v candidate starts:%d old starts:%d migration builds:%d err:%v", active, candidateStarts, oldStarts, migrationBuilds, err)
+	}
 
 	if err := rollbackExisting(fixture.ctx, fixture.store, active, fixture.old.BuildID, &output); err != nil {
 		t.Fatalf("native previous-version rollback: %v", err)
 	}
 	active, err = fixture.store.ReadActive()
-	if err != nil || active.Receipt != fixture.old || candidateStarts != 1 || oldStarts != 1 {
+	if err != nil || active.Receipt != fixture.old || candidateStarts != 2 || oldStarts != 1 || migrationBuilds != 1 {
 		t.Fatalf("native v6 rollback = active:%#v candidate starts:%d old starts:%d err:%v", active, candidateStarts, oldStarts, err)
 	}
 	if digest, err := sha256Path(database); err != nil || digest != backupDigest {
 		t.Fatalf("native rollback did not restore exact paired-backup bytes: backup=%s restored=%s err=%v", backupDigest, digest, err)
+	}
+}
+
+func TestV6ToV7NativeVerificationFailureRestoresAndReopensV6(t *testing.T) {
+	preserveMigrationSeams(t)
+	python := migrationIntegrationPython(t)
+	fixture := newV6ActivationFixtureWithPython(t, python)
+	database := filepath.Join(fixture.state, "jobctrl.db")
+	if err := os.Remove(database); err != nil {
+		t.Fatal(err)
+	}
+	createShippedV6Fixture(t, python, database)
+
+	temporalQuiescenceProof = func(_, _ launchContext) error { return nil }
+	sealedV7CandidateBuilder = postStampFailureCandidateBuilder()
+	sealedV7CandidateInstaller = installSealedV7Candidate
+	candidateStarts, oldStarts := 0, 0
+	startReleaseCommand = func(base launchContext, receipt release.Receipt, journalID string) error {
+		if journalID == "" {
+			return errors.New("release start is not bound to its migration journal")
+		}
+		verified, err := verifyInstalledReleaseForExecution(fixture.store, receipt)
+		if err != nil {
+			return err
+		}
+		runtimeContext := verifiedReleaseContext(base, verified)
+		switch receipt.BuildID {
+		case fixture.old.BuildID:
+			oldStarts++
+			return reopenRestoredV6WithPriorRuntime(runtimeContext, database)
+		case fixture.candidate.BuildID:
+			candidateStarts++
+			if err := reopenMigratedV7WithCandidateRuntime(runtimeContext, database); err != nil {
+				return err
+			}
+			return reopenMigratedV7WithTypeScriptAPI(database)
+		default:
+			return fmt.Errorf("unexpected release start %s", receipt.BuildID)
+		}
+	}
+
+	var output bytes.Buffer
+	if err := promoteExisting(fixture.ctx, fixture.store, fixture.active, fixture.candidate.BuildID, "update", &output); err == nil {
+		t.Fatal("native activation unexpectedly accepted a post-stamp verification failure")
+	}
+	active, err := fixture.store.ReadActive()
+	if err != nil || active.Receipt != fixture.old || candidateStarts != 0 || oldStarts != 1 {
+		t.Fatalf("post-stamp rollback = active:%#v candidate starts:%d old starts:%d err:%v", active, candidateStarts, oldStarts, err)
+	}
+	pair, err := retainedPairForReceipt(fixture.state, fixture.old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := pairedDatabasePath(fixture.state, pair, "jobctrl.db", legacyJobCtrlSchemaVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backupDigest, err := sha256Path(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restoredDigest, err := sha256Path(database); err != nil || restoredDigest != backupDigest {
+		t.Fatalf("post-stamp rollback did not restore exact v6 bytes: backup=%s restored=%s err=%v", backupDigest, restoredDigest, err)
+	}
+
+	sealedV7CandidateBuilder = buildSealedV7Candidate
+	if err := promoteExisting(fixture.ctx, fixture.store, active, fixture.candidate.BuildID, "update", &output); err != nil {
+		t.Fatalf("native retry after post-stamp failure: %v", err)
+	}
+	active, err = fixture.store.ReadActive()
+	if err != nil || active.Receipt != fixture.candidate || candidateStarts != 1 || oldStarts != 1 {
+		t.Fatalf("post-stamp retry = active:%#v candidate starts:%d old starts:%d err:%v", active, candidateStarts, oldStarts, err)
 	}
 }
 

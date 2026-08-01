@@ -358,7 +358,7 @@ def test_incomplete_v6_is_rejected_before_any_write(tmp_path: Path) -> None:
     _create_incomplete_v6_database(db_path)
     before = _complete_database_dump(db_path)
 
-    with pytest.raises(SchemaMigrationRequiredError, match="jobctrl migrate"):
+    with pytest.raises(SchemaMigrationRequiredError, match="jobctrl update"):
         init_db(db_path)
 
     close_connection(db_path)
