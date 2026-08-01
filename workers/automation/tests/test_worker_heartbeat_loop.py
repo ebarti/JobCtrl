@@ -79,7 +79,7 @@ def _recovery_connection() -> sqlite3.Connection:
             tenant_id TEXT NOT NULL,
             discover_workflow_id TEXT NOT NULL,
             discover_run_id TEXT NOT NULL,
-            job_url TEXT NOT NULL
+            job_id TEXT NOT NULL
         );
         CREATE TABLE pipeline_step_projections (
             tenant_id TEXT NOT NULL,
@@ -131,7 +131,7 @@ def test_recovery_candidates_keep_open_runs_and_only_latest_incomplete_terminal(
         if table == "discovery_execution_jobs":
             conn.execute(
                 f"INSERT INTO {table} VALUES "
-                "('local', 'discover-open', 'run-open', 'job:open')"
+                "('local', 'discover-open', 'run-open', '11111111-1111-4111-8111-111111111111')"
             )
         else:
             conn.execute(
@@ -179,10 +179,13 @@ def test_recovery_candidates_skip_terminal_incomplete_checkpoint() -> None:
                   '2026-07-16T09:00:00Z', 'run-incomplete')
         """
     )
-    digest = execution_reconciliation._recovery_key_digest({"job:partial"}, set())
+    digest = execution_reconciliation._recovery_key_digest(
+        {"22222222-2222-4222-8222-222222222222"}, set()
+    )
     conn.execute(
         "INSERT INTO discovery_execution_jobs VALUES "
-        "('local', 'discover-incomplete', 'run-incomplete', 'job:partial')"
+        "('local', 'discover-incomplete', 'run-incomplete', "
+        "'22222222-2222-4222-8222-222222222222')"
     )
     conn.execute(
         """
@@ -211,11 +214,14 @@ def test_recovery_candidates_repair_stale_ready_checkpoint() -> None:
     conn.execute(
         """
         INSERT INTO discovery_execution_jobs VALUES (
-            'local', 'discover-stale', 'run-stale', 'job:new'
+            'local', 'discover-stale', 'run-stale',
+            '33333333-3333-4333-8333-333333333333'
         )
         """
     )
-    stale_digest = execution_reconciliation._recovery_key_digest({"job:old"}, set())
+    stale_digest = execution_reconciliation._recovery_key_digest(
+        {"44444444-4444-4444-8444-444444444444"}, set()
+    )
     conn.execute(
         """
         INSERT INTO discovery_execution_recoveries VALUES (
@@ -243,7 +249,8 @@ def test_recovery_candidates_do_not_infer_readiness_from_projection_counts() -> 
     )
     conn.execute(
         "INSERT INTO discovery_execution_jobs VALUES "
-        "('local', 'discover-partial', 'run-partial', 'job:partial')"
+        "('local', 'discover-partial', 'run-partial', "
+        "'22222222-2222-4222-8222-222222222222')"
     )
     conn.execute(
         "INSERT INTO pipeline_step_projections VALUES "
