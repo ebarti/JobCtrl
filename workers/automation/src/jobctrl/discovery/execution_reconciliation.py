@@ -1130,10 +1130,10 @@ def _persisted_membership_keys(
     temporal_run_id: str,
 ) -> set[str]:
     return {
-        str(row["job_url"])
+        str(row["job_id"])
         for row in conn.execute(
             """
-            SELECT job_url FROM discovery_execution_jobs
+            SELECT job_id FROM discovery_execution_jobs
             WHERE tenant_id = ? AND discover_workflow_id = ? AND discover_run_id = ?
             """,
             (tenant_id, workflow_id, temporal_run_id),
