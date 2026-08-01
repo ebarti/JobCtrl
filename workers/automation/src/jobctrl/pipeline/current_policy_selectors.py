@@ -10,26 +10,27 @@ from jobctrl.database import (
     ensure_scoring_policy_tables,
     ensure_tailoring_policy_tables,
 )
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 
 
-def scoring_current_policy_job_urls(
+def scoring_current_policy_job_ids(
     conn: sqlite3.Connection,
     *,
     tenant_id: str,
     limit: int = 0,
-    job_urls: tuple[str, ...] = (),
-) -> tuple[str, ...]:
+    job_ids: tuple[JobId, ...] = (),
+) -> tuple[JobId, ...]:
     """Return active enriched jobs missing a current-policy score."""
 
     current_version = _current_scoring_policy_version(conn, tenant_id)
-    requested = _clean_job_urls(job_urls)
-    requested_sql, requested_params = _requested_filter("j.url", requested)
+    requested = _clean_job_ids(job_ids)
+    requested_sql, requested_params = _requested_filter("j.job_id", requested)
     active_sql = _active_job_filter("j.tenant_id", "j.job_id")
     limit_sql, limit_params = _limit_filter(limit)
 
     rows = conn.execute(
         f"""
-        SELECT j.url
+        SELECT j.job_id
         FROM jobs j
         JOIN job_enrichments je
           ON je.tenant_id = j.tenant_id AND je.job_id = j.job_id
@@ -58,23 +59,23 @@ def scoring_current_policy_job_urls(
         """,
         (tenant_id, *requested_params, current_version, *limit_params),
     ).fetchall()
-    return tuple(str(row[0]) for row in rows if row[0])
+    return tuple(canonical_job_id(str(row[0])) for row in rows if row[0])
 
 
-def tailoring_current_policy_job_urls(
+def tailoring_current_policy_job_ids(
     conn: sqlite3.Connection,
     *,
     tenant_id: str,
     min_score: int = 7,
     limit: int = 0,
-    job_urls: tuple[str, ...] = (),
-) -> tuple[str, ...]:
+    job_ids: tuple[JobId, ...] = (),
+) -> tuple[JobId, ...]:
     """Return active eligible jobs missing a current-policy tailored artifact."""
 
     min_score = effective_tailoring_min_score(min_score)
     current_version = _current_tailoring_policy_version(conn, tenant_id)
-    requested = _clean_job_urls(job_urls)
-    requested_sql, requested_params = _requested_filter("j.url", requested)
+    requested = _clean_job_ids(job_ids)
+    requested_sql, requested_params = _requested_filter("j.job_id", requested)
     active_sql = _active_job_filter("j.tenant_id", "j.job_id")
     limit_sql, limit_params = _limit_filter(limit)
     effective_tailor_path = (
@@ -85,7 +86,7 @@ def tailoring_current_policy_job_urls(
 
     rows = conn.execute(
         f"""
-        SELECT j.url
+        SELECT j.job_id
         FROM jobs j
         JOIN job_enrichments je
           ON je.tenant_id = j.tenant_id AND je.job_id = j.job_id
@@ -152,7 +153,7 @@ def tailoring_current_policy_job_urls(
             *limit_params,
         ),
     ).fetchall()
-    return tuple(str(row[0]) for row in rows if row[0])
+    return tuple(canonical_job_id(str(row[0])) for row in rows if row[0])
 
 
 def _current_scoring_policy_version(conn: sqlite3.Connection, tenant_id: str) -> int:
@@ -201,11 +202,11 @@ def _active_job_filter(tenant_id_expr: str, job_id_expr: str) -> str:
     """
 
 
-def _requested_filter(column: str, job_urls: tuple[str, ...]) -> tuple[str, tuple[str, ...]]:
-    if not job_urls:
+def _requested_filter(column: str, job_ids: tuple[JobId, ...]) -> tuple[str, tuple[JobId, ...]]:
+    if not job_ids:
         return "", ()
-    placeholders = ", ".join("?" for _ in job_urls)
-    return f" AND {column} IN ({placeholders})", job_urls
+    placeholders = ", ".join("?" for _ in job_ids)
+    return f" AND {column} IN ({placeholders})", job_ids
 
 
 def _limit_filter(limit: int) -> tuple[str, tuple[int, ...]]:
@@ -214,8 +215,8 @@ def _limit_filter(limit: int) -> tuple[str, tuple[int, ...]]:
     return "", ()
 
 
-def _clean_job_urls(job_urls: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(url.strip() for url in job_urls if url and url.strip()))
+def _clean_job_ids(job_ids: tuple[JobId, ...]) -> tuple[JobId, ...]:
+    return tuple(dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids))
 
 
 def _score_policy_version_expr(json_expr: str) -> str:

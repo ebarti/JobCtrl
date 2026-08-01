@@ -29,6 +29,7 @@ from jobctrl.discovery.activities import (
 )
 from jobctrl.discovery.workflow import DiscoverWorkflow
 from jobctrl.enrichment.activities import enrich_activity
+from jobctrl.domain.identifiers import JobId
 from jobctrl.infrastructure.temporal.finalize import (
     record_workflow_outcome,
     record_workflow_started,
@@ -257,7 +258,7 @@ async def test_pipeline_workflow_preserves_canonical_apply_target():
                     JobPipelineWorkflowInput(
                         tenant_id="local",
                         stages=["apply"],
-                        apply_job_id=_APPLY_JOB_ID,
+                        job_id=_APPLY_JOB_ID,
                         apply_selector_keys=("jobId",),
                         dry_run=True,
                     ),
@@ -326,7 +327,9 @@ def test_pipeline_apply_spec_boundaries_reject_present_unsupported_or_empty_sele
     selector: dict[str, object],
 ) -> None:
     with pytest.raises(ValueError, match="apply (accepts|jobId)"):
-        build_run_stage_workflow_spec({"tenantId": "local", "stage": "apply", **selector})
+        build_run_stage_workflow_spec(
+            {"tenantId": "local", "stage": "apply", **selector}
+        )
     with pytest.raises(ValueError, match="apply (accepts|jobId)"):
         build_pipeline_workflow_spec(
             {"tenantId": "local", **selector},
@@ -339,7 +342,7 @@ def test_pipeline_apply_spec_boundaries_preserve_batch_and_canonical_target() ->
     batch = build_run_stage_workflow_spec({"tenantId": "local", "stage": "apply"})
     (batch_payload,) = batch.args
     assert batch_payload.apply_selector_keys == ()
-    assert batch_payload.apply_job_id is None
+    assert batch_payload.job_id is None
 
     targeted = build_pipeline_workflow_spec(
         {"tenantId": "local", "jobId": _APPLY_JOB_ID},
@@ -348,15 +351,15 @@ def test_pipeline_apply_spec_boundaries_preserve_batch_and_canonical_target() ->
     )
     (targeted_payload,) = targeted.args
     assert targeted_payload.apply_selector_keys == ("jobId",)
-    assert targeted_payload.apply_job_id == _APPLY_JOB_ID
+    assert targeted_payload.job_id == _APPLY_JOB_ID
 
 
 @pytest.mark.parametrize(
     "selector_kwargs",
     [
-        {"job_url": "https://example.test/job"},
-        {"job_url": ""},
-        {"job_urls": ("https://example.test/job",)},
+        {"jobUrl": "https://example.test/job"},
+        {"jobUrl": ""},
+        {"jobUrls": ["https://example.test/job"]},
     ],
 )
 def test_pipeline_apply_spec_rejects_direct_legacy_scope_arguments(
@@ -364,10 +367,9 @@ def test_pipeline_apply_spec_rejects_direct_legacy_scope_arguments(
 ) -> None:
     with pytest.raises(ValueError, match="apply accepts only a canonical jobId"):
         build_pipeline_workflow_spec(
-            {"tenantId": "local"},
+            {"tenantId": "local", **selector_kwargs},
             stages=["apply"],
             limit=1,
-            **selector_kwargs,
         )
 
 
@@ -516,21 +518,21 @@ async def test_pipeline_workflow_forwards_validation_mode_to_tailor_and_cover():
 @pytest.mark.asyncio
 async def test_job_scoped_tailor_continuation_runs_cover_for_same_job_after_success():
     queue = f"pipeline-tailor-cover-{uuid.uuid4()}"
-    job_url = "https://example.com/job/manual-tailor"
-    tailored_urls: list[str] = []
-    cover_urls: list[str] = []
+    job_id = JobId("10000000-0000-4000-8000-000000000001")
+    tailored_job_ids: list[JobId] = []
+    cover_job_ids: list[JobId] = []
 
-    def fake_tailor_job_by_url(url: str, **_kwargs):
-        tailored_urls.append(url)
+    def fake_tailor_job_by_id(selected_job_id: JobId, **_kwargs):
+        tailored_job_ids.append(selected_job_id)
         return {"status": "approved"}
 
-    def fake_cover_letter_by_url(url: str, **_kwargs):
-        cover_urls.append(url)
+    def fake_cover_letter_by_id(selected_job_id: JobId, **_kwargs):
+        cover_job_ids.append(selected_job_id)
         return {"status": "ok", "generated": 1, "errors": 0, "elapsed": 0.01}
 
     with (
-        patch("jobctrl.scoring.tailor.tailor_job_by_url", side_effect=fake_tailor_job_by_url),
-        patch("jobctrl.scoring.cover_letter.cover_letter_by_url", side_effect=fake_cover_letter_by_url),
+        patch("jobctrl.scoring.tailor.tailor_job_by_id", side_effect=fake_tailor_job_by_id),
+        patch("jobctrl.scoring.cover_letter.cover_letter_by_id", side_effect=fake_cover_letter_by_id),
     ):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
@@ -545,7 +547,7 @@ async def test_job_scoped_tailor_continuation_runs_cover_for_same_job_after_succ
                     JobPipelineWorkflowInput(
                         tenant_id="local",
                         stages=["tailor", "cover"],
-                        job_url=job_url,
+                        job_id=job_id,
                         limit=1,
                     ),
                     id=f"pipeline-tailor-cover-wf-{uuid.uuid4()}",
@@ -554,29 +556,29 @@ async def test_job_scoped_tailor_continuation_runs_cover_for_same_job_after_succ
 
     assert result.stages_completed == ["tailor", "cover"]
     assert result.stages_failed == []
-    assert tailored_urls == [job_url]
-    assert cover_urls == [job_url]
+    assert tailored_job_ids == [job_id]
+    assert cover_job_ids == [job_id]
 
 
 @pytest.mark.asyncio
 async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
     queue = f"pipeline-current-policy-tailor-cover-{uuid.uuid4()}"
-    selected_url = "https://example.com/job/current-policy-selected"
-    unrelated_pending_cover_url = "https://example.com/job/unrelated-pending-cover"
-    tailored_urls: list[str] = []
-    cover_urls: list[str] = []
+    selected_job_id = JobId("10000000-0000-4000-8000-000000000002")
+    unrelated_pending_cover_job_id = JobId("10000000-0000-4000-8000-000000000003")
+    tailored_job_ids: list[JobId] = []
+    cover_job_ids: list[JobId] = []
 
-    def fake_current_policy_urls(_conn, **kwargs):
+    def fake_current_policy_job_ids(_conn, **kwargs):
         assert kwargs["limit"] == 1
-        return (selected_url,)
+        return (selected_job_id,)
 
-    def fake_tailor_job_by_url(url: str, **_kwargs):
-        tailored_urls.append(url)
+    def fake_tailor_job_by_id(job_id: JobId, **_kwargs):
+        tailored_job_ids.append(job_id)
         return {"status": "approved"}
 
-    def fake_cover_letter_by_url(url: str, **_kwargs):
-        cover_urls.append(url)
-        assert url != unrelated_pending_cover_url
+    def fake_cover_letter_by_id(job_id: JobId, **_kwargs):
+        cover_job_ids.append(job_id)
+        assert job_id != unrelated_pending_cover_job_id
         return {"status": "ok", "generated": 1, "errors": 0, "elapsed": 0.01}
 
     with (
@@ -585,12 +587,9 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
         # dummy), so stub the finalize writer — the finalize wiring itself is
         # covered by test_workflow_finalize.py.
         patch("jobctrl.infrastructure.temporal.finalize._emit"),
-        patch(
-            "jobctrl.pipeline.current_policy_selectors.tailoring_current_policy_job_urls",
-            side_effect=fake_current_policy_urls,
-        ),
-        patch("jobctrl.scoring.tailor.tailor_job_by_url", side_effect=fake_tailor_job_by_url),
-        patch("jobctrl.scoring.cover_letter.cover_letter_by_url", side_effect=fake_cover_letter_by_url),
+        patch("jobctrl.pipeline.current_policy_selectors.tailoring_current_policy_job_ids", side_effect=fake_current_policy_job_ids),
+        patch("jobctrl.scoring.tailor.tailor_job_by_id", side_effect=fake_tailor_job_by_id),
+        patch("jobctrl.scoring.cover_letter.cover_letter_by_id", side_effect=fake_cover_letter_by_id),
     ):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
@@ -615,8 +614,8 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
 
     assert result.stages_completed == ["tailor", "cover"]
     assert result.stages_failed == []
-    assert tailored_urls == [selected_url]
-    assert cover_urls == [selected_url]
+    assert tailored_job_ids == [selected_job_id]
+    assert cover_job_ids == [selected_job_id]
 
 
 @pytest.mark.asyncio

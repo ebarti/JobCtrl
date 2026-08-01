@@ -26,10 +26,13 @@ class ScoreActivityInput:
     workers: int = 1
     dry_run: bool = False
     rescore: bool = False
-    job_urls: tuple[str, ...] = ()
+    job_ids: tuple[JobId, ...] = ()
     current_policy_only: bool = False
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
 
 
 @dataclass(frozen=True)
@@ -90,7 +93,7 @@ async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
                 stages=list(result["stages"]),
             )
 
-        if payload.job_urls:
+        if payload.job_ids:
             result = await run_blocking_with_heartbeat(
                 lambda: _run_selected_scores(payload, cancel_event=cancel_event),
                 starting_message="selected score starting",
@@ -170,15 +173,15 @@ def _run_current_policy_scores(
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     from jobctrl.database import get_connection
-    from jobctrl.pipeline.current_policy_selectors import scoring_current_policy_job_urls
+    from jobctrl.pipeline.current_policy_selectors import scoring_current_policy_job_ids
 
-    urls = scoring_current_policy_job_urls(
+    job_ids = scoring_current_policy_job_ids(
         get_connection(),
         tenant_id=payload.tenant_id,
         limit=payload.limit,
-        job_urls=payload.job_urls,
+        job_ids=payload.job_ids,
     )
-    return _run_selected_scores(replace(payload, job_urls=urls, limit=0), cancel_event=cancel_event)
+    return _run_selected_scores(replace(payload, job_ids=job_ids, limit=0), cancel_event=cancel_event)
 
 
 def _run_selected_scores(
@@ -187,9 +190,9 @@ def _run_selected_scores(
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
-    from jobctrl.scoring.scorer import score_job_by_url
+    from jobctrl.scoring.scorer import score_job_by_id
 
-    urls = _limited_job_urls(payload.job_urls, payload.limit)
+    job_ids = _limited_job_ids(payload.job_ids, payload.limit)
     if payload.dry_run:
         return {
             "status": "ok",
@@ -200,7 +203,7 @@ def _run_selected_scores(
                     "stage": "score",
                     "status": "ok",
                     "elapsed": 0.0,
-                    "selected": len(urls),
+                    "selected": len(job_ids),
                     "dry_run": True,
                 }
             ],
@@ -210,31 +213,31 @@ def _run_selected_scores(
     errors: dict[str, str] = {}
     scored = 0
 
-    def score_one(url: str):
+    def score_one(job_id: JobId):
         if cancel_event is not None and cancel_event.is_set():
             raise LlmTransientError("score activity canceled")
-        return url, score_job_by_url(
-            url,
+        return job_id, score_job_by_id(
+            job_id,
             tenant_id=TenantId(payload.tenant_id),
             rescore=payload.rescore,
             llm_model=payload.llm_model,
         )
 
     worker_count = max(1, int(payload.workers or 1))
-    if worker_count == 1 or len(urls) <= 1:
-        results = [score_one(url) for url in urls]
+    if worker_count == 1 or len(job_ids) <= 1:
+        results = [score_one(job_id) for job_id in job_ids]
     else:
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures = [executor.submit(score_one, url) for url in urls]
+            futures = [executor.submit(score_one, job_id) for job_id in job_ids]
             results = [future.result() for future in as_completed(futures)]
 
-    for url, outcome in results:
+    for job_id, outcome in results:
         if cancel_event is not None and cancel_event.is_set():
             raise LlmTransientError("score activity canceled")
         if outcome.ok:
             scored += 1
         else:
-            errors[url] = outcome.error or "Scoring failed"
+            errors[str(job_id)] = outcome.error or "Scoring failed"
 
     elapsed = time.time() - t0
     status = "failed" if errors else "ok"
@@ -247,18 +250,22 @@ def _run_selected_scores(
                 "stage": "score",
                 "status": status,
                 "elapsed": elapsed,
-                "selected": len(urls),
+                "selected": len(job_ids),
                 "scored": scored,
             }
         ],
     }
 
 
-def _limited_job_urls(job_urls: tuple[str, ...], limit: int) -> tuple[str, ...]:
-    unique = tuple(dict.fromkeys(url for url in job_urls if url))
+def _limited_job_ids(job_ids: tuple[JobId, ...], limit: int) -> tuple[JobId, ...]:
+    unique = tuple(dict.fromkeys(job_ids))
     if limit > 0:
         return unique[:limit]
     return unique
+
+
+def _canonical_job_ids(job_ids: tuple[JobId, ...]) -> tuple[JobId, ...]:
+    return tuple(dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids))
 
 
 _SUCCESS_STATUSES = {"ok", "partial", "skipped", "already_done"}
