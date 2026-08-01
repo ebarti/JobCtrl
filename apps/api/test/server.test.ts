@@ -7610,6 +7610,121 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("preserves preparation and Apply state across repeated cancellation and terminal refresh", async () => {
+    const jobId = jobIdFor("https://example.com/jobs/ready");
+    const db = new Database(options.dbPath);
+    insertDiscoverWorkflowRunRow(db, {
+      workflowId: "prepare-active",
+      workflowType: "JobPreparationWorkflow",
+      status: "in_progress",
+      startedAt: "2026-04-29T10:21:00+00:00",
+      temporalRunId: "temporal-prepare-active",
+      inputSummary: { jobId, steps: ["tailor", "cover"] },
+    });
+    insertDiscoverWorkflowRunRow(db, {
+      workflowId: "apply-active",
+      workflowType: "ApplyWorkflow",
+      status: "in_progress",
+      startedAt: "2026-04-29T10:22:00+00:00",
+      temporalRunId: "temporal-apply-active",
+      inputSummary: { jobId, dryRun: true },
+    });
+    db.prepare(
+      `INSERT INTO apply_run_projections (
+         run_id, job_id, job_title, job_employer, status, result, dry_run, started_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "apply-active",
+      jobId,
+      "Platform Engineer",
+      "ExampleCo",
+      "in_progress",
+      null,
+      1,
+      "2026-04-29T10:22:00+00:00",
+    );
+    const eventCount = (db.prepare("SELECT COUNT(*) AS count FROM job_events").get() as { count: number }).count;
+    db.close();
+
+    const dispatch = vi.fn(async (command: { runId?: string }) => ({
+      runId: command.runId ?? "",
+      status: "canceling",
+    }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    for (const runId of ["prepare-active", "apply-active"]) {
+      const first = await app.inject({
+        method: "POST",
+        url: `/v1/workflow-runs/${runId}/actions/cancel`,
+      });
+      const replay = await app.inject({
+        method: "POST",
+        url: `/v1/workflow-runs/${runId}/actions/cancel`,
+      });
+      expect(first.statusCode, first.body).toBe(200);
+      expect(first.json()).toMatchObject({
+        action: "cancel",
+        status: "canceling",
+        jobKey: jobId,
+        runId,
+      });
+      expect(replay.json()).toMatchObject({ status: "canceling", runId });
+      const activeDetail = await app.inject({ method: "GET", url: `/v1/workflow-runs/${runId}` });
+      expect(activeDetail.json()).toMatchObject({
+        jobKey: jobId,
+        status: "in_progress",
+      });
+    }
+    expect(dispatch).toHaveBeenCalledTimes(4);
+
+    const terminalDb = new Database(options.dbPath);
+    terminalDb.prepare(
+      `UPDATE workflow_run_projections
+          SET status = 'canceled', finished_at = ?, events_json = ?
+        WHERE workflow_id IN ('prepare-active', 'apply-active')`,
+    ).run(
+      "2026-04-29T10:23:00+00:00",
+      JSON.stringify([
+        {
+          eventType: "WorkflowCanceled",
+          occurredAt: "2026-04-29T10:23:00+00:00",
+          status: "canceled",
+          message: "Workflow canceled by request.",
+        },
+      ]),
+    );
+    terminalDb.prepare(
+      "UPDATE apply_run_projections SET status = 'canceled', result = 'canceled', finished_at = ? WHERE run_id = ?",
+    ).run("2026-04-29T10:23:00+00:00", "apply-active");
+    terminalDb.close();
+
+    for (const runId of ["prepare-active", "apply-active"]) {
+      const terminal = await app.inject({
+        method: "POST",
+        url: `/v1/workflow-runs/${runId}/actions/cancel`,
+      });
+      expect(terminal.statusCode, terminal.body).toBe(200);
+      expect(terminal.json()).toMatchObject({
+        status: "already_terminal",
+        jobKey: jobId,
+        runId,
+        result: { status: "canceled" },
+      });
+      const terminalDetail = await app.inject({ method: "GET", url: `/v1/workflow-runs/${runId}` });
+      expect(terminalDetail.json()).toMatchObject({
+        jobKey: jobId,
+        status: "canceled",
+        events: [{ eventType: "WorkflowCanceled", status: "canceled" }],
+      });
+    }
+    expect(dispatch).toHaveBeenCalledTimes(4);
+    const verifyDb = new Database(options.dbPath);
+    expect((verifyDb.prepare("SELECT COUNT(*) AS count FROM job_events").get() as { count: number }).count).toBe(
+      eventCount,
+    );
+    verifyDb.close();
+    await app.close();
+  });
+
   it("preserves an already-terminal Apply result before the worker gate without writes", async () => {
     const db = new Database(options.dbPath);
     const eventCount = (db.prepare("SELECT COUNT(*) AS count FROM job_events").get() as { count: number }).count;
