@@ -13,12 +13,36 @@ For field-level schemas and every route variant, use the
 | Route family | What it exposes |
 | --- | --- |
 | `GET /v1/jobs` and `GET /v1/jobs/:jobKey` | List/detail projections, stage state, score summary, and audit links. |
+| `GET /v1/scoring/keywords` | Current projected score-version keyword aggregation with canonical normalized keys. |
 | `GET /v1/evidence-map` | Canonical career evidence used by scoring and materials. |
 | `POST /v1/jobs/:key/score-correction` | A new score version plus explicit correction rationale. |
 | Job hide/restore/delete routes | Reversible lifecycle commands, plus a separate permanent-delete boundary. |
 
 List and detail endpoints read projection rows. They do not recompute scores,
 parse salary text, or replay events during a request.
+
+`jobKey` is the tenant-scoped stable `JobId`, not a posting URL. User/import
+boundaries may resolve a URL to that ID explicitly, but internal job routes and
+foreign references remain ID-shaped. `GET /v1/jobs` accepts
+`normalizedScoreKeyword` using the exact key returned by
+`GET /v1/scoring/keywords`; current filtering never mixes historical score
+versions into the result.
+
+## Feedback Learning And Materials Policy
+
+| Route | Purpose |
+| --- | --- |
+| `GET /v1/learning/recommendations` | Paginated pending/inactive recommendation summaries with sample gates and safe counts. |
+| `GET /v1/learning/recommendations/:recommendationId/evidence` | Bounded structured supporting and contradicting references without source free text. |
+| `POST /v1/learning/recommendations/:recommendationId/reviews` | Explicitly accept or reject one current recommendation. |
+| `GET /v1/learning/policies/materials` | Paginated current and superseded tailoring-policy revisions with allowlisted provenance. |
+| `POST /v1/learning/policies/materials/rollbacks` | Append a `user_requested` revision restoring one earlier version. |
+
+Acceptance creates one versioned Materials policy revision; rejection writes a
+review but does not change policy. Rollback is append-only and idempotent for
+the same structured request. None of these routes starts scoring, tailoring,
+Apply, or artifact work. Errors and historical metadata are sanitized before
+they cross the browser boundary.
 
 ## Artifacts And Resume Templates
 

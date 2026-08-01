@@ -198,58 +198,39 @@ manages the subscription lifecycle.
 
 ## 7.4 The Invalidation Router
 
-A pure function that maps `DomainEvent → Set<QueryKey>`. The router lives
-in `contexts/operations/invalidation-router.ts`. Each backend event type
-has a registered handler:
+A pure function maps each `DomainEvent` to tenant-scoped invalidation or exact
+patch instructions. The router lives in
+`contexts/operations/invalidation-router.ts`; each backend event type has a
+registered aggregate-owned handler:
 
 ```ts
-const handlers: Record<DomainEventType, InvalidationHandler> = {
-  JobDiscovered: ({ tenantId }) => [
-    jobsKeys.lists(tenantId),
-    dashboardKeys.summary(tenantId),
-  ],
-  JobScored: ({ tenantId, jobId }) => [
-    jobsKeys.detail(tenantId, jobId),
-    jobsKeys.lists(tenantId),
-    dashboardKeys.summary(tenantId),
-  ],
-  ResumeApproved: ({ tenantId, jobId }) => [
-    jobsKeys.detail(tenantId, jobId),
-    jobsKeys.lists(tenantId),
-    artifactsKeys.lists(tenantId),
-    dashboardKeys.summary(tenantId),
-  ],
-  ApplyRunEventRecorded: ({ tenantId, runId, event }) => {
-    // Specialized: append to in-memory list rather than invalidate.
-    return [{ kind: "apply-run-event", tenantId, runId, event }];
-  },
-  PipelineStepStarted: ({ tenantId, execution }) => [
-    workflowRunsKeys.detail(tenantId, execution.workflowId),
-    workflowRunsKeys.lists(tenantId),
-    pipelineKeys.operations(tenantId),
-  ],
-  // ... one entry per DomainEventUnion variant
-};
+export const jobActiveStateChangedHandler = (event) => [
+  patchQuery(jobsKeys.detail(event.tenantId, event.payload.jobId),
+    (current) => patchJobActiveState(current, event.payload)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
 
-export function handleEvent(event: DomainEvent, qc: QueryClient): void {
-  const out = handlers[event.eventType](event.payload);
-  for (const item of out) {
-    if ("kind" in item && item.kind === "apply-run-event") {
-      qc.setQueryData(applyRunsKeys.detail(item.tenantId, item.runId), (old) =>
-        appendApplyRunEvent(old, item.event),
-      );
-    } else {
-      qc.invalidateQueries({ queryKey: item });
-    }
-  }
-}
+export const resumeApprovedHandler = (event) => [
+  patchQuery(jobsKeys.detail(event.tenantId, event.payload.jobId),
+    (current) => patchResumeApproved(current, event.payload)),
+  patchQuery(artifactsKeys.detail(event.tenantId, event.payload.artifactId),
+    (current) => patchResumeApproved(current, event.payload)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(artifactsKeys.lists(event.tenantId)),
+];
+
+// Workflow lifecycle handlers patch the existing detail, then invalidate the
+// list/dashboard reads whose membership or aggregation may have changed.
+// ApplyRunEventRecorded remains a direct ordered append.
 ```
 
 In practice the per-event handler functions are authored in each aggregate
 context's `handlers.ts` (seven files: `discovery`, `enrichment`, `profile`,
 `scoring`, `materials`, `apply`, `pipeline`) and registered centrally in
-`invalidation-router.ts`, which exports `invalidate`, `patchApplyRunEvent`,
-and `useInvalidationRouter`. The illustration above inlines them for
+`invalidation-router.ts`, which exports `invalidate`, `patchQuery`,
+`patchApplyRunEvent`, and `useInvalidationRouter`. The illustration above
+inlines representative handlers for
 clarity; Operations itself has no `handlers.ts`.
 
 **Why a router and not per-context subscriptions:**
@@ -277,10 +258,8 @@ Two layers, both required:
    is no Zod schema to read `.options` from) and asserts a handler is
    registered for each. This is the *backstop* that catches the case where a
    developer adds a stub handler `() => []` (TS-passing, behaviorally wrong).
-   It runs in the web Vitest suite, which is **not yet CI-gated** (tracked in
-   `docs/backlog.md`); the compile-time check in (1) — run in CI via
-   `pnpm -r check` — is the CI-enforced guard, and this parity test is its
-   local runtime backstop.
+   The web Vitest suite runs in TypeScript CI; the compile-time check and
+   runtime parity test are both required.
 
 The pattern mirrors the backend's `scripts/check-domain-type-parity.py`
 (per `architecture.md`'s verification-commands section). A new event on
@@ -294,26 +273,34 @@ Two patterns exist; both have a place:
 
 | Pattern | When to use | Example event |
 |---|---|---|
-| `queryClient.invalidateQueries({ queryKey })` | **Default.** Use whenever the event indicates "the projection changed; the next render should re-fetch." | `JobScored` → invalidate `jobsKeys.detail` and `jobsKeys.lists`. |
-| `queryClient.setQueryData(queryKey, updater)` | **Optimization for high-frequency events** where re-fetching would be wasteful. Use when the event payload contains exactly the data needed to patch the cache. | `ApplyRunEventRecorded` → append to the in-memory event list of the active apply-run query. |
+| `queryClient.invalidateQueries({ queryKey })` | Use when the payload is incomplete, list/filter membership can change, a dashboard aggregate changed, or no exact registered row is known. Keep the key tenant-scoped and no broader than the affected resource family. | `JobScored` → invalidate job list/detail and dashboard projections. |
+| `queryClient.setQueriesData` / `setQueryData` | Use immediately when the event contains the canonical fields needed for a truthful patch of an existing cache row. Pair it with bounded invalidation when another view needs membership/refilter/aggregate reconciliation. | Active job detail, registered artifact approval, workflow detail, and ordered Apply-run append. |
 
-**Why default to `invalidate`:**
+**Why invalidation remains necessary:**
 
 - **Single source of truth.** The projection on the server is canonical;
   the cache always reconciles to it.
 - **No hand-rolled merge bugs.** Patching cache shape by hand introduces
   mismatch between the patched value and what a fresh fetch would return.
-- **Simple, mechanical.** Each new event type is a one-line handler.
+- **Membership safety.** Events cannot insert rows into filtered or paginated
+  lists without the complete projection and filter context.
 
-**Why `setQueryData` for `ApplyRunEventRecorded` specifically:**
+**Exact patch rules:**
 
-- **Volume.** During an apply run, several events per second arrive over
-  the course of minutes. Re-fetching the apply-run detail per event
-  saturates the API for no benefit.
-- **Append-only semantics.** The event payload is exactly the new event to
-  append. Patching is trivially correct.
-- **Reconciliation backstop.** When the apply-run route workspace is left and
-  revisited, it re-fetches, naturally reconciling with any drift.
+- `JobActiveStateChanged` patches an open job detail immediately; job lists and
+  Dashboard invalidate because active-state filters and aggregates can change.
+- `ResumeApproved` changes status only on an artifact already present in an
+  open job/artifact detail. It never creates a missing artifact; list pages
+  invalidate so persisted registration and filtering remain authoritative.
+- `Workflow*` lifecycle events patch the matching run detail by exact workflow
+  identity and append a deduplicated timeline entry. Run lists, Dashboard, and
+  operations invalidate because status membership and aggregation can change.
+- `ApplyRunEventRecorded` directly appends its complete ordered event. This
+  high-frequency path avoids a refetch per event; a later read still provides
+  reconciliation.
+
+The router never resets component-owned filters, selection, pagination, or
+scroll position. A query update changes data under the existing view state.
 
 ### Runtime snapshot polling complements SSE
 

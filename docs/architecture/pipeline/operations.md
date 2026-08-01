@@ -142,7 +142,7 @@ identity once and creates an immutable `DiscoveryExecutionRef`:
 The run ID is required because the deterministic workflow ID can be started
 again. Source-run IDs are observation details, not execution identity. Every
 linked job is persisted in `discovery_execution_jobs`, keyed by that exact
-execution plus canonical job URL, with one of two cohorts:
+execution plus stable JobId, with one of two cohorts:
 
 - `observed_this_run` — a source in this execution observed the job;
 - `existing_backlog` — the execution deliberately swept pre-existing eligible

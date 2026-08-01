@@ -6,6 +6,12 @@ state, and a provenance-bearing content snapshot. Extraction is the controlled
 work used to obtain those facts from an API, posting page, browser render, or
 user-mediated capture.
 
+Every accepted job receives one system-generated `JobId` inside its tenant.
+Posting and application URLs remain external locators: changing a URL does not
+change identity or detach the job's score, materials, stages, outcomes, events,
+or workflow references. URL resolution happens only at explicit API, import,
+capture, or migration boundaries.
+
 ## How A Lead Becomes A Usable Snapshot
 
 Enrichment separates “we found a listing” from “we have enough trustworthy
@@ -82,6 +88,9 @@ Several records participate, but they do not own the same fact:
 - **Discovery owns intake and identity:** source observations, canonical job
   identity, deduplication, source-native identifiers, manual capture, and the
   source registry.
+- **Employer and source are independent facts:** Employer identifies the
+  hiring organization; Source identifies where JobCtrl observed the posting.
+  Neither is guessed from the other or from a URL during projection reads.
 - **Enrichment owns posting detail:** fetch attempts, full description,
   application URL, content snapshots, extraction provenance, confidence, and
   active-state verification.
@@ -91,8 +100,10 @@ Several records participate, but they do not own the same fact:
 - **Operations owns the read projection:** list/detail pages read projection
   rows. A `GET` does not fetch the posting again or repair missing enrichment.
 
-Canonical job/enrichment rows and `posting_snapshot_sets` live in
-`jobctrl.db`. Events explain what changed, while projections make the latest
+Canonical job/enrichment rows are keyed by `(tenant_id, job_id)` in
+`jobctrl.db`; posting URLs are unique locators rather than primary or foreign
+keys. `posting_snapshot_sets` and source observations retain their own
+provenance. Events explain what changed, while projections make the latest
 accepted state efficient to read. Raw captured content is not copied into broad
 event payloads.
 

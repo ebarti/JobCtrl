@@ -169,6 +169,10 @@ evidence, qualifications, and the complete capability matrix.
   by default and uses the configured cron only after you enable it.
 - Enrich postings with full descriptions, canonical posting URLs, and apply
   URLs.
+- Keep each job under one tenant-scoped, immutable `JobId`. Posting and
+  application URLs are locators resolved only at explicit capture/import/API
+  boundaries, so a URL change cannot detach scores, materials, outcomes, or
+  workflow history. Source and employer remain separate persisted facts.
 - Fetch politely: anonymous discovery/enrichment requests route through one
   gateway that honors `robots.txt`, paces each host, bounds each run's request
   budget, and sends an honest `User-Agent` that never impersonates a browser.
@@ -185,6 +189,9 @@ evidence, qualifications, and the complete capability matrix.
   reflow into labelled cards at narrower widths.
 - Score jobs as an applicant-side triage aid with auditable evidence — never
   employer-side screening.
+- Persist normalized scoring keywords per score version. The jobs API filters
+  by the canonical normalized key, while `/v1/scoring/keywords` exposes the
+  current-version aggregation used by typed clients.
 - Generate tailored resumes, cover letters, PDFs, and review artifacts.
 - Triage jobs through the real **Active**, **Deleted**, and **Hidden** queues.
   The default Active view keeps source and warning columns available but hidden,
@@ -212,6 +219,15 @@ evidence, qualifications, and the complete capability matrix.
   remains before offering to set up a replacement run; setup never starts work
   by itself. Runs keeps the durable workflow history; Jobs and route-level
   detail workspaces keep record-specific evidence and actions adjacent.
+- Inspect Discover, preparation, and Apply through the same Runs vocabulary,
+  timeline, terminal-state rules, and cancellation control. Repeated cancel
+  requests are harmless, and an already-terminal result remains inspectable.
+- Review privacy-bounded learning recommendations on the Dashboard. JobCtrl
+  derives them only from explicit reviewed signals, requires compatible
+  evidence across jobs, and changes Materials behavior only after you accept a
+  recommendation. Tailoring policy history is versioned, superseded revisions
+  remain inspectable, and restore creates a new append-only revision without
+  re-scoring jobs or replacing artifacts.
 - Keep recruiter, hiring-manager, and referrer contact records per company or
   application, each fact carrying its provenance, with CSV import. Draft
   truthful, reviewable outreach messages under the same anti-fabrication gates
@@ -456,6 +472,14 @@ invoke the same Python command through the checkout as described in
 This writes `~/.jobctrl/backups/jobctrl-<timestamp>.db` via SQLite
 `VACUUM INTO` and never deletes anything (`--output <path>` to choose a
 target).
+
+The native v7 update performs its own paired migration safeguard. For an
+admitted v6 installation it stops and quiesces JobCtrl, backs up both
+`jobctrl.db` and bundled Temporal state, builds and verifies the JobId-keyed v7
+candidate in one transaction, then activates the verified pair. Any failed
+build, verification, or activation restores the previous pair. The API and
+worker run exact v7 only; there is no mixed-version, dual-write, or permanent
+fallback runtime.
 
 <details>
 <summary><b>Restore steps</b></summary>
