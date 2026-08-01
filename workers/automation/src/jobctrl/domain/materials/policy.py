@@ -8,6 +8,7 @@ from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field
 from typing import Any
 
+from jobctrl.domain.operations.feedback import TAILORING_FEEDBACK_RULE_ALLOWLIST
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 
 DEFAULT_TAILORING_POLICY_VERSION = 1
@@ -16,6 +17,74 @@ REQUIREMENT_LED_TAILORING_POLICY_VERSION = 2
 DEFAULT_REQUIREMENT_LED_MIN_FIT_SCORE = 8
 DEFAULT_REQUIREMENT_LED_MUST_HAVE_COVERAGE = 0.85
 DEFAULT_REQUIREMENT_LED_MAX_REVISION_ATTEMPTS = 1
+
+_LEARNED_TAILORING_RULES_RUNTIME_KEY = "learned_tailoring_rules"
+_LEARNED_TAILORING_RULE_PAIRS = frozenset(TAILORING_FEEDBACK_RULE_ALLOWLIST.values())
+_LEARNED_TAILORING_RULE_PROMPTS = {
+    "style_guidance": "Preserve the user's reviewed edit pattern and writing-style choices.",
+    "fact_handling": "Require every factual claim to match canonical source evidence.",
+    "claim_policy": "Omit claims that are not verified or explicitly confirmed.",
+    "keyword_strategy": "Use target-job terms only when supported by canonical profile evidence.",
+    "provenance_policy": "Require direct traceable evidence for every generated claim.",
+}
+
+
+class TailoringPolicyChangedError(RuntimeError):
+    """Raised before artifact persistence when the policy snapshot advanced."""
+
+
+@dataclass(frozen=True)
+class LearnedTailoringRules:
+    """Closed, privacy-safe Materials rules accepted from recommendations."""
+
+    rules: tuple[tuple[str, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        normalized = tuple(
+            sorted(
+                (str(rule_key or "").strip(), str(rule_value or "").strip())
+                for rule_key, rule_value in self.rules
+            )
+        )
+        if len({rule_key for rule_key, _ in normalized}) != len(normalized):
+            raise ValueError("learned tailoring rule keys must be unique")
+        invalid = [pair for pair in normalized if pair not in _LEARNED_TAILORING_RULE_PAIRS]
+        if invalid:
+            raise ValueError("learned tailoring rules must match the versioned allowlist")
+        object.__setattr__(self, "rules", normalized)
+
+    @classmethod
+    def from_mapping(cls, value: MappingABC[str, Any] | None) -> "LearnedTailoringRules":
+        if value is None:
+            return cls()
+        if not isinstance(value, MappingABC):
+            raise ValueError("learned tailoring rules must be an object")
+        return cls(tuple((str(key), str(item)) for key, item in value.items()))
+
+    @classmethod
+    def from_runtime_settings(
+        cls,
+        runtime_settings: MappingABC[str, Any] | None,
+    ) -> "LearnedTailoringRules":
+        settings = runtime_settings or {}
+        raw = settings.get(_LEARNED_TAILORING_RULES_RUNTIME_KEY, {})
+        if not isinstance(raw, MappingABC):
+            raise ValueError("learned tailoring rules must be an object")
+        return cls.from_mapping(raw)
+
+    def with_rule(self, rule_key: str, rule_value: str) -> "LearnedTailoringRules":
+        updated = self.to_dict()
+        updated[str(rule_key or "").strip()] = str(rule_value or "").strip()
+        return type(self).from_mapping(updated)
+
+    def to_dict(self) -> dict[str, str]:
+        return dict(self.rules)
+
+    def prompt_lines(self) -> tuple[str, ...]:
+        return tuple(
+            f"- {rule_key}={rule_value}: {_LEARNED_TAILORING_RULE_PROMPTS[rule_key]}"
+            for rule_key, rule_value in self.rules
+        )
 
 
 @dataclass(frozen=True)
@@ -387,6 +456,64 @@ class TailoringPolicy:
     def policy_id(self) -> str:
         return f"{self.tenant_id}:tailoring-policy-v{self.version}"
 
+    @property
+    def learned_tailoring_rules(self) -> LearnedTailoringRules:
+        return LearnedTailoringRules.from_runtime_settings(self.runtime_settings)
+
+    def with_learned_tailoring_rules(
+        self,
+        rules: LearnedTailoringRules,
+        *,
+        version: int | None = None,
+        created_at: str | None = None,
+        rollback_of_version: int | None = None,
+        rollback_reason: str = "",
+    ) -> "TailoringPolicy":
+        runtime_settings = dict(self.runtime_settings)
+        runtime_settings[_LEARNED_TAILORING_RULES_RUNTIME_KEY] = rules.to_dict()
+        return type(self)(
+            tenant_id=self.tenant_id,
+            version=self.version if version is None else version,
+            prompt_version=self.prompt_version,
+            schema_version=self.schema_version,
+            judge_schema_version=self.judge_schema_version,
+            prompt_fingerprint=self.prompt_fingerprint,
+            config_fingerprint=_configuration_fingerprint(
+                prompt_version=self.prompt_version,
+                schema_version=self.schema_version,
+                judge_schema_version=self.judge_schema_version,
+                prompt_fingerprint=self.prompt_fingerprint,
+                profile_policy_fingerprint=self.profile_policy_fingerprint,
+                custom_prompt_fingerprint=self.custom_prompt_fingerprint,
+                generator_settings=self.generator_settings,
+                judge_settings=self.judge_settings,
+                runtime_settings=runtime_settings,
+            ),
+            profile_policy_fingerprint=self.profile_policy_fingerprint,
+            custom_prompt_fingerprint=self.custom_prompt_fingerprint,
+            generator_settings=self.generator_settings,
+            judge_settings=self.judge_settings,
+            runtime_settings=runtime_settings,
+            rollback_of_version=rollback_of_version,
+            rollback_reason=rollback_reason,
+            created_at=self.created_at if created_at is None else created_at,
+            created_from_event_id=self.created_from_event_id,
+        )
+
+    def with_learned_tailoring_rule(
+        self,
+        *,
+        rule_key: str,
+        rule_value: str,
+        version: int,
+        created_at: str,
+    ) -> "TailoringPolicy":
+        return self.with_learned_tailoring_rules(
+            self.learned_tailoring_rules.with_rule(rule_key, rule_value),
+            version=version,
+            created_at=created_at,
+        )
+
     @classmethod
     def from_runtime(
         cls,
@@ -411,18 +538,16 @@ class TailoringPolicy:
         generator = _clean_mapping(generator_settings or {})
         judge = _clean_mapping(judge_settings or {})
         runtime = _clean_mapping(runtime_settings or {})
-        config_fingerprint = fingerprint_value(
-            {
-                "prompt_version": prompt_version,
-                "schema_version": schema_version,
-                "judge_schema_version": judge_schema_version,
-                "prompt_fingerprint": prompt_fingerprint,
-                "profile_policy_fingerprint": profile_fingerprint,
-                "custom_prompt_fingerprint": custom_fingerprint,
-                "generator_settings": generator,
-                "judge_settings": judge,
-                "runtime_settings": runtime,
-            }
+        config_fingerprint = _configuration_fingerprint(
+            prompt_version=prompt_version,
+            schema_version=schema_version,
+            judge_schema_version=judge_schema_version,
+            prompt_fingerprint=prompt_fingerprint,
+            profile_policy_fingerprint=profile_fingerprint,
+            custom_prompt_fingerprint=custom_fingerprint,
+            generator_settings=generator,
+            judge_settings=judge,
+            runtime_settings=runtime,
         )
         return cls(
             tenant_id=tenant_id,
@@ -495,7 +620,35 @@ class TailoringPolicy:
             "config_fingerprint": self.config_fingerprint,
             "profile_policy_fingerprint": self.profile_policy_fingerprint,
             "custom_prompt_fingerprint": self.custom_prompt_fingerprint,
+            "learned_tailoring_rules": self.learned_tailoring_rules.to_dict(),
         }
+
+
+def _configuration_fingerprint(
+    *,
+    prompt_version: str,
+    schema_version: str,
+    judge_schema_version: str,
+    prompt_fingerprint: str,
+    profile_policy_fingerprint: str,
+    custom_prompt_fingerprint: str,
+    generator_settings: MappingABC[str, Any],
+    judge_settings: MappingABC[str, Any],
+    runtime_settings: MappingABC[str, Any],
+) -> str:
+    return fingerprint_value(
+        {
+            "prompt_version": prompt_version,
+            "schema_version": schema_version,
+            "judge_schema_version": judge_schema_version,
+            "prompt_fingerprint": prompt_fingerprint,
+            "profile_policy_fingerprint": profile_policy_fingerprint,
+            "custom_prompt_fingerprint": custom_prompt_fingerprint,
+            "generator_settings": generator_settings,
+            "judge_settings": judge_settings,
+            "runtime_settings": runtime_settings,
+        }
+    )
 
 
 def fingerprint_value(value: Any) -> str:
@@ -536,10 +689,12 @@ __all__ = [
     "DEFAULT_REQUIREMENT_LED_REVISION_GATES",
     "AutoApprovalPolicy",
     "GenerationPermissions",
+    "LearnedTailoringRules",
     "RequiredContentPins",
     "RequirementLedTailoringControls",
     "RevisionGatePolicy",
     "TailoringPolicy",
+    "TailoringPolicyChangedError",
     "WritingStylePolicy",
     "adapt_requirement_led_controls",
     "fingerprint_value",

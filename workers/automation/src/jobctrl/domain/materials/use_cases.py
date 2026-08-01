@@ -88,7 +88,7 @@ from jobctrl.domain.materials.fabrication_detector import (
     scan_prose_skill_fabrications,
     scan_resume_bullets,
 )
-from jobctrl.domain.materials.policy import TailoringPolicy
+from jobctrl.domain.materials.policy import LearnedTailoringRules, TailoringPolicy
 from jobctrl.domain.materials.provenance import BulletProvenance, BulletProvenanceSet
 from jobctrl.domain.materials.provenance_builder import (
     ProvenanceBindingError,
@@ -1075,6 +1075,7 @@ def build_master_tailor_prompt(
     snapshot: ProfileSnapshot,
     *,
     tailoring_plan: TailoringPlan | None = None,
+    learned_tailoring_rules: LearnedTailoringRules | None = None,
 ) -> str:
     """Build the master-resume tailoring prompt from the snapshot."""
     profile = snapshot.as_dict()
@@ -1154,6 +1155,14 @@ def build_master_tailor_prompt(
     quality_plan_block = (
         "\n" + tailoring_plan.to_prompt_context() + "\n"
         if tailoring_plan is not None
+        else ""
+    )
+    learned_rule_lines = (learned_tailoring_rules or LearnedTailoringRules()).prompt_lines()
+    learned_rule_block = (
+        "\nACCEPTED LEARNING RULES FOR FUTURE MATERIALS:\n"
+        + "\n".join(learned_rule_lines)
+        + "\n"
+        if learned_rule_lines
         else ""
     )
 
@@ -1238,6 +1247,7 @@ MASTER SKILL CATEGORIES:
 
 TAILORING POLICY:
 {chr(10).join(policy_lines)}
+{learned_rule_block}
 
 WRITING STYLE:
 {chr(10).join(style_lines)}
@@ -1624,12 +1634,35 @@ class TailorResumeUseCase:
             prior_generation = None
             materials = previous
 
+        current_policy = (
+            self._policy_repository.get_current(tenant_id)
+            if self._policy_repository is not None
+            else None
+        )
+        learned_tailoring_rules = (
+            current_policy.learned_tailoring_rules
+            if current_policy is not None
+            else LearnedTailoringRules()
+        )
+        tailoring_plan = build_tailoring_plan(
+            profile_snapshot.as_dict(),
+            job,
+            employer_analysis=employer_analysis,
+            requirement_fit_report=requirement_fit_report,
+        )
+        tailor_prompt_base = build_master_tailor_prompt(
+            profile_snapshot,
+            tailoring_plan=tailoring_plan,
+            learned_tailoring_rules=learned_tailoring_rules,
+        )
         report, parsed_payload, validation, verdict = self._run_attempts(
             job=job,
             profile_snapshot=profile_snapshot,
             validation_mode=validation_mode,
             employer_analysis=employer_analysis,
             requirement_fit_report=requirement_fit_report,
+            tailoring_plan=tailoring_plan,
+            tailor_prompt_base=tailor_prompt_base,
         )
         attempts = report["attempts"]
 
@@ -1677,6 +1710,15 @@ class TailorResumeUseCase:
                 warnings=validation.warnings,
             )
 
+        tailoring_policy = self._resolve_tailoring_policy(
+            profile_snapshot=profile_snapshot,
+            prompt_text=tailor_prompt_base,
+            validation_mode=validation_mode,
+            tenant_id=tenant_id,
+            learned_tailoring_rules=learned_tailoring_rules,
+            expected_current_version=0 if current_policy is None else current_policy.version,
+        )
+
         # Assemble the rendered resume text from the FINAL (voiced) payload so the
         # shipped text == the audited text == the provenance ``generated_text``.
         tailored_text = self._assembler.assemble_resume_text(final_payload, profile_snapshot)
@@ -1695,12 +1737,6 @@ class TailorResumeUseCase:
             size_bytes = None
 
         judge_record = self._judge_record(verdict)
-        tailoring_policy = self._resolve_tailoring_policy(
-            profile_snapshot=profile_snapshot,
-            report=report,
-            validation_mode=validation_mode,
-            tenant_id=tenant_id,
-        )
         resume_template = _resolve_effective_resume_template(
             self._repository,
             tenant_id,
@@ -1992,6 +2028,8 @@ class TailorResumeUseCase:
         validation_mode: str,
         employer_analysis: EmployerAnalysis,
         requirement_fit_report: "RequirementFitReport | None" = None,
+        tailoring_plan: TailoringPlan,
+        tailor_prompt_base: str,
     ) -> tuple[dict, dict | None, ValidationResult, JudgeVerdict | None]:
         """Run the LLM ⇒ validate ⇒ judge attempt loop.
 
@@ -1999,16 +2037,6 @@ class TailorResumeUseCase:
         payload (or ``None`` if every attempt failed to parse) + the last
         :class:`ValidationResult` and :class:`JudgeVerdict`.
         """
-        tailoring_plan = build_tailoring_plan(
-            profile_snapshot.as_dict(),
-            job,
-            employer_analysis=employer_analysis,
-            requirement_fit_report=requirement_fit_report,
-        )
-        tailor_prompt_base = build_master_tailor_prompt(
-            profile_snapshot,
-            tailoring_plan=tailoring_plan,
-        )
         model_policy = self._llm_policy
         report: dict = {
             "attempts": 0,
@@ -2271,18 +2299,23 @@ class TailorResumeUseCase:
         self,
         *,
         profile_snapshot: ProfileSnapshot,
-        report: dict,
+        prompt_text: str,
         validation_mode: str,
         tenant_id: TenantId,
+        learned_tailoring_rules: LearnedTailoringRules,
+        expected_current_version: int,
     ) -> TailoringPolicy:
         profile = profile_snapshot.as_dict()
+        runtime_settings: dict[str, Any] = {"validation_mode": validation_mode}
+        if learned_tailoring_rules.rules:
+            runtime_settings["learned_tailoring_rules"] = learned_tailoring_rules.to_dict()
         candidate = TailoringPolicy.from_runtime(
             tenant_id=tenant_id,
             version=1,
             prompt_version=TAILORING_PROMPT_VERSION,
             schema_version=TAILORING_SCHEMA_VERSION,
             judge_schema_version=TAILORING_JUDGE_SCHEMA_VERSION,
-            prompt_text=str(report.get("system_prompt") or ""),
+            prompt_text=prompt_text,
             profile_policy=get_tailoring_policy(profile),
             custom_prompt=get_custom_tailoring_prompt(profile),
             generator_settings={
@@ -2297,12 +2330,15 @@ class TailorResumeUseCase:
                 "max_tokens": self._llm_policy.judge_max_tokens,
                 "min_score": self._llm_policy.judge_min_score,
             },
-            runtime_settings={"validation_mode": validation_mode},
+            runtime_settings=runtime_settings,
             created_at=_utc_now(),
         )
         if self._policy_repository is None:
             return candidate
-        return self._policy_repository.resolve_current(candidate)
+        return self._policy_repository.resolve_current(
+            candidate,
+            expected_current_version=expected_current_version,
+        )
 
     def _run_candidate(
         self,

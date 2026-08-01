@@ -199,8 +199,13 @@ class TailoringPolicyRepository(Protocol):
         """Persist a tailoring policy version."""
         ...
 
-    def resolve_current(self, candidate: TailoringPolicy) -> TailoringPolicy:
-        """Return current policy, creating a new version when config changed."""
+    def resolve_current(
+        self,
+        candidate: TailoringPolicy,
+        *,
+        expected_current_version: int | None = None,
+    ) -> TailoringPolicy:
+        """Resolve the candidate only if the pre-generation snapshot is current."""
         ...
 
 
