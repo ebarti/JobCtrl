@@ -9,6 +9,8 @@ import { z } from "zod";
 
 import {
   DEFAULT_PIPELINE_LLM_MODEL,
+  LearningRecommendationIdSchema,
+  LearningRecommendationReviewIdSchema,
   MANUAL_CAPTURE_MODE_VALUES,
   STAGES,
 } from "./schemas.js";
@@ -87,6 +89,7 @@ export const RpcMethods = {
   BrowserCapabilityDisable: "browser_capability_disable",
   BrowserProfileCopy: "browser_profile_copy",
   RederiveLearningRecommendations: "rederive_learning_recommendations",
+  ReviewLearningRecommendation: "review_learning_recommendation",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
 
@@ -499,6 +502,90 @@ export const RederiveLearningRecommendationsResultSchema = z
   );
 export type RederiveLearningRecommendationsResult = z.infer<
   typeof RederiveLearningRecommendationsResultSchema
+>;
+
+export const ReviewLearningRecommendationParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
+    recommendationId: LearningRecommendationIdSchema,
+    decision: z.enum(["accepted", "rejected"]),
+  })
+  .strict();
+export type ReviewLearningRecommendationParams = z.infer<
+  typeof ReviewLearningRecommendationParamsSchema
+>;
+
+const WorkerUtcTimestampPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:Z|\+00:00)$/;
+
+function isValidWorkerUtcTimestamp(value: string): boolean {
+  const match = WorkerUtcTimestampPattern.exec(value);
+  if (!match) {
+    return false;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) {
+    return false;
+  }
+  const daysInMonth = [
+    31,
+    year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ][month - 1] ?? 0;
+  return day >= 1 && day <= daysInMonth;
+}
+
+const WorkerUtcTimestampSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(
+    WorkerUtcTimestampPattern,
+    "Expected an ISO-8601 UTC timestamp.",
+  )
+  .refine(isValidWorkerUtcTimestamp, "Expected a valid UTC timestamp.")
+  .transform((value) => new Date(value).toISOString());
+
+const ReviewLearningRecommendationResultBaseSchema = z
+  .object({
+    status: z.literal("succeeded"),
+    reviewId: LearningRecommendationReviewIdSchema,
+    recommendationId: LearningRecommendationIdSchema,
+    revision: z.number().int().positive(),
+    context: z.literal("materials"),
+    policyKind: z.literal("tailoring_rule"),
+    reviewedAt: WorkerUtcTimestampSchema,
+  })
+  .strict();
+
+export const ReviewLearningRecommendationResultSchema = z.discriminatedUnion("decision", [
+  ReviewLearningRecommendationResultBaseSchema.extend({
+    decision: z.literal("accepted"),
+    policyVersion: z.number().int().positive(),
+  }),
+  ReviewLearningRecommendationResultBaseSchema.extend({
+    decision: z.literal("rejected"),
+    policyVersion: z.null(),
+  }),
+]);
+export type ReviewLearningRecommendationResult = z.infer<
+  typeof ReviewLearningRecommendationResultSchema
 >;
 
 export const ProfileImportParamsSchema = z
