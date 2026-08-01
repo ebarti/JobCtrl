@@ -2816,14 +2816,23 @@ def run_single_job(
 ) -> dict:
     """Start the single-job Temporal workflow path and wait for its result."""
     from jobctrl.config import APP_DIR, DB_PATH
+    from jobctrl.domain.discovery.value_objects import PostingUrl
+    from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
     from jobctrl.workflow_specs import (
         build_single_job_workflow_spec,
         start_workflow_spec_and_wait_sync,
         workflow_result_to_dict,
     )
 
+    identity = SqliteJobIdentityResolver(get_connection()).resolve_current_by_posting_url(
+        LOCAL_TENANT,
+        PostingUrl(value=url),
+    )
+    if identity is None:
+        raise ValueError(f"No current job found for URL: {url}")
+
     spec = build_single_job_workflow_spec(
-        url,
+        str(identity.job_id),
         do_tailor=do_tailor,
         do_apply=do_apply,
         validation_mode=validation_mode,
