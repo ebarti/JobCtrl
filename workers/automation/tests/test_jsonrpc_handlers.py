@@ -863,9 +863,9 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
                 "stage": "score",
                 "stages": ["score", "tailor"],
-                "jobUrls": [
-                    "https://example.com/job/score-a",
-                    "https://example.com/job/score-b",
+                "jobIds": [
+                    "20000000-0000-4000-8000-000000000001",
+                    "20000000-0000-4000-8000-000000000002",
                 ],
                 "limit": 5,
                 "workers": 2,
@@ -897,9 +897,9 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
         expected_app_dir="/tmp/jobctrl",
         expected_db_path="/tmp/jobctrl/jobctrl.db",
         stages=["score", "tailor"],
-        job_urls=(
-            "https://example.com/job/score-a",
-            "https://example.com/job/score-b",
+        job_ids=(
+            JobId("20000000-0000-4000-8000-000000000001"),
+            JobId("20000000-0000-4000-8000-000000000002"),
         ),
         min_score=8,
         workers=2,
@@ -913,6 +913,51 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
         tailor_judge_min_score=0.9,
         llm_model=DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     )
+
+
+def test_run_stage_rejects_noncanonical_job_ids() -> None:
+    server = _server()
+
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="run_stage",
+            params={
+                "tenantId": "local",
+                "stage": "score",
+                "jobIds": ["https://example.com/jobs/not-an-id"],
+            },
+            id=1,
+        )
+    )
+
+    assert response is not None
+    assert response.to_dict()["error"]["code"] == INVALID_PARAMS
+
+
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        ("run_stage", {"stage": "score", "jobUrl": "https://example.com/jobs/legacy"}),
+        (
+            "rescore_jobs_not_on_current_scoring_policy",
+            {"jobUrls": ["https://example.com/jobs/legacy"]},
+        ),
+        (
+            "retailor_current_policy",
+            {"jobUrls": ["https://example.com/jobs/legacy"]},
+        ),
+    ],
+)
+def test_pipeline_rpc_rejects_legacy_url_selection_fields(
+    method: str,
+    params: dict[str, object],
+) -> None:
+    response = _server().dispatch(JsonRpcRequest(method=method, params=params, id=1))
+
+    assert response is not None
+    body = response.to_dict()
+    assert body["error"]["code"] == INVALID_PARAMS
+    assert "jobId or jobIds" in body["error"]["message"]
 
 
 def test_run_stage_preserves_selected_discovery_source_ids(tmp_db: Path) -> None:
@@ -1013,9 +1058,9 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
                 "limit": 10,
-                "jobUrls": [
-                    "https://example.com/job/score-a",
-                    "https://example.com/job/score-b",
+                "jobIds": [
+                    "20000000-0000-4000-8000-000000000003",
+                    "20000000-0000-4000-8000-000000000004",
                 ],
                 "dryRun": False,
             },
@@ -1024,10 +1069,10 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "limit": 10,
                 "rescore": True,
                 "retailor": False,
-                "job_url": None,
-                "job_urls": (
-                    "https://example.com/job/score-a",
-                    "https://example.com/job/score-b",
+                "job_id": None,
+                "job_ids": (
+                    JobId("20000000-0000-4000-8000-000000000003"),
+                    JobId("20000000-0000-4000-8000-000000000004"),
                 ),
                 "score_current_policy_only": True,
                 "dry_run": False,
@@ -1101,9 +1146,9 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
                 "limit": 5,
-                "jobUrls": [
-                    "https://example.com/job/tailor-a",
-                    "https://example.com/job/tailor-b",
+                "jobIds": [
+                    "20000000-0000-4000-8000-000000000005",
+                    "20000000-0000-4000-8000-000000000006",
                 ],
                 "dryRun": False,
                 "suppressExistingArtifacts": True,
@@ -1113,10 +1158,10 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "limit": 5,
                 "rescore": False,
                 "retailor": True,
-                "job_url": None,
-                "job_urls": (
-                    "https://example.com/job/tailor-a",
-                    "https://example.com/job/tailor-b",
+                "job_id": None,
+                "job_ids": (
+                    JobId("20000000-0000-4000-8000-000000000005"),
+                    JobId("20000000-0000-4000-8000-000000000006"),
                 ),
                 "tailor_current_policy_only": True,
                 "dry_run": False,
@@ -1130,15 +1175,15 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
                 "limit": 5,
-                "jobUrls": ["https://example.com/job/tailor-a"],
+                "jobIds": ["20000000-0000-4000-8000-000000000007"],
             },
             {
                 "stages": ["tailor", "cover"],
                 "limit": 5,
                 "rescore": False,
                 "retailor": True,
-                "job_url": None,
-                "job_urls": ("https://example.com/job/tailor-a",),
+                "job_id": None,
+                "job_ids": (JobId("20000000-0000-4000-8000-000000000007"),),
                 "tailor_current_policy_only": True,
                 "dry_run": False,
                 "suppress_existing_artifacts": False,
@@ -1348,7 +1393,7 @@ def test_v7_job_id_workflow_targets_are_loaded_directly_and_tenant_scoped(
         ),
     ],
 )
-def test_v7_direct_preparation_identity_requires_one_canonical_job_id(
+def test_current_policy_job_handlers_require_a_canonical_job_id(
     tmp_db: Path,
     method: str,
     params: dict[str, object],
@@ -1360,6 +1405,26 @@ def test_v7_direct_preparation_identity_requires_one_canonical_job_id(
     body = response.to_dict()
     assert body["error"]["code"] == INVALID_PARAMS
     assert expected_message in body["error"]["message"]
+
+
+@pytest.mark.parametrize("method", ("rescore_job", "retailor_job"))
+def test_current_policy_job_handlers_reject_legacy_url_fields(method: str) -> None:
+    response = _server().dispatch(
+        JsonRpcRequest(
+            method=method,
+            params={
+                "tenantId": "local",
+                "jobId": "20000000-0000-4000-8000-000000000001",
+                "jobUrl": "https://example.com/jobs/legacy",
+            },
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert body["error"]["code"] == INVALID_PARAMS
+    assert "jobUrl is not supported" in body["error"]["message"]
 
 
 @pytest.mark.parametrize(
@@ -1501,12 +1566,16 @@ def test_retailor_job_duplicate_dispatch_uses_existing_workflow_without_duplicat
 ) -> None:
     conn = get_connection(tmp_db)
     job_url = "https://example.com/job/retailor-idempotent"
-    _seed_job(tmp_db, job_url)
+    job_id = _seed_v7_current_locator(
+        conn,
+        tenant_id=TenantId("local"),
+        job_url=job_url,
+    )
     _seed_tailoring_policy(conn, version=3)
-    _seed_tailored_artifact(conn, job_url, policy_version=3)
+    _seed_tailored_artifact(conn, job_id, policy_version=3)
     before = conn.execute(
-        "SELECT COUNT(*), COUNT(DISTINCT artifact_id) FROM job_materials_artifacts WHERE job_url = ?",
-        (job_url,),
+        "SELECT COUNT(*), COUNT(DISTINCT artifact_id) FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ?",
+        ("local", job_id),
     ).fetchone()
     seen: list[WorkflowStartSpec] = []
 
@@ -1522,7 +1591,7 @@ def test_retailor_job_duplicate_dispatch_uses_existing_workflow_without_duplicat
             "tenantId": "local",
             "expectedAppDir": "/tmp/jobctrl",
             "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
-            "jobUrl": job_url,
+            "jobId": str(job_id),
             "dryRun": False,
         },
         id=1,
@@ -1540,15 +1609,15 @@ def test_retailor_job_duplicate_dispatch_uses_existing_workflow_without_duplicat
     assert seen[0].id_conflict_policy is WorkflowIDConflictPolicy.USE_EXISTING
     assert seen[1].id_conflict_policy is WorkflowIDConflictPolicy.USE_EXISTING
     after = conn.execute(
-        "SELECT COUNT(*), COUNT(DISTINCT artifact_id) FROM job_materials_artifacts WHERE job_url = ?",
-        (job_url,),
+        "SELECT COUNT(*), COUNT(DISTINCT artifact_id) FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ?",
+        ("local", job_id),
     ).fetchone()
     assert tuple(before) == (1, 1)
     assert tuple(after) == tuple(before)
 
 
 @pytest.mark.asyncio
-async def test_pipeline_workflow_preserves_selected_job_urls_in_activity_inputs(monkeypatch) -> None:
+async def test_pipeline_workflow_preserves_selected_job_ids_in_activity_inputs(monkeypatch) -> None:
     captured: list[tuple[object, object]] = []
     child_workflows: list[tuple[object, object, dict[str, object]]] = []
 
@@ -1582,7 +1651,7 @@ async def test_pipeline_workflow_preserves_selected_job_urls_in_activity_inputs(
         JobPipelineWorkflowInput(
             tenant_id="local",
             stages=["score"],
-            job_url="https://example.com/job/score-one",
+            job_id=JobId("30000000-0000-4000-8000-000000000001"),
             rescore=True,
         ),
     )
@@ -1591,9 +1660,9 @@ async def test_pipeline_workflow_preserves_selected_job_urls_in_activity_inputs(
         JobPipelineWorkflowInput(
             tenant_id="local",
             stages=["score"],
-            job_urls=(
-                "https://example.com/job/score-a",
-                "https://example.com/job/score-b",
+            job_ids=(
+                JobId("30000000-0000-4000-8000-000000000002"),
+                JobId("30000000-0000-4000-8000-000000000003"),
             ),
             rescore=True,
         ),
@@ -1603,7 +1672,7 @@ async def test_pipeline_workflow_preserves_selected_job_urls_in_activity_inputs(
         JobPipelineWorkflowInput(
             tenant_id="local",
             stages=["tailor"],
-            job_url="https://example.com/job/tailor-one",
+            job_id=JobId("30000000-0000-4000-8000-000000000004"),
             retailor=True,
             suppress_existing_artifacts=False,
         ),
@@ -1613,9 +1682,9 @@ async def test_pipeline_workflow_preserves_selected_job_urls_in_activity_inputs(
         JobPipelineWorkflowInput(
             tenant_id="local",
             stages=["tailor"],
-            job_urls=(
-                "https://example.com/job/tailor-a",
-                "https://example.com/job/tailor-b",
+            job_ids=(
+                JobId("30000000-0000-4000-8000-000000000005"),
+                JobId("30000000-0000-4000-8000-000000000006"),
             ),
             retailor=True,
             suppress_existing_artifacts=True,
@@ -1626,7 +1695,7 @@ async def test_pipeline_workflow_preserves_selected_job_urls_in_activity_inputs(
         JobPipelineWorkflowInput(
             tenant_id="local",
             stages=["cover"],
-            job_url="https://example.com/job/cover-one",
+            job_id=JobId("30000000-0000-4000-8000-000000000007"),
         ),
     )
 
@@ -1638,45 +1707,45 @@ async def test_pipeline_workflow_preserves_selected_job_urls_in_activity_inputs(
     assert len(captured) == 5
     assert captured[0][0] is score_activity
     assert isinstance(captured[0][1], ScoreActivityInput)
-    assert captured[0][1].job_urls == ("https://example.com/job/score-one",)
+    assert captured[0][1].job_ids == (JobId("30000000-0000-4000-8000-000000000001"),)
     assert captured[1][0] is score_activity
     assert isinstance(captured[1][1], ScoreActivityInput)
-    assert captured[1][1].job_urls == (
-        "https://example.com/job/score-a",
-        "https://example.com/job/score-b",
+    assert captured[1][1].job_ids == (
+        JobId("30000000-0000-4000-8000-000000000002"),
+        JobId("30000000-0000-4000-8000-000000000003"),
     )
     assert captured[2][0] is tailor_activity
     assert isinstance(captured[2][1], TailorActivityInput)
-    assert captured[2][1].job_urls == ("https://example.com/job/tailor-one",)
+    assert captured[2][1].job_ids == (JobId("30000000-0000-4000-8000-000000000004"),)
     assert captured[2][1].suppress_existing_artifacts is False
     assert captured[3][0] is tailor_activity
     assert isinstance(captured[3][1], TailorActivityInput)
-    assert captured[3][1].job_urls == (
-        "https://example.com/job/tailor-a",
-        "https://example.com/job/tailor-b",
+    assert captured[3][1].job_ids == (
+        JobId("30000000-0000-4000-8000-000000000005"),
+        JobId("30000000-0000-4000-8000-000000000006"),
     )
     assert captured[3][1].suppress_existing_artifacts is True
     assert captured[4][0] is cover_activity
     assert isinstance(captured[4][1], CoverActivityInput)
-    assert captured[4][1].job_urls == ("https://example.com/job/cover-one",)
+    assert captured[4][1].job_ids == (JobId("30000000-0000-4000-8000-000000000007"),)
 
 
-def test_selected_score_activity_runs_only_requested_urls(monkeypatch) -> None:
-    calls: list[tuple[str, dict[str, object]]] = []
+def test_selected_score_activity_runs_only_requested_job_ids(monkeypatch) -> None:
+    calls: list[tuple[JobId, dict[str, object]]] = []
 
-    def fake_score_job_by_url(url: str, **kwargs: object) -> SimpleNamespace:
-        calls.append((url, kwargs))
+    def fake_score_job_by_id(job_id: JobId, **kwargs: object) -> SimpleNamespace:
+        calls.append((job_id, kwargs))
         return SimpleNamespace(ok=True, error=None)
 
-    monkeypatch.setattr("jobctrl.scoring.scorer.score_job_by_url", fake_score_job_by_url)
+    monkeypatch.setattr("jobctrl.scoring.scorer.score_job_by_id", fake_score_job_by_id)
 
     result = scoring_activities_mod._run_selected_scores(
         ScoreActivityInput(
             tenant_id="local",
-            job_urls=(
-                "https://example.com/job/score-a",
-                "https://example.com/job/score-b",
-                "https://example.com/job/score-a",
+            job_ids=(
+                JobId("40000000-0000-4000-8000-000000000001"),
+                JobId("40000000-0000-4000-8000-000000000002"),
+                JobId("40000000-0000-4000-8000-000000000001"),
             ),
             limit=2,
             rescore=True,
@@ -1684,20 +1753,20 @@ def test_selected_score_activity_runs_only_requested_urls(monkeypatch) -> None:
         )
     )
 
-    assert [url for url, _kwargs in calls] == [
-        "https://example.com/job/score-a",
-        "https://example.com/job/score-b",
+    assert [job_id for job_id, _kwargs in calls] == [
+        JobId("40000000-0000-4000-8000-000000000001"),
+        JobId("40000000-0000-4000-8000-000000000002"),
     ]
-    assert all(call_kwargs["rescore"] is True for _url, call_kwargs in calls)
-    assert all(call_kwargs["llm_model"] == "local:score" for _url, call_kwargs in calls)
+    assert all(call_kwargs["rescore"] is True for _job_id, call_kwargs in calls)
+    assert all(call_kwargs["llm_model"] == "local:score" for _job_id, call_kwargs in calls)
     assert result["errors"] == {}
     assert result["stages"][0]["selected"] == 2
     assert result["stages"][0]["scored"] == 2
 
 
 def test_selected_score_activity_uses_requested_workers(monkeypatch) -> None:
-    calls: list[str] = []
-    submitted: list[str] = []
+    calls: list[JobId] = []
+    submitted: list[JobId] = []
     executor_workers: list[int] = []
 
     class FakeFuture:
@@ -1717,25 +1786,25 @@ def test_selected_score_activity_uses_requested_workers(monkeypatch) -> None:
         def __exit__(self, *_args: object) -> None:
             return None
 
-        def submit(self, fn, url: str):  # noqa: ANN001 - test double mirrors concurrent.futures
-            submitted.append(url)
-            return FakeFuture(fn(url))
+        def submit(self, fn, job_id: JobId):  # noqa: ANN001 - test double mirrors concurrent.futures
+            submitted.append(job_id)
+            return FakeFuture(fn(job_id))
 
-    def fake_score_job_by_url(url: str, **_kwargs: object) -> SimpleNamespace:
-        calls.append(url)
+    def fake_score_job_by_id(job_id: JobId, **_kwargs: object) -> SimpleNamespace:
+        calls.append(job_id)
         return SimpleNamespace(ok=True, error=None)
 
-    monkeypatch.setattr("jobctrl.scoring.scorer.score_job_by_url", fake_score_job_by_url)
+    monkeypatch.setattr("jobctrl.scoring.scorer.score_job_by_id", fake_score_job_by_id)
     monkeypatch.setattr(scoring_activities_mod, "ThreadPoolExecutor", RecordingExecutor)
     monkeypatch.setattr(scoring_activities_mod, "as_completed", lambda futures: futures)
 
     result = scoring_activities_mod._run_selected_scores(
         ScoreActivityInput(
             tenant_id="local",
-            job_urls=(
-                "https://example.com/job/score-a",
-                "https://example.com/job/score-b",
-                "https://example.com/job/score-c",
+            job_ids=(
+                JobId("40000000-0000-4000-8000-000000000003"),
+                JobId("40000000-0000-4000-8000-000000000004"),
+                JobId("40000000-0000-4000-8000-000000000005"),
             ),
             workers=3,
             llm_model="local:score",
@@ -1744,9 +1813,9 @@ def test_selected_score_activity_uses_requested_workers(monkeypatch) -> None:
 
     assert executor_workers == [3]
     assert submitted == [
-        "https://example.com/job/score-a",
-        "https://example.com/job/score-b",
-        "https://example.com/job/score-c",
+        JobId("40000000-0000-4000-8000-000000000003"),
+        JobId("40000000-0000-4000-8000-000000000004"),
+        JobId("40000000-0000-4000-8000-000000000005"),
     ]
     assert calls == submitted
     assert result["errors"] == {}
@@ -1793,14 +1862,14 @@ def test_current_policy_score_activity_skips_current_policy_scores(
         policy_version=2,
     )
 
-    calls: list[str] = []
+    calls: list[JobId] = []
 
-    def fake_score_job_by_url(url: str, **_kwargs: object) -> SimpleNamespace:
-        calls.append(url)
+    def fake_score_job_by_id(job_id: JobId, **_kwargs: object) -> SimpleNamespace:
+        calls.append(job_id)
         return SimpleNamespace(ok=True, error=None)
 
     monkeypatch.setattr("jobctrl.database.get_connection", lambda: get_connection(tmp_db))
-    monkeypatch.setattr("jobctrl.scoring.scorer.score_job_by_url", fake_score_job_by_url)
+    monkeypatch.setattr("jobctrl.scoring.scorer.score_job_by_id", fake_score_job_by_id)
 
     result = scoring_activities_mod._run_current_policy_scores(
         ScoreActivityInput(
@@ -1811,7 +1880,7 @@ def test_current_policy_score_activity_skips_current_policy_scores(
         )
     )
 
-    assert set(calls) == {missing_url, outdated_url}
+    assert set(calls) == {job_ids[missing_url], job_ids[outdated_url]}
     assert result["stages"][0]["selected"] == 2
     assert result["stages"][0]["scored"] == 2
 
@@ -1821,31 +1890,31 @@ def test_current_policy_score_activity_skips_current_policy_scores(
             tenant_id="local",
             limit=10,
             rescore=True,
-            job_urls=(current_url, outdated_url, corrected_url),
+            job_ids=(job_ids[current_url], job_ids[outdated_url], job_ids[corrected_url]),
             current_policy_only=True,
         )
     )
 
-    assert calls == [outdated_url]
+    assert calls == [job_ids[outdated_url]]
     assert result["stages"][0]["selected"] == 1
 
 
-def test_selected_tailor_activity_runs_only_requested_urls(monkeypatch) -> None:
-    calls: list[tuple[str, dict[str, object]]] = []
+def test_selected_tailor_activity_runs_only_requested_job_ids(monkeypatch) -> None:
+    calls: list[tuple[JobId, dict[str, object]]] = []
 
-    def fake_tailor_job_by_url(url: str, **kwargs: object) -> dict[str, object]:
-        calls.append((url, kwargs))
+    def fake_tailor_job_by_id(job_id: JobId, **kwargs: object) -> dict[str, object]:
+        calls.append((job_id, kwargs))
         return {"status": "approved"}
 
-    monkeypatch.setattr("jobctrl.scoring.tailor.tailor_job_by_url", fake_tailor_job_by_url)
+    monkeypatch.setattr("jobctrl.scoring.tailor.tailor_job_by_id", fake_tailor_job_by_id)
 
     result = materials_activities_mod._run_selected_tailoring(
         TailorActivityInput(
             tenant_id="local",
-            job_urls=(
-                "https://example.com/job/tailor-a",
-                "https://example.com/job/tailor-b",
-                "https://example.com/job/tailor-a",
+            job_ids=(
+                JobId("50000000-0000-4000-8000-000000000001"),
+                JobId("50000000-0000-4000-8000-000000000002"),
+                JobId("50000000-0000-4000-8000-000000000001"),
             ),
             limit=2,
             min_score=8,
@@ -1859,24 +1928,24 @@ def test_selected_tailor_activity_runs_only_requested_urls(monkeypatch) -> None:
         )
     )
 
-    assert [url for url, _kwargs in calls] == [
-        "https://example.com/job/tailor-a",
-        "https://example.com/job/tailor-b",
+    assert [job_id for job_id, _kwargs in calls] == [
+        JobId("50000000-0000-4000-8000-000000000001"),
+        JobId("50000000-0000-4000-8000-000000000002"),
     ]
-    assert all(call_kwargs["retailor"] is True for _url, call_kwargs in calls)
-    assert all(call_kwargs["suppress_existing_artifacts"] is True for _url, call_kwargs in calls)
-    assert all(call_kwargs["min_score"] == 8 for _url, call_kwargs in calls)
-    assert all(call_kwargs["tailor_models"] == ("local:tailor",) for _url, call_kwargs in calls)
+    assert all(call_kwargs["retailor"] is True for _job_id, call_kwargs in calls)
+    assert all(call_kwargs["suppress_existing_artifacts"] is True for _job_id, call_kwargs in calls)
+    assert all(call_kwargs["min_score"] == 8 for _job_id, call_kwargs in calls)
+    assert all(call_kwargs["tailor_models"] == ("local:tailor",) for _job_id, call_kwargs in calls)
     assert result["errors"] == {}
     assert result["stages"][0]["selected"] == 2
     assert result["stages"][0]["approved"] == 2
-    assert result["stages"][0]["selectedJobUrls"] == [
-        "https://example.com/job/tailor-a",
-        "https://example.com/job/tailor-b",
+    assert result["stages"][0]["selectedJobIds"] == [
+        JobId("50000000-0000-4000-8000-000000000001"),
+        JobId("50000000-0000-4000-8000-000000000002"),
     ]
-    assert result["stages"][0]["approvedJobUrls"] == [
-        "https://example.com/job/tailor-a",
-        "https://example.com/job/tailor-b",
+    assert result["stages"][0]["approvedJobIds"] == [
+        JobId("50000000-0000-4000-8000-000000000001"),
+        JobId("50000000-0000-4000-8000-000000000002"),
     ]
 
 
@@ -1951,14 +2020,14 @@ def test_current_policy_tailor_activity_skips_current_policy_artifacts(
         policy_version=2,
     )
 
-    calls: list[tuple[str, dict[str, object]]] = []
+    calls: list[tuple[JobId, dict[str, object]]] = []
 
-    def fake_tailor_job_by_url(url: str, **kwargs: object) -> dict[str, object]:
-        calls.append((url, kwargs))
+    def fake_tailor_job_by_id(job_id: JobId, **kwargs: object) -> dict[str, object]:
+        calls.append((job_id, kwargs))
         return {"status": "approved"}
 
     monkeypatch.setattr("jobctrl.database.get_connection", lambda: get_connection(tmp_db))
-    monkeypatch.setattr("jobctrl.scoring.tailor.tailor_job_by_url", fake_tailor_job_by_url)
+    monkeypatch.setattr("jobctrl.scoring.tailor.tailor_job_by_id", fake_tailor_job_by_id)
 
     result = materials_activities_mod._run_current_policy_tailoring(
         TailorActivityInput(
@@ -1971,11 +2040,11 @@ def test_current_policy_tailor_activity_skips_current_policy_artifacts(
         )
     )
 
-    assert {url for url, _kwargs in calls} == {missing_url, outdated_url}
-    assert all(kwargs["suppress_existing_artifacts"] is True for _url, kwargs in calls)
+    assert {job_id for job_id, _kwargs in calls} == {job_ids[missing_url], job_ids[outdated_url]}
+    assert all(kwargs["suppress_existing_artifacts"] is True for _job_id, kwargs in calls)
     assert result["stages"][0]["selected"] == 2
     assert result["stages"][0]["approved"] == 2
-    assert set(result["stages"][0]["approvedJobUrls"]) == {missing_url, outdated_url}
+    assert set(result["stages"][0]["approvedJobIds"]) == {job_ids[missing_url], job_ids[outdated_url]}
 
     calls.clear()
     result = materials_activities_mod._run_current_policy_tailoring(
@@ -1984,13 +2053,13 @@ def test_current_policy_tailor_activity_skips_current_policy_artifacts(
             min_score=7,
             limit=10,
             retailor=True,
-            job_urls=(current_url, outdated_url),
+            job_ids=(job_ids[current_url], job_ids[outdated_url]),
             current_policy_only=True,
             suppress_existing_artifacts=False,
         )
     )
 
-    assert [url for url, _kwargs in calls] == [outdated_url]
+    assert [job_id for job_id, _kwargs in calls] == [job_ids[outdated_url]]
     assert calls[0][1]["suppress_existing_artifacts"] is False
     assert result["stages"][0]["selected"] == 1
 
@@ -2300,28 +2369,28 @@ def _seed_score(
     conn.commit()
 
 
-def _seed_tailored_artifact(conn, url: str, *, policy_version: int) -> None:
+def _seed_tailored_artifact(conn, job_id: JobId, *, policy_version: int) -> None:
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-        ) VALUES (?, 1, 'local', 'resume_approved',
+            tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+        ) VALUES ('local', ?, 1, 'resume_approved',
             '2026-05-26T10:00:00+00:00', '2026-05-26T10:00:00+00:00', '{}')
         """,
-        (url,),
+        (job_id,),
     )
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
-            render_format, size_bytes, metadata_json, created_at, superseded_at
-        ) VALUES (?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?,
+            tenant_id, job_id, generation, artifact_type, artifact_id, status,
+            path, render_format, size_bytes, metadata_json, created_at, superseded_at
+        ) VALUES ('local', ?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?,
             '2026-05-26T10:00:00+00:00', NULL)
         """,
         (
-            url,
-            f"artifact-{policy_version}-{url.rsplit('/', 1)[-1]}",
-            f"/tmp/{url.rsplit('/', 1)[-1]}.txt",
+            job_id,
+            f"artifact-{policy_version}-{job_id}",
+            f"/tmp/{job_id}.txt",
             json.dumps({"tailoring_policy_version": policy_version}),
         ),
     )

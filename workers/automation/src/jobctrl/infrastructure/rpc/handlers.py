@@ -80,13 +80,16 @@ def _bool_param(params: dict[str, Any], name: str, *, default: bool = False) -> 
     return bool(raw)
 
 
-def _job_urls(params: dict[str, Any]) -> tuple[str, ...]:
-    raw = params.get("jobUrls") or ()
+def _job_ids(params: dict[str, Any]) -> tuple[JobId, ...]:
+    raw = params.get("jobIds") or ()
     if not raw:
         return ()
     if not isinstance(raw, list):
-        raise invalid_params("jobUrls must be an array")
-    return tuple(str(item).strip() for item in raw if str(item).strip())
+        raise invalid_params("jobIds must be an array")
+    try:
+        return tuple(dict.fromkeys(canonical_job_id(str(item)) for item in raw))
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
 
 
 def _source_ids(params: dict[str, Any]) -> tuple[str, ...]:
@@ -207,7 +210,7 @@ def rescore_jobs_not_on_current_scoring_policy(params: dict[str, Any]) -> Workfl
         stages=["score"],
         limit=int(params.get("limit", 100)),
         rescore=True,
-        job_urls=_job_urls(params),
+        job_ids=_job_ids(params),
         score_current_policy_only=True,
     )
 
@@ -465,7 +468,7 @@ def retailor_current_policy(params: dict[str, Any]) -> WorkflowStartSpec:
         stages=["tailor", "cover"],
         limit=int(params.get("limit", 100)),
         retailor=True,
-        job_urls=_job_urls(params),
+        job_ids=_job_ids(params),
         tailor_current_policy_only=True,
         suppress_existing_artifacts=_bool_param(params, "suppressExistingArtifacts", default=False),
     )
@@ -478,26 +481,29 @@ def _pipeline_workflow_spec(
     limit: int,
     rescore: bool = False,
     retailor: bool = False,
-    job_url: str | None = None,
-    job_urls: tuple[str, ...] = (),
+    job_id: JobId | None = None,
+    job_ids: tuple[JobId, ...] = (),
     score_current_policy_only: bool = False,
     tailor_current_policy_only: bool = False,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
-    return build_pipeline_workflow_spec(
-        params,
-        stages=stages,
-        limit=limit,
-        rescore=rescore,
-        retailor=retailor,
-        job_url=job_url,
-        job_urls=job_urls,
-        score_current_policy_only=score_current_policy_only,
-        tailor_current_policy_only=tailor_current_policy_only,
-        suppress_existing_artifacts=suppress_existing_artifacts,
-        allow_low_fit_override=allow_low_fit_override,
-    )
+    try:
+        return build_pipeline_workflow_spec(
+            params,
+            stages=stages,
+            limit=limit,
+            rescore=rescore,
+            retailor=retailor,
+            job_id=job_id,
+            job_ids=job_ids,
+            score_current_policy_only=score_current_policy_only,
+            tailor_current_policy_only=tailor_current_policy_only,
+            suppress_existing_artifacts=suppress_existing_artifacts,
+            allow_low_fit_override=allow_low_fit_override,
+        )
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
 
 
 def profile_import(params: dict[str, Any]) -> WorkflowStartSpec:
