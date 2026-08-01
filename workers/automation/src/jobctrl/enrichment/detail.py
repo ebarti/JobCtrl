@@ -2322,34 +2322,44 @@ def _run_detail_scraper(
     gateway = PolitenessGateway()
 
     if workers > 1 and len(order) > 1:
+        database_path = next(
+            str(row[2])
+            for row in conn.execute("PRAGMA database_list").fetchall()
+            if str(row[1]) == "main"
+        )
+
         def _scrape_site(site: str) -> dict:
             if cancel_event is not None and cancel_event.is_set():
                 raise TransientNetworkError("enrichment canceled")
             jobs = site_jobs[site]
             log.info("%s -- %d jobs", site, len(jobs))
-            if cancel_event is None:
-                stats = scrape_site_batch(
-                    None,
-                    site,
-                    jobs,
-                    max_jobs=max_per_site,
-                    tenant_id=stable_tenant_id,
-                    gateway=gateway,
-                    run_budget=run_budget,
-                    on_job_enriched=on_job_enriched,
-                )
-            else:
-                stats = scrape_site_batch(
-                    None,
-                    site,
-                    jobs,
-                    max_jobs=max_per_site,
-                    cancel_event=cancel_event,
-                    tenant_id=stable_tenant_id,
-                    gateway=gateway,
-                    run_budget=run_budget,
-                    on_job_enriched=on_job_enriched,
-                )
+            thread_conn = db_module.get_connection(database_path)
+            try:
+                if cancel_event is None:
+                    stats = scrape_site_batch(
+                        thread_conn,
+                        site,
+                        jobs,
+                        max_jobs=max_per_site,
+                        tenant_id=stable_tenant_id,
+                        gateway=gateway,
+                        run_budget=run_budget,
+                        on_job_enriched=on_job_enriched,
+                    )
+                else:
+                    stats = scrape_site_batch(
+                        thread_conn,
+                        site,
+                        jobs,
+                        max_jobs=max_per_site,
+                        cancel_event=cancel_event,
+                        tenant_id=stable_tenant_id,
+                        gateway=gateway,
+                        run_budget=run_budget,
+                        on_job_enriched=on_job_enriched,
+                    )
+            finally:
+                db_module.close_connection(database_path)
             log.info(
                 "%s summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
                 site,
