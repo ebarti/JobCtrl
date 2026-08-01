@@ -2479,9 +2479,21 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
   const compensationProjection = buildExactV7CompensationProjection(jobId, nullableString(job.salary));
 
   const artifacts = collectArtifacts(db, tenantId, jobId, materials);
-  const resume = preferredArtifactSource(artifacts, ["tailored_resume"], materials.generation);
-  const coverLetter = preferredArtifactSource(artifacts, ["cover_letter"], materials.generation);
-  const resumePdf = preferredArtifactSource(artifacts, ["resume_pdf"], materials.generation);
+  const resume = preferredArtifactSource(
+    artifacts,
+    ["tailored_resume", "tailored_resume_txt"],
+    materials.generation,
+  );
+  const coverLetter = preferredArtifactSource(
+    artifacts,
+    ["cover_letter", "cover_letter_txt"],
+    materials.generation,
+  );
+  const resumePdf = preferredArtifactSource(
+    artifacts,
+    ["resume_pdf", "tailored_resume_pdf"],
+    materials.generation,
+  );
   const coverLetterPdf = preferredArtifactSource(artifacts, ["cover_letter_pdf"], materials.generation);
   const hasResume = Boolean(resume);
   const hasCoverLetter = Boolean(coverLetter);

@@ -1929,9 +1929,16 @@ describe("local TypeScript API", () => {
     const now = new Date().toISOString();
     const db = new Database(options.dbPath);
     try {
+      const jobUrl = "https://example.com/jobs/ready";
+      db.prepare("UPDATE jobs SET discovered_at = ? WHERE url = ?").run(now, jobUrl);
       db.prepare(
-        "UPDATE jobs SET discovered_at = ?, apply_status = 'applied', applied_at = ? WHERE url = ?",
-      ).run(now, now, "https://example.com/jobs/ready");
+        `INSERT INTO job_events (
+           tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at
+         ) SELECT 'local', job_id, 1, 'apply', 'ApplicationManuallyMarked', 'info',
+                  'Job marked applied from test.', ?
+             FROM jobs
+            WHERE tenant_id = 'local' AND url = ?`,
+      ).run(now, jobUrl);
     } finally {
       db.close();
     }
@@ -2940,14 +2947,12 @@ describe("local TypeScript API", () => {
       artifactCount: 2,
     });
     expect(body.applyAudit).toMatchObject({
-      state: "preparing",
-      label: "materials preparing",
+      state: "ready",
+      label: "materials ready",
       reviewEvidenceAvailable: true,
       hardBlockers: [],
     });
-    expect(body.applyAudit.missingPrerequisites).toEqual([
-      expect.objectContaining({ code: "missing_resume_pdf" }),
-    ]);
+    expect(body.applyAudit.missingPrerequisites).toEqual([]);
     expect(body.stages.map((stage: { stage: string }) => stage.stage)).toEqual([
       "discover",
       "enrich",
@@ -3157,8 +3162,8 @@ describe("local TypeScript API", () => {
       },
     });
     expect(detailBody.applyAudit).toMatchObject({
-      state: "preparing",
-      label: "materials preparing",
+      state: "ready",
+      label: "materials ready",
       reviewEvidenceAvailable: true,
     });
 
@@ -3276,8 +3281,8 @@ describe("local TypeScript API", () => {
       },
     });
     expect(detailBody.applyAudit).toMatchObject({
-      state: "preparing",
-      label: "materials preparing",
+      state: "ready",
+      label: "materials ready",
       reviewEvidenceAvailable: true,
     });
 
