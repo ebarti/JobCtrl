@@ -596,11 +596,14 @@ class SqliteJobRepository:
         the existing owner before any candidate row becomes visible.
         """
 
-        if self._conn.in_transaction:
-            raise RuntimeError("claim_new_job requires an idle SQLite connection")
+        owns_transaction = not self._conn.in_transaction
+        savepoint = "claim_new_job"
+        if owns_transaction:
+            self._conn.execute("BEGIN IMMEDIATE")
+        else:
+            self._conn.execute(f"SAVEPOINT {savepoint}")
 
         try:
-            self._conn.execute("BEGIN IMMEDIATE")
             self._fence_search_unit_write()
             owner_match = self.find_canonical_owner(
                 job.tenant_id,
@@ -609,7 +612,10 @@ class SqliteJobRepository:
                 canonical_url=identity.canonical_url,
             )
             if owner_match is not None:
-                self._conn.commit()
+                if owns_transaction:
+                    self._conn.commit()
+                else:
+                    self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 return owner_match
 
             candidate_job_id = canonical_job_id(str(job.job_id))
@@ -618,7 +624,10 @@ class SqliteJobRepository:
                 candidate_job_id,
             )
             if not was_new:
-                self._conn.commit()
+                if owns_transaction:
+                    self._conn.commit()
+                else:
+                    self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 return CanonicalOwnerMatch(
                     job_id=persisted_identity.job_id,
                     basis="canonical_url_match",
@@ -632,11 +641,22 @@ class SqliteJobRepository:
                 observation,
             )
             if owner_match is not None:
-                self._conn.rollback()
+                if owns_transaction:
+                    self._conn.rollback()
+                else:
+                    self._conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 return owner_match
-            self._conn.commit()
+            if owns_transaction:
+                self._conn.commit()
+            else:
+                self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         except BaseException:
-            self._conn.rollback()
+            if owns_transaction:
+                self._conn.rollback()
+            else:
+                self._conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
             raise
 
         self._record_observation_side_effects(
