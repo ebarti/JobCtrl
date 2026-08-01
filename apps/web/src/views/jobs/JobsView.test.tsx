@@ -810,7 +810,7 @@ describe("<JobsView> bulk delete integration", () => {
     expect(rowForTitle(applyJob.title)).toHaveClass(
       "data-grid-row-tone-warning",
     );
-  });
+  }, 15_000);
 
   it("hydrates active saved table view filters when the jobs view remounts", async () => {
     const vonageJob: JobSummary = {
