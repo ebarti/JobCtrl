@@ -24,6 +24,7 @@ from jobctrl.infrastructure.learning.sqlite_repository import (
     LearningRecommendationConflict,
     SqliteLearningRecommendationRepository,
 )
+from jobctrl.infrastructure.materials import sqlite_repository as materials_sqlite_repository
 from jobctrl.infrastructure.materials import (
     LearningRecommendationReviewError,
     SqliteLearningRecommendationReviewRepository,
@@ -892,7 +893,21 @@ def test_review_fails_closed_without_current_policy_or_for_tombstone(
     close_connection(db_path)
 
 
-def test_concurrent_accepts_serialize_and_preserve_both_rules(tmp_path: Path) -> None:
+def test_concurrent_accepts_serialize_and_preserve_both_rules(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_ensure = materials_sqlite_repository.ensure_tailoring_policy_tables
+
+    def ensure_before_immediate_transaction(conn):
+        assert not conn.in_transaction
+        return original_ensure(conn)
+
+    monkeypatch.setattr(
+        materials_sqlite_repository,
+        "ensure_tailoring_policy_tables",
+        ensure_before_immediate_transaction,
+    )
     db_path = tmp_path / "jobctrl.db"
     setup_conn = init_db(db_path)
     recommendations = (
