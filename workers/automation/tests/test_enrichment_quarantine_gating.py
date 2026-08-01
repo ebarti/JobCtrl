@@ -39,7 +39,7 @@ from jobctrl.domain.enrichment import (
     SnapshotConfidence,
     SnapshotDescriptionHash,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, generate_job_id
 from jobctrl.domain.materials import (
     Artifact,
     ArtifactType,
@@ -72,19 +72,49 @@ def conn(tmp_path: Path) -> sqlite3.Connection:
 
 
 def _seed_enriched_job(conn: sqlite3.Connection, url: str) -> None:
+    job_id = generate_job_id()
     conn.execute(
-        "INSERT INTO jobs (url, title, site, full_description, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (url, "Engineer", "Acme", _DESCRIPTION, "2024-01-01T00:00:00+00:00"),
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (str(LOCAL_TENANT), str(job_id), url, "Engineer", "Acme", "2024-01-01T00:00:00+00:00"),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_locators (
+            tenant_id, job_id, locator_kind, locator_value, is_current,
+            first_seen_at, last_seen_at, retired_at
+        ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?, NULL)
+        """,
+        (str(LOCAL_TENANT), str(job_id), url, NOW, NOW),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_enrichments (
+            tenant_id, job_id, current_status, full_description, application_url,
+            enriched_at, extraction_tier, attempts_json, updated_at
+        ) VALUES (?, ?, 'enriched', ?, NULL, ?, 'css_selectors', '[]', ?)
+        """,
+        (str(LOCAL_TENANT), str(job_id), _DESCRIPTION, NOW, NOW),
     )
     conn.commit()
+
+
+def _job_id(conn: sqlite3.Connection, url: str) -> JobId:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+        (str(LOCAL_TENANT), url),
+    ).fetchone()
+    assert row is not None
+    return JobId(str(row["job_id"]))
 
 
 def _save_score(conn: sqlite3.Connection, url: str, fit: int = 9) -> None:
     SqliteScoreRepository(conn).save(
         JobScore.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+            job_id=_job_id(conn, url),
             fit_score=FitScore.create(fit),
             breakdown=ScoreBreakdown(reasoning="ok", eligibility=EligibilityAssessment()),
             matched_keywords=MatchedKeywords.from_iterable(["python"]),
@@ -104,7 +134,7 @@ def _record_snapshot(
 ) -> None:
     repo = SqlitePostingSnapshotSetRepository(conn)
     snapshot_set = PostingSnapshotSet.empty(
-        tenant_id=LOCAL_TENANT, job_id=JobId(url), updated_at=NOW
+        tenant_id=LOCAL_TENANT, job_id=_job_id(conn, url), updated_at=NOW
     )
     snapshot_set, _ = snapshot_set.record_snapshot(
         source_id="acme",
@@ -129,7 +159,7 @@ def _add_approved_resume_with_pdf(conn: sqlite3.Connection, url: str) -> None:
     SqliteMaterialsRepository(conn).save(
         MaterialsSetFactory.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+            job_id=_job_id(conn, url),
             created_at="2024-01-01T00:00:00+00:00",
         )
         .with_resume_attempt(
@@ -289,8 +319,8 @@ def test_repository_persists_latest_confidence_and_quarantine(
 
     row = conn.execute(
         "SELECT latest_confidence, latest_quarantine_reason "
-        "FROM posting_snapshot_sets WHERE job_url = ?",
-        (url,),
+        "FROM posting_snapshot_sets WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), _job_id(conn, url)),
     ).fetchone()
     assert row["latest_confidence"] == "low"
     assert row["latest_quarantine_reason"] == "low_confidence_extraction"
@@ -356,6 +386,7 @@ def test_snapshot_captured_event_records_confidence_and_quarantine(
     }
     _record_posting_snapshot_from_cascade(
         conn,
+        job_id=_job_id(conn, url),
         url=url,
         source_id="acme",
         title="Engineer",
@@ -397,8 +428,9 @@ def test_no_snapshot_backlog_job_is_never_gated_from_any_selector(
     _seed_enriched_job(conn, tailored)
     _save_score(conn, tailored, fit=9)
     conn.execute(
-        "UPDATE jobs SET application_url = 'https://apply.example/backlog' WHERE url = ?",
-        (tailored,),
+        "UPDATE job_enrichments SET application_url = 'https://apply.example/backlog' "
+        "WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), _job_id(conn, tailored)),
     )
     conn.commit()
     _add_approved_resume_with_pdf(conn, tailored)
@@ -444,7 +476,7 @@ def test_reenrichment_to_high_self_heals_a_quarantined_job_into_tailoring(
 
     # Re-enrich: append a fresh confident snapshot to the same aggregate.
     repo = SqlitePostingSnapshotSetRepository(conn)
-    snapshot_set = repo.load(LOCAL_TENANT, JobId(url))
+    snapshot_set = repo.load(LOCAL_TENANT, _job_id(conn, url))
     assert snapshot_set is not None
     snapshot_set, _ = snapshot_set.record_snapshot(
         source_id="acme",

@@ -7,6 +7,7 @@ import os
 import stat
 import sys
 import threading
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -266,7 +267,13 @@ def test_standing_apply_loop_rechecks_capability_before_the_next_candidate(
 
     def acquire(*_args, **_kwargs):
         candidates.append("claimed")
-        return {"url": "https://example.com/job", "title": "Engineer", "site": "Example"}
+        return {
+            "job_id": str(uuid.uuid4()),
+            "tenant_id": "local",
+            "url": "https://example.com/job",
+            "title": "Engineer",
+            "site": "Example",
+        }
 
     monkeypatch.setattr(browser_capabilities, "require_system_browser_capability", check_capability)
     monkeypatch.setattr(launcher, "acquire_job", acquire)

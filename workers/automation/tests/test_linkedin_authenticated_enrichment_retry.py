@@ -14,7 +14,7 @@ from jobctrl.domain.enrichment import (
     FullDescription,
     JobEnrichment,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, generate_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.enrichment.detail import (
     _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS,
@@ -72,11 +72,33 @@ class _RecoveryResolver:
 
 
 def _seed_discovered(conn: sqlite3.Connection, url: str, site: str) -> None:
+    job_id = generate_job_id()
     conn.execute(
-        "INSERT INTO jobs (url, title, site, discovered_at) VALUES (?, ?, ?, ?)",
-        (url, "Engineer", site, "2026-01-01T00:00:00+00:00"),
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (str(LOCAL_TENANT), str(job_id), url, "Engineer", site, "2026-01-01T00:00:00+00:00"),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_locators (
+            tenant_id, job_id, locator_kind, locator_value, is_current,
+            first_seen_at, last_seen_at, retired_at
+        ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?, NULL)
+        """,
+        (str(LOCAL_TENANT), str(job_id), url, "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
     )
     conn.commit()
+
+
+def _job_id(conn: sqlite3.Connection, url: str) -> JobId:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+        (str(LOCAL_TENANT), url),
+    ).fetchone()
+    assert row is not None
+    return JobId(str(row["job_id"]))
 
 
 def _save_enriched(
@@ -90,7 +112,7 @@ def _save_enriched(
     now = datetime.now(timezone.utc).isoformat()
     aggregate = JobEnrichment.empty(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=_job_id(conn, url),
         updated_at=now,
     )
     for attempt_index in range(attempts):
@@ -121,7 +143,7 @@ def _save_failed(
     now = datetime.now(timezone.utc).isoformat()
     aggregate = JobEnrichment.empty(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=_job_id(conn, url),
         updated_at=now,
     )
     for attempt_index in range(attempts):
@@ -233,15 +255,15 @@ def test_retry_candidates_reset_failed_rows_and_preserve_enriched(
 
     assert reset_count == 1
     repo = SqliteEnrichmentRepository(conn)
-    missing = repo.load(LOCAL_TENANT, JobId(missing_url))
+    missing = repo.load(LOCAL_TENANT, _job_id(conn, missing_url))
     assert missing is not None
     assert missing.is_enriched
     assert missing.full_description is not None
     assert missing.full_description.text == "A complete LinkedIn description"
     assert missing.application_url is None
-    assert repo.load(LOCAL_TENANT, JobId(failed_url)).is_pending  # type: ignore[union-attr]
-    assert repo.load(LOCAL_TENANT, JobId(has_apply_url)).is_enriched  # type: ignore[union-attr]
-    assert repo.load(LOCAL_TENANT, JobId(indeed_url)).is_enriched  # type: ignore[union-attr]
+    assert repo.load(LOCAL_TENANT, _job_id(conn, failed_url)).is_pending  # type: ignore[union-attr]
+    assert repo.load(LOCAL_TENANT, _job_id(conn, has_apply_url)).is_enriched  # type: ignore[union-attr]
+    assert repo.load(LOCAL_TENANT, _job_id(conn, indeed_url)).is_enriched  # type: ignore[union-attr]
 
 
 def test_enriched_missing_apply_url_preserves_description_on_failed_recovery(
@@ -262,7 +284,7 @@ def test_enriched_missing_apply_url_preserves_description_on_failed_recovery(
     assert resolver.calls == [url]
     assert resolver.closed is True
     repo = SqliteEnrichmentRepository(conn)
-    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+    aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
     assert aggregate is not None
     assert aggregate.is_enriched
     assert aggregate.full_description is not None
@@ -289,7 +311,7 @@ def test_enriched_missing_apply_url_preserves_description_when_resolver_raises(
 
     assert reset_count == 0
     repo = SqliteEnrichmentRepository(conn)
-    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+    aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
     assert aggregate is not None
     assert aggregate.is_enriched
     assert aggregate.full_description is not None
@@ -315,7 +337,7 @@ def test_enriched_missing_apply_url_backfills_on_successful_recovery(
     assert reset_count == 0
     assert resolver.calls == [url]
     repo = SqliteEnrichmentRepository(conn)
-    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+    aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
     assert aggregate is not None
     assert aggregate.is_enriched
     assert aggregate.full_description is not None
@@ -344,7 +366,7 @@ def test_enriched_missing_apply_url_recovery_is_bounded_across_runs(
     # reached (initial enrichment attempt + N-1 recovery passes), never forever.
     assert len(resolver.calls) == _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS - 1
     repo = SqliteEnrichmentRepository(conn)
-    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+    aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
     assert aggregate is not None
     assert aggregate.attempt_count == _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS
     # Description preserved intact across every run.
@@ -372,7 +394,7 @@ def test_failed_row_still_reset_for_authenticated_retry(
     # Non-enriched rows never touch the apply-URL resolver.
     assert resolver.calls == []
     repo = SqliteEnrichmentRepository(conn)
-    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+    aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
     assert aggregate is not None
     assert aggregate.is_pending
 
@@ -391,8 +413,8 @@ def test_retry_candidates_skip_nonretryable_and_exhausted_rows(
 
     assert reset_count == 0
     repo = SqliteEnrichmentRepository(conn)
-    assert repo.load(LOCAL_TENANT, JobId(nonretryable_url)).is_failed  # type: ignore[union-attr]
-    assert repo.load(LOCAL_TENANT, JobId(exhausted_url)).is_enriched  # type: ignore[union-attr]
+    assert repo.load(LOCAL_TENANT, _job_id(conn, nonretryable_url)).is_failed  # type: ignore[union-attr]
+    assert repo.load(LOCAL_TENANT, _job_id(conn, exhausted_url)).is_enriched  # type: ignore[union-attr]
 
 
 def test_recovery_pass_navigation_consumes_run_budget(
@@ -445,7 +467,7 @@ def test_recovery_pass_defers_when_run_budget_exhausted(
     assert resolver.calls == []
     assert reset_count == 0
     repo = SqliteEnrichmentRepository(conn)
-    aggregate = repo.load(LOCAL_TENANT, JobId(url))
+    aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
     assert aggregate is not None
     assert aggregate.is_enriched
     assert aggregate.application_url is None
@@ -454,8 +476,8 @@ def test_recovery_pass_defers_when_run_budget_exhausted(
     # The deferral is a first-class budget-exhausted outcome, not a scrape error.
     row = conn.execute(
         "SELECT failure_category, is_scrape_failure FROM operational_attempt_metrics "
-        "WHERE job_url = ? AND outcome = 'blocked'",
-        (url,),
+        "WHERE stage = 'enrich' AND source_id = 'linkedin' AND outcome = 'blocked' "
+        "ORDER BY metric_id DESC LIMIT 1",
     ).fetchone()
     assert row is not None
     assert row[0] == "budget_exhausted"
