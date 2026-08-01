@@ -1,7 +1,8 @@
-"""Round-1 review B1 + B2 regression: worker queue selectors and stats
-must read the canonical fit score from ``job_scores`` (the new write
-target) and not from the legacy ``jobs.fit_score`` column (which is left
-NULL on the new path).
+"""Exact-v7 regressions for worker score queues and dashboard stats.
+
+Worker queue selectors and stats must read canonical scores from
+``job_scores`` by tenant-scoped JobId. Deprecated score columns on ``jobs``
+are not a runtime fallback.
 
 Without these fixes:
 
@@ -14,9 +15,8 @@ Without these fixes:
     ``score_distribution`` / ``untailored_eligible`` counts — dashboard
     funnel goes wrong.
 
-Each test seeds a job, scores it through ``ScoreRepository.save`` (so the
-legacy column stays NULL), and asserts the selector / stat reflects the
-new score.
+Each test seeds exact-v7 canonical rows, scores through
+``ScoreRepository.save``, and asserts the selector or stat reflects the score.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from jobctrl.database import (
     get_stats,
     init_db,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, generate_job_id
 from jobctrl.domain.scoring import (
     EligibilityAssessment,
     FitScore,
@@ -50,44 +50,65 @@ def conn(tmp_path: Path) -> sqlite3.Connection:
     return init_db(tmp_path / "jobctrl.db")
 
 
-def _seed_enriched_job(conn: sqlite3.Connection, url: str) -> None:
+def _seed_enriched_job(conn: sqlite3.Connection, url: str) -> JobId:
+    job_id = generate_job_id()
     conn.execute(
-        "INSERT INTO jobs (url, title, site, full_description, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (url, "Engineer", "Acme", "Need Python.", "2024-01-01T00:00:00+00:00"),
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
+            url,
+            "Engineer",
+            "Acme",
+            "2024-01-01T00:00:00+00:00",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_enrichments (
+            tenant_id, job_id, current_status, full_description, updated_at
+        ) VALUES (?, ?, 'enriched', 'Need Python.', ?)
+        """,
+        (str(LOCAL_TENANT), str(job_id), "2024-01-01T00:00:00+00:00"),
     )
     conn.commit()
+    return job_id
 
 
-def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> None:
+def _mark_closed(
+    conn: sqlite3.Connection,
+    job_id: JobId,
+    state: str = "removed",
+) -> None:
     conn.execute(
         """
         INSERT INTO posting_snapshot_sets (
-            tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+            tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
             latest_active_state, updated_at
         ) VALUES (?, ?, '{}', 0, ?, ?)
-        ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+        ON CONFLICT(tenant_id, job_id) DO UPDATE SET
             latest_active_state = excluded.latest_active_state,
             updated_at = excluded.updated_at
         """,
-        (str(LOCAL_TENANT), url, state, utc_now()),
+        (str(LOCAL_TENANT), str(job_id), state, utc_now()),
     )
     conn.commit()
 
 
 def _save_score(
     conn: sqlite3.Connection,
-    url: str,
+    job_id: JobId,
     fit: int = 8,
     *,
     eligibility: EligibilityAssessment | None = None,
 ) -> None:
-    """Save a JobScore through the new repository — leaves jobs.fit_score NULL."""
+    """Save a canonical JobScore through the Scoring repository."""
     repo = SqliteScoreRepository(conn)
     repo.save(
         JobScore.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+            job_id=job_id,
             fit_score=FitScore.create(fit),
             breakdown=ScoreBreakdown(reasoning="ok", eligibility=eligibility or EligibilityAssessment()),
             matched_keywords=MatchedKeywords.from_iterable(["python"]),
@@ -96,18 +117,65 @@ def _save_score(
     )
 
 
-def _insert_active_score_staleness_marker(conn: sqlite3.Connection, url: str) -> None:
+def _insert_active_score_staleness_marker(
+    conn: sqlite3.Connection,
+    job_id: JobId,
+) -> None:
     conn.execute(
         """
         INSERT INTO job_score_staleness (
-            tenant_id, job_url, stale_reason,
+            tenant_id, job_id, stale_reason,
             old_policy_id, old_policy_version,
             new_policy_id, new_policy_version,
             marked_at, resolved, resolved_at, resolved_by_score_version
         ) VALUES (?, ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
                   'local:scoring-policy-v2', 2, ?, 0, NULL, NULL)
         """,
-        (str(LOCAL_TENANT), url, datetime.now(timezone.utc).isoformat()),
+        (str(LOCAL_TENANT), str(job_id), datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+
+def _seed_approved_tailored_resume(
+    conn: sqlite3.Connection,
+    job_id: JobId,
+) -> None:
+    created_at = "2024-01-02T00:00:00+00:00"
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES (?, ?, 1, 'approved', ?, ?)
+        """,
+        (str(LOCAL_TENANT), str(job_id), created_at, created_at),
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_materials_artifacts (
+            tenant_id, job_id, generation, artifact_type, artifact_id,
+            status, path, render_format, created_at
+        ) VALUES (?, ?, 1, ?, ?, 'approved', ?, ?, ?)
+        """,
+        [
+            (
+                str(LOCAL_TENANT),
+                str(job_id),
+                "tailored_resume",
+                f"{job_id}:tailored-resume",
+                f"/tmp/{job_id}-tailored.txt",
+                "text",
+                created_at,
+            ),
+            (
+                str(LOCAL_TENANT),
+                str(job_id),
+                "resume_pdf",
+                f"{job_id}:resume-pdf",
+                f"/tmp/{job_id}-resume.pdf",
+                "latex_pdf",
+                created_at,
+            ),
+        ],
     )
     conn.commit()
 
@@ -121,23 +189,24 @@ def test_pending_score_excludes_jobs_already_in_job_scores(
     conn: sqlite3.Connection,
 ) -> None:
     url = "https://example.com/job/scored"
-    _seed_enriched_job(conn, url)
+    job_id = _seed_enriched_job(conn, url)
 
     # Pre-condition: the job is pending_score.
     pending_before = get_jobs_by_stage(conn=conn, stage="pending_score")
-    assert {row["url"] for row in pending_before} == {url}
+    assert {row["job_id"] for row in pending_before} == {job_id}
 
     # Action: persist a score through the new repository.
-    _save_score(conn, url, fit=8)
+    _save_score(conn, job_id, fit=8)
 
     # Post-condition: the job is no longer pending_score.
     pending_after = get_jobs_by_stage(conn=conn, stage="pending_score")
     assert pending_after == []
 
-    # And the legacy column is still NULL — proves the selector is
-    # reading the canonical job_scores row, not jobs.fit_score.
-    legacy = conn.execute("SELECT fit_score FROM jobs WHERE url=?", (url,)).fetchone()
-    assert legacy["fit_score"] is None
+    deprecated = conn.execute(
+        "SELECT fit_score FROM jobs WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert deprecated["fit_score"] is None
 
 
 def test_pending_score_excludes_jobs_at_attempt_cap(
@@ -147,14 +216,23 @@ def test_pending_score_excludes_jobs_at_attempt_cap(
     pending_score — otherwise a permanently-failing job re-bills the LLM
     on every batch forever. Mirrors the tailor / cover ``< 5`` cap."""
     url = "https://example.com/job/score-capped"
-    _seed_enriched_job(conn, url)
-    ensure_job_stage_rows(conn, url)
+    job_id = _seed_enriched_job(conn, url)
+    ensure_job_stage_rows(conn, job_id)
     set_stage_state(
-        conn, url, "score", "running",
-        started_at="2024-01-02T00:00:00+00:00", validate_transition=False,
+        conn,
+        job_id,
+        "score",
+        "running",
+        started_at="2024-01-02T00:00:00+00:00",
+        validate_transition=False,
     )
     set_stage_state(
-        conn, url, "score", "failed", attempt_count=5, validate_transition=False,
+        conn,
+        job_id,
+        "score",
+        "failed",
+        attempt_count=5,
+        validate_transition=False,
     )
 
     assert get_jobs_by_stage(conn=conn, stage="pending_score") == []
@@ -165,18 +243,27 @@ def test_pending_score_includes_jobs_under_attempt_cap(
 ) -> None:
     """A job with fewer than 5 score attempts is still eligible."""
     url = "https://example.com/job/score-under-cap"
-    _seed_enriched_job(conn, url)
-    ensure_job_stage_rows(conn, url)
+    job_id = _seed_enriched_job(conn, url)
+    ensure_job_stage_rows(conn, job_id)
     set_stage_state(
-        conn, url, "score", "running",
-        started_at="2024-01-02T00:00:00+00:00", validate_transition=False,
+        conn,
+        job_id,
+        "score",
+        "running",
+        started_at="2024-01-02T00:00:00+00:00",
+        validate_transition=False,
     )
     set_stage_state(
-        conn, url, "score", "failed", attempt_count=4, validate_transition=False,
+        conn,
+        job_id,
+        "score",
+        "failed",
+        attempt_count=4,
+        validate_transition=False,
     )
 
-    urls = {row["url"] for row in get_jobs_by_stage(conn=conn, stage="pending_score")}
-    assert url in urls
+    job_ids = {row["job_id"] for row in get_jobs_by_stage(conn=conn, stage="pending_score")}
+    assert job_id in job_ids
 
 
 def test_count_pending_score_uses_same_attempt_cap_as_selector(
@@ -188,14 +275,23 @@ def test_count_pending_score_uses_same_attempt_cap_as_selector(
     capped_url = "https://example.com/job/count-score-capped"
     eligible_url = "https://example.com/job/count-score-under-cap"
     for url, attempts in ((capped_url, 5), (eligible_url, 4)):
-        _seed_enriched_job(conn, url)
-        ensure_job_stage_rows(conn, url)
+        job_id = _seed_enriched_job(conn, url)
+        ensure_job_stage_rows(conn, job_id)
         set_stage_state(
-            conn, url, "score", "running",
-            started_at="2024-01-02T00:00:00+00:00", validate_transition=False,
+            conn,
+            job_id,
+            "score",
+            "running",
+            started_at="2024-01-02T00:00:00+00:00",
+            validate_transition=False,
         )
         set_stage_state(
-            conn, url, "score", "failed", attempt_count=attempts, validate_transition=False,
+            conn,
+            job_id,
+            "score",
+            "failed",
+            attempt_count=attempts,
+            validate_transition=False,
         )
 
     monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
@@ -211,16 +307,17 @@ def test_closed_postings_are_excluded_from_score_and_tailor_queues(
 
     score_url = "https://example.com/job/closed-score"
     tailor_url = "https://example.com/job/closed-tailor"
-    _seed_enriched_job(conn, score_url)
-    _seed_enriched_job(conn, tailor_url)
-    _save_score(conn, tailor_url, fit=8)
-    _mark_closed(conn, score_url)
-    _mark_closed(conn, tailor_url)
+    score_job_id = _seed_enriched_job(conn, score_url)
+    tailor_job_id = _seed_enriched_job(conn, tailor_url)
+    _save_score(conn, tailor_job_id, fit=8)
+    _mark_closed(conn, score_job_id)
+    _mark_closed(conn, tailor_job_id)
     monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
 
-    assert {row["url"] for row in get_jobs_by_stage(conn=conn, stage="pending_score")} == set()
+    assert get_jobs_by_stage(conn=conn, stage="pending_score") == []
     assert {
-        row["url"] for row in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)
+        row["job_id"]
+        for row in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)
     } == set()
     assert pipeline._count_pending("score") == 0
     assert pipeline._count_pending("tailor", min_score=7) == 0
@@ -230,71 +327,63 @@ def test_pending_tailor_includes_jobs_scored_through_repository(
     conn: sqlite3.Connection,
 ) -> None:
     url = "https://example.com/job/ready-to-tailor"
-    _seed_enriched_job(conn, url)
-    _save_score(conn, url, fit=8)
+    job_id = _seed_enriched_job(conn, url)
+    _save_score(conn, job_id, fit=8)
 
-    # The new selector must find the job under pending_tailor even though
-    # jobs.fit_score is NULL — the COALESCE picks up the canonical
-    # job_scores row.
     pending = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)
-    urls = {row["url"] for row in pending}
-    assert url in urls
+    job_ids = {row["job_id"] for row in pending}
+    assert job_id in job_ids
 
 
 def test_pending_tailor_excludes_score_five_even_when_threshold_is_lowered(
     conn: sqlite3.Connection,
-) -> None:
+    ) -> None:
     low_url = "https://example.com/job/low-fit-tailor"
     ok_url = "https://example.com/job/minimum-fit-tailor"
-    _seed_enriched_job(conn, low_url)
-    _seed_enriched_job(conn, ok_url)
-    _save_score(conn, low_url, fit=5)
-    _save_score(conn, ok_url, fit=6)
+    low_job_id = _seed_enriched_job(conn, low_url)
+    ok_job_id = _seed_enriched_job(conn, ok_url)
+    _save_score(conn, low_job_id, fit=5)
+    _save_score(conn, ok_job_id, fit=6)
 
     pending = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=5)
-    urls = {row["url"] for row in pending}
+    job_ids = {row["job_id"] for row in pending}
 
-    assert low_url not in urls
-    assert ok_url in urls
+    assert low_job_id not in job_ids
+    assert ok_job_id in job_ids
 
 
 def test_pending_tailor_excludes_high_score_blocked_jobs(
     conn: sqlite3.Connection,
-) -> None:
+    ) -> None:
     url_allowed = "https://example.com/job/allowed-tailor"
     url_blocked = "https://example.com/job/blocked-tailor"
-    _seed_enriched_job(conn, url_allowed)
-    _seed_enriched_job(conn, url_blocked)
-    _save_score(conn, url_allowed, fit=8)
+    allowed_job_id = _seed_enriched_job(conn, url_allowed)
+    blocked_job_id = _seed_enriched_job(conn, url_blocked)
+    _save_score(conn, allowed_job_id, fit=8)
     _save_score(
         conn,
-        url_blocked,
+        blocked_job_id,
         fit=9,
         eligibility=EligibilityAssessment(status="blocked", hard_blockers=("No sponsorship.",)),
     )
 
     pending = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)
-    urls = {row["url"] for row in pending}
-    assert url_allowed in urls
-    assert url_blocked not in urls
+    job_ids = {row["job_id"] for row in pending}
+    assert allowed_job_id in job_ids
+    assert blocked_job_id not in job_ids
 
 
 def test_pending_cover_includes_jobs_scored_through_repository(
     conn: sqlite3.Connection,
 ) -> None:
     url = "https://example.com/job/ready-to-cover"
-    _seed_enriched_job(conn, url)
-    _save_score(conn, url, fit=9)
-    # Cover stage requires a tailored resume.
-    conn.execute(
-        "UPDATE jobs SET tailored_resume_path=?, tailored_at=? WHERE url=?",
-        ("/tmp/tailored.txt", "2024-01-02T00:00:00+00:00", url),
-    )
-    conn.commit()
+    job_id = _seed_enriched_job(conn, url)
+    _save_score(conn, job_id, fit=9)
+    _seed_approved_tailored_resume(conn, job_id)
 
     pending = get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7)
-    urls = {row["url"] for row in pending}
-    assert url in urls
+    job_ids = {row["job_id"] for row in pending}
+    assert job_id in job_ids
 
 
 def test_closed_postings_are_excluded_from_cover_queue(
@@ -304,47 +393,38 @@ def test_closed_postings_are_excluded_from_cover_queue(
     from jobctrl.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/closed-cover"
-    _seed_enriched_job(conn, url)
-    _save_score(conn, url, fit=9)
-    conn.execute(
-        "UPDATE jobs SET tailored_resume_path=?, tailored_at=? WHERE url=?",
-        ("/tmp/tailored.txt", "2024-01-02T00:00:00+00:00", url),
-    )
-    _mark_closed(conn, url)
+    job_id = _seed_enriched_job(conn, url)
+    _save_score(conn, job_id, fit=9)
+    _seed_approved_tailored_resume(conn, job_id)
+    _mark_closed(conn, job_id)
     monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
 
     pending_cover = get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7)
-    assert {row["url"] for row in pending_cover} == set()
+    assert pending_cover == []
     assert pipeline._count_pending("cover", min_score=7) == 0
 
 
 def test_pending_cover_excludes_high_score_blocked_jobs(
     conn: sqlite3.Connection,
-) -> None:
+    ) -> None:
     url_allowed = "https://example.com/job/allowed-cover"
     url_blocked = "https://example.com/job/blocked-cover"
-    _seed_enriched_job(conn, url_allowed)
-    _seed_enriched_job(conn, url_blocked)
-    _save_score(conn, url_allowed, fit=8)
+    allowed_job_id = _seed_enriched_job(conn, url_allowed)
+    blocked_job_id = _seed_enriched_job(conn, url_blocked)
+    _save_score(conn, allowed_job_id, fit=8)
     _save_score(
         conn,
-        url_blocked,
+        blocked_job_id,
         fit=9,
         eligibility=EligibilityAssessment(status="eligible", hard_blockers=("Below minimum salary.",)),
     )
-    conn.executemany(
-        "UPDATE jobs SET tailored_resume_path=?, tailored_at=? WHERE url=?",
-        [
-            ("/tmp/allowed-tailored.txt", "2024-01-02T00:00:00+00:00", url_allowed),
-            ("/tmp/blocked-tailored.txt", "2024-01-02T00:00:00+00:00", url_blocked),
-        ],
-    )
-    conn.commit()
+    _seed_approved_tailored_resume(conn, allowed_job_id)
+    _seed_approved_tailored_resume(conn, blocked_job_id)
 
     pending = get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7)
-    urls = {row["url"] for row in pending}
-    assert url_allowed in urls
-    assert url_blocked not in urls
+    job_ids = {row["job_id"] for row in pending}
+    assert allowed_job_id in job_ids
+    assert blocked_job_id not in job_ids
 
 
 @pytest.mark.parametrize("stage", ["pending_tailor", "pending_cover"])
@@ -363,35 +443,30 @@ def test_downstream_materials_selectors_exclude_non_current_scores(
     active_marker: bool,
 ) -> None:
     url = f"https://example.com/job/non-current-{stage}-{score_state}-{active_marker}"
-    _seed_enriched_job(conn, url)
-    _save_score(conn, url, fit=9)
-    ensure_job_stage_rows(conn, url)
-    set_stage_state(conn, url, "score", score_state, validate_transition=False)
+    job_id = _seed_enriched_job(conn, url)
+    _save_score(conn, job_id, fit=9)
+    ensure_job_stage_rows(conn, job_id)
+    set_stage_state(conn, job_id, "score", score_state, validate_transition=False)
     if active_marker:
-        _insert_active_score_staleness_marker(conn, url)
+        _insert_active_score_staleness_marker(conn, job_id)
     if stage == "pending_cover":
-        conn.execute(
-            "UPDATE jobs SET tailored_resume_path=?, tailored_at=? WHERE url=?",
-            ("/tmp/tailored.txt", "2024-01-02T00:00:00+00:00", url),
-        )
-        conn.commit()
+        _seed_approved_tailored_resume(conn, job_id)
 
     pending = get_jobs_by_stage(conn=conn, stage=stage, min_score=7)
-    urls = {row["url"] for row in pending}
-    assert url not in urls
+    job_ids = {row["job_id"] for row in pending}
+    assert job_id not in job_ids
 
 
 def test_get_jobs_by_stage_returns_canonical_score_in_dict(
     conn: sqlite3.Connection,
 ) -> None:
-    """Returned dicts surface the canonical fit_score so legacy callers
-    that read ``job["fit_score"]`` see the new value (not NULL)."""
+    """Returned selector records expose the canonical score value."""
     url = "https://example.com/job/dict"
-    _seed_enriched_job(conn, url)
-    _save_score(conn, url, fit=6)
+    job_id = _seed_enriched_job(conn, url)
+    _save_score(conn, job_id, fit=6)
 
     rows = get_jobs_by_stage(conn=conn, stage="enriched")
-    matching = next(row for row in rows if row["url"] == url)
+    matching = next(row for row in rows if row["job_id"] == job_id)
     assert matching["fit_score"] == 6
 
 
@@ -403,9 +478,9 @@ def test_get_jobs_by_stage_returns_canonical_score_in_dict(
 def test_get_stats_counts_repository_scores(conn: sqlite3.Connection) -> None:
     url_scored = "https://example.com/job/has-score"
     url_pending = "https://example.com/job/no-score"
-    _seed_enriched_job(conn, url_scored)
+    scored_job_id = _seed_enriched_job(conn, url_scored)
     _seed_enriched_job(conn, url_pending)
-    _save_score(conn, url_scored, fit=8)
+    _save_score(conn, scored_job_id, fit=8)
 
     stats = get_stats(conn)
     assert stats["scored"] == 1
@@ -419,26 +494,35 @@ def test_get_stats_untailored_eligible_uses_canonical_score(
     conn: sqlite3.Connection,
 ) -> None:
     url = "https://example.com/job/eligible"
-    _seed_enriched_job(conn, url)
-    _save_score(conn, url, fit=9)
+    job_id = _seed_enriched_job(conn, url)
+    _save_score(conn, job_id, fit=9)
 
     stats = get_stats(conn)
     # Eligible = score >= 7, has description, no tailored resume.
     assert stats["untailored_eligible"] == 1
 
 
-def test_get_stats_falls_back_to_legacy_column(conn: sqlite3.Connection) -> None:
-    """Pre-Phase-5 rows that only exist in ``jobs.fit_score`` should
-    still be counted (the COALESCE picks them up)."""
-    url = "https://example.com/job/legacy"
-    _seed_enriched_job(conn, url)
-    conn.execute("UPDATE jobs SET fit_score=?, scored_at=? WHERE url=?", (5, "2023-01-01", url))
+def test_get_stats_ignores_deprecated_jobs_score_columns(
+    conn: sqlite3.Connection,
+) -> None:
+    """Exact-v7 runtime never treats deprecated job columns as score state."""
+    url = "https://example.com/job/deprecated-score-column"
+    job_id = _seed_enriched_job(conn, url)
+    conn.execute(
+        """
+        UPDATE jobs
+           SET fit_score = ?, scored_at = ?
+         WHERE tenant_id = ? AND job_id = ?
+        """,
+        (5, "2023-01-01", str(LOCAL_TENANT), str(job_id)),
+    )
     conn.commit()
 
     stats = get_stats(conn)
-    assert stats["scored"] == 1
+    assert stats["scored"] == 0
+    assert stats["unscored"] == 1
     distribution = dict(stats["score_distribution"])
-    assert distribution.get(5) == 1
+    assert 5 not in distribution
 
 
 # ---------------------------------------------------------------------------
@@ -456,11 +540,11 @@ def test_pipeline_count_pending_score_excludes_repository_rows(
     from jobctrl.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/pipeline"
-    _seed_enriched_job(conn, url)
+    job_id = _seed_enriched_job(conn, url)
     monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
 
     assert pipeline._count_pending("score") == 1
-    _save_score(conn, url, fit=8)
+    _save_score(conn, job_id, fit=8)
     assert pipeline._count_pending("score") == 0
 
 
@@ -471,8 +555,8 @@ def test_pipeline_count_pending_tailor_picks_repository_scores(
     from jobctrl.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/pipeline-tailor"
-    _seed_enriched_job(conn, url)
-    _save_score(conn, url, fit=8)
+    job_id = _seed_enriched_job(conn, url)
+    _save_score(conn, job_id, fit=8)
     monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
 
     assert pipeline._count_pending("tailor", min_score=7) == 1
@@ -485,10 +569,10 @@ def test_pipeline_count_pending_tailor_excludes_pending_rescore(
     from jobctrl.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/pipeline-tailor-pending-rescore"
-    _seed_enriched_job(conn, url)
-    _save_score(conn, url, fit=8)
-    ensure_job_stage_rows(conn, url)
-    set_stage_state(conn, url, "score", "pending", validate_transition=False)
+    job_id = _seed_enriched_job(conn, url)
+    _save_score(conn, job_id, fit=8)
+    ensure_job_stage_rows(conn, job_id)
+    set_stage_state(conn, job_id, "score", "pending", validate_transition=False)
     monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
 
     assert pipeline._count_pending("tailor", min_score=7) == 0
