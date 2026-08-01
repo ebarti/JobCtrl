@@ -230,7 +230,8 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     await dispatcher(
       {
         action: "rescore_job",
-        jobKey: "https://example.com/jobs/current",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
         dryRun: true,
         reason: "policy refresh",
       },
@@ -261,7 +262,8 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     await dispatcher(
       {
         action: "retailor_job",
-        jobKey: "https://example.com/jobs/current",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
         dryRun: true,
         suppressExistingArtifacts: false,
         tailorModels: ["gemini:test"],
@@ -288,7 +290,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           tenantId: "local",
           expectedAppDir: "/tmp",
           expectedDbPath: "/tmp/jobctrl.db",
-          jobUrl: "https://example.com/jobs/current",
+          jobId: CANONICAL_JOB_ID,
           dryRun: true,
           reason: "policy refresh",
         },
@@ -325,7 +327,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           tenantId: "local",
           expectedAppDir: "/tmp",
           expectedDbPath: "/tmp/jobctrl.db",
-          jobUrl: "https://example.com/jobs/current",
+          jobId: CANONICAL_JOB_ID,
           dryRun: true,
           suppressExistingArtifacts: false,
           tailorModels: ["gemini:test"],
@@ -397,6 +399,25 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     ]);
   });
 
+  it("fails closed when direct maintenance actions lack a canonical job id", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+    const context = { appDir: "/tmp", dbPath: "/tmp/jobctrl.db" };
+
+    for (const action of ["rescore_job", "retailor_job"] as const) {
+      const result = await dispatcher(
+        { action, jobKey: "https://example.com/jobs/legacy" },
+        context,
+      );
+      expect(result).toMatchObject({
+        status: "failed",
+        message: "Pipeline job selection requires a canonical jobId.",
+      });
+    }
+
+    expect(fake.calls).toEqual([]);
+  });
+
   it("surfaces workflow start identifiers for preparation maintenance actions", async () => {
     const fake = new FakeDispatcher();
     const dispatcher = createActionDispatcher(fake);
@@ -404,7 +425,8 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     const commands: ActionCommandPayload[] = [
       {
         action: "rescore_job",
-        jobKey: "https://example.com/jobs/current",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
       },
       {
         action: "rescore_jobs_not_on_current_scoring_policy",
@@ -412,7 +434,8 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       },
       {
         action: "retailor_job",
-        jobKey: "https://example.com/jobs/current",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
       },
       {
         action: "retailor_current_policy",
@@ -592,7 +615,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     );
     await dispatcher({ action: "apply", jobKey: "https://example.com/jobs/current" }, context);
     await dispatcher({ action: "cancel", jobKey: "pipeline", runId: "run-1" }, context);
-    await dispatcher({ action: "rescore_job", jobKey: "https://example.com/jobs/current" }, context);
+    await dispatcher({ action: "rescore_job", jobKey: CANONICAL_JOB_ID, jobId: CANONICAL_JOB_ID }, context);
     await dispatcher({ action: "refresh_compensation", jobKey: "https://example.com/jobs/current" }, context);
     await dispatcher({ action: "generate_interview_prep", jobKey: "https://example.com/jobs/current" }, context);
     await dispatcher(
@@ -602,7 +625,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       },
       context,
     );
-    await dispatcher({ action: "retailor_job", jobKey: "https://example.com/jobs/current" }, context);
+    await dispatcher({ action: "retailor_job", jobKey: CANONICAL_JOB_ID, jobId: CANONICAL_JOB_ID }, context);
     await dispatcher({ action: "retailor_current_policy", jobKey: "pipeline" }, context);
 
     const dispatchedMethods = [...new Set(fake.calls.map((call) => call.method))];

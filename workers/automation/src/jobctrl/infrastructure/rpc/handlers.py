@@ -122,36 +122,26 @@ def _load_current_job(
     return job
 
 
-def _load_preparation_target(
+def _load_current_job_by_id(
     conn: Any,
     *,
     tenant_id: TenantId,
-    params: dict[str, Any],
+    job_id: JobId,
 ) -> dict[str, Any]:
-    """Load one target from exactly one canonical ID or external URL locator."""
+    """Load a non-deleted canonical target without accepting a URL locator."""
+    job = SqlitePreparationTargetReader(conn).load(tenant_id, job_id)
+    if job is None:
+        raise invalid_params(f"unknown or inactive jobId: {job_id}")
+    return job
 
-    raw_job_id = params.get("jobId")
-    raw_job_url = params.get("jobUrl")
-    has_job_id = raw_job_id not in (None, "")
-    has_job_url = raw_job_url not in (None, "")
-    if has_job_id == has_job_url:
-        raise invalid_params("provide exactly one of jobId or jobUrl")
 
-    if has_job_id:
-        try:
-            stable_job_id = canonical_job_id(str(raw_job_id))
-        except ValueError as exc:
-            raise invalid_params(f"invalid jobId: {raw_job_id}") from exc
-        job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
-        if job is None:
-            raise invalid_params(f"unknown or inactive jobId: {raw_job_id}")
-        return job
-
-    return _load_current_job(
-        conn,
-        tenant_id=tenant_id,
-        job_url=str(raw_job_url),
-    )
+def _required_job_id(params: dict[str, Any]) -> JobId:
+    if "jobUrl" in params:
+        raise invalid_params("jobUrl is not supported; use canonical jobId")
+    try:
+        return canonical_job_id(str(_require(params, "jobId")))
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
 
 
 def _job_id(job: dict[str, Any]) -> JobId:
@@ -184,8 +174,15 @@ def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
 
 def rescore_job(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = TenantId(_tenant_id(params))
+    requested_job_id = _required_job_id(params)
     conn = get_connection()
-    job_id = _job_id(_load_preparation_target(conn, tenant_id=tenant_id, params=params))
+    job_id = _job_id(
+        _load_current_job_by_id(
+            conn,
+            tenant_id=tenant_id,
+            job_id=requested_job_id,
+        )
+    )
     return build_preparation_workflow_spec(
         tenant_id=tenant_id,
         job_id=job_id,
@@ -217,8 +214,15 @@ def rescore_jobs_not_on_current_scoring_policy(params: dict[str, Any]) -> Workfl
 
 def retailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = TenantId(_tenant_id(params))
+    requested_job_id = _required_job_id(params)
     conn = get_connection()
-    job_id = _job_id(_load_preparation_target(conn, tenant_id=tenant_id, params=params))
+    job_id = _job_id(
+        _load_current_job_by_id(
+            conn,
+            tenant_id=tenant_id,
+            job_id=requested_job_id,
+        )
+    )
     raw_judge_min_score = params.get("tailorJudgeMinScore")
     return build_preparation_workflow_spec(
         tenant_id=tenant_id,
