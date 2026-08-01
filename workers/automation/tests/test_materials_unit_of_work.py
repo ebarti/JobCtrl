@@ -48,6 +48,7 @@ from jobctrl.infrastructure.materials import (
 )
 
 JOB_URL = "https://example.com/job/uow"
+JOB_ID = JobId("00000000-0000-4000-8000-000000000044")
 
 
 # ---------------------------------------------------------------------------
@@ -59,9 +60,9 @@ JOB_URL = "https://example.com/job/uow"
 def conn(tmp_path: Path) -> sqlite3.Connection:
     connection = init_db(tmp_path / "jobctrl.db")
     connection.execute(
-        "INSERT INTO jobs (url, title, site, full_description, fit_score, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (JOB_URL, "Senior Backend Engineer", "Acme", "Own Python services.", 9, "2024-01-01T00:00:00+00:00"),
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, full_description, fit_score, discovered_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (LOCAL_TENANT, JOB_ID, JOB_URL, "Senior Backend Engineer", "Acme", "Own Python services.", 9, "2024-01-01T00:00:00+00:00"),
     )
     connection.commit()
     return connection
@@ -93,7 +94,7 @@ def _approve_with_pdf(base: MaterialsSet, *, resume_path: str, pdf_path: str, up
 def _gen1_approved() -> MaterialsSet:
     base = MaterialsSet.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(JOB_URL),
+        job_id=JOB_ID,
         created_at="2024-01-01T00:00:00+00:00",
     )
     return _approve_with_pdf(
@@ -107,7 +108,7 @@ def _gen1_approved() -> MaterialsSet:
 def _provenance_set(generation: int, *, artifact_id: str, text: str) -> BulletProvenanceSet:
     return BulletProvenanceSet(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(JOB_URL),
+        job_id=JOB_ID,
         generation=generation,
         artifact_id=artifact_id,
         bullets=(
@@ -152,7 +153,7 @@ class _FailAfterNSaves:
 def _next_generation_approved(materials_repo: SqliteMaterialsRepository) -> tuple[MaterialsSet, MaterialsSet]:
     """Return ``(superseded_gen1, approved_gen2)`` from the persisted gen 1."""
     superseded, fresh = MaterialsSetFactory.next_generation(
-        materials_repo.load(LOCAL_TENANT, JobId(JOB_URL)),
+        materials_repo.load(LOCAL_TENANT, JOB_ID),
         created_at="2024-01-03T00:00:00+00:00",
     )
     gen2 = _approve_with_pdf(
@@ -184,14 +185,14 @@ def test_flip_rolls_back_when_new_generation_save_fails(conn: sqlite3.Connection
             failing.save(superseded)
             failing.save(gen2)
 
-    current = materials.load_current_approved(LOCAL_TENANT, JobId(JOB_URL))
+    current = materials.load_current_approved(LOCAL_TENANT, JOB_ID)
     assert current is not None
     assert current.generation == 1
     assert current.is_resume_approved
     assert current.tailored_resume is not None
     assert current.tailored_resume.status is ArtifactStatus.APPROVED
     # The rolled-back generation 2 left no row behind.
-    assert materials.load(LOCAL_TENANT, JobId(JOB_URL), generation=2) is None
+    assert materials.load(LOCAL_TENANT, JOB_ID, generation=2) is None
 
 
 def test_flip_rolls_back_when_provenance_save_fails(conn: sqlite3.Connection) -> None:
@@ -204,7 +205,7 @@ def test_flip_rolls_back_when_provenance_save_fails(conn: sqlite3.Connection) ->
 
     materials.save(_gen1_approved())
     gen1_artifact_id = (
-        materials.load(LOCAL_TENANT, JobId(JOB_URL)).tailored_resume.artifact_id  # type: ignore[union-attr]
+        materials.load(LOCAL_TENANT, JOB_ID).tailored_resume.artifact_id  # type: ignore[union-attr]
     )
     provenance.save(_provenance_set(1, artifact_id=gen1_artifact_id, text="Gen 1 grounded bullet."))
 
@@ -221,14 +222,14 @@ def test_flip_rolls_back_when_provenance_save_fails(conn: sqlite3.Connection) ->
             )
 
     # Preservation invariant: generation 1 is still the current approved resume.
-    current = materials.load_current_approved(LOCAL_TENANT, JobId(JOB_URL))
+    current = materials.load_current_approved(LOCAL_TENANT, JOB_ID)
     assert current is not None
     assert current.generation == 1
     assert current.is_resume_approved
     # Generation 1 provenance survived; generation 2 orphaned nothing.
-    assert provenance.load(LOCAL_TENANT, JobId(JOB_URL), generation=1) is not None
-    assert provenance.load(LOCAL_TENANT, JobId(JOB_URL), generation=2) is None
-    assert materials.load(LOCAL_TENANT, JobId(JOB_URL), generation=2) is None
+    assert provenance.load(LOCAL_TENANT, JOB_ID, generation=1) is not None
+    assert provenance.load(LOCAL_TENANT, JOB_ID, generation=2) is None
+    assert materials.load(LOCAL_TENANT, JOB_ID, generation=2) is None
 
 
 def test_flip_commits_once_on_success(conn: sqlite3.Connection) -> None:
@@ -249,12 +250,12 @@ def test_flip_commits_once_on_success(conn: sqlite3.Connection) -> None:
             _provenance_set(2, artifact_id=gen2_artifact_id, text="Gen 2 grounded bullet.")
         )
 
-    current = materials.load_current_approved(LOCAL_TENANT, JobId(JOB_URL))
+    current = materials.load_current_approved(LOCAL_TENANT, JOB_ID)
     assert current is not None and current.generation == 2 and current.is_resume_approved
-    assert provenance.load(LOCAL_TENANT, JobId(JOB_URL), generation=2) is not None
+    assert provenance.load(LOCAL_TENANT, JOB_ID, generation=2) is not None
     # Generation 1 was superseded, so it is no longer the current approved resume,
     # but its row is retained as audit history.
-    assert materials.load(LOCAL_TENANT, JobId(JOB_URL), generation=1) is not None
+    assert materials.load(LOCAL_TENANT, JOB_ID, generation=1) is not None
 
 
 def test_flip_holds_one_explicit_transaction_and_locks_out_competitors(
@@ -296,9 +297,9 @@ def test_flip_holds_one_explicit_transaction_and_locks_out_competitors(
     finally:
         competitor.close()
 
-    current = materials.load_current_approved(LOCAL_TENANT, JobId(JOB_URL))
+    current = materials.load_current_approved(LOCAL_TENANT, JOB_ID)
     assert current is not None and current.generation == 2 and current.is_resume_approved
-    assert provenance.load(LOCAL_TENANT, JobId(JOB_URL), generation=2) is not None
+    assert provenance.load(LOCAL_TENANT, JOB_ID, generation=2) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +323,7 @@ def test_without_unit_of_work_new_generation_failure_loses_current_resume(
         failing.save(superseded)  # commits immediately
         failing.save(gen2)  # never runs
 
-    assert materials.load_current_approved(LOCAL_TENANT, JobId(JOB_URL)) is None
+    assert materials.load_current_approved(LOCAL_TENANT, JOB_ID) is None
 
 
 def test_without_unit_of_work_provenance_failure_orphans_approved_generation(
@@ -343,6 +344,6 @@ def test_without_unit_of_work_provenance_failure_orphans_approved_generation(
         materials.save(gen2)  # commits
         failing_provenance.save(_provenance_set(2, artifact_id="art-gen2", text="orphan"))
 
-    current = materials.load_current_approved(LOCAL_TENANT, JobId(JOB_URL))
+    current = materials.load_current_approved(LOCAL_TENANT, JOB_ID)
     assert current is not None and current.generation == 2
-    assert provenance.load(LOCAL_TENANT, JobId(JOB_URL), generation=2) is None
+    assert provenance.load(LOCAL_TENANT, JOB_ID, generation=2) is None
