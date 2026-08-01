@@ -1,9 +1,8 @@
 import { expect, test } from "@playwright/test";
 import Database from "better-sqlite3";
 
-import { loadE2eDbPath } from "../fixtures/e2e-state.js";
+import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
 
-const JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
 const CONTACT_ID = "contact-e2e-outreach";
 const CONTACT_THREAD_ID = "thread-e2e-contact";
 const DUE_THREAD_ID = "thread-e2e-due";
@@ -28,155 +27,6 @@ function tableExists(db: Database.Database, table: string): boolean {
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(table);
   return Boolean(row);
-}
-
-function ensureColumn(
-  db: Database.Database,
-  table: string,
-  column: string,
-  definition: string,
-): void {
-  const columns = new Set(
-    (
-      db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
-    ).map((row) => row.name),
-  );
-  if (!columns.has(column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-  }
-}
-
-function ensureOutreachSeedTables(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS contacts (
-      tenant_id   TEXT NOT NULL DEFAULT 'local',
-      contact_id  TEXT NOT NULL,
-      employer    TEXT,
-      job_url     TEXT,
-      role        TEXT NOT NULL DEFAULT 'other',
-      created_at  TEXT NOT NULL,
-      updated_at  TEXT NOT NULL,
-      deleted_at  TEXT,
-      PRIMARY KEY (tenant_id, contact_id)
-    );
-    CREATE TABLE IF NOT EXISTS contact_attributes (
-      tenant_id      TEXT NOT NULL DEFAULT 'local',
-      attribute_id   TEXT NOT NULL,
-      contact_id     TEXT NOT NULL,
-      attribute_kind TEXT NOT NULL,
-      value_json     TEXT,
-      source_kind    TEXT NOT NULL,
-      source_ref     TEXT NOT NULL,
-      capture_method TEXT NOT NULL,
-      confidence     REAL NOT NULL DEFAULT 0,
-      user_confirmed INTEGER NOT NULL DEFAULT 0,
-      recorded_at    TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, attribute_id)
-    );
-    CREATE TABLE IF NOT EXISTS contact_research_tasks (
-      tenant_id            TEXT NOT NULL DEFAULT 'local',
-      task_id              TEXT NOT NULL,
-      employer             TEXT,
-      job_url              TEXT,
-      status               TEXT NOT NULL DEFAULT 'queued',
-      source_attempts_json TEXT NOT NULL DEFAULT '[]',
-      started_at           TEXT,
-      updated_at           TEXT NOT NULL,
-      needs_review_at      TEXT,
-      completed_at         TEXT,
-      failed_at            TEXT,
-      error_class          TEXT,
-      PRIMARY KEY (tenant_id, task_id)
-    );
-    CREATE TABLE IF NOT EXISTS contact_candidates (
-      tenant_id            TEXT NOT NULL DEFAULT 'local',
-      candidate_id         TEXT NOT NULL,
-      task_id              TEXT NOT NULL,
-      role                 TEXT NOT NULL DEFAULT 'other',
-      attributes_json      TEXT,
-      source_kind          TEXT NOT NULL,
-      source_ref           TEXT NOT NULL,
-      capture_method       TEXT NOT NULL,
-      confidence           REAL NOT NULL DEFAULT 0,
-      status               TEXT NOT NULL DEFAULT 'needs_review',
-      proposed_at          TEXT NOT NULL,
-      confirmed_contact_id TEXT,
-      confirmed_at         TEXT,
-      PRIMARY KEY (tenant_id, candidate_id)
-    );
-    CREATE TABLE IF NOT EXISTS outreach_threads (
-      tenant_id        TEXT NOT NULL DEFAULT 'local',
-      thread_id        TEXT NOT NULL,
-      contact_id       TEXT NOT NULL,
-      job_url          TEXT,
-      created_at       TEXT NOT NULL,
-      updated_at       TEXT NOT NULL,
-      follow_up_due_at TEXT,
-      follow_up_basis  TEXT,
-      follow_up_state  TEXT NOT NULL DEFAULT 'none',
-      PRIMARY KEY (tenant_id, thread_id)
-    );
-    CREATE TABLE IF NOT EXISTS outreach_drafts (
-      tenant_id         TEXT NOT NULL DEFAULT 'local',
-      draft_id          TEXT NOT NULL,
-      thread_id         TEXT NOT NULL,
-      generation        INTEGER NOT NULL DEFAULT 1,
-      kind              TEXT NOT NULL,
-      status            TEXT NOT NULL DEFAULT 'candidate',
-      body_text         TEXT,
-      gate_results_json TEXT,
-      provenance_json   TEXT,
-      created_at        TEXT NOT NULL,
-      approved_at       TEXT,
-      rejected_at       TEXT,
-      reason            TEXT,
-      PRIMARY KEY (tenant_id, draft_id)
-    );
-    CREATE TABLE IF NOT EXISTS outreach_send_logs (
-      tenant_id        TEXT NOT NULL DEFAULT 'local',
-      send_log_id      TEXT NOT NULL,
-      thread_id        TEXT NOT NULL,
-      draft_id         TEXT NOT NULL,
-      channel          TEXT NOT NULL,
-      sent_at          TEXT NOT NULL,
-      logged_at        TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, send_log_id)
-    );
-    CREATE TABLE IF NOT EXISTS application_outcomes (
-      tenant_id     TEXT NOT NULL DEFAULT 'local',
-      outcome_id    TEXT NOT NULL,
-      job_key       TEXT NOT NULL,
-      kind          TEXT NOT NULL,
-      source        TEXT NOT NULL,
-      note          TEXT,
-      occurred_at   TEXT NOT NULL,
-      recorded_at   TEXT NOT NULL,
-      suggestion_id TEXT,
-      evidence_id   TEXT,
-      interview_prep_generation INTEGER,
-      created_by    TEXT NOT NULL DEFAULT 'user',
-      PRIMARY KEY (tenant_id, outcome_id)
-    );
-  `);
-  ensureColumn(db, "application_outcomes", "note", "TEXT");
-  ensureColumn(db, "application_outcomes", "suggestion_id", "TEXT");
-  ensureColumn(db, "application_outcomes", "evidence_id", "TEXT");
-  ensureColumn(
-    db,
-    "application_outcomes",
-    "interview_prep_generation",
-    "INTEGER",
-  );
-  ensureColumn(
-    db,
-    "application_outcomes",
-    "created_by",
-    "TEXT NOT NULL DEFAULT 'user'",
-  );
-  if (tableExists(db, "job_events")) {
-    ensureColumn(db, "job_events", "entity_kind", "TEXT");
-    ensureColumn(db, "job_events", "entity_ref", "TEXT");
-  }
 }
 
 function resetOutreachSeed(db: Database.Database): void {
@@ -223,14 +73,13 @@ function resetOutreachSeed(db: Database.Database): void {
 function seedOutreachPlanner(dbPath: string): void {
   const db = new Database(dbPath);
   try {
-    ensureOutreachSeedTables(db);
     resetOutreachSeed(db);
 
     db.prepare(
       `INSERT INTO contacts (
-         tenant_id, contact_id, employer, job_url, role, created_at, updated_at, deleted_at
+         tenant_id, contact_id, employer, job_id, role, created_at, updated_at, deleted_at
        ) VALUES ('local', ?, 'GitLab', ?, 'recruiter', ?, ?, NULL)`,
-    ).run(CONTACT_ID, JOB_URL, NOW, NOW);
+    ).run(CONTACT_ID, QA_PLATFORM_JOB_ID, NOW, NOW);
     const insertAttribute = db.prepare(
       `INSERT INTO contact_attributes (
          tenant_id, attribute_id, contact_id, attribute_kind, value_json,
@@ -261,12 +110,12 @@ function seedOutreachPlanner(dbPath: string): void {
 
     db.prepare(
       `INSERT INTO contact_research_tasks (
-         tenant_id, task_id, employer, job_url, status, source_attempts_json,
+         tenant_id, task_id, employer, job_id, status, source_attempts_json,
          started_at, updated_at, needs_review_at, completed_at, failed_at, error_class
        ) VALUES ('local', ?, 'GitLab', ?, 'needs_review', ?, ?, ?, ?, NULL, NULL, NULL)`,
     ).run(
       TASK_ID,
-      JOB_URL,
+      QA_PLATFORM_JOB_ID,
       JSON.stringify([
         {
           sourceKind: "public_web_page",
@@ -329,7 +178,7 @@ function seedOutreachPlanner(dbPath: string): void {
 
     const insertThread = db.prepare(
       `INSERT INTO outreach_threads (
-         tenant_id, thread_id, contact_id, job_url, created_at, updated_at,
+         tenant_id, thread_id, contact_id, job_id, created_at, updated_at,
          follow_up_due_at, follow_up_basis, follow_up_state
        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
@@ -346,7 +195,7 @@ function seedOutreachPlanner(dbPath: string): void {
     insertThread.run(
       DUE_THREAD_ID,
       CONTACT_ID,
-      JOB_URL,
+      QA_PLATFORM_JOB_ID,
       NOW,
       NOW,
       PAST_DUE_AT,
@@ -356,7 +205,7 @@ function seedOutreachPlanner(dbPath: string): void {
     insertThread.run(
       FUTURE_THREAD_ID,
       CONTACT_ID,
-      JOB_URL,
+      QA_PLATFORM_JOB_ID,
       NOW,
       NOW,
       FUTURE_DUE_AT,
@@ -455,11 +304,11 @@ function seedOutreachPlanner(dbPath: string): void {
     ).run(CONTACT_THREAD_ID, NOW);
     db.prepare(
       `INSERT INTO application_outcomes (
-         tenant_id, outcome_id, job_key, kind, source, note, occurred_at, recorded_at,
+         tenant_id, outcome_id, job_id, kind, source, note, occurred_at, recorded_at,
          suggestion_id, evidence_id, interview_prep_generation, created_by
        ) VALUES ('local', 'outcome-e2e-outreach', ?, 'applied_confirmation', 'e2e_seed',
          NULL, '2026-07-01T12:00:00.000Z', ?, NULL, NULL, NULL, 'e2e')`,
-    ).run(JOB_URL, NOW);
+    ).run(QA_PLATFORM_JOB_ID, NOW);
 
     // This fixture writes canonical rows directly. Clear the derived read
     // models so the next public API read rematerializes every outreach surface

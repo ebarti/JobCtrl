@@ -6,6 +6,9 @@ interface E2eState {
   workspace?: { dbPath?: string };
 }
 
+/** Canonical ID emitted for QA_PLATFORM_JOB_URL by the exact-v7 QA seed. */
+export const QA_PLATFORM_JOB_ID = "abaf847c-43cd-40ad-8dc3-76685694ff29";
+
 export function e2eStateFilePath(): string {
   const configured = process.env["JOBCTRL_E2E_STATE_FILE"];
   if (!configured) {

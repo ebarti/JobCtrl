@@ -1,11 +1,11 @@
 import Database from "better-sqlite3";
 import { test, expect, type Locator, type Page } from "@playwright/test";
 
+import { QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
+
 const FILTER_PARAMS =
   "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
 const PLATFORM_JOB_TITLE = "Director of Platform Engineering";
-const PLATFORM_JOB_URL =
-  "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
 // Pending-preparation pickup is an existing non-apply Jobs behavior; Phase 22 blocks apply/material/Gmail/destructive paths.
 const PROHIBITED_PRODUCT_PATH_REQUESTS = [
   /\/v1\/jobs\/.+\/actions\/apply$/i,
@@ -50,76 +50,19 @@ function seedSyntheticCompensationData(): void {
   }
   const db = new Database(dbPath);
   try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS job_posted_compensation_facts (
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        job_url TEXT NOT NULL,
-        source_field TEXT NOT NULL DEFAULT 'jobs.salary',
-        source_text TEXT,
-        legacy_raw_salary TEXT,
-        parse_state TEXT NOT NULL,
-        currency TEXT,
-        period TEXT NOT NULL DEFAULT 'unknown',
-        component TEXT NOT NULL DEFAULT 'unknown',
-        minimum_amount INTEGER,
-        maximum_amount INTEGER,
-        annualized_minimum_amount INTEGER,
-        annualized_maximum_amount INTEGER,
-        annualization_assumption TEXT,
-        confidence TEXT NOT NULL DEFAULT 'none',
-        warnings_json TEXT NOT NULL DEFAULT '[]',
-        parser_version TEXT NOT NULL,
-        source_hash TEXT NOT NULL,
-        parsed_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, job_url)
-      );
-      CREATE TABLE IF NOT EXISTS job_market_compensation_estimates (
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        job_url TEXT NOT NULL,
-        estimate_state TEXT NOT NULL,
-        currency TEXT,
-        period TEXT NOT NULL DEFAULT 'year',
-        component TEXT NOT NULL DEFAULT 'total_compensation',
-        minimum_amount INTEGER,
-        maximum_amount INTEGER,
-        confidence_band TEXT NOT NULL DEFAULT 'none',
-        confidence_score REAL NOT NULL DEFAULT 0,
-        source_count INTEGER NOT NULL DEFAULT 0,
-        sample_count INTEGER,
-        aggregate_bucket TEXT,
-        geography_scope TEXT,
-        occupation_code TEXT,
-        occupation_label TEXT,
-        seniority_label TEXT,
-        source_snapshot_json TEXT NOT NULL DEFAULT '[]',
-        factor_reasons_json TEXT NOT NULL DEFAULT '[]',
-        insufficient_reasons_json TEXT NOT NULL DEFAULT '[]',
-        unsupported_reasons_json TEXT NOT NULL DEFAULT '[]',
-        source_unavailable_reasons_json TEXT NOT NULL DEFAULT '[]',
-        warnings_json TEXT NOT NULL DEFAULT '[]',
-        estimator_version TEXT NOT NULL,
-        estimated_at TEXT NOT NULL,
-        company_name TEXT,
-        normalized_company TEXT,
-        role_title TEXT,
-        normalized_role TEXT,
-        company_tier TEXT NOT NULL DEFAULT 'unknown',
-        match_scope TEXT NOT NULL DEFAULT 'none',
-        PRIMARY KEY (tenant_id, job_url)
-      );
-    `);
-    db.prepare("UPDATE jobs SET salary = ? WHERE url = ?").run(
+    db.prepare("UPDATE jobs SET salary = ? WHERE tenant_id = ? AND job_id = ?").run(
       "€55,000/year",
-      PLATFORM_JOB_URL,
+      "local",
+      QA_PLATFORM_JOB_ID,
     );
     db.prepare(
       `INSERT INTO job_posted_compensation_facts (
-        tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+        tenant_id, job_id, source_field, source_text, legacy_raw_salary,
         parse_state, currency, period, component, minimum_amount, maximum_amount,
         annualized_minimum_amount, annualized_maximum_amount, annualization_assumption,
         confidence, warnings_json, parser_version, source_hash, parsed_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
         source_text = excluded.source_text,
         legacy_raw_salary = excluded.legacy_raw_salary,
         parse_state = excluded.parse_state,
@@ -138,7 +81,7 @@ function seedSyntheticCompensationData(): void {
         parsed_at = excluded.parsed_at`,
     ).run(
       "local",
-      PLATFORM_JOB_URL,
+      QA_PLATFORM_JOB_ID,
       "jobs.salary",
       "€55,000/year",
       "€55,000/year",
@@ -159,7 +102,7 @@ function seedSyntheticCompensationData(): void {
     );
     db.prepare(
       `INSERT INTO job_market_compensation_estimates (
-        tenant_id, job_url, estimate_state, currency, period, component,
+        tenant_id, job_id, estimate_state, currency, period, component,
         minimum_amount, maximum_amount, confidence_band, confidence_score,
         source_count, sample_count, aggregate_bucket, geography_scope,
         occupation_code, occupation_label, seniority_label, source_snapshot_json,
@@ -167,7 +110,7 @@ function seedSyntheticCompensationData(): void {
         source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
         company_name, normalized_company, role_title, normalized_role, company_tier, match_scope
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
         estimate_state = excluded.estimate_state,
         currency = excluded.currency,
         period = excluded.period,
@@ -193,7 +136,7 @@ function seedSyntheticCompensationData(): void {
         match_scope = excluded.match_scope`,
     ).run(
       "local",
-      PLATFORM_JOB_URL,
+      QA_PLATFORM_JOB_ID,
       "estimated_range",
       "EUR",
       "year",
@@ -262,10 +205,10 @@ function seedSyntheticCompensationData(): void {
        WHERE tenant_id = ? AND profile_id = ?`,
     ).run("EUR", "75000", profileUpdatedAt, "local", "default");
     db.prepare(
-      `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO job_events (
+         tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES ('local', NULL, 1, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      null,
       "profile",
       "ProfileUpdated",
       "info",
@@ -279,10 +222,11 @@ function seedSyntheticCompensationData(): void {
     );
     const compensationUpdatedAt = new Date().toISOString();
     db.prepare(
-      `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO job_events (
+         tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES ('local', ?, 1, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      PLATFORM_JOB_URL,
+      QA_PLATFORM_JOB_ID,
       "compensation",
       "CompensationFactsUpdated",
       "info",
@@ -290,7 +234,7 @@ function seedSyntheticCompensationData(): void {
       compensationUpdatedAt,
       JSON.stringify({
         tenantId: "local",
-        jobId: PLATFORM_JOB_URL,
+        jobId: QA_PLATFORM_JOB_ID,
         changedSections: ["posted", "market"],
         postedRecordStatus: "recorded",
         postedParseState: "parsed_range",

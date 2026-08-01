@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import type { ApplyReviewQueueResponse } from "@jobctrl/contracts";
 
+import { QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
 import {
   makeApplyAudit,
   makeJobsPage,
@@ -2318,7 +2319,7 @@ test("Apply Review requirement-fit card has visual regression coverage", async (
 }) => {
   await installDeterministicRequirementFitScrollbars(page);
   await page.goto(
-    `/apply-review?jobKey=${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}`,
+    `/apply-review?jobKey=${encodeURIComponent(QA_PLATFORM_JOB_ID)}`,
   );
   const selectedApplication = page.locator(".apply-review-selected");
   await expect(selectedApplication).toBeVisible({ timeout: 30_000 });
