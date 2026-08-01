@@ -32,6 +32,7 @@ _CROSS_RUNTIME_DURABLE_TABLES = {
     "discovery_execution_recoveries",
     "jobctrl_hidden_jobs",
     "learning_recommendation_evidence",
+    "learning_recommendation_evidence_jobs",
     "learning_recommendation_jobs",
     "learning_recommendation_tombstones",
     "learning_recommendations",
@@ -646,6 +647,10 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
             'sample_gated_no_population_inference', ?, ?
         )
     """
+    job_ids = (
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    )
     for index in range(1, 4):
         conn.execute(
             """
@@ -664,10 +669,15 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
                 f"2026-08-01T00:00:0{index}Z",
             ),
         )
-    for job_id in (
-        "11111111-1111-4111-8111-111111111111",
-        "22222222-2222-4222-8222-222222222222",
-    ):
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_evidence_jobs (
+                tenant_id, recommendation_id, signal_id, job_id
+            ) VALUES ('local', 'recommendation-1', ?, ?)
+            """,
+            (f"signal-{index}", job_ids[min(index - 1, 1)]),
+        )
+    for job_id in job_ids:
         conn.execute(
             """
             INSERT INTO learning_recommendation_jobs (
@@ -676,6 +686,28 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
             """,
             (job_id,),
         )
+    conn.execute(
+        """
+        INSERT INTO learning_recommendation_evidence (
+            tenant_id, recommendation_id, signal_id, evidence_role,
+            source_kind, source_id, source_revision, recorded_at
+        ) VALUES (
+            'local', 'recommendation-1', 'contradiction-1', 'contradicting',
+            'tailoring_feedback_signal', 'source-contradiction-1', 4, ?
+        )
+        """,
+        ("2026-08-01T00:00:04Z",),
+    )
+    conn.execute(
+        """
+        INSERT INTO learning_recommendation_evidence_jobs (
+            tenant_id, recommendation_id, signal_id, job_id
+        ) VALUES (
+            'local', 'recommendation-1', 'contradiction-1',
+            '33333333-3333-4333-8333-333333333333'
+        )
+        """
+    )
     conn.execute(
         insert_recommendation,
         (
@@ -702,6 +734,26 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
         ("2026-08-01T02:00:00Z", "2026-08-01T02:00:01Z"),
     )
     conn.commit()
+    assert tuple(
+        conn.execute(
+            """
+            SELECT evidence.evidence_role, evidence_job.signal_id,
+                   evidence_job.job_id
+            FROM learning_recommendation_evidence_jobs AS evidence_job
+            JOIN learning_recommendation_evidence AS evidence
+              ON evidence.tenant_id = evidence_job.tenant_id
+             AND evidence.recommendation_id = evidence_job.recommendation_id
+             AND evidence.signal_id = evidence_job.signal_id
+            WHERE evidence_job.tenant_id = 'local'
+              AND evidence_job.recommendation_id = 'recommendation-1'
+              AND evidence_job.signal_id = 'contradiction-1'
+            """
+        ).fetchone()
+    ) == (
+        "contradicting",
+        "contradiction-1",
+        "33333333-3333-4333-8333-333333333333",
+    )
 
     with pytest.raises(sqlite3.IntegrityError, match="supporting signal count mismatch"):
         conn.execute(
@@ -771,6 +823,18 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
                     f"2026-08-01T03:00:0{index}Z",
                 ),
             )
+            conn.execute(
+                """
+                INSERT INTO learning_recommendation_evidence_jobs (
+                    tenant_id, recommendation_id, signal_id, job_id
+                ) VALUES ('local', ?, ?, ?)
+                """,
+                (
+                    recommendation_id,
+                    f"{recommendation_id}-signal-{index}",
+                    f"00000000-0000-4000-8000-{min(index, job_count):012d}",
+                ),
+            )
         for index in range(1, job_count + 1):
             conn.execute(
                 """
@@ -823,6 +887,17 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
             )
             """
         )
+    with pytest.raises(sqlite3.IntegrityError, match="evidence jobs are sealed"):
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_evidence_jobs (
+                tenant_id, recommendation_id, signal_id, job_id
+            ) VALUES (
+                'local', 'recommendation-1', 'signal-1',
+                '33333333-3333-4333-8333-333333333333'
+            )
+            """
+        )
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
             """
@@ -830,6 +905,17 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
                 tenant_id, recommendation_id, job_id
             ) VALUES (
                 'local', 'missing-recommendation',
+                'https://jobs.example/not-a-job-id'
+            )
+            """
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_evidence_jobs (
+                tenant_id, recommendation_id, signal_id, job_id
+            ) VALUES (
+                'local', 'missing-recommendation', 'signal-orphan',
                 'https://jobs.example/not-a-job-id'
             )
             """
@@ -915,6 +1001,7 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
     append_only_mutations = (
         "UPDATE learning_recommendations SET derived_at = derived_at WHERE recommendation_id = 'recommendation-1'",
         "DELETE FROM learning_recommendation_evidence WHERE recommendation_id = 'recommendation-1'",
+        "UPDATE learning_recommendation_evidence_jobs SET job_id = job_id WHERE recommendation_id = 'recommendation-1'",
         "UPDATE learning_recommendation_jobs SET job_id = job_id WHERE recommendation_id = 'recommendation-1'",
         "DELETE FROM learning_recommendation_tombstones WHERE tombstone_id = 'tombstone-1'",
     )
@@ -937,6 +1024,7 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
     for table in (
         "learning_recommendations",
         "learning_recommendation_evidence",
+        "learning_recommendation_evidence_jobs",
         "learning_recommendation_jobs",
         "learning_recommendation_tombstones",
     ):
@@ -951,6 +1039,105 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
             or any(column.endswith(f"_{fragment}") for fragment in forbidden_fragments)
         }
 
+    assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
+    close_connection(db_path)
+
+
+def test_learning_recommendation_job_provenance_constraints_fail_closed(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    insert_recommendation = """
+        INSERT INTO learning_recommendations (
+            tenant_id, recommendation_id, derivation_version,
+            evaluation_fixture_version, context, policy_kind, signal_kind,
+            rule_key, rule_value, allowlist_version, status,
+            observed_signal_count, observed_job_count, minimum_signal_count,
+            minimum_job_count, confidence_limit, input_fingerprint, derived_at
+        ) VALUES (
+            'local', ?, 1, 1, 'materials', 'tailoring_rule',
+            'factual_correction', 'fact_handling', 'require_source_match',
+            1, 'pending', 3, 2, 3, 2,
+            'sample_gated_no_population_inference', ?, ?
+        )
+    """
+    job_ids = (
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+        "33333333-3333-4333-8333-333333333333",
+    )
+    cases = (
+        (
+            "missing-provenance",
+            (job_ids[0], job_ids[1], None),
+            "evidence job provenance missing",
+        ),
+        (
+            "supporting-mismatch",
+            (job_ids[0], job_ids[1], job_ids[2]),
+            "supporting evidence job mismatch",
+        ),
+        (
+            "unsupported-threshold-job",
+            (job_ids[0], job_ids[0], job_ids[0]),
+            "job lacks supporting evidence",
+        ),
+    )
+    for recommendation_id, evidence_job_ids, match in cases:
+        conn.execute("SAVEPOINT invalid_evidence_jobs")
+        for index in range(1, 4):
+            signal_id = f"{recommendation_id}-signal-{index}"
+            conn.execute(
+                """
+                INSERT INTO learning_recommendation_evidence (
+                    tenant_id, recommendation_id, signal_id, evidence_role,
+                    source_kind, source_id, source_revision, recorded_at
+                ) VALUES (
+                    'local', ?, ?, 'supporting',
+                    'tailoring_feedback_signal', ?, ?, ?
+                )
+                """,
+                (
+                    recommendation_id,
+                    signal_id,
+                    f"{recommendation_id}-source-{index}",
+                    index,
+                    f"2026-08-01T05:00:0{index}Z",
+                ),
+            )
+            evidence_job_id = evidence_job_ids[index - 1]
+            if evidence_job_id is not None:
+                conn.execute(
+                    """
+                    INSERT INTO learning_recommendation_evidence_jobs (
+                        tenant_id, recommendation_id, signal_id, job_id
+                    ) VALUES ('local', ?, ?, ?)
+                    """,
+                    (recommendation_id, signal_id, evidence_job_id),
+                )
+        for job_id in job_ids[:2]:
+            conn.execute(
+                """
+                INSERT INTO learning_recommendation_jobs (
+                    tenant_id, recommendation_id, job_id
+                ) VALUES ('local', ?, ?)
+                """,
+                (recommendation_id, job_id),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match=match):
+            conn.execute(
+                insert_recommendation,
+                (
+                    recommendation_id,
+                    str(len(recommendation_id)).zfill(64),
+                    "2026-08-01T05:01:00Z",
+                ),
+            )
+        conn.execute("ROLLBACK TO invalid_evidence_jobs")
+        conn.execute("RELEASE invalid_evidence_jobs")
+
+    assert conn.execute("SELECT COUNT(*) FROM learning_recommendations").fetchone()[0] == 0
     assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
     close_connection(db_path)
 

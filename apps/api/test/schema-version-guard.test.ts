@@ -142,14 +142,14 @@ describe("schema version guard at DB open", () => {
     const pythonManifest = fs.readFileSync(pythonManifestPath, "utf8");
 
     expect(pythonManifest).toContain("version=7,");
-    expect(pythonManifest).toContain("object_count=226,");
-    expect(pythonManifest).toContain("table_count=107,");
+    expect(pythonManifest).toContain("object_count=231,");
+    expect(pythonManifest).toContain("table_count=108,");
     expect(pythonManifest).toContain(`fingerprint=\"${EXACT_V7_SCHEMA_MANIFEST.fingerprint}\",`);
     expect(EXACT_V7_SCHEMA_MANIFEST).toEqual({
       version: SUPPORTED_SCHEMA_VERSION,
-      objectCount: 226,
-      tableCount: 107,
-      fingerprint: "b80552dd38f1bdfcd75b95c09054f80a1169c609610ce4975edb837dd76808c8",
+      objectCount: 231,
+      tableCount: 108,
+      fingerprint: "8b2179d91d202bf43c5463ceb7f34313a0c75f296b20335ee4364cfa8d2e78bd",
     });
   });
 });
