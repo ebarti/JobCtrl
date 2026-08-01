@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 
 import pytest
 
@@ -40,6 +41,16 @@ from jobctrl.infrastructure.discovery.sqlite_execution_repository import (
 )
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobctrl.state import record_job_event
+
+
+def _seed_v7_job(conn: sqlite3.Connection, job_id: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at)
+        VALUES ('local', ?, ?, 'Recovery fixture', 'fixture', '2026-07-16T08:00:00+00:00')
+        """,
+        (job_id, f"https://fixture.example/jobs/{job_id}"),
+    )
 
 
 def _legacy_records() -> list[dict[str, object]]:
@@ -593,7 +604,10 @@ async def test_decoder_v2_recovers_exact_legacy_fanouts_and_resumes_partial_repl
     assert len(native_step_keys) == 4
     assert legacy_step_keys.isdisjoint(native_step_keys)
 
-    job_urls = [f"https://jobs.example/{index:03d}" for index in range(72)]
+    job_ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, f"jobctrl:recovery:{index:03d}")) for index in range(72)]
+    job_index_by_id = {job_id: index for index, job_id in enumerate(job_ids)}
+    for job_id in job_ids:
+        _seed_v7_job(conn, job_id)
     fanout_job_indexes = (
         range(0),
         range(71),
@@ -614,9 +628,9 @@ async def test_decoder_v2_recovers_exact_legacy_fanouts_and_resumes_partial_repl
                 occurred_at=(f"2026-07-16T09:{pass_index:02d}:10.{position:03d}+00:00"),
                 workflow_id=f"prep-{idempotency_key}",
                 temporal_run_id=f"prep-run-{job_index:03d}",
-                input_summary={"jobUrl": job_urls[job_index]},
+                input_summary={"jobUrl": job_ids[job_index]},
             )
-    for job_index, job_url in enumerate(job_urls):
+    for job_index, job_id in enumerate(job_ids):
         idempotency_key = f"job-{job_index:03d}"
         workflow_id = f"prep-{idempotency_key}"
         temporal_run_id = f"prep-run-{job_index:03d}"
@@ -626,7 +640,7 @@ async def test_decoder_v2_recovers_exact_legacy_fanouts_and_resumes_partial_repl
             workflow_id=workflow_id,
             temporal_run_id=temporal_run_id,
             input_summary={
-                "jobUrl": job_url,
+                "jobUrl": job_id,
                 "steps": ["pdf", "cover", "score", "tailor"],
                 "targetVersion": "1",
                 "idempotencyKey": idempotency_key,
@@ -637,7 +651,7 @@ async def test_decoder_v2_recovers_exact_legacy_fanouts_and_resumes_partial_repl
             occurred_at=f"2026-07-16T10:01:00.{job_index:03d}+00:00",
             workflow_id=workflow_id,
             temporal_run_id=temporal_run_id,
-            input_summary={"jobUrl": job_url},
+            input_summary={"jobUrl": job_id},
         )
 
     for _activity_type, _payload, (step_kind, item_key), detail_code in native_specs:
@@ -667,16 +681,16 @@ async def test_decoder_v2_recovers_exact_legacy_fanouts_and_resumes_partial_repl
     # plans became durable. The four native keys already owned by their normal
     # lifecycle are the only projected step rows at the interruption point.
     repository = SqliteDiscoveryExecutionRepository(conn)
-    for job_index, job_url in enumerate(job_urls[:15]):
+    for job_index, job_id in enumerate(job_ids[:15]):
         repository.link_job(
             execution,
-            job_url,
+            job_id,
             cohort_kind="existing_backlog",
             linked_at="2026-07-16T10:02:00+00:00",
         )
         repository.set_work_plan(
             execution,
-            job_url,
+            job_id,
             state="planned",
             required_steps=("score", "tailor", "cover", "pdf"),
             preparation_workflow_id=f"prep-job-{job_index:03d}",
@@ -684,7 +698,7 @@ async def test_decoder_v2_recovers_exact_legacy_fanouts_and_resumes_partial_repl
         )
 
     all_step_keys = legacy_step_keys | native_step_keys
-    expected_digest = _recovery_key_digest(set(job_urls), all_step_keys)
+    expected_digest = _recovery_key_digest(set(job_ids), all_step_keys)
     _ensure_recovery_manifest_table(conn)
     _write_recovery_manifest(
         conn,
@@ -736,18 +750,18 @@ async def test_decoder_v2_recovers_exact_legacy_fanouts_and_resumes_partial_repl
 
     memberships = conn.execute(
         """
-        SELECT job_url, work_plan_state, required_steps_json,
+        SELECT job_id, work_plan_state, required_steps_json,
                preparation_workflow_id, work_plan_reason
         FROM discovery_execution_jobs
         WHERE tenant_id = ? AND discover_workflow_id = ? AND discover_run_id = ?
         """,
         (execution.tenant_id, execution.workflow_id, execution.temporal_run_id),
     ).fetchall()
-    assert {row["job_url"] for row in memberships} == set(job_urls)
+    assert {row["job_id"] for row in memberships} == set(job_ids)
     assert all(row["work_plan_state"] == "planned" for row in memberships)
     assert all(json.loads(row["required_steps_json"]) == ["score", "tailor", "cover", "pdf"] for row in memberships)
     assert all(
-        row["preparation_workflow_id"] == f"prep-job-{int(str(row['job_url']).rsplit('/', 1)[1]):03d}"
+        row["preparation_workflow_id"] == f"prep-job-{job_index_by_id[str(row['job_id'])]:03d}"
         for row in memberships
     )
     assert all(row["work_plan_reason"] == _LEGACY_WORK_PLAN_REASON_CODE for row in memberships)
@@ -1059,10 +1073,11 @@ async def test_ready_manifest_retries_history_read_without_losing_durable_proof(
         workflow_id="discover-local",
         temporal_run_id="run-history-retry",
     )
+    _seed_v7_job(conn, str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:durable")))
     repository = SqliteDiscoveryExecutionRepository(conn)
     repository.link_job(
         execution,
-        "job:durable",
+        str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:durable")),
         cohort_kind="existing_backlog",
         linked_at="2026-07-16T08:00:00+00:00",
     )
@@ -1079,7 +1094,7 @@ async def test_ready_manifest_retries_history_read_without_losing_durable_proof(
         tenant_id=TenantId(execution.tenant_id),
     ).refresh()
 
-    membership_keys = {"job:durable"}
+    membership_keys = {str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:durable"))}
     step_keys = {("source_planning", "plan")}
     digest = _recovery_key_digest(membership_keys, step_keys)
     _ensure_recovery_manifest_table(conn)
@@ -1261,7 +1276,7 @@ async def test_retried_fanout_recovers_exact_work_without_inventing_queue_time(
         occurred_at="2026-07-16T08:01:01+00:00",
         workflow_id="prep-retried",
         temporal_run_id="prep-run-retried",
-        input_summary={"jobUrl": "job:retried"},
+        input_summary={"jobUrl": str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:retried"))},
     )
     _append_workflow_started(
         conn,
@@ -1269,12 +1284,13 @@ async def test_retried_fanout_recovers_exact_work_without_inventing_queue_time(
         workflow_id="prep-retried",
         temporal_run_id="prep-run-retried",
         input_summary={
-            "jobUrl": "job:retried",
+            "jobUrl": str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:retried")),
             "steps": ["score", "tailor"],
             "targetVersion": "1",
             "idempotencyKey": "retried",
         },
     )
+    _seed_v7_job(conn, str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:retried")))
 
     async def normalized_history(_handle, _converter):
         return records
@@ -1299,7 +1315,8 @@ async def test_retried_fanout_recovers_exact_work_without_inventing_queue_time(
     assert result.jobs_linked == 1
     assert result.work_plans_recovered == 1
     membership = conn.execute(
-        "SELECT * FROM discovery_execution_jobs WHERE job_url = 'job:retried'"
+        "SELECT * FROM discovery_execution_jobs WHERE job_id = ?",
+        (str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:retried")),),
     ).fetchone()
     assert membership["work_plan_state"] == "planned"
     assert membership["preparation_workflow_id"] == "prep-retried"
@@ -1633,7 +1650,7 @@ async def test_terminal_failed_fanout_persists_exact_partial_incomplete_coverage
         occurred_at="2026-07-16T09:00:02+00:00",
         workflow_id="prep-partial",
         temporal_run_id="prep-run-partial",
-        input_summary={"jobUrl": "job:partial"},
+        input_summary={"jobUrl": str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:partial"))},
     )
     _append_workflow_started(
         conn,
@@ -1641,12 +1658,13 @@ async def test_terminal_failed_fanout_persists_exact_partial_incomplete_coverage
         workflow_id="prep-partial",
         temporal_run_id="prep-run-partial",
         input_summary={
-            "jobUrl": "job:partial",
+            "jobUrl": str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:partial")),
             "steps": ["score"],
             "targetVersion": "1",
             "idempotencyKey": "partial",
         },
     )
+    _seed_v7_job(conn, str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:partial")))
 
     async def normalized_history(_handle, _converter):
         return records
@@ -1671,7 +1689,8 @@ async def test_terminal_failed_fanout_persists_exact_partial_incomplete_coverage
     assert result.jobs_linked == 1
     assert result.work_plans_recovered == 1
     membership = conn.execute(
-        "SELECT * FROM discovery_execution_jobs WHERE job_url = 'job:partial'"
+        "SELECT * FROM discovery_execution_jobs WHERE job_id = ?",
+        (str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:partial")),),
     ).fetchone()
     assert membership["work_plan_state"] == "planned"
     assert membership["preparation_workflow_id"] == "prep-partial"
@@ -1698,7 +1717,7 @@ async def test_terminal_failed_fanout_persists_exact_partial_incomplete_coverage
     assert manifest["expected_step_count"] == 1
     assert manifest["persisted_step_count"] == 1
     assert manifest["key_digest"] == _recovery_key_digest(
-        {"job:partial"},
+        {str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:partial"))},
         {("preparation_fanout", "streaming:pass-1")},
     )
 
@@ -1724,9 +1743,10 @@ async def test_reconciliation_repairs_stale_ready_manifest(tmp_path, monkeypatch
         workflow_id="discover-local",
         temporal_run_id="run-stale",
     )
+    _seed_v7_job(conn, str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:new")))
     SqliteDiscoveryExecutionRepository(conn).link_job(
         execution,
-        "job:new",
+        str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:new")),
         cohort_kind="existing_backlog",
         linked_at="2026-07-16T08:00:00+00:00",
     )
@@ -1741,7 +1761,9 @@ async def test_reconciliation_repairs_stale_ready_manifest(tmp_path, monkeypatch
         persisted_memberships=1,
         expected_steps=0,
         persisted_steps=0,
-        key_digest=_recovery_key_digest({"job:old"}, set()),
+        key_digest=_recovery_key_digest(
+            {str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:old"))}, set()
+        ),
     )
 
     async def normalized_history(_handle, _converter):
@@ -1774,7 +1796,7 @@ async def test_reconciliation_repairs_stale_ready_manifest(tmp_path, monkeypatch
     row = conn.execute("SELECT * FROM discovery_execution_recoveries").fetchone()
     assert row["state"] == "ready"
     assert row["expected_membership_count"] == row["persisted_membership_count"] == 1
-    assert row["key_digest"] == _recovery_key_digest({"job:new"}, set())
+    assert row["key_digest"] == _recovery_key_digest({str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:new"))}, set())
 
 
 @pytest.mark.asyncio
