@@ -3215,7 +3215,10 @@ describe("dashboard outcome-conversion projection", () => {
           finished_at: job.applyRun.status === "starting" ? null : "2026-06-01T12:00:00+00:00",
         });
       }
-      if (job.manualMarked) {
+      const seedsManualApplication =
+        job.manualMarked ||
+        (job.applied && !job.applyRun && !job.outcomes?.includes("applied_confirmation"));
+      if (seedsManualApplication) {
         insertEvent.run({
           job_id: jobId,
           event_type: "ApplicationManuallyMarked",
