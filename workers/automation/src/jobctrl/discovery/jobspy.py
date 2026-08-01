@@ -34,6 +34,7 @@ from jobctrl.domain.job_content_identity import (
     job_content_fingerprint,
     normalize_identity_text,
 )
+from jobctrl.domain.identifiers import canonical_job_id
 # Phase 7 (S-27 round-1 review M1): ``parse_proxy`` lives under
 # ``jobctrl.infrastructure.network`` so the Enrichment context's
 # Playwright fetcher can import it without depending on this Discovery

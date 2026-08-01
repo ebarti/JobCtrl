@@ -22,7 +22,6 @@ from urllib.parse import urlparse
 
 from jobctrl.database import (
     ensure_discovery_control_tables,
-    ensure_enrichment_tables,
     ensure_posting_snapshot_tables,
     ensure_source_observation_tables,
 )
