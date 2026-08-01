@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from jobctrl.database import close_connection, init_db
+from jobctrl.domain.identifiers import generate_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
 from jobctrl.state import record_job_event
@@ -16,9 +17,10 @@ def test_record_job_event_publishes_through_bus(tmp_path: Path) -> None:
     bus.subscribe(None, received.append)
 
     try:
+        job_id = generate_job_id()
         record_job_event(
             conn,
-            "https://example.com/job/1",
+            job_id,
             "score",
             "StageCompleted",
             message="Fit score 9/10",
@@ -37,7 +39,7 @@ def test_record_job_event_publishes_through_bus(tmp_path: Path) -> None:
         event = received[0]
         assert event.event_type == "StageCompleted"
         assert event.tenant_id == LOCAL_TENANT
-        assert event.payload["job_url"] == "https://example.com/job/1"
+        assert event.payload["jobId"] == str(job_id)
         assert event.payload["stage"] == "score"
         assert event.payload["score"] == 9
         assert event.payload["message"] == "Fit score 9/10"
@@ -50,9 +52,10 @@ def test_record_job_event_without_publisher_only_persists(tmp_path: Path) -> Non
     conn = init_db(db_path)
 
     try:
+        job_id = generate_job_id()
         record_job_event(
             conn,
-            "https://example.com/job/2",
+            job_id,
             "enrich",
             "StageStarted",
             message="Enrichment started",
@@ -75,9 +78,10 @@ def test_record_job_event_typed_subscriber_only_receives_match(tmp_path: Path) -
     bus.subscribe("StageCompleted", completed.append)
 
     try:
-        record_job_event(conn, "u", "score", "StageStarted", publisher=bus)
-        record_job_event(conn, "u", "score", "StageCompleted", publisher=bus)
-        record_job_event(conn, "u", "score", "StageFailed", publisher=bus)
+        job_id = generate_job_id()
+        record_job_event(conn, job_id, "score", "StageStarted", publisher=bus)
+        record_job_event(conn, job_id, "score", "StageCompleted", publisher=bus)
+        record_job_event(conn, job_id, "score", "StageFailed", publisher=bus)
         conn.commit()
     finally:
         close_connection(db_path)
