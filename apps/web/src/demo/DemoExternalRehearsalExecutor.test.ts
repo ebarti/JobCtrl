@@ -14,7 +14,7 @@ import {
 } from "./workspace/index.js";
 
 const NOW = "2026-07-11T12:00:00.000Z";
-const JOB = "job-northwind-platform";
+const JOB = "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35";
 const ARTIFACT = "artifact-tailored-resume";
 
 afterEach(() => {

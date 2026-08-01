@@ -63,7 +63,7 @@ describe("<DemoReceiptHistory>", () => {
             didNotDo: "No test application was submitted.",
             operation: "applyJob",
             entityType: "job",
-            entityId: "job-northwind-platform",
+            entityId: "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
           });
       });
     });

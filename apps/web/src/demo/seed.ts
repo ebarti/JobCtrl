@@ -29,7 +29,7 @@ const demoSeed = {
     ],
     jobs: [
       {
-        id: "job-northwind-platform",
+        id: "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
         title: "Platform systems lead",
         state: "accepted",
         at: minutes(-1440),

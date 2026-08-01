@@ -702,7 +702,9 @@ scenarioTest("Demo guide shortcuts navigate through seeded surfaces and confirm 
   await expect(guide).toContainText("Every record and action in this demo is simulated and synthetic");
 
   await guide.getByRole("link", { name: "Inspect synthetic scoring evidence" }).click();
-  await expect(page).toHaveURL(/\/jobs\/job-northwind-platform(?:\?|$)/);
+  await expect(page).toHaveURL(
+    /\/jobs\/6e2f4a10-20be-4d5f-98a4-a4bb9a877a35(?:\?|$)/,
+  );
   await expect(page.getByText("Preparation diagnostics", { exact: false })).toBeVisible();
   await expect(page.getByRole("article", { name: "Job details" })).toBeVisible();
 
@@ -713,7 +715,9 @@ scenarioTest("Demo guide shortcuts navigate through seeded surfaces and confirm 
 
   await openGuide.click();
   await guide.getByRole("link", { name: "Open simulated Apply Review and dry run" }).click();
-  await expect(page).toHaveURL(/\/apply-review\?jobKey=job-northwind-platform(?:&|$)/);
+  await expect(page).toHaveURL(
+    /\/apply-review\?jobKey=6e2f4a10-20be-4d5f-98a4-a4bb9a877a35(?:&|$)/,
+  );
   await expect(page.getByRole("heading", { name: "Application review" })).toBeVisible();
 
   await openGuide.click();
@@ -784,7 +788,12 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
   const routes = [
     ["/dashboard", "Dashboard", "3 jobs"],
     ["/jobs", "Jobs", "Platform systems lead"],
-    ["/jobs/job-northwind-platform", "Job details", "Preparation diagnostics", "article"],
+    [
+      "/jobs/6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
+      "Job details",
+      "Preparation diagnostics",
+      "article",
+    ],
     ["/evidence-map", "Career evidence map", "Delivery improvement evidence"],
     ["/artifacts", "Artifacts", "Platform systems lead"],
     [
@@ -794,7 +803,7 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
       "article",
     ],
     [
-      "/apply-review?jobKey=job-northwind-platform",
+      "/apply-review?jobKey=6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
       "Application review",
       "Materials ready",
     ],
@@ -1033,8 +1042,8 @@ scenarioTest("score correction is browser-local, cross-tab visible, reload durab
 
   const second = await context.newPage();
   await Promise.all([
-    page.goto("/jobs/job-northwind-platform"),
-    second.goto("/jobs/job-northwind-platform"),
+    page.goto("/jobs/6e2f4a10-20be-4d5f-98a4-a4bb9a877a35"),
+    second.goto("/jobs/6e2f4a10-20be-4d5f-98a4-a4bb9a877a35"),
   ]);
   await expect(page.getByText("8/10", { exact: true })).toBeVisible();
   await expect(second.getByText("8/10", { exact: true })).toBeVisible();

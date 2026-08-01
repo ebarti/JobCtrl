@@ -11,7 +11,7 @@ const REFERENCE_TIME_MS = Date.parse(REFERENCE_TIME);
 const at = (value: string) => demoTimestamp(Math.round((Date.parse(value) - REFERENCE_TIME_MS) / 60_000));
 
 const job = {
-  jobKey: "job-northwind-platform",
+  jobKey: "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
   url: "demo-job:northwind-platform",
   title: "Platform systems lead",
   company: "Northwind Workshop",
