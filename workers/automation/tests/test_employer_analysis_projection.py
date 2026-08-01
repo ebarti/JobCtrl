@@ -44,6 +44,7 @@ from jobctrl.infrastructure.materials import SqliteEmployerAnalysisRepository
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobctrl.infrastructure.scoring import SqliteRequirementFitReportRepository
 
+JOB_ID = JobId("00000000-0000-4000-8000-000000000051")
 JOB_URL = "https://example.com/jobs/event-driven"
 JD = "Senior Event Engineer. Requires 5+ years Python. Kafka is a plus."
 
@@ -53,12 +54,21 @@ def conn(tmp_path) -> Iterator[sqlite3.Connection]:
     db_path = tmp_path / "jobs.db"
     connection = init_db(db_path)
     connection.execute(
-        "INSERT INTO jobs (url, title, site) VALUES (?, ?, ?)",
-        (JOB_URL, "Senior Event Engineer", "example"),
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, site)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(JOB_ID),
+            JOB_URL,
+            "Senior Event Engineer",
+            "example",
+        ),
     )
     connection.commit()
     yield connection
-    close_connection()
+    close_connection(db_path)
 
 
 def _analysis(generation: int) -> EmployerAnalysis:
@@ -81,7 +91,7 @@ def _analysis(generation: int) -> EmployerAnalysis:
     )
     return EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(JOB_URL),
+        job_id=JOB_ID,
         generation=generation,
         snapshot_hash=compute_snapshot_hash(JD),
         canonical=canonical,
@@ -124,7 +134,7 @@ def _requirement_fit_report(score_version: int) -> RequirementFitReport:
         ),
     )
     return RequirementFitReport(
-        job_id=JOB_URL,
+        job_id=str(JOB_ID),
         score_version=score_version,
         employer_analysis_generation=2,
         profile_snapshot_version=3,
@@ -153,17 +163,19 @@ def test_projection_serves_latest_canonical_analysis_read_model(conn: sqlite3.Co
     builder = ProjectionBuilder(conn_factory=lambda: conn)
     conn.execute(
         """
-        INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-        VALUES (?, 'tailor', 'EmployerAnalyzed', 'info', 'analyzed', ?, '{}')
+        INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type,
+            level, message, occurred_at, payload_json
+        ) VALUES (?, ?, 1, 'tailor', 'EmployerAnalyzed', 'info', 'analyzed', ?, '{}')
         """,
-        (JOB_URL, latest.created_at),
+        (str(LOCAL_TENANT), str(JOB_ID), latest.created_at),
     )
     conn.commit()
     builder.refresh()
 
     row = conn.execute(
         "SELECT employer_analysis_json FROM job_detail_projections WHERE job_id = ?",
-        (JOB_URL,),
+        (str(JOB_ID),),
     ).fetchone()
     assert row is not None
     served = json.loads(row["employer_analysis_json"])
@@ -181,17 +193,20 @@ def test_projection_analysis_is_null_when_no_analysis_exists(conn: sqlite3.Conne
     builder = ProjectionBuilder(conn_factory=lambda: conn)
     conn.execute(
         """
-        INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-        VALUES (?, 'score', 'JobScored', 'info', 'scored', '2026-05-04T12:00:00+00:00', '{}')
+        INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type,
+            level, message, occurred_at, payload_json
+        ) VALUES (?, ?, 1, 'score', 'JobScored', 'info', 'scored',
+                  '2026-05-04T12:00:00+00:00', '{}')
         """,
-        (JOB_URL,),
+        (str(LOCAL_TENANT), str(JOB_ID)),
     )
     conn.commit()
     builder.refresh()
 
     row = conn.execute(
         "SELECT employer_analysis_json FROM job_detail_projections WHERE job_id = ?",
-        (JOB_URL,),
+        (str(JOB_ID),),
     ).fetchone()
     assert row is not None
     assert row["employer_analysis_json"] is None
@@ -208,17 +223,20 @@ def test_projection_serves_latest_requirement_fit_report_read_model(
     builder = ProjectionBuilder(conn_factory=lambda: conn)
     conn.execute(
         """
-        INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-        VALUES (?, 'score', 'JobScored', 'info', 'scored', '2026-05-04T12:00:00+00:00', '{}')
+        INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type,
+            level, message, occurred_at, payload_json
+        ) VALUES (?, ?, 1, 'score', 'JobScored', 'info', 'scored',
+                  '2026-05-04T12:00:00+00:00', '{}')
         """,
-        (JOB_URL,),
+        (str(LOCAL_TENANT), str(JOB_ID)),
     )
     conn.commit()
     builder.refresh()
 
     row = conn.execute(
         "SELECT requirement_fit_report_json FROM job_detail_projections WHERE job_id = ?",
-        (JOB_URL,),
+        (str(JOB_ID),),
     ).fetchone()
     assert row is not None
     served = json.loads(row["requirement_fit_report_json"])
@@ -235,17 +253,20 @@ def test_projection_requirement_fit_report_is_null_when_no_report_exists(
     builder = ProjectionBuilder(conn_factory=lambda: conn)
     conn.execute(
         """
-        INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-        VALUES (?, 'score', 'JobScored', 'info', 'scored', '2026-05-04T12:00:00+00:00', '{}')
+        INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type,
+            level, message, occurred_at, payload_json
+        ) VALUES (?, ?, 1, 'score', 'JobScored', 'info', 'scored',
+                  '2026-05-04T12:00:00+00:00', '{}')
         """,
-        (JOB_URL,),
+        (str(LOCAL_TENANT), str(JOB_ID)),
     )
     conn.commit()
     builder.refresh()
 
     row = conn.execute(
         "SELECT requirement_fit_report_json FROM job_detail_projections WHERE job_id = ?",
-        (JOB_URL,),
+        (str(JOB_ID),),
     ).fetchone()
     assert row is not None
     assert row["requirement_fit_report_json"] is None
