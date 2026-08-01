@@ -268,10 +268,10 @@ def derive_tailoring_recommendations(
             else ()
         )
         support_ids = tuple(signal.signal_id for signal in support)
-        if set(support_ids) & set(contradiction_ids):
-            raise ValueError("one signal cannot support and contradict a recommendation")
         if unresolved_ids:
             continue
+        if set(support_ids) & set(contradiction_ids):
+            raise ValueError("one signal cannot support and contradict a recommendation")
 
         evidence = tuple(
             RecommendationEvidenceRef(

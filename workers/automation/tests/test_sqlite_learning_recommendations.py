@@ -458,6 +458,203 @@ def test_source_deletion_tombstones_without_inventing_a_replacement(
     close_connection(db_path)
 
 
+def test_review_ledger_automatically_rederives_corrections_and_rejections(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    _seed_tailoring_sources(conn)
+    conn.commit()
+    repository = SqliteLearningRecommendationRepository(conn)
+
+    original = repository.rederive_tailoring(
+        _TENANT_A,
+        source_changes=None,
+        rederived_at="2026-08-01T11:00:00Z",
+    )[0]
+    _insert_tailoring_review(
+        conn,
+        signal_id="tailoring-1",
+        revision=2,
+        decision="accepted",
+        reviewed_at="2026-08-01T11:30:00Z",
+    )
+    conn.commit()
+
+    replacement = repository.rederive_tailoring(
+        _TENANT_A,
+        source_changes=None,
+        rederived_at="2026-08-01T11:31:00Z",
+    )[0]
+    assert replacement.recommendation_id != original.recommendation_id
+    assert tuple(
+        conn.execute(
+            """
+            SELECT reason_code, affected_signal_id,
+                   replacement_recommendation_id, tombstoned_at
+            FROM learning_recommendation_tombstones
+            WHERE recommendation_id = ?
+            """,
+            (original.recommendation_id,),
+        ).fetchone()
+    ) == (
+        "source_corrected",
+        "tailoring-feedback:tailoring-1:1",
+        replacement.recommendation_id,
+        "2026-08-01T11:30:00Z",
+    )
+
+    _insert_tailoring_review(
+        conn,
+        signal_id="tailoring-2",
+        revision=2,
+        decision="rejected",
+        reviewed_at="2026-08-01T12:00:00Z",
+    )
+    conn.commit()
+    assert (
+        repository.rederive_tailoring(
+            _TENANT_A,
+            source_changes=None,
+            rederived_at="2026-08-01T12:01:00Z",
+        )
+        == ()
+    )
+    assert [
+        tuple(row)
+        for row in conn.execute(
+            """
+            SELECT recommendation_id, reason_code, tombstoned_at
+            FROM learning_recommendation_tombstones
+            WHERE affected_signal_id = 'tailoring-feedback:tailoring-2:1'
+            ORDER BY recommendation_id
+            """
+        ).fetchall()
+    ] == [
+        (original.recommendation_id, "source_deleted", "2026-08-01T12:00:00Z"),
+        (replacement.recommendation_id, "source_deleted", "2026-08-01T12:00:00Z"),
+    ]
+    close_connection(db_path)
+
+
+def test_explicit_contradiction_ledger_blocks_until_one_side_is_resolved(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    _seed_tailoring_sources(conn)
+    conn.execute(
+        """
+        INSERT INTO resume_review_drafts (
+            tenant_id, draft_id, job_id, base_generation, renderer_format,
+            state, latest_revision_number, created_at, updated_at
+        ) VALUES (
+            'tenant-a', 'draft-4', ?, 1, 'text', 'active', 0, ?, ?
+        )
+        """,
+        (_JOB_B, "2026-08-01T10:00:00Z", "2026-08-01T10:00:00Z"),
+    )
+    conn.execute(
+        """
+        INSERT INTO tailoring_feedback_signals (
+            tenant_id, signal_id, job_id, draft_id, source_kind, source_id,
+            signal_kind, status, summary, created_at, reviewed_at
+        ) VALUES (
+            'tenant-a', 'tailoring-4', ?, 'draft-4', 'edit_delta',
+            'private-delta-4', 'factual_correction', 'accepted',
+            'private contradiction rationale', ?, ?
+        )
+        """,
+        (_JOB_B, "2026-08-01T10:00:00Z", "2026-08-01T10:00:04Z"),
+    )
+    _insert_tailoring_review(
+        conn,
+        signal_id="tailoring-4",
+        revision=1,
+        decision="accepted",
+        reviewed_at="2026-08-01T10:00:04Z",
+    )
+    conn.execute(
+        """
+        INSERT INTO tailoring_feedback_signal_contradictions (
+            tenant_id, contradiction_id, signal_id, signal_revision,
+            signal_job_id, contradicting_signal_id,
+            contradicting_signal_revision, contradicting_signal_job_id,
+            recorded_at
+        ) VALUES (
+            'tenant-a', 'contradiction-1-4', 'tailoring-1', 1, ?,
+            'tailoring-4', 1, ?, '2026-08-01T10:05:00Z'
+        )
+        """,
+        (_JOB_A, _JOB_B),
+    )
+    conn.commit()
+    repository = SqliteLearningRecommendationRepository(conn)
+
+    assert (
+        repository.rederive_tailoring(
+            _TENANT_A,
+            source_changes=None,
+            rederived_at="2026-08-01T11:00:00Z",
+        )
+        == ()
+    )
+    assert conn.execute("SELECT COUNT(*) FROM learning_recommendations").fetchone()[0] == 0
+
+    _insert_tailoring_review(
+        conn,
+        signal_id="tailoring-4",
+        revision=2,
+        decision="rejected",
+        reviewed_at="2026-08-01T11:30:00Z",
+    )
+    conn.commit()
+    recommendation = repository.rederive_tailoring(
+        _TENANT_A,
+        source_changes=None,
+        rederived_at="2026-08-01T11:31:00Z",
+    )[0]
+    assert recommendation.contradicting_signal_ids == (
+        "tailoring-feedback:tailoring-4:1",
+    )
+    assert [
+        tuple(row)
+        for row in conn.execute(
+            """
+            SELECT signal_id, evidence_role, source_id, source_revision
+            FROM learning_recommendation_evidence
+            WHERE recommendation_id = ?
+            ORDER BY evidence_role, signal_id
+            """,
+            (recommendation.recommendation_id,),
+        ).fetchall()
+    ][0] == (
+        "tailoring-feedback:tailoring-4:1",
+        "contradicting",
+        "tailoring-4",
+        1,
+    )
+    learning_dump = "\n".join(
+        repr(tuple(row))
+        for row in conn.execute(
+            "SELECT * FROM learning_recommendation_evidence"
+        ).fetchall()
+    )
+    assert "private contradiction rationale" not in learning_dump
+    assert "private-delta-4" not in learning_dump
+    replayed = repository.rederive_tailoring(
+        _TENANT_A,
+        source_changes=None,
+        rederived_at="2026-08-01T11:32:00Z",
+    )
+    assert replayed == (recommendation,)
+    assert conn.execute("SELECT COUNT(*) FROM learning_recommendations").fetchone()[0] == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM learning_recommendation_tombstones"
+    ).fetchone()[0] == 0
+    close_connection(db_path)
+
+
 def test_source_change_validation_rolls_back_before_audit_mutation(
     tmp_path: Path,
 ) -> None:

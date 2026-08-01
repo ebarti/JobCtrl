@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Mapping
 from datetime import datetime
 import hashlib
@@ -14,9 +15,11 @@ from jobctrl.domain.operations.learning import (
     RecommendationEvidenceRef,
     TailoringContradictionEvidence,
     TailoringRecommendationScope,
+    TailoringRuleEffect,
     derive_tailoring_recommendations,
 )
 from jobctrl.domain.operations.feedback import TailoringFeedbackSignal
+from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.projections.sqlite_feedback_signals import (
     SqliteFeedbackSignalReader,
@@ -184,7 +187,7 @@ class SqliteLearningRecommendationRepository:
         self,
         tenant_id: TenantId,
         *,
-        source_changes: tuple[LearningSourceChange, ...],
+        source_changes: tuple[LearningSourceChange, ...] | None,
         rederived_at: str,
         contradictions: Mapping[
             TailoringRecommendationScope, TailoringContradictionEvidence
@@ -196,13 +199,16 @@ class SqliteLearningRecommendationRepository:
         ]
         | None = None,
     ) -> tuple[LearningRecommendation, ...]:
-        """Recompute pending proposals and tombstone changed source history."""
+        """Recompute pending proposals and tombstone changed source history.
+
+        Passing ``None`` detects stale accepted evidence from the canonical
+        review ledger in the same transaction. Explicit tuples remain
+        available for deterministic replay and migration fixtures.
+        """
 
         if not str(tenant_id).strip():
             raise ValueError("tenant_id must not be empty")
         rederived_at = _structured_timestamp(rederived_at, name="rederived_at")
-        contradiction_ledger = contradictions or {}
-        contradiction_refs = contradicting_evidence or {}
         owns_transaction = not self._conn.in_transaction
         if owns_transaction:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -215,9 +221,30 @@ class SqliteLearningRecommendationRepository:
                 for signal in signals
                 if isinstance(signal, TailoringFeedbackSignal)
             )
+            effective_source_changes = source_changes
+            if effective_source_changes is None:
+                effective_source_changes = self._detect_source_changes(
+                    tenant_id,
+                    current_signals=tailoring_signals,
+                    rederived_at=rederived_at,
+                )
+            if contradictions is None:
+                if contradicting_evidence is not None:
+                    raise ValueError(
+                        "explicit contradiction evidence requires an explicit ledger"
+                    )
+                contradiction_ledger, contradiction_refs = (
+                    self._canonical_contradictions(
+                        tenant_id,
+                        current_signals=tailoring_signals,
+                    )
+                )
+            else:
+                contradiction_ledger = contradictions
+                contradiction_refs = contradicting_evidence or {}
             self._validate_source_changes(
                 tenant_id,
-                source_changes=source_changes,
+                source_changes=effective_source_changes,
                 current_signals=tailoring_signals,
             )
             recommendations = derive_tailoring_recommendations(
@@ -232,7 +259,7 @@ class SqliteLearningRecommendationRepository:
                     ),
                     derived_at=rederived_at,
                 )
-            for change in source_changes:
+            for change in effective_source_changes:
                 self._append_source_change_tombstones(
                     change,
                     recommendations=recommendations,
@@ -250,6 +277,154 @@ class SqliteLearningRecommendationRepository:
         else:
             self._conn.execute(f"RELEASE SAVEPOINT {_REDERIVE_SAVEPOINT}")
         return recommendations
+
+    def _canonical_contradictions(
+        self,
+        tenant_id: TenantId,
+        *,
+        current_signals: tuple[TailoringFeedbackSignal, ...],
+    ) -> tuple[
+        Mapping[TailoringRecommendationScope, TailoringContradictionEvidence],
+        Mapping[
+            TailoringRecommendationScope,
+            tuple[RecommendationEvidenceRef, ...],
+        ],
+    ]:
+        current_by_id = {signal.signal_id: signal for signal in current_signals}
+        contradiction_ids: dict[TailoringRecommendationScope, set[str]] = defaultdict(set)
+        unresolved_ids: dict[TailoringRecommendationScope, set[str]] = defaultdict(set)
+        evidence_by_scope: dict[
+            TailoringRecommendationScope,
+            dict[str, RecommendationEvidenceRef],
+        ] = defaultdict(dict)
+        rows = self._conn.execute(
+            """
+            SELECT contradiction.signal_id AS left_signal_id,
+                   contradiction.signal_revision AS left_revision,
+                   contradiction.signal_job_id AS left_job_id,
+                   left_review.signal_kind AS left_signal_kind,
+                   left_review.rule_key AS left_rule_key,
+                   left_review.rule_value AS left_rule_value,
+                   left_review.allowlist_version AS left_allowlist_version,
+                   left_review.reviewed_at AS left_recorded_at,
+                   contradiction.contradicting_signal_id AS right_signal_id,
+                   contradiction.contradicting_signal_revision AS right_revision,
+                   contradiction.contradicting_signal_job_id AS right_job_id,
+                   right_review.signal_kind AS right_signal_kind,
+                   right_review.rule_key AS right_rule_key,
+                   right_review.rule_value AS right_rule_value,
+                   right_review.allowlist_version AS right_allowlist_version,
+                   right_review.reviewed_at AS right_recorded_at
+            FROM tailoring_feedback_signal_contradictions AS contradiction
+            JOIN tailoring_feedback_signal_reviews AS left_review
+              ON left_review.tenant_id = contradiction.tenant_id
+             AND left_review.signal_id = contradiction.signal_id
+             AND left_review.revision = contradiction.signal_revision
+            JOIN tailoring_feedback_signal_reviews AS right_review
+              ON right_review.tenant_id = contradiction.tenant_id
+             AND right_review.signal_id = contradiction.contradicting_signal_id
+             AND right_review.revision = contradiction.contradicting_signal_revision
+            WHERE contradiction.tenant_id = ?
+            ORDER BY contradiction.contradiction_id
+            """,
+            (str(tenant_id),),
+        ).fetchall()
+        for row in rows:
+            left = _contradiction_endpoint(row, "left", tenant_id=tenant_id)
+            right = _contradiction_endpoint(row, "right", tenant_id=tenant_id)
+            for current_endpoint, other_endpoint in ((left, right), (right, left)):
+                if current_endpoint[0] not in current_by_id:
+                    continue
+                scope = current_endpoint[1]
+                other_signal_id = other_endpoint[0]
+                contradiction_ids[scope].add(other_signal_id)
+                evidence_by_scope[scope][other_signal_id] = other_endpoint[2]
+                if other_signal_id in current_by_id:
+                    unresolved_ids[scope].add(other_signal_id)
+        ledger = {
+            scope: TailoringContradictionEvidence(
+                signal_ids=tuple(sorted(signal_ids)),
+                unresolved_signal_ids=tuple(sorted(unresolved_ids[scope])),
+            )
+            for scope, signal_ids in contradiction_ids.items()
+        }
+        evidence = {
+            scope: tuple(
+                evidence_by_scope[scope][signal_id]
+                for signal_id in sorted(evidence_by_scope[scope])
+            )
+            for scope in evidence_by_scope
+        }
+        return ledger, evidence
+
+    def _detect_source_changes(
+        self,
+        tenant_id: TenantId,
+        *,
+        current_signals: tuple[TailoringFeedbackSignal, ...],
+        rederived_at: str,
+    ) -> tuple[LearningSourceChange, ...]:
+        current_by_source = {signal.source_id: signal for signal in current_signals}
+        rows = self._conn.execute(
+            """
+            SELECT DISTINCT evidence.signal_id, evidence.source_id,
+                            evidence.source_revision
+            FROM learning_recommendation_evidence AS evidence
+            WHERE evidence.tenant_id = ?
+              AND evidence.source_kind = 'tailoring_feedback_signal'
+              AND evidence.evidence_role = 'supporting'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM learning_recommendation_tombstones AS tombstone
+                WHERE tombstone.tenant_id = evidence.tenant_id
+                  AND tombstone.recommendation_id = evidence.recommendation_id
+                  AND tombstone.affected_signal_id = evidence.signal_id
+                  AND tombstone.affected_source_revision = evidence.source_revision
+              )
+            ORDER BY evidence.source_id, evidence.source_revision,
+                     evidence.signal_id
+            """,
+            (str(tenant_id),),
+        ).fetchall()
+        changes: list[LearningSourceChange] = []
+        for row in rows:
+            previous_signal_id = str(row[0])
+            source_id = str(row[1])
+            source_revision = int(row[2])
+            current = current_by_source.get(source_id)
+            if current is not None and current.source_revision == source_revision:
+                continue
+            if current is not None and current.source_revision < source_revision:
+                raise LearningRecommendationConflict(
+                    "current tailoring feedback revision predates recommendation evidence"
+                )
+            if current is not None:
+                reason_code = "source_corrected"
+                changed_at = current.recorded_at
+            else:
+                reason_code = "source_deleted"
+                latest = self._conn.execute(
+                    """
+                    SELECT reviewed_at
+                    FROM tailoring_feedback_signal_reviews
+                    WHERE tenant_id = ? AND signal_id = ?
+                    ORDER BY revision DESC
+                    LIMIT 1
+                    """,
+                    (str(tenant_id), source_id),
+                ).fetchone()
+                changed_at = str(latest[0]) if latest is not None else rederived_at
+            changes.append(
+                LearningSourceChange(
+                    tenant_id=tenant_id,
+                    previous_signal_id=previous_signal_id,
+                    source_id=source_id,
+                    source_revision=source_revision,
+                    reason_code=reason_code,
+                    changed_at=changed_at,
+                )
+            )
+        return tuple(changes)
 
     def _validate_source_changes(
         self,
@@ -312,6 +487,7 @@ class SqliteLearningRecommendationRepository:
              AND evidence.recommendation_id = recommendation.recommendation_id
             WHERE recommendation.tenant_id = ?
               AND evidence.source_kind = ?
+              AND evidence.evidence_role = 'supporting'
               AND evidence.source_id = ?
               AND evidence.source_revision = ?
               AND evidence.signal_id = ?
@@ -454,6 +630,43 @@ class SqliteLearningRecommendationRepository:
         else:
             self._conn.execute(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}")
             self._conn.execute(f"RELEASE SAVEPOINT {_SAVEPOINT}")
+
+
+def _contradiction_endpoint(
+    row: sqlite3.Row,
+    prefix: str,
+    *,
+    tenant_id: TenantId,
+) -> tuple[
+    str,
+    TailoringRecommendationScope,
+    RecommendationEvidenceRef,
+]:
+    source_id = str(row[f"{prefix}_signal_id"])
+    source_revision = int(row[f"{prefix}_revision"])
+    signal_id = f"tailoring-feedback:{source_id}:{source_revision}"
+    effect = TailoringRuleEffect(
+        signal_kind=str(row[f"{prefix}_signal_kind"]),
+        rule_key=str(row[f"{prefix}_rule_key"]),
+        rule_value=str(row[f"{prefix}_rule_value"]),
+        allowlist_version=int(row[f"{prefix}_allowlist_version"]),
+    )
+    return (
+        signal_id,
+        TailoringRecommendationScope(
+            tenant_id=tenant_id,
+            proposed_effect=effect,
+        ),
+        RecommendationEvidenceRef(
+            tenant_id=tenant_id,
+            signal_id=signal_id,
+            source_kind="tailoring_feedback_signal",
+            source_id=source_id,
+            source_revision=source_revision,
+            job_ids=(canonical_job_id(str(row[f"{prefix}_job_id"])),),
+            recorded_at=str(row[f"{prefix}_recorded_at"]),
+        ),
+    )
 
 
 def _input_fingerprint(recommendation_id: str) -> str:
