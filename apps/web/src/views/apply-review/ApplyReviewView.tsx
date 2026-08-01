@@ -1363,9 +1363,10 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
   const mutation = useRepeatApplicationOverrideMutation();
   const [reason, setReason] = useState("");
   const [selectedPriorJobId, setSelectedPriorJobId] = useState<string | null>(null);
-  const needsConfirmation = ["blocked", "confirmation_required", "override_consumed"].includes(
+  const needsAttention = ["blocked", "confirmation_required", "override_consumed"].includes(
     assessment.status,
   );
+  const canConfirm = ["confirmation_required", "override_consumed"].includes(assessment.status);
   const selectedPrior = assessment.matches.find(
     (match) => match.priorApplication.jobId === selectedPriorJobId,
   ) ?? (assessment.matches.length === 1 ? assessment.matches[0] ?? null : null);
@@ -1382,7 +1383,7 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
   const variant = assessment.status === "blocked" ? "destructive" : ["clear", "override_ready"].includes(assessment.status) ? "info" : "warning";
   return (
     <section className="repeat-application-guard" aria-label="Repeat application protection">
-      <Alert variant={variant} role={needsConfirmation ? "alert" : "status"}>
+      <Alert variant={variant} role={needsAttention ? "alert" : "status"}>
         {["clear", "override_ready"].includes(assessment.status) ? (
           <IconShieldCheck aria-hidden="true" />
         ) : (
@@ -1447,7 +1448,7 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
         </details>
       ) : null}
 
-      {needsConfirmation && assessment.matches.length > 0 && assessment.evidenceFingerprint ? (
+      {canConfirm && assessment.matches.length > 0 && assessment.evidenceFingerprint ? (
         <div className="repeat-application-confirmation-form">
           <FieldSet>
             <FieldLegend>Select the prior application for this confirmation</FieldLegend>

@@ -918,10 +918,10 @@ describe("<ApplyReviewView>", () => {
     resolveConfirmation({ ok: true, assessment: repeatApplication });
   });
 
-  it("surfaces stale repeat evidence as a refresh-and-review error", async () => {
+  it("keeps canonical-identity repeats blocked without offering an override", async () => {
     const repeatApplication = makeRepeatApplicationAssessment({
       status: "blocked",
-      summary: "A confirmed application to this canonical opening blocks another live submission by default.",
+      summary: "A confirmed application to this canonical opening blocks another live submission.",
       evidenceFingerprint: "b".repeat(64),
       matches: [
         {
@@ -937,6 +937,50 @@ describe("<ApplyReviewView>", () => {
             confirmedAt: "2026-05-01T10:00:00Z",
           },
           identityEvidence: ["canonical_url:https://example.com/jobs/99"],
+        },
+      ],
+    });
+    const queue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0 ? { ...item, repeatApplication } : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => queue),
+        },
+      }),
+    });
+
+    expect(await screen.findByText("Repeat application blocked")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Reason for another live attempt")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm one live attempt" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Authorize live submit/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Authorize dry run/i })).toBeEnabled();
+  });
+
+  it("surfaces stale repeat evidence as a refresh-and-review error", async () => {
+    const repeatApplication = makeRepeatApplicationAssessment({
+      status: "confirmation_required",
+      summary: "A confirmed application to the same employer and an equivalent role requires deliberate confirmation.",
+      evidenceFingerprint: "b".repeat(64),
+      matches: [
+        {
+          relationship: "same_employer_equivalent_role",
+          reason: "The employer identity matches exactly and the normalized role titles are materially equivalent.",
+          priorApplication: {
+            jobId: "20000000-0000-4000-8000-000000000003",
+            title: "Principal Platform Engineer",
+            company: "Globex",
+            applicationUrl: null,
+            factKind: "application_submitted",
+            factId: "event:99",
+            confirmedAt: "2026-05-01T10:00:00Z",
+          },
+          identityEvidence: ["employer:globex", "role:principal platform engineer"],
         },
       ],
     });

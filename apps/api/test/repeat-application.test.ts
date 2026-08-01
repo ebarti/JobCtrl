@@ -164,6 +164,19 @@ describe("repeat application evidence", () => {
     expect(() => assertLiveApplicationMayDispatch(db, TARGET_JOB_ID)).toThrow(
       "repeat_application_blocked",
     );
+    expect(() =>
+      recordRepeatApplicationOverride(db, TARGET_JOB_ID, {
+        evidenceFingerprint: assessment.evidenceFingerprint!,
+        priorJobId: PRIOR_JOB_ID,
+        reason: "The first application was withdrawn before review.",
+        confirmedBy: "qa-user",
+      }),
+    ).toThrow("repeat_application_blocked");
+    expect(
+      db.prepare(
+        "SELECT COUNT(*) AS count FROM application_repeat_overrides WHERE tenant_id = 'local' AND target_job_id = ?",
+      ).get(TARGET_JOB_ID),
+    ).toMatchObject({ count: 0 });
   });
 
   it("honors accepted duplicate links, including observation identities", () => {

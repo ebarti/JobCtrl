@@ -156,9 +156,11 @@ export function evaluateRepeatApplication(
   const evidenceFingerprint = repeatEvidenceFingerprint(target.job_id, fingerprintMatches);
   const override = matchingOverride(db, targetJobId, evidenceFingerprint);
   const exact = matches.some((match) => match.relationship !== "same_employer_equivalent_role");
-  const status: RepeatApplicationAssessment["status"] = override
-    ? override.consumedAt ? "override_consumed" : "override_ready"
-    : exact ? "blocked" : "confirmation_required";
+  const status: RepeatApplicationAssessment["status"] = exact
+    ? "blocked"
+    : override
+      ? override.consumedAt ? "override_consumed" : "override_ready"
+      : "confirmation_required";
   const summary = status === "override_ready"
     ? "A reasoned confirmation is recorded for one live attempt against this exact evidence."
     : status === "override_consumed"
@@ -196,6 +198,9 @@ export function recordRepeatApplicationOverride(
     const assessment = evaluateRepeatApplication(db, targetJobId);
     if (!assessment.evidenceFingerprint || assessment.status === "clear") {
       throw new InputError("repeat_application_confirmation_not_required");
+    }
+    if (assessment.status === "blocked") {
+      throw new InputError("repeat_application_blocked");
     }
     if (assessment.evidenceFingerprint !== request.evidenceFingerprint) {
       throw new InputError("repeat_application_evidence_stale");
