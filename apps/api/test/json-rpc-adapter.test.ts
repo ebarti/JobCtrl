@@ -111,6 +111,45 @@ describe("createContactResearchStarter (JSON-RPC adapter)", () => {
 });
 
 describe("createActionDispatcher (JSON-RPC adapter)", () => {
+  it("maps learning rederivation to one runtime-scoped synchronous RPC", async () => {
+    const fake = new FakeDispatcher();
+    const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
+    fake.setResponse({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        status: "succeeded",
+        recommendationCount: 1,
+        recommendationIds: [recommendationId],
+      },
+    });
+    const dispatcher = createActionDispatcher(fake);
+
+    const result = await dispatcher(
+      { action: "rederive_learning_recommendations", jobKey: "learning" },
+      { appDir: "/tmp/jobctrl", dbPath: "/tmp/jobctrl/jobctrl.db" },
+    );
+
+    expect(fake.calls).toEqual([
+      {
+        method: "rederive_learning_recommendations",
+        params: {
+          tenantId: "local",
+          expectedAppDir: "/tmp/jobctrl",
+          expectedDbPath: "/tmp/jobctrl/jobctrl.db",
+        },
+      },
+    ]);
+    expect(result).toEqual({
+      status: "succeeded",
+      result: {
+        status: "succeeded",
+        recommendationCount: 1,
+        recommendationIds: [recommendationId],
+      },
+    });
+  });
+
   it("preserves the cancel_run RPC canceling status and run id", async () => {
     const fake = new FakeDispatcher();
     fake.setResponse({

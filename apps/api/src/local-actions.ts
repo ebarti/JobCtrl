@@ -25,6 +25,7 @@ import { randomUUID } from "node:crypto";
 import {
   DEFAULT_PIPELINE_LLM_MODEL,
   PIPELINE_ACTION_JOB_KEY,
+  RederiveLearningRecommendationsResultSchema,
   type ActionCommandPayload,
   type ActionRunResponse,
   type ResumeTemplateTheme,
@@ -196,6 +197,12 @@ export function createActionDispatcher(
       const message = status === "failed" ? extractResultMessage(response.result) : null;
       if (message) result.message = message;
       return result;
+    }
+    if (rpcCall.method === "rederive_learning_recommendations") {
+      const result = RederiveLearningRecommendationsResultSchema.parse(
+        response.result,
+      );
+      return { status: result.status, result };
     }
     return {
       status: "queued",
@@ -475,6 +482,16 @@ interface RpcCall {
 }
 
 function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchContext): RpcCall | null {
+  if (command.action === "rederive_learning_recommendations") {
+    return {
+      method: "rederive_learning_recommendations",
+      params: {
+        tenantId: "local",
+        expectedAppDir: context.appDir,
+        expectedDbPath: context.dbPath,
+      },
+    };
+  }
   if (command.action === "run_stage") {
     if (!command.stage) return null;
     return { method: "run_stage", params: runStageRpcParams(command, context) };

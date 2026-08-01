@@ -34,8 +34,12 @@ beforeEach(() => {
     configPath: path.join(tempDir, "config.json"),
     resumePdfRenderer,
     actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({
-      status: "queued",
-      runId: "unexpected-run",
+      status: "succeeded",
+      result: {
+        status: "succeeded",
+        recommendationCount: 0,
+        recommendationIds: [],
+      },
     })) as ReturnType<typeof vi.fn> & ActionDispatcher,
   };
   seedDatabase(options.dbPath);
@@ -335,6 +339,35 @@ describe("resume review draft API", () => {
 
   it("reviews tailoring feedback through the versioned allowlist without exposing source text", async () => {
     const privateSource = "private source text must never enter the review response";
+    const decisionsObservedByDerivation: string[] = [];
+    const actionDispatcher = options.actionDispatcher as ReturnType<typeof vi.fn> &
+      ActionDispatcher;
+    actionDispatcher.mockImplementation(
+      async (...[, context]: Parameters<ActionDispatcher>): Promise<ActionDispatchResult> => {
+        const persisted = new Database(context.dbPath);
+        try {
+          const row = persisted
+            .prepare(
+              `SELECT decision
+                 FROM tailoring_feedback_signal_reviews
+                ORDER BY revision DESC
+                LIMIT 1`,
+            )
+            .get() as { decision: string };
+          decisionsObservedByDerivation.push(row.decision);
+        } finally {
+          persisted.close();
+        }
+        return {
+          status: "succeeded",
+          result: {
+            status: "succeeded",
+            recommendationCount: 0,
+            recommendationIds: [],
+          },
+        };
+      },
+    );
     const app = buildApp(options);
     const createResponse = await app.inject({
       method: "POST",
@@ -435,6 +468,18 @@ describe("resume review draft API", () => {
       ruleValue: null,
       contradictsSignalIds: [],
     });
+    expect(options.actionDispatcher).toHaveBeenCalledTimes(3);
+    expect(decisionsObservedByDerivation).toEqual([
+      "accepted",
+      "accepted",
+      "rejected",
+    ]);
+    expect(options.actionDispatcher).toHaveBeenNthCalledWith(
+      1,
+      { action: "rederive_learning_recommendations", jobKey: "learning" },
+      expect.objectContaining({ dbPath: options.dbPath }),
+    );
+
     const db = new Database(options.dbPath);
     try {
       const reviews = db
@@ -588,6 +633,91 @@ describe("resume review draft API", () => {
     } finally {
       persisted.close();
     }
+    await app.close();
+  });
+
+  it("retries idempotent derivation when a saved review refresh initially fails", async () => {
+    const actionDispatcher = options.actionDispatcher as ReturnType<typeof vi.fn> &
+      ActionDispatcher;
+    actionDispatcher
+      .mockResolvedValueOnce({ status: "failed" })
+      .mockResolvedValueOnce({
+        status: "succeeded",
+        result: {
+          status: "succeeded",
+          recommendationCount: 0,
+          recommendationIds: [],
+        },
+      });
+    const app = buildApp(options);
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+    const draftId = createResponse.json().draft.draftId as string;
+    const revisionResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
+      payload: {
+        editedText: "Led 4 platform reliability projects.",
+        editDeltas: [
+          {
+            kind: "replace_text",
+            section: "experience",
+            beforeText: "Led 3 projects.",
+            afterText: "Led 4 platform reliability projects.",
+          },
+        ],
+      },
+    });
+    const signalId = revisionResponse.json().draft.feedbackSignals[0].signalId as string;
+    const payload = {
+      decision: "accepted",
+      ruleKey: "fact_handling",
+      ruleValue: "require_source_match",
+    } as const;
+
+    const failed = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/feedback-signals/${encodeURIComponent(signalId)}/reviews`,
+      payload,
+    });
+    expect(failed.statusCode, failed.body).toBe(503);
+    expect(failed.json()).toEqual({
+      ok: false,
+      error: "learning_rederivation_failed",
+      message:
+        "The feedback review was saved, but pending learning recommendations could not be refreshed. Retry the same review.",
+    });
+
+    const retried = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/feedback-signals/${encodeURIComponent(signalId)}/reviews`,
+      payload,
+    });
+    expect(retried.statusCode, retried.body).toBe(200);
+    expect(retried.json().review).toMatchObject({
+      signalId,
+      revision: 1,
+      decision: "accepted",
+      contradictsSignalIds: [],
+    });
+    const persisted = new Database(options.dbPath);
+    try {
+      expect(
+        persisted
+          .prepare(
+            `SELECT COUNT(*) AS count
+               FROM tailoring_feedback_signal_reviews
+              WHERE signal_id = ?`,
+          )
+          .get(signalId),
+      ).toEqual({ count: 1 });
+    } finally {
+      persisted.close();
+    }
+    expect(actionDispatcher).toHaveBeenCalledTimes(2);
     await app.close();
   });
 

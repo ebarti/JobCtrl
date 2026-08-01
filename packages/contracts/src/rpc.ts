@@ -86,6 +86,7 @@ export const RpcMethods = {
   BrowserCapabilityEnable: "browser_capability_enable",
   BrowserCapabilityDisable: "browser_capability_disable",
   BrowserProfileCopy: "browser_profile_copy",
+  RederiveLearningRecommendations: "rederive_learning_recommendations",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
 
@@ -471,6 +472,34 @@ export const CancelRunResultSchema = z
   })
   .strict();
 export type CancelRunResult = z.infer<typeof CancelRunResultSchema>;
+
+export const RederiveLearningRecommendationsParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
+  })
+  .strict();
+export type RederiveLearningRecommendationsParams = z.infer<
+  typeof RederiveLearningRecommendationsParamsSchema
+>;
+
+export const RederiveLearningRecommendationsResultSchema = z
+  .object({
+    status: z.literal("succeeded"),
+    recommendationCount: z.number().int().nonnegative(),
+    recommendationIds: z
+      .array(z.string().regex(/^learning-recommendation:[a-f0-9]{64}$/))
+      .max(100),
+  })
+  .strict()
+  .refine(
+    (value) => value.recommendationIds.length === value.recommendationCount,
+    "Recommendation count must match recommendation IDs.",
+  );
+export type RederiveLearningRecommendationsResult = z.infer<
+  typeof RederiveLearningRecommendationsResultSchema
+>;
 
 export const ProfileImportParamsSchema = z
   .object({

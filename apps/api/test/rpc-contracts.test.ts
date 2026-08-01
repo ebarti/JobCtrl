@@ -17,6 +17,8 @@ import {
   ManualCaptureImportParamsSchema,
   ManualCaptureImportWorkflowResultSchema,
   ProviderModelCatalogResultSchema,
+  RederiveLearningRecommendationsParamsSchema,
+  RederiveLearningRecommendationsResultSchema,
   RefreshCompensationParamsSchema,
   RefreshCompensationResultSchema,
   RescoreJobParamsSchema,
@@ -31,6 +33,50 @@ import {
 } from "../src/contracts.js";
 
 const CANONICAL_JOB_ID = "11111111-1111-4111-8111-111111111111";
+
+describe("learning recommendation derivation RPC contract", () => {
+  it("registers bounded runtime-scoped request and result shapes", () => {
+    expect(RpcMethods.RederiveLearningRecommendations).toBe(
+      "rederive_learning_recommendations",
+    );
+    expect(
+      RederiveLearningRecommendationsParamsSchema.parse({
+        expectedAppDir: "/tmp/jobctrl",
+        expectedDbPath: "/tmp/jobctrl/jobctrl.db",
+      }),
+    ).toEqual({
+      tenantId: "local",
+      expectedAppDir: "/tmp/jobctrl",
+      expectedDbPath: "/tmp/jobctrl/jobctrl.db",
+    });
+    const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
+    expect(
+      RederiveLearningRecommendationsResultSchema.parse({
+        status: "succeeded",
+        recommendationCount: 1,
+        recommendationIds: [recommendationId],
+      }),
+    ).toEqual({
+      status: "succeeded",
+      recommendationCount: 1,
+      recommendationIds: [recommendationId],
+    });
+    expect(() =>
+      RederiveLearningRecommendationsResultSchema.parse({
+        status: "succeeded",
+        recommendationCount: 0,
+        recommendationIds: [recommendationId],
+      }),
+    ).toThrow();
+    expect(() =>
+      RederiveLearningRecommendationsResultSchema.parse({
+        status: "succeeded",
+        recommendationCount: 1,
+        recommendationIds: ["private free text"],
+      }),
+    ).toThrow();
+  });
+});
 
 describe("cancel_run RPC contract", () => {
   it("registers cancel_run in RpcMethods", () => {
