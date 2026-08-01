@@ -12,6 +12,8 @@ import { initializeExactV7Database } from "./v7-schema.js";
 const JOB_ID = "00000000-0000-4000-8000-000000000071";
 const ARTIFACT_JOB_ID = "00000000-0000-4000-8000-000000000072";
 const UNKNOWN_COMPANY_JOB_ID = "00000000-0000-4000-8000-000000000073";
+const STALE_WIDE_JOB_ID = "00000000-0000-4000-8000-000000000074";
+const CANONICAL_FACTS_JOB_ID = "00000000-0000-4000-8000-000000000075";
 const cleanups: Array<() => void> = [];
 
 afterEach(() => {
@@ -255,6 +257,160 @@ describe("exact-v7 projection refresh", () => {
       },
     ]);
     reopened.close();
+  });
+
+  it("ignores stale wide values and derives list, detail, and dashboard facts from canonical rows", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-v7-canonical-projections-"));
+    cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const dbPath = path.join(dir, "jobs.db");
+    initializeExactV7Database(dbPath);
+    const db = new Database(dbPath);
+    db.pragma("foreign_keys = ON");
+
+    const insertJob = db.prepare(
+      `INSERT INTO jobs (
+         tenant_id, job_id, url, title, company, site, discovered_at,
+         fit_score, score_reasoning, tailored_resume_path, cover_letter_path,
+         apply_status, applied_at
+       ) VALUES (
+         'local', @job_id, @url, @title, 'Example', 'example', '2026-07-31T12:00:00Z',
+         10, 'stale score reasoning', '/tmp/stale-resume.txt', '/tmp/stale-cover.txt',
+         'applied', '2026-07-30T12:00:00Z'
+       )`,
+    );
+    insertJob.run({
+      job_id: STALE_WIDE_JOB_ID,
+      url: "https://jobs.example.test/stale-wide",
+      title: "Stale wide values only",
+    });
+    insertJob.run({
+      job_id: CANONICAL_FACTS_JOB_ID,
+      url: "https://jobs.example.test/canonical-facts",
+      title: "Canonical facts",
+    });
+
+    const insertEvent = db.prepare(
+      `INSERT INTO job_events (
+         tenant_id, job_id, identity_version, stage, event_type, occurred_at
+       ) VALUES ('local', ?, 1, ?, ?, ?)`,
+    );
+    insertEvent.run(STALE_WIDE_JOB_ID, "discover", "JobDiscovered", "2026-07-31T12:00:00Z");
+    insertEvent.run(CANONICAL_FACTS_JOB_ID, "discover", "JobDiscovered", "2026-07-31T12:00:00Z");
+    insertEvent.run(
+      CANONICAL_FACTS_JOB_ID,
+      "apply",
+      "ApplicationManuallyMarked",
+      "2026-07-31T12:30:00Z",
+    );
+
+    db.prepare(
+      `INSERT INTO job_scores (
+         tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at
+       ) VALUES ('local', ?, 1, 7, '{"reasoning":"canonical score reasoning"}', '[]', ?)`,
+    ).run(CANONICAL_FACTS_JOB_ID, "2026-07-31T12:15:00Z");
+    db.prepare(
+      `INSERT INTO job_artifacts (
+         tenant_id, job_id, stage, artifact_type, status, path, created_at, size_bytes
+       ) VALUES ('local', ?, 'tailor', 'tailored_resume', 'active',
+                 '/tmp/canonical-resume.txt', '2026-07-31T12:20:00Z', 12)`,
+    ).run(CANONICAL_FACTS_JOB_ID);
+    db.prepare(
+      `INSERT INTO job_materials (
+         tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+       ) VALUES ('local', ?, 1, 'resume_approved', ?, ?, '{}')`,
+    ).run(CANONICAL_FACTS_JOB_ID, "2026-07-31T12:20:00Z", "2026-07-31T12:20:00Z");
+    db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
+         render_format, size_bytes, metadata_json, created_at
+       ) VALUES ('local', ?, 1, 'cover_letter', 'canonical-cover', 'approved',
+                 '/tmp/canonical-cover.txt', 'text', 12, '{}', '2026-07-31T12:20:00Z')`,
+    ).run(CANONICAL_FACTS_JOB_ID);
+
+    refreshProjections(db, "local");
+
+    expect(
+      db
+        .prepare(
+          `SELECT fit_score, score_reasoning, has_resume, has_cover_letter, has_pdf,
+                  apply_status, applied_at, apply_mode, artifact_count
+             FROM job_list_projections
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        )
+        .get(STALE_WIDE_JOB_ID),
+    ).toEqual({
+      fit_score: null,
+      score_reasoning: "",
+      has_resume: 0,
+      has_cover_letter: 0,
+      has_pdf: 0,
+      apply_status: null,
+      applied_at: null,
+      apply_mode: null,
+      artifact_count: 0,
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT fit_score, score_reasoning, has_resume, has_cover_letter,
+                  apply_status, applied_at, apply_mode
+             FROM job_list_projections
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        )
+        .get(CANONICAL_FACTS_JOB_ID),
+    ).toEqual({
+      fit_score: 7,
+      score_reasoning: "canonical score reasoning",
+      has_resume: 1,
+      has_cover_letter: 1,
+      apply_status: "applied",
+      applied_at: "2026-07-31T12:30:00Z",
+      apply_mode: "manual_marked",
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT score_breakdown_json, score_reasoning, score_version, scored_at
+             FROM job_detail_projections
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        )
+        .get(STALE_WIDE_JOB_ID),
+    ).toEqual({
+      score_breakdown_json: null,
+      score_reasoning: "",
+      score_version: null,
+      scored_at: null,
+    });
+    const dashboard = db
+      .prepare(
+        `SELECT ready, applied, score_distribution_json, outcome_conversion_json
+           FROM dashboard_projections
+          WHERE tenant_id = 'local'`,
+      )
+      .get() as {
+      ready: number;
+      applied: number;
+      score_distribution_json: string;
+      outcome_conversion_json: string;
+    };
+    expect(dashboard).toMatchObject({
+      ready: 0,
+      applied: 1,
+      score_distribution_json: "[[7,1]]",
+    });
+    expect(JSON.parse(dashboard.outcome_conversion_json)).toMatchObject({
+      totals: { applied: 1 },
+      byBand: [{ band: "strong", applied: 1 }],
+      byApplyMode: [{ applyMode: "manual_marked", applied: 1 }],
+    });
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM artifact_list_projections WHERE tenant_id = 'local' AND job_id = ?",
+        )
+        .get(STALE_WIDE_JOB_ID),
+    ).toEqual({ count: 0 });
+    db.close();
   });
 
   it("uses explicit company truth without deriving employer from source or URL", () => {

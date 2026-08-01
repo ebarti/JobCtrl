@@ -2472,29 +2472,32 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
   const firstActionable =
     stages.find((s) => !["succeeded", "skipped"].includes(s.state)) ?? stages[stages.length - 1];
 
-  const fitScore = score.fitScore ?? nullableNumber(job.fit_score);
-  const scoreReasoning = score.reasoning || stringField(job.score_reasoning);
+  const fitScore = score.fitScore;
+  const scoreReasoning = score.reasoning;
   const scoreBreakdownJson = score.breakdown ? JSON.stringify(score.breakdown) : null;
   const scoreKeywordsJson = JSON.stringify(score.keywords);
   const compensationProjection = buildExactV7CompensationProjection(jobId, nullableString(job.salary));
 
-  const hasCanonicalMaterials = materials.hasCanonicalHistory;
-  const tailorPath = hasCanonicalMaterials ? materials.tailorPath : nullableString(job.tailored_resume_path);
-  const coverPath = hasCanonicalMaterials ? materials.coverPath : nullableString(job.cover_letter_path);
-  const hasResume = Boolean(tailorPath);
-  const hasCoverLetter = Boolean(coverPath);
-  const hasPdf = Boolean(materials.resumePdfPath ?? materials.coverPdfPath);
+  const artifacts = collectArtifacts(db, tenantId, jobId, materials);
+  const resume = preferredArtifactSource(artifacts, ["tailored_resume"], materials.generation);
+  const coverLetter = preferredArtifactSource(artifacts, ["cover_letter"], materials.generation);
+  const resumePdf = preferredArtifactSource(artifacts, ["resume_pdf"], materials.generation);
+  const coverLetterPdf = preferredArtifactSource(artifacts, ["cover_letter_pdf"], materials.generation);
+  const hasResume = Boolean(resume);
+  const hasCoverLetter = Boolean(coverLetter);
+  const hasPdf = Boolean(resumePdf ?? coverLetterPdf);
 
-  const applyStatus = deriveApplyStatus(apply.status, nullableString(job.apply_status));
-  const appliedAt = apply.status === "succeeded" ? apply.finishedAt : nullableString(job.applied_at);
-  const applyMode = deriveApplyMode(db, tenantId, jobId, apply, nullableString(job.apply_status), nullableString(job.applied_at));
+  const explicitApplication = loadExplicitApplication(db, tenantId, jobId);
+  const applyStatus =
+    explicitApplication && apply.status !== "succeeded" ? "applied" : deriveApplyStatus(apply.status);
+  const appliedAt = apply.status === "succeeded" ? apply.finishedAt : explicitApplication?.occurredAt ?? null;
+  const applyMode = deriveApplyMode(apply, explicitApplication);
 
   const description = stringField(job.description);
   const fullDescription = enrichment.fullDescription ?? stringField(job.full_description);
 
   const lastUpdatedAt = new Date().toISOString();
 
-  const artifacts = collectArtifacts(db, tenantId, jobId, materials);
   const provenanceByArtifact = loadBulletProvenanceByArtifact(db, tenantId, jobId);
   const { coverage: coverageByArtifact, voice: voiceByArtifact } = loadProvenanceAuxByArtifact(
     db,
@@ -4682,53 +4685,54 @@ function previewText(value: string, limit: number): string {
   return value.length <= limit ? value : `${value.slice(0, limit)}...`;
 }
 
-function deriveApplyStatus(arStatus: string | null, legacyStatus: string | null): string | null {
+interface ExplicitApplication {
+  mode: "manual_marked" | "external_confirmed";
+  occurredAt: string;
+}
+
+function loadExplicitApplication(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobId: string,
+): ExplicitApplication | null {
+  const manual = getRow<{ occurred_at: string | null }>(
+    db,
+    `SELECT occurred_at
+       FROM job_events
+      WHERE tenant_id = ? AND job_id = ? AND event_type = 'ApplicationManuallyMarked'
+      ORDER BY occurred_at DESC, event_id DESC
+      LIMIT 1`,
+    [tenantId, jobId],
+  );
+  const manuallyMarkedAt = nullableString(manual?.occurred_at);
+  if (manuallyMarkedAt) return { mode: "manual_marked", occurredAt: manuallyMarkedAt };
+
+  const confirmation = getRow<{ occurred_at: string | null }>(
+    db,
+    `SELECT occurred_at
+       FROM application_outcomes
+      WHERE tenant_id = ? AND job_id = ? AND kind = 'applied_confirmation'
+      ORDER BY occurred_at DESC, outcome_id DESC
+      LIMIT 1`,
+    [tenantId, jobId],
+  );
+  const confirmedAt = nullableString(confirmation?.occurred_at);
+  return confirmedAt ? { mode: "external_confirmed", occurredAt: confirmedAt } : null;
+}
+
+function deriveApplyStatus(arStatus: string | null): string | null {
   if (arStatus) {
     if (arStatus === "succeeded") return "applied";
     if (arStatus === "starting" || arStatus === "in_progress") return "in_progress";
     if (arStatus === "dry_run_complete") return "dry_run";
     return arStatus;
   }
-  return legacyStatus;
+  return null;
 }
 
-function deriveApplyMode(
-  db: SqliteDatabase,
-  tenantId: string,
-  jobId: string,
-  apply: ApplyLatest,
-  legacyStatus: string | null,
-  legacyAppliedAt: string | null,
-): string | null {
+function deriveApplyMode(apply: ApplyLatest, explicitApplication: ExplicitApplication | null): string | null {
   if (apply.status === "succeeded" && !apply.dryRun) return "automated_live";
-  const isApplied = Boolean(legacyAppliedAt) || legacyStatus === "applied";
-  if (!isApplied) return null;
-  if (hasJobEvent(db, tenantId, jobId, "ApplicationManuallyMarked")) return "manual_marked";
-  if (hasApplicationOutcomeKind(db, tenantId, jobId, "applied_confirmation")) return "external_confirmed";
-  return "manual_marked";
-}
-
-function hasJobEvent(db: SqliteDatabase, tenantId: string, jobId: string, eventType: string): boolean {
-  const row = getRow<{ c: number }>(
-    db,
-    "SELECT COUNT(*) AS c FROM job_events WHERE tenant_id = ? AND job_id = ? AND event_type = ?",
-    [tenantId, jobId, eventType],
-  );
-  return Number(row?.c ?? 0) > 0;
-}
-
-function hasApplicationOutcomeKind(
-  db: SqliteDatabase,
-  tenantId: string,
-  jobId: string,
-  kind: string,
-): boolean {
-  const row = getRow<{ c: number }>(
-    db,
-    "SELECT COUNT(*) AS c FROM application_outcomes WHERE tenant_id = ? AND job_id = ? AND kind = ?",
-    [tenantId, jobId, kind],
-  );
-  return Number(row?.c ?? 0) > 0;
+  return explicitApplication?.mode ?? null;
 }
 
 // Suppress unused import warning for SqliteValue (re-exported for consumers).
