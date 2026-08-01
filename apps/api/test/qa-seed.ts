@@ -23,6 +23,7 @@ export interface QaSeedOptions {
 interface QaJobSeed {
   url: string;
   title: string;
+  company?: string;
   site: string;
   strategy?: string;
   location?: string;
@@ -249,6 +250,7 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
     url: QA_PLATFORM_JOB_URL,
     applicationUrl: QA_PLATFORM_JOB_URL,
     title: "Director of Platform Engineering",
+    company: "GitLab",
     site: "Greenhouse",
     strategy: "qa",
     location: "Remote, United States",
@@ -1677,14 +1679,15 @@ function seedWorkerHeartbeat(db: Database.Database, dbPath: string): void {
 function insertJob(db: Database.Database, job: QaJobSeed): void {
   db.prepare(
     `INSERT INTO jobs (
-      url, tenant_id, job_id, title, site, strategy, location, salary, discovered_at, application_url,
+      url, tenant_id, job_id, title, company, site, strategy, location, salary, discovered_at, application_url,
       description, full_description, detail_scraped_at, fit_score, score_reasoning,
       scored_at, tailored_resume_path, tailored_at
-    ) VALUES (?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     job.url,
     qaJobId(job.url),
     job.title,
+    job.company ?? "",
     job.site,
     job.strategy ?? "qa",
     job.location ?? "Remote",
