@@ -83,6 +83,8 @@ import type {
   JobDetail,
   JobApplicationOutcomeListResponse,
   JobListQuery,
+  LearningRecommendationEvidenceListQuery,
+  LearningRecommendationEvidenceListResponse,
   LearningRecommendationListResponse,
   LearningRecommendationListQuery,
   JobMutationResponse,
@@ -156,7 +158,10 @@ import type {
   WorkflowRunSummary,
   WorkflowRunsListQuery,
 } from "@jobctrl/contracts";
-import { LearningRecommendationListResponseSchema } from "@jobctrl/contracts";
+import {
+  LearningRecommendationEvidenceListResponseSchema,
+  LearningRecommendationListResponseSchema,
+} from "@jobctrl/contracts";
 
 type QueryValue = boolean | number | string | null | undefined;
 const DEFAULT_NODE_BASE_URL = "http://127.0.0.1:8766";
@@ -253,6 +258,18 @@ export class JobCtrlApiClient {
   ): Promise<LearningRecommendationListResponse> {
     return LearningRecommendationListResponseSchema.parse(
       await this.get("/v1/learning/recommendations", query),
+    );
+  }
+
+  async learningRecommendationEvidence(
+    recommendationId: string,
+    query: Partial<LearningRecommendationEvidenceListQuery> = {},
+  ): Promise<LearningRecommendationEvidenceListResponse> {
+    return LearningRecommendationEvidenceListResponseSchema.parse(
+      await this.get(
+        `/v1/learning/recommendations/${encodeURIComponent(recommendationId)}/evidence`,
+        query,
+      ),
     );
   }
 
