@@ -74,6 +74,7 @@ import {
   RoleMatchFeedbackDecisionSchema,
   RetailorJobRequestSchema,
   ReviewLearningRecommendationResultSchema,
+  RollbackTailoringPolicyResultSchema,
   RpcMethods,
   ResumeTemplateDefaultSelectionRequestSchema,
   ResumeTemplateVersionSaveRequestSchema,
@@ -83,6 +84,8 @@ import {
   ResumeReviewDraftRenderRequestSchema,
   ResumeReviewDraftRevisionSaveRequestSchema,
   TailoringFeedbackSignalReviewRequestSchema,
+  TailoringPolicyRollbackRequestSchema,
+  TailoringPolicyRollbackResponseSchema,
   RunPipelineStagesRequestSchema,
   SettingsUpdateRequestSchema,
   type ExtensionCapabilityTokenResponse,
@@ -601,6 +604,52 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       ),
     ),
   );
+
+  app.post("/v1/learning/policies/materials/rollbacks", async (request, reply) => {
+    const body = parseBody(reply, TailoringPolicyRollbackRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+
+    let response;
+    try {
+      response = await providerDispatcher.call(RpcMethods.RollbackTailoringPolicy, {
+        tenantId: "local",
+        targetVersion: body.targetVersion,
+        expectedAppDir: appDir,
+        expectedDbPath: options.dbPath,
+      });
+    } catch {
+      return tailoringPolicyRollbackFailure(reply, 503);
+    }
+    if (response.error) {
+      return tailoringPolicyRollbackFailure(
+        reply,
+        response.error.code === JsonRpcErrorCodes.InvalidParams ? 409 : 502,
+      );
+    }
+
+    const parsedResult = RollbackTailoringPolicyResultSchema.safeParse(response.result);
+    if (
+      !parsedResult.success ||
+      parsedResult.data.rollbackOfVersion !== body.targetVersion
+    ) {
+      return tailoringPolicyRollbackFailure(reply, 502);
+    }
+    return TailoringPolicyRollbackResponseSchema.parse({
+      ok: true,
+      context: parsedResult.data.context,
+      policyKind: parsedResult.data.policyKind,
+      version: parsedResult.data.policyVersion,
+      status: "current",
+      learnedRules: parsedResult.data.learnedRules,
+      sourceReviewId: null,
+      sourceRecommendationId: null,
+      rollbackOfVersion: parsedResult.data.rollbackOfVersion,
+      rollbackReasonCode: parsedResult.data.rollbackReasonCode,
+      createdAt: parsedResult.data.rolledBackAt,
+    });
+  });
 
   app.get<{ Params: { recommendationId: string } }>(
     "/v1/learning/recommendations/:recommendationId/evidence",
@@ -3367,6 +3416,15 @@ function learningRecommendationReviewFailure(reply: FastifyReply, statusCode: 40
     ok: false as const,
     error: "learning_recommendation_review_failed" as const,
     message: "The learning recommendation review could not be completed.",
+  };
+}
+
+function tailoringPolicyRollbackFailure(reply: FastifyReply, statusCode: 409 | 502 | 503) {
+  void reply.code(statusCode);
+  return {
+    ok: false as const,
+    error: "tailoring_policy_rollback_failed" as const,
+    message: "The tailoring policy rollback could not be completed.",
   };
 }
 

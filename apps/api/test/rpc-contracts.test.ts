@@ -21,6 +21,8 @@ import {
   RederiveLearningRecommendationsResultSchema,
   ReviewLearningRecommendationParamsSchema,
   ReviewLearningRecommendationResultSchema,
+  RollbackTailoringPolicyParamsSchema,
+  RollbackTailoringPolicyResultSchema,
   RefreshCompensationParamsSchema,
   RefreshCompensationResultSchema,
   RescoreJobParamsSchema,
@@ -149,6 +151,55 @@ describe("learning recommendation review RPC contract", () => {
         policyKind: "tailoring_rule",
         policyVersion: 2,
         reviewedAt: "2026-08-01T12:34:56Z",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("tailoring policy rollback RPC contract", () => {
+  it("registers a runtime-scoped rollback with closed policy metadata", () => {
+    expect(RpcMethods.RollbackTailoringPolicy).toBe("rollback_tailoring_policy");
+    expect(
+      RollbackTailoringPolicyParamsSchema.parse({
+        targetVersion: 1,
+        expectedAppDir: "/tmp/jobctrl",
+        expectedDbPath: "/tmp/jobctrl/jobctrl.db",
+      }),
+    ).toEqual({
+      tenantId: "local",
+      targetVersion: 1,
+      expectedAppDir: "/tmp/jobctrl",
+      expectedDbPath: "/tmp/jobctrl/jobctrl.db",
+    });
+    expect(
+      RollbackTailoringPolicyResultSchema.parse({
+        status: "succeeded",
+        context: "materials",
+        policyKind: "tailoring_rule",
+        policyVersion: 3,
+        rollbackOfVersion: 1,
+        rollbackReasonCode: "user_requested",
+        learnedRules: [],
+        rolledBackAt: "2026-08-01T12:34:56+00:00",
+      }),
+    ).toMatchObject({
+      policyVersion: 3,
+      rollbackOfVersion: 1,
+      rolledBackAt: "2026-08-01T12:34:56.000Z",
+    });
+    expect(() =>
+      RollbackTailoringPolicyParamsSchema.parse({ targetVersion: 0 }),
+    ).toThrow();
+    expect(() =>
+      RollbackTailoringPolicyResultSchema.parse({
+        status: "succeeded",
+        context: "materials",
+        policyKind: "tailoring_rule",
+        policyVersion: 3,
+        rollbackOfVersion: 1,
+        rollbackReasonCode: "private narrative",
+        learnedRules: [],
+        rolledBackAt: "2026-08-01T12:34:56Z",
       }),
     ).toThrow();
   });

@@ -1311,6 +1311,7 @@ class SqliteTailoringPolicyRepository:
                 )
             if (
                 current.rollback_of_version == target.version
+                and current.rollback_reason == reason
                 and current.same_config_as(target)
             ):
                 self._conn.commit()
