@@ -335,13 +335,13 @@ export const RunContactResearchParamsSchema = z
     expectedDbPath: z.string().trim().min(1).optional(),
     taskId: z.string().trim().min(1).max(200),
     employer: z.string().trim().min(1).max(200).nullish(),
-    jobUrl: z.string().trim().min(1).max(2000).nullish(),
+    jobId: CanonicalJobIdParam.optional(),
     sources: z.array(ContactResearchSourceInputSchema).max(25).default([]),
     llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
   })
   .strict()
-  .refine((params) => Boolean(params.employer) || Boolean(params.jobUrl), {
-    message: "provide at least one of employer or jobUrl",
+  .refine((params) => Boolean(params.employer) || Boolean(params.jobId), {
+    message: "provide at least one of employer or jobId",
     path: ["employer"],
   });
 export type RunContactResearchParams = z.infer<typeof RunContactResearchParamsSchema>;

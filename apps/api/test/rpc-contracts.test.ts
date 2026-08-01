@@ -24,6 +24,7 @@ import {
   RetailorCurrentPolicyParamsSchema,
   RetailorJobParamsSchema,
   RpcMethods,
+  RunContactResearchParamsSchema,
   RunStageParamsSchema,
   SettingsUpdateRequestSchema,
   TailorJobParamsSchema,
@@ -208,6 +209,55 @@ describe("manual_capture_import RPC contract", () => {
       item_id: "manual-1",
       job_id: "https://example.test/jobs/1",
     });
+  });
+});
+
+describe("run_contact_research RPC contract", () => {
+  it("registers canonical job-scoped research", () => {
+    expect(RpcMethods.RunContactResearch).toBe("run_contact_research");
+    expect(
+      RunContactResearchParamsSchema.parse({
+        taskId: "contact-research-1",
+        jobId: CANONICAL_JOB_ID,
+      }),
+    ).toMatchObject({
+      tenantId: "local",
+      taskId: "contact-research-1",
+      jobId: CANONICAL_JOB_ID,
+    });
+  });
+
+  it("accepts an employer-scoped research request", () => {
+    expect(
+      RunContactResearchParamsSchema.parse({
+        taskId: "contact-research-1",
+        employer: "Acme",
+      }),
+    ).toMatchObject({
+      tenantId: "local",
+      employer: "Acme",
+    });
+  });
+
+  it("rejects URL-shaped job IDs and legacy job URLs", () => {
+    expect(() =>
+      RunContactResearchParamsSchema.parse({
+        taskId: "contact-research-1",
+        jobId: "https://example.test/jobs/1",
+      }),
+    ).toThrow();
+    expect(() =>
+      RunContactResearchParamsSchema.parse({
+        taskId: "contact-research-1",
+        jobUrl: "https://example.test/jobs/1",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects research requests without an employer or job ID", () => {
+    expect(() =>
+      RunContactResearchParamsSchema.parse({ taskId: "contact-research-1" }),
+    ).toThrow();
   });
 });
 
