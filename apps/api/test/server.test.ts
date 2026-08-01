@@ -7397,34 +7397,24 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("cancels an in-flight workflow run by run id", async () => {
+  it("requests in-flight workflow cancellation idempotently without synthetic terminal events", async () => {
     const db = new Database(options.dbPath);
     try {
-      db.prepare(
-        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) SELECT 'local', (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?), 1, ?, ?, ?, ?, ?, ?",
-      ).run(
-        null,
-        "discover",
-        "StageStarted",
-        "info",
-        "Discover workflow started",
-        "2026-04-29T10:20:00+00:00",
-        JSON.stringify({
-          tenantId: "local",
-          jobId: "pipeline",
-          stage: "discover",
-          runId: "discovery:jobspy:run-1",
-          workflowId: "workflow-run-1",
-          progress: {
-            completed: 0,
-            total: 6,
-            percent: 0,
-            currentStep: "JobSpy",
-            status: "running",
-            message: "JobSpy started",
-          },
-        }),
-      );
+      insertPipelineWorkflowEvent(db, {
+        eventType: "WorkflowStarted",
+        occurredAt: "2026-04-29T10:20:00+00:00",
+        workflowId: "workflow-run-1",
+        temporalRunId: "temporal-run-1",
+        startedAt: "2026-04-29T10:20:00+00:00",
+        inputSummary: { runId: "discovery:jobspy:run-1", stage: "discover" },
+      });
+      insertDiscoverWorkflowRunRow(db, {
+        workflowId: "workflow-run-1",
+        status: "in_progress",
+        startedAt: "2026-04-29T10:20:00+00:00",
+        temporalRunId: "temporal-run-1",
+        inputSummary: { runId: "discovery:jobspy:run-1", stage: "discover" },
+      });
       db.prepare(
         `INSERT INTO discovery_runs (
           tenant_id, run_id, source_ids_json, status, counts_json, progress_json,
@@ -7447,11 +7437,15 @@ describe("local TypeScript API", () => {
     }
     const dispatch = vi.fn(async () => ({
       runId: "workflow-run-1",
-      status: "cancel_requested",
+      status: "canceling",
     }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
 
     const response = await app.inject({
+      method: "POST",
+      url: "/v1/workflow-runs/workflow-run-1/actions/cancel",
+    });
+    const replay = await app.inject({
       method: "POST",
       url: "/v1/workflow-runs/workflow-run-1/actions/cancel",
     });
@@ -7460,7 +7454,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       action: "cancel",
-      status: "cancel_requested",
+      status: "canceling",
       jobKey: "pipeline",
       runId: "workflow-run-1",
       command: {
@@ -7469,25 +7463,17 @@ describe("local TypeScript API", () => {
         runId: "workflow-run-1",
       },
     });
-    expect(dispatch).toHaveBeenCalledWith(
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(replay.json()).toMatchObject({ status: "canceling", runId: "workflow-run-1" });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({
         action: "cancel",
         jobKey: "pipeline",
         runId: "workflow-run-1",
       }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
-    );
-
-    const summaryResponse = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
-    expect(summaryResponse.statusCode, summaryResponse.body).toBe(200);
-    expect(summaryResponse.json().progress).toContainEqual(
-      expect.objectContaining({
-        stage: "discover",
-        status: "failed",
-        runId: "discovery:jobspy:run-1",
-        workflowId: "workflow-run-1",
-        message: "Discover canceled",
-      }),
     );
     const verifyDb = new Database(options.dbPath);
     try {
@@ -7506,19 +7492,108 @@ describe("local TypeScript API", () => {
         | undefined;
       expect(row).toBeDefined();
       expect(row).toMatchObject({
-        status: "failed",
-        failed_at: expect.any(String),
-        updated_at: expect.any(String),
+        status: "running",
+        failed_at: null,
+        updated_at: "2026-04-29T10:20:00+00:00",
       });
-      expect(JSON.parse(row?.error_classes_json ?? "[]")).toEqual(["canceled"]);
-      expect(JSON.parse(row?.progress_json ?? "{}")).toMatchObject({
-        status: "failed",
-        message: "Discover canceled",
-      });
+      expect(JSON.parse(row?.error_classes_json ?? "[]")).toEqual([]);
+      expect(JSON.parse(row?.progress_json ?? "{}")).toEqual({ completed: 0, total: 72, unit: "searches" });
+      const syntheticEvents = verifyDb.prepare(
+        `SELECT COUNT(*) AS count
+           FROM job_events
+          WHERE event_type IN ('StageFailed', 'DiscoveryRunFailed', 'WorkflowCanceled')
+            AND payload_json LIKE '%workflow-run-1%'`,
+      ).get() as { count: number };
+      expect(syntheticEvents.count).toBe(0);
     } finally {
       verifyDb.close();
     }
 
+    await app.close();
+  });
+
+  it("preserves an already-terminal Apply result before the worker gate without writes", async () => {
+    const db = new Database(options.dbPath);
+    const eventCount = (db.prepare("SELECT COUNT(*) AS count FROM job_events").get() as { count: number }).count;
+    db.close();
+    const dispatch = vi.fn(async () => ({ status: "canceling" }));
+    const app = buildApp({
+      ...options,
+      actionDispatcher: dispatch,
+      requireHealthyWorkerForActions: true,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/workflow-runs/run-1/actions/cancel",
+    });
+    const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/run-1" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      status: "already_terminal",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
+      runId: "run-1",
+      result: { status: "succeeded", result: "succeeded" },
+    });
+    expect(detail.statusCode, detail.body).toBe(200);
+    expect(detail.json()).toMatchObject({
+      runId: "run-1",
+      status: "succeeded",
+      result: "succeeded",
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+    const verifyDb = new Database(options.dbPath);
+    expect((verifyDb.prepare("SELECT COUNT(*) AS count FROM job_events").get() as { count: number }).count).toBe(
+      eventCount,
+    );
+    verifyDb.close();
+    await app.close();
+  });
+
+  it("does not mutate an active workflow when the worker is unavailable and rejects unknown runs", async () => {
+    const db = new Database(options.dbPath);
+    insertPipelineWorkflowEvent(db, {
+      eventType: "WorkflowStarted",
+      occurredAt: "2026-04-29T10:20:00+00:00",
+      workflowId: "workflow-run-unavailable",
+      temporalRunId: "temporal-run-unavailable",
+      startedAt: "2026-04-29T10:20:00+00:00",
+    });
+    insertDiscoverWorkflowRunRow(db, {
+      workflowId: "workflow-run-unavailable",
+      status: "in_progress",
+      startedAt: "2026-04-29T10:20:00+00:00",
+      temporalRunId: "temporal-run-unavailable",
+    });
+    const eventCount = (db.prepare("SELECT COUNT(*) AS count FROM job_events").get() as { count: number }).count;
+    db.close();
+    const dispatch = vi.fn(async () => ({ status: "canceling" }));
+    const app = buildApp({
+      ...options,
+      actionDispatcher: dispatch,
+      requireHealthyWorkerForActions: true,
+    });
+
+    const unavailable = await app.inject({
+      method: "POST",
+      url: "/v1/workflow-runs/workflow-run-unavailable/actions/cancel",
+    });
+    const unknown = await app.inject({
+      method: "POST",
+      url: "/v1/workflow-runs/workflow-run-missing/actions/cancel",
+    });
+
+    expect(unavailable.statusCode, unavailable.body).toBe(503);
+    expect(unavailable.json()).toMatchObject({ ok: false, error: "worker_runtime_unavailable" });
+    expect(unknown.statusCode, unknown.body).toBe(404);
+    expect(unknown.json()).toMatchObject({ ok: false, error: "workflow_run_not_found" });
+    expect(dispatch).not.toHaveBeenCalled();
+    const verifyDb = new Database(options.dbPath);
+    expect((verifyDb.prepare("SELECT COUNT(*) AS count FROM job_events").get() as { count: number }).count).toBe(
+      eventCount,
+    );
+    verifyDb.close();
     await app.close();
   });
 
@@ -9869,6 +9944,8 @@ function insertPipelineWorkflowEvent(
 function insertDiscoverWorkflowRunRow(
   db: Database.Database,
   row: {
+    workflowId?: string;
+    workflowType?: string;
     status: string;
     errorCode?: string | null;
     errorMessage?: string | null;
@@ -9878,6 +9955,7 @@ function insertDiscoverWorkflowRunRow(
     durationMs?: number | null;
     temporalRunId?: string | null;
     eventsJson?: string;
+    inputSummary?: Record<string, unknown>;
   },
 ): void {
   db.prepare(
@@ -9887,11 +9965,11 @@ function insertDiscoverWorkflowRunRow(
        duration_ms, temporal_run_id, events_json
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    "discover-local",
+    row.workflowId ?? "discover-local",
     "local",
-    "DiscoverWorkflow",
+    row.workflowType ?? "DiscoverWorkflow",
     row.status,
-    JSON.stringify({ limit: 1000 }),
+    JSON.stringify(row.inputSummary ?? { limit: 1000 }),
     row.errorCode ?? null,
     row.errorMessage ?? null,
     row.retryable ? 1 : 0,

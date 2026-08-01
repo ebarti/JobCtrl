@@ -1999,19 +1999,34 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.post<{ Params: { runId: string } }>("/v1/workflow-runs/:runId/actions/cancel", async (request, reply) => {
     const runId = decodeRouteParam(request.params.runId);
+    const run = withDb(reply, options.dbPath, (db) => getWorkflowRunDetail(db, runId));
+    if (run && "ok" in run) {
+      return run;
+    }
+    if (!run) {
+      void reply.code(404);
+      return { ok: false, error: "workflow_run_not_found" };
+    }
+    const command: ActionCommandPayload = {
+      action: "cancel" as const,
+      jobKey: run.jobKey || PIPELINE_ACTION_JOB_KEY,
+      runId,
+    };
+    if (run.status !== "starting" && run.status !== "in_progress") {
+      return buildActionResponse(command, {
+        status: "already_terminal",
+        runId,
+        result: {
+          status: run.status,
+          result: run.result,
+        },
+      });
+    }
     const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
     if (!workerReady) {
       return undefined;
     }
-    const command: ActionCommandPayload = {
-      action: "cancel" as const,
-      jobKey: PIPELINE_ACTION_JOB_KEY,
-      runId,
-    };
     const dispatch = await actionDispatcher(command, actionContext);
-    if (dispatch.status !== "failed") {
-      recordPipelineWorkflowCancelRequested(options.dbPath, runId);
-    }
     return buildActionResponse(command, dispatch);
   });
 
@@ -4025,117 +4040,6 @@ function recordPipelineWorkflowStarted(
   });
 }
 
-function recordPipelineWorkflowCancelRequested(dbPath: string, workflowId: string): void {
-  if (!databaseExists(dbPath)) return;
-  let db: ApiDb | null = null;
-  try {
-    db = openDatabase(dbPath);
-    const latest = latestPipelineWorkflowEvent(db, workflowId);
-    if (!latest) return;
-    const payload = parseJsonRecord(latest.payload_json);
-    const progress = isRecord(payload.progress) ? payload.progress : {};
-    const stage = isStage(latest.stage) ? latest.stage : isStage(payload.stage) ? payload.stage : null;
-    if (!stage) return;
-    const sourceRunId = textValue(payload.runId ?? payload.run_id);
-    const message = `${labelForStage(stage)} canceled`;
-    const now = new Date().toISOString();
-    const progressPayload = {
-      completed: numberValue(progress.completed ?? progress.progressCompleted) ?? 0,
-      total: numberValue(progress.total ?? progress.progressTotal) ?? 1,
-      percent: numberValue(progress.percent ?? progress.progressPercent) ?? 0,
-      currentStep: textValue(progress.currentStep ?? progress.current_step) || null,
-      status: "failed",
-      message,
-      ...(isRecord(progress.sourceProgress)
-        ? { sourceProgress: progress.sourceProgress }
-        : isRecord(progress.source_progress)
-          ? { sourceProgress: progress.source_progress }
-          : {}),
-    };
-    insertJobEvent(db, {
-      jobUrl: null,
-      stage,
-      eventType: "StageFailed",
-      level: "warn",
-      message,
-      payload: {
-        tenantId: "local",
-        jobId: PIPELINE_ACTION_JOB_KEY,
-        stage,
-        workflowId,
-        workflow_id: workflowId,
-        ...(sourceRunId ? { runId: sourceRunId, run_id: sourceRunId } : {}),
-        errorCode: "pipeline_stage_canceled",
-        errorMessage: message,
-        retryable: true,
-        progress: progressPayload,
-      },
-    });
-    if (stage === "discover" && sourceRunId) {
-      insertJobEvent(db, {
-        jobUrl: null,
-        stage,
-        eventType: "DiscoveryRunFailed",
-        level: "warn",
-        message: `Discovery run ${sourceRunId} canceled`,
-        payload: {
-          tenantId: "local",
-          runId: sourceRunId,
-          run_id: sourceRunId,
-          errorClass: "canceled",
-          error_class: "canceled",
-          failedAt: now,
-          failed_at: now,
-          retryable: true,
-        },
-      });
-      markDiscoveryRunCanceled(db, {
-        runId: sourceRunId,
-        workflowId,
-        failedAt: now,
-        progress: progressPayload,
-      });
-    }
-  } catch {
-    // Cancellation should still reach Temporal even if local projection repair fails.
-  } finally {
-    db?.close();
-  }
-}
-
-function markDiscoveryRunCanceled(
-  db: ApiDb,
-  cancellation: {
-    runId: string;
-    workflowId: string;
-    failedAt: string;
-    progress: Record<string, unknown>;
-  },
-): void {
-  if (!tableExists(db, "discovery_runs")) return;
-  const columns = columnNames(db, "discovery_runs");
-  const assignments: string[] = ["status = ?", "error_classes_json = ?", "failed_at = ?"];
-  const values: unknown[] = ["failed", JSON.stringify(["canceled"]), cancellation.failedAt];
-
-  if (columns.has("updated_at")) {
-    assignments.push("updated_at = ?");
-    values.push(cancellation.failedAt);
-  }
-  if (columns.has("progress_json")) {
-    assignments.push("progress_json = ?");
-    values.push(JSON.stringify(cancellation.progress));
-  }
-  if (columns.has("workflow_id")) {
-    assignments.push("workflow_id = COALESCE(workflow_id, ?)");
-    values.push(cancellation.workflowId);
-  }
-
-  values.push(cancellation.runId);
-  db.prepare(`UPDATE discovery_runs SET ${assignments.join(", ")} WHERE run_id = ? AND status = 'running'`).run(
-    ...values,
-  );
-}
-
 function recordPipelineWorkflowEvent(
   dbPath: string,
   event: {
@@ -4182,29 +4086,6 @@ function recordPipelineWorkflowEvent(
   } finally {
     db?.close();
   }
-}
-
-function latestPipelineWorkflowEvent(
-  db: ApiDb,
-  workflowId: string,
-): { stage: string | null; payload_json: string | null } | null {
-  const row = db.prepare(
-    `SELECT stage, payload_json
-       FROM job_events
-      WHERE tenant_id = 'local'
-        AND job_id IS NULL
-        AND payload_json IS NOT NULL
-        AND json_valid(payload_json)
-        AND (
-          JSON_EXTRACT(payload_json, '$.workflowId') = ?
-          OR JSON_EXTRACT(payload_json, '$.workflow_id') = ?
-        )
-      ORDER BY event_id DESC
-      LIMIT 1`,
-  ).get(workflowId, workflowId) as
-    | { stage: string | null; payload_json: string | null }
-    | undefined;
-  return row ?? null;
 }
 
 function insertJobEvent(

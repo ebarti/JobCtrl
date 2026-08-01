@@ -156,6 +156,16 @@ export function createActionDispatcher(
         result: response.error.data,
       };
     }
+    if (rpcCall.method === "cancel_run") {
+      const rpcRunId = isRecord(response.result) && typeof response.result.runId === "string"
+        ? response.result.runId
+        : command.runId;
+      return {
+        status: extractStatus(response.result) ?? "canceling",
+        ...(rpcRunId ? { runId: rpcRunId } : {}),
+        result: response.result,
+      };
+    }
     const workflowStart = extractWorkflowStart(response.result);
     if (hasWorkflowStart(workflowStart)) {
       const result: ActionDispatchResult = {
