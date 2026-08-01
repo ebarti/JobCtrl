@@ -104,7 +104,7 @@ def _analysis(
     )
     return EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(JOB_URL),
+        job_id=PERSISTED_JOB_ID,
         generation=1,
         snapshot_hash=compute_snapshot_hash("jd"),
         canonical=canonical,
@@ -208,6 +208,7 @@ def _numberless_profile() -> dict:
 
 def _job() -> dict:
     return {
+        "job_id": PERSISTED_JOB_ID,
         "url": JOB_URL,
         "title": "Senior Backend Engineer",
         "full_description": "Own Python backend services and improve API latency.",
