@@ -314,7 +314,7 @@ class DiscoverJobsUseCase:
 
         with canonicalize_span(
             tenant_id=str(tenant_id),
-            job_id=str(owner_id) if owner_id else identity.canonical_url,
+            job_id=str(owner_id) if owner_id else None,
             source_id=posting.source_id,
             canonical_url_present=bool(identity.canonical_url),
             ats_kind=identity.ats_kind.value,

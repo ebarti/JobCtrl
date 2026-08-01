@@ -63,7 +63,7 @@ def adapter_fetch_span(
 def canonicalize_span(
     *,
     tenant_id: str,
-    job_id: str,
+    job_id: str | None,
     source_id: str,
     canonical_url_present: bool,
     ats_kind: str,
@@ -76,7 +76,8 @@ def canonicalize_span(
     with tracer.start_as_current_span("discovery.canonicalize") as span:
         span.set_attribute("langfuse.observation.type", "span")
         span.set_attribute("tenant.id", tenant_id)
-        span.set_attribute("job.id", job_id)
+        if job_id is not None:
+            span.set_attribute("job.id", job_id)
         span.set_attribute("source.id", source_id)
         span.set_attribute("canonical.url.present", bool(canonical_url_present))
         span.set_attribute("ats.kind", ats_kind)

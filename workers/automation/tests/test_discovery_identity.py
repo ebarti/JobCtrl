@@ -7,6 +7,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import set_tracer_provider
 
 from jobctrl.database import init_db
 from jobctrl.domain.discovery import (
@@ -728,6 +732,37 @@ def test_discover_jobs_use_case_creates_job_identity_and_first_observation(
     assert publisher.events[0].payload["employer"] == "Acme"
     assert publisher.events[0].payload["source"] == "greenhouse"
     assert publisher.events[-1].payload["run_id"] == "run-1"
+
+
+def test_discovery_canonicalize_span_omits_new_job_id_and_records_owner_id(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from opentelemetry import trace as trace_api
+    from opentelemetry.util._once import Once
+
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER_SET_ONCE", Once())
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER", None)
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    set_tracer_provider(provider)
+
+    job_id = JobId("d7c34823-22ac-42ac-b1a0-64fe00eb1014")
+    use_case = DiscoverJobsUseCase(
+        repository=SqliteJobRepository(conn),
+        publisher=RecordingPublisher(),
+        clock=lambda: "2026-05-12T00:00:00Z",
+        job_id_factory=lambda: job_id,
+    )
+
+    use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-new")
+    use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-owner")
+
+    canonicalize_spans = [span for span in exporter.get_finished_spans() if span.name == "discovery.canonicalize"]
+    assert len(canonicalize_spans) == 2
+    assert "job.id" not in canonicalize_spans[0].attributes
+    assert canonicalize_spans[1].attributes["job.id"] == str(job_id)
 
 
 def test_discover_jobs_use_case_rejects_url_shaped_job_id_factory(
