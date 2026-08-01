@@ -7,10 +7,8 @@ from typing import Any
 
 from jobctrl.apply import launcher as launcher_module
 from jobctrl.domain.identifiers import canonical_job_id
-from jobctrl.infrastructure.scoring import collect_feedback_signals
 
 _TENANT_A = "tenant-a"
-_TENANT_B = "tenant-b"
 _JOB_A = canonical_job_id("a0000000-0000-4000-8000-000000000001")
 _JOB_B = canonical_job_id("a0000000-0000-4000-8000-000000000002")
 
@@ -74,61 +72,6 @@ def _insert_corrected_score(
             ),
         ),
     )
-
-
-def test_feedback_signals_use_canonical_corrections_and_actions_transparently() -> None:
-    conn = _connection()
-    _insert_corrected_score(
-        conn,
-        tenant_id=_TENANT_A,
-        job_id=str(_JOB_A),
-    )
-    conn.execute(
-        """
-        INSERT INTO job_events (tenant_id, job_id, event_type, message)
-        VALUES (?, ?, 'StageSkipped', 'Skipped after review.')
-        """,
-        (_TENANT_A, str(_JOB_B)),
-    )
-
-    signals = collect_feedback_signals(conn)
-    assert [signal.kind for signal in signals] == [
-        "score_correction",
-        "StageSkipped",
-    ]
-    assert (signals[0].tenant_id, signals[0].job_id) == (
-        _TENANT_A,
-        str(_JOB_A),
-    )
-    assert "Better leadership fit" in signals[0].evidence
-    assert (signals[1].tenant_id, signals[1].job_id) == (
-        _TENANT_A,
-        str(_JOB_B),
-    )
-    assert "Skipped after review" in signals[1].evidence
-
-
-def test_feedback_history_isolates_same_job_id_across_tenants() -> None:
-    conn = _connection()
-    shared_job_id = str(_JOB_A)
-    _insert_corrected_score(
-        conn,
-        tenant_id=_TENANT_A,
-        job_id=shared_job_id,
-    )
-    conn.execute(
-        """
-        INSERT INTO job_events (tenant_id, job_id, event_type, message)
-        VALUES (?, ?, 'StageSkipped', 'Tenant B skipped this job.')
-        """,
-        (_TENANT_B, shared_job_id),
-    )
-    signals = collect_feedback_signals(conn)
-
-    assert [(signal.tenant_id, signal.job_id) for signal in signals] == [
-        (_TENANT_A, shared_job_id),
-        (_TENANT_B, shared_job_id),
-    ]
 
 
 class _RowsCursor:

@@ -53,6 +53,8 @@ import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 import { refreshProjections } from "./projections.js";
 import { InputError, resolveJobId } from "./write-model.js";
 
+export class RoleMatchFeedbackDecisionConflictError extends Error {}
+
 const DEFAULT_TENANT = "local";
 export const EXTENSION_MANUAL_CAPTURE_SOURCE_ID = "manual_capture:extension";
 const EXTENSION_MANUAL_CAPTURE_REASON: ManualActionReasonValue = "browser_extension_capture";
@@ -1136,8 +1138,16 @@ export function decideRoleMatchFeedbackSuggestion(
   if (!existing) {
     throw new InputError(`Role-match feedback suggestion ${suggestionId} was not found.`);
   }
-  const now = new Date().toISOString();
   const status = decision.decision === "approve" ? "approved" : "declined";
+  if (existing.status !== "pending") {
+    if (existing.status === status) {
+      return { ok: true, suggestion: rowToRoleMatchSuggestion(existing) };
+    }
+    throw new RoleMatchFeedbackDecisionConflictError(
+      `Role-match feedback suggestion ${suggestionId} is already ${existing.status}.`,
+    );
+  }
+  const now = new Date().toISOString();
   db.prepare(
     `UPDATE role_match_feedback_suggestions
      SET status = ?, decision_reason = ?, decided_at = ?, updated_at = ?
@@ -1262,7 +1272,8 @@ function refreshRoleMatchFeedbackSuggestions(db: SqliteDatabase): void {
        sample_count = excluded.sample_count,
        source_ids_json = excluded.source_ids_json,
        evidence_json = excluded.evidence_json,
-       updated_at = excluded.updated_at`,
+       updated_at = excluded.updated_at
+     WHERE role_match_feedback_suggestions.status = 'pending'`,
   );
   for (const group of groups.values()) {
     upsert.run(
