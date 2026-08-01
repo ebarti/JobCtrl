@@ -1018,10 +1018,12 @@ def test_single_job_starts_temporal_workflow_spec(tmp_path, monkeypatch):
     app_dir = Path(tmp_path) / "app"
     db_path = Path(tmp_path) / "jobs.db"
     app_dir.mkdir()
+    conn = init_db(db_path)
 
     monkeypatch.setattr(config_module, "APP_DIR", app_dir)
     monkeypatch.setattr(config_module, "DB_PATH", db_path)
     url = "https://example.com/blocked"
+    job_id = _insert_ready_job(conn, url=url)
     specs = []
 
     def fake_start(spec):
@@ -1034,14 +1036,16 @@ def test_single_job_starts_temporal_workflow_spec(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr("jobctrl.workflow_specs.start_workflow_spec_and_wait_sync", fake_start)
+    monkeypatch.setattr(runner_module, "get_connection", lambda: conn)
 
     result = runner_module.run_single_job(url, do_tailor=True, do_apply=False)
 
     payload = specs[0].args[0]
-    assert payload.job_url == url
+    assert payload.job_url == job_id
     assert payload.stages == ["enrich", "score", "tailor", "cover"]
     assert payload.expected_app_dir == str(app_dir)
     assert payload.expected_db_path == str(db_path)
+    assert result["url"] == url
     assert result["workflowId"] == "workflow-single"
     assert result["stages_completed"] == ["enrich", "score", "tailor", "cover"]
 
