@@ -23,18 +23,28 @@ import {
   within,
 } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { artifactsKeys } from "../../contexts/operations/artifactsKeys.js";
+import { jobsKeys } from "../../contexts/operations/jobsKeys.js";
+import { workflowRunsKeys } from "../../contexts/operations/workflowRunsKeys.js";
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
 import {
+  makeArtifactDetail,
+  makeArtifactsPage,
+  makeJobDetail,
   makeJobsPage,
+  makeWorkflowRunDetail,
+  sampleDraftResumeArtifact,
   sampleCompensationSummary,
   sampleJob,
   sampleSecondaryJob,
 } from "../../test/fixtures/projections.js";
+import { eventByType } from "../../test/fixtures/events.js";
 import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
-import { buildTestPorts } from "../../test/testPorts.js";
+import { FakeEventStreamPort, buildTestPorts } from "../../test/testPorts.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
 import { routeTree } from "../../routeTree.gen.js";
 import {
@@ -164,6 +174,151 @@ describe("<JobsRoute> loader reliability", () => {
     expect(await screen.findByText("api offline")).toBeInTheDocument();
     expect(screen.getByText("Jobs table")).toBeInTheDocument();
     expect(screen.queryByText("Something went wrong!")).not.toBeInTheDocument();
+  });
+});
+
+describe("<JobsView> realtime UI state", () => {
+  it("reconciles live updates without resetting the filtered table view", async () => {
+    const user = userEvent.setup();
+    const eventStream = new FakeEventStreamPort();
+    const initialJob: JobSummary = {
+      ...sampleJob,
+      title: "Realtime initial job",
+      fitScore: 8,
+    };
+    let latestJob = initialJob;
+    const jobs = vi.fn(async () => ({
+      ...makeJobsPage([latestJob]),
+      pagination: { page: 3, pageSize: 25, total: 51, pages: 3 },
+    }));
+    const ports = buildTestPorts({ api: { jobs }, eventStream });
+    const harness = buildProviderHarness({ ports, withEventStream: true });
+    const realtimeSearch =
+      "?q=realtime&stage=tailor&state=running&deleted=active&sort=fit_score&dir=asc&page=3&pageSize=25&minFitScore=7&maxFitScore=9";
+    const { router, Wrapper } = buildRouter(harness, realtimeSearch);
+    const draftArtifact = {
+      ...sampleDraftResumeArtifact,
+      artifactId: eventByType.ResumeApproved.payload.artifactId,
+      jobKey: initialJob.jobKey,
+    };
+    const workflowDetail = makeWorkflowRunDetail({
+      workflowId: eventByType.WorkflowCompleted.payload.workflowId,
+      status: "in_progress",
+      temporalRunId: eventByType.WorkflowCompleted.payload.temporalRunId,
+      finishedAt: null,
+      durationMs: null,
+      events: [],
+    });
+    const unrelatedKey = ["tenant", LOCAL_TENANT, "unrelated", "realtime"];
+
+    harness.queryClient.setQueryData(
+      jobsKeys.detail(LOCAL_TENANT, initialJob.jobKey),
+      makeJobDetail(initialJob, { artifacts: [draftArtifact] }),
+    );
+    harness.queryClient.setQueryData(
+      artifactsKeys.detail(LOCAL_TENANT, draftArtifact.artifactId),
+      makeArtifactDetail(draftArtifact),
+    );
+    harness.queryClient.setQueryData(
+      artifactsKeys.list(LOCAL_TENANT, { status: "candidate", page: 3 }),
+      makeArtifactsPage([draftArtifact]),
+    );
+    harness.queryClient.setQueryData(
+      workflowRunsKeys.detail(
+        LOCAL_TENANT,
+        eventByType.WorkflowCompleted.payload.workflowId,
+      ),
+      workflowDetail,
+    );
+    harness.queryClient.setQueryData(unrelatedKey, { retained: true });
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(initialJob.title)).toBeInTheDocument();
+    await waitFor(() => expect(eventStream.subscriptions).toHaveLength(1));
+    await user.click(
+      screen.getByRole("checkbox", { name: `Select ${initialJob.title}` }),
+    );
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+
+    const gridScroll = document.querySelector<HTMLElement>(
+      ".filterable-data-grid-scroll",
+    );
+    expect(gridScroll).not.toBeNull();
+    gridScroll!.scrollTop = 73;
+    fireEvent.scroll(gridScroll!);
+    const searchBeforeEvents = router.state.location.search;
+
+    latestJob = {
+      ...initialJob,
+      title: "Realtime scored job",
+      fitScore: 9,
+    };
+    await act(async () => {
+      eventStream.emit({
+        eventType: eventByType.JobScored.eventType,
+        tenantId: eventByType.JobScored.tenantId,
+        payload: eventByType.JobScored.payload,
+      });
+    });
+    expect(await screen.findByText(latestJob.title)).toBeInTheDocument();
+    expect(screen.queryByText(initialJob.title)).not.toBeInTheDocument();
+
+    await act(async () => {
+      eventStream.emit({
+        eventType: eventByType.ResumeApproved.eventType,
+        tenantId: eventByType.ResumeApproved.tenantId,
+        payload: eventByType.ResumeApproved.payload,
+      });
+      eventStream.emit({
+        eventType: eventByType.WorkflowCompleted.eventType,
+        tenantId: eventByType.WorkflowCompleted.tenantId,
+        payload: eventByType.WorkflowCompleted.payload,
+      });
+      eventStream.emit({
+        eventType: "FutureRealtimeEvent",
+        tenantId: LOCAL_TENANT,
+        payload: {},
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        harness.queryClient.getQueryData<ReturnType<typeof makeJobDetail>>(
+          jobsKeys.detail(LOCAL_TENANT, initialJob.jobKey),
+        )?.artifacts[0]?.status,
+      ).toBe("approved");
+      expect(
+        harness.queryClient.getQueryData<ReturnType<typeof makeArtifactDetail>>(
+          artifactsKeys.detail(LOCAL_TENANT, draftArtifact.artifactId),
+        )?.artifact.status,
+      ).toBe("approved");
+      expect(
+        harness.queryClient.getQueryData<ReturnType<typeof makeWorkflowRunDetail>>(
+          workflowRunsKeys.detail(
+            LOCAL_TENANT,
+            eventByType.WorkflowCompleted.payload.workflowId,
+          ),
+        )?.status,
+      ).toBe("succeeded");
+    });
+
+    expect(
+      harness.queryClient.getQueryState(
+        artifactsKeys.list(LOCAL_TENANT, { status: "candidate", page: 3 }),
+      )?.isInvalidated,
+    ).toBe(true);
+    expect(harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(false);
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: `Select ${latestJob.title}` }),
+    ).toBeChecked();
+    expect(router.state.location.search).toEqual(searchBeforeEvents);
+    expect(gridScroll!.scrollTop).toBe(73);
+    expect(ports.telemetry.event).toHaveBeenCalledWith(
+      "event-stream.unknown-event",
+      { eventType: "FutureRealtimeEvent" },
+    );
   });
 });
 
