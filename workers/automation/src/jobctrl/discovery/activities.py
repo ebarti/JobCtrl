@@ -16,6 +16,7 @@ from jobctrl.domain.discovery.execution import (
 )
 from jobctrl.domain.errors import JobCtrlError, to_application_error
 from jobctrl.domain.events.operations import PipelineStepDetailCode, PipelineStepKind
+from jobctrl.domain.identifiers import JobId
 from jobctrl.infrastructure.temporal.pipeline_step_lifecycle import (
     PipelineStepScope,
     begin_pipeline_step_attempt,
@@ -367,7 +368,7 @@ async def discovery_enrichment_activity(
 
 def _build_per_job_handoff(
     payload: DiscoveryEnrichmentActivityInput,
-) -> Callable[[str], None] | None:
+) -> Callable[[JobId], None] | None:
     """Build the R9 Phase 2 per-job preparation handoff, or ``None`` when off.
 
     The returned callback is fired by the enrichment worker as each job reaches
@@ -385,10 +386,10 @@ def _build_per_job_handoff(
 
     handoff_lock = threading.Lock()
 
-    def _handoff(job_url: str) -> None:
+    def _handoff(job_id: JobId) -> None:
         with handoff_lock:
             start_job_preparation_workflow(
-                job_url,
+                job_id,
                 min_score=payload.min_score,
                 workers=payload.workers,
                 validation_mode=payload.validation_mode,
