@@ -61,7 +61,7 @@ from jobctrl.domain.enrichment.snapshot_services import (
 from jobctrl.domain.enrichment.snapshot_use_case import CapturePostingSnapshotUseCase
 from jobctrl.domain.enrichment.snapshot_value_objects import QuarantineReason
 from jobctrl.domain.events.base import DomainEvent
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.discovery.target_queries import query_specs_for_source, title_matches_any_query
@@ -207,10 +207,10 @@ class DurableJobEventPublisher:
         if self._write_fence is not None:
             self._write_fence()
         payload = {"tenantId": str(event.tenant_id), **event.payload}
-        job_url = _event_job_url(event)
+        job_id = _event_job_id(event)
         record_job_event(
             self._conn,
-            job_url,
+            job_id,
             self._stage,
             event.event_type,
             message=event.event_type,
@@ -226,7 +226,6 @@ class DurableJobEventPublisher:
 def ensure_worker_discovery_tables(conn: sqlite3.Connection) -> None:
     ensure_source_observation_tables(conn)
     ensure_discovery_control_tables(conn)
-    ensure_enrichment_tables(conn)
     ensure_posting_snapshot_tables(conn)
 
 
@@ -695,11 +694,10 @@ def _promote_ats_source_description_to_enrichment(
     )
     enrichment_repository.save(succeeded)
 
-    job_url = str(job_id)
-    ensure_job_stage_rows(conn, job_url, discovered_at=observed_at)
+    ensure_job_stage_rows(conn, job_id, discovered_at=observed_at)
     stage_row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        (job_url,),
+        "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+        (str(LOCAL_TENANT), str(job_id)),
     ).fetchone()
     stage_state = str(stage_row["state"] or "") if stage_row is not None else ""
     if stage_state != "succeeded":
@@ -707,7 +705,7 @@ def _promote_ats_source_description_to_enrichment(
             try:
                 set_stage_state(
                     conn,
-                    job_url,
+                    job_id,
                     "enrich",
                     "running",
                     attempt_count=succeeded.attempt_count,
@@ -716,7 +714,7 @@ def _promote_ats_source_description_to_enrichment(
             except ValueError:
                 set_stage_state(
                     conn,
-                    job_url,
+                    job_id,
                     "enrich",
                     "running",
                     attempt_count=succeeded.attempt_count,
@@ -725,7 +723,7 @@ def _promote_ats_source_description_to_enrichment(
                 )
         set_stage_state(
             conn,
-            job_url,
+            job_id,
             "enrich",
             "succeeded",
             attempt_count=succeeded.attempt_count,
@@ -734,7 +732,7 @@ def _promote_ats_source_description_to_enrichment(
         )
         record_job_event(
             conn,
-            job_url,
+            job_id,
             "enrich",
             "StageCompleted",
             message=(f"ATS source description promoted to enrichment: {len(description)} description chars"),
@@ -759,8 +757,6 @@ def retire_invalid_source_jobs(
     """Soft-delete active discovered jobs that fail today's discovery contract."""
 
     ensure_source_observation_tables(conn)
-    ensure_enrichment_tables(conn)
-    _ensure_deleted_jobs_table(conn)
     query_specs_by_family = _query_specs_by_family(search_cfg)
     accept_locs, reject_locs = configured_location_filters(search_cfg)
     locations = tuple(_location_values(search_cfg))
@@ -770,6 +766,7 @@ def retire_invalid_source_jobs(
     rows = conn.execute(
         """
         SELECT
+            j.job_id,
             j.url,
             COALESCE(j.title, '') AS title,
             COALESCE(j.location, '') AS location,
@@ -781,18 +778,18 @@ def retire_invalid_source_jobs(
             COALESCE(MIN(o.source_id), '') AS source_id
         FROM jobs j
         LEFT JOIN job_enrichments e
-          ON e.tenant_id = ? AND e.job_url = j.url
+          ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
         LEFT JOIN job_canonical_identities c
-          ON c.tenant_id = ? AND c.job_url = j.url
+          ON c.tenant_id = j.tenant_id AND c.job_id = j.job_id
         LEFT JOIN job_source_observations o
-          ON o.tenant_id = ? AND o.job_url = j.url
+          ON o.tenant_id = j.tenant_id AND o.job_id = j.job_id
         LEFT JOIN jobctrl_deleted_jobs d
-          ON d.job_url = j.url
+          ON d.tenant_id = j.tenant_id AND d.job_id = j.job_id
          AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
-        WHERE d.job_url IS NULL
-        GROUP BY j.url
+        WHERE j.tenant_id = ? AND d.job_id IS NULL
+        GROUP BY j.tenant_id, j.job_id
         """,
-        (str(LOCAL_TENANT), str(LOCAL_TENANT), str(LOCAL_TENANT)),
+        (str(LOCAL_TENANT),),
     ).fetchall()
 
     for row in rows:
@@ -820,26 +817,26 @@ def retire_invalid_source_jobs(
             continue
         source_id = str(row["source_id"] or row["ats_kind"] or family)
         reason = f"discovery hygiene rejected {source_id}: {', '.join(reasons)}"
+        job_id = canonical_job_id(str(row["job_id"]))
         job_url = str(row["url"])
         conn.execute(
             """
-            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-            VALUES (?, ?, ?, NULL)
-            ON CONFLICT(job_url) DO UPDATE SET
+            INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at, reason, restored_at)
+            VALUES (?, ?, ?, ?, NULL)
+            ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 deleted_at = excluded.deleted_at,
                 reason = excluded.reason,
                 restored_at = NULL
             """,
-            (job_url, now, reason),
+            (str(LOCAL_TENANT), str(job_id), now, reason),
         )
         record_job_event(
             conn,
-            job_url,
+            job_id,
             "discover",
             "JobDeleted",
             message=reason,
             payload={
-                "job_id": job_url,
                 "reason": reason,
                 "deleted_at": now,
                 "run_id": run_id,
@@ -985,20 +982,6 @@ def _source_rejection_reasons(
     ):
         reasons.append("location_mismatch")
     return reasons
-
-
-def _ensure_deleted_jobs_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-            job_url TEXT PRIMARY KEY,
-            deleted_at TEXT NOT NULL,
-            reason TEXT,
-            restored_at TEXT,
-            FOREIGN KEY(job_url) REFERENCES jobs(url)
-        )
-        """
-    )
 
 
 def _scraped_posting_key(posting: ScrapedJobPosting) -> tuple[str, str, str]:
@@ -1149,7 +1132,7 @@ def build_discovery_acceptance_report(
     lead_yield = _scalar_int(
         conn,
         """
-        SELECT COUNT(DISTINCT job_url)
+        SELECT COUNT(DISTINCT job_id)
         FROM job_source_observations
         WHERE tenant_id = ? AND run_id != 'backfill'
         """,
@@ -1176,7 +1159,7 @@ def build_discovery_acceptance_report(
     )
     canonical_jobs = _scalar_int(
         conn,
-        "SELECT COUNT(DISTINCT job_url) FROM job_canonical_identities WHERE tenant_id = ?",
+        "SELECT COUNT(DISTINCT job_id) FROM job_canonical_identities WHERE tenant_id = ?",
         (tenant,),
     )
     canonical_verification_rate = round(canonical_jobs / lead_yield, 4) if lead_yield else 0.0
@@ -1203,14 +1186,15 @@ def build_discovery_acceptance_report(
         """
         SELECT COUNT(*)
         FROM jobs j
-        JOIN job_enrichments e ON e.job_url = j.url AND e.tenant_id = ?
+        JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
         LEFT JOIN discovery_quarantine_entries q
-          ON q.tenant_id = ? AND q.job_id = j.url AND q.status = 'pending'
-        WHERE e.current_status = 'enriched'
+          ON q.tenant_id = j.tenant_id AND q.job_id = j.job_id AND q.status = 'pending'
+        WHERE j.tenant_id = ?
+          AND e.current_status = 'enriched'
           AND j.fit_score IS NULL
           AND q.job_id IS NULL
         """,
-        (tenant, tenant),
+        (tenant,),
     )
     return DiscoveryAcceptanceReport(
         scenario=scenario,
@@ -2228,11 +2212,11 @@ def _looks_protected(url: str) -> bool:
     )
 
 
-def _event_job_url(event: DomainEvent) -> str | None:
-    for key in ("job_id", "jobId", "job_url", "jobUrl", "surviving_job_id"):
+def _event_job_id(event: DomainEvent) -> JobId | None:
+    for key in ("job_id", "jobId", "surviving_job_id"):
         value = event.payload.get(key)
         if value:
-            return str(value)
+            return canonical_job_id(str(value))
     return None
 
 
