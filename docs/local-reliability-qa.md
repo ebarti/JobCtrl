@@ -119,8 +119,8 @@ corepack pnpm docs:build
 git diff --check
 ```
 
-The product path must then verify in the disposable/demo workspace that Runs
-shows the shared Discover/preparation/Apply timeline; repeated cancellation
+The product path must then verify in a disposable seeded API/web workspace that
+Runs shows the shared Discover/preparation/Apply timeline; repeated cancellation
 does not overwrite a terminal result; targeted events update an open job,
 registered artifact, and workflow detail without resetting filters, selection,
 pagination, or scroll; and Dashboard supports recommendation evidence,
@@ -130,6 +130,11 @@ score and accepted artifact remain unchanged until those commands are invoked.
 The gate must also prove that no feedback decision or restore automatically
 starts scoring, tailoring, Apply, or artifact work. Do not perform a real
 application submission or mutate a real user database during this QA.
+
+The browser-local public demo may cover realtime state preservation, but its
+learning capabilities are intentionally unavailable. Recommendation review,
+policy acceptance/rejection, and rollback must therefore run through the seeded
+non-demo local API/web fixture.
 
 ### Repeat-application prevention
 
