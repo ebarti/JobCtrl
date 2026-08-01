@@ -175,7 +175,13 @@ def test_apply_handler_forwards_approval_required_flag() -> None:
 def test_apply_handler_rejects_present_unsupported_or_empty_selectors(
     selector: dict[str, object],
 ) -> None:
-    with pytest.raises(ValueError, match="apply (accepts|jobId)"):
+    selector_name = next(iter(selector))
+    expected_message = (
+        r"apply (?:accepts|jobId)"
+        if selector_name == "jobId"
+        else rf"{selector_name} is not supported"
+    )
+    with pytest.raises(ValueError, match=expected_message):
         apply_action({"tenantId": "local", **selector})
 
 
