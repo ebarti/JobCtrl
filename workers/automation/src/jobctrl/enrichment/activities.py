@@ -10,20 +10,23 @@ from typing import Any
 from temporalio import activity
 
 from jobctrl.domain.errors import JobCtrlError, TransientNetworkError, to_application_error
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 
 
 @dataclass(frozen=True)
 class EnrichActivityInput:
-    # ``tenant_id`` is currently informational; runners read from
-    # ``LOCAL_TENANT`` until tenant scoping lands.
+    # Tenant scope travels with selected canonical job identifiers.
     tenant_id: str
     expected_app_dir: str | None = None
     expected_db_path: str | None = None
     limit: int = 0
     workers: int = 1
     dry_run: bool = False
-    job_urls: tuple[str, ...] = ()
+    job_ids: tuple[JobId, ...] = ()
     workflow_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
 
 
 @dataclass(frozen=True)
@@ -50,7 +53,7 @@ async def enrich_activity(payload: EnrichActivityInput) -> EnrichActivityOutput:
 
     cancel_event = threading.Event()
     try:
-        if payload.job_urls:
+        if payload.job_ids:
             result = await run_blocking_with_heartbeat(
                 lambda: _run_selected_enrichment(payload, cancel_event=cancel_event),
                 starting_message="selected enrich starting",
@@ -134,7 +137,7 @@ def _run_selected_enrichment(
     from jobctrl.database import get_connection
     from jobctrl.enrichment.detail import _run_detail_scraper
 
-    urls = _limited_job_urls(payload.job_urls, payload.limit)
+    job_ids = _limited_job_ids(payload.job_ids, payload.limit)
     if payload.dry_run:
         return {
             "status": "ok",
@@ -145,21 +148,23 @@ def _run_selected_enrichment(
                     "stage": "enrich",
                     "status": "ok",
                     "elapsed": 0.0,
-                    "selected": len(urls),
+                    "selected": len(job_ids),
                     "dry_run": True,
                 }
             ],
         }
 
+    conn = get_connection()
     t0 = time.time()
     scraper_kwargs: dict[str, Any] = {
         "max_per_site": payload.limit or None,
         "workers": payload.workers,
-        "job_urls": urls,
+        "tenant_id": payload.tenant_id,
+        "job_ids": job_ids,
     }
     if cancel_event is not None:
         scraper_kwargs["cancel_event"] = cancel_event
-    stats = _run_detail_scraper(get_connection(), **scraper_kwargs)
+    stats = _run_detail_scraper(conn, **scraper_kwargs)
     elapsed = time.time() - t0
     errors = (
         {"enrich": f"{stats.get('error', 0)} enrichment error(s)"}
@@ -176,18 +181,22 @@ def _run_selected_enrichment(
                 "stage": "enrich",
                 "status": status,
                 "elapsed": elapsed,
-                "selected": len(urls),
+                "selected": len(job_ids),
                 **stats,
             }
         ],
     }
 
 
-def _limited_job_urls(job_urls: tuple[str, ...], limit: int) -> tuple[str, ...]:
-    unique = tuple(dict.fromkeys(url for url in job_urls if url))
+def _limited_job_ids(job_ids: tuple[JobId, ...], limit: int) -> tuple[JobId, ...]:
+    unique = tuple(dict.fromkeys(job_ids))
     if limit > 0:
         return unique[:limit]
     return unique
+
+
+def _canonical_job_ids(job_ids: tuple[JobId, ...]) -> tuple[JobId, ...]:
+    return tuple(dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids))
 
 
 _SUCCESS_STATUSES = {"ok", "partial", "skipped", "already_done"}

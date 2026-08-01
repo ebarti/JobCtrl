@@ -8,7 +8,7 @@ import pytest
 
 from jobctrl.database import close_connection, init_db
 from jobctrl.domain.enrichment import EnrichmentError, ExtractionTier, JobEnrichment
-from jobctrl.domain.identifiers import canonical_job_id
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.enrichment import detail
 from jobctrl.enrichment.detail import (
@@ -270,7 +270,6 @@ def test_authenticated_linkedin_retry_resets_only_exact_v7_aggregate(
 
         reset_count = _reset_authenticated_linkedin_retry_candidates(
             conn,
-            job_urls=(job_url,),
             session=offline_session(conn, site="linkedin"),
         )
 
@@ -315,20 +314,14 @@ def test_scrape_site_batch_resolves_url_once_before_exact_v7_writes(
     job_url = "https://www.linkedin.com/jobs/view/4375576106"
     try:
         _seed_current_job(conn, job_id=job_id, url=job_url, title="Director")
-        resolved_urls: list[str] = []
-        resolve_current_job_id = detail._resolve_current_enrichment_job_id
-
-        def resolve_once(current_conn, url: str):
-            resolved_urls.append(url)
-            return resolve_current_job_id(current_conn, url)
+        fetched_urls: list[str] = []
 
         monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "0")
         monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
-        monkeypatch.setattr(detail, "_resolve_current_enrichment_job_id", resolve_once)
         monkeypatch.setattr(
             detail,
             "scrape_detail_page",
-            lambda _page, _url, session=None: {
+            lambda _page, _url, session=None: fetched_urls.append(_url) or {
                 "status": "ok",
                 "tier_used": 1,
                 "full_description": _long_description(),
@@ -340,7 +333,11 @@ def test_scrape_site_batch_resolves_url_once_before_exact_v7_writes(
         )
 
         stats = detail.scrape_site_batch(
-            conn, "linkedin", [(job_url, "Director")], gateway=offline_gateway()
+            conn,
+            "linkedin",
+            [(job_id, "Director")],
+            tenant_id=LOCAL_TENANT,
+            gateway=offline_gateway(),
         )
 
         aggregate = SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, job_id)
@@ -377,7 +374,7 @@ def test_scrape_site_batch_resolves_url_once_before_exact_v7_writes(
         }
         assert aggregate is not None and aggregate.is_enriched
         assert aggregate.job_id == job_id
-        assert resolved_urls == [job_url]
+        assert fetched_urls == [job_url]
         assert snapshot is not None and snapshot["job_id"] == str(job_id)
         assert stage is not None and stage["job_id"] == str(job_id)
         assert stage["state"] == "succeeded"
@@ -392,17 +389,21 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
 ) -> None:
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
+    tenant_id = "local"
+    job_id = JobId("60000000-0000-4000-8000-000000000011")
     job_url = "https://www.linkedin.com/jobs/view/4375576106"
     description = _long_description()
     try:
         conn.execute(
             """
             INSERT INTO jobs (
-                url, title, description, full_description, location, site,
-                strategy, discovered_at, application_url, company
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                tenant_id, job_id, url, title, description, full_description,
+                location, site, strategy, discovered_at, application_url, company
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                tenant_id,
+                str(job_id),
                 job_url,
                 "Director of Engineering",
                 description,
@@ -413,6 +414,21 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
                 "2026-06-04T15:55:20+00:00",
                 None,
                 "Checkatrade",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_locators (
+                tenant_id, job_id, locator_kind, locator_value, is_current,
+                first_seen_at, last_seen_at, retired_at
+            ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?, NULL)
+            """,
+            (
+                tenant_id,
+                str(job_id),
+                job_url,
+                "2026-06-04T15:55:20+00:00",
+                "2026-06-04T15:55:20+00:00",
             ),
         )
         conn.commit()
@@ -438,7 +454,11 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
         )
 
         stats = detail.scrape_site_batch(
-            conn, "linkedin", [(job_url, "Director")], gateway=offline_gateway()
+            conn,
+            "linkedin",
+            [(job_id, "Director")],
+            tenant_id=tenant_id,
+            gateway=offline_gateway(),
         )
 
         assert stats["processed"] == 1
@@ -449,9 +469,9 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
             """
             SELECT current_status, full_description, attempts_json
             FROM job_enrichments
-            WHERE job_url = ?
+            WHERE tenant_id = ? AND job_id = ?
             """,
-            (job_url,),
+            (tenant_id, str(job_id)),
         ).fetchone()
         assert enrichment["current_status"] == "enriched"
         assert enrichment["full_description"] == description.strip()
@@ -462,9 +482,9 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
             """
             SELECT state, metadata_json
             FROM job_stage_states
-            WHERE job_url = ? AND stage = 'enrich'
+            WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'
             """,
-            (job_url,),
+            (tenant_id, str(job_id)),
         ).fetchone()
         assert stage["state"] == "succeeded"
         assert json.loads(stage["metadata_json"]) == {
@@ -477,11 +497,11 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
             """
             SELECT payload_json
             FROM job_events
-            WHERE job_url = ? AND event_type = 'StageCompleted'
+            WHERE tenant_id = ? AND job_id = ? AND event_type = 'StageCompleted'
             ORDER BY event_id DESC
             LIMIT 1
             """,
-            (job_url,),
+            (tenant_id, str(job_id)),
         ).fetchone()
         payload = json.loads(event["payload_json"])
         assert payload["fallbackSource"] == "discovery"
@@ -507,10 +527,9 @@ def test_selected_enrichment_filters_retry_to_requested_job(monkeypatch: pytest.
     result = _run_selected_enrichment(
         EnrichActivityInput(
             tenant_id="local",
-            job_urls=(
-                "https://example.com/jobs/selected",
-                "https://example.com/jobs/selected",
-                "",
+            job_ids=(
+                JobId("60000000-0000-4000-8000-000000000010"),
+                JobId("60000000-0000-4000-8000-000000000010"),
             ),
             limit=1,
         )
@@ -521,7 +540,8 @@ def test_selected_enrichment_filters_retry_to_requested_job(monkeypatch: pytest.
         {
             "max_per_site": 1,
             "workers": 1,
-            "job_urls": ("https://example.com/jobs/selected",),
+            "tenant_id": "local",
+            "job_ids": (JobId("60000000-0000-4000-8000-000000000010"),),
         }
     ]
 
@@ -560,6 +580,7 @@ def test_inactive_cascade_snapshot_uses_current_job_id_and_keeps_url_as_locator(
         _seed_current_job(conn, job_id=job_id, url=url)
         _record_posting_snapshot_from_cascade(
             conn,
+            job_id=job_id,
             url=url,
             source_id="jobspy",
             title="Closed engineering role",
@@ -631,6 +652,7 @@ def test_snapshot_failure_uses_current_job_id_for_state_and_events(tmp_path: Pat
         _seed_current_job(conn, job_id=job_id, url=url)
         _record_posting_snapshot_failure_from_cascade(
             conn,
+            job_id=job_id,
             url=url,
             source_id="jobspy",
             cascade_result={
