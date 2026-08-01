@@ -27,6 +27,7 @@ from jobctrl.domain.materials import (
 )
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.materials import SqliteMaterialsRepository
+from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
 
 @pytest.fixture()
@@ -35,10 +36,37 @@ def conn(tmp_path: Path) -> sqlite3.Connection:
 
 
 def _seed_job(conn: sqlite3.Connection, url: str, fit_score: int = 9) -> str:
+    job_id = _job_id(url)
     conn.execute(
-        "INSERT INTO jobs (url, title, site, full_description, fit_score, discovered_at) "
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        (url, "Engineer", "Acme", "desc", fit_score, "2024-01-01T00:00:00+00:00"),
+        (LOCAL_TENANT, job_id, url, "Engineer", "Acme", "2024-01-01T00:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO job_enrichments "
+        "(tenant_id, job_id, current_status, full_description, updated_at) "
+        "VALUES (?, ?, 'enriched', 'desc', ?)",
+        (LOCAL_TENANT, job_id, "2024-01-01T00:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO job_scores "
+        "(tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at) "
+        "VALUES (?, ?, 1, ?, '{}', '[]', ?)",
+        (LOCAL_TENANT, job_id, fit_score, "2024-01-01T00:00:00+00:00"),
+    )
+    ensure_job_stage_rows(
+        conn,
+        job_id,
+        tenant_id=LOCAL_TENANT,
+        discovered_at="2024-01-01T00:00:00+00:00",
+    )
+    set_stage_state(
+        conn,
+        job_id,
+        "score",
+        "succeeded",
+        tenant_id=LOCAL_TENANT,
+        validate_transition=False,
     )
     conn.commit()
     return url
@@ -48,29 +76,18 @@ def _selector_job_id(name: str) -> JobId:
     return JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, f"jobctrl-selector-test:{name}")))
 
 
+def _job_id(url: str) -> JobId:
+    return JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, url)))
+
+
 def _seed_selector_job(
     conn: sqlite3.Connection,
     name: str,
     fit_score: int = 9,
 ) -> JobId:
-    job_id = _selector_job_id(name)
-    conn.execute(
-        "INSERT INTO jobs "
-        "(tenant_id, job_id, url, title, site, full_description, fit_score, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            LOCAL_TENANT,
-            job_id,
-            f"https://example.com/{name}",
-            "Engineer",
-            "Acme",
-            "desc",
-            fit_score,
-            "2024-01-01T00:00:00+00:00",
-        ),
-    )
-    conn.commit()
-    return job_id
+    url = f"https://example.com/{name}"
+    _seed_job(conn, url, fit_score)
+    return _job_id(url)
 
 
 def _make_resume_artifact(path: str = "/tmp/r.txt") -> Artifact:
@@ -420,7 +437,7 @@ def test_get_stats_untailored_eligible_excludes_materials_tailored(
 ) -> None:
     """Once a job is tailored via materials, ``untailored_eligible`` drops it."""
     tailored_job_id = _seed_selector_job(conn, "tailored")
-    pending_job_id = _seed_selector_job(conn, "pending")
+    _seed_selector_job(conn, "pending")
     repo = SqliteMaterialsRepository(conn)
     repo.save(
         MaterialsSetFactory.initial(
@@ -434,28 +451,6 @@ def test_get_stats_untailored_eligible_excludes_materials_tailored(
             updated_at="2024-01-02T00:00:00+00:00",
         )
     )
-    # Need a score row so the score-side filter is satisfied for both jobs.
-    from jobctrl.domain.scoring import (
-        FitScore,
-        JobScore,
-        MatchedKeywords,
-        ScoreBreakdown,
-    )
-    from jobctrl.infrastructure.scoring import SqliteScoreRepository
-
-    score_repo = SqliteScoreRepository(conn)
-    for job_id in (tailored_job_id, pending_job_id):
-        score_repo.save(
-            JobScore.initial(
-                tenant_id=LOCAL_TENANT,
-                job_id=job_id,
-                fit_score=FitScore.create(9),
-                breakdown=ScoreBreakdown(reasoning="ok"),
-                matched_keywords=MatchedKeywords.from_iterable(["python"]),
-                scored_at="2024-01-02T00:00:00+00:00",
-            )
-        )
-
     stats = get_stats(conn)
     assert stats["untailored_eligible"] == 1
 
@@ -591,7 +586,7 @@ def test_reset_tailor_clears_rejected_attempt_artifacts(
     repo.save(
         MaterialsSetFactory.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+            job_id=_job_id(url),
             created_at="2024-01-01T00:00:00+00:00",
         ).with_resume_attempt(
             _make_resume_artifact(),
@@ -600,17 +595,19 @@ def test_reset_tailor_clears_rejected_attempt_artifacts(
             updated_at="2024-01-02T00:00:00+00:00",
         )
     )
-    ensure_job_stage_rows(conn, url, discovered_at="2024-01-01T00:00:00+00:00")
+    ensure_job_stage_rows(
+        conn, _job_id(url), tenant_id=LOCAL_TENANT, discovered_at="2024-01-01T00:00:00+00:00"
+    )
 
-    reset_job_stage(conn, url, "tailor")
+    reset_job_stage(conn, url, "tailor", tenant_id=LOCAL_TENANT)
 
     pending_after = {row["url"] for row in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)}
     assert url in pending_after
 
     # Materials artifacts for the latest generation must be gone.
     artifact_count = conn.execute(
-        "SELECT COUNT(*) FROM job_materials_artifacts WHERE job_url = ?",
-        (url,),
+        "SELECT COUNT(*) FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ?",
+        (LOCAL_TENANT, _job_id(url)),
     ).fetchone()[0]
     assert artifact_count == 0
 
@@ -626,7 +623,7 @@ def test_reset_tailor_preserves_approved_materials_until_replacement(
     repo.save(
         MaterialsSetFactory.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+            job_id=_job_id(url),
             created_at="2024-01-01T00:00:00+00:00",
         ).with_resume_attempt(
             _make_resume_artifact(),
@@ -635,15 +632,17 @@ def test_reset_tailor_preserves_approved_materials_until_replacement(
             updated_at="2024-01-02T00:00:00+00:00",
         )
     )
-    ensure_job_stage_rows(conn, url, discovered_at="2024-01-01T00:00:00+00:00")
+    ensure_job_stage_rows(
+        conn, _job_id(url), tenant_id=LOCAL_TENANT, discovered_at="2024-01-01T00:00:00+00:00"
+    )
 
-    reset_job_stage(conn, url, "tailor")
+    reset_job_stage(conn, url, "tailor", tenant_id=LOCAL_TENANT)
 
     pending_after = {row["url"] for row in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)}
     assert url not in pending_after
     artifact_count = conn.execute(
-        "SELECT COUNT(*) FROM job_materials_artifacts WHERE job_url = ?",
-        (url,),
+        "SELECT COUNT(*) FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ?",
+        (LOCAL_TENANT, _job_id(url)),
     ).fetchone()[0]
     assert artifact_count == 1
 
@@ -656,7 +655,7 @@ def test_reset_cover_clears_only_failed_cover_artifacts(conn: sqlite3.Connection
     repo = SqliteMaterialsRepository(conn)
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=_job_id(url),
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         _make_resume_artifact(),
@@ -669,13 +668,15 @@ def test_reset_cover_clears_only_failed_cover_artifacts(conn: sqlite3.Connection
         updated_at="2024-01-03T00:00:00+00:00",
     )
     repo.save(materials)
-    ensure_job_stage_rows(conn, url, discovered_at="2024-01-01T00:00:00+00:00")
+    ensure_job_stage_rows(
+        conn, _job_id(url), tenant_id=LOCAL_TENANT, discovered_at="2024-01-01T00:00:00+00:00"
+    )
 
-    reset_job_stage(conn, url, "cover")
+    reset_job_stage(conn, url, "cover", tenant_id=LOCAL_TENANT)
 
     rows = conn.execute(
-        "SELECT artifact_type FROM job_materials_artifacts WHERE job_url = ?",
-        (url,),
+        "SELECT artifact_type FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ?",
+        (LOCAL_TENANT, _job_id(url)),
     ).fetchall()
     types = {row[0] for row in rows}
     assert "tailored_resume" in types
@@ -692,7 +693,7 @@ def test_reset_cover_preserves_approved_cover_until_replacement(
     repo = SqliteMaterialsRepository(conn)
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=_job_id(url),
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         _make_resume_artifact(),
@@ -705,13 +706,15 @@ def test_reset_cover_preserves_approved_cover_until_replacement(
         updated_at="2024-01-03T00:00:00+00:00",
     )
     repo.save(materials)
-    ensure_job_stage_rows(conn, url, discovered_at="2024-01-01T00:00:00+00:00")
+    ensure_job_stage_rows(
+        conn, _job_id(url), tenant_id=LOCAL_TENANT, discovered_at="2024-01-01T00:00:00+00:00"
+    )
 
-    reset_job_stage(conn, url, "cover")
+    reset_job_stage(conn, url, "cover", tenant_id=LOCAL_TENANT)
 
     rows = conn.execute(
-        "SELECT artifact_type FROM job_materials_artifacts WHERE job_url = ?",
-        (url,),
+        "SELECT artifact_type FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ?",
+        (LOCAL_TENANT, _job_id(url)),
     ).fetchall()
     types = {row[0] for row in rows}
     assert "tailored_resume" in types
@@ -740,24 +743,31 @@ def test_acquire_job_picks_up_materials_only_tailored_jobs(tmp_path) -> None:
     conn = init_db(db_path)
     try:
         url = "https://example.com/job"
+        job_id = _job_id(url)
         conn.execute(
-            "INSERT INTO jobs (url, title, site, application_url, "
-            "full_description, discovered_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
+                LOCAL_TENANT,
+                job_id,
                 url,
                 "Engineer",
                 "Acme",
-                "https://example.com/apply",
-                "desc",
                 "2024-01-01T00:00:00+00:00",
             ),
+        )
+        conn.execute(
+            "INSERT INTO job_enrichments "
+            "(tenant_id, job_id, current_status, full_description, application_url, updated_at) "
+            "VALUES (?, ?, 'enriched', 'desc', 'https://example.com/apply', ?)",
+            (LOCAL_TENANT, job_id, "2024-01-01T00:00:00+00:00"),
         )
         conn.commit()
         # Score the job (apply requires fit_score >= min_score).
         SqliteScoreRepository(conn).save(
             JobScore.initial(
                 tenant_id=LOCAL_TENANT,
-                job_id=JobId(url),
+                job_id=job_id,
                 fit_score=FitScore.create(9),
                 breakdown=ScoreBreakdown(reasoning="ok"),
                 matched_keywords=MatchedKeywords.from_iterable(["python"]),
@@ -768,7 +778,7 @@ def test_acquire_job_picks_up_materials_only_tailored_jobs(tmp_path) -> None:
         SqliteMaterialsRepository(conn).save(
             MaterialsSetFactory.initial(
                 tenant_id=LOCAL_TENANT,
-                job_id=JobId(url),
+                job_id=job_id,
                 created_at="2024-01-01T00:00:00+00:00",
             ).with_resume_attempt(
                 _make_resume_artifact("/tmp/materials-resume.txt"),
@@ -781,7 +791,8 @@ def test_acquire_job_picks_up_materials_only_tailored_jobs(tmp_path) -> None:
             )
         )
         legacy_path = conn.execute(
-            "SELECT tailored_resume_path FROM jobs WHERE url = ?", (url,)
+            "SELECT tailored_resume_path FROM jobs WHERE tenant_id = ? AND job_id = ?",
+            (LOCAL_TENANT, job_id),
         ).fetchone()[0]
         assert legacy_path is None  # confirm no legacy write happened
 
@@ -816,23 +827,30 @@ def test_acquire_job_excludes_materials_only_text_resume_without_pdf(tmp_path) -
     conn = init_db(db_path)
     try:
         url = "https://example.com/job"
+        job_id = _job_id(url)
         conn.execute(
-            "INSERT INTO jobs (url, title, site, application_url, "
-            "full_description, discovered_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
+                LOCAL_TENANT,
+                job_id,
                 url,
                 "Engineer",
                 "Acme",
-                "https://example.com/apply",
-                "desc",
                 "2024-01-01T00:00:00+00:00",
             ),
+        )
+        conn.execute(
+            "INSERT INTO job_enrichments "
+            "(tenant_id, job_id, current_status, full_description, application_url, updated_at) "
+            "VALUES (?, ?, 'enriched', 'desc', 'https://example.com/apply', ?)",
+            (LOCAL_TENANT, job_id, "2024-01-01T00:00:00+00:00"),
         )
         conn.commit()
         SqliteScoreRepository(conn).save(
             JobScore.initial(
                 tenant_id=LOCAL_TENANT,
-                job_id=JobId(url),
+                job_id=job_id,
                 fit_score=FitScore.create(9),
                 breakdown=ScoreBreakdown(reasoning="ok"),
                 matched_keywords=MatchedKeywords.from_iterable(["python"]),
@@ -842,7 +860,7 @@ def test_acquire_job_excludes_materials_only_text_resume_without_pdf(tmp_path) -
         SqliteMaterialsRepository(conn).save(
             MaterialsSetFactory.initial(
                 tenant_id=LOCAL_TENANT,
-                job_id=JobId(url),
+                job_id=job_id,
                 created_at="2024-01-01T00:00:00+00:00",
             ).with_resume_attempt(
                 _make_resume_artifact("/tmp/materials-resume.txt"),
