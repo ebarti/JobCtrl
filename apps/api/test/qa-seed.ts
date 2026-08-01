@@ -322,6 +322,7 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
     resumeTxt,
   });
   seedResumeReviewDraft(db);
+  seedLearningPolicyFixture(db);
 
   insertEvent(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "apply", "info", "QA apply run queued");
   insertEvent(db, "https://linkedin.com/jobs/view/qa-risk-manager", "score", "error", "QA score action failed");
@@ -1232,6 +1233,229 @@ function seedResumeReviewDraft(db: Database.Database): void {
     "qa-platform-resume-pdf",
     QA_NOW,
     QA_NOW,
+  );
+}
+
+function seedLearningPolicyFixture(db: Database.Database): void {
+  const policyCreatedAt = "2026-05-04T11:00:00.000Z";
+  const styleRecommendationId = `learning-recommendation:${"a".repeat(64)}`;
+  const factualRecommendationId = `learning-recommendation:${"b".repeat(64)}`;
+  const signals = [
+    {
+      signalId: "qa-learning-style-1",
+      jobId: QA_PLATFORM_JOB_ID,
+      draftId: "qa-platform-resume-draft",
+      signalKind: "style_preference",
+      ruleKey: "style_guidance",
+      ruleValue: "preserve_user_edit_pattern",
+      reviewedAt: "2026-05-04T11:01:00.000Z",
+    },
+    {
+      signalId: "qa-learning-style-2",
+      jobId: QA_RISK_JOB_ID,
+      draftId: "qa-risk-resume-draft",
+      signalKind: "style_preference",
+      ruleKey: "style_guidance",
+      ruleValue: "preserve_user_edit_pattern",
+      reviewedAt: "2026-05-04T11:02:00.000Z",
+    },
+    {
+      signalId: "qa-learning-style-3",
+      jobId: QA_PLATFORM_JOB_ID,
+      draftId: "qa-platform-resume-draft",
+      signalKind: "style_preference",
+      ruleKey: "style_guidance",
+      ruleValue: "preserve_user_edit_pattern",
+      reviewedAt: "2026-05-04T11:03:00.000Z",
+    },
+    {
+      signalId: "qa-learning-factual-1",
+      jobId: QA_PLATFORM_JOB_ID,
+      draftId: "qa-platform-resume-draft",
+      signalKind: "factual_correction",
+      ruleKey: "fact_handling",
+      ruleValue: "require_source_match",
+      reviewedAt: "2026-05-04T11:04:00.000Z",
+    },
+    {
+      signalId: "qa-learning-factual-2",
+      jobId: QA_RISK_JOB_ID,
+      draftId: "qa-risk-resume-draft",
+      signalKind: "factual_correction",
+      ruleKey: "fact_handling",
+      ruleValue: "require_source_match",
+      reviewedAt: "2026-05-04T11:05:00.000Z",
+    },
+    {
+      signalId: "qa-learning-factual-3",
+      jobId: QA_RISK_JOB_ID,
+      draftId: "qa-risk-resume-draft",
+      signalKind: "factual_correction",
+      ruleKey: "fact_handling",
+      ruleValue: "require_source_match",
+      reviewedAt: "2026-05-04T11:06:00.000Z",
+    },
+  ] as const;
+
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO resume_review_drafts (
+        tenant_id, draft_id, job_id, base_generation, renderer_format,
+        state, latest_revision_number, created_at, updated_at
+      ) VALUES ('local', 'qa-risk-resume-draft', ?, 1, 'text', 'active', 0, ?, ?)`,
+    ).run(QA_RISK_JOB_ID, policyCreatedAt, policyCreatedAt);
+    insertQaTailoringPolicy(db, {
+      version: 1,
+      learnedRules: {},
+      createdAt: policyCreatedAt,
+    });
+
+    const insertSignal = db.prepare(
+      `INSERT INTO tailoring_feedback_signals (
+        tenant_id, signal_id, job_id, draft_id, source_kind, source_id,
+        signal_kind, status, summary, created_at, reviewed_at
+      ) VALUES ('local', ?, ?, ?, 'edit_delta', ?, ?, 'accepted', ?, ?, ?)`,
+    );
+    const insertSignalReview = db.prepare(
+      `INSERT INTO tailoring_feedback_signal_reviews (
+        tenant_id, review_id, signal_id, revision, decision, signal_kind,
+        rule_key, rule_value, allowlist_version, reviewed_at
+      ) VALUES ('local', ?, ?, 1, 'accepted', ?, ?, ?, 1, ?)`,
+    );
+    for (const signal of signals) {
+      insertSignal.run(
+        signal.signalId,
+        signal.jobId,
+        signal.draftId,
+        `qa-source-${signal.signalId}`,
+        signal.signalKind,
+        "Synthetic accepted feedback for learning policy browser QA.",
+        signal.reviewedAt,
+        signal.reviewedAt,
+      );
+      insertSignalReview.run(
+        `qa-learning-review-${signal.signalId}`,
+        signal.signalId,
+        signal.signalKind,
+        signal.ruleKey,
+        signal.ruleValue,
+        signal.reviewedAt,
+      );
+    }
+
+    insertQaLearningRecommendation(db, {
+      recommendationId: styleRecommendationId,
+      signalKind: "style_preference",
+      ruleKey: "style_guidance",
+      ruleValue: "preserve_user_edit_pattern",
+      inputFingerprint: "c".repeat(64),
+      derivedAt: "2026-05-04T11:10:00.000Z",
+      signals: signals.slice(0, 3),
+    });
+    insertQaLearningRecommendation(db, {
+      recommendationId: factualRecommendationId,
+      signalKind: "factual_correction",
+      ruleKey: "fact_handling",
+      ruleValue: "require_source_match",
+      inputFingerprint: "d".repeat(64),
+      derivedAt: "2026-05-04T11:09:00.000Z",
+      signals: signals.slice(3),
+    });
+  })();
+}
+
+function insertQaTailoringPolicy(
+  db: Database.Database,
+  input: {
+    version: number;
+    learnedRules: Record<string, string>;
+    createdAt: string;
+    rollbackOfVersion?: number;
+    rollbackReason?: string;
+  },
+): void {
+  db.prepare(
+    `INSERT INTO tailoring_policies (
+      tenant_id, version, prompt_version, schema_version, judge_schema_version,
+      prompt_fingerprint, config_fingerprint, profile_policy_fingerprint,
+      custom_prompt_fingerprint, generator_settings_json, judge_settings_json,
+      runtime_settings_json, rollback_of_version, rollback_reason, created_at,
+      created_from_event_id
+    ) VALUES ('local', ?, 'tailor.v2', 'resume.v1', 'judge.v1',
+              'qa-prompt', ?, 'qa-profile', 'qa-custom', '{}', '{}', ?, ?, ?, ?, NULL)`,
+  ).run(
+    input.version,
+    `qa-config-${input.version}`,
+    JSON.stringify({ learned_tailoring_rules: input.learnedRules }),
+    input.rollbackOfVersion ?? null,
+    input.rollbackReason ?? "",
+    input.createdAt,
+  );
+}
+
+function insertQaLearningRecommendation(
+  db: Database.Database,
+  input: {
+    recommendationId: string;
+    signalKind: "style_preference" | "factual_correction";
+    ruleKey: "style_guidance" | "fact_handling";
+    ruleValue: "preserve_user_edit_pattern" | "require_source_match";
+    inputFingerprint: string;
+    derivedAt: string;
+    signals: readonly {
+      signalId: string;
+      jobId: string;
+      reviewedAt: string;
+    }[];
+  },
+): void {
+  const insertEvidence = db.prepare(
+    `INSERT INTO learning_recommendation_evidence (
+      tenant_id, recommendation_id, signal_id, evidence_role, source_kind,
+      source_id, source_revision, recorded_at
+    ) VALUES ('local', ?, ?, 'supporting', 'tailoring_feedback_signal', ?, 1, ?)`,
+  );
+  const insertEvidenceJob = db.prepare(
+    `INSERT INTO learning_recommendation_evidence_jobs (
+      tenant_id, recommendation_id, signal_id, job_id
+    ) VALUES ('local', ?, ?, ?)`,
+  );
+  const jobIds = new Set<string>();
+  for (const signal of input.signals) {
+    const evidenceSignalId = `tailoring-feedback:${signal.signalId}:1`;
+    insertEvidence.run(
+      input.recommendationId,
+      evidenceSignalId,
+      signal.signalId,
+      signal.reviewedAt,
+    );
+    insertEvidenceJob.run(input.recommendationId, evidenceSignalId, signal.jobId);
+    jobIds.add(signal.jobId);
+  }
+  const insertJob = db.prepare(
+    `INSERT INTO learning_recommendation_jobs (
+      tenant_id, recommendation_id, job_id
+    ) VALUES ('local', ?, ?)`,
+  );
+  for (const jobId of jobIds) {
+    insertJob.run(input.recommendationId, jobId);
+  }
+  db.prepare(
+    `INSERT INTO learning_recommendations (
+      tenant_id, recommendation_id, derivation_version,
+      evaluation_fixture_version, context, policy_kind, signal_kind,
+      rule_key, rule_value, allowlist_version, status, observed_signal_count,
+      observed_job_count, minimum_signal_count, minimum_job_count,
+      confidence_limit, input_fingerprint, derived_at
+    ) VALUES ('local', ?, 1, 1, 'materials', 'tailoring_rule', ?, ?, ?, 1,
+              'pending', 3, 2, 3, 2, 'sample_gated_no_population_inference', ?, ?)`,
+  ).run(
+    input.recommendationId,
+    input.signalKind,
+    input.ruleKey,
+    input.ruleValue,
+    input.inputFingerprint,
+    input.derivedAt,
   );
 }
 

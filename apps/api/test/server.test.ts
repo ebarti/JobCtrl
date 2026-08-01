@@ -2547,6 +2547,100 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("excludes terminal learning recommendations from tenant-scoped pages without hiding evidence", async () => {
+    const acceptedRecommendationId = `learning-recommendation:${"a".repeat(64)}`;
+    const rejectedRecommendationId = `learning-recommendation:${"b".repeat(64)}`;
+    const pendingRecommendationId = `learning-recommendation:${"c".repeat(64)}`;
+    const otherTenantRecommendationId = `learning-recommendation:${"d".repeat(64)}`;
+    const db = new Database(options.dbPath);
+    insertLearningRecommendationFixture(db, {
+      tenantId: "local",
+      recommendationId: acceptedRecommendationId,
+      tombstoned: false,
+    });
+    insertLearningRecommendationFixture(db, {
+      tenantId: "local",
+      recommendationId: rejectedRecommendationId,
+      tombstoned: false,
+    });
+    insertLearningRecommendationFixture(db, {
+      tenantId: "local",
+      recommendationId: pendingRecommendationId,
+      tombstoned: false,
+    });
+    insertLearningRecommendationFixture(db, {
+      tenantId: "other",
+      recommendationId: otherTenantRecommendationId,
+      tombstoned: false,
+    });
+    insertTailoringPolicyFixture(db, {
+      tenantId: "local",
+      version: 1,
+      learnedRules: {},
+      createdAt: "2026-08-01T10:00:00Z",
+    });
+    db.prepare(
+      `INSERT INTO learning_recommendation_reviews (
+         tenant_id, review_id, recommendation_id, revision, decision,
+         context, policy_kind, policy_version, reviewed_at
+       ) VALUES ('local', ?, ?, 1, 'accepted', 'materials', 'tailoring_rule', 1, ?)`,
+    ).run(
+      `learning-recommendation-review:${"e".repeat(64)}`,
+      acceptedRecommendationId,
+      "2026-08-01T10:01:00Z",
+    );
+    db.prepare(
+      `INSERT INTO learning_recommendation_reviews (
+         tenant_id, review_id, recommendation_id, revision, decision,
+         context, policy_kind, policy_version, reviewed_at
+       ) VALUES ('local', ?, ?, 1, 'rejected', 'materials', 'tailoring_rule', NULL, ?)`,
+    ).run(
+      `learning-recommendation-review:${"f".repeat(64)}`,
+      rejectedRecommendationId,
+      "2026-08-01T10:02:00Z",
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const firstPage = LearningRecommendationListResponseSchema.parse(
+      (
+        await app.inject({
+          method: "GET",
+          url: "/v1/learning/recommendations?page=1&pageSize=1",
+        })
+      ).json(),
+    );
+    const secondPage = LearningRecommendationListResponseSchema.parse(
+      (
+        await app.inject({
+          method: "GET",
+          url: "/v1/learning/recommendations?page=2&pageSize=1",
+        })
+      ).json(),
+    );
+    const acceptedEvidence = LearningRecommendationEvidenceListResponseSchema.parse(
+      (
+        await app.inject({
+          method: "GET",
+          url: `/v1/learning/recommendations/${encodeURIComponent(acceptedRecommendationId)}/evidence`,
+        })
+      ).json(),
+    );
+
+    expect(firstPage).toMatchObject({ page: 1, pageSize: 1, total: 1, totalPages: 1 });
+    expect(firstPage.recommendations).toEqual([
+      expect.objectContaining({ recommendationId: pendingRecommendationId }),
+    ]);
+    expect(secondPage).toMatchObject({ page: 2, pageSize: 1, total: 1, totalPages: 1 });
+    expect(secondPage.recommendations).toEqual([]);
+    expect(acceptedEvidence).toMatchObject({
+      recommendationId: acceptedRecommendationId,
+      total: 4,
+    });
+
+    await app.close();
+  });
+
   it("serves privacy-bounded tailoring policy revision history", async () => {
     const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
     const reviewId = `learning-recommendation-review:${"b".repeat(64)}`;
