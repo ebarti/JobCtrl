@@ -222,15 +222,10 @@ describe("preparation RPC contracts", () => {
 
   it("parses and defaults rescore_job request payloads", () => {
     const parsed = RescoreJobParamsSchema.parse({
-      jobUrl: "https://example.test/job/1",
+      jobId: CANONICAL_JOB_ID,
     });
 
     expect(parsed).toEqual({
-      tenantId: "local",
-      jobUrl: "https://example.test/job/1",
-      dryRun: false,
-    });
-    expect(RescoreJobParamsSchema.parse({ jobId: CANONICAL_JOB_ID })).toEqual({
       tenantId: "local",
       jobId: CANONICAL_JOB_ID,
       dryRun: false,
@@ -377,17 +372,10 @@ describe("preparation RPC contracts", () => {
 
   it("parses and defaults retailor_job request payloads", () => {
     const parsed = RetailorJobParamsSchema.parse({
-      jobUrl: "https://example.test/job/1",
+      jobId: CANONICAL_JOB_ID,
     });
 
     expect(parsed).toEqual({
-      tenantId: "local",
-      jobUrl: "https://example.test/job/1",
-      dryRun: false,
-      suppressExistingArtifacts: true,
-      tailorModels: [],
-    });
-    expect(RetailorJobParamsSchema.parse({ jobId: CANONICAL_JOB_ID })).toEqual({
       tenantId: "local",
       jobId: CANONICAL_JOB_ID,
       dryRun: false,
@@ -431,7 +419,7 @@ describe("preparation RPC contracts", () => {
     ).toThrow();
     expect(() =>
       RetailorJobParamsSchema.parse({
-        jobUrl: "https://example.test/job/1",
+        jobId: CANONICAL_JOB_ID,
         tailorJudgeMinScore: 1.1,
       }),
     ).toThrow();

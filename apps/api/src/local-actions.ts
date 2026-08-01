@@ -133,6 +133,16 @@ export function createActionDispatcher(
       return { status: "reset", message: "Stage reset for retry." };
     }
 
+    if (
+      (command.action === "rescore_job" || command.action === "retailor_job") &&
+      !command.jobId
+    ) {
+      return {
+        status: "failed",
+        message: "Pipeline job selection requires a canonical jobId.",
+      };
+    }
+
     const rpcCall = mapCommandToRpc(command, context);
     if (!rpcCall) {
       return {
@@ -482,7 +492,7 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
         tenantId: "local",
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
-        ...(command.jobId ? { jobId: command.jobId } : { jobUrl: command.jobKey }),
+        jobId: command.jobId,
         dryRun: Boolean(command.dryRun),
         ...(command.reason ? { reason: command.reason } : {}),
       },
@@ -511,11 +521,7 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
   if (command.action === "retailor_job") {
     return {
       method: "retailor_job",
-      params: retailorRpcParams(
-        command,
-        context,
-        command.jobId ? { jobId: command.jobId } : { jobUrl: command.jobKey },
-      ),
+      params: retailorRpcParams(command, context, { jobId: command.jobId! }),
     };
   }
   if (command.action === "retailor_current_policy") {
@@ -677,7 +683,7 @@ function tailorRpcParams(
   return params;
 }
 
-type PreparationJobLocator = { jobId: string } | { jobUrl: string };
+type PreparationJobLocator = { jobId: string };
 
 function retailorRpcParams(
   command: ActionCommandPayload,

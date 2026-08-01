@@ -1412,9 +1412,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         if (!jobUrl) {
           return { ok: false, error: "job_not_found" };
         }
+        const jobId = requireJobId(db, jobUrl);
         const command: ActionCommandPayload = {
           action: "rescore_job",
-          jobKey: jobUrl,
+          jobKey: jobId,
+          jobId,
           dryRun: body.dryRun,
         };
         if (body.reason) command.reason = body.reason;
@@ -1711,9 +1713,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         if (!jobUrl) {
           return { ok: false, error: "job_not_found" };
         }
+        const jobId = requireJobId(db, jobUrl);
         const command: ActionCommandPayload = {
           action: "retailor_job",
-          jobKey: jobUrl,
+          jobKey: jobId,
+          jobId,
           dryRun: body.dryRun,
           suppressExistingArtifacts: body.suppressExistingArtifacts,
           tailorModels: body.tailorModels,
@@ -1731,7 +1735,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           message: "Current-policy re-tailoring requested by user",
           payload: {
             tenantId: "local",
-            jobId: jobUrl,
+            jobId,
             dryRun: body.dryRun,
             reason: body.reason ?? "current_policy_retailor",
             suppressExistingArtifacts: body.suppressExistingArtifacts,
@@ -3482,6 +3486,14 @@ function candidateJobUrls(
     }
   }
   return [...unique];
+}
+
+function requireJobId(db: ApiDb, jobLocator: string): string {
+  const jobId = resolveJobId(db, "local", jobLocator);
+  if (!jobId) {
+    throw new InputError(`Unknown job selection: ${jobLocator}`);
+  }
+  return jobId;
 }
 
 function firstEligiblePendingPreparationStage(

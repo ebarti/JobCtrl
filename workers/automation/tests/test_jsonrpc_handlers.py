@@ -997,13 +997,13 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tenantId": "local",
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
-                "jobUrl": "https://example.com/job/score",
+                "jobId": "20000000-0000-4000-8000-000000000001",
                 "dryRun": True,
             },
             {
                 "steps": ["score"],
                 "rescore": True,
-                "job_url": "https://example.com/job/score",
+                "job_id": JobId("20000000-0000-4000-8000-000000000001"),
             },
         ),
         (
@@ -1062,7 +1062,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tenantId": "local",
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
-                "jobUrl": "https://example.com/job/tailor",
+                "jobId": "20000000-0000-4000-8000-000000000009",
                 "dryRun": True,
                 "suppressExistingArtifacts": False,
                 "tailorModels": ["local:draft-a"],
@@ -1072,7 +1072,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
             {
                 "steps": ["tailor", "cover", "pdf"],
                 "retailor": True,
-                "job_url": "https://example.com/job/tailor",
+                "job_id": JobId("20000000-0000-4000-8000-000000000009"),
                 "suppress_existing_artifacts": False,
                 "tailor_models": ("local:draft-a",),
                 "tailor_judge_model": "gemini:judge-c",
@@ -1085,12 +1085,12 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tenantId": "local",
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
-                "jobUrl": "https://example.com/job/tailor",
+                "jobId": "20000000-0000-4000-8000-000000000010",
             },
             {
                 "steps": ["tailor", "cover", "pdf"],
                 "retailor": True,
-                "job_url": "https://example.com/job/tailor",
+                "job_id": JobId("20000000-0000-4000-8000-000000000010"),
                 "suppress_existing_artifacts": False,
             },
         ),
@@ -1159,11 +1159,17 @@ def test_current_policy_maintenance_methods_start_pipeline_workflows(
         return _StubHandle("maintenance-wf", "maintenance-run")
 
     if method in {"rescore_job", "tailor_job", "retailor_job"}:
-        job_url = str(params["jobUrl"])
+        if method in {"rescore_job", "retailor_job"}:
+            job_id = JobId(str(params["jobId"]))
+            job_url = f"https://example.com/job/{method}"
+        else:
+            job_url = str(params["jobUrl"])
+            job_id = None
         job_id = _seed_v7_current_locator(
             get_connection(tmp_db),
             tenant_id=TenantId("local"),
             job_url=job_url,
+            job_id=job_id,
         )
         expected_payload = {
             key: value
@@ -1237,10 +1243,15 @@ def test_v7_job_url_workflow_locators_are_tenant_scoped(tmp_db: Path, monkeypatc
         ("tailor_job", tenant_b, job_id_b),
         ("retailor_job", tenant_a, job_id_a),
     ):
+        params: dict[str, str] = {"tenantId": str(tenant_id)}
+        if method in {"rescore_job", "retailor_job"}:
+            params["jobId"] = str(expected_job_id)
+        else:
+            params["jobUrl"] = job_url
         response = server.dispatch(
             JsonRpcRequest(
                 method=method,
-                params={"tenantId": str(tenant_id), "jobUrl": job_url},
+                params=params,
                 id=1,
             )
         )
@@ -1318,22 +1329,26 @@ def test_v7_job_id_workflow_targets_are_loaded_directly_and_tenant_scoped(
 @pytest.mark.parametrize(
     ("params", "expected_message"),
     [
-        ({"tenantId": "local"}, "provide exactly one of jobId or jobUrl"),
+        ({"tenantId": "local"}, "missing required param: jobId"),
+        (
+            {"tenantId": "local", "jobUrl": "https://example.com/jobs/legacy"},
+            "jobUrl is not supported",
+        ),
         (
             {
                 "tenantId": "local",
                 "jobId": "50000000-0000-4000-8000-000000000005",
                 "jobUrl": "https://example.com/jobs/both",
             },
-            "provide exactly one of jobId or jobUrl",
+            "jobUrl is not supported",
         ),
         (
             {"tenantId": "local", "jobId": "https://example.com/jobs/not-an-id"},
-            "invalid jobId",
+            "JobId must be a canonical UUID",
         ),
     ],
 )
-def test_v7_direct_preparation_identity_requires_exactly_one_valid_locator(
+def test_v7_direct_preparation_identity_requires_one_canonical_job_id(
     tmp_db: Path,
     method: str,
     params: dict[str, object],
@@ -1349,7 +1364,7 @@ def test_v7_direct_preparation_identity_requires_exactly_one_valid_locator(
 
 @pytest.mark.parametrize(
     "method",
-    ("rescore_job", "tailor_job", "retailor_job", "analyze_job"),
+    ("tailor_job", "analyze_job"),
 )
 def test_v7_job_url_locators_reject_unknown_and_retired_jobs(
     tmp_db: Path,
