@@ -11,6 +11,7 @@ export { applyReviewKeys } from "./applyReviewKeys.js";
 export { outcomesKeys } from "./outcomesKeys.js";
 export { workflowRunsKeys } from "./workflowRunsKeys.js";
 export { healthKeys } from "./healthKeys.js";
+export { learningKeys } from "./learningKeys.js";
 export { profileKeys } from "../profile/queryKeys.js";
 export { discoveryKeys } from "../discovery/queryKeys.js";
 export { enrichmentKeys } from "../enrichment/queryKeys.js";

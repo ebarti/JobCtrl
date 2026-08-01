@@ -83,6 +83,12 @@ import type {
   JobListQuery,
   JobMutationResponse,
   JobSummary,
+  LearningRecommendationEvidenceListQuery,
+  LearningRecommendationEvidenceListResponse,
+  LearningRecommendationListQuery,
+  LearningRecommendationListResponse,
+  LearningRecommendationReviewRequest,
+  LearningRecommendationReviewResponse,
   MarkJobActionRequest,
   ManualCaptureDismissRequest,
   ManualCaptureDismissResponse,
@@ -192,6 +198,17 @@ export interface ApiClientPort {
   dashboardSummary(): Promise<DashboardSummary>;
   pipelineOperations(): Promise<PipelineOperationsSnapshot>;
   outcomeAnalytics(): Promise<OutcomeAnalyticsSummary>;
+  learningRecommendations(
+    query?: Partial<LearningRecommendationListQuery>,
+  ): Promise<LearningRecommendationListResponse>;
+  learningRecommendationEvidence(
+    recommendationId: string,
+    query?: Partial<LearningRecommendationEvidenceListQuery>,
+  ): Promise<LearningRecommendationEvidenceListResponse>;
+  reviewLearningRecommendation(
+    recommendationId: string,
+    body: LearningRecommendationReviewRequest,
+  ): Promise<LearningRecommendationReviewResponse>;
   digest(): Promise<DailyDigest>;
   acknowledgeDigest(body?: DigestAcknowledgeRequest): Promise<DigestAcknowledgeResponse>;
   activity(query?: Partial<ActivityListQuery>): Promise<PaginatedResponse<ActivityEventSummary>>;
