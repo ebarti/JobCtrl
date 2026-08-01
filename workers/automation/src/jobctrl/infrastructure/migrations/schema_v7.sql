@@ -1720,10 +1720,62 @@ CREATE TABLE resume_review_comment_replies (
       FOREIGN KEY (tenant_id, thread_id)
         REFERENCES resume_review_comment_threads(tenant_id, thread_id)
         ON DELETE CASCADE,
-      FOREIGN KEY (tenant_id, draft_revision_id)
+        FOREIGN KEY (tenant_id, draft_revision_id)
         REFERENCES resume_review_draft_revisions(tenant_id, revision_id)
         ON DELETE CASCADE
     );
+CREATE TABLE tailoring_feedback_signal_reviews (
+      tenant_id        TEXT NOT NULL DEFAULT 'local',
+      review_id        TEXT NOT NULL,
+      signal_id        TEXT NOT NULL,
+      revision         INTEGER NOT NULL CHECK(revision > 0),
+      decision         TEXT NOT NULL CHECK(decision IN ('accepted', 'rejected')),
+      signal_kind      TEXT NOT NULL CHECK(signal_kind IN (
+        'style_preference',
+        'factual_correction',
+        'claim_policy_correction',
+        'keyword_strategy',
+        'provenance_dispute'
+      )),
+      rule_key         TEXT,
+      rule_value       TEXT,
+      allowlist_version INTEGER NOT NULL CHECK(allowlist_version > 0),
+      reviewed_at      TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, review_id),
+      UNIQUE (tenant_id, signal_id, revision),
+      CHECK (
+        (decision = 'accepted'
+          AND rule_key IS NOT NULL
+          AND length(rule_key) BETWEEN 1 AND 80
+          AND rule_key NOT GLOB '*[^a-z0-9_]*'
+          AND rule_value IS NOT NULL
+          AND length(rule_value) BETWEEN 1 AND 160
+          AND rule_value NOT GLOB '*[^a-z0-9_]*')
+        OR
+        (decision = 'rejected' AND rule_key IS NULL AND rule_value IS NULL)
+      )
+    );
+CREATE TRIGGER validate_tailoring_feedback_signal_review_source
+BEFORE INSERT ON tailoring_feedback_signal_reviews
+BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM tailoring_feedback_signals
+    WHERE tenant_id = NEW.tenant_id
+      AND signal_id = NEW.signal_id
+      AND signal_kind = NEW.signal_kind
+  ) THEN RAISE(ABORT, 'tailoring feedback review source mismatch') END;
+END;
+CREATE TRIGGER prevent_tailoring_feedback_signal_review_update
+BEFORE UPDATE ON tailoring_feedback_signal_reviews
+BEGIN
+  SELECT RAISE(ABORT, 'tailoring feedback reviews are append-only');
+END;
+CREATE TRIGGER prevent_tailoring_feedback_signal_review_delete
+BEFORE DELETE ON tailoring_feedback_signal_reviews
+BEGIN
+  SELECT RAISE(ABORT, 'tailoring feedback reviews are append-only');
+END;
 CREATE TABLE tailoring_feedback_signals (
       tenant_id         TEXT NOT NULL DEFAULT 'local',
       signal_id         TEXT NOT NULL,
@@ -2106,6 +2158,10 @@ CREATE INDEX idx_tailoring_feedback_signals_draft
       ON tailoring_feedback_signals(tenant_id, draft_id, created_at DESC);
 CREATE INDEX idx_tailoring_feedback_signals_job
       ON tailoring_feedback_signals(tenant_id, job_id, created_at DESC);
+CREATE INDEX idx_tailoring_feedback_signal_reviews_signal
+      ON tailoring_feedback_signal_reviews(tenant_id, signal_id, revision DESC);
+CREATE INDEX idx_tailoring_feedback_signal_reviews_decision
+      ON tailoring_feedback_signal_reviews(tenant_id, decision, reviewed_at DESC);
 CREATE INDEX idx_workflow_run_projections_tenant_started
         ON workflow_run_projections(tenant_id, started_at DESC, workflow_id DESC)
         ;

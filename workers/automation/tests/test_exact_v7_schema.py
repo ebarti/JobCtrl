@@ -38,6 +38,7 @@ _CROSS_RUNTIME_DURABLE_TABLES = {
     "resume_review_drafts",
     "resume_review_edit_deltas",
     "tailoring_feedback_signals",
+    "tailoring_feedback_signal_reviews",
     "worker_runtime_heartbeats",
 }
 
@@ -485,6 +486,140 @@ def test_job_score_keywords_exact_schema_contract(tmp_path: Path) -> None:
     )
     assert conn.execute("SELECT COUNT(*) FROM job_score_keywords").fetchone()[0] == 0
     assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
+    close_connection(db_path)
+
+
+def test_tailoring_feedback_reviews_are_structured_append_only_facts(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    job_id = "11111111-1111-4111-8111-111111111112"
+    conn.execute(
+        "INSERT INTO jobs (tenant_id, job_id, url) VALUES (?, ?, ?)",
+        ("local", job_id, "https://jobs.example/feedback-review"),
+    )
+    conn.execute(
+        """
+        INSERT INTO resume_review_drafts (
+            tenant_id, draft_id, job_id, base_generation, created_at, updated_at
+        ) VALUES ('local', 'draft-1', ?, 1, ?, ?)
+        """,
+        (job_id, "2026-08-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+    )
+    conn.execute(
+        """
+        INSERT INTO tailoring_feedback_signals (
+            tenant_id, signal_id, job_id, draft_id, source_kind, source_id,
+            signal_kind, status, summary, created_at
+        ) VALUES (
+            'local', 'signal-1', ?, 'draft-1', 'edit_delta', 'delta-1',
+            'factual_correction', 'candidate', 'private source text', ?
+        )
+        """,
+        (job_id, "2026-08-01T00:01:00Z"),
+    )
+    conn.execute(
+        """
+        INSERT INTO tailoring_feedback_signal_reviews (
+            tenant_id, review_id, signal_id, revision, decision, signal_kind,
+            rule_key, rule_value, allowlist_version, reviewed_at
+        ) VALUES (
+            'local', 'review-1', 'signal-1', 1, 'accepted',
+            'factual_correction', 'fact_handling', 'require_source_match', 1, ?
+        )
+        """,
+        ("2026-08-01T00:02:00Z",),
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO tailoring_feedback_signal_reviews (
+                tenant_id, review_id, signal_id, revision, decision, signal_kind,
+                rule_key, rule_value, allowlist_version, reviewed_at
+            ) VALUES (
+                'local', 'review-duplicate', 'signal-1', 1, 'rejected',
+                'factual_correction', NULL, NULL, 1, ?
+            )
+            """,
+            ("2026-08-01T00:03:00Z",),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="source mismatch"):
+        conn.execute(
+            """
+            INSERT INTO tailoring_feedback_signal_reviews (
+                tenant_id, review_id, signal_id, revision, decision, signal_kind,
+                rule_key, rule_value, allowlist_version, reviewed_at
+            ) VALUES (
+                'local', 'review-kind-mismatch', 'signal-1', 2, 'accepted',
+                'style_preference', 'resume_style', 'concise', 1, ?
+            )
+            """,
+            ("2026-08-01T00:03:00Z",),
+        )
+    for rule_key, rule_value in (
+        (None, None),
+        ("free text", "require_source_match"),
+        ("fact_handling", "free text"),
+    ):
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                INSERT INTO tailoring_feedback_signal_reviews (
+                    tenant_id, review_id, signal_id, revision, decision,
+                    signal_kind, rule_key, rule_value, allowlist_version,
+                    reviewed_at
+                ) VALUES (
+                    'local', ?, 'signal-1', ?, 'accepted',
+                    'factual_correction', ?, ?, 1, ?
+                )
+                """,
+                (
+                    f"review-invalid-{rule_key}-{rule_value}",
+                    10 + len(str(rule_key)),
+                    rule_key,
+                    rule_value,
+                    "2026-08-01T00:04:00Z",
+                ),
+            )
+
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        conn.execute(
+            """
+            UPDATE tailoring_feedback_signal_reviews
+            SET rule_value = 'silently_changed'
+            WHERE tenant_id = 'local' AND review_id = 'review-1'
+            """
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        conn.execute(
+            """
+            DELETE FROM tailoring_feedback_signal_reviews
+            WHERE tenant_id = 'local' AND review_id = 'review-1'
+            """
+        )
+
+    conn.execute(
+        "DELETE FROM tailoring_feedback_signals WHERE tenant_id = 'local' AND signal_id = 'signal-1'"
+    )
+    assert [
+        tuple(row)
+        for row in conn.execute(
+            "SELECT decision, rule_key, rule_value FROM tailoring_feedback_signal_reviews"
+        ).fetchall()
+    ] == [("accepted", "fact_handling", "require_source_match")]
+    assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
+
+    indexes = {
+        str(index[1])
+        for index in conn.execute("PRAGMA index_list(tailoring_feedback_signal_reviews)")
+    }
+    assert {
+        "idx_tailoring_feedback_signal_reviews_signal",
+        "idx_tailoring_feedback_signal_reviews_decision",
+    } <= indexes
     close_connection(db_path)
 
 

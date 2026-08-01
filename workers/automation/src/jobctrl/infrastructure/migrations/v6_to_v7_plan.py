@@ -234,6 +234,13 @@ def _table_plans() -> dict[str, TablePlan]:
         source_exists=False,
         source_required=False,
     )
+    # Structured tailoring reviews are append-only exact-v7 audit facts. The
+    # v6 source has only raw candidate signals, so no review row is inferred.
+    plans["tailoring_feedback_signal_reviews"] = TablePlan(
+        TableDisposition.DIRECT_COPY,
+        source_exists=False,
+        source_required=False,
+    )
     plans["discovery_run_projections"] = TablePlan(
         TableDisposition.RETIRED,
         target_exists=False,
@@ -524,6 +531,7 @@ _DECLARED_COLUMNS: Final[Mapping[str, frozenset[str]]] = _column_manifest(
         "source_quality_stats": "tenant_id source_id window_start window_end run_count failed_run_count consecutive_failures observed_jobs new_jobs existing_jobs duplicate_jobs active_jobs stale_jobs detail_success_count detail_failure_count active_verification_rate duplicate_rate full_description_success_rate apply_url_success_rate last_run_id last_error_class recommended_state updated_at",
         "source_registry_entries": "tenant_id source_id kind display_name owner priority state policy_id seed_url created_at updated_at",
         "tailoring_feedback_signals": "tenant_id signal_id job_key job_id draft_id draft_revision_id source_kind source_id signal_kind status summary section semantic_id created_at reviewed_at",
+        "tailoring_feedback_signal_reviews": "tenant_id review_id signal_id revision decision signal_kind rule_key rule_value allowlist_version reviewed_at",
         "tailoring_policies": "tenant_id version prompt_version schema_version judge_schema_version prompt_fingerprint config_fingerprint profile_policy_fingerprint custom_prompt_fingerprint generator_settings_json judge_settings_json runtime_settings_json rollback_of_version rollback_reason created_at created_from_event_id",
         "worker_runtime_heartbeats": "worker_id component pid hostname app_dir db_path task_queue started_at last_seen_at max_concurrent_activities activity_executor_max_workers active_activity_count active_activity_counts_json active_activity_details_json active_activity_details_total active_activity_details_truncated activity_duration_summary_json task_queue_observation_json heartbeat_schema_version",
         "workflow_run_projections": "workflow_id tenant_id workflow_type status input_summary_json error_code error_message retryable started_at finished_at duration_ms temporal_run_id events_json",
