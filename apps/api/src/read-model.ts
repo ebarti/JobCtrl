@@ -278,6 +278,11 @@ interface WorkflowRunProjectionRow extends Record<string, unknown> {
   apply_dry_run?: number | null;
   apply_model?: string | null;
   apply_result?: string | null;
+  // Preparation enrichment (LEFT JOIN job_list_projections) — resolved only
+  // from the canonical JobId recorded in input_summary_json.
+  related_job_id?: string | null;
+  related_job_title?: string | null;
+  related_job_employer?: string | null;
 }
 
 interface SourceQualityProjectionRow extends Record<string, unknown> {
@@ -5916,11 +5921,11 @@ function applyWorkflowLifecycleFold(
  * in one list, then re-folds each row's lifecycle from `job_events` (see
  * `loadWorkflowRunLifecycleFolds`) so a stale terminal outcome from a superseded
  * execution never leaks onto a run the current execution has restarted.
- * Apply rows are enriched with job context via a LEFT JOIN to
- * `apply_run_projections` (the apply-specific detail projection); non-apply
- * rows show their workflow type instead of a job title. The `runId` equals
- * the Temporal `workflow_id`, so the Temporal Web UI deep-link uses it
- * verbatim.
+ * Apply rows are enriched with job context via `apply_run_projections` (the
+ * apply-specific detail projection). Preparation rows resolve the canonical
+ * JobId in their input summary against the tenant-scoped job read model. The
+ * `runId` equals the Temporal `workflow_id`, so the Temporal Web UI deep-link
+ * uses it verbatim.
  */
 export function listWorkflowRuns(
   db: SqliteDatabase,
@@ -5932,15 +5937,25 @@ export function listWorkflowRuns(
   const applySelect = `, arp.job_id AS apply_job_id, arp.job_title AS job_title,
        arp.job_employer AS job_employer, arp.dry_run AS apply_dry_run,
        arp.model AS apply_model, arp.result AS apply_result`;
-  // Deleted / hidden filters apply to the enriched apply job only; non-apply
-  // rows have a NULL apply_job_id and pass through untouched.
+  const relatedJobJoin = ` LEFT JOIN job_list_projections rjp
+    ON wrp.workflow_type = 'JobPreparationWorkflow'
+   AND rjp.tenant_id = wrp.tenant_id
+   AND rjp.job_id = CASE
+     WHEN json_valid(wrp.input_summary_json)
+     THEN json_extract(wrp.input_summary_json, '$.jobId')
+     ELSE NULL
+   END`;
+  const relatedJobSelect = `, rjp.job_id AS related_job_id,
+       rjp.title AS related_job_title, rjp.employer AS related_job_employer`;
+  // Deleted / hidden filters apply to any run with canonical job context;
+  // Discover and other job-independent rows pass through untouched.
   const deletedJoin = ` LEFT JOIN jobctrl_deleted_jobs d
-    ON d.tenant_id = arp.tenant_id
-   AND d.job_id = arp.job_id
+    ON d.tenant_id = wrp.tenant_id
+   AND d.job_id = COALESCE(arp.job_id, rjp.job_id)
    AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))`;
   const hiddenJoin = ` LEFT JOIN jobctrl_hidden_jobs h
-    ON h.tenant_id = arp.tenant_id
-   AND h.job_id = arp.job_id
+    ON h.tenant_id = wrp.tenant_id
+   AND h.job_id = COALESCE(arp.job_id, rjp.job_id)
    AND h.unhidden_at IS NULL`;
   const where: string[] = ["wrp.tenant_id = ?"];
   const params: SqliteValue[] = [DEFAULT_TENANT];
@@ -5948,7 +5963,7 @@ export function listWorkflowRuns(
   const whereSql = where.length ? ` WHERE ${where.join(" AND ")}` : "";
   const rows = allRows<WorkflowRunProjectionRow>(
     db,
-    `SELECT wrp.*${applySelect} FROM workflow_run_projections wrp${applyJoin}${deletedJoin}${hiddenJoin}${whereSql}
+    `SELECT wrp.*${applySelect}${relatedJobSelect} FROM workflow_run_projections wrp${applyJoin}${relatedJobJoin}${deletedJoin}${hiddenJoin}${whereSql}
      ORDER BY wrp.started_at DESC, wrp.workflow_id DESC`,
     params,
   );
@@ -5979,10 +5994,10 @@ function workflowRunsFilterPayload(query: WorkflowRunsListQuery): Record<string,
 
 /**
  * Workflow run detail (Temporal loop closure — P0). Reads one
- * `workflow_run_projections` row (enriched with apply job context when the
- * run is an apply workflow) and returns the full `WorkflowRunDetail` shape,
- * including the folded lifecycle timeline. Returns `null` when the run id is
- * unknown.
+ * `workflow_run_projections` row (enriched with canonical job context when the
+ * run is an apply or preparation workflow) and returns the full
+ * `WorkflowRunDetail` shape, including the folded lifecycle timeline. Returns
+ * `null` when the run id is unknown.
  */
 export function getWorkflowRunDetail(
   db: SqliteDatabase,
@@ -5994,9 +6009,19 @@ export function getWorkflowRunDetail(
   const applySelect = `, arp.job_id AS apply_job_id, arp.job_title AS job_title,
        arp.job_employer AS job_employer, arp.dry_run AS apply_dry_run,
        arp.model AS apply_model, arp.result AS apply_result`;
+  const relatedJobJoin = ` LEFT JOIN job_list_projections rjp
+    ON wrp.workflow_type = 'JobPreparationWorkflow'
+   AND rjp.tenant_id = wrp.tenant_id
+   AND rjp.job_id = CASE
+     WHEN json_valid(wrp.input_summary_json)
+     THEN json_extract(wrp.input_summary_json, '$.jobId')
+     ELSE NULL
+   END`;
+  const relatedJobSelect = `, rjp.job_id AS related_job_id,
+       rjp.title AS related_job_title, rjp.employer AS related_job_employer`;
   const rawRow = getRow<WorkflowRunProjectionRow>(
     db,
-    `SELECT wrp.*${applySelect} FROM workflow_run_projections wrp${applyJoin}
+    `SELECT wrp.*${applySelect}${relatedJobSelect} FROM workflow_run_projections wrp${applyJoin}${relatedJobJoin}
      WHERE wrp.tenant_id = ? AND wrp.workflow_id = ?`,
     [DEFAULT_TENANT, runId],
   );
@@ -6089,9 +6114,12 @@ function rowToWorkflowRunSummary(row: WorkflowRunProjectionRow): WorkflowRunSumm
     workflowType === "ApplyWorkflow" &&
     (inputSummary.autoApplyLoop === true || inputSummary.auto_apply_loop === true) &&
     inputSummary.continuous === true;
-  // Apply rows carry job context via the LEFT JOIN; non-apply rows have a
-  // NULL apply_job_id and surface their workflow type instead of a job title.
+  // Apply context remains authoritative for apply runs. Preparation context
+  // comes only from the canonical JobId join; job-independent runs continue to
+  // surface their workflow type.
   const hasApplyJob = Boolean(stringField(row.apply_job_id));
+  const jobKey = stringField(row.apply_job_id) || stringField(row.related_job_id);
+  const hasJob = Boolean(jobKey);
   const dryRun = hasApplyJob
     ? Boolean(row.apply_dry_run)
     : inputSummaryDryRun(inputSummary);
@@ -6099,14 +6127,17 @@ function rowToWorkflowRunSummary(row: WorkflowRunProjectionRow): WorkflowRunSumm
     workflowId,
     runId: workflowId,
     workflowType,
-    jobKey: stringField(row.apply_job_id),
+    jobKey,
     title:
       (isStandingApplyLoop ? "Standing apply loop" : "") ||
       stringField(row.job_title) ||
-      (hasApplyJob ? "Untitled" : workflowType || "Workflow run"),
+      stringField(row.related_job_title) ||
+      (hasJob ? "Untitled" : workflowType || "Workflow run"),
     company:
       (isStandingApplyLoop ? "Auto apply" : "") ||
-      stringField(row.job_employer) || (hasApplyJob ? "Unknown company" : ""),
+      stringField(row.job_employer) ||
+      stringField(row.related_job_employer) ||
+      (hasJob ? "Unknown company" : ""),
     status: normalizeWorkflowRunStatus(row.status),
     result: nullableString(row.apply_result),
     dryRun,

@@ -5199,6 +5199,104 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("enriches preparation workflow list and detail from its canonical tenant-scoped JobId", async () => {
+    const jobId = jobIdFor("https://example.com/jobs/ready");
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `INSERT INTO job_list_projections (tenant_id, job_id, title, employer)
+       VALUES (?, ?, ?, ?)`,
+    ).run("other", jobId, "Wrong tenant title", "Wrong tenant employer");
+    insertDiscoverWorkflowRunRow(db, {
+      workflowId: "prepare-local",
+      workflowType: "JobPreparationWorkflow",
+      status: "succeeded",
+      inputSummary: { jobId, dryRun: true, steps: ["tailor", "cover"] },
+      startedAt: "2026-04-29T10:26:00+00:00",
+      finishedAt: "2026-04-29T10:27:00+00:00",
+      durationMs: 60_000,
+      temporalRunId: "temporal-prepare-run",
+      eventsJson: JSON.stringify([
+        {
+          eventType: "WorkflowStarted",
+          occurredAt: "2026-04-29T10:26:00+00:00",
+          status: "in_progress",
+          message: null,
+        },
+        {
+          eventType: "WorkflowCompleted",
+          occurredAt: "2026-04-29T10:27:00+00:00",
+          status: "succeeded",
+          message: null,
+        },
+      ]),
+    });
+    insertDiscoverWorkflowRunRow(db, {
+      workflowId: "prepare-url-shaped",
+      workflowType: "JobPreparationWorkflow",
+      status: "queued",
+      inputSummary: { jobId: "https://example.com/jobs/ready" },
+      startedAt: "2026-04-29T10:25:00+00:00",
+    });
+    insertDiscoverWorkflowRunRow(db, {
+      workflowId: "discover-with-job-id",
+      status: "queued",
+      inputSummary: { jobId },
+      startedAt: "2026-04-29T10:24:00+00:00",
+    });
+    db.close();
+
+    const app = buildApp(options);
+    try {
+      const listResponse = await app.inject({ method: "GET", url: "/v1/workflow-runs" });
+      expect(listResponse.statusCode, listResponse.body).toBe(200);
+      const summary = listResponse
+        .json()
+        .items.find((item: { workflowId: string }) => item.workflowId === "prepare-local");
+      expect(summary).toMatchObject({
+        workflowId: "prepare-local",
+        workflowType: "JobPreparationWorkflow",
+        jobKey: jobId,
+        title: "Platform Engineer",
+        company: "ExampleCo",
+        status: "succeeded",
+        dryRun: true,
+      });
+      const urlShapedSummary = listResponse
+        .json()
+        .items.find((item: { workflowId: string }) => item.workflowId === "prepare-url-shaped");
+      expect(urlShapedSummary).toMatchObject({
+        jobKey: "",
+        title: "JobPreparationWorkflow",
+        company: "",
+      });
+      const discoverSummary = listResponse
+        .json()
+        .items.find((item: { workflowId: string }) => item.workflowId === "discover-with-job-id");
+      expect(discoverSummary).toMatchObject({
+        jobKey: "",
+        title: "DiscoverWorkflow",
+        company: "",
+      });
+
+      const detailResponse = await app.inject({ method: "GET", url: "/v1/workflow-runs/prepare-local" });
+      expect(detailResponse.statusCode, detailResponse.body).toBe(200);
+      expect(detailResponse.json()).toMatchObject({
+        workflowId: "prepare-local",
+        workflowType: "JobPreparationWorkflow",
+        jobKey: jobId,
+        title: "Platform Engineer",
+        company: "ExampleCo",
+        inputSummary: { jobId, dryRun: true, steps: ["tailor", "cover"] },
+        events: [
+          { eventType: "WorkflowStarted", status: "in_progress" },
+          { eventType: "WorkflowCompleted", status: "succeeded" },
+        ],
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("surfaces the standing auto-apply loop as an operations workflow run", async () => {
     const db = new Database(options.dbPath);
     db.prepare(
