@@ -23,6 +23,7 @@ from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.discovery.jobspy import store_jobspy_results
 from jobctrl.infrastructure.compensation import SqlitePostedCompensationRepository
+from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobctrl.infrastructure.discovery.sqlite_search_unit_repository import (
     DiscoverySearchPlanConflict,
@@ -593,20 +594,20 @@ def test_mid_event_supersession_is_fenced_and_retry_repairs_audit_rows(
             "reject_patterns": [],
         },
     }
-    original_set_identity = SqliteJobRepository.set_canonical_identity
+    original_publish = DurableJobEventPublisher.publish
     reclaimed: list = []
 
-    def reclaim_before_identity(self, tenant_id, job_id, identity):
+    def reclaim_before_event(self, event):
         if not reclaimed:
             next_lease = search_units.claim_next(execution, "attempt-2", 2)
             assert next_lease is not None
             reclaimed.append(next_lease)
-        return original_set_identity(self, tenant_id, job_id, identity)
+        return original_publish(self, event)
 
     monkeypatch.setattr(
-        SqliteJobRepository,
-        "set_canonical_identity",
-        reclaim_before_identity,
+        DurableJobEventPublisher,
+        "publish",
+        reclaim_before_event,
     )
 
     with pytest.raises(StaleDiscoverySearchUnitLease):
@@ -632,9 +633,29 @@ def test_mid_event_supersession_is_fenced_and_retry_repairs_audit_rows(
             "SELECT COUNT(*) FROM job_canonical_identities WHERE job_url = ?",
             ("https://example.test/jobs/mid-event",),
         ).fetchone()[0]
-        == 0
+        == 1
     )
     assert reclaimed
+    assert (
+        search_db.execute(
+            """
+            SELECT COUNT(*) FROM job_source_observations
+            WHERE job_id = (SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?)
+            """,
+            (str(LOCAL_TENANT), "https://example.test/jobs/mid-event"),
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        search_db.execute(
+            """
+            SELECT COUNT(*) FROM job_events
+            WHERE job_id = (SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?)
+            """,
+            (str(LOCAL_TENANT), "https://example.test/jobs/mid-event"),
+        ).fetchone()[0]
+        == 0
+    )
 
     resumed = store_jobspy_results(
         search_db,
