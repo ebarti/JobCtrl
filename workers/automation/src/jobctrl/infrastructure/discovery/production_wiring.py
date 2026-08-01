@@ -45,6 +45,7 @@ from jobctrl.domain.discovery.use_cases import (
     default_canonical_identity,
 )
 from jobctrl.domain.discovery.value_objects import (
+    Employer,
     JobMetadata,
     PostingUrl,
     SearchStrategy,
@@ -2003,9 +2004,11 @@ def _manual_capture_posting(
     originating_url: str,
 ) -> ScrapedJobPosting:
     title = _extract_title(content) or "User-mediated captured posting"
+    employer_name = _extract_employer(content)
     return ScrapedJobPosting(
         posting_url=PostingUrl(value=url),
         source=Source(board="User-mediated capture"),
+        employer=(Employer(name=employer_name) if employer_name else Employer.unknown()),
         metadata=JobMetadata(
             title=title,
             salary="",
@@ -2253,6 +2256,18 @@ def _extract_title(content: str) -> str:
     match = re.search(r"<title>(.*?)</title>", content, flags=re.IGNORECASE | re.DOTALL)
     if match:
         return re.sub(r"\s+", " ", match.group(1)).strip()
+    return ""
+
+
+def _extract_employer(content: str) -> str:
+    for item in _extract_json_ld(content):
+        organization = item.get("hiringOrganization")
+        if isinstance(organization, dict):
+            name = organization.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        elif isinstance(organization, str) and organization.strip():
+            return organization.strip()
     return ""
 
 

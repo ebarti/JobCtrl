@@ -10,6 +10,7 @@ from jobctrl.discovery import smartextract
 from jobctrl.domain.identifiers import generate_job_id
 from jobctrl.domain.discovery import (
     AtsKind,
+    Employer,
     JobMetadata,
     PostingUrl,
     SearchStrategy,
@@ -121,7 +122,7 @@ def _ats_posting(
     *,
     canonical_url: str,
     description: str,
-    board: str = "Acme",
+    board: str = "greenhouse",
     title: str = "Staff Platform Engineer",
     source_id: str = "greenhouse:acme",
     source_native_id: str = "gh-1",
@@ -130,6 +131,7 @@ def _ats_posting(
     return ScrapedJobPosting(
         posting_url=PostingUrl(value=canonical_url),
         source=Source(board=board),
+        employer=Employer(name="Acme"),
         metadata=JobMetadata(title=title, description=description, location=location),
         strategy=SearchStrategy.WORKDAY_API,
         source_id=source_id,

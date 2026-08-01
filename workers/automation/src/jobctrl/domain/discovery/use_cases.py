@@ -42,7 +42,7 @@ from jobctrl.domain.discovery.identity import (
     JobSourceObservation,
     normalize_observed_url,
 )
-from jobctrl.domain.discovery.value_objects import Employer, PostingUrl
+from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.events import (
     CanonicalJobIdentityResolvedPayload,
     DuplicateJobLinkedPayload,
@@ -302,11 +302,11 @@ class DiscoverJobsUseCase:
             else None
         )
         content_match: ContentOwnerMatch | None = None
-        if owner_id is None and is_genuine_employer_identity(posting.source.board):
+        if owner_id is None and is_genuine_employer_identity(posting.employer.name):
             content_match = self._repository.find_content_owner(
                 tenant_id,
                 title=posting.metadata.title,
-                company=posting.source.board,
+                company=posting.employer.name,
                 description=posting.metadata.description,
             )
             if content_match is not None:
@@ -378,7 +378,7 @@ class DiscoverJobsUseCase:
             job_id=job_id,
             posting_url=canonical_posting_url,
             source=posting.source,
-            employer=Employer.unknown(),
+            employer=posting.employer,
             search_strategy=posting.strategy,
             metadata=posting.metadata,
             discovered_at=observed_at,
@@ -420,7 +420,7 @@ class DiscoverJobsUseCase:
                     job_id=str(job_id),
                     posting_url=canonical_posting_url.value,
                     source=posting.source.board,
-                    employer="Unknown",
+                    employer=posting.employer.name,
                     metadata=posting.metadata.to_dict(),
                     discovered_at=observed_at,
                 ),
@@ -591,6 +591,8 @@ class DiscoverJobsUseCase:
                         acceptance=acceptance,
                     )
                 refreshed = existing.with_metadata(posting.metadata)
+                if refreshed.employer.is_unknown() and not posting.employer.is_unknown():
+                    refreshed = refreshed.with_employer(posting.employer)
                 if refreshed.is_deleted:
                     restored = self._repository.restore(
                         tenant_id,
@@ -599,6 +601,8 @@ class DiscoverJobsUseCase:
                     )
                     if restored is not None:
                         refreshed = restored.with_metadata(posting.metadata)
+                        if refreshed.employer.is_unknown() and not posting.employer.is_unknown():
+                            refreshed = refreshed.with_employer(posting.employer)
                         self._publisher.publish(
                             create_job_restored(
                                 tenant_id,

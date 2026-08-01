@@ -9,12 +9,17 @@ table:
   ``job_id``        — stable, system-generated aggregate identifier.
   ``url``           — current posting locator, unique but never identity.
   ``title``,
+  ``company``        — ``Job.employer.name`` when known.
   ``salary``,
   ``description``,
   ``location``      — ``Job.metadata`` value object fields.
   ``site``          — ``Job.source.board``.
   ``strategy``      — ``Job.search_strategy.value``.
   ``discovered_at`` — ``Job.discovered_at``.
+
+Employer and source are independent canonical facts: ``company`` never falls
+back to ``site`` (or to a URL), and an empty ``company`` hydrates as
+``Employer.unknown()``.
 
 Soft-delete state lives in the existing ``jobctrl_deleted_jobs``
 tombstone table (mirror of the API's
@@ -23,13 +28,6 @@ reads/writes that exact-v7 table directly so a
 worker-side delete and an API-side delete share the same tombstone row
 shape.
 
-The legacy ``Job.employer`` is **not** persisted here this phase: the
-``jobs`` table has no dedicated employer column (the legacy code
-conflates employer with ``site``). The adapter writes ``employer.name``
-into ``site`` only when ``source.board`` is empty — but since the
-``Source.board`` invariant is non-empty, ``site`` always carries the
-board. ``employer`` round-trips on the in-memory aggregate; persisting
-it natively is deferred to the table-narrowing PR called out by §8.
 """
 
 from __future__ import annotations
@@ -182,7 +180,7 @@ class SqliteJobRepository:
         if not include_deleted:
             sql = (
                 "SELECT j.tenant_id, j.job_id, j.url, "
-                "j.title, j.salary, j.description, j.location, "
+                "j.title, j.company, j.salary, j.description, j.location, "
                 "j.site, j.strategy, j.discovered_at, "
                 "d.deleted_at, d.reason "
                 "FROM jobs j "
@@ -195,7 +193,7 @@ class SqliteJobRepository:
         else:
             sql = (
                 "SELECT j.tenant_id, j.job_id, j.url, "
-                "j.title, j.salary, j.description, j.location, "
+                "j.title, j.company, j.salary, j.description, j.location, "
                 "j.site, j.strategy, j.discovered_at, "
                 "d.deleted_at, d.reason "
                 "FROM jobs j "
@@ -781,16 +779,12 @@ class SqliteJobRepository:
         The returned :class:`ContentOwnerMatch` records which of the two paths
         matched so the write boundary logs an honest duplicate-link reason.
 
-        Content merges MUST key on a genuine employer on BOTH sides, otherwise
-        two DISTINCT employers' postings would collapse into one Job (silent
-        data loss). ``jobs.company`` is empty for use-case-created rows, so the
-        stored employer coalesces to ``jobs.site`` (the board, which is the real
-        employer for ATS-owned rows) — but a platform/sentinel board
-        ("User-mediated capture", the "Workday" fallback, a JobSpy board, or the
-        ``Unknown`` sentinel) is shared across employers and must not be treated
-        as an employer key. When either side lacks a genuine employer this falls
-        through to ``None`` (a safe under-merge). Returns ``None`` when the
-        posting cannot be fingerprinted or no existing Job matches.
+        Content merges MUST key on a genuine canonical employer on BOTH sides,
+        otherwise two DISTINCT employers' postings would collapse into one Job
+        (silent data loss). ``jobs.site`` is only the source board and is never an
+        employer fallback. When either side lacks a genuine employer this falls
+        through to ``None`` (a safe under-merge). Returns ``None`` when the posting
+        cannot be fingerprinted or no existing Job matches.
 
         The incoming posting is a raw LISTING, so the match compares it against
         BOTH the stored listing (``jobs.description``) and the stored enriched
@@ -811,7 +805,7 @@ class SqliteJobRepository:
         self._conn.create_function("jh_normalize_identity", 1, normalize_identity_text, deterministic=True)
         rows = self._conn.execute(
             """
-            SELECT j.job_id, j.url, j.title, j.company, j.site,
+            SELECT j.job_id, j.url, j.title, j.company,
                    j.description AS listing_description,
                    COALESCE(je.full_description, j.full_description)
                        AS enriched_description,
@@ -826,7 +820,7 @@ class SqliteJobRepository:
              AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
             WHERE j.tenant_id = ?
               AND jh_normalize_identity(COALESCE(j.title, '')) = ?
-              AND jh_normalize_identity(COALESCE(NULLIF(j.company, ''), j.site, '')) = ?
+              AND jh_normalize_identity(COALESCE(j.company, '')) = ?
             ORDER BY is_deleted ASC, j.discovered_at ASC NULLS LAST, j.url ASC
             """,
             (
@@ -836,8 +830,7 @@ class SqliteJobRepository:
             ),
         ).fetchall()
         for existing in rows:
-            stored_company = existing["company"]
-            stored_employer = stored_company if stored_company else existing["site"]
+            stored_employer = existing["company"]
             if not is_genuine_employer_identity(stored_employer):
                 continue
             basis = content_match_basis(
@@ -1252,7 +1245,7 @@ class SqliteJobRepository:
         row = self._conn.execute(
             """
             SELECT j.tenant_id, j.job_id, j.url,
-                   j.title, j.salary, j.description, j.location,
+                   j.title, j.company, j.salary, j.description, j.location,
                    j.site, j.strategy, j.discovered_at,
                    d.deleted_at, d.reason
             FROM jobs j
@@ -1332,6 +1325,7 @@ class SqliteJobRepository:
             job_id = row["job_id"]
             url = row["url"]
             title = row["title"]
+            company = row["company"]
             salary = row["salary"]
             description = row["description"]
             location = row["location"]
@@ -1346,6 +1340,7 @@ class SqliteJobRepository:
                 job_id,
                 url,
                 title,
+                company,
                 salary,
                 description,
                 location,
@@ -1362,12 +1357,13 @@ class SqliteJobRepository:
         # fall back to the sentinel "unknown" so the value object
         # invariant holds.
         board = (site or "unknown").strip() or "unknown"
+        employer_name = str(company or "").strip()
         return Job(
             tenant_id=TenantId(str(tenant_id)),
             job_id=JobId(str(job_id)),
             posting_url=posting_url or PostingUrl(value=str(url)),
             source=Source(board=board),
-            employer=Employer.unknown(),
+            employer=(Employer(name=employer_name) if employer_name else Employer.unknown()),
             search_strategy=strategy,
             metadata=JobMetadata(
                 title=str(title or ""),

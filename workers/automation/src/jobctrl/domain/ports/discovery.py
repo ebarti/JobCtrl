@@ -11,7 +11,7 @@ PR 2 ATS adapters (``WorkdayBoardAdapter``, ``GreenhouseBoardAdapter``,
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, Literal, Protocol
 
 from jobctrl.domain.discovery.aggregate import Job
@@ -23,6 +23,7 @@ from jobctrl.domain.discovery.identity import (
 )
 from jobctrl.domain.discovery.scheduler import DiscoveryRun
 from jobctrl.domain.discovery.value_objects import (
+    Employer,
     JobMetadata,
     PostingUrl,
     SearchStrategy,
@@ -50,6 +51,11 @@ class ScrapedJobPosting:
     URL the source advertises (typically the ATS detail URL), the ATS
     kind detected by the adapter, and the source registry id the
     posting was scraped from.
+
+    ``employer`` is the hiring company reported by the scraper, independent of
+    ``source.board``. Scrapers use ``Employer.unknown()`` only when their payload
+    has no explicit company fact; callers never derive it from a site label or
+    URL.
     """
 
     posting_url: PostingUrl
@@ -60,6 +66,7 @@ class ScrapedJobPosting:
     source_native_id: str
     canonical_url: str
     ats_kind: AtsKind = AtsKind.OTHER
+    employer: Employer = field(default_factory=Employer.unknown)
 
 
 @dataclass(frozen=True)

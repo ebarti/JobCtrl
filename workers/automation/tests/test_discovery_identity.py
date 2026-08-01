@@ -74,11 +74,17 @@ def _posting(
     source_id: str = "greenhouse:acme",
     ats_kind: AtsKind = AtsKind.GREENHOUSE,
     board: str = "greenhouse",
+    employer_name: str | None = "Acme",
     metadata: JobMetadata | None = None,
 ) -> ScrapedJobPosting:
     return ScrapedJobPosting(
         posting_url=PostingUrl(value=canonical_url),
         source=Source(board=board),
+        employer=(
+            Employer(name=employer_name)
+            if employer_name is not None
+            else Employer.unknown()
+        ),
         metadata=metadata or JobMetadata(title="Platform Engineer", location="Remote"),
         strategy=SearchStrategy.WORKDAY_API,
         source_id=source_id,
@@ -700,6 +706,13 @@ def test_discover_jobs_use_case_creates_job_identity_and_first_observation(
     assert persisted is not None
     assert uuid.UUID(str(persisted.job_id)).version == 4
     assert persisted.job_id == stable_job_id
+    assert persisted.employer.name == "Acme"
+    assert persisted.source.board == "greenhouse"
+    stored = conn.execute(
+        "SELECT company, site FROM jobs WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), str(stable_job_id)),
+    ).fetchone()
+    assert tuple(stored) == ("Acme", "greenhouse")
     identity = repo.load_canonical_identity(LOCAL_TENANT, persisted.job_id)
     assert identity is not None
     assert identity.ats_kind is AtsKind.GREENHOUSE
@@ -712,6 +725,8 @@ def test_discover_jobs_use_case_creates_job_identity_and_first_observation(
         "JobSourceObserved",
     ]
     assert {event.payload["job_id"] for event in publisher.events} == {str(stable_job_id)}
+    assert publisher.events[0].payload["employer"] == "Acme"
+    assert publisher.events[0].payload["source"] == "greenhouse"
     assert publisher.events[-1].payload["run_id"] == "run-1"
 
 
@@ -1755,9 +1770,8 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_manual_
     )
     boilerplate = _long_description("boiler", tokens=90)
 
-    # Two DISTINCT employers, both captured with only the shared platform-sentinel
-    # board ("User-mediated capture") and near-identical boilerplate text. The
-    # employer discriminator is absent, so these MUST NOT content-merge.
+    # Two DISTINCT employers share the same platform board and near-identical
+    # boilerplate text. The explicit employer discriminator prevents a merge.
     use_case.execute(
         tenant_id=LOCAL_TENANT,
         postings=[
@@ -1767,6 +1781,7 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_manual_
                 source_id="manual_capture:acme",
                 ats_kind=AtsKind.OTHER,
                 board="User-mediated capture",
+                employer_name="Acme",
                 metadata=JobMetadata(
                     title="Head of Engineering",
                     description=boilerplate + " acme alpha beta",
@@ -1786,6 +1801,7 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_manual_
                 source_id="manual_capture:globex",
                 ats_kind=AtsKind.OTHER,
                 board="User-mediated capture",
+                employer_name="Globex",
                 metadata=JobMetadata(
                     title="Head of Engineering",
                     description=boilerplate + " globex gamma delta",
@@ -1815,7 +1831,7 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_workday
     )
     boilerplate = _long_description("boiler", tokens=90)
 
-    # Employer-less Workday postings fall back to the constant board "Workday".
+    # Distinct employers can share the same Workday source board.
     use_case.execute(
         tenant_id=LOCAL_TENANT,
         postings=[
@@ -1825,6 +1841,7 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_workday
                 source_id="workday:one",
                 ats_kind=AtsKind.WORKDAY,
                 board="Workday",
+                employer_name="One Corp",
                 metadata=JobMetadata(
                     title="Head of Data",
                     description=boilerplate + " one alpha beta",
@@ -1844,6 +1861,7 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_workday
                 source_id="workday:two",
                 ats_kind=AtsKind.WORKDAY,
                 board="Workday",
+                employer_name="Two Corp",
                 metadata=JobMetadata(
                     title="Head of Data",
                     description=boilerplate + " two gamma delta",

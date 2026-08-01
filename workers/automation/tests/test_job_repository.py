@@ -81,6 +81,28 @@ def test_save_then_load_round_trips(conn: sqlite3.Connection) -> None:
     assert loaded.is_deleted is False
 
 
+def test_reopen_round_trips_employer_separately_from_source(tmp_path: Path) -> None:
+    db_path = tmp_path / "employer-source.db"
+    writer = init_db(db_path)
+    original = _make_job().with_employer(Employer(name="Acme"))
+    SqliteJobRepository(writer).save(original)
+    writer.close()
+
+    reader = init_db(db_path)
+    try:
+        loaded = SqliteJobRepository(reader).load(LOCAL_TENANT, original.job_id)
+        stored = reader.execute(
+            "SELECT company, site FROM jobs WHERE tenant_id = ? AND job_id = ?",
+            (str(LOCAL_TENANT), str(original.job_id)),
+        ).fetchone()
+        assert loaded is not None
+        assert loaded.employer.name == "Acme"
+        assert loaded.source.board == "greenhouse"
+        assert tuple(stored) == ("Acme", "greenhouse")
+    finally:
+        reader.close()
+
+
 def test_explicit_locator_resolution_finds_jobs(conn: sqlite3.Connection) -> None:
     repo = SqliteJobRepository(conn)
     job = _make_job()
@@ -129,6 +151,79 @@ def test_identity_resolver_keeps_job_id_stable_across_url_aliases(
             observed_at="2026-05-01T00:00:00+00:00",
         ),
     )
+    conn.execute(
+        """
+        INSERT INTO job_scores (
+            tenant_id, job_id, version, fit_score, breakdown_json,
+            keywords_json, scored_at
+        ) VALUES (?, ?, 1, 8, '{}', '["python"]', ?)
+        """,
+        (str(LOCAL_TENANT), str(stable_id), "2026-05-01T01:00:00+00:00"),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_stage_states (
+            tenant_id, job_id, stage, state, updated_at
+        ) VALUES (?, ?, 'score', 'succeeded', ?)
+        """,
+        (str(LOCAL_TENANT), str(stable_id), "2026-05-01T01:00:00+00:00"),
+    )
+    conn.execute(
+        """
+        INSERT INTO preparation_work_items (
+            item_id, tenant_id, job_id, kind, target_version,
+            source_event_id, state, idempotency_key, created_at,
+            updated_at, available_at
+        ) VALUES (
+            'prep-alias', ?, ?, 'score', 1,
+            'event-alias', 'completed', 'prep-alias-key', ?, ?, ?
+        )
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(stable_id),
+            "2026-05-01T01:00:00+00:00",
+            "2026-05-01T01:00:00+00:00",
+            "2026-05-01T01:00:00+00:00",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_artifacts (
+            tenant_id, job_id, stage, artifact_type, status, path, created_at
+        ) VALUES (?, ?, 'tailor', 'resume_pdf', 'accepted', ?, ?)
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(stable_id),
+            "artifacts/resume-alias.pdf",
+            "2026-05-01T01:00:00+00:00",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type,
+            occurred_at, payload_json
+        ) VALUES (?, ?, 7, 'score', 'JobScored', ?, '{}')
+        """,
+        (str(LOCAL_TENANT), str(stable_id), "2026-05-01T01:00:00+00:00"),
+    )
+    conn.execute(
+        """
+        INSERT INTO application_outcomes (
+            tenant_id, outcome_id, job_id, kind, source,
+            occurred_at, recorded_at
+        ) VALUES (?, 'outcome-alias', ?, 'interview', 'user', ?, ?)
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(stable_id),
+            "2026-05-01T02:00:00+00:00",
+            "2026-05-01T02:00:00+00:00",
+        ),
+    )
+    conn.commit()
 
     returned_id = repo.save(
         _make_job(
@@ -177,6 +272,37 @@ def test_identity_resolver_keeps_job_id_stable_across_url_aliases(
         replacement_url.value: (1, True),
     }
     assert observation_row["job_id"] == str(stable_id)
+    dependent_rows = conn.execute(
+        """
+        SELECT 'job_scores' AS relation, job_id FROM job_scores
+        WHERE tenant_id = ? AND job_id = ?
+        UNION ALL
+        SELECT 'job_stage_states', job_id FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ?
+        UNION ALL
+        SELECT 'preparation_work_items', job_id FROM preparation_work_items
+        WHERE tenant_id = ? AND job_id = ?
+        UNION ALL
+        SELECT 'job_artifacts', job_id FROM job_artifacts
+        WHERE tenant_id = ? AND job_id = ?
+        UNION ALL
+        SELECT 'job_events', job_id FROM job_events
+        WHERE tenant_id = ? AND job_id = ?
+        UNION ALL
+        SELECT 'application_outcomes', job_id FROM application_outcomes
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(stable_id)) * 6,
+    ).fetchall()
+    assert {row["relation"]: row["job_id"] for row in dependent_rows} == {
+        "job_scores": str(stable_id),
+        "job_stage_states": str(stable_id),
+        "preparation_work_items": str(stable_id),
+        "job_artifacts": str(stable_id),
+        "job_events": str(stable_id),
+        "application_outcomes": str(stable_id),
+    }
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert by_original_url is not None
     loaded_by_original_url = repo.load(LOCAL_TENANT, by_original_url.job_id)
     assert loaded_by_original_url is not None

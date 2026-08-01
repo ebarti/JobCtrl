@@ -34,7 +34,7 @@ from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.use_cases import (
     DiscoverJobsUseCase,
 )
-from jobctrl.domain.discovery.value_objects import JobMetadata, PostingUrl, SearchStrategy, Source
+from jobctrl.domain.discovery.value_objects import Employer, JobMetadata, PostingUrl, SearchStrategy, Source
 from jobctrl.domain.errors import TransientNetworkError
 from jobctrl.domain.discovery.source_registry import SMART_EXTRACT_EXPERIMENTAL_POLICY
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
@@ -166,9 +166,11 @@ def _store_jobs_filtered(
             missing_description += 1
             continue
         company = str(job.get("company") or "").strip()
+        source_board = str(site or "").strip() or "smart-extract"
         posting = ScrapedJobPosting(
             posting_url=PostingUrl(value=url),
-            source=Source(board=company or site),
+            source=Source(board=source_board),
+            employer=Employer(name=company) if company else Employer.unknown(),
             metadata=JobMetadata(
                 title=str(job.get("title") or ""),
                 salary=str(job.get("salary") or ""),

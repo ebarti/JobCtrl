@@ -25,7 +25,7 @@ from jobctrl.domain.discovery.identity import AtsKind
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.source_registry import WORKDAY_API_POLICY
 from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
-from jobctrl.domain.discovery.value_objects import JobMetadata, PostingUrl, SearchStrategy, Source
+from jobctrl.domain.discovery.value_objects import Employer, JobMetadata, PostingUrl, SearchStrategy, Source
 from jobctrl.domain.errors import TransientNetworkError
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
@@ -435,9 +435,11 @@ def _posting_from_job(job: dict, employers: dict) -> ScrapedJobPosting | None:
     description = _usable_description_text(job.get("full_description"))
     if not description:
         return None
+    employer_name = str(job.get("employer_name") or "").strip()
     return ScrapedJobPosting(
         posting_url=PostingUrl(value=url),
-        source=Source(board=str(job.get("employer_name") or "Workday")),
+        source=Source(board="workday"),
+        employer=(Employer(name=employer_name) if employer_name else Employer.unknown()),
         metadata=JobMetadata(
             title=str(job.get("title") or ""),
             salary="",

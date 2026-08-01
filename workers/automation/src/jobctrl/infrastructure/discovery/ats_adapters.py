@@ -35,6 +35,7 @@ from bs4 import BeautifulSoup
 
 from jobctrl.domain.discovery.identity import AtsKind
 from jobctrl.domain.discovery.value_objects import (
+    Employer,
     JobMetadata,
     PostingUrl,
     SearchStrategy,
@@ -49,6 +50,11 @@ from jobctrl.infrastructure.observability.adapter_spans import adapter_fetch_spa
 log = logging.getLogger(__name__)
 
 _NULL_DESCRIPTION_SENTINELS = {"<na>", "nan", "nat", "none", "null"}
+
+
+def _employer_from_optional(value: object) -> Employer:
+    name = str(value or "").strip()
+    return Employer(name=name) if name else Employer.unknown()
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +99,7 @@ class WorkdayEmployer:
 
     @property
     def board(self) -> str:
-        return self.name
+        return "workday"
 
 
 class WorkdayBoardAdapter:
@@ -221,6 +227,7 @@ class WorkdayBoardAdapter:
         return ScrapedJobPosting(
             posting_url=PostingUrl(value=canonical_url),
             source=Source(board=self._employer.board),
+            employer=_employer_from_optional(self._employer.name),
             metadata=JobMetadata(
                 title=title,
                 salary="",
@@ -336,7 +343,8 @@ class GreenhouseBoardAdapter:
         company = str(raw.get("company_name") or self._company or "").strip()
         return ScrapedJobPosting(
             posting_url=PostingUrl(value=canonical_url),
-            source=Source(board=company or f"greenhouse:{self._board_token}"),
+            source=Source(board="greenhouse"),
+            employer=_employer_from_optional(company),
             metadata=JobMetadata(
                 title=title,
                 salary="",
@@ -440,10 +448,10 @@ class LeverBoardAdapter:
         description = _lever_description(raw)
         if not description:
             return None
-        company = self._company or f"lever:{self._site}"
         return ScrapedJobPosting(
             posting_url=PostingUrl(value=hosted_url),
-            source=Source(board=company),
+            source=Source(board="lever"),
+            employer=_employer_from_optional(self._company),
             metadata=JobMetadata(
                 title=text,
                 salary="",
@@ -545,10 +553,10 @@ class AshbyBoardAdapter:
         description = _ashby_description(raw)
         if not description:
             return None
-        company = self._company or f"ashby:{self._board_name}"
         return ScrapedJobPosting(
             posting_url=PostingUrl(value=job_url),
-            source=Source(board=company),
+            source=Source(board="ashby"),
+            employer=_employer_from_optional(self._company),
             metadata=JobMetadata(
                 title=title,
                 salary="",

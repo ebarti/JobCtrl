@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from jobctrl import config
 from jobctrl.database import get_connection, init_db
-from jobctrl.domain.discovery import JobMetadata, PostingUrl, SearchStrategy, Source
+from jobctrl.domain.discovery import Employer, JobMetadata, PostingUrl, SearchStrategy, Source
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.search_units import (
     DiscoverySearchSpec,
@@ -236,6 +236,7 @@ def store_jobspy_results(
             source_id=source_id,
             source_native_id=_jobspy_source_native_id(row, url),
             site_label=site_label,
+            company=company,
             title=title,
             salary=salary,
             description=description,
@@ -475,6 +476,7 @@ def _jobspy_posting_from_row(
     source_id: str,
     source_native_id: str,
     site_label: str,
+    company: str | None,
     title: str | None,
     salary: str | None,
     description: str | None,
@@ -483,6 +485,7 @@ def _jobspy_posting_from_row(
     return ScrapedJobPosting(
         posting_url=PostingUrl(value=url),
         source=Source(board=site_label),
+        employer=Employer(name=company) if company else Employer.unknown(),
         metadata=JobMetadata(
             title=title or "",
             salary=salary or "",
@@ -812,7 +815,7 @@ def _find_existing_content_duplicate(
 def _find_stored_content_duplicate_survivor(conn: sqlite3.Connection, *, url: str) -> str | None:
     row = conn.execute(
         """
-        SELECT j.title, j.company, j.site,
+        SELECT j.title, j.company,
                COALESCE(je.full_description, j.full_description, j.description) AS description
         FROM jobs j
         LEFT JOIN job_enrichments je
@@ -824,12 +827,11 @@ def _find_stored_content_duplicate_survivor(conn: sqlite3.Connection, *, url: st
     ).fetchone()
     if row is None:
         return None
-    stored_company = row["company"]
     return _find_content_duplicate_survivor(
         conn,
         url=url,
         title=row["title"],
-        company=stored_company if stored_company else row["site"],
+        company=row["company"],
         description=row["description"],
         include_self=True,
     )
@@ -863,7 +865,7 @@ def _find_content_duplicate_survivor(
         params = (url, *params)
     rows = conn.execute(
         f"""
-        SELECT j.url, j.title, j.company, j.site,
+        SELECT j.url, j.title, j.company,
                j.description AS listing_description,
                COALESCE(je.full_description, j.full_description) AS enriched_description,
                CASE WHEN d.job_id IS NULL THEN 0 ELSE 1 END AS is_deleted
@@ -878,14 +880,13 @@ def _find_content_duplicate_survivor(
         WHERE j.tenant_id = ?
           {self_filter}
           AND jh_normalize_identity(COALESCE(j.title, '')) = ?
-          AND jh_normalize_identity(COALESCE(NULLIF(j.company, ''), j.site, '')) = ?
+          AND jh_normalize_identity(COALESCE(j.company, '')) = ?
         ORDER BY is_deleted ASC, j.discovered_at ASC NULLS LAST, j.url ASC
         """,
         (str(LOCAL_TENANT), *params),
     ).fetchall()
     for existing in rows:
-        stored_company = existing["company"]
-        stored_employer = stored_company if stored_company else existing["site"]
+        stored_employer = existing["company"]
         if not is_genuine_employer_identity(stored_employer):
             continue
         if (

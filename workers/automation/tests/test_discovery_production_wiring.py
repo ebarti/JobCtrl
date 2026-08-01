@@ -32,6 +32,7 @@ from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.enrichment.detail import _record_posting_snapshot_from_cascade
 from jobctrl.infrastructure.discovery.production_wiring import (
     ManualCaptureImport,
+    _manual_capture_posting,
     _posting_acceptance_policy,
     build_discovery_acceptance_report,
     import_manual_capture_item,
@@ -344,6 +345,7 @@ def _manual_capture_html() -> str:
         {{
           "@type": "JobPosting",
           "title": "VP Engineering",
+          "hiringOrganization": {{"name": "Acme"}},
           "description": "{description}",
           "directApply": true,
           "url": "https://login.protected.example/jobs/vp-engineering",
@@ -360,6 +362,19 @@ def _manual_capture_html() -> str:
       <body><main>{description}</main></body>
     </html>
     """
+
+
+def test_manual_capture_mapper_preserves_employer_and_source() -> None:
+    posting = _manual_capture_posting(
+        source_id="manual:protected-board",
+        item_id="manual-item",
+        url="https://login.protected.example/jobs/vp-engineering",
+        content=_manual_capture_html(),
+        originating_url="https://login.protected.example/jobs",
+    )
+
+    assert posting.employer.name == "Acme"
+    assert posting.source.board == "User-mediated capture"
 
 
 def test_worker_seeds_api_visible_locator_and_manual_queues(
@@ -1395,13 +1410,14 @@ def test_manual_capture_import_runs_discovery_enrichment_and_snapshot_pipeline(
 
     assert outcome.promoted_to_job_enrichment is True
     assert outcome.quarantine_reason == "none"
-    assert conn.execute(
+    job_row = conn.execute(
         """
-        SELECT strategy FROM jobs
+        SELECT strategy, company, site FROM jobs
         WHERE job_id = ?
         """,
         (outcome.job_id,),
-    ).fetchone()["strategy"] == "manual"
+    ).fetchone()
+    assert tuple(job_row) == ("manual", "Acme", "User-mediated capture")
     enrichment_row = conn.execute(
         """
         SELECT current_status, extraction_tier

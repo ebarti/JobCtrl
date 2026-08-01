@@ -10,6 +10,7 @@ from jobctrl.database import close_connection, init_db
 from jobctrl.discovery import jobspy, smartextract, workday
 from jobctrl.domain.discovery import (
     AtsKind,
+    Employer,
     JobMetadata,
     PostingUrl,
     SearchStrategy,
@@ -475,15 +476,8 @@ def test_jobspy_retains_partial_results_and_counts_typed_board_failure(monkeypat
     assert result["errors"] == 1
 
 
-def test_jobspy_dedups_against_ats_first_null_company_owner(tmp_path):
-    """JobSpy's pre-use-case dedup must tolerate an ATS-first owner with NULL company.
-
-    Use-case-created ATS rows leave ``jobs.company`` NULL and carry the employer
-    in ``jobs.site``. JobSpy supplies the employer in its ``company`` column, so a
-    dedup that filters on ``jobs.company`` alone misses the ATS owner and stores a
-    duplicate. The pre-filter must coalesce ``company`` -> ``site`` like the
-    use-case content-owner lookup.
-    """
+def test_jobspy_dedups_against_ats_first_canonical_employer(tmp_path):
+    """JobSpy dedup uses the canonical employer, independently of the source."""
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
@@ -499,7 +493,8 @@ def test_jobspy_dedups_against_ats_first_null_company_owner(tmp_path):
             postings=[
                 ScrapedJobPosting(
                     posting_url=PostingUrl(value=owner_url),
-                    source=Source(board="Acme"),
+                    source=Source(board="greenhouse"),
+                    employer=Employer(name="Acme"),
                     metadata=JobMetadata(
                         title="Staff Platform Engineer",
                         description=_JOBSPY_DESCRIPTION,
@@ -517,8 +512,8 @@ def test_jobspy_dedups_against_ats_first_null_company_owner(tmp_path):
         stored = conn.execute(
             "SELECT company, site FROM jobs WHERE url = ?", (owner_url,)
         ).fetchone()
-        assert (stored["company"] or "") == ""
-        assert stored["site"] == "Acme"
+        assert stored["company"] == "Acme"
+        assert stored["site"] == "greenhouse"
 
         frame = _jobspy_frame(
             [
@@ -541,15 +536,14 @@ def test_jobspy_dedups_against_ats_first_null_company_owner(tmp_path):
         close_connection(db_path)
 
 
-def test_jobspy_keeps_distinct_roles_at_same_null_company_owner_separate(tmp_path):
-    """Distinct roles must not merge onto a NULL-company ATS owner via JobSpy.
+def test_jobspy_keeps_distinct_roles_at_same_employer_separate(tmp_path):
+    """Distinct roles must not merge onto an ATS owner via JobSpy.
 
-    The company->site coalescing lets JobSpy find an ATS-first owner whose
-    ``jobs.company`` is NULL, but the content match still gates on normalized
-    title AND employer. Two genuinely different roles at the same employer with
+    Content matching gates on normalized title AND canonical employer. Two
+    genuinely different roles at the same employer with
     near-identical (well above 0.83 shingle) descriptions must remain separate
     Jobs -- the title gate short-circuits before the shared description could
-    fingerprint- or shingle-match. Regression guard for the null-company path.
+    fingerprint- or shingle-match.
     """
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
@@ -570,7 +564,8 @@ def test_jobspy_keeps_distinct_roles_at_same_null_company_owner_separate(tmp_pat
             postings=[
                 ScrapedJobPosting(
                     posting_url=PostingUrl(value=owner_url),
-                    source=Source(board="Acme"),
+                    source=Source(board="greenhouse"),
+                    employer=Employer(name="Acme"),
                     metadata=JobMetadata(
                         title="Staff Platform Engineer",
                         description=shared_description,
@@ -588,8 +583,8 @@ def test_jobspy_keeps_distinct_roles_at_same_null_company_owner_separate(tmp_pat
         stored = conn.execute(
             "SELECT company, site FROM jobs WHERE url = ?", (owner_url,)
         ).fetchone()
-        assert (stored["company"] or "") == ""
-        assert stored["site"] == "Acme"
+        assert stored["company"] == "Acme"
+        assert stored["site"] == "greenhouse"
 
         frame = _jobspy_frame(
             [
