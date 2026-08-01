@@ -5,6 +5,7 @@ export type EventStreamStatus = "connecting" | "open" | "closed";
 export interface DomainEventEnvelope {
   readonly eventType: string;
   readonly tenantId: TenantId;
+  readonly occurredAt?: string | null;
   readonly payload: unknown;
 }
 

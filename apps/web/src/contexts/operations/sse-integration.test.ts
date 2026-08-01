@@ -47,7 +47,15 @@ describe("SSE integration (frames → parser → invalidation router) — full p
     it(`parses an SSE frame for ${eventType} and routes it through the invalidation router`, () => {
       const event = eventByType[eventType];
       const wire = buildFrameText([
-        { id: "42", event: eventType, data: JSON.stringify(event.payload) },
+        {
+          id: "42",
+          event: eventType,
+          data: JSON.stringify({
+            tenantId: event.tenantId,
+            occurredAt: event.occurredAt,
+            payload: event.payload,
+          }),
+        },
       ]);
       const [frame] = parseSse(wire);
       expect(frame, `expected one parsed frame for ${eventType}`).toBeDefined();
@@ -58,6 +66,7 @@ describe("SSE integration (frames → parser → invalidation router) — full p
         return;
       }
       expect(result.envelope.eventType).toBe(eventType);
+      expect(result.envelope.occurredAt).toBe(event.occurredAt);
 
       const queryClient = new QueryClient();
       if (eventType === "ApplyRunEventRecorded") {
@@ -73,7 +82,7 @@ describe("SSE integration (frames → parser → invalidation router) — full p
           {
             eventType,
             tenantId: result.envelope.tenantId,
-            occurredAt: event.occurredAt,
+            occurredAt: result.envelope.occurredAt,
             payload: result.envelope.payload,
           } as never,
           queryClient,

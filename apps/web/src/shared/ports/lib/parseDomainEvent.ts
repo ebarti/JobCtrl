@@ -35,12 +35,17 @@ export function parseDomainEvent(frame: ParsedFrame): ParseDomainEventResult {
   if (!isRecord(parsed)) {
     return { ok: false, reason: "non-object-payload", eventType: frame.eventType };
   }
+  const payload = parsed["payload"];
+  if (!isRecord(payload)) {
+    return { ok: false, reason: "non-object-payload", eventType: frame.eventType };
+  }
   return {
     ok: true,
     envelope: {
       eventType: frame.eventType,
       tenantId: readTenantId(parsed),
-      payload: parsed,
+      occurredAt: readOccurredAt(parsed),
+      payload,
     },
   };
 }
@@ -54,4 +59,9 @@ function readTenantId(payload: Record<string, unknown>): TenantId {
   return typeof candidate === "string" && candidate.length > 0
     ? (candidate as TenantId)
     : LOCAL_TENANT;
+}
+
+function readOccurredAt(payload: Record<string, unknown>): string | null {
+  const candidate = payload["occurredAt"];
+  return typeof candidate === "string" && candidate.length > 0 ? candidate : null;
 }

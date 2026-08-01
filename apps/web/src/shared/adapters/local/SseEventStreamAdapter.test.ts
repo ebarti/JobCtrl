@@ -106,12 +106,13 @@ describe("SseEventStreamAdapter", () => {
     expect(streamUrl.searchParams.get("tenantId")).toBe(tenantId);
 
     const payload = { tenantId, jobId: "job-1", fitScore: 91 };
-    source.emit("JobScored", JSON.stringify(payload));
+    source.emit("JobScored", encodeEnvelope(payload));
 
     expect(handler).toHaveBeenCalledOnce();
     expect(handler).toHaveBeenCalledWith({
       eventType: "JobScored",
       tenantId,
+      occurredAt: null,
       payload,
     });
   });
@@ -135,7 +136,7 @@ describe("SseEventStreamAdapter", () => {
       expect(handler).not.toHaveBeenCalled();
 
       const payload = { tenantId: LOCAL_TENANT, jobId: "job-1" };
-      source.emit("JobScored", JSON.stringify(payload));
+      source.emit("JobScored", encodeEnvelope(payload));
       expect(handler).toHaveBeenCalledOnce();
     },
   );
@@ -153,12 +154,12 @@ describe("SseEventStreamAdapter", () => {
 
     expect(source.listenerCount("JobScored")).toBe(1);
     offRemovedEvent();
-    source.emit("JobScored", JSON.stringify({ jobId: "job-1" }));
+    source.emit("JobScored", encodeEnvelope({ jobId: "job-1" }));
     expect(removedEventHandler).not.toHaveBeenCalled();
     expect(activeEventHandler).toHaveBeenCalledOnce();
 
     offActiveEvent();
-    source.emit("JobScored", JSON.stringify({ jobId: "job-2" }));
+    source.emit("JobScored", encodeEnvelope({ jobId: "job-2" }));
     expect(activeEventHandler).toHaveBeenCalledOnce();
     expect(source.listenerCount("JobScored")).toBe(1);
 
@@ -197,7 +198,7 @@ describe("SseEventStreamAdapter", () => {
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(source.listenerCount("JobScored")).toBe(1);
 
-    source.emit("JobScored", JSON.stringify({ jobId: "job-1" }));
+    source.emit("JobScored", encodeEnvelope({ jobId: "job-1" }));
     expect(handler).toHaveBeenCalledOnce();
     expect(statuses.mock.calls.map(([status]) => status)).toEqual([
       "open",
@@ -246,7 +247,7 @@ describe("SseEventStreamAdapter", () => {
     expect(subscription.status).toBe("closed");
     expect(adapter.status).toBe("closed");
 
-    source.emit("JobScored", JSON.stringify({ jobId: "job-1" }));
+    source.emit("JobScored", encodeEnvelope({ jobId: "job-1" }));
     source.emit("heartbeat");
     source.emit("open");
     expect(eventHandler).not.toHaveBeenCalled();
@@ -269,3 +270,10 @@ describe("SseEventStreamAdapter", () => {
     expect(() => subscription.close()).not.toThrow();
   });
 });
+
+function encodeEnvelope(payload: Record<string, unknown>): string {
+  const tenantId = typeof payload["tenantId"] === "string"
+    ? payload["tenantId"]
+    : LOCAL_TENANT;
+  return JSON.stringify({ tenantId, occurredAt: null, payload });
+}
