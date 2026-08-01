@@ -45,6 +45,7 @@ import {
   EnsureCurrentResumeMaterialsRequestSchema,
   JobResumeTemplateAssignmentRequestSchema,
   JobListQuerySchema,
+  LearningRecommendationListQuerySchema,
   JsonRpcErrorCodes,
   JsonRpcRequestSchema,
   MarkJobActionRequestSchema,
@@ -239,6 +240,7 @@ import {
   readSettingsConfig,
 } from "./read-model.js";
 import { buildPipelineOperationsSnapshot } from "./pipeline-operations.js";
+import { listLearningRecommendations } from "./learning-recommendations.js";
 import { refreshProjections } from "./projections.js";
 import { createResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 import {
@@ -569,6 +571,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/scoring/keywords", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listScoringKeywords(db)),
+  );
+
+  app.get("/v1/learning/recommendations", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) =>
+      listLearningRecommendations(
+        db,
+        LearningRecommendationListQuerySchema.parse(request.query),
+      ),
+    ),
   );
 
   app.get("/v1/digest", async (_request, reply) =>
