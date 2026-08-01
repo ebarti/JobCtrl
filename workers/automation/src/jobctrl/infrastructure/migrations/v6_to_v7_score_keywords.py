@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import unicodedata
 from dataclasses import dataclass
 from typing import Final
 
+from jobctrl.infrastructure.scoring.keyword_normalization import canonicalize_keywords
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V7_MANIFEST,
     assert_exact_manifest,
@@ -180,18 +180,7 @@ def _normalized_keywords(keywords_json: object) -> tuple[tuple[str, str, int], .
             "source score keywords must be a JSON string array"
         )
 
-    normalized: list[tuple[str, str, int]] = []
-    seen: set[str] = set()
-    for value in values:
-        display = " ".join(unicodedata.normalize("NFKC", value).split())
-        if not display:
-            continue
-        lookup = display.casefold()
-        if lookup in seen:
-            continue
-        seen.add(lookup)
-        normalized.append((lookup, display, len(normalized)))
-    return tuple(normalized)
+    return canonicalize_keywords(values)
 
 
 def _target_score_ids(candidate: sqlite3.Connection) -> set[tuple[str, str, int]]:
