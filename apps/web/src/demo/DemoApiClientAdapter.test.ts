@@ -136,11 +136,13 @@ const READ_CASES = [
   ["applyReviewQueue", (api: ApiClientPort) => api.applyReviewQueue()],
   [
     "resumeReviewDraft",
-    (api: ApiClientPort) => api.resumeReviewDraft("job-northwind-platform"),
+    (api: ApiClientPort) =>
+      api.resumeReviewDraft("6e2f4a10-20be-4d5f-98a4-a4bb9a877a35"),
   ],
   [
     "resumeReviewFeedback",
-    (api: ApiClientPort) => api.resumeReviewFeedback("job-northwind-platform"),
+    (api: ApiClientPort) =>
+      api.resumeReviewFeedback("6e2f4a10-20be-4d5f-98a4-a4bb9a877a35"),
   ],
   ["resumeTemplates", (api: ApiClientPort) => api.resumeTemplates()],
   [
@@ -151,10 +153,14 @@ const READ_CASES = [
   [
     "jobApplicationOutcomes",
     (api: ApiClientPort) =>
-      api.jobApplicationOutcomes("job-northwind-platform"),
+      api.jobApplicationOutcomes("6e2f4a10-20be-4d5f-98a4-a4bb9a877a35"),
   ],
   ["jobs", (api: ApiClientPort) => api.jobs()],
-  ["job", (api: ApiClientPort) => api.job("job-northwind-platform")],
+  [
+    "job",
+    (api: ApiClientPort) =>
+      api.job("6e2f4a10-20be-4d5f-98a4-a4bb9a877a35"),
+  ],
   ["evidenceMap", (api: ApiClientPort) => api.evidenceMap()],
   ["workflowRuns", (api: ApiClientPort) => api.workflowRuns()],
   [
@@ -270,12 +276,15 @@ describe("DemoApiClientAdapter", () => {
     expect((await adapter.jobs()).items[0]!.title).not.toBe("caller mutation");
 
     await repository.mutate((draft) => {
-      draft.state.readModel.jobs.details["job-northwind-platform"]!.job.title =
-        "authoritative update";
+      draft.state.readModel.jobs.details[
+        "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35"
+      ]!.job.title = "authoritative update";
     });
-    expect((await adapter.job("job-northwind-platform")).job.title).toBe(
-      "authoritative update",
-    );
+    expect(
+      (
+        await adapter.job("6e2f4a10-20be-4d5f-98a4-a4bb9a877a35")
+      ).job.title,
+    ).toBe("authoritative update");
   });
 
   it("resolves synchronous previews only from current repository authority", async () => {
@@ -705,7 +714,7 @@ describe("DemoApiClientAdapter", () => {
 
     await expect(
       adapter.listContacts({
-        jobId: "job-northwind-platform",
+        jobId: "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
         employer: "Northwind Workshop",
       }),
     ).resolves.toMatchObject({
@@ -715,7 +724,9 @@ describe("DemoApiClientAdapter", () => {
       adapter.listContacts({ employer: "northwind workshop" }),
     ).resolves.toEqual({ ok: true, items: [] });
     await expect(
-      adapter.researchTasks({ jobId: "job-northwind-platform" }),
+      adapter.researchTasks({
+        jobId: "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
+      }),
     ).resolves.toMatchObject({
       items: [{ taskId: "research-demo-hiring-partner" }],
     });
@@ -805,7 +816,7 @@ describe("DemoApiClientAdapter", () => {
   it("resolves every seeded dynamic detail and returns stable 404 errors for unknown IDs", async () => {
     const { adapter } = await createAdapter();
     for (const jobKey of [
-      "job-northwind-platform",
+      "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
       "job-contoso-reliability",
       "job-fabrikam-systems",
     ]) {

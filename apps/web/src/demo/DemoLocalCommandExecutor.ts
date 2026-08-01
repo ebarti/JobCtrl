@@ -455,7 +455,11 @@ export class DemoLocalCommandExecutor {
         );
         draft.state.readModel.discovery.manualCapture.items =
           draft.state.readModel.discovery.manualCapture.items.filter((candidate) => candidate.itemId !== itemId);
-        const baseDetail = structuredClone(draft.state.readModel.jobs.details["job-northwind-platform"]!);
+        const baseDetail = structuredClone(
+          draft.state.readModel.jobs.details[
+            "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35"
+          ]!,
+        );
         const importedJob = {
           ...structuredClone(baseDetail.job),
           jobKey,

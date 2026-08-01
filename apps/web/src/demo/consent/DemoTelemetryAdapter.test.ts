@@ -54,7 +54,9 @@ describe("DemoTelemetryAdapter", () => {
       referrer: () => "https://jobctrl.dev/private?query=value",
     });
 
-    adapter.sessionStarted("/jobs/job-northwind-platform?secret=value");
+    adapter.sessionStarted(
+      "/jobs/6e2f4a10-20be-4d5f-98a4-a4bb9a877a35?secret=value",
+    );
     adapter.routeViewed("/artifacts/artifact-tailored-resume");
     await Promise.resolve();
     const bodies = fetcher.mock.calls.map((call) => String(call[1]?.body));

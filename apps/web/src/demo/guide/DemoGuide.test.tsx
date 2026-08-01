@@ -118,7 +118,10 @@ describe("<DemoGuide>", () => {
     );
     expect(
       screen.getByRole("link", { name: "Inspect synthetic scoring evidence" }),
-    ).toHaveAttribute("href", "/jobs/job-northwind-platform");
+    ).toHaveAttribute(
+      "href",
+      "/jobs/6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
+    );
     expect(
       screen.getByRole("link", { name: "Review synthetic tailored materials" }),
     ).toHaveAttribute("href", "/artifacts/artifact-tailored-resume");
@@ -126,7 +129,10 @@ describe("<DemoGuide>", () => {
       screen.getByRole("link", {
         name: "Open simulated Apply Review and dry run",
       }),
-    ).toHaveAttribute("href", "/apply-review?jobKey=job-northwind-platform");
+    ).toHaveAttribute(
+      "href",
+      "/apply-review?jobKey=6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
+    );
     expect(
       screen.getByRole("link", { name: "See simulated run history" }),
     ).toHaveAttribute("href", "/runs");
@@ -136,7 +142,7 @@ describe("<DemoGuide>", () => {
     );
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(
-        "/jobs/job-northwind-platform",
+        "/jobs/6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
       );
     });
     expect((ports.telemetry as FakeTelemetryPort).event).toHaveBeenCalledWith(

@@ -1053,7 +1053,7 @@ describe("<ApplyReviewView>", () => {
       items: [
         {
           ...sampleApplyReviewQueue.items[0]!,
-          jobKey: "job-northwind-platform",
+          jobKey: "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
           title: "Platform systems lead",
           company: "Northwind Workshop",
         },
