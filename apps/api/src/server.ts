@@ -1190,7 +1190,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         : [];
 
       for (const group of runnableGroups) {
-        const command = bulkRetryRunStageCommand(group.stage, group.jobUrls, body);
+        const command = bulkRetryRunStageCommand(db, group.stage, group.jobUrls, body);
         const dispatch = await actionDispatcher(command, actionContext);
         if (dispatch.workflowId) {
           recordPipelineWorkflowStarted(
@@ -1198,7 +1198,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             group.stage,
             dispatch.workflowId,
             dispatch.runId,
-            bulkRetryWorkflowPayload(command, dispatch, group.jobUrls),
+            bulkRetryWorkflowPayload(command, dispatch),
           );
         }
         if (dispatch.status === "queued") {
@@ -1253,7 +1253,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
 
       for (const group of runnableGroups) {
-        const command = pendingPreparationRunStageCommand(group.stage, group.jobUrls, body);
+        const command = pendingPreparationRunStageCommand(db, group.stage, group.jobUrls, body);
         const dispatch = await actionDispatcher(command, actionContext);
         if (dispatch.workflowId) {
           recordPipelineWorkflowStarted(
@@ -1261,7 +1261,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             group.stage,
             dispatch.workflowId,
             dispatch.runId,
-            pendingPreparationWorkflowPayload(command, dispatch, group.jobUrls),
+            pendingPreparationWorkflowPayload(command, dispatch),
           );
         }
         if (dispatch.status === "queued") {
@@ -1437,21 +1437,23 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
-    const command: ActionCommandPayload = {
-      action: "rescore_jobs_not_on_current_scoring_policy",
-      jobKey: PIPELINE_ACTION_JOB_KEY,
-      jobKeys: body.jobKeys,
-      limit: body.limit,
-      dryRun: body.dryRun,
-    };
-    if (body.reason) command.reason = body.reason;
-    const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
-    if (!workerReady) {
-      return undefined;
-    }
-    const dispatch = await actionDispatcher(command, actionContext);
-    void reply.code(202);
-    return buildActionResponse(command, dispatch);
+    return withWritableDb(reply, options.dbPath, async (db) => {
+      const command: ActionCommandPayload = {
+        action: "rescore_jobs_not_on_current_scoring_policy",
+        jobKey: PIPELINE_ACTION_JOB_KEY,
+        jobIds: requireJobIds(db, body.jobKeys),
+        limit: body.limit,
+        dryRun: body.dryRun,
+      };
+      if (body.reason) command.reason = body.reason;
+      const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+      if (!workerReady) {
+        return undefined;
+      }
+      const dispatch = await actionDispatcher(command, actionContext);
+      void reply.code(202);
+      return buildActionResponse(command, dispatch);
+    });
   });
 
   app.delete<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey", async (request, reply) => {
@@ -1502,9 +1504,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const reset = resetJobStage(db, decodeRouteParam(request.params.jobKey), body.stage, {
         resetAttempts: body.resetAttempts,
       });
+      const jobId = requireJobId(db, reset.jobUrl);
       const command: ActionCommandPayload = {
         action: "retry_stage" as const,
-        jobKey: reset.jobUrl,
+        jobKey: jobId,
+        jobId,
         stage: body.stage,
         resetAttempts: body.resetAttempts,
         runAfter: body.runAfter,
@@ -1536,9 +1540,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return { ok: false, error: "job_not_found" };
       }
       refreshProjections(db);
+      const jobId = requireJobId(db, jobUrl);
       const command: ActionCommandPayload = {
         action: "run_stage",
-        jobKey: jobUrl,
+        jobKey: jobId,
+        jobId,
         stage: body.stage,
         stages,
         dryRun: body.dryRun,
@@ -1595,9 +1601,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         void reply.code(400);
         return { ok: false, error: "no_material_stage_requested" };
       }
+      const jobId = requireJobId(db, jobUrl);
       const command: ActionCommandPayload = {
         action: "run_stage",
-        jobKey: jobUrl,
+        jobKey: jobId,
+        jobId,
         stage: primaryStage,
         stages: body.stages,
         dryRun: body.dryRun,
@@ -1627,9 +1635,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return { ok: false, error: "job_not_found" };
       }
       refreshProjections(db);
+      const jobId = requireJobId(db, jobUrl);
       const command: ActionCommandPayload = {
         action: "generate_interview_prep",
-        jobKey: jobUrl,
+        jobKey: jobId,
+        jobId,
       };
       if (body.llmModel) {
         command.llmModel = body.llmModel;
@@ -1642,7 +1652,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         message: "Interview preparation requested by user",
         payload: {
           tenantId: "local",
-          jobId: jobUrl,
+          jobId,
         },
       });
       const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
@@ -1665,9 +1675,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!jobUrl) {
         return { ok: false, error: "job_not_found" };
       }
+      const jobId = requireJobId(db, jobUrl);
       const command: ActionCommandPayload = {
         action: "tailor_job",
-        jobKey: jobUrl,
+        jobKey: jobId,
+        jobId,
         dryRun: body.dryRun,
         tailorModels: body.tailorModels,
       };
@@ -1684,7 +1696,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         message: "Tailoring requested by user",
         payload: {
           tenantId: "local",
-          jobId: jobUrl,
+          jobId,
           dryRun: body.dryRun,
           reason: body.reason ?? "manual_tailor",
           allowLowFitOverride: true,
@@ -1758,27 +1770,29 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
-    const command: ActionCommandPayload = {
-      action: "retailor_current_policy",
-      jobKey: PIPELINE_ACTION_JOB_KEY,
-      jobKeys: body.jobKeys,
-      limit: body.limit,
-      dryRun: body.dryRun,
-      suppressExistingArtifacts: body.suppressExistingArtifacts,
-      tailorModels: body.tailorModels,
-    };
-    if (body.reason) command.reason = body.reason;
-    if (body.tailorJudgeModel) command.tailorJudgeModel = body.tailorJudgeModel;
-    if (body.tailorJudgeMinScore !== undefined) {
-      command.tailorJudgeMinScore = body.tailorJudgeMinScore;
-    }
-    const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
-    if (!workerReady) {
-      return undefined;
-    }
-    const dispatch = await actionDispatcher(command, actionContext);
-    void reply.code(202);
-    return buildActionResponse(command, dispatch);
+    return withWritableDb(reply, options.dbPath, async (db) => {
+      const command: ActionCommandPayload = {
+        action: "retailor_current_policy",
+        jobKey: PIPELINE_ACTION_JOB_KEY,
+        jobIds: requireJobIds(db, body.jobKeys),
+        limit: body.limit,
+        dryRun: body.dryRun,
+        suppressExistingArtifacts: body.suppressExistingArtifacts,
+        tailorModels: body.tailorModels,
+      };
+      if (body.reason) command.reason = body.reason;
+      if (body.tailorJudgeModel) command.tailorJudgeModel = body.tailorJudgeModel;
+      if (body.tailorJudgeMinScore !== undefined) {
+        command.tailorJudgeMinScore = body.tailorJudgeMinScore;
+      }
+      const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+      if (!workerReady) {
+        return undefined;
+      }
+      const dispatch = await actionDispatcher(command, actionContext);
+      void reply.code(202);
+      return buildActionResponse(command, dispatch);
+    });
   });
 
   app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/actions/apply", async (request, reply) => {
@@ -1794,9 +1808,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body.dryRun) {
         assertLiveApplicationMayDispatch(db, jobUrl);
       }
-      const command = {
+      const jobId = requireJobId(db, jobUrl);
+      const command: ActionCommandPayload = {
         action: "apply" as const,
-        jobKey: jobUrl,
+        jobKey: jobId,
+        jobId,
         dryRun: body.dryRun,
         headless: body.headless,
         limit: body.limit,
@@ -3496,6 +3512,10 @@ function requireJobId(db: ApiDb, jobLocator: string): string {
   return jobId;
 }
 
+function requireJobIds(db: ApiDb, jobLocators: readonly string[]): string[] {
+  return [...new Set(jobLocators.map((jobLocator) => requireJobId(db, jobLocator)))];
+}
+
 function firstEligiblePendingPreparationStage(
   db: ApiDb,
   jobUrl: string,
@@ -3519,6 +3539,7 @@ function stageCountsForTargets(targets: readonly RetryFailedJobTarget[]): Partia
 }
 
 function bulkRetryRunStageCommand(
+  db: ApiDb,
   stage: Stage,
   jobUrls: readonly string[],
   request: BulkRetryFailedRequest,
@@ -3527,7 +3548,7 @@ function bulkRetryRunStageCommand(
   const command: ActionCommandPayload = {
     action: "run_stage",
     jobKey: PIPELINE_ACTION_JOB_KEY,
-    jobKeys: [...jobUrls],
+    jobIds: requireJobIds(db, jobUrls),
     stage,
     stages,
     dryRun: request.dryRun,
@@ -3544,11 +3565,12 @@ function bulkRetryRunStageCommand(
 }
 
 function pendingPreparationRunStageCommand(
+  db: ApiDb,
   stage: Stage,
   jobUrls: readonly string[],
   request: BulkRunPendingPreparationRequest,
 ): ActionCommandPayload {
-  const command = bulkRetryRunStageCommand(stage, jobUrls, {
+  const command = bulkRetryRunStageCommand(db, stage, jobUrls, {
     allMatching: false,
     jobKeys: [...jobUrls],
     runAfter: true,
@@ -3568,15 +3590,14 @@ function pendingPreparationRunStageCommand(
 function bulkRetryWorkflowPayload(
   command: ActionCommandPayload,
   dispatch: ActionDispatchResult,
-  jobUrls: readonly string[],
 ): Record<string, unknown> {
   return {
     source: "bulk_retry_failed",
     action: command.action,
     stage: command.stage,
     stages: command.stages ?? [],
-    jobUrls: [...jobUrls],
-    jobCount: jobUrls.length,
+    jobIds: command.jobIds ?? [],
+    jobCount: command.jobIds?.length ?? 0,
     requestedWorkers: command.workers,
     requestedLimit: command.limit,
     requestedMinScore: command.minScore,
@@ -3589,10 +3610,9 @@ function bulkRetryWorkflowPayload(
 function pendingPreparationWorkflowPayload(
   command: ActionCommandPayload,
   dispatch: ActionDispatchResult,
-  jobUrls: readonly string[],
 ): Record<string, unknown> {
   return {
-    ...bulkRetryWorkflowPayload(command, dispatch, jobUrls),
+    ...bulkRetryWorkflowPayload(command, dispatch),
     source: "bulk_run_pending_preparation",
   };
 }

@@ -56,7 +56,8 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     const result = await dispatcher(
       {
         action: "apply",
-        jobKey: "https://example.com/jobs/x",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
         limit: 1,
         dryRun: true,
         model: "default",
@@ -70,7 +71,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       tenantId: "local",
       expectedAppDir: "/tmp",
       expectedDbPath: "/tmp/jobctrl.db",
-      jobUrl: "https://example.com/jobs/x",
+      jobId: CANONICAL_JOB_ID,
       limit: 1,
       dryRun: true,
       model: "default",
@@ -86,7 +87,8 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     const result = await dispatcher(
       {
         action: "retry_stage",
-        jobKey: "https://example.com/jobs/x",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
         stage: "apply",
         runAfter: true,
         dryRun: true,
@@ -106,7 +108,8 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     const result = await dispatcher(
       {
         action: "retry_stage",
-        jobKey: "https://example.com/jobs/x",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
         stage: "enrich",
         stages: ["enrich", "score", "tailor", "cover"],
         runAfter: true,
@@ -122,7 +125,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         tenantId: "local",
         expectedAppDir: "/tmp",
         expectedDbPath: "/tmp/jobctrl.db",
-        jobUrl: "https://example.com/jobs/x",
+        jobId: CANONICAL_JOB_ID,
         stage: "enrich",
         stages: ["enrich", "score", "tailor", "cover"],
         limit: 1,
@@ -139,7 +142,8 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     await dispatcher(
       {
         action: "retry_stage",
-        jobKey: "https://example.com/jobs/x",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
         stage: "tailor",
         runAfter: true,
         dryRun: true,
@@ -151,7 +155,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(fake.calls[0]).toEqual({
       method: "run_stage",
       params: expect.objectContaining({
-        jobUrl: "https://example.com/jobs/x",
+        jobId: CANONICAL_JOB_ID,
         stage: "tailor",
         stages: ["tailor", "cover"],
         limit: 1,
@@ -241,7 +245,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       {
         action: "rescore_jobs_not_on_current_scoring_policy",
         jobKey: "pipeline",
-        jobKeys: ["https://example.com/jobs/stale"],
+        jobIds: [CANONICAL_JOB_ID],
         limit: 10,
         dryRun: true,
       },
@@ -250,7 +254,8 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     await dispatcher(
       {
         action: "tailor_job",
-        jobKey: "https://example.com/jobs/current",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
         dryRun: true,
         reason: "manual_tailor",
         tailorModels: ["gemini:test"],
@@ -276,7 +281,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       {
         action: "retailor_current_policy",
         jobKey: "pipeline",
-        jobKeys: ["https://example.com/jobs/current"],
+        jobIds: [CANONICAL_JOB_ID],
         limit: 5,
         dryRun: false,
       },
@@ -302,7 +307,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           expectedAppDir: "/tmp",
           expectedDbPath: "/tmp/jobctrl.db",
           limit: 10,
-          jobUrls: ["https://example.com/jobs/stale"],
+          jobIds: [CANONICAL_JOB_ID],
           dryRun: true,
         },
       },
@@ -312,7 +317,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           tenantId: "local",
           expectedAppDir: "/tmp",
           expectedDbPath: "/tmp/jobctrl.db",
-          jobUrl: "https://example.com/jobs/current",
+          jobId: CANONICAL_JOB_ID,
           dryRun: true,
           allowLowFitOverride: true,
           reason: "manual_tailor",
@@ -342,7 +347,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           expectedAppDir: "/tmp",
           expectedDbPath: "/tmp/jobctrl.db",
           limit: 5,
-          jobUrls: ["https://example.com/jobs/current"],
+          jobIds: [CANONICAL_JOB_ID],
           dryRun: false,
           suppressExistingArtifacts: false,
         },
@@ -399,19 +404,27 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     ]);
   });
 
-  it("fails closed when direct maintenance actions lack a canonical job id", async () => {
+  it("fails closed when job-scoped actions lack a canonical job id", async () => {
     const fake = new FakeDispatcher();
     const dispatcher = createActionDispatcher(fake);
     const context = { appDir: "/tmp", dbPath: "/tmp/jobctrl.db" };
 
-    for (const action of ["rescore_job", "retailor_job"] as const) {
-      const result = await dispatcher(
-        { action, jobKey: "https://example.com/jobs/legacy" },
-        context,
-      );
+    const commands: ActionCommandPayload[] = [
+      { action: "retry_stage", jobKey: "https://example.com/jobs/legacy", stage: "score", runAfter: true },
+      { action: "run_stage", jobKey: "https://example.com/jobs/legacy", stage: "score" },
+      { action: "rescore_job", jobKey: "https://example.com/jobs/legacy" },
+      { action: "tailor_job", jobKey: "https://example.com/jobs/legacy" },
+      { action: "retailor_job", jobKey: "https://example.com/jobs/legacy" },
+      { action: "analyze_job", jobKey: "https://example.com/jobs/legacy" },
+      { action: "generate_interview_prep", jobKey: "https://example.com/jobs/legacy" },
+      { action: "apply", jobKey: "https://example.com/jobs/legacy" },
+    ];
+
+    for (const command of commands) {
+      const result = await dispatcher(command, context);
       expect(result).toMatchObject({
         status: "failed",
-        message: "Pipeline job selection requires a canonical jobId.",
+        message: "Job-scoped actions require a canonical jobId.",
       });
     }
 
@@ -564,7 +577,8 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     const result = await dispatcher(
       {
         action: "generate_interview_prep",
-        jobKey: "https://example.com/jobs/current",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
         llmModel: "gpt-test",
       },
       { appDir: "/tmp", dbPath: "/tmp/jobctrl.db" },
@@ -577,12 +591,41 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           tenantId: "local",
           expectedAppDir: "/tmp",
           expectedDbPath: "/tmp/jobctrl.db",
-          jobUrl: "https://example.com/jobs/current",
+          jobId: CANONICAL_JOB_ID,
           llmModel: "gpt-test",
         },
       },
     ]);
     expect(result).toMatchObject({ status: "queued", runId: "run-fake" });
+  });
+
+  it("maps employer analysis by canonical job ID without a URL-shaped RPC param", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+
+    await dispatcher(
+      {
+        action: "analyze_job",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
+        retailor: true,
+      },
+      { appDir: "/tmp", dbPath: "/tmp/jobctrl.db" },
+    );
+
+    expect(fake.calls).toEqual([
+      {
+        method: "analyze_job",
+        params: {
+          tenantId: "local",
+          expectedAppDir: "/tmp",
+          expectedDbPath: "/tmp/jobctrl.db",
+          jobId: CANONICAL_JOB_ID,
+          force: true,
+        },
+      },
+    ]);
+    expect(fake.calls[0]?.params).not.toHaveProperty("jobUrl");
   });
 
   it("dispatches only RPC methods registered by the Python worker", async () => {
@@ -607,17 +650,21 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     await dispatcher(
       {
         action: "retry_stage",
-        jobKey: "https://example.com/jobs/current",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
         stage: "apply",
         runAfter: true,
       },
       context,
     );
-    await dispatcher({ action: "apply", jobKey: "https://example.com/jobs/current" }, context);
+    await dispatcher({ action: "apply", jobKey: CANONICAL_JOB_ID, jobId: CANONICAL_JOB_ID }, context);
     await dispatcher({ action: "cancel", jobKey: "pipeline", runId: "run-1" }, context);
     await dispatcher({ action: "rescore_job", jobKey: CANONICAL_JOB_ID, jobId: CANONICAL_JOB_ID }, context);
     await dispatcher({ action: "refresh_compensation", jobKey: "https://example.com/jobs/current" }, context);
-    await dispatcher({ action: "generate_interview_prep", jobKey: "https://example.com/jobs/current" }, context);
+    await dispatcher(
+      { action: "generate_interview_prep", jobKey: CANONICAL_JOB_ID, jobId: CANONICAL_JOB_ID },
+      context,
+    );
     await dispatcher(
       {
         action: "rescore_jobs_not_on_current_scoring_policy",
@@ -655,7 +702,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(fake.calls[0]?.method).toBe("run_stage");
   });
 
-  it("passes selected job URLs through global run-stage RPC", async () => {
+  it("passes selected canonical job IDs through global run-stage RPC", async () => {
     const fake = new FakeDispatcher();
     const dispatcher = createActionDispatcher(fake);
 
@@ -663,7 +710,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       {
         action: "run_stage",
         jobKey: "pipeline",
-        jobKeys: ["https://example.com/jobs/a", "https://example.com/jobs/b"],
+        jobIds: [CANONICAL_JOB_ID],
         stage: "score",
         stages: ["score", "tailor", "cover"],
         limit: 2,
@@ -675,7 +722,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(fake.calls[0]).toEqual({
       method: "run_stage",
       params: expect.objectContaining({
-        jobUrls: ["https://example.com/jobs/a", "https://example.com/jobs/b"],
+        jobIds: [CANONICAL_JOB_ID],
         stage: "score",
         stages: ["score", "tailor", "cover"],
         limit: 2,
@@ -884,7 +931,8 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     const result = await dispatcher(
       {
         action: "retry_stage",
-        jobKey: "https://example.com/jobs/x",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
         stage: "apply",
         runAfter: false,
         dryRun: true,
@@ -924,14 +972,15 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     fake.setResponse({
       jsonrpc: "2.0",
       id: 1,
-      error: { code: -32602, message: "Invalid params: missing jobUrl" },
+      error: { code: -32602, message: "Invalid params: missing jobId" },
     } as JsonRpcResponse);
     const dispatcher = createActionDispatcher(fake);
 
     const result = await dispatcher(
       {
         action: "apply",
-        jobKey: "https://example.com/jobs/y",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
         limit: 1,
         dryRun: true,
       },
@@ -940,7 +989,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
 
     expect(result).toMatchObject({
       status: "failed",
-      message: "Invalid params: missing jobUrl",
+      message: "Invalid params: missing jobId",
     });
   });
 
@@ -956,7 +1005,8 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     const result: ActionDispatchResult = await dispatcher(
       {
         action: "apply",
-        jobKey: "https://example.com/jobs/y",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
         limit: 1,
         dryRun: true,
       },
@@ -973,7 +1023,8 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     await dispatcher(
       {
         action: "apply",
-        jobKey: "https://example.com/jobs/z",
+        jobKey: CANONICAL_JOB_ID,
+        jobId: CANONICAL_JOB_ID,
         limit: 1,
         dryRun: true,
       },

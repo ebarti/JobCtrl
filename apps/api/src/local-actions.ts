@@ -133,13 +133,10 @@ export function createActionDispatcher(
       return { status: "reset", message: "Stage reset for retry." };
     }
 
-    if (
-      (command.action === "rescore_job" || command.action === "retailor_job") &&
-      !command.jobId
-    ) {
+    if (requiresCanonicalJobId(command) && !command.jobId) {
       return {
         status: "failed",
-        message: "Pipeline job selection requires a canonical jobId.",
+        message: "Job-scoped actions require a canonical jobId.",
       };
     }
 
@@ -506,7 +503,7 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
         limit: command.limit ?? 100,
-        jobUrls: command.jobKeys ?? [],
+        jobIds: command.jobIds ?? [],
         dryRun: Boolean(command.dryRun),
         ...(command.reason ? { reason: command.reason } : {}),
       },
@@ -515,7 +512,7 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
   if (command.action === "tailor_job") {
     return {
       method: "tailor_job",
-      params: tailorRpcParams(command, context, command.jobKey),
+      params: tailorRpcParams(command, context, command.jobId!),
     };
   }
   if (command.action === "retailor_job") {
@@ -537,7 +534,7 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
         tenantId: "local",
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
-        jobUrl: command.jobKey,
+        jobId: command.jobId,
         force: Boolean(command.retailor),
       },
     };
@@ -568,7 +565,7 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
         tenantId: "local",
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
-        jobUrl: command.jobKey,
+        jobId: command.jobId,
         llmModel: command.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
       },
     };
@@ -609,6 +606,23 @@ function retryContinuationStages(stage: NonNullable<ActionCommandPayload["stage"
   }
 }
 
+function requiresCanonicalJobId(command: ActionCommandPayload): boolean {
+  if (command.action === "retry_stage") {
+    return Boolean(command.runAfter) && command.jobKey !== PIPELINE_ACTION_JOB_KEY;
+  }
+  if (command.action === "run_stage") {
+    return command.jobKey !== PIPELINE_ACTION_JOB_KEY;
+  }
+  return (
+    command.action === "rescore_job" ||
+    command.action === "tailor_job" ||
+    command.action === "retailor_job" ||
+    command.action === "analyze_job" ||
+    command.action === "generate_interview_prep" ||
+    (command.action === "apply" && command.jobKey !== PIPELINE_ACTION_JOB_KEY)
+  );
+}
+
 function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatchContext): Record<string, unknown> {
   const stages =
     command.stages && command.stages.length > 0
@@ -646,11 +660,11 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
   if (command.tailorJudgeMinScore !== undefined) {
     params.tailorJudgeMinScore = command.tailorJudgeMinScore;
   }
-  if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
-    params.jobUrl = command.jobKey;
+  if (command.jobId) {
+    params.jobId = command.jobId;
   }
-  if (command.jobKeys && command.jobKeys.length > 0) {
-    params.jobUrls = command.jobKeys;
+  if (command.jobIds && command.jobIds.length > 0) {
+    params.jobIds = command.jobIds;
   }
   return params;
 }
@@ -658,13 +672,13 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
 function tailorRpcParams(
   command: ActionCommandPayload,
   context: ActionDispatchContext,
-  jobUrl: string,
+  jobId: string,
 ): Record<string, unknown> {
   const params: Record<string, unknown> = {
     tenantId: "local",
     expectedAppDir: context.appDir,
     expectedDbPath: context.dbPath,
-    jobUrl,
+    jobId,
     dryRun: Boolean(command.dryRun),
     allowLowFitOverride: true,
   };
@@ -701,7 +715,7 @@ function retailorRpcParams(
     Object.assign(params, locator);
   } else {
     params.limit = command.limit ?? 100;
-    params.jobUrls = command.jobKeys ?? [];
+    params.jobIds = command.jobIds ?? [];
   }
   if (command.reason) {
     params.reason = command.reason;
@@ -731,8 +745,8 @@ function applyRpcParams(command: ActionCommandPayload, context: ActionDispatchCo
     headless: Boolean(command.headless),
     continuous: Boolean(command.continuous),
   };
-  if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
-    params.jobUrl = command.jobKey;
+  if (command.jobId) {
+    params.jobId = command.jobId;
   }
   return params;
 }

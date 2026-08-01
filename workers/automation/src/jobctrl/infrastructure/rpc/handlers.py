@@ -23,12 +23,10 @@ import logging
 from typing import Any
 
 from jobctrl.database import get_connection
-from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.rpc.messages import WorkflowStartSpec
 from jobctrl.domain.preparation import PreparationWorkItemKind
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
-from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
 from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
 from jobctrl.infrastructure.rpc.server import JsonRpcServer, invalid_params
 from jobctrl.infrastructure.rpc.workflow_starter import WorkflowCanceler
@@ -80,13 +78,31 @@ def _bool_param(params: dict[str, Any], name: str, *, default: bool = False) -> 
     return bool(raw)
 
 
-def _job_urls(params: dict[str, Any]) -> tuple[str, ...]:
-    raw = params.get("jobUrls") or ()
+def _reject_job_url_params(params: dict[str, Any]) -> None:
+    if "jobUrl" in params:
+        raise invalid_params("jobUrl is not supported; use canonical jobId")
+    if "jobUrls" in params:
+        raise invalid_params("jobUrls is not supported; use canonical jobIds")
+
+
+def _job_ids(params: dict[str, Any]) -> tuple[JobId, ...]:
+    _reject_job_url_params(params)
+    if "jobId" in params:
+        raise invalid_params("jobId is not supported on a bulk selector; use jobIds")
+    raw = params.get("jobIds", ())
+    if not isinstance(raw, list):
+        raise invalid_params("jobIds must be an array")
     if not raw:
         return ()
-    if not isinstance(raw, list):
-        raise invalid_params("jobUrls must be an array")
-    return tuple(str(item).strip() for item in raw if str(item).strip())
+    try:
+        return tuple(
+            dict.fromkeys(
+                canonical_job_id(str(item))
+                for item in raw
+            )
+        )
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
 
 
 def _source_ids(params: dict[str, Any]) -> tuple[str, ...]:
@@ -96,30 +112,6 @@ def _source_ids(params: dict[str, Any]) -> tuple[str, ...]:
     if not isinstance(raw, list):
         raise invalid_params("sourceIds must be an array")
     return tuple(dict.fromkeys(str(item).strip() for item in raw if str(item).strip()))
-
-
-def _load_current_job(
-    conn: Any,
-    *,
-    tenant_id: TenantId,
-    job_url: str,
-) -> dict[str, Any]:
-    """Resolve an active URL locator and load its non-deleted canonical target."""
-
-    try:
-        posting_url = PostingUrl(value=job_url)
-    except ValueError as exc:
-        raise invalid_params(f"invalid jobUrl: {job_url}") from exc
-    identity = SqliteJobIdentityResolver(conn).resolve_current_by_posting_url(
-        tenant_id,
-        posting_url,
-    )
-    if identity is None:
-        raise invalid_params(f"unknown or inactive jobUrl: {job_url}")
-    job = SqlitePreparationTargetReader(conn).load(tenant_id, identity.job_id)
-    if job is None:
-        raise invalid_params(f"unknown or inactive jobUrl: {job_url}")
-    return job
 
 
 def _load_current_job_by_id(
@@ -136,8 +128,9 @@ def _load_current_job_by_id(
 
 
 def _required_job_id(params: dict[str, Any]) -> JobId:
-    if "jobUrl" in params:
-        raise invalid_params("jobUrl is not supported; use canonical jobId")
+    _reject_job_url_params(params)
+    if "jobIds" in params:
+        raise invalid_params("jobIds is not supported on a single-job command; use jobId")
     try:
         return canonical_job_id(str(_require(params, "jobId")))
     except ValueError as exc:
@@ -146,6 +139,85 @@ def _required_job_id(params: dict[str, Any]) -> JobId:
 
 def _job_id(job: dict[str, Any]) -> JobId:
     return canonical_job_id(str(job["job_id"]))
+
+
+def _current_job_url(job: dict[str, Any]) -> str:
+    job_url = str(job.get("url") or "").strip()
+    if not job_url:
+        raise invalid_params(f"jobId {job.get('job_id')} has no current posting URL")
+    return job_url
+
+
+def _selected_job_ids(params: dict[str, Any]) -> tuple[JobId | None, tuple[JobId, ...]]:
+    _reject_job_url_params(params)
+    if "jobId" in params and "jobIds" in params:
+        raise invalid_params("provide jobId or jobIds, not both")
+    if "jobId" in params:
+        try:
+            return canonical_job_id(str(_require(params, "jobId"))), ()
+        except ValueError as exc:
+            raise invalid_params(str(exc)) from exc
+    if "jobIds" not in params:
+        return None, ()
+    raw_many = params["jobIds"]
+    if not isinstance(raw_many, list):
+        raise invalid_params("jobIds must be an array")
+    if not raw_many:
+        return None, ()
+    try:
+        return None, tuple(
+            dict.fromkeys(
+                canonical_job_id(str(item))
+                for item in raw_many
+            )
+        )
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
+
+
+def _load_current_job_urls_by_id(
+    conn: Any,
+    *,
+    tenant_id: TenantId,
+    job_ids: tuple[JobId, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        _current_job_url(
+            _load_current_job_by_id(conn, tenant_id=tenant_id, job_id=job_id)
+        )
+        for job_id in job_ids
+    )
+
+
+def _legacy_workflow_locator_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Adapt canonical RPC IDs to the pre-#623/#628 workflow input contract.
+
+    The current URL is loaded by tenant-scoped ``JobId`` here; no caller URL
+    crosses JSON-RPC. The mapped runtime PRs remove this adapter after rebase.
+    """
+
+    tenant_id = TenantId(_tenant_id(params))
+    job_id, job_ids = _selected_job_ids(params)
+    adapted = {
+        key: value
+        for key, value in params.items()
+        if key not in {"jobId", "jobIds"}
+    }
+    if job_id is None and not job_ids:
+        return adapted
+    conn = get_connection()
+    if job_id is not None:
+        job = _load_current_job_by_id(conn, tenant_id=tenant_id, job_id=job_id)
+        adapted["jobUrl"] = _current_job_url(job)
+    else:
+        adapted["jobUrls"] = list(
+            _load_current_job_urls_by_id(
+                conn,
+                tenant_id=tenant_id,
+                job_ids=job_ids,
+            )
+        )
+    return adapted
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +239,7 @@ def _stage_list(params: dict[str, Any]) -> list[str]:
 
 def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
     try:
-        return build_run_stage_workflow_spec(params)
+        return build_run_stage_workflow_spec(_legacy_workflow_locator_params(params))
     except ValueError as exc:
         raise invalid_params(str(exc)) from exc
 
@@ -207,7 +279,7 @@ def rescore_jobs_not_on_current_scoring_policy(params: dict[str, Any]) -> Workfl
         stages=["score"],
         limit=int(params.get("limit", 100)),
         rescore=True,
-        job_urls=_job_urls(params),
+        job_ids=_job_ids(params),
         score_current_policy_only=True,
     )
 
@@ -259,9 +331,15 @@ def retailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
 
 def tailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = TenantId(_tenant_id(params))
-    job_url = str(_require(params, "jobUrl"))
+    requested_job_id = _required_job_id(params)
     conn = get_connection()
-    job_id = _job_id(_load_current_job(conn, tenant_id=tenant_id, job_url=job_url))
+    job_id = _job_id(
+        _load_current_job_by_id(
+            conn,
+            tenant_id=tenant_id,
+            job_id=requested_job_id,
+        )
+    )
     raw_judge_min_score = params.get("tailorJudgeMinScore")
     return build_preparation_workflow_spec(
         tenant_id=tenant_id,
@@ -306,23 +384,23 @@ def analyze_job(params: dict[str, Any]) -> dict[str, Any]:
     can see a degraded run immediately (D-08).
     """
     tenant_id = TenantId(_tenant_id(params))
-    job_url = str(_require(params, "jobUrl"))
+    job_id = _required_job_id(params)
     force = _bool_param(params, "force", default=False)
 
     from jobctrl.scoring.tailor import _build_analyze_use_case
 
     conn = get_connection()
-    job = _load_current_job(conn, tenant_id=tenant_id, job_url=job_url)
+    job = _load_current_job_by_id(conn, tenant_id=tenant_id, job_id=job_id)
     if not (job.get("full_description") or job.get("description")):
         raise invalid_params(
-            f"job {job_url} has no description to analyze; enrich it first"
+            f"jobId {job_id} has no description to analyze; enrich it first"
         )
 
     use_case = _build_analyze_use_case(conn=conn)
     outcome = use_case.execute(job=job, tenant_id=tenant_id, force=force)
     record = outcome.analysis
     return {
-        "jobUrl": job_url,
+        "jobId": str(job_id),
         "generation": record.generation,
         "cacheKey": record.cache_key,
         "cached": outcome.cached,
@@ -487,7 +565,7 @@ def retailor_current_policy(params: dict[str, Any]) -> WorkflowStartSpec:
         stages=["tailor", "cover"],
         limit=int(params.get("limit", 100)),
         retailor=True,
-        job_urls=_job_urls(params),
+        job_ids=_job_ids(params),
         tailor_current_policy_only=True,
         suppress_existing_artifacts=_bool_param(
             params, "suppressExistingArtifacts", default=False
@@ -502,21 +580,29 @@ def _pipeline_workflow_spec(
     limit: int,
     rescore: bool = False,
     retailor: bool = False,
-    job_url: str | None = None,
-    job_urls: tuple[str, ...] = (),
+    job_id: JobId | None = None,
+    job_ids: tuple[JobId, ...] = (),
     score_current_policy_only: bool = False,
     tailor_current_policy_only: bool = False,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
+    tenant_id = TenantId(_tenant_id(params))
+    conn = get_connection()
+    selected_job_ids = (job_id,) if job_id is not None else job_ids
+    job_urls = _load_current_job_urls_by_id(
+        conn,
+        tenant_id=tenant_id,
+        job_ids=selected_job_ids,
+    )
     return build_pipeline_workflow_spec(
         params,
         stages=stages,
         limit=limit,
         rescore=rescore,
         retailor=retailor,
-        job_url=job_url,
-        job_urls=job_urls,
+        job_url=job_urls[0] if job_id is not None else None,
+        job_urls=job_urls if job_id is None else (),
         score_current_policy_only=score_current_policy_only,
         tailor_current_policy_only=tailor_current_policy_only,
         suppress_existing_artifacts=suppress_existing_artifacts,
@@ -552,13 +638,21 @@ def _apply_workflow_id(tenant_id: str, job_key: str) -> str:
 
 def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
     """Build a :class:`WorkflowStartSpec` for :class:`ApplyWorkflow`."""
-    return build_apply_workflow_spec(params)
+    try:
+        if "jobIds" in params:
+            raise invalid_params("jobIds is not supported by apply; use jobId")
+        return build_apply_workflow_spec(_legacy_workflow_locator_params(params))
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
 
 
 def generate_interview_prep(params: dict[str, Any]) -> WorkflowStartSpec:
     """Build a workflow spec for user-triggered stored interview prep."""
     try:
-        return build_interview_prep_workflow_spec(params)
+        _required_job_id(params)
+        return build_interview_prep_workflow_spec(
+            _legacy_workflow_locator_params(params)
+        )
     except ValueError as exc:
         raise invalid_params(str(exc)) from exc
 

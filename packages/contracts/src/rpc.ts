@@ -106,7 +106,8 @@ export const RunStageParamsSchema = z
     expectedDbPath: z.string().trim().min(1).optional(),
     stage: z.enum(STAGES),
     stages: z.array(z.enum(STAGES)).min(1).max(STAGES.length).optional(),
-    jobUrl: z.string().optional(),
+    jobId: CanonicalJobIdParam.optional(),
+    jobIds: z.array(CanonicalJobIdParam).max(5000).optional(),
     limit: z.number().int().min(0).default(0),
     workers: z.number().int().min(1).default(1),
     minScore: z.number().int().min(0).max(10).default(7),
@@ -122,7 +123,10 @@ export const RunStageParamsSchema = z
     tailorJudgeMinScore: z.number().min(0).max(1).optional(),
     continuous: z.boolean().default(false),
   })
-  .strict();
+  .strict()
+  .refine((params) => !("jobId" in params && "jobIds" in params), {
+    message: "provide jobId or jobIds, not both",
+  });
 export type RunStageParams = z.infer<typeof RunStageParamsSchema>;
 
 /**
@@ -204,7 +208,7 @@ export const RescoreJobsNotOnCurrentScoringPolicyParamsSchema = z
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
     limit: z.number().int().min(1).max(1000).default(100),
-    jobUrls: z.array(z.string().trim().min(1)).max(5000).default([]),
+    jobIds: z.array(CanonicalJobIdParam).max(5000).default([]),
     dryRun: z.boolean().default(false),
     reason: z.string().trim().max(400).optional(),
   })
@@ -218,7 +222,7 @@ export const TailorJobParamsSchema = z
     tenantId: TenantParam,
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
-    jobUrl: z.string().min(1),
+    jobId: CanonicalJobIdParam,
     dryRun: z.boolean().default(false),
     allowLowFitOverride: z.boolean().default(true),
     reason: z.string().trim().max(400).optional(),
@@ -241,7 +245,7 @@ export const AnalyzeJobParamsSchema = z
     tenantId: TenantParam,
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
-    jobUrl: z.string().min(1),
+    jobId: CanonicalJobIdParam,
     force: z.boolean().default(false),
   })
   .strict();
@@ -249,7 +253,7 @@ export type AnalyzeJobParams = z.infer<typeof AnalyzeJobParamsSchema>;
 
 export const AnalyzeJobResultSchema = z
   .object({
-    jobUrl: z.string(),
+    jobId: CanonicalJobIdParam,
     generation: z.number().int(),
     cacheKey: z.string(),
     cached: z.boolean(),
@@ -302,7 +306,7 @@ export const GenerateInterviewPrepParamsSchema = z
     tenantId: TenantParam,
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
-    jobUrl: z.string().min(1),
+    jobId: CanonicalJobIdParam,
     llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
   })
   .strict();
@@ -402,7 +406,7 @@ export const RetailorCurrentPolicyParamsSchema = z
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
     limit: z.number().int().min(1).max(1000).default(100),
-    jobUrls: z.array(z.string().trim().min(1)).max(5000).default([]),
+    jobIds: z.array(CanonicalJobIdParam).max(5000).default([]),
     dryRun: z.boolean().default(false),
     suppressExistingArtifacts: z.boolean().default(true),
     reason: z.string().trim().max(400).optional(),
@@ -418,7 +422,7 @@ export const ApplyParamsSchema = z
     tenantId: TenantParam,
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
-    jobUrl: z.string().optional(),
+    jobId: CanonicalJobIdParam.optional(),
     limit: z.number().int().min(1).default(1),
     workers: z.number().int().min(1).default(1),
     minScore: z.number().int().min(0).max(10).default(7),

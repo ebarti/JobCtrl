@@ -3963,7 +3963,7 @@ export interface ActionCommandPayload {
   resetAttempts?: boolean;
   runAfter?: boolean;
   dryRun?: boolean;
-  jobKeys?: string[];
+  jobIds?: string[];
   limit?: number;
   workers?: number;
   minScore?: number;
