@@ -51,6 +51,11 @@ def test_root_copy_preserves_v6_jobs_and_derives_current_locator(
 ) -> None:
     source, candidate = _databases(tmp_path, history=history)
     try:
+        source.execute(
+            "UPDATE jobs SET company = ?, site = ?",
+            ("Acme", "greenhouse"),
+        )
+        source.commit()
         source_schema = source.execute("PRAGMA schema_version").fetchone()[0]
         source_changes = source.total_changes
         source_dump = tuple(source.iterdump())
@@ -72,12 +77,14 @@ def test_root_copy_preserves_v6_jobs_and_derives_current_locator(
             ): "00000000-0000-4000-8000-000000000001"
         }
         assert candidate.execute(
-            "SELECT tenant_id, job_id, url, title FROM jobs"
+            "SELECT tenant_id, job_id, url, title, company, site FROM jobs"
         ).fetchone() == (
             "local",
             "00000000-0000-4000-8000-000000000001",
             "https://jobs.example/shipped-v6",
             "Shipped V6 fixture",
+            "Acme",
+            "greenhouse",
         )
         assert candidate.execute(
             """
