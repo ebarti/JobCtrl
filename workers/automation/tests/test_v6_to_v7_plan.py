@@ -173,6 +173,7 @@ def test_identity_locator_and_sequence_roles_are_not_inferred_from_names() -> No
         is TableDisposition.DIRECT_COPY
     )
     for table in (
+        "learning_recommendation_reviews",
         "learning_recommendation_evidence",
         "learning_recommendation_evidence_jobs",
         "learning_recommendation_jobs",
