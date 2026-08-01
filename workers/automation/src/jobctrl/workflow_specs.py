@@ -305,7 +305,7 @@ def build_contact_research_workflow_spec(params: dict[str, Any]) -> WorkflowStar
 
 
 def build_single_job_workflow_spec(
-    url: str,
+    job_id: str,
     *,
     do_tailor: bool = True,
     do_apply: bool = True,
@@ -329,7 +329,7 @@ def build_single_job_workflow_spec(
             "expectedAppDir": expected_app_dir,
             "expectedDbPath": expected_db_path,
             "stages": stages,
-            "jobUrl": url,
+            "jobId": job_id,
             "validationMode": validation_mode,
             "model": model,
             "headless": headless,
