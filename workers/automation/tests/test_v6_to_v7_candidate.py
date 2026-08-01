@@ -37,6 +37,7 @@ _SOURCE_TITLE = "Shipped V6 fixture"
 _STEP_IDS = (
     "root",
     "direct_scalar",
+    "score_keywords",
     "duplicate_links",
     "events",
     "work_items",

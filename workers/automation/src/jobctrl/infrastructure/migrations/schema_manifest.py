@@ -23,9 +23,9 @@ class SchemaManifest:
 # semantically meaningful and must never normalize to the same fingerprint.
 EXACT_V7_MANIFEST = SchemaManifest(
     version=7,
-    object_count=197,
-    table_count=101,
-    fingerprint="b24a3c1c366b40a8acf3b27f4eb237ef63e52d7ebc55166b7df58970afbd0d80",
+    object_count=199,
+    table_count=102,
+    fingerprint="515fbe3685b850638bbf0900fa99f2dc6faf46b2ae480b152a2fb5ff972d68f4",
 )
 
 

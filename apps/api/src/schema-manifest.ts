@@ -14,9 +14,9 @@ export type SchemaManifest = {
 // a different schema.
 export const EXACT_V7_SCHEMA_MANIFEST: SchemaManifest = {
   version: 7,
-  objectCount: 197,
-  tableCount: 101,
-  fingerprint: "b24a3c1c366b40a8acf3b27f4eb237ef63e52d7ebc55166b7df58970afbd0d80",
+  objectCount: 199,
+  tableCount: 102,
+  fingerprint: "515fbe3685b850638bbf0900fa99f2dc6faf46b2ae480b152a2fb5ff972d68f4",
 };
 
 type SqliteMasterRow = [type: string, name: string, tableName: string, sql: string];

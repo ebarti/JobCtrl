@@ -353,6 +353,141 @@ def test_job_purge_cascades_private_resume_review_rows(tmp_path: Path) -> None:
     close_connection(db_path)
 
 
+def test_job_score_keywords_exact_schema_contract(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    job_id = "11111111-1111-4111-8111-111111111111"
+    conn.execute(
+        "INSERT INTO jobs (tenant_id, job_id, url) VALUES (?, ?, ?)",
+        ("local", job_id, "https://jobs.example/1"),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_scores (
+            tenant_id, job_id, version, fit_score, breakdown_json,
+            keywords_json, scored_at
+        ) VALUES (?, ?, 1, 8, '{}', '[]', ?)
+        """,
+        ("local", job_id, "2026-08-01T00:00:00Z"),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_score_keywords (
+            tenant_id, job_id, score_version, normalized_keyword,
+            display_keyword, position
+        ) VALUES (?, ?, 1, 'python', 'Python', 0)
+        """,
+        ("local", job_id),
+    )
+    conn.commit()
+
+    columns = conn.execute("PRAGMA table_info(job_score_keywords)").fetchall()
+    assert tuple(str(column[1]) for column in columns) == (
+        "tenant_id",
+        "job_id",
+        "score_version",
+        "normalized_keyword",
+        "display_keyword",
+        "position",
+    )
+    assert tuple(
+        str(column[1]) for column in columns if int(column[5])
+    ) == ("tenant_id", "job_id", "score_version", "normalized_keyword")
+
+    foreign_keys = conn.execute(
+        "PRAGMA foreign_key_list(job_score_keywords)"
+    ).fetchall()
+    score_foreign_keys = [foreign_key for foreign_key in foreign_keys if foreign_key[2] == "job_scores"]
+    assert {(foreign_key[3], foreign_key[4]) for foreign_key in score_foreign_keys} == {
+        ("tenant_id", "tenant_id"),
+        ("job_id", "job_id"),
+        ("score_version", "version"),
+    }
+    assert {foreign_key[6] for foreign_key in score_foreign_keys} == {"CASCADE"}
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO job_score_keywords (
+                tenant_id, job_id, score_version, normalized_keyword,
+                display_keyword, position
+            ) VALUES (?, ?, 1, 'python', 'PYTHON', 1)
+            """,
+            ("local", job_id),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO job_score_keywords (
+                tenant_id, job_id, score_version, normalized_keyword,
+                display_keyword, position
+            ) VALUES (?, ?, 1, 'python', 'Python', 0)
+            """,
+            ("other-tenant", job_id),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO job_score_keywords (
+                tenant_id, job_id, score_version, normalized_keyword,
+                display_keyword, position
+            ) VALUES (?, ?, 1, '   ', 'SQL', 1)
+            """,
+            ("local", job_id),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO job_score_keywords (
+                tenant_id, job_id, score_version, normalized_keyword,
+                display_keyword, position
+            ) VALUES (?, ?, 1, 'sql', '', 1)
+            """,
+            ("local", job_id),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO job_score_keywords (
+                tenant_id, job_id, score_version, normalized_keyword,
+                display_keyword, position
+            ) VALUES (?, ?, 1, 'sql', 'SQL', 0)
+            """,
+            ("local", job_id),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO job_score_keywords (
+                tenant_id, job_id, score_version, normalized_keyword,
+                display_keyword, position
+            ) VALUES (?, ?, 1, 'sql', 'SQL', -1)
+            """,
+            ("local", job_id),
+        )
+
+    indexes = {
+        str(index[1]): index
+        for index in conn.execute("PRAGMA index_list(job_score_keywords)")
+    }
+    assert indexes["idx_job_score_keywords_tenant_normalized"][2] == 0
+    assert tuple(
+        str(column[2])
+        for column in conn.execute(
+            "PRAGMA index_info(idx_job_score_keywords_tenant_normalized)"
+        )
+    ) == ("tenant_id", "normalized_keyword", "job_id", "score_version")
+
+    conn.execute(
+        "DELETE FROM job_scores WHERE tenant_id = ? AND job_id = ? AND version = 1",
+        ("local", job_id),
+    )
+    assert conn.execute("SELECT COUNT(*) FROM job_score_keywords").fetchone()[0] == 0
+    assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
+    close_connection(db_path)
+
+
 def test_incomplete_v6_is_rejected_before_any_write(tmp_path: Path) -> None:
     db_path = tmp_path / "jobctrl.db"
     _create_incomplete_v6_database(db_path)
