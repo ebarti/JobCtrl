@@ -7,6 +7,7 @@ import pytest
 from jobctrl import config
 from jobctrl.database import close_connection, init_db
 from jobctrl.discovery import smartextract
+from jobctrl.domain.identifiers import generate_job_id
 from jobctrl.domain.discovery import (
     AtsKind,
     JobMetadata,
@@ -19,6 +20,15 @@ from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.discovery import SqliteJobRepository
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
+
+
+def _job_id_by_url(conn, url: str) -> str:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+        (str(LOCAL_TENANT), url),
+    ).fetchone()
+    assert row is not None
+    return str(row["job_id"])
 
 
 def test_short_headless_html_never_retries_headful_in_the_bundled_core(
@@ -379,10 +389,12 @@ def test_smart_extract_updates_existing_serialized_null_description(
         conn.execute(
             """
             INSERT INTO jobs (
-                url, title, company, description, location, site, strategy, discovered_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                tenant_id, job_id, url, title, company, description, location, site, strategy, discovered_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                str(LOCAL_TENANT),
+                str(generate_job_id()),
                 url,
                 "Head of Engineering",
                 "Startup.jobs",
@@ -395,21 +407,25 @@ def test_smart_extract_updates_existing_serialized_null_description(
         )
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-                job_url TEXT PRIMARY KEY,
-                deleted_at TEXT NOT NULL,
-                reason TEXT,
-                restored_at TEXT,
-                FOREIGN KEY(job_url) REFERENCES jobs(url)
+            INSERT INTO job_locators (
+                tenant_id, job_id, locator_kind, locator_value,
+                is_current, first_seen_at, last_seen_at, retired_at
             )
-            """
+            SELECT tenant_id, job_id, 'posting_url', url, 1, discovered_at, discovered_at, NULL
+            FROM jobs WHERE tenant_id = ? AND url = ?
+            """,
+            (str(LOCAL_TENANT), url),
         )
         conn.execute(
             """
-            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-            VALUES (?, ?, ?, NULL)
+            INSERT INTO jobctrl_deleted_jobs (
+                tenant_id, job_id, deleted_at, reason, restored_at
+            )
+            SELECT tenant_id, job_id, ?, ?, NULL
+            FROM jobs
+            WHERE tenant_id = ? AND url = ?
             """,
-            (url, "2026-05-20T00:00:00+00:00", "missing_description"),
+            ("2026-05-20T00:00:00+00:00", "missing_description", str(LOCAL_TENANT), url),
         )
         conn.commit()
 
@@ -434,7 +450,9 @@ def test_smart_extract_updates_existing_serialized_null_description(
             """
             SELECT j.description, d.restored_at
             FROM jobs j
-            JOIN jobctrl_deleted_jobs d ON d.job_url = j.url
+            JOIN jobctrl_deleted_jobs d
+              ON d.tenant_id = j.tenant_id
+             AND d.job_id = j.job_id
             WHERE j.url = ?
             """,
             (url,),
@@ -457,10 +475,12 @@ def test_smart_extract_refreshes_existing_title_location_before_restore(
         conn.execute(
             """
             INSERT INTO jobs (
-                url, title, company, description, location, site, strategy, discovered_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                tenant_id, job_id, url, title, company, description, location, site, strategy, discovered_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                str(LOCAL_TENANT),
+                str(generate_job_id()),
                 url,
                 "Sales Director, Platform Services",
                 "",
@@ -473,21 +493,25 @@ def test_smart_extract_refreshes_existing_title_location_before_restore(
         )
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-                job_url TEXT PRIMARY KEY,
-                deleted_at TEXT NOT NULL,
-                reason TEXT,
-                restored_at TEXT,
-                FOREIGN KEY(job_url) REFERENCES jobs(url)
+            INSERT INTO job_locators (
+                tenant_id, job_id, locator_kind, locator_value,
+                is_current, first_seen_at, last_seen_at, retired_at
             )
-            """
+            SELECT tenant_id, job_id, 'posting_url', url, 1, discovered_at, discovered_at, NULL
+            FROM jobs WHERE tenant_id = ? AND url = ?
+            """,
+            (str(LOCAL_TENANT), url),
         )
         conn.execute(
             """
-            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-            VALUES (?, ?, ?, NULL)
+            INSERT INTO jobctrl_deleted_jobs (
+                tenant_id, job_id, deleted_at, reason, restored_at
+            )
+            SELECT tenant_id, job_id, ?, ?, NULL
+            FROM jobs
+            WHERE tenant_id = ? AND url = ?
             """,
-            (url, "2026-05-20T00:00:00+00:00", "title/location mismatch"),
+            ("2026-05-20T00:00:00+00:00", "title/location mismatch", str(LOCAL_TENANT), url),
         )
         conn.commit()
 
@@ -513,7 +537,9 @@ def test_smart_extract_refreshes_existing_title_location_before_restore(
             """
             SELECT j.title, j.company, j.description, j.location, d.restored_at
             FROM jobs j
-            JOIN jobctrl_deleted_jobs d ON d.job_url = j.url
+            JOIN jobctrl_deleted_jobs d
+              ON d.tenant_id = j.tenant_id
+             AND d.job_id = j.job_id
             WHERE j.url = ?
             """,
             (url,),
@@ -619,15 +645,16 @@ def test_smart_extract_dedups_against_ats_first_content_owner(
         link = conn.execute(
             "SELECT surviving_job_id, reason, confidence FROM job_duplicate_links"
         ).fetchone()
-        assert link["surviving_job_id"] == owner_url
+        owner_job_id = _job_id_by_url(conn, owner_url)
+        assert link["surviving_job_id"] == owner_job_id
         assert link["reason"] == "content_fingerprint_match"
         assert link["confidence"] == 0.95
         linked_events = conn.execute(
-            "SELECT job_url FROM job_events WHERE event_type = 'DuplicateJobLinked'"
+            "SELECT job_id FROM job_events WHERE event_type = 'DuplicateJobLinked'"
         ).fetchall()
         assert len(linked_events) == 1
-        assert linked_events[0]["job_url"] == owner_url
-        observations = repository.list_observations(LOCAL_TENANT, owner_url)
+        assert linked_events[0]["job_id"] == owner_job_id
+        observations = repository.list_observations(LOCAL_TENANT, owner_job_id)
         assert "smartextract:Acme Careers" in {obs.source_id for obs in observations}
     finally:
         close_connection(db_path)
@@ -687,7 +714,7 @@ def test_ats_dedups_against_smart_extract_first_content_owner(
         link = conn.execute(
             "SELECT surviving_job_id, reason FROM job_duplicate_links"
         ).fetchone()
-        assert link["surviving_job_id"] == smart_url
+        assert link["surviving_job_id"] == _job_id_by_url(conn, smart_url)
         assert link["reason"] == "content_fingerprint_match"
     finally:
         close_connection(db_path)

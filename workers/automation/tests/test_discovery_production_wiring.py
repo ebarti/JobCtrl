@@ -27,6 +27,7 @@ from jobctrl.domain.discovery.source_registry import (
     SourceState,
     WORKDAY_API_POLICY,
 )
+from jobctrl.domain.identifiers import generate_job_id
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.enrichment.detail import _record_posting_snapshot_from_cascade
 from jobctrl.infrastructure.discovery.production_wiring import (
@@ -44,6 +45,77 @@ from jobctrl.infrastructure.discovery.production_wiring import (
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobctrl.pipeline import runner
 from jobctrl.state import record_job_event
+
+
+def _insert_v7_job(
+    conn: sqlite3.Connection,
+    *,
+    url: str,
+    title: str,
+    company: str,
+    description: str,
+    location: str,
+    site: str,
+    strategy: str,
+    discovered_at: str,
+) -> str:
+    job_id = str(generate_job_id())
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, company, description, location,
+            site, strategy, discovered_at
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (job_id, url, title, company, description, location, site, strategy, discovered_at),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_locators (
+            tenant_id, job_id, locator_kind, locator_value, is_current,
+            first_seen_at, last_seen_at, retired_at
+        ) VALUES ('local', ?, 'posting_url', ?, 1, ?, ?, NULL)
+        """,
+        (job_id, url, discovered_at, discovered_at),
+    )
+    return job_id
+
+
+def _insert_source_observation(
+    conn: sqlite3.Connection,
+    *,
+    observation_id: str,
+    job_id: str,
+    source_id: str,
+    source_native_id: str,
+    url: str,
+    observed_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_source_observations (
+            tenant_id, source_observation_id, job_id, source_id,
+            source_native_id, observed_url, normalized_observed_url,
+            run_id, observed_at
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, 'test', ?)
+        """,
+        (observation_id, job_id, source_id, source_native_id, url, url, observed_at),
+    )
+
+
+def _deleted_reasons_by_url(conn: sqlite3.Connection) -> dict[str, str]:
+    return {
+        str(row["url"]): str(row["reason"])
+        for row in conn.execute(
+            """
+            SELECT jobs.url, jobctrl_deleted_jobs.reason
+            FROM jobctrl_deleted_jobs
+            JOIN jobs
+              ON jobs.tenant_id = jobctrl_deleted_jobs.tenant_id
+             AND jobs.job_id = jobctrl_deleted_jobs.job_id
+            """
+        ).fetchall()
+    }
 
 
 @pytest.fixture
@@ -335,25 +407,26 @@ def test_worker_seeds_api_visible_locator_and_manual_queues(
 def test_worker_auto_approves_parseable_sources_from_broad_board_observations(
     conn: sqlite3.Connection,
 ) -> None:
-    conn.execute(
-        """
-        INSERT INTO job_source_observations (
-          tenant_id, source_observation_id, job_url, source_id,
-          source_native_id, observed_url, normalized_observed_url,
-          run_id, observed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "local",
-            "obs-1",
-            "https://boards.greenhouse.io/acme/jobs/123",
-            "jobspy:linkedin",
-            "123",
-            "https://boards.greenhouse.io/acme/jobs/123",
-            "https://boards.greenhouse.io/acme/jobs/123",
-            "run-1",
-            "2026-05-12T10:00:00+00:00",
-        ),
+    url = "https://boards.greenhouse.io/acme/jobs/123"
+    job_id = _insert_v7_job(
+        conn,
+        url=url,
+        title="Engineering Manager",
+        company="Acme",
+        description="Lead engineering teams.",
+        location="Barcelona, Spain",
+        site="linkedin",
+        strategy="jobspy",
+        discovered_at="2026-05-12T10:00:00+00:00",
+    )
+    _insert_source_observation(
+        conn,
+        observation_id="obs-1",
+        job_id=job_id,
+        source_id="jobspy:linkedin",
+        source_native_id="123",
+        url=url,
+        observed_at="2026-05-12T10:00:00+00:00",
     )
     conn.commit()
 
@@ -480,22 +553,29 @@ def test_canonical_ats_scheduler_routes_postings_through_discovery_use_case(
     }
     enrichments = conn.execute(
         """
-        SELECT job_url, current_status, full_description, extraction_tier
+        SELECT jobs.url, job_enrichments.current_status,
+               job_enrichments.full_description, job_enrichments.extraction_tier
         FROM job_enrichments
+        JOIN jobs
+          ON jobs.tenant_id = job_enrichments.tenant_id
+         AND jobs.job_id = job_enrichments.job_id
         """
     ).fetchall()
-    assert {row["job_url"] for row in enrichments} == expected_urls
+    assert {row["url"] for row in enrichments} == expected_urls
     assert {row["current_status"] for row in enrichments} == {"enriched"}
     assert {row["extraction_tier"] for row in enrichments} == {"css_selectors"}
     assert all(str(row["full_description"] or "").strip() for row in enrichments)
     stage_rows = conn.execute(
         """
-        SELECT job_url, state
+        SELECT jobs.url, job_stage_states.state
         FROM job_stage_states
-        WHERE stage = 'enrich'
+        JOIN jobs
+          ON jobs.tenant_id = job_stage_states.tenant_id
+         AND jobs.job_id = job_stage_states.job_id
+        WHERE job_stage_states.stage = 'enrich'
         """
     ).fetchall()
-    assert {row["job_url"] for row in stage_rows} == expected_urls
+    assert {row["url"] for row in stage_rows} == expected_urls
     assert {row["state"] for row in stage_rows} == {"succeeded"}
     assert {
         row["url"] for row in get_jobs_by_stage(conn, "pending_score", limit=0)
@@ -607,39 +687,33 @@ def test_discovery_hygiene_retires_existing_invalid_canonical_ats_rows(
         ),
     ]
     for index, (url, title, location, description) in enumerate(rows):
-        conn.execute(
-            """
-            INSERT INTO jobs (url, title, company, description, location, site, strategy, discovered_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (url, title, "Acme", description, location, "Acme", "workday_api", "2026-05-20T00:00:00+00:00"),
+        job_id = _insert_v7_job(
+            conn,
+            url=url,
+            title=title,
+            company="Acme",
+            description=description,
+            location=location,
+            site="Acme",
+            strategy="workday_api",
+            discovered_at="2026-05-20T00:00:00+00:00",
         )
         conn.execute(
             """
             INSERT INTO job_canonical_identities (
-                tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at
+                tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            ("local", url, url, "greenhouse", f"gh-{index}", 1.0, "2026-05-20T00:00:00+00:00"),
+            ("local", job_id, url, "greenhouse", f"gh-{index}", 1.0, "2026-05-20T00:00:00+00:00"),
         )
-        conn.execute(
-            """
-            INSERT INTO job_source_observations (
-                tenant_id, source_observation_id, job_url, source_id, source_native_id,
-                observed_url, normalized_observed_url, run_id, observed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "local",
-                f"obs-{index}",
-                url,
-                "greenhouse:acme",
-                f"gh-{index}",
-                url,
-                url,
-                "test",
-                "2026-05-20T00:00:00+00:00",
-            ),
+        _insert_source_observation(
+            conn,
+            observation_id=f"obs-{index}",
+            job_id=job_id,
+            source_id="greenhouse:acme",
+            source_native_id=f"gh-{index}",
+            url=url,
+            observed_at="2026-05-20T00:00:00+00:00",
         )
     conn.commit()
 
@@ -650,10 +724,7 @@ def test_discovery_hygiene_retires_existing_invalid_canonical_ats_rows(
     )
 
     assert result["retired_jobs"] == 3
-    deleted = {
-        row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
-    }
+    deleted = _deleted_reasons_by_url(conn)
     assert "https://boards.greenhouse.io/acme/jobs/valid" not in deleted
     assert "missing_description" in deleted["https://boards.greenhouse.io/acme/jobs/empty-description"]
     assert "title_mismatch" in deleted["https://boards.greenhouse.io/acme/jobs/sales"]
@@ -686,39 +757,33 @@ def test_discovery_hygiene_retires_ashby_business_travel_portugal_rows(
         ),
     ]
     for url, title, location, description, native_id in rows:
-        conn.execute(
-            """
-            INSERT INTO jobs (url, title, company, description, location, site, strategy, discovered_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (url, title, "Perk", description, location, "jobs.ashbyhq.com", "workday_api", "2026-05-25T21:35:55+00:00"),
+        job_id = _insert_v7_job(
+            conn,
+            url=url,
+            title=title,
+            company="Perk",
+            description=description,
+            location=location,
+            site="jobs.ashbyhq.com",
+            strategy="workday_api",
+            discovered_at="2026-05-25T21:35:55+00:00",
         )
         conn.execute(
             """
             INSERT INTO job_canonical_identities (
-                tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at
+                tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            ("local", url, url, "ashby", native_id, 0.9, "2026-05-25T21:35:55+00:00"),
+            ("local", job_id, url, "ashby", native_id, 0.9, "2026-05-25T21:35:55+00:00"),
         )
-        conn.execute(
-            """
-            INSERT INTO job_source_observations (
-                tenant_id, source_observation_id, job_url, source_id, source_native_id,
-                observed_url, normalized_observed_url, run_id, observed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "local",
-                f"obs-{native_id}",
-                url,
-                "ashby:perk",
-                native_id,
-                url,
-                url,
-                "test",
-                "2026-05-25T21:35:55+00:00",
-            ),
+        _insert_source_observation(
+            conn,
+            observation_id=f"obs-{native_id}",
+            job_id=job_id,
+            source_id="ashby:perk",
+            source_native_id=native_id,
+            url=url,
+            observed_at="2026-05-25T21:35:55+00:00",
         )
     conn.commit()
 
@@ -742,10 +807,7 @@ def test_discovery_hygiene_retires_ashby_business_travel_portugal_rows(
     )
 
     assert result["retired_jobs"] == 1
-    deleted = {
-        row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
-    }
+    deleted = _deleted_reasons_by_url(conn)
     assert good_url not in deleted
     assert "title_mismatch" in deleted[bad_url]
     assert "location_mismatch" in deleted[bad_url]
@@ -778,40 +840,25 @@ def test_discovery_hygiene_retires_invalid_jobspy_rows(
         ),
     ]
     for index, (url, title, location, description, source_id) in enumerate(rows):
-        conn.execute(
-            """
-            INSERT INTO jobs (url, title, company, description, location, site, strategy, discovered_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                url,
-                title,
-                "LinkedInCo",
-                description,
-                location,
-                "linkedin",
-                "jobspy",
-                "2026-05-20T00:00:00+00:00",
-            ),
+        job_id = _insert_v7_job(
+            conn,
+            url=url,
+            title=title,
+            company="LinkedInCo",
+            description=description,
+            location=location,
+            site="linkedin",
+            strategy="jobspy",
+            discovered_at="2026-05-20T00:00:00+00:00",
         )
-        conn.execute(
-            """
-            INSERT INTO job_source_observations (
-                tenant_id, source_observation_id, job_url, source_id, source_native_id,
-                observed_url, normalized_observed_url, run_id, observed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "local",
-                f"jobspy-obs-{index}",
-                url,
-                source_id,
-                f"li-{index}",
-                url,
-                url,
-                "test",
-                "2026-05-20T00:00:00+00:00",
-            ),
+        _insert_source_observation(
+            conn,
+            observation_id=f"jobspy-obs-{index}",
+            job_id=job_id,
+            source_id=source_id,
+            source_native_id=f"li-{index}",
+            url=url,
+            observed_at="2026-05-20T00:00:00+00:00",
         )
     conn.commit()
 
@@ -835,10 +882,7 @@ def test_discovery_hygiene_retires_invalid_jobspy_rows(
     )
 
     assert result["retired_jobs"] == 2
-    deleted = {
-        row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
-    }
+    deleted = _deleted_reasons_by_url(conn)
     assert "https://www.linkedin.com/jobs/view/valid-head-engineering" not in deleted
     assert "title_mismatch" in deleted["https://www.linkedin.com/jobs/view/head-school-biomedical"]
     assert "location_mismatch" in deleted["https://www.linkedin.com/jobs/view/us-engineering-manager"]
@@ -879,50 +923,39 @@ def test_discovery_hygiene_treats_serialized_null_descriptions_as_missing(
             "Lead engineering teams in Barcelona.",
         ),
     ]
+    job_ids_by_url: dict[str, str] = {}
     for index, (url, title, location, description) in enumerate(rows):
-        conn.execute(
-            """
-            INSERT INTO jobs (url, title, company, description, location, site, strategy, discovered_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                url,
-                title,
-                "LinkedInCo",
-                description,
-                location,
-                "linkedin",
-                "jobspy",
-                "2026-05-20T00:00:00+00:00",
-            ),
+        job_id = _insert_v7_job(
+            conn,
+            url=url,
+            title=title,
+            company="LinkedInCo",
+            description=description,
+            location=location,
+            site="linkedin",
+            strategy="jobspy",
+            discovered_at="2026-05-20T00:00:00+00:00",
         )
-        conn.execute(
-            """
-            INSERT INTO job_source_observations (
-                tenant_id, source_observation_id, job_url, source_id, source_native_id,
-                observed_url, normalized_observed_url, run_id, observed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "local",
-                f"jobspy-sentinel-obs-{index}",
-                url,
-                "jobspy:linkedin",
-                f"li-sentinel-{index}",
-                url,
-                url,
-                "test",
-                "2026-05-20T00:00:00+00:00",
-            ),
+        job_ids_by_url[url] = job_id
+        _insert_source_observation(
+            conn,
+            observation_id=f"jobspy-sentinel-obs-{index}",
+            job_id=job_id,
+            source_id="jobspy:linkedin",
+            source_native_id=f"li-sentinel-{index}",
+            url=url,
+            observed_at="2026-05-20T00:00:00+00:00",
         )
     conn.execute(
         """
         INSERT INTO job_enrichments (
-            job_url, tenant_id, current_status, full_description, updated_at
+            job_id, tenant_id, current_status, full_description, updated_at
         ) VALUES (?, ?, ?, ?, ?)
         """,
         (
-            "https://www.linkedin.com/jobs/view/enrichment-sentinel-with-fallback",
+            job_ids_by_url[
+                "https://www.linkedin.com/jobs/view/enrichment-sentinel-with-fallback"
+            ],
             "local",
             "success",
             "<NA>",
@@ -942,10 +975,7 @@ def test_discovery_hygiene_treats_serialized_null_descriptions_as_missing(
     )
 
     assert result["retired_jobs"] == 3
-    deleted = {
-        row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
-    }
+    deleted = _deleted_reasons_by_url(conn)
     assert "https://www.linkedin.com/jobs/view/valid-head-engineering" not in deleted
     assert (
         "https://www.linkedin.com/jobs/view/enrichment-sentinel-with-fallback"
@@ -1013,40 +1043,25 @@ def test_discovery_hygiene_applies_to_workday_and_smart_extract_rows(
         ),
     ]
     for index, (url, title, location, description, site, strategy, source_id) in enumerate(rows):
-        conn.execute(
-            """
-            INSERT INTO jobs (url, title, company, description, location, site, strategy, discovered_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                url,
-                title,
-                site,
-                description,
-                location,
-                site,
-                strategy,
-                "2026-05-20T00:00:00+00:00",
-            ),
+        job_id = _insert_v7_job(
+            conn,
+            url=url,
+            title=title,
+            company=site,
+            description=description,
+            location=location,
+            site=site,
+            strategy=strategy,
+            discovered_at="2026-05-20T00:00:00+00:00",
         )
-        conn.execute(
-            """
-            INSERT INTO job_source_observations (
-                tenant_id, source_observation_id, job_url, source_id, source_native_id,
-                observed_url, normalized_observed_url, run_id, observed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "local",
-                f"source-family-obs-{index}",
-                url,
-                source_id,
-                f"native-{index}",
-                url,
-                url,
-                "test",
-                "2026-05-20T00:00:00+00:00",
-            ),
+        _insert_source_observation(
+            conn,
+            observation_id=f"source-family-obs-{index}",
+            job_id=job_id,
+            source_id=source_id,
+            source_native_id=f"native-{index}",
+            url=url,
+            observed_at="2026-05-20T00:00:00+00:00",
         )
     conn.commit()
 
@@ -1065,10 +1080,7 @@ def test_discovery_hygiene_applies_to_workday_and_smart_extract_rows(
     )
 
     assert result["retired_jobs"] == 3
-    deleted = {
-        row["job_url"]: row["reason"]
-        for row in conn.execute("SELECT job_url, reason FROM jobctrl_deleted_jobs").fetchall()
-    }
+    deleted = _deleted_reasons_by_url(conn)
     assert "https://acme.wd1.myworkdayjobs.com/jobs/valid-engineering-manager" not in deleted
     assert "https://wellfound.com/jobs/valid-head-engineering" not in deleted
     assert "title_mismatch" in deleted["https://acme.wd1.myworkdayjobs.com/jobs/customer-success"]
@@ -1296,10 +1308,12 @@ def test_enrichment_snapshot_success_uses_observed_source_id(
     )
     row = conn.execute(
         """
-        SELECT jobs.url, jobs.title, jobs.site, job_source_observations.source_id
+        SELECT jobs.job_id, jobs.url, jobs.title, jobs.site,
+               job_source_observations.source_id
         FROM jobs
         JOIN job_source_observations
-            ON job_source_observations.job_url = jobs.url
+          ON job_source_observations.tenant_id = jobs.tenant_id
+         AND job_source_observations.job_id = jobs.job_id
         WHERE job_source_observations.source_id = ?
         LIMIT 1
         """,
@@ -1310,6 +1324,7 @@ def test_enrichment_snapshot_success_uses_observed_source_id(
     _record_posting_snapshot_from_cascade(
         conn,
         url=row["url"],
+        job_id=row["job_id"],
         source_id=row["site"],
         title=row["title"],
         cascade_result={
@@ -1383,7 +1398,7 @@ def test_manual_capture_import_runs_discovery_enrichment_and_snapshot_pipeline(
     assert conn.execute(
         """
         SELECT strategy FROM jobs
-        WHERE url = ?
+        WHERE job_id = ?
         """,
         (outcome.job_id,),
     ).fetchone()["strategy"] == "manual"
@@ -1391,7 +1406,7 @@ def test_manual_capture_import_runs_discovery_enrichment_and_snapshot_pipeline(
         """
         SELECT current_status, extraction_tier
         FROM job_enrichments
-        WHERE job_url = ?
+        WHERE job_id = ?
         """,
         (outcome.job_id,),
     ).fetchone()
@@ -1400,7 +1415,7 @@ def test_manual_capture_import_runs_discovery_enrichment_and_snapshot_pipeline(
         """
         SELECT latest_snapshot_version, latest_active_state
         FROM posting_snapshot_sets
-        WHERE job_url = ?
+        WHERE job_id = ?
         """,
         (outcome.job_id,),
     ).fetchone()
@@ -1518,7 +1533,7 @@ def test_manual_capture_import_cli_routes_api_bridge_through_worker_pipeline(
     assert captured.err == ""
     assert exit_code == 0
     result = json.loads(captured.out)
-    assert result["jobId"] == "https://login.protected.example/jobs/vp-engineering"
+    assert result["jobId"]
     assert result["promotedToJobEnrichment"] is True
     assert result["retryContext"]["manual_capture_provenance"]["source_kind"] == (
         "user_mediated_capture"
@@ -1526,6 +1541,10 @@ def test_manual_capture_import_cli_routes_api_bridge_through_worker_pipeline(
     verify_conn = sqlite3.connect(db_path)
     verify_conn.row_factory = sqlite3.Row
     try:
+        assert result["jobId"] == verify_conn.execute(
+            "SELECT job_id FROM jobs WHERE url = ?",
+            ("https://login.protected.example/jobs/vp-engineering",),
+        ).fetchone()["job_id"]
         assert (
             verify_conn.execute(
                 "SELECT strategy FROM jobs WHERE url = ?",
@@ -1535,8 +1554,8 @@ def test_manual_capture_import_cli_routes_api_bridge_through_worker_pipeline(
         )
         assert (
             verify_conn.execute(
-                "SELECT current_status FROM job_enrichments WHERE job_url = ?",
-                ("https://login.protected.example/jobs/vp-engineering",),
+                "SELECT current_status FROM job_enrichments WHERE job_id = ?",
+                (result["jobId"],),
             ).fetchone()["current_status"]
             == "enriched"
         )

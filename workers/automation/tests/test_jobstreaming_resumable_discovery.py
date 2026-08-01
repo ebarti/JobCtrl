@@ -390,9 +390,13 @@ def test_store_before_ack_replay_resumes_without_duplicate_counts_or_events(
     assert interrupted_unit.checkpoint_revision == 0
     assert interrupted_unit.accepted_jobs == 1
     assert interrupted_unit.new_jobs == 1
-    first_job_event_count = conn.execute(
-        "SELECT COUNT(*) FROM job_events WHERE job_url = ?",
+    first_job_id = conn.execute(
+        "SELECT job_id FROM jobs WHERE url = ?",
         ("https://example.test/director-of-engineering/1",),
+    ).fetchone()["job_id"]
+    first_job_event_count = conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE job_id = ?",
+        (first_job_id,),
     ).fetchone()[0]
 
     result = jobspy.run_discovery(
@@ -423,8 +427,8 @@ def test_store_before_ack_replay_resumes_without_duplicate_counts_or_events(
     ).fetchone()
     assert event_counts[0] == event_counts[1]
     assert conn.execute(
-        "SELECT COUNT(*) FROM job_events WHERE job_url = ?",
-        ("https://example.test/director-of-engineering/1",),
+        "SELECT COUNT(*) FROM job_events WHERE job_id = ?",
+        (first_job_id,),
     ).fetchone()[0] == first_job_event_count
     assert any(
         snapshot["message"] == "Resuming interrupted JobStreaming search unit"

@@ -16,6 +16,7 @@ from jobctrl.domain.discovery import (
     Source,
 )
 from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
+from jobctrl.domain.identifiers import generate_job_id
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.compensation import SqlitePostedCompensationRepository
@@ -28,6 +29,15 @@ _JOBSPY_DESCRIPTION = "Lead engineering, platform, security, and delivery teams 
 
 def _jobspy_frame(rows: list[dict]) -> pd.DataFrame:
     return pd.DataFrame([{"description": _JOBSPY_DESCRIPTION, **row} for row in rows])
+
+
+def _stable_job_id(conn, job_url: str) -> str:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+        (str(LOCAL_TENANT), job_url),
+    ).fetchone()
+    assert row is not None
+    return str(row["job_id"])
 
 
 def test_jobspy_limit_stops_after_one_new_job(monkeypatch):
@@ -526,7 +536,7 @@ def test_jobspy_dedups_against_ats_first_null_company_owner(tmp_path):
         link = conn.execute(
             "SELECT surviving_job_id FROM job_duplicate_links"
         ).fetchone()
-        assert link["surviving_job_id"] == owner_url
+        assert link["surviving_job_id"] == _stable_job_id(conn, owner_url)
     finally:
         close_connection(db_path)
 
@@ -641,8 +651,8 @@ def test_jobspy_stores_company_and_backfills_existing_job(tmp_path):
         ).fetchone()
         assert row["company"] == "Keyrock"
         event = conn.execute(
-            "SELECT event_type FROM job_events WHERE job_url = ? AND event_type = 'JobMetadataUpdated' LIMIT 1",
-            ("https://www.linkedin.com/jobs/view/1",),
+            "SELECT event_type FROM job_events WHERE job_id = ? AND event_type = 'JobMetadataUpdated' LIMIT 1",
+            (_stable_job_id(conn, "https://www.linkedin.com/jobs/view/1"),),
         ).fetchone()
         assert event["event_type"] == "JobMetadataUpdated"
     finally:
@@ -787,12 +797,16 @@ def test_jobspy_existing_row_refreshes_metadata_before_restore(tmp_path):
     conn = init_db(db_path)
     url = "https://www.linkedin.com/jobs/view/stale"
     try:
+        job_id = str(generate_job_id())
         conn.execute(
             """
-            INSERT INTO jobs (url, title, company, description, location, site, strategy, discovered_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO jobs (
+                tenant_id, job_id, url, title, company, description, location, site, strategy, discovered_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                str(LOCAL_TENANT),
+                job_id,
                 url,
                 "Stale Support Role",
                 "",
@@ -803,13 +817,33 @@ def test_jobspy_existing_row_refreshes_metadata_before_restore(tmp_path):
                 "2026-05-20T00:00:00+00:00",
             ),
         )
-        jobspy._ensure_deleted_jobs_table(conn)
         conn.execute(
             """
-            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-            VALUES (?, ?, ?, NULL)
+            INSERT INTO job_locators (
+                tenant_id, job_id, locator_kind, locator_value, is_current,
+                first_seen_at, last_seen_at, retired_at
+            ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?, NULL)
             """,
-            (url, "2026-05-21T00:00:00+00:00", "stale invalid row"),
+            (
+                str(LOCAL_TENANT),
+                job_id,
+                url,
+                "2026-05-20T00:00:00+00:00",
+                "2026-05-20T00:00:00+00:00",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO jobctrl_deleted_jobs (
+                tenant_id, job_id, deleted_at, reason, restored_at
+            ) VALUES (?, ?, ?, ?, NULL)
+            """,
+            (
+                str(LOCAL_TENANT),
+                _stable_job_id(conn, url),
+                "2026-05-21T00:00:00+00:00",
+                "stale invalid row",
+            ),
         )
         conn.commit()
 
@@ -840,8 +874,8 @@ def test_jobspy_existing_row_refreshes_metadata_before_restore(tmp_path):
             "location": "Barcelona, Spain",
         }
         tombstone = conn.execute(
-            "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
-            (url,),
+            "SELECT restored_at FROM jobctrl_deleted_jobs WHERE tenant_id = ? AND job_id = ?",
+            (str(LOCAL_TENANT), _stable_job_id(conn, url)),
         ).fetchone()
         assert tombstone["restored_at"] is not None
     finally:
@@ -1031,9 +1065,9 @@ def test_jobspy_learns_posting_owner_source_from_direct_ats_url(tmp_path):
             """
             SELECT source_id, observed_url, run_id
             FROM job_source_observations
-            WHERE job_url = ?
+            WHERE job_id = ?
             """,
-            ("https://www.linkedin.com/jobs/view/4416248661",),
+            (_stable_job_id(conn, "https://www.linkedin.com/jobs/view/4416248661"),),
         ).fetchone()
         assert observation["source_id"] == "jobspy:linkedin"
         assert observation["observed_url"] == "https://www.linkedin.com/jobs/view/4416248661"
@@ -1043,9 +1077,9 @@ def test_jobspy_learns_posting_owner_source_from_direct_ats_url(tmp_path):
             """
             SELECT canonical_url, ats_kind, source_native_id, confidence
             FROM job_canonical_identities
-            WHERE job_url = ?
+            WHERE job_id = ?
             """,
-            ("https://www.linkedin.com/jobs/view/4416248661",),
+            (_stable_job_id(conn, "https://www.linkedin.com/jobs/view/4416248661"),),
         ).fetchone()
         assert identity["canonical_url"] == direct_url
         assert identity["ats_kind"] == "greenhouse"
@@ -1105,7 +1139,7 @@ def test_jobspy_persists_posted_compensation_fact_from_bounded_salary_text(tmp_p
 
         fact = SqlitePostedCompensationRepository(conn).get_fact(
             "local",
-            "https://www.linkedin.com/jobs/view/posted-comp",
+            _stable_job_id(conn, "https://www.linkedin.com/jobs/view/posted-comp"),
         )
         assert fact is not None
         assert fact.parse_state == "parsed_range"
@@ -1227,9 +1261,9 @@ def test_jobspy_keeps_learned_workday_sources_in_review_until_runnable(tmp_path)
             """
             SELECT canonical_url, ats_kind, source_native_id
             FROM job_canonical_identities
-            WHERE job_url = ?
+            WHERE job_id = ?
             """,
-            ("https://www.linkedin.com/jobs/view/12",),
+            (_stable_job_id(conn, "https://www.linkedin.com/jobs/view/12"),),
         ).fetchone()
         assert identity["canonical_url"] == direct_url
         assert identity["ats_kind"] == "workday"
@@ -1340,12 +1374,14 @@ def test_jobspy_rejects_same_content_location_variants(tmp_path):
             "SELECT surviving_job_id, superseded_job_or_observation_id, reason "
             "FROM job_duplicate_links"
         ).fetchone()
-        assert link["surviving_job_id"] == "https://www.linkedin.com/jobs/view/4416248661"
+        assert link["surviving_job_id"] == _stable_job_id(
+            conn, "https://www.linkedin.com/jobs/view/4416248661"
+        )
         assert link["superseded_job_or_observation_id"] == "https://www.linkedin.com/jobs/view/4416235850"
         assert link["reason"] == "content_fingerprint_match"
         observation = conn.execute(
-            "SELECT source_id FROM job_source_observations WHERE job_url = ?",
-            ("https://www.linkedin.com/jobs/view/4416248661",),
+            "SELECT source_id FROM job_source_observations WHERE job_id = ?",
+            (_stable_job_id(conn, "https://www.linkedin.com/jobs/view/4416248661"),),
         ).fetchone()
         assert observation["source_id"] == "jobspy:linkedin"
     finally:
@@ -1436,12 +1472,14 @@ def test_jobspy_rejects_cross_board_markdown_description_variants(tmp_path):
         link = conn.execute(
             "SELECT surviving_job_id, superseded_job_or_observation_id, reason FROM job_duplicate_links"
         ).fetchone()
-        assert link["surviving_job_id"] == "https://es.indeed.com/viewjob?jk=6b34cd5504dac130"
+        assert link["surviving_job_id"] == _stable_job_id(
+            conn, "https://es.indeed.com/viewjob?jk=6b34cd5504dac130"
+        )
         assert link["superseded_job_or_observation_id"] == "https://www.linkedin.com/jobs/view/4409381449"
         assert link["reason"] == "content_fingerprint_match"
         observations = conn.execute(
-            "SELECT source_id FROM job_source_observations WHERE job_url = ? ORDER BY source_id",
-            ("https://es.indeed.com/viewjob?jk=6b34cd5504dac130",),
+            "SELECT source_id FROM job_source_observations WHERE job_id = ? ORDER BY source_id",
+            (_stable_job_id(conn, "https://es.indeed.com/viewjob?jk=6b34cd5504dac130"),),
         ).fetchall()
         assert [row["source_id"] for row in observations] == ["jobspy:indeed", "jobspy:linkedin"]
     finally:
@@ -1520,11 +1558,13 @@ def test_jobspy_exact_rediscovery_keeps_deleted_content_duplicate_suppressed(tmp
         conn.execute(
             """
             INSERT INTO jobs (
-                url, title, company, location, site, strategy, discovered_at,
+                tenant_id, job_id, url, title, company, location, site, strategy, discovered_at,
                 description, full_description, detail_scraped_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                str(LOCAL_TENANT),
+                str(generate_job_id()),
                 duplicate_url,
                 "Director, Product Management (BSS/Platform Services)",
                 "Vonage",
@@ -1539,10 +1579,16 @@ def test_jobspy_exact_rediscovery_keeps_deleted_content_duplicate_suppressed(tmp
         )
         conn.execute(
             """
-            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-            VALUES (?, ?, ?, NULL)
+            INSERT INTO jobctrl_deleted_jobs (
+                tenant_id, job_id, deleted_at, reason, restored_at
+            ) VALUES (?, ?, ?, ?, NULL)
             """,
-            (duplicate_url, "2026-05-21T11:00:00+00:00", "content duplicate"),
+            (
+                str(LOCAL_TENANT),
+                _stable_job_id(conn, duplicate_url),
+                "2026-05-21T11:00:00+00:00",
+                "content duplicate",
+            ),
         )
         conn.commit()
 
@@ -1560,14 +1606,14 @@ def test_jobspy_exact_rediscovery_keeps_deleted_content_duplicate_suppressed(tmp
         assert jobspy.store_jobspy_results(conn, rediscovered, "Product", limit=10) == (0, 1)
 
         tombstone = conn.execute(
-            "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
-            (duplicate_url,),
+            "SELECT restored_at FROM jobctrl_deleted_jobs WHERE tenant_id = ? AND job_id = ?",
+            (str(LOCAL_TENANT), _stable_job_id(conn, duplicate_url)),
         ).fetchone()
         assert tombstone["restored_at"] is None
         link = conn.execute(
             "SELECT surviving_job_id, superseded_job_or_observation_id, reason FROM job_duplicate_links"
         ).fetchone()
-        assert link["surviving_job_id"] == survivor_url
+        assert link["surviving_job_id"] == _stable_job_id(conn, survivor_url)
         assert link["superseded_job_or_observation_id"] == duplicate_url
         assert link["reason"] == "content_fingerprint_match"
     finally:
