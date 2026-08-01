@@ -8,15 +8,16 @@ from typing import Any
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from jobctrl.domain.identifiers import JobId, canonical_job_id
+
 
 @dataclass(frozen=True)
 class ApplyActivityInput:
-    # ``tenant_id`` is currently informational; runners read from
-    # ``LOCAL_TENANT`` until tenant scoping lands.
+    # Every targeted claim is scoped by this tenant and canonical JobId.
     tenant_id: str
     expected_app_dir: str | None = None
     expected_db_path: str | None = None
-    job_url: str | None = None
+    job_id: JobId | None = None
     limit: int = 1
     min_score: int = 7
     model: str = "default"
@@ -29,6 +30,10 @@ class ApplyActivityInput:
     # ``limit``.  Otherwise ``max(1, limit)`` jobs are processed.
     continuous: bool = False
     auto_apply_loop: bool = False
+
+    def __post_init__(self) -> None:
+        if self.job_id is not None:
+            object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
 @dataclass(frozen=True)
@@ -46,7 +51,7 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
     Exception policy:
 
     - ``CancelledError`` — re-raised so Temporal marks the activity cancelled.
-    - ``LookupError`` (missing job URL or other lookup misses) — wrapped in a
+    - ``LookupError`` (missing JobId or other lookup misses) — wrapped in a
       non-retryable ``ApplicationError`` so the workflow fails fast.
     - Any other exception — re-raised verbatim so Temporal's configured retry
       policy can fire on transient browser / network / executor failures.
@@ -80,19 +85,12 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
         # of one to keep ``limit < 1`` calls from no-oping.
         effective_limit = 0 if payload.continuous else max(1, payload.limit)
         approval_required = read_apply_approval_required(default=payload.approval_required)
-        min_score = (
-            read_min_fit_score(default=payload.min_score)
-            if payload.auto_apply_loop
-            else payload.min_score
-        )
-        workers = (
-            read_apply_concurrency(default=payload.workers)
-            if payload.auto_apply_loop
-            else payload.workers
-        )
+        min_score = read_min_fit_score(default=payload.min_score) if payload.auto_apply_loop else payload.min_score
+        workers = read_apply_concurrency(default=payload.workers) if payload.auto_apply_loop else payload.workers
         return apply_main(
             limit=effective_limit,
-            target_url=payload.job_url,
+            target_job_id=payload.job_id,
+            tenant_id=payload.tenant_id,
             min_score=min_score,
             headless=payload.headless,
             model=payload.model,
@@ -110,7 +108,10 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
             progress_message="apply still running",
             poll_interval=15.0,
             activity_name="apply",
-            job_context={"job_url": payload.job_url or "", "dry_run": payload.dry_run},
+            job_context={
+                "job_id": str(payload.job_id) if payload.job_id is not None else "",
+                "dry_run": payload.dry_run,
+            },
             on_cancel=_signal_launcher_stop,
         )
 
@@ -122,11 +123,9 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
             error=None,
         )
     except LookupError as exc:
-        # Missing job URL or other lookup misses are operator errors;
+        # Missing JobId or other lookup misses are operator errors;
         # do not retry — surface them immediately to the workflow.
-        raise ApplicationError(
-            str(exc), type=type(exc).__name__, non_retryable=True
-        ) from exc
+        raise ApplicationError(str(exc), type=type(exc).__name__, non_retryable=True) from exc
 
 
 def _signal_launcher_stop() -> None:
@@ -136,9 +135,7 @@ def _signal_launcher_stop() -> None:
 
         _stop_event.set()
     except Exception:  # noqa: BLE001 — never let cleanup mask the cancel
-        activity.logger.exception(
-            "apply_activity: failed to set launcher _stop_event during cancel"
-        )
+        activity.logger.exception("apply_activity: failed to set launcher _stop_event during cancel")
 
 
 # Re-exported for the registry; activity decorator metadata is preserved.

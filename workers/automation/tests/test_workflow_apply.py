@@ -28,6 +28,14 @@ from jobctrl.infrastructure.temporal.finalize import (
 from jobctrl.llm import SpendBudgetStatus
 
 
+JOB_ID = "90000000-0000-4000-8000-000000000001"
+
+
+def test_apply_workflow_input_rejects_url_shaped_job_id() -> None:
+    with pytest.raises(ValueError, match="canonical UUID"):
+        ApplyWorkflowInput(tenant_id="local", job_id="https://example.com/job")
+
+
 @pytest.fixture(autouse=True)
 def permit_browser_for_existing_apply_workflow_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     """Workflow retry tests execute after the capability gate has passed."""
@@ -78,7 +86,6 @@ async def test_apply_workflow_returns_ok_when_apply_main_succeeds():
                     ApplyWorkflow.run,
                     ApplyWorkflowInput(
                         tenant_id="local",
-                        job_url="https://example.com/job",
                         min_score=8,
                         limit=3,
                         workers=2,
@@ -120,7 +127,6 @@ async def test_live_apply_workflow_does_not_retry_transient_failures():
                     ApplyWorkflow.run,
                     ApplyWorkflowInput(
                         tenant_id="local",
-                        job_url="https://example.com/job",
                         limit=1,
                     ),
                     id=workflow_id,
@@ -156,7 +162,6 @@ async def test_dry_run_apply_workflow_recovers_when_first_attempt_fails():
                     ApplyWorkflow.run,
                     ApplyWorkflowInput(
                         tenant_id="local",
-                        job_url="https://example.com/job",
                         limit=1,
                         dry_run=True,
                     ),
@@ -190,10 +195,16 @@ async def test_apply_workflow_continuous_batch_is_bounded_and_continues_as_new(m
     )
 
     result = await ApplyWorkflow()._run_apply(
-        ApplyWorkflowInput(tenant_id="local", continuous=True, limit=0)
+        ApplyWorkflowInput(
+            tenant_id="local",
+            job_id=JOB_ID,
+            continuous=True,
+            limit=0,
+        )
     )
 
     assert result.ok is True
+    assert captured["payload"].job_id == JOB_ID
     assert captured["payload"].limit == 25
     assert captured["payload"].continuous is False
     assert captured["timeout"] == timedelta(hours=1)
@@ -292,7 +303,7 @@ async def test_apply_workflow_does_not_retry_lookup_errors():
 
     with patch(
         "jobctrl.apply.launcher.main",
-        side_effect=LookupError("no job URL provided"),
+        side_effect=LookupError("no matching JobId"),
     ) as apply_main_mock:
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with Worker(
@@ -316,4 +327,4 @@ async def test_apply_workflow_does_not_retry_lookup_errors():
     assert apply_main_mock.call_count == 1
     assert result.ok is False
     assert result.status == "failed"
-    assert "no job URL provided" in (result.error or "")
+    assert "no matching JobId" in (result.error or "")

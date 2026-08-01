@@ -31,6 +31,7 @@ from jobctrl.apply.launcher import (
 from jobctrl.apply.dashboard import get_recent_events
 from jobctrl.apply.origins import canonical_http_url
 from jobctrl.database import close_connection, get_connection, init_db
+from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
 from jobctrl.workflow_specs import StartedWorkflowResult
@@ -74,9 +75,7 @@ def _insert_ready_job(
     conn.commit()
 
 
-def _insert_single_job_tailor_candidate(
-    conn, *, url: str = "https://example.com/job"
-) -> None:
+def _insert_single_job_tailor_candidate(conn, *, url: str = "https://example.com/job") -> None:
     conn.execute(
         """
         INSERT INTO jobs (
@@ -93,6 +92,15 @@ def _insert_single_job_tailor_candidate(
         ),
     )
     conn.commit()
+
+
+def _target_job_id(conn, url: str = "https://example.com/job") -> str:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ? LIMIT 1",
+        (LOCAL_TENANT, url),
+    ).fetchone()
+    assert row is not None
+    return str(row["job_id"])
 
 
 def _insert_blocked_score(conn, url: str, *, fit_score: int = 9) -> None:
@@ -124,9 +132,7 @@ def _insert_blocked_score(conn, url: str, *, fit_score: int = 9) -> None:
 
 
 def test_unsafe_url_failure_is_permanent() -> None:
-    assert launcher_module._is_permanent_failure(
-        "failed:unsafe_url: URL host is not a public address: 127.0.0.1"
-    )
+    assert launcher_module._is_permanent_failure("failed:unsafe_url: URL host is not a public address: 127.0.0.1")
 
 
 def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> None:
@@ -275,25 +281,20 @@ def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
     _insert_ready_job(conn)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         job = acquire_job(
-            target_url="https://example.com/job",
+            target_job_id=_target_job_id(conn),
             worker_id=1,
             approval_required=False,
         )
         assert job is not None
         assert job["url"] == "https://example.com/job"
         # Legacy column stays NULL on the new path.
-        legacy = conn.execute(
-            "SELECT apply_status FROM jobs WHERE url = ?", (job["url"],)
-        ).fetchone()
+        legacy = conn.execute("SELECT apply_status FROM jobs WHERE url = ?", (job["url"],)).fetchone()
         assert legacy["apply_status"] is None
         # Canonical lock: stage row in 'running'.
         stage = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
             (job["url"],),
         ).fetchone()
         assert stage is not None
@@ -332,20 +333,15 @@ def test_apply_approval_gate_blocks_live_without_approval(tmp_path, monkeypatch)
     _insert_ready_job(conn)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         prior_event_count = len(get_recent_events())
-        assert acquire_job(target_url="https://example.com/job", worker_id=1) is None
+        assert acquire_job(target_job_id=_target_job_id(conn), worker_id=1) is None
         row = conn.execute(
             "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
             ("https://example.com/job",),
         ).fetchone()
         assert row is None or row["state"] == "pending"
-        assert any(
-            "Awaiting apply approval" in event
-            for event in get_recent_events()[prior_event_count:]
-        )
+        assert any("Awaiting apply approval" in event for event in get_recent_events()[prior_event_count:])
     finally:
         close_connection(db_path)
 
@@ -362,9 +358,7 @@ def test_approval_required_apply_loop_never_runs_browser_for_unapproved_job(
         raise AssertionError("unapproved live job reached browser automation")
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         monkeypatch.setattr(launcher_module, "run_job", fail_run_job)
 
         applied, failed = worker_loop(
@@ -390,11 +384,9 @@ def test_apply_approval_gate_can_be_disabled_or_bypassed_for_dry_run(tmp_path, m
     _insert_ready_job(conn)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         job = acquire_job(
-            target_url="https://example.com/job",
+            target_job_id=_target_job_id(conn),
             worker_id=1,
             approval_required=False,
         )
@@ -403,7 +395,7 @@ def test_apply_approval_gate_can_be_disabled_or_bypassed_for_dry_run(tmp_path, m
         conn.commit()
 
         dry_job = acquire_job(
-            target_url="https://example.com/job",
+            target_job_id=_target_job_id(conn),
             worker_id=1,
             run_ctx={"dry_run": True},
             approval_required=True,
@@ -435,10 +427,8 @@ def test_apply_approval_gate_requires_latest_approve_submit(tmp_path, monkeypatc
     )
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
-        assert acquire_job(target_url="https://example.com/job", worker_id=1) is None
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
+        assert acquire_job(target_job_id=_target_job_id(conn), worker_id=1) is None
         _insert_review_decision(
             conn,
             decision="approve_submit",
@@ -448,7 +438,7 @@ def test_apply_approval_gate_requires_latest_approve_submit(tmp_path, monkeypatc
             profile_version=1,
             application_url="https://example.com/apply",
         )
-        assert acquire_job(target_url="https://example.com/job", worker_id=1) is not None
+        assert acquire_job(target_job_id=_target_job_id(conn), worker_id=1) is not None
     finally:
         close_connection(db_path)
 
@@ -467,15 +457,10 @@ def test_apply_approval_gate_requires_matching_full_dry_run(tmp_path, monkeypatc
     )
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         prior_event_count = len(get_recent_events())
-        assert acquire_job(target_url="https://example.com/job", worker_id=1) is None
-        assert any(
-            "awaiting_dry_run" in event
-            for event in get_recent_events()[prior_event_count:]
-        )
+        assert acquire_job(target_job_id=_target_job_id(conn), worker_id=1) is None
+        assert any("awaiting_dry_run" in event for event in get_recent_events()[prior_event_count:])
     finally:
         close_connection(db_path)
 
@@ -487,12 +472,10 @@ def test_normal_dry_run_completion_satisfies_approval_gate(tmp_path, monkeypatch
     _seed_current_apply_binding(conn, coverage=None)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         run_ctx: dict = {"dry_run": True}
         dry_run_job = acquire_job(
-            target_url="https://example.com/job",
+            target_job_id=_target_job_id(conn),
             worker_id=1,
             run_ctx=run_ctx,
             approval_required=True,
@@ -509,9 +492,7 @@ def test_normal_dry_run_completion_satisfies_approval_gate(tmp_path, monkeypatch
                 "result": "dry_run_complete",
                 "dry_run": True,
                 "coverage": "full",
-                "allowed_navigations": _run_bound_navigation(
-                    "https://example.com/apply"
-                ),
+                "allowed_navigations": _run_bound_navigation("https://example.com/apply"),
                 "materials_generation": 1,
                 "application_url": "https://example.com/apply",
                 "profile_version": 1,
@@ -533,9 +514,7 @@ def test_normal_dry_run_completion_satisfies_approval_gate(tmp_path, monkeypatch
         assert completion is not None
         payload = json.loads(completion["payload_json"])
         assert payload["coverage"] == "full"
-        assert payload["allowed_navigations"] == _run_bound_navigation(
-            "https://example.com/apply"
-        )
+        assert payload["allowed_navigations"] == _run_bound_navigation("https://example.com/apply")
         assert payload["materials_generation"] == 1
         assert payload["application_url"] == "https://example.com/apply"
 
@@ -549,7 +528,7 @@ def test_normal_dry_run_completion_satisfies_approval_gate(tmp_path, monkeypatch
         )
 
         live_job = acquire_job(
-            target_url="https://example.com/job",
+            target_job_id=_target_job_id(conn),
             worker_id=2,
             approval_required=True,
         )
@@ -568,13 +547,11 @@ def test_full_dry_run_without_navigation_receipt_cannot_satisfy_approval_gate(
     _seed_current_apply_binding(conn, coverage=None)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         run_ctx: dict = {"dry_run": True}
         assert (
             acquire_job(
-                target_url="https://example.com/job",
+                target_job_id=_target_job_id(conn),
                 worker_id=1,
                 run_ctx=run_ctx,
                 approval_required=True,
@@ -608,7 +585,7 @@ def test_full_dry_run_without_navigation_receipt_cannot_satisfy_approval_gate(
 
         assert (
             acquire_job(
-                target_url="https://example.com/job",
+                target_job_id=_target_job_id(conn),
                 worker_id=2,
                 approval_required=True,
             )
@@ -621,9 +598,18 @@ def test_full_dry_run_without_navigation_receipt_cannot_satisfy_approval_gate(
 @pytest.mark.parametrize(
     ("decision_bindings", "expected_reason"),
     [
-        ({"materials_generation": 0, "profile_version": 1, "application_url": "https://example.com/apply"}, "approval_stale_materials"),
-        ({"materials_generation": 1, "profile_version": 0, "application_url": "https://example.com/apply"}, "approval_stale_profile"),
-        ({"materials_generation": 1, "profile_version": 1, "application_url": "https://example.com/old-apply"}, "approval_stale_url"),
+        (
+            {"materials_generation": 0, "profile_version": 1, "application_url": "https://example.com/apply"},
+            "approval_stale_materials",
+        ),
+        (
+            {"materials_generation": 1, "profile_version": 0, "application_url": "https://example.com/apply"},
+            "approval_stale_profile",
+        ),
+        (
+            {"materials_generation": 1, "profile_version": 1, "application_url": "https://example.com/old-apply"},
+            "approval_stale_url",
+        ),
     ],
 )
 def test_apply_approval_gate_rejects_stale_bindings(
@@ -639,19 +625,14 @@ def test_apply_approval_gate_rejects_stale_bindings(
     _insert_review_decision(conn, decision="approve_submit", **decision_bindings)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         worker_id = {
             "approval_stale_materials": 11,
             "approval_stale_profile": 12,
             "approval_stale_url": 13,
         }[expected_reason]
-        assert acquire_job(target_url="https://example.com/job", worker_id=worker_id) is None
-        assert any(
-            f"[W{worker_id}]" in event and expected_reason in event
-            for event in get_recent_events()
-        )
+        assert acquire_job(target_job_id=_target_job_id(conn), worker_id=worker_id) is None
+        assert any(f"[W{worker_id}]" in event and expected_reason in event for event in get_recent_events())
     finally:
         close_connection(db_path)
 
@@ -671,10 +652,8 @@ def test_apply_approval_gate_accepts_partial_override_bound_to_run(tmp_path, mon
     )
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
-        assert acquire_job(target_url="https://example.com/job", worker_id=1) is not None
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
+        assert acquire_job(target_job_id=_target_job_id(conn), worker_id=1) is not None
     finally:
         close_connection(db_path)
 
@@ -721,15 +700,10 @@ def test_apply_approval_gate_rejects_dry_run_evidence_for_stale_profile(
     )
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         worker_id = 21 if coverage == "full" else 22
-        assert acquire_job(target_url="https://example.com/job", worker_id=worker_id) is None
-        assert any(
-            f"[W{worker_id}]" in event and expected_reason in event
-            for event in get_recent_events()
-        )
+        assert acquire_job(target_job_id=_target_job_id(conn), worker_id=worker_id) is None
+        assert any(f"[W{worker_id}]" in event and expected_reason in event for event in get_recent_events())
     finally:
         close_connection(db_path)
 
@@ -782,15 +756,10 @@ def test_apply_approval_gate_rejects_invalid_partial_override(
     )
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         worker_id = 23 if seed_stale_run else 24
-        assert acquire_job(target_url="https://example.com/job", worker_id=worker_id) is None
-        assert any(
-            f"[W{worker_id}]" in event and "override_evidence_invalid" in event
-            for event in get_recent_events()
-        )
+        assert acquire_job(target_job_id=_target_job_id(conn), worker_id=worker_id) is None
+        assert any(f"[W{worker_id}]" in event and "override_evidence_invalid" in event for event in get_recent_events())
     finally:
         close_connection(db_path)
 
@@ -806,9 +775,7 @@ def test_acquire_job_accepts_posting_url_when_direct_apply_url_missing(tmp_path,
     )
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         job = acquire_job(worker_id=1, approval_required=False)
         assert job is not None
         assert job["url"] == "https://example.com/posting-only"
@@ -899,9 +866,7 @@ def test_acquire_job_excludes_high_score_blocked_candidates(tmp_path, monkeypatc
     _insert_blocked_score(conn, "https://example.com/blocked", fit_score=10)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         job = acquire_job(min_score=7, worker_id=1, approval_required=False)
         assert job is not None
         assert job["url"] == "https://example.com/allowed"
@@ -916,15 +881,16 @@ def test_acquire_job_excludes_closed_candidates(tmp_path, monkeypatch):
     _mark_closed(conn, "https://example.com/closed")
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         assert acquire_job(min_score=7, worker_id=1, approval_required=False) is None
-        assert acquire_job(
-            target_url="https://example.com/closed",
-            worker_id=1,
-            approval_required=False,
-        ) is None
+        assert (
+            acquire_job(
+                target_job_id=_target_job_id(conn, "https://example.com/closed"),
+                worker_id=1,
+                approval_required=False,
+            )
+            is None
+        )
     finally:
         close_connection(db_path)
 
@@ -936,14 +902,15 @@ def test_targeted_apply_rejects_blocked_candidate(tmp_path, monkeypatch):
     _insert_blocked_score(conn, "https://example.com/blocked", fit_score=10)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
+        assert (
+            acquire_job(
+                target_job_id=_target_job_id(conn, "https://example.com/blocked"),
+                worker_id=1,
+                approval_required=False,
+            )
+            is None
         )
-        assert acquire_job(
-            target_url="https://example.com/blocked",
-            worker_id=1,
-            approval_required=False,
-        ) is None
     finally:
         close_connection(db_path)
 
@@ -1025,11 +992,9 @@ def test_acquire_job_promotes_prior_apply_run_into_row_dict(tmp_path, monkeypatc
     conn.commit()
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         job = acquire_job(
-            target_url="https://example.com/job",
+            target_job_id=_target_job_id(conn),
             worker_id=1,
             approval_required=False,
         )
@@ -1059,17 +1024,14 @@ def test_acquire_job_finds_new_path_enriched_job(tmp_path, monkeypatch):
     conn = init_db(db_path)
     url = "https://example.com/new-path-job"
     conn.execute(
-        "INSERT INTO jobs (url, title, site, fit_score, tailored_resume_path) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO jobs (url, title, site, fit_score, tailored_resume_path) VALUES (?, ?, ?, ?, ?)",
         (url, "New Path Engineer", "ExampleCo", 9, "/tmp/resume.txt"),
     )
     conn.commit()
 
     repo = SqliteEnrichmentRepository(conn)
     repo.save(
-        JobEnrichment.empty(
-            tenant_id=LOCAL_TENANT, job_id=JobId(url), updated_at="t0"
-        )
+        JobEnrichment.empty(tenant_id=LOCAL_TENANT, job_id=JobId(url), updated_at="t0")
         .start_attempt(extraction_tier=ExtractionTier.JSON_LD, started_at="t0")
         .succeed_attempt(
             full_description=FullDescription(text="Build distributed systems."),
@@ -1078,16 +1040,12 @@ def test_acquire_job_finds_new_path_enriched_job(tmp_path, monkeypatch):
             finished_at="t1",
         )
     )
-    legacy = conn.execute(
-        "SELECT application_url FROM jobs WHERE url = ?", (url,)
-    ).fetchone()
+    legacy = conn.execute("SELECT application_url FROM jobs WHERE url = ?", (url,)).fetchone()
     assert legacy["application_url"] is None
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
-        job = acquire_job(target_url=url, worker_id=1, approval_required=False)
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
+        job = acquire_job(target_job_id=_target_job_id(conn, url), worker_id=1, approval_required=False)
         assert job is not None
         assert job["url"] == url
         assert job["application_url"] == "https://example.com/apply-new"
@@ -1106,9 +1064,7 @@ def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
     _insert_ready_job(conn)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         mark_result(
             "https://example.com/job",
             "dry_run",
@@ -1122,8 +1078,7 @@ def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
             ("https://example.com/job",),
         ).fetchone()
         state = conn.execute(
-            "SELECT state, error_code FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
+            "SELECT state, error_code FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
             ("https://example.com/job",),
         ).fetchone()
         # Legacy columns stay NULL on the new write path.
@@ -1134,8 +1089,7 @@ def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
         assert state["error_code"] == "DRY_RUN"
         # Canonical: an apply_run_projections row in dry_run_complete.
         ar = conn.execute(
-            "SELECT run_id, status, dry_run FROM apply_run_projections "
-            "WHERE job_id = ?",
+            "SELECT run_id, status, dry_run FROM apply_run_projections WHERE job_id = ?",
             ("https://example.com/job",),
         ).fetchone()
         assert ar is not None
@@ -1146,9 +1100,7 @@ def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
         close_connection(db_path)
 
 
-def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(
-    tmp_path, monkeypatch
-):
+def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(tmp_path, monkeypatch):
     """Reviewer-reported regression (PR 37 High #1): the production
     sequence ``acquire_job`` (Pending -> Running) then
     ``mark_result("dry_run", ...)`` (Running -> Skipped) used to raise
@@ -1161,12 +1113,10 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(
     _insert_ready_job(conn)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         run_ctx: dict = {}
         job = acquire_job(
-            target_url="https://example.com/job",
+            target_job_id=_target_job_id(conn),
             worker_id=2,
             run_ctx=run_ctx,
             approval_required=False,
@@ -1174,8 +1124,7 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(
         assert job is not None
         # Sanity: the lock acquired -> Running.
         before = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
             (job["url"],),
         ).fetchone()
         assert before["state"] == "running"
@@ -1191,8 +1140,7 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(
         # (a) No exception (we got here).
         # (b) Stage row landed on Skipped.
         after = conn.execute(
-            "SELECT state, error_code FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
+            "SELECT state, error_code FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
             (job["url"],),
         ).fetchone()
         assert after["state"] == "skipped"
@@ -1202,8 +1150,7 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(
         # and a sensible terminal status, after refresh.
         ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).refresh()
         ar = conn.execute(
-            "SELECT run_id, status, dry_run FROM apply_run_projections "
-            "WHERE job_id = ?",
+            "SELECT run_id, status, dry_run FROM apply_run_projections WHERE job_id = ?",
             (job["url"],),
         ).fetchone()
         assert ar is not None
@@ -1221,20 +1168,17 @@ def test_release_lock_does_not_rewind_running_row(tmp_path, monkeypatch):
     _insert_ready_job(conn)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         run_ctx: dict = {}
         job = acquire_job(
-            target_url="https://example.com/job",
+            target_job_id=_target_job_id(conn),
             worker_id=3,
             run_ctx=run_ctx,
             approval_required=False,
         )
         assert job is not None
         before = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
             (job["url"],),
         ).fetchone()
         assert before["state"] == "running"
@@ -1242,8 +1186,7 @@ def test_release_lock_does_not_rewind_running_row(tmp_path, monkeypatch):
         release_lock(job["url"], run_ctx=run_ctx)
 
         after = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply'",
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",
             (job["url"],),
         ).fetchone()
         assert after["state"] == "running"
@@ -1258,14 +1201,12 @@ def test_apply_recovery_rewinds_before_submit_intent(tmp_path, monkeypatch):
     _insert_ready_job(conn)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         # 1. Acquire (writes ApplyRunStarted with the canonical run_id +
         #    flips stage to running).
         run_ctx: dict = {}
         job = acquire_job(
-            target_url="https://example.com/job",
+            target_job_id=_target_job_id(conn),
             worker_id=5,
             run_ctx=run_ctx,
             approval_required=False,
@@ -1289,12 +1230,10 @@ def test_apply_recovery_after_submit_intent_needs_verification(tmp_path, monkeyp
     _insert_ready_job(conn)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
         run_ctx: dict = {"workflow_id": "apply-local-https://example.com/job"}
         job = acquire_job(
-            target_url="https://example.com/job",
+            target_job_id=_target_job_id(conn),
             worker_id=5,
             run_ctx=run_ctx,
             approval_required=False,
@@ -1328,7 +1267,7 @@ def test_apply_recovery_after_submit_intent_needs_verification(tmp_path, monkeyp
         _insert_review_decision(conn, job_key=job["url"], decision="approve_submit")
         assert (
             acquire_job(
-                target_url=job["url"],
+                target_job_id=_target_job_id(conn, job["url"]),
                 worker_id=6,
                 run_ctx={"workflow_id": "apply-targeted-reclaim"},
                 approval_required=True,
@@ -1369,7 +1308,7 @@ def test_failed_result_after_submit_intent_parks_without_reclaim(
         )
         run_ctx: dict = {"workflow_id": "apply-email-send"}
         job = acquire_job(
-            target_url="https://example.com/job",
+            target_job_id=_target_job_id(conn),
             worker_id=5,
             run_ctx=run_ctx,
             approval_required=False,
@@ -1411,7 +1350,7 @@ def test_failed_result_after_submit_intent_parks_without_reclaim(
 
         assert (
             acquire_job(
-                target_url=job["url"],
+                target_job_id=_target_job_id(conn, job["url"]),
                 worker_id=6,
                 run_ctx={"workflow_id": "apply-targeted-reclaim"},
                 approval_required=False,
@@ -1439,6 +1378,7 @@ def test_acquire_job_concurrent_workers_only_one_succeeds(tmp_path, monkeypatch)
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
     _insert_ready_job(conn)
+    job_id = _target_job_id(conn)
     close_connection(db_path)  # workers create thread-local connections
 
     try:
@@ -1446,9 +1386,7 @@ def test_acquire_job_concurrent_workers_only_one_succeeds(tmp_path, monkeypatch)
         # connection (SQLite forbids sharing across threads).  The
         # ``get_connection`` helper is already thread-local, so the
         # monkeypatch points each thread to the same DB path.
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
 
         results: list[dict | None] = []
         results_lock = threading.Lock()
@@ -1458,7 +1396,7 @@ def test_acquire_job_concurrent_workers_only_one_succeeds(tmp_path, monkeypatch)
             ready.wait()
             try:
                 outcome = acquire_job(
-                    target_url="https://example.com/job",
+                    target_job_id=job_id,
                     worker_id=worker_id,
                     approval_required=False,
                 )
@@ -1483,15 +1421,13 @@ def test_acquire_job_concurrent_workers_only_one_succeeds(tmp_path, monkeypatch)
 
         successes = [r for r in results if r is not None]
         assert len(successes) == 1, (
-            f"expected exactly one acquire to succeed, got {len(successes)} "
-            f"(results={results!r})"
+            f"expected exactly one acquire to succeed, got {len(successes)} (results={results!r})"
         )
 
         # Exactly one ``running`` row in ``job_stage_states.apply``.
         check_conn = get_connection(db_path)
         running_count = check_conn.execute(
-            "SELECT COUNT(*) FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply' AND state = 'running'",
+            "SELECT COUNT(*) FROM job_stage_states WHERE job_url = ? AND stage = 'apply' AND state = 'running'",
             ("https://example.com/job",),
         ).fetchone()[0]
         assert running_count == 1
@@ -1499,9 +1435,7 @@ def test_acquire_job_concurrent_workers_only_one_succeeds(tmp_path, monkeypatch)
         close_connection(db_path)
 
 
-def test_record_job_event_default_publisher_refreshes_apply_run_projections(
-    tmp_path, monkeypatch
-):
+def test_record_job_event_default_publisher_refreshes_apply_run_projections(tmp_path, monkeypatch):
     """Reviewer-reported regression (PR 37 High #4): ``record_job_event``
     used to require the caller to thread a publisher through to fan out
     via the ``InProcessEventBus``; the projection's wildcard subscriber
@@ -1657,8 +1591,7 @@ def test_record_job_event_from_worker_thread_refreshes_projection(
         ar = None
         while _time.monotonic() < deadline:
             ar = bootstrap_conn.execute(
-                "SELECT run_id, status FROM apply_run_projections "
-                "WHERE job_id = ?",
+                "SELECT run_id, status FROM apply_run_projections WHERE job_id = ?",
                 ("https://example.com/job",),
             ).fetchone()
             if ar is not None:
@@ -1666,8 +1599,7 @@ def test_record_job_event_from_worker_thread_refreshes_projection(
             _time.sleep(0.05)
 
         assert ar is not None, (
-            "apply_run_projections row never appeared — "
-            "the wildcard subscriber did not refresh on the worker thread"
+            "apply_run_projections row never appeared — the wildcard subscriber did not refresh on the worker thread"
         )
         assert ar["run_id"] == "from-worker"
         assert ar["status"] == "succeeded"
@@ -1680,9 +1612,7 @@ def test_record_job_event_from_worker_thread_refreshes_projection(
         close_connection(db_path)
 
 
-def test_apply_saga_writes_full_event_timeline_to_job_events(
-    tmp_path, monkeypatch
-):
+def test_apply_saga_writes_full_event_timeline_to_job_events(tmp_path, monkeypatch):
     """Reviewer-reported regression (PR 37 High #3): saga events
     (``SagaStarted`` / ``BrowserLaunched`` / ``AgentStarted`` /
     ``AgentResult`` / per-``AgentEvent``) used to be lost because
@@ -1706,14 +1636,12 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
     _insert_ready_job(conn)
 
     try:
-        monkeypatch.setattr(
-            "jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path)
-        )
+        monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))
 
         # Seed the launcher-emitted ApplyRunStarted (acquire_job's job).
         run_ctx: dict = {}
         job = acquire_job(
-            target_url="https://example.com/job",
+            target_job_id=_target_job_id(conn),
             worker_id=1,
             run_ctx=run_ctx,
             approval_required=False,
@@ -1905,16 +1833,13 @@ def test_dashboard_dry_runs_excludes_soft_deleted_jobs(tmp_path):
 
         # Soft-delete the second job.
         conn.execute(
-            "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at) "
-            "VALUES (?, ?)",
+            "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at) VALUES (?, ?)",
             ("https://example.com/job-deleted", "2026-05-04T13:05:00+00:00"),
         )
         conn.commit()
         ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
-        dash = conn.execute(
-            "SELECT dry_runs FROM dashboard_projections LIMIT 1"
-        ).fetchone()
+        dash = conn.execute("SELECT dry_runs FROM dashboard_projections LIMIT 1").fetchone()
         assert dash is not None
         # Only the live job's dry run is counted.
         assert dash["dry_runs"] == 1

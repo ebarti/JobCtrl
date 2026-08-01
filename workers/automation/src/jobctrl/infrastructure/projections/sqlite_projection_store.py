@@ -396,7 +396,7 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             is_scrape_failure       INTEGER NOT NULL DEFAULT 0,
             is_retryable            INTEGER NOT NULL DEFAULT 1,
             run_id                  TEXT,
-            job_url                 TEXT,
+            job_id                  TEXT,
             duration_ms             INTEGER,
             total_count             INTEGER,
             new_count               INTEGER,
@@ -405,7 +405,9 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             duplicate_count         INTEGER,
             error_class             TEXT,
             error_message           TEXT,
-            metadata_json           TEXT NOT NULL DEFAULT '{}'
+            metadata_json           TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE RESTRICT
         )
         """
     )
@@ -536,8 +538,7 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
     score_evidence_schema_changed = False
     for table_name, column_name, definition in SCORE_EVIDENCE_COLUMNS:
         score_evidence_schema_changed = (
-            _ensure_column(conn, table_name, column_name, definition)
-            or score_evidence_schema_changed
+            _ensure_column(conn, table_name, column_name, definition) or score_evidence_schema_changed
         )
     if score_evidence_schema_changed:
         # Projection rows are fully derived; resetting them lets the next

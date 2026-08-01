@@ -30,6 +30,7 @@ from jobctrl.workflow_specs import (
 
 INTERNAL_PIPELINE_ACTION_STAGES: tuple[str, ...] = (*SUPPORTED_STAGE_ORDER, "enrich")
 ACTION_STAGES: tuple[str, ...] = (*INTERNAL_PIPELINE_ACTION_STAGES, "apply", "profile_import")
+_APPLY_JOB_LOCATOR_UNRESOLVED = "apply_job_locator_unresolved"
 
 
 @dataclass(frozen=True)
@@ -97,14 +98,17 @@ def run_local_action(request: LocalActionRequest) -> LocalActionResult:
             error=f"Unknown action stage: {request.stage}",
         )
 
+    apply_job_id: str | None = None
     try:
         _bootstrap_runtime()
+        apply_job_id = _resolve_apply_action_job_id(request)
         _record_action_event(
             request,
             "ActionStarted",
             "info",
             f"{request.stage} action started",
             {"action_id": action_id, "dry_run": request.dry_run},
+            job_id=apply_job_id,
         )
 
         if request.stage == "profile_import" and request.dry_run:
@@ -117,12 +121,22 @@ def run_local_action(request: LocalActionRequest) -> LocalActionResult:
                 ok=True,
                 status="dry_run",
                 result=result,
+                job_id=apply_job_id,
             )
 
-        result = _execute_action(request)
+        result = _execute_action(request, apply_job_id=apply_job_id)
         ok = _action_succeeded(result)
         status = "succeeded" if ok else "failed"
-        return _finish_action(request, action_id, started_at, start, ok=ok, status=status, result=result)
+        return _finish_action(
+            request,
+            action_id,
+            started_at,
+            start,
+            ok=ok,
+            status=status,
+            result=result,
+            job_id=apply_job_id,
+        )
     except Exception as exc:  # noqa: BLE001 - action API must return structured failure
         return _finish_action(
             request,
@@ -134,6 +148,7 @@ def run_local_action(request: LocalActionRequest) -> LocalActionResult:
             result={},
             error=str(exc),
             traceback_text=traceback.format_exc(),
+            job_id=apply_job_id,
         )
 
 
@@ -177,7 +192,11 @@ def _bootstrap_runtime() -> None:
     init_db()
 
 
-def _execute_action(request: LocalActionRequest) -> dict[str, Any]:
+def _execute_action(
+    request: LocalActionRequest,
+    *,
+    apply_job_id: str | None = None,
+) -> dict[str, Any]:
     if request.stage in INTERNAL_PIPELINE_ACTION_STAGES:
         return _start_and_wait(
             build_run_stage_workflow_spec(
@@ -202,7 +221,7 @@ def _execute_action(request: LocalActionRequest) -> dict[str, Any]:
             build_apply_workflow_spec(
                 {
                     "tenantId": "local",
-                    "jobUrl": request.job_url,
+                    **({"jobId": apply_job_id} if apply_job_id else {}),
                     "limit": _effective_apply_limit(request),
                     "minScore": request.min_score,
                     "headless": request.headless,
@@ -266,6 +285,24 @@ def _effective_apply_limit(request: LocalActionRequest) -> int:
     return 0 if request.continuous else max(1, request.limit)
 
 
+def _resolve_apply_action_job_id(request: LocalActionRequest) -> str | None:
+    """Resolve the external apply URL before it reaches canonical event state."""
+    if request.stage != "apply" or not request.job_url:
+        return None
+
+    from jobctrl.domain.discovery.value_objects import PostingUrl
+    from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
+
+    identity = SqliteJobIdentityResolver(get_connection()).resolve_current_by_posting_url(
+        LOCAL_TENANT,
+        PostingUrl(value=request.job_url),
+    )
+    if identity is None:
+        raise ValueError(_APPLY_JOB_LOCATOR_UNRESOLVED)
+    return str(identity.job_id)
+
+
 def _finish_action(
     request: LocalActionRequest,
     action_id: str,
@@ -277,6 +314,7 @@ def _finish_action(
     result: dict[str, Any],
     error: str | None = None,
     traceback_text: str | None = None,
+    job_id: str | None = None,
 ) -> LocalActionResult:
     finished_at = utc_now()
     duration_ms = int((perf_counter() - start) * 1000)
@@ -291,9 +329,10 @@ def _finish_action(
                 "duration_ms": duration_ms,
                 "error": error,
             },
+            job_id=job_id,
         )
         if request.dry_run:
-            _record_dry_run_metric(request, action_id, duration_ms)
+            _record_dry_run_metric(request, action_id, duration_ms, job_id=job_id)
     except Exception:  # noqa: BLE001 - action results must stay JSON-safe when event logging fails
         pass
     return LocalActionResult(
@@ -318,11 +357,16 @@ def _record_action_event(
     level: str,
     message: str,
     payload: dict[str, Any],
+    *,
+    job_id: str | None = None,
 ) -> None:
     conn = get_connection()
+    event_job_id = job_id
+    if event_job_id is None and request.stage != "apply":
+        event_job_id = request.job_url
     record_job_event(
         conn,
-        request.job_url,
+        event_job_id,
         request.stage,
         event_type,
         level=level,
@@ -332,7 +376,13 @@ def _record_action_event(
     conn.commit()
 
 
-def _record_dry_run_metric(request: LocalActionRequest, action_id: str, duration_ms: int) -> None:
+def _record_dry_run_metric(
+    request: LocalActionRequest,
+    action_id: str,
+    duration_ms: int,
+    *,
+    job_id: str | None = None,
+) -> None:
     conn = get_connection()
     record_operational_attempt_metric(
         conn,
@@ -341,7 +391,7 @@ def _record_dry_run_metric(request: LocalActionRequest, action_id: str, duration
         outcome="dry_run",
         adapter="api",
         run_id=action_id,
-        job_url=request.job_url,
+        job_id=job_id,
         duration_ms=duration_ms,
         metadata={
             "workers": request.workers,

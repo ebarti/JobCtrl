@@ -16,6 +16,8 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 
+from jobctrl.domain.identifiers import JobId, canonical_job_id
+
 with workflow.unsafe.imports_passed_through():
     from jobctrl.apply.activities import (
         ApplyActivityInput,
@@ -34,7 +36,7 @@ class ApplyWorkflowInput:
     tenant_id: str
     expected_app_dir: str | None = None
     expected_db_path: str | None = None
-    job_url: str | None = None
+    job_id: JobId | None = None
     dry_run: bool = False
     headless: bool = False
     model: str = "default"
@@ -48,6 +50,10 @@ class ApplyWorkflowInput:
     # Settings-controlled standing loop. The workflow id is deterministic and
     # the activity re-reads apply settings at batch time.
     auto_apply_loop: bool = False
+
+    def __post_init__(self) -> None:
+        if self.job_id is not None:
+            object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
 @dataclass(frozen=True)
@@ -140,7 +146,7 @@ class ApplyWorkflow:
                     tenant_id=payload.tenant_id,
                     expected_app_dir=payload.expected_app_dir,
                     expected_db_path=payload.expected_db_path,
-                    job_url=payload.job_url,
+                    job_id=payload.job_id,
                     limit=activity_limit,
                     min_score=payload.min_score,
                     model=payload.model,
@@ -151,11 +157,7 @@ class ApplyWorkflow:
                     continuous=False,
                     auto_apply_loop=payload.auto_apply_loop,
                 ),
-                start_to_close_timeout=(
-                    _APPLY_CONTINUOUS_BATCH_TIMEOUT
-                    if payload.continuous
-                    else _APPLY_TIMEOUT
-                ),
+                start_to_close_timeout=(_APPLY_CONTINUOUS_BATCH_TIMEOUT if payload.continuous else _APPLY_TIMEOUT),
                 retry_policy=_APPLY_DRY_RUN_RETRY if payload.dry_run else _APPLY_LIVE_RETRY,
                 heartbeat_timeout=timedelta(seconds=60),
             )
@@ -180,7 +182,7 @@ class ApplyWorkflow:
 def _apply_input_summary(payload: ApplyWorkflowInput) -> dict[str, Any]:
     """Compact, camelCase input summary for the workflow-run read-model."""
     return {
-        "jobUrl": payload.job_url,
+        "jobId": str(payload.job_id) if payload.job_id is not None else None,
         "dryRun": payload.dry_run,
         "continuous": payload.continuous,
         "autoApplyLoop": payload.auto_apply_loop,
