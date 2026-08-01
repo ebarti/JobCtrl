@@ -3380,7 +3380,7 @@ describe("local TypeScript API", () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json().job).toMatchObject({
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
       fitScore: 6,
       scoreVersion: 2,
       scoreCorrection: {
@@ -3674,7 +3674,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       count: 1,
-      jobKeys: [staleUrl],
+      jobKeys: [jobIdFor(staleUrl)],
       nextAction: "jobctrl run score --rescore",
     });
 
