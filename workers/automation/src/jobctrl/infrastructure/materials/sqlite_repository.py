@@ -974,6 +974,11 @@ class SqliteLearningRecommendationReviewRepository:
         if not reviewed_at:
             raise LearningRecommendationReviewError("reviewed_at must not be empty")
 
+        policy_repository = (
+            SqliteTailoringPolicyRepository(self._conn)
+            if decision == "accepted"
+            else None
+        )
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             recommendation = self._conn.execute(
@@ -1046,7 +1051,7 @@ class SqliteLearningRecommendationReviewRepository:
                         _row_value(recommendation, "allowlist_version", 3)
                     ),
                 )
-                policy_repository = SqliteTailoringPolicyRepository(self._conn)
+                assert policy_repository is not None
                 current = policy_repository.get_current(tenant_id)
                 if current is None:
                     raise LearningRecommendationReviewError(
