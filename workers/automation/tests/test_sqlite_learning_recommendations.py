@@ -753,7 +753,7 @@ def test_multiple_source_changes_each_append_a_tombstone(tmp_path: Path) -> None
     close_connection(db_path)
 
 
-def test_review_rejects_without_policy_then_accepts_once(tmp_path: Path) -> None:
+def test_review_rejection_is_terminal_and_replays_same_decision(tmp_path: Path) -> None:
     db_path = tmp_path / "jobctrl.db"
     conn = init_db(db_path)
     recommendation = _recommendation(_TENANT_A)
@@ -784,29 +784,6 @@ def test_review_rejects_without_policy_then_accepts_once(tmp_path: Path) -> None
     assert rejected.policy_version is None
     assert policy_repository.get_current(_TENANT_A) == original_policy
 
-    accepted = reviewer.review(
-        _TENANT_A,
-        recommendation_id=recommendation.recommendation_id,
-        decision="accepted",
-        reviewed_at="2026-08-01T11:02:00Z",
-    )
-    accepted_replay = reviewer.review(
-        _TENANT_A,
-        recommendation_id=recommendation.recommendation_id,
-        decision="accepted",
-        reviewed_at="2026-08-01T11:03:00Z",
-    )
-
-    assert accepted == accepted_replay
-    assert accepted.revision == 2
-    assert accepted.policy_version == 2
-    assert policy_repository.get_current(_TENANT_A).learned_tailoring_rules.to_dict() == {
-        "fact_handling": "require_source_match"
-    }
-    assert conn.execute(
-        "SELECT COUNT(*) FROM learning_recommendation_reviews"
-    ).fetchone()[0] == 2
-    assert conn.execute("SELECT COUNT(*) FROM tailoring_policies").fetchone()[0] == 2
     with pytest.raises(
         LearningRecommendationReviewError,
         match="terminal",
@@ -814,9 +791,13 @@ def test_review_rejects_without_policy_then_accepts_once(tmp_path: Path) -> None
         reviewer.review(
             _TENANT_A,
             recommendation_id=recommendation.recommendation_id,
-            decision="rejected",
-            reviewed_at="2026-08-01T11:04:00Z",
+            decision="accepted",
+            reviewed_at="2026-08-01T11:02:00Z",
         )
+    assert conn.execute(
+        "SELECT COUNT(*) FROM learning_recommendation_reviews"
+    ).fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM tailoring_policies").fetchone()[0] == 1
     close_connection(db_path)
 
 
