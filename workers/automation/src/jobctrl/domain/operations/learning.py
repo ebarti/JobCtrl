@@ -26,6 +26,8 @@ TAILORING_RECOMMENDATION_EVALUATION_FIXTURE_VERSION = 1
 TAILORING_RECOMMENDATION_MIN_SIGNAL_COUNT = 3
 TAILORING_RECOMMENDATION_MIN_JOB_COUNT = 2
 
+LearningRecommendationDecision = Literal["accepted", "rejected"]
+
 
 @dataclass(frozen=True, kw_only=True)
 class LearningSourceChange:
@@ -206,6 +208,43 @@ class LearningRecommendation:
             raise ValueError("one signal cannot support and contradict a recommendation")
 
 
+@dataclass(frozen=True, kw_only=True)
+class LearningRecommendationReview:
+    """Append-only explicit decision linked to the owning Materials policy."""
+
+    tenant_id: TenantId
+    review_id: str
+    recommendation_id: str
+    revision: int
+    decision: LearningRecommendationDecision
+    policy_version: int | None
+    reviewed_at: str
+    context: Literal["materials"] = field(default="materials", init=False)
+    policy_kind: Literal["tailoring_rule"] = field(
+        default="tailoring_rule", init=False
+    )
+
+    def __post_init__(self) -> None:
+        if not str(self.tenant_id).strip():
+            raise ValueError("tenant_id must not be empty")
+        for name, value in (
+            ("review_id", self.review_id),
+            ("recommendation_id", self.recommendation_id),
+            ("reviewed_at", self.reviewed_at),
+        ):
+            if not value.strip():
+                raise ValueError(f"{name} must not be empty")
+        if self.revision < 1:
+            raise ValueError("review revision must be positive")
+        if self.decision not in {"accepted", "rejected"}:
+            raise ValueError("unsupported learning recommendation decision")
+        if self.decision == "accepted":
+            if self.policy_version is None or self.policy_version < 1:
+                raise ValueError("accepted review requires a policy version")
+        elif self.policy_version is not None:
+            raise ValueError("rejected review cannot change policy")
+
+
 def derive_tailoring_recommendations(
     signals: Iterable[FeedbackSignal],
     *,
@@ -348,6 +387,8 @@ def _recommendation_id(
 
 
 __all__ = [
+    "LearningRecommendationDecision",
+    "LearningRecommendationReview",
     "LearningRecommendation",
     "LearningSourceChange",
     "RecommendationEvidenceRef",

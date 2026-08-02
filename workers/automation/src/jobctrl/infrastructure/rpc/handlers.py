@@ -32,6 +32,10 @@ from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
 from jobctrl.infrastructure.learning.sqlite_repository import (
     SqliteLearningRecommendationRepository,
 )
+from jobctrl.infrastructure.materials import (
+    LearningRecommendationReviewError,
+    SqliteLearningRecommendationReviewRepository,
+)
 from jobctrl.infrastructure.rpc.server import JsonRpcServer, invalid_params
 from jobctrl.infrastructure.rpc.workflow_starter import WorkflowCanceler
 from jobctrl.infrastructure.runtime_identity import assert_expected_runtime
@@ -821,6 +825,42 @@ def rederive_learning_recommendations(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def review_learning_recommendation(params: dict[str, Any]) -> dict[str, Any]:
+    """Record one explicit recommendation decision and its policy effect."""
+
+    tenant_id = TenantId(_tenant_id(params))
+    recommendation_id = str(_require(params, "recommendationId")).strip()
+    decision = str(_require(params, "decision")).strip()
+    if decision not in {"accepted", "rejected"}:
+        raise invalid_params("decision must be accepted or rejected")
+    assert_expected_runtime(
+        expected_app_dir=params.get("expectedAppDir"),
+        expected_db_path=params.get("expectedDbPath"),
+    )
+    try:
+        review = SqliteLearningRecommendationReviewRepository(
+            get_connection()
+        ).review(
+            tenant_id,
+            recommendation_id=recommendation_id,
+            decision=decision,
+            reviewed_at=datetime.now(UTC).isoformat(),
+        )
+    except LearningRecommendationReviewError as exc:
+        raise invalid_params(str(exc)) from exc
+    return {
+        "status": "succeeded",
+        "reviewId": review.review_id,
+        "recommendationId": review.recommendation_id,
+        "revision": review.revision,
+        "decision": review.decision,
+        "context": review.context,
+        "policyKind": review.policy_kind,
+        "policyVersion": review.policy_version,
+        "reviewedAt": review.reviewed_at,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -854,6 +894,11 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register(
         "rederive_learning_recommendations",
         rederive_learning_recommendations,
+        mode="sync",
+    )
+    server.register(
+        "review_learning_recommendation",
+        review_learning_recommendation,
         mode="sync",
     )
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
