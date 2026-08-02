@@ -812,6 +812,8 @@ const pinnedTailoringExplanation: ArtifactTailoringExplanation = {
 describe("<ApplyReviewView>", () => {
   it("shows inspectable repeat evidence, keeps dry-run authorization available, and records a bound confirmation", async () => {
     const fingerprint = "a".repeat(64);
+    const priorJobId = "20000000-0000-4000-8000-000000000001";
+    const alternatePriorJobId = "20000000-0000-4000-8000-000000000002";
     const repeatApplication = makeRepeatApplicationAssessment({
       status: "confirmation_required",
       summary: "A confirmed application to the same employer and an equivalent role requires deliberate confirmation.",
@@ -821,7 +823,7 @@ describe("<ApplyReviewView>", () => {
           relationship: "same_employer_equivalent_role",
           reason: "The employer identity matches exactly and the normalized role titles are materially equivalent.",
           priorApplication: {
-            jobKey: "https://example.com/jobs/prior-platform",
+            jobId: priorJobId,
             title: "Principal Platform Engineer",
             company: "Globex",
             applicationUrl: "https://example.com/jobs/prior-platform/apply",
@@ -835,7 +837,7 @@ describe("<ApplyReviewView>", () => {
           relationship: "same_employer_equivalent_role",
           reason: "The employer identity matches exactly and the normalized role titles are materially equivalent.",
           priorApplication: {
-            jobKey: "https://alternate.example.test/jobs/prior-platform",
+            jobId: alternatePriorJobId,
             title: "Principal Platform Engineer",
             company: "Globex",
             applicationUrl: "https://alternate.example.test/jobs/prior-platform/apply",
@@ -849,12 +851,12 @@ describe("<ApplyReviewView>", () => {
       auditTrail: [
         {
           auditId: "audit-repeat-1",
-          targetJobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+          targetJobId: "10000000-0000-4000-8000-000000000001",
           action: "confirmation_required",
           evidenceFingerprint: fingerprint,
           evidence: [],
           overrideId: null,
-          priorJobKey: null,
+          priorJobId: null,
           actor: "system",
           reason: null,
           occurredAt: "2026-05-06T06:36:00Z",
@@ -889,10 +891,10 @@ describe("<ApplyReviewView>", () => {
     expect(await screen.findByText("Review prior application before live submit")).toBeInTheDocument();
     expect(screen.getAllByText("worker-confirmed submission", { exact: false })).toHaveLength(2);
     expect(screen.getByRole("link", {
-      name: "Inspect prior application: https://example.com/jobs/prior-platform",
+      name: `Inspect prior application: ${priorJobId}`,
     })).toHaveAttribute(
       "href",
-      `/jobs/${encodeURIComponent("https://example.com/jobs/prior-platform")}`,
+      `/jobs/${encodeURIComponent(priorJobId)}`,
     );
     expect(screen.getByRole("button", { name: /Authorize live submit/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Authorize dry run/i })).toBeEnabled();
@@ -903,30 +905,30 @@ describe("<ApplyReviewView>", () => {
     );
     expect(screen.getByRole("button", { name: "Confirm one live attempt" })).toBeDisabled();
     await userEvent.click(screen.getByRole("radio", {
-      name: "Confirm prior application: https://alternate.example.test/jobs/prior-platform",
+      name: `Confirm prior application: ${alternatePriorJobId}`,
     }));
     await userEvent.click(screen.getByRole("button", { name: "Confirm one live attempt" }));
     expect(screen.getByRole("button", { name: "Recording confirmation" })).toBeDisabled();
     expect(confirmRepeatApplication).toHaveBeenCalledWith(queue.items[0]!.jobKey, {
       evidenceFingerprint: fingerprint,
-      priorJobKey: "https://alternate.example.test/jobs/prior-platform",
+      priorJobId: alternatePriorJobId,
       reason: "The first application was withdrawn before review.",
       confirmedBy: "user",
     });
     resolveConfirmation({ ok: true, assessment: repeatApplication });
   });
 
-  it("surfaces stale repeat evidence as a refresh-and-review error", async () => {
+  it("keeps canonical-identity repeats blocked without offering an override", async () => {
     const repeatApplication = makeRepeatApplicationAssessment({
       status: "blocked",
-      summary: "A confirmed application to this canonical opening blocks another live submission by default.",
+      summary: "A confirmed application to this canonical opening blocks another live submission.",
       evidenceFingerprint: "b".repeat(64),
       matches: [
         {
           relationship: "canonical_identity",
           reason: "The canonical ATS identity matches the previously applied opening.",
           priorApplication: {
-            jobKey: "prior-job",
+            jobId: "20000000-0000-4000-8000-000000000003",
             title: "Principal Platform Engineer",
             company: "Globex",
             applicationUrl: null,
@@ -935,6 +937,50 @@ describe("<ApplyReviewView>", () => {
             confirmedAt: "2026-05-01T10:00:00Z",
           },
           identityEvidence: ["canonical_url:https://example.com/jobs/99"],
+        },
+      ],
+    });
+    const queue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0 ? { ...item, repeatApplication } : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => queue),
+        },
+      }),
+    });
+
+    expect(await screen.findByText("Repeat application blocked")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Reason for another live attempt")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm one live attempt" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Authorize live submit/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Authorize dry run/i })).toBeEnabled();
+  });
+
+  it("surfaces stale repeat evidence as a refresh-and-review error", async () => {
+    const repeatApplication = makeRepeatApplicationAssessment({
+      status: "confirmation_required",
+      summary: "A confirmed application to the same employer and an equivalent role requires deliberate confirmation.",
+      evidenceFingerprint: "b".repeat(64),
+      matches: [
+        {
+          relationship: "same_employer_equivalent_role",
+          reason: "The employer identity matches exactly and the normalized role titles are materially equivalent.",
+          priorApplication: {
+            jobId: "20000000-0000-4000-8000-000000000003",
+            title: "Principal Platform Engineer",
+            company: "Globex",
+            applicationUrl: null,
+            factKind: "application_submitted",
+            factId: "event:99",
+            confirmedAt: "2026-05-01T10:00:00Z",
+          },
+          identityEvidence: ["employer:globex", "role:principal platform engineer"],
         },
       ],
     });
@@ -966,14 +1012,14 @@ describe("<ApplyReviewView>", () => {
   });
 
   it("keeps immutable repeat-protection evidence inspectable after the current relation clears", async () => {
-    const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
-    const priorJobKey = "https://example.com/jobs/prior-platform";
+    const targetJobId = "10000000-0000-4000-8000-000000000001";
+    const priorJobId = "20000000-0000-4000-8000-000000000004";
     const fingerprint = "c".repeat(64);
     const historicalMatch = {
       relationship: "same_employer_equivalent_role" as const,
       reason: "The employer identity matched when the confirmation was recorded.",
       priorApplication: {
-        jobKey: priorJobKey,
+        jobId: priorJobId,
         title: "Principal Platform Engineer",
         company: "Globex",
         applicationUrl: null,
@@ -991,12 +1037,12 @@ describe("<ApplyReviewView>", () => {
       auditTrail: [
         {
           auditId: "audit-historical-1",
-          targetJobKey: jobKey,
+          targetJobId,
           action: "override_recorded",
           evidenceFingerprint: fingerprint,
           evidence: [historicalMatch],
           overrideId: "override-historical-1",
-          priorJobKey,
+          priorJobId,
           actor: "user",
           reason: "The first application was withdrawn before review.",
           occurredAt: "2026-05-06T06:36:00Z",
@@ -1020,7 +1066,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText(/event:historical-42/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Inspect selected prior application" })).toHaveAttribute(
       "href",
-      `/jobs/${encodeURIComponent(priorJobKey)}`,
+      `/jobs/${encodeURIComponent(priorJobId)}`,
     );
   });
 

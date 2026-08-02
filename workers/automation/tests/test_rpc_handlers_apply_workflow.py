@@ -12,6 +12,9 @@ from jobctrl.domain.rpc.messages import JsonRpcRequest, WorkflowStartSpec
 from jobctrl.infrastructure.rpc.handlers import apply_action, register_default_handlers
 from jobctrl.infrastructure.rpc.server import JsonRpcServer
 
+JOB_ID = "90000000-0000-4000-8000-000000000001"
+OTHER_JOB_ID = "90000000-0000-4000-8000-000000000002"
+
 
 @pytest.fixture(autouse=True)
 def permit_browser_for_existing_rpc_spec_tests(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -40,7 +43,7 @@ def test_apply_handler_returns_workflow_start_spec() -> None:
             "tenantId": "local",
             "expectedAppDir": "/tmp/jobctrl",
             "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
-            "jobUrl": "https://example.com/job/1",
+            "jobId": JOB_ID,
             "limit": 2,
             "model": "sonnet",
             "dryRun": True,
@@ -58,7 +61,7 @@ def test_apply_handler_returns_workflow_start_spec() -> None:
         tenant_id="local",
         expected_app_dir="/tmp/jobctrl",
         expected_db_path="/tmp/jobctrl/jobctrl.db",
-        job_url="https://example.com/job/1",
+        job_id=JOB_ID,
         dry_run=True,
         headless=True,
         model="sonnet",
@@ -83,7 +86,7 @@ def test_apply_via_jsonrpc_starts_workflow() -> None:
             method="apply",
             params={
                 "tenantId": "local",
-                "jobUrl": "https://example.com/job/1",
+                "jobId": JOB_ID,
                 "limit": 1,
                 "model": "haiku",
                 "dryRun": False,
@@ -104,7 +107,7 @@ def test_apply_via_jsonrpc_starts_workflow() -> None:
     assert seen[0].workflow is ApplyWorkflow
     (payload,) = seen[0].args
     assert payload.tenant_id == "local"
-    assert payload.job_url == "https://example.com/job/1"
+    assert payload.job_id == JOB_ID
     assert payload.limit == 1
     assert payload.model == "haiku"
 
@@ -129,15 +132,15 @@ def test_apply_handler_continuous_defaults_to_false() -> None:
 
 
 def test_apply_handler_sets_deterministic_workflow_id_for_single_job() -> None:
-    """A single-job apply gets a stable ``apply-{jobKey}`` id so a double-click
+    """A single-job apply gets a stable ``apply-{jobId}`` id so a double-click
     attaches to the running run (USE_EXISTING) instead of double-submitting."""
-    spec_a = apply_action({"tenantId": "local", "jobUrl": "https://example.com/job/1"})
-    spec_b = apply_action({"tenantId": "local", "jobUrl": "https://example.com/job/1"})
-    spec_c = apply_action({"tenantId": "local", "jobUrl": "https://example.com/job/2"})
+    spec_a = apply_action({"tenantId": "local", "jobId": JOB_ID})
+    spec_b = apply_action({"tenantId": "local", "jobId": JOB_ID})
+    spec_c = apply_action({"tenantId": "local", "jobId": OTHER_JOB_ID})
 
     assert spec_a.workflow_id is not None
-    assert spec_a.workflow_id == "apply-local-https://example.com/job/1"
-    # Deterministic: same job URL ⇒ same id; different URL ⇒ different id.
+    assert spec_a.workflow_id == f"apply-local-{JOB_ID}"
+    # Deterministic: same canonical JobId ⇒ same id; different JobId ⇒ different id.
     assert spec_a.workflow_id == spec_b.workflow_id
     assert spec_a.workflow_id != spec_c.workflow_id
 
@@ -149,7 +152,45 @@ def test_apply_handler_forwards_approval_required_flag() -> None:
     assert payload.approval_required is False
 
 
-def test_apply_handler_batch_keeps_uuid_id() -> None:
-    """Batch / continuous apply (no jobUrl) stays on the starter's uuid id."""
+@pytest.mark.parametrize(
+    "selector",
+    [
+        {"jobId": None},
+        {"jobId": ""},
+        {"jobId": "   "},
+        {"jobIds": None},
+        {"jobIds": []},
+        {"jobIds": [JOB_ID]},
+        {"jobUrl": None},
+        {"jobUrl": ""},
+        {"jobUrl": "   "},
+        {"jobUrl": "https://example.test/job"},
+        {"jobUrls": None},
+        {"jobUrls": []},
+        {"jobUrls": [""]},
+        {"jobUrls": ["   "]},
+        {"jobUrls": ["https://example.test/job"]},
+    ],
+)
+def test_apply_handler_rejects_present_unsupported_or_empty_selectors(
+    selector: dict[str, object],
+) -> None:
+    selector_name = next(iter(selector))
+    expected_message = (
+        r"apply (?:accepts|jobId)"
+        if selector_name == "jobId"
+        else rf"{selector_name} is not supported"
+    )
+    with pytest.raises(ValueError, match=expected_message):
+        apply_action({"tenantId": "local", **selector})
+
+
+def test_apply_handler_rejects_noncanonical_job_identity() -> None:
+    with pytest.raises(ValueError, match="canonical UUID"):
+        apply_action({"tenantId": "local", "jobId": JOB_ID.replace("90000000", "9000000a").upper()})
+
+
+def test_apply_handler_batch_keeps_generated_workflow_id() -> None:
+    """Batch / continuous apply (no jobId) stays on the starter's generated id."""
     spec = apply_action({"tenantId": "local", "continuous": True})
     assert spec.workflow_id is None

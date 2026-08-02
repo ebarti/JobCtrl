@@ -90,6 +90,30 @@ def _seed_selector_job(
     return _job_id(url)
 
 
+def _seed_apply_selector_job(
+    conn: sqlite3.Connection,
+    name: str,
+) -> tuple[JobId, str]:
+    job_id = _seed_selector_job(conn, name)
+    url = f"https://example.com/{name}"
+    cursor = conn.execute(
+        """
+        UPDATE job_enrichments
+        SET application_url = ?, updated_at = ?
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (
+            f"{url}/apply",
+            "2024-01-01T00:00:00+00:00",
+            LOCAL_TENANT,
+            job_id,
+        ),
+    )
+    assert cursor.rowcount == 1
+    conn.commit()
+    return job_id, url
+
+
 def _make_resume_artifact(path: str = "/tmp/r.txt") -> Artifact:
     return Artifact.create(
         type=ArtifactType.TAILORED_RESUME,
@@ -731,49 +755,10 @@ def test_acquire_job_picks_up_materials_only_tailored_jobs(tmp_path) -> None:
     ``job_materials_artifacts`` (no legacy ``jobs.tailored_resume_path``)."""
     from jobctrl.apply.launcher import acquire_job
     from jobctrl.database import close_connection, get_connection
-    from jobctrl.domain.scoring import (
-        FitScore,
-        JobScore,
-        MatchedKeywords,
-        ScoreBreakdown,
-    )
-    from jobctrl.infrastructure.scoring import SqliteScoreRepository
-
     db_path = tmp_path / "apply.db"
     conn = init_db(db_path)
     try:
-        url = "https://example.com/job"
-        job_id = _job_id(url)
-        conn.execute(
-            "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                LOCAL_TENANT,
-                job_id,
-                url,
-                "Engineer",
-                "Acme",
-                "2024-01-01T00:00:00+00:00",
-            ),
-        )
-        conn.execute(
-            "INSERT INTO job_enrichments "
-            "(tenant_id, job_id, current_status, full_description, application_url, updated_at) "
-            "VALUES (?, ?, 'enriched', 'desc', 'https://example.com/apply', ?)",
-            (LOCAL_TENANT, job_id, "2024-01-01T00:00:00+00:00"),
-        )
-        conn.commit()
-        # Score the job (apply requires fit_score >= min_score).
-        SqliteScoreRepository(conn).save(
-            JobScore.initial(
-                tenant_id=LOCAL_TENANT,
-                job_id=job_id,
-                fit_score=FitScore.create(9),
-                breakdown=ScoreBreakdown(reasoning="ok"),
-                matched_keywords=MatchedKeywords.from_iterable(["python"]),
-                scored_at="2024-01-02T00:00:00+00:00",
-            )
-        )
+        job_id, url = _seed_apply_selector_job(conn, "apply-materials-pdf")
         # Tailor via materials (no legacy column write).
         SqliteMaterialsRepository(conn).save(
             MaterialsSetFactory.initial(
@@ -791,7 +776,10 @@ def test_acquire_job_picks_up_materials_only_tailored_jobs(tmp_path) -> None:
             )
         )
         legacy_path = conn.execute(
-            "SELECT tailored_resume_path FROM jobs WHERE tenant_id = ? AND job_id = ?",
+            """
+            SELECT tailored_resume_path FROM jobs
+            WHERE tenant_id = ? AND job_id = ?
+            """,
             (LOCAL_TENANT, job_id),
         ).fetchone()[0]
         assert legacy_path is None  # confirm no legacy write happened
@@ -815,48 +803,10 @@ def test_acquire_job_picks_up_materials_only_tailored_jobs(tmp_path) -> None:
 def test_acquire_job_excludes_materials_only_text_resume_without_pdf(tmp_path) -> None:
     from jobctrl.apply.launcher import acquire_job
     from jobctrl.database import close_connection, get_connection
-    from jobctrl.domain.scoring import (
-        FitScore,
-        JobScore,
-        MatchedKeywords,
-        ScoreBreakdown,
-    )
-    from jobctrl.infrastructure.scoring import SqliteScoreRepository
-
     db_path = tmp_path / "apply.db"
     conn = init_db(db_path)
     try:
-        url = "https://example.com/job"
-        job_id = _job_id(url)
-        conn.execute(
-            "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                LOCAL_TENANT,
-                job_id,
-                url,
-                "Engineer",
-                "Acme",
-                "2024-01-01T00:00:00+00:00",
-            ),
-        )
-        conn.execute(
-            "INSERT INTO job_enrichments "
-            "(tenant_id, job_id, current_status, full_description, application_url, updated_at) "
-            "VALUES (?, ?, 'enriched', 'desc', 'https://example.com/apply', ?)",
-            (LOCAL_TENANT, job_id, "2024-01-01T00:00:00+00:00"),
-        )
-        conn.commit()
-        SqliteScoreRepository(conn).save(
-            JobScore.initial(
-                tenant_id=LOCAL_TENANT,
-                job_id=job_id,
-                fit_score=FitScore.create(9),
-                breakdown=ScoreBreakdown(reasoning="ok"),
-                matched_keywords=MatchedKeywords.from_iterable(["python"]),
-                scored_at="2024-01-02T00:00:00+00:00",
-            )
-        )
+        job_id, _url = _seed_apply_selector_job(conn, "apply-materials-text-only")
         SqliteMaterialsRepository(conn).save(
             MaterialsSetFactory.initial(
                 tenant_id=LOCAL_TENANT,

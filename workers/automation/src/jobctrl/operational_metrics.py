@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT
 
 
@@ -49,7 +50,7 @@ def ensure_operational_metric_tables(conn: sqlite3.Connection) -> list[str]:
             is_scrape_failure       INTEGER NOT NULL DEFAULT 0,
             is_retryable            INTEGER NOT NULL DEFAULT 1,
             run_id                  TEXT,
-            job_url                 TEXT,
+            job_id                  TEXT,
             duration_ms             INTEGER,
             total_count             INTEGER,
             new_count               INTEGER,
@@ -92,9 +93,7 @@ def classify_failure(
     adapter_lower = (adapter or "").lower()
 
     if normalized_class == "TypeError" and (
-        "lambda" in message_lower
-        or "<lambda>" in normalized_message
-        or "unexpected keyword argument" in message_lower
+        "lambda" in message_lower or "<lambda>" in normalized_message or "unexpected keyword argument" in message_lower
     ):
         return FailureClassification("test_harness", False, False, False)
     if "aborted_for_code_reload" in message_lower or class_lower == "aborted_for_code_reload":
@@ -107,7 +106,8 @@ def classify_failure(
         return FailureClassification(
             "timeout",
             True,
-            stage_lower in SCRAPE_STAGES or adapter_lower in {"browser", "jobspy", "workday", "smartextract", "ats_api"},
+            stage_lower in SCRAPE_STAGES
+            or adapter_lower in {"browser", "jobspy", "workday", "smartextract", "ats_api"},
             True,
         )
     if not normalized_class and not normalized_message:
@@ -132,6 +132,10 @@ def record_operational_attempt_metric(
     source_role: str | None = None,
     adapter: str | None = None,
     run_id: str | None = None,
+    tenant_id: str | None = None,
+    job_id: str | None = None,
+    # Accepted for legacy callers at an explicit locator boundary, but never
+    # persisted in the broad operational read model.
     job_url: str | None = None,
     duration_ms: int | None = None,
     counts: dict[str, Any] | None = None,
@@ -146,6 +150,7 @@ def record_operational_attempt_metric(
 ) -> None:
     ensure_operational_metric_tables(conn)
     counts = counts or {}
+    stable_job_id = canonical_job_id(str(job_id)) if job_id is not None else None
     terminal_failure = outcome in {"failed", "partial_failed"}
     classification = (
         classify_failure(
@@ -163,13 +168,13 @@ def record_operational_attempt_metric(
             tenant_id, occurred_at, stage, source_id, source_kind,
             source_priority, source_role, adapter, attempt_kind, outcome,
             failure_category, is_operational_failure, is_scrape_failure,
-            is_retryable, run_id, job_url, duration_ms, total_count,
+            is_retryable, run_id, job_id, duration_ms, total_count,
             new_count, existing_count, observed_count, duplicate_count,
             error_class, error_message, metadata_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            str(LOCAL_TENANT),
+            str(tenant_id or LOCAL_TENANT),
             occurred_at or utc_now(),
             stage,
             source_id,
@@ -179,7 +184,9 @@ def record_operational_attempt_metric(
             adapter,
             attempt_kind,
             outcome,
-            failure_category if failure_category is not None else (classification.failure_category if classification else None),
+            failure_category
+            if failure_category is not None
+            else (classification.failure_category if classification else None),
             _bool_int(
                 is_operational_failure
                 if is_operational_failure is not None
@@ -191,12 +198,10 @@ def record_operational_attempt_metric(
                 else (classification.is_scrape_failure if classification else False)
             ),
             _bool_int(
-                is_retryable
-                if is_retryable is not None
-                else (classification.is_retryable if classification else True)
+                is_retryable if is_retryable is not None else (classification.is_retryable if classification else True)
             ),
             run_id,
-            job_url,
+            str(stable_job_id) if stable_job_id is not None else None,
             duration_ms,
             _count(counts, "total"),
             _count(counts, "new_jobs", "newJobs", "new"),
@@ -233,7 +238,6 @@ def _snake_case(value: str) -> str:
     if raw.upper() == raw:
         return "_".join(part.lower() for part in re.split(r"[^A-Za-z0-9]+", raw) if part) or "unknown"
     normalized = "".join(
-        f"_{char.lower()}" if char.isupper() else (char.lower() if char.isalnum() else "_")
-        for char in raw
+        f"_{char.lower()}" if char.isupper() else (char.lower() if char.isalnum() else "_") for char in raw
     )
     return "_".join(part for part in normalized.split("_") if part) or "unknown"

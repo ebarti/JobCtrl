@@ -79,7 +79,6 @@ from jobctrl.database import (
     _SCORE_DOWNSTREAM_STATE_JOIN,
     _SCORE_CURRENT_FOR_DOWNSTREAM,
     _SCORE_ELIGIBLE_FOR_DOWNSTREAM,
-    ensure_application_review_decision_columns,
     get_connection,
 )
 from jobctrl.domain.apply.services import ApplyPromptBuilder
@@ -88,11 +87,12 @@ from jobctrl.domain.apply.repeat_application import (
     evaluate_repeat_application,
 )
 from jobctrl.domain.apply.value_objects import ApplyPrompt, ApplyRunId, new_apply_run_id
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.tenant import TenantId
 from jobctrl.operational_metrics import record_operational_attempt_metric
 from jobctrl.state import (
     ensure_job_stage_rows,
-    record_job_artifact,
     record_job_event,
     set_stage_state,
 )
@@ -136,89 +136,99 @@ def _utc_now() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _has_active_apply(conn, url: str) -> bool:
-    """True when ``job_stage_states.apply.state == 'running'`` for ``url``.
+def _has_active_apply(conn, *, tenant_id: str, job_id: str) -> bool:
+    """True when ``job_stage_states.apply.state == 'running'`` for one JobId.
 
     The §4.6 invariant — at most one in-progress apply per JobId —
     is enforced by checking the canonical stage state row.
     """
     row = conn.execute(
         "SELECT 1 FROM job_stage_states "
-        "WHERE job_url = ? AND stage = 'apply' AND state = 'running' LIMIT 1",
-        (url,),
+        "WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'apply' AND state = 'running' LIMIT 1",
+        (tenant_id, job_id),
     ).fetchone()
     return row is not None
 
 
-def _has_succeeded_apply(conn, url: str) -> bool:
-    """True when the canonical apply stage row is succeeded for ``url``."""
+def _has_succeeded_apply(conn, *, tenant_id: str, job_id: str) -> bool:
+    """True when the canonical apply stage row is succeeded for one JobId."""
     row = conn.execute(
         "SELECT 1 FROM job_stage_states "
-        "WHERE job_url = ? AND stage = 'apply' AND state = 'succeeded' LIMIT 1",
-        (url,),
+        "WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'apply' AND state = 'succeeded' LIMIT 1",
+        (tenant_id, job_id),
     ).fetchone()
     return row is not None
 
 
-def _has_needs_verification_apply(conn, url: str) -> bool:
-    """True when a live apply is parked for manual verification."""
+def _has_needs_verification_apply(conn, *, tenant_id: str, job_id: str) -> bool:
+    """True when one JobId is parked for manual verification."""
     row = conn.execute(
         "SELECT 1 FROM job_stage_states "
-        "WHERE job_url = ? AND stage = 'apply' AND state = 'needs_verification' LIMIT 1",
-        (url,),
+        "WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'apply' AND state = 'needs_verification' LIMIT 1",
+        (tenant_id, job_id),
     ).fetchone()
     return row is not None
 
 
-def _attempt_count_for(conn, url: str) -> int:
+def _attempt_count_for(conn, *, tenant_id: str, job_id: str) -> int:
     """Return the canonical attempt count from ``job_stage_states.apply``."""
     row = conn.execute(
-        "SELECT attempt_count FROM job_stage_states "
-        "WHERE job_url = ? AND stage = 'apply' LIMIT 1",
-        (url,),
+        "SELECT attempt_count FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply' LIMIT 1",
+        (tenant_id, job_id),
     ).fetchone()
     return int(row[0] or 0) if row else 0
 
 
-def _latest_apply_review_decision(conn, *, tenant_id: str, job_key: str) -> dict[str, Any] | None:
-    ensure_application_review_decision_columns(conn)
+def _latest_apply_review_decision(conn, *, tenant_id: str, job_id: str) -> dict[str, Any] | None:
     row = conn.execute(
         """
         SELECT decision, materials_generation, profile_version, application_url,
                partial_override_run_id, email_recipient, email_attachment_artifact_id
         FROM application_review_decisions
-        WHERE tenant_id = ? AND job_key = ?
+        WHERE tenant_id = ? AND job_id = ?
         ORDER BY decided_at DESC, decision_id DESC
         LIMIT 1
         """,
-        (tenant_id, job_key),
+        (tenant_id, job_id),
     ).fetchone()
     if row is None:
         return None
-    return dict(row) if hasattr(row, "keys") else {
-        "decision": row[0],
-        "materials_generation": row[1],
-        "profile_version": row[2],
-        "application_url": row[3],
-        "partial_override_run_id": row[4],
-        "email_recipient": row[5],
-        "email_attachment_artifact_id": row[6],
-    }
+    return (
+        dict(row)
+        if hasattr(row, "keys")
+        else {
+            "decision": row[0],
+            "materials_generation": row[1],
+            "profile_version": row[2],
+            "application_url": row[3],
+            "partial_override_run_id": row[4],
+            "email_recipient": row[5],
+            "email_attachment_artifact_id": row[6],
+        }
+    )
 
 
-def _latest_email_application_candidate(conn, *, job_key: str) -> dict[str, Any] | None:
+def _latest_email_application_candidate(
+    conn,
+    *,
+    tenant_id: str,
+    job_id: str,
+) -> dict[str, Any] | None:
     try:
         row = conn.execute(
             """
             SELECT payload_json
             FROM job_events
-            WHERE job_url = ?
+            WHERE tenant_id = ? AND job_id = ?
               AND stage = 'apply'
               AND event_type = 'EmailApplicationCandidateRecorded'
             ORDER BY occurred_at DESC, event_id DESC
             LIMIT 1
             """,
-            (job_key,),
+            (tenant_id, job_id),
         ).fetchone()
     except Exception:  # noqa: BLE001
         return None
@@ -233,10 +243,7 @@ def _latest_email_application_candidate(conn, *, job_key: str) -> dict[str, Any]
 
 
 def _current_profile_version(conn, *, tenant_id: str = "local") -> int | None:
-    columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(candidate_profiles)").fetchall()
-    }
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(candidate_profiles)").fetchall()}
     if "version" not in columns:
         return None
     row = conn.execute(
@@ -294,17 +301,13 @@ def _has_run_bound_initial_navigation(
     if len(allowed) != 1:
         return False
     try:
-        expected_fingerprint = sha256(
-            canonical_http_url(application_url).encode("utf-8")
-        ).hexdigest()
+        expected_fingerprint = sha256(canonical_http_url(application_url).encode("utf-8")).hexdigest()
     except ValueError:
         return False
     navigation = allowed[0]
     return (
-        str(_payload_value(navigation, "decision") or "")
-        == "run_bound_initial_url"
-        and str(_payload_value(navigation, "grant_id", "grantId") or "")
-        == "initial_application_url"
+        str(_payload_value(navigation, "decision") or "") == "run_bound_initial_url"
+        and str(_payload_value(navigation, "grant_id", "grantId") or "") == "initial_application_url"
         and str(_payload_value(navigation, "method") or "").upper() == "GET"
         and str(
             _payload_value(
@@ -321,7 +324,8 @@ def _has_run_bound_initial_navigation(
 def _dry_run_evidence_exists(
     conn,
     *,
-    job_key: str,
+    tenant_id: str,
+    job_id: str,
     materials_generation: int,
     profile_version: int,
     application_url: str,
@@ -331,11 +335,12 @@ def _dry_run_evidence_exists(
     rows = conn.execute(
         """
         SELECT payload_json FROM job_events
-        WHERE job_url = ? AND stage = 'apply' AND event_type = 'DryRunCompleted'
+        WHERE tenant_id = ? AND job_id = ?
+          AND stage = 'apply' AND event_type = 'DryRunCompleted'
         ORDER BY event_id DESC
         LIMIT 24
         """,
-        (job_key,),
+        (tenant_id, job_id),
     ).fetchall()
     for row in rows:
         payload = _payload_from_row(row)
@@ -357,11 +362,12 @@ def _dry_run_evidence_exists(
         started_rows = conn.execute(
             """
             SELECT payload_json FROM job_events
-            WHERE job_url = ? AND stage = 'apply' AND event_type = 'ApplyRunStarted'
+            WHERE tenant_id = ? AND job_id = ?
+              AND stage = 'apply' AND event_type = 'ApplyRunStarted'
             ORDER BY event_id DESC
             LIMIT 48
             """,
-            (job_key,),
+            (tenant_id, job_id),
         ).fetchall()
         for started_row in started_rows:
             started_payload = _payload_from_row(started_row)
@@ -405,15 +411,22 @@ def _dry_run_evidence_exists(
     return False
 
 
-def _apply_run_started_payload(conn, *, job_key: str, run_id: str) -> dict[str, Any]:
+def _apply_run_started_payload(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    run_id: str,
+) -> dict[str, Any]:
     rows = conn.execute(
         """
         SELECT payload_json FROM job_events
-        WHERE job_url = ? AND stage = 'apply' AND event_type = 'ApplyRunStarted'
+        WHERE tenant_id = ? AND job_id = ?
+          AND stage = 'apply' AND event_type = 'ApplyRunStarted'
         ORDER BY event_id DESC
         LIMIT 48
         """,
-        (job_key,),
+        (str(tenant_id), str(canonical_job_id(str(job_id)))),
     ).fetchall()
     for row in rows:
         payload = _payload_from_row(row)
@@ -425,17 +438,19 @@ def _apply_run_started_payload(conn, *, job_key: str, run_id: str) -> dict[str, 
 def _latest_dry_run_completion_payload(
     conn,
     *,
-    job_key: str,
+    tenant_id: TenantId,
+    job_id: JobId,
     run_id: str,
 ) -> dict[str, Any]:
     rows = conn.execute(
         """
         SELECT payload_json FROM job_events
-        WHERE job_url = ? AND stage = 'apply' AND event_type = 'DryRunCompleted'
+        WHERE tenant_id = ? AND job_id = ?
+          AND stage = 'apply' AND event_type = 'DryRunCompleted'
         ORDER BY event_id DESC
         LIMIT 24
         """,
-        (job_key,),
+        (str(tenant_id), str(canonical_job_id(str(job_id)))),
     ).fetchall()
     for row in rows:
         payload = _payload_from_row(row)
@@ -447,15 +462,22 @@ def _latest_dry_run_completion_payload(
 def _dry_run_completion_binding(
     conn,
     *,
-    job_key: str,
+    tenant_id: TenantId,
+    job_id: JobId,
     run_id: str,
     run_ctx: dict | None,
 ) -> dict[str, Any]:
     ctx = run_ctx or {}
-    started_payload = _apply_run_started_payload(conn, job_key=job_key, run_id=run_id)
+    started_payload = _apply_run_started_payload(
+        conn,
+        tenant_id=tenant_id,
+        job_id=job_id,
+        run_id=run_id,
+    )
     completion_payload = _latest_dry_run_completion_payload(
         conn,
-        job_key=job_key,
+        tenant_id=tenant_id,
+        job_id=job_id,
         run_id=run_id,
     )
     materials_generation = _payload_int(ctx, "materials_generation", "materialsGeneration")
@@ -500,10 +522,7 @@ def _dry_run_completion_binding(
     )
     if not isinstance(blocked_channels, list):
         blocked_channels = [str(blocked_channels)]
-    allowed_navigations = (
-        _allowed_navigation_evidence(completion_payload)
-        or _allowed_navigation_evidence(ctx)
-    )
+    allowed_navigations = _allowed_navigation_evidence(completion_payload) or _allowed_navigation_evidence(ctx)
     if not _has_run_bound_initial_navigation(
         {"allowed_navigations": allowed_navigations},
         application_url=application_url,
@@ -514,11 +533,7 @@ def _dry_run_completion_binding(
         "application_url": application_url or None,
         "profile_version": profile_version,
         "coverage": coverage,
-        "blocked_channels": [
-            str(channel)
-            for channel in blocked_channels
-            if channel is not None and str(channel)
-        ],
+        "blocked_channels": [str(channel) for channel in blocked_channels if channel is not None and str(channel)],
         "allowed_navigations": allowed_navigations,
     }
 
@@ -527,7 +542,7 @@ def _approval_refusal_reason(
     conn,
     *,
     tenant_id: str,
-    job_key: str,
+    job_id: str,
     materials_generation: Any,
     profile_version: int | None,
     application_url: str,
@@ -535,7 +550,7 @@ def _approval_refusal_reason(
     decision = _latest_apply_review_decision(
         conn,
         tenant_id=tenant_id,
-        job_key=job_key,
+        job_id=job_id,
     )
     if not decision or decision.get("decision") != "approve_submit":
         return "awaiting_approval"
@@ -557,18 +572,22 @@ def _approval_refusal_reason(
         return "approval_stale_profile"
     if str(decision.get("application_url") or "") != application_url:
         return "approval_stale_url"
-    email_candidate = _latest_email_application_candidate(conn, job_key=job_key)
+    email_candidate = _latest_email_application_candidate(
+        conn,
+        tenant_id=tenant_id,
+        job_id=job_id,
+    )
     if email_candidate:
-        if (
-            str(decision.get("email_recipient") or "").lower()
-            != str(email_candidate.get("recipient") or "").lower()
-            or str(decision.get("email_attachment_artifact_id") or "")
-            != str(email_candidate.get("attachment_artifact_id") or "")
+        if str(decision.get("email_recipient") or "").lower() != str(
+            email_candidate.get("recipient") or ""
+        ).lower() or str(decision.get("email_attachment_artifact_id") or "") != str(
+            email_candidate.get("attachment_artifact_id") or ""
         ):
             return "approval_stale_email_candidate"
     if _dry_run_evidence_exists(
         conn,
-        job_key=job_key,
+        tenant_id=tenant_id,
+        job_id=job_id,
         materials_generation=current_materials_generation,
         profile_version=decision_profile_version,
         application_url=application_url,
@@ -579,7 +598,8 @@ def _approval_refusal_reason(
     if partial_override_run_id:
         if _dry_run_evidence_exists(
             conn,
-            job_key=job_key,
+            tenant_id=tenant_id,
+            job_id=job_id,
             materials_generation=current_materials_generation,
             profile_version=decision_profile_version,
             application_url=application_url,
@@ -608,7 +628,9 @@ def _apply_candidate_select_parts() -> tuple[str, str]:
     attempts_subquery = (
         "(SELECT COALESCE(jss_a.attempt_count, 0) "
         "FROM job_stage_states jss_a "
-        "WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply' LIMIT 1) AS apply_attempts"
+        "WHERE jss_a.tenant_id = jobs.tenant_id "
+        "AND jss_a.job_id = jobs.job_id "
+        "AND jss_a.stage = 'apply' LIMIT 1) AS apply_attempts"
     )
     columns = (
         f"jobs.tenant_id AS tenant_id, jobs.job_id AS job_id, "
@@ -635,11 +657,12 @@ def _apply_candidate_select_parts() -> tuple[str, str]:
 
 
 def acquire_job(
-    target_url: str | None = None,
+    target_job_id: JobId | None = None,
     min_score: int = 7,
     worker_id: int = 0,
     run_ctx: dict | None = None,
     approval_required: bool = True,
+    tenant_id: str | None = None,
 ) -> dict | None:
     """Atomically acquire the next job to apply to.
 
@@ -653,29 +676,30 @@ def acquire_job(
     conn = get_connection()
     try:
         conn.execute("BEGIN IMMEDIATE")
+        tenant_id = str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
 
         common_columns, common_joins = _apply_candidate_select_parts()
 
-        if target_url:
-            like = f"%{target_url.split('?')[0].rstrip('/')}%"
+        if target_job_id is not None:
             target_row = conn.execute(
                 f"""
                 SELECT {common_columns}
                 FROM jobs {common_joins}
-                WHERE (jobs.url = ? OR {_EFFECTIVE_APPLICATION_URL} = ?
-                       OR {_EFFECTIVE_APPLICATION_URL} LIKE ? OR jobs.url LIKE ?)
+                WHERE jobs.tenant_id = ?
+                  AND jobs.job_id = ?
                   AND {_READY_TAILORED_RESUME_WITH_PDF}
                   AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
                   AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
                   AND {_NOT_CLOSED_ACTIVE_STATE}
                 LIMIT 1
                 """,
-                (target_url, target_url, like, like),
+                (tenant_id, str(canonical_job_id(str(target_job_id)))),
             ).fetchone()
             candidate_rows = [target_row] if target_row is not None else []
         else:
             blocked_sites, blocked_patterns = _load_blocked()
             params: list[Any] = [
+                tenant_id,
                 config.DEFAULTS["max_apply_attempts"],
                 min_score,
             ]
@@ -686,26 +710,28 @@ def acquire_job(
                 params.extend(blocked_sites)
             url_clauses = ""
             if blocked_patterns:
-                url_clauses = " ".join(
-                    "AND jobs.url NOT LIKE ?" for _ in blocked_patterns
-                )
+                url_clauses = " ".join("AND jobs.url NOT LIKE ?" for _ in blocked_patterns)
                 params.extend(blocked_patterns)
             rows = conn.execute(
                 f"""
                 SELECT {common_columns}
                 FROM jobs {common_joins}
-                WHERE {_READY_TAILORED_RESUME_WITH_PDF}
+                WHERE jobs.tenant_id = ?
+                  AND {_READY_TAILORED_RESUME_WITH_PDF}
                   AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL
                   AND {_EFFECTIVE_APPLY_TARGET_URL} != ''
                   AND NOT EXISTS (
                       SELECT 1 FROM job_stage_states jss_active
-                      WHERE jss_active.job_url = jobs.url
+                      WHERE jss_active.tenant_id = jobs.tenant_id
+                        AND jss_active.job_id = jobs.job_id
                         AND jss_active.stage = 'apply'
                         AND jss_active.state IN ('running', 'succeeded', 'needs_verification')
                   )
                   AND COALESCE(
                       (SELECT jss_a.attempt_count FROM job_stage_states jss_a
-                       WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply'
+                       WHERE jss_a.tenant_id = jobs.tenant_id
+                         AND jss_a.job_id = jobs.job_id
+                         AND jss_a.stage = 'apply'
                        LIMIT 1), 0
                   ) < ?
                   AND {_EFFECTIVE_FIT_SCORE} >= ?
@@ -731,7 +757,11 @@ def acquire_job(
         if not dry_run:
             row = None
             for candidate in candidate_rows:
-                candidate_assessment = evaluate_repeat_application(conn, candidate["url"])
+                candidate_assessment = evaluate_repeat_application(
+                    conn,
+                    tenant_id=tenant_id,
+                    target_job_id=candidate["job_id"],
+                )
                 if candidate_assessment["status"] in {"clear", "override_ready"}:
                     row = candidate
                     repeat_assessment = candidate_assessment
@@ -754,16 +784,18 @@ def acquire_job(
         # Skip manual ATS sites (the agent cannot solve them).
         from jobctrl.config import is_manual_ats
 
+        job_id = str(row["job_id"])
         url = row["url"]
         apply_url = row["application_url"] or url
         if is_manual_ats(apply_url):
             now = _utc_now()
-            ensure_job_stage_rows(conn, url)
+            ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
             set_stage_state(
                 conn,
-                url,
+                job_id,
                 "apply",
                 "skipped",
+                tenant_id=tenant_id,
                 finished_at=now,
                 error_code="MANUAL_ATS",
                 error_message="manual ATS",
@@ -772,9 +804,10 @@ def acquire_job(
             run_id = new_apply_run_id()
             record_job_event(
                 conn,
-                url,
+                job_id,
                 "apply",
                 "ApplyManualSkip",
+                tenant_id=tenant_id,
                 level="info",
                 message="manual ATS",
                 payload={
@@ -790,29 +823,27 @@ def acquire_job(
             logger.info("Skipping manual ATS: %s", url[:80])
             return None
 
-        # Targeted-mode also enforces the no-active + max-attempts
-        # invariants (the SELECT above is permissive on target_url so
-        # we can surface "no such job" errors clearly).
-        if _has_active_apply(conn, url):
+        # Targeted-mode also enforces the no-active + max-attempts invariants.
+        if _has_active_apply(conn, tenant_id=tenant_id, job_id=job_id):
             conn.rollback()
             return None
-        if _has_succeeded_apply(conn, url):
+        if _has_succeeded_apply(conn, tenant_id=tenant_id, job_id=job_id):
             conn.rollback()
             return None
-        if _has_needs_verification_apply(conn, url):
+        if _has_needs_verification_apply(conn, tenant_id=tenant_id, job_id=job_id):
             conn.rollback()
             return None
-        attempts = _attempt_count_for(conn, url)
+        attempts = _attempt_count_for(conn, tenant_id=tenant_id, job_id=job_id)
         if attempts >= int(config.DEFAULTS["max_apply_attempts"]):
             conn.rollback()
             return None
         if approval_required and not dry_run:
             refusal_reason = _approval_refusal_reason(
                 conn,
-                tenant_id=LOCAL_TENANT,
-                job_key=url,
+                tenant_id=tenant_id,
+                job_id=job_id,
                 materials_generation=row["materials_generation"],
-                profile_version=_current_profile_version(conn, tenant_id=LOCAL_TENANT),
+                profile_version=_current_profile_version(conn, tenant_id=tenant_id),
                 application_url=apply_url,
             )
             if refusal_reason:
@@ -821,10 +852,7 @@ def acquire_job(
                 # Keep those audit facts even though this candidate cannot be
                 # claimed yet.
                 conn.commit()
-                add_event(
-                    f"[W{worker_id}] Awaiting apply approval "
-                    f"({refusal_reason}) for {(row['title'] or url)[:40]}"
-                )
+                add_event(f"[W{worker_id}] Awaiting apply approval ({refusal_reason}) for {(row['title'] or url)[:40]}")
                 logger.info(
                     "Apply approval required for %s; refusal_reason=%s",
                     url,
@@ -833,26 +861,24 @@ def acquire_job(
                 return None
 
         now = _utc_now()
-        run_id = ApplyRunId(
-            (run_ctx.get("run_id") if run_ctx else None) or new_apply_run_id()
-        )
+        run_id = ApplyRunId((run_ctx.get("run_id") if run_ctx else None) or new_apply_run_id())
         repeat_override_id = None
         if repeat_assessment and repeat_assessment["status"] == "override_ready":
             repeat_override_id = consume_repeat_application_override(
                 conn,
                 repeat_assessment,
-                target_job_key=url,
+                tenant_id=tenant_id,
+                target_job_id=job_id,
                 run_id=str(run_id),
                 consumed_at=now,
             )
-        ensure_job_stage_rows(conn, url)
+        ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
         # Reset prior retryable terminal state (failed / exhausted /
         # canceled / skipped) back to pending so the §8.5 state machine accepts
         # the pending → running transition.
         prior_row = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE job_url = ? AND stage = 'apply' LIMIT 1",
-            (url,),
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply' LIMIT 1",
+            (tenant_id, job_id),
         ).fetchone()
         if prior_row is not None and prior_row[0] not in {
             "pending",
@@ -862,24 +888,27 @@ def acquire_job(
         }:
             set_stage_state(
                 conn,
-                url,
+                job_id,
                 "apply",
                 "pending",
+                tenant_id=tenant_id,
                 validate_transition=False,
             )
         set_stage_state(
             conn,
-            url,
+            job_id,
             "apply",
             "running",
+            tenant_id=tenant_id,
             started_at=now,
             attempt_count=attempts + 1,
         )
         record_job_event(
             conn,
-            url,
+            job_id,
             "apply",
             "ApplyRunStarted",
+            tenant_id=tenant_id,
             message="Apply agent acquired job",
             payload={
                 "run_id": str(run_id),
@@ -892,12 +921,10 @@ def acquire_job(
                 "workflow_id": run_ctx.get("workflow_id") if run_ctx else None,
                 "materials_generation": row["materials_generation"],
                 "application_url": apply_url,
-                "profile_version": _current_profile_version(conn, tenant_id=LOCAL_TENANT),
+                "profile_version": _current_profile_version(conn, tenant_id=tenant_id),
                 "repeat_application_override_id": repeat_override_id,
                 "repeat_application_evidence_fingerprint": (
-                    repeat_assessment.get("evidenceFingerprint")
-                    if repeat_assessment
-                    else None
+                    repeat_assessment.get("evidenceFingerprint") if repeat_assessment else None
                 ),
             },
         )
@@ -908,28 +935,26 @@ def acquire_job(
             run_ctx.setdefault("worker_id", worker_id)
             run_ctx["materials_generation"] = row["materials_generation"]
             run_ctx["application_url"] = apply_url
+            run_ctx["tenant_id"] = tenant_id
+            run_ctx["job_id"] = job_id
             run_ctx["profile_version"] = _current_profile_version(
                 conn,
-                tenant_id=LOCAL_TENANT,
+                tenant_id=tenant_id,
             )
             run_ctx["repeat_application_override_id"] = repeat_override_id
             run_ctx["repeat_application_evidence_fingerprint"] = (
-                repeat_assessment.get("evidenceFingerprint")
-                if repeat_assessment
-                else None
+                repeat_assessment.get("evidenceFingerprint") if repeat_assessment else None
             )
 
         job_dict = _row_to_job_dict(row, run_id=run_id)
         decision = _latest_apply_review_decision(
             conn,
-            tenant_id=LOCAL_TENANT,
-            job_key=url,
+            tenant_id=tenant_id,
+            job_id=job_id,
         )
         if decision:
             job_dict["approved_email_recipient"] = str(decision.get("email_recipient") or "")
-            job_dict["approved_email_attachment_artifact_id"] = str(
-                decision.get("email_attachment_artifact_id") or ""
-            )
+            job_dict["approved_email_attachment_artifact_id"] = str(decision.get("email_attachment_artifact_id") or "")
         return job_dict
     except Exception:
         conn.rollback()
@@ -938,8 +963,9 @@ def acquire_job(
 
 def _register_apply_log_artifact(
     conn,
-    url: str,
+    job_id: JobId,
     *,
+    tenant_id: TenantId,
     worker_id: int | None,
     run_id: str,
     occurred_at: str,
@@ -950,26 +976,156 @@ def _register_apply_log_artifact(
     if worker_id is None:
         return
     log_path = config.LOG_DIR / f"worker-{int(worker_id)}.log"
-    record_job_artifact(
+    _record_apply_artifact(
         conn,
-        url,
-        "apply",
-        "apply_log",
-        log_path,
+        job_id,
+        tenant_id=tenant_id,
+        artifact_type="apply_log",
+        path=log_path,
         status="active",
         created_at=occurred_at,
         metadata={"run_id": str(run_id), "worker_id": int(worker_id)},
     )
 
 
+def _record_apply_artifact(
+    conn,
+    job_id: JobId,
+    *,
+    tenant_id: TenantId,
+    artifact_type: str,
+    path: Path,
+    status: str = "active",
+    created_at: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Persist an Apply artifact against the exact tenant/job aggregate."""
+
+    stable_job_id = canonical_job_id(str(job_id))
+    try:
+        size_bytes = path.stat().st_size
+    except OSError:
+        size_bytes = None
+    conn.execute(
+        """
+        INSERT INTO job_artifacts (
+            tenant_id, job_id, stage, artifact_type, status, path,
+            created_at, size_bytes, metadata_json
+        ) VALUES (?, ?, 'apply', ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(tenant_id, job_id, stage, artifact_type, path) DO UPDATE SET
+            status = excluded.status,
+            created_at = excluded.created_at,
+            size_bytes = excluded.size_bytes,
+            metadata_json = excluded.metadata_json
+        """,
+        (
+            str(tenant_id),
+            str(stable_job_id),
+            artifact_type,
+            status,
+            str(path),
+            created_at or _utc_now(),
+            size_bytes,
+            json.dumps(metadata or {}, separators=(",", ":"), sort_keys=True),
+        ),
+    )
+
+
+def _posting_url_for_job_id(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> str | None:
+    row = conn.execute(
+        """
+        SELECT locator_value
+        FROM job_locators
+        WHERE tenant_id = ? AND job_id = ?
+          AND locator_kind = 'posting_url' AND is_current = 1
+        ORDER BY last_seen_at DESC
+        LIMIT 1
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if row is None:
+        row = conn.execute(
+            "SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ? LIMIT 1",
+            (str(tenant_id), str(job_id)),
+        ).fetchone()
+    if row is None:
+        return None
+    return str(row[0] or "") or None
+
+
+def _has_apply_event_for_job_id(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    run_id: str,
+    event_types: set[str],
+) -> bool:
+    placeholders = ",".join("?" for _ in event_types)
+    rows = conn.execute(
+        f"""
+        SELECT payload_json FROM job_events
+        WHERE tenant_id = ? AND job_id = ?
+          AND stage = 'apply' AND event_type IN ({placeholders})
+        """,
+        (str(tenant_id), str(job_id), *event_types),
+    ).fetchall()
+    for row in rows:
+        payload_json = row["payload_json"] if hasattr(row, "keys") else row[0]
+        try:
+            payload = json.loads(payload_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(payload, dict) and str(payload.get("run_id") or "") == run_id:
+            return True
+    return False
+
+
+def _record_apply_terminal_event_once(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    run_id: str,
+    event_type: str,
+    level: str = "info",
+    message: str,
+    payload: dict[str, Any],
+) -> None:
+    if _has_apply_event_for_job_id(
+        conn,
+        tenant_id=tenant_id,
+        job_id=job_id,
+        run_id=run_id,
+        event_types={event_type},
+    ):
+        return
+    record_job_event(
+        conn,
+        job_id,
+        "apply",
+        event_type,
+        tenant_id=tenant_id,
+        level=level,
+        message=message,
+        payload=payload,
+    )
+
+
 def mark_result(
-    url: str,
+    job_id: JobId,
     status: str,
     error: str | None = None,
     permanent: bool = False,
     duration_ms: int | None = None,
     task_id: str | None = None,
     run_ctx: dict | None = None,
+    tenant_id: TenantId | None = None,
 ) -> None:
     """Update a job's apply outcome.
 
@@ -985,19 +1141,29 @@ def mark_result(
     """
     conn = get_connection()
     now = _utc_now()
-    ensure_job_stage_rows(conn, url)
-
-    run_id = (
-        task_id
-        or (run_ctx.get("run_id") if run_ctx else None)
-        or new_apply_run_id()
+    stable_job_id = canonical_job_id(str(job_id))
+    stable_tenant_id = TenantId(str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT))
+    posting_url = _posting_url_for_job_id(
+        conn,
+        tenant_id=stable_tenant_id,
+        job_id=stable_job_id,
     )
+    ensure_job_stage_rows(
+        conn,
+        stable_job_id,
+        tenant_id=stable_tenant_id,
+    )
+
+    run_id = task_id or (run_ctx.get("run_id") if run_ctx else None) or new_apply_run_id()
     worker_id = run_ctx.get("worker_id") if run_ctx else None
     model = run_ctx.get("model") if run_ctx else None
     dry_run = bool(run_ctx.get("dry_run")) if run_ctx else False
-    submit_intent_recorded = (
-        status not in {"applied", "dry_run"}
-        and _has_apply_submit_intent(conn, url, str(run_id))
+    submit_intent_recorded = status not in {"applied", "dry_run"} and _has_apply_event_for_job_id(
+        conn,
+        tenant_id=stable_tenant_id,
+        job_id=stable_job_id,
+        run_id=str(run_id),
+        event_types={"ApplySubmitIntended"},
     )
 
     if status == "applied":
@@ -1006,15 +1172,21 @@ def mark_result(
         # still want to record this completion. Skip canonical validation;
         # the launcher is the writer.
         set_stage_state(
-            conn, url, "apply", "succeeded",
-            finished_at=now, duration_ms=duration_ms,
+            conn,
+            stable_job_id,
+            "apply",
+            "succeeded",
+            tenant_id=stable_tenant_id,
+            finished_at=now,
+            duration_ms=duration_ms,
             validate_transition=False,
         )
-        record_job_event(
+        _record_apply_terminal_event_once(
             conn,
-            url,
-            "apply",
-            "ApplicationSubmitted",
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+            run_id=str(run_id),
+            event_type="ApplicationSubmitted",
             message="Application submitted",
             payload={
                 "run_id": str(run_id),
@@ -1028,7 +1200,8 @@ def mark_result(
     elif status == "dry_run":
         binding = _dry_run_completion_binding(
             conn,
-            job_key=url,
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
             run_id=str(run_id),
             run_ctx=run_ctx,
         )
@@ -1036,22 +1209,24 @@ def mark_result(
         # convention (dry-run completed), not in the canonical §8.5 table.
         set_stage_state(
             conn,
-            url,
+            stable_job_id,
             "apply",
             "skipped",
+            tenant_id=stable_tenant_id,
             finished_at=now,
             duration_ms=duration_ms,
             error_code="DRY_RUN",
             error_message="Dry run completed without submitting.",
             retryable=True,
-            next_action=f"jobctrl apply --url {url}",
+            next_action=f"jobctrl apply --url {posting_url}" if posting_url else None,
             validate_transition=False,
         )
-        record_job_event(
+        _record_apply_terminal_event_once(
             conn,
-            url,
-            "apply",
-            "DryRunCompleted",
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+            run_id=str(run_id),
+            event_type="DryRunCompleted",
             message="Dry run completed without submitting",
             payload={
                 "run_id": str(run_id),
@@ -1073,27 +1248,26 @@ def mark_result(
         reason = (error or "unknown").strip()
         set_stage_state(
             conn,
-            url,
+            stable_job_id,
             "apply",
             "needs_verification",
+            tenant_id=stable_tenant_id,
             finished_at=now,
             duration_ms=duration_ms,
             error_code="APPLY_NEEDS_VERIFICATION",
             error_message=(
-                "Apply reached the submit-intent checkpoint, but the external "
-                f"outcome is ambiguous: {reason}"
+                f"Apply reached the submit-intent checkpoint, but the external outcome is ambiguous: {reason}"
             ),
             retryable=False,
-            next_action=(
-                "Review the employer site or confirmation email before retrying."
-            ),
+            next_action=("Review the employer site or confirmation email before retrying."),
             validate_transition=False,
         )
-        record_job_event(
+        _record_apply_terminal_event_once(
             conn,
-            url,
-            "apply",
-            "ApplicationFailed",
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+            run_id=str(run_id),
+            event_type="ApplicationFailed",
             level="warn",
             message="Application outcome requires manual verification",
             payload={
@@ -1114,22 +1288,24 @@ def mark_result(
         # the writer is the launcher, transitions are runner-owned.
         set_stage_state(
             conn,
-            url,
+            stable_job_id,
             "apply",
             "failed",
+            tenant_id=stable_tenant_id,
             finished_at=now,
             duration_ms=duration_ms,
             error_code=str(status).upper(),
             error_message=reason,
             retryable=not permanent,
-            next_action=f"jobctrl apply --url {url}" if not permanent else None,
+            next_action=(f"jobctrl apply --url {posting_url}" if not permanent and posting_url else None),
             validate_transition=False,
         )
-        record_job_event(
+        _record_apply_terminal_event_once(
             conn,
-            url,
-            "apply",
-            "ApplicationFailed",
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+            run_id=str(run_id),
+            event_type="ApplicationFailed",
             level="error",
             message=reason,
             payload={
@@ -1144,7 +1320,12 @@ def mark_result(
         )
 
     _register_apply_log_artifact(
-        conn, url, worker_id=worker_id, run_id=str(run_id), occurred_at=now
+        conn,
+        stable_job_id,
+        tenant_id=stable_tenant_id,
+        worker_id=worker_id,
+        run_id=str(run_id),
+        occurred_at=now,
     )
     conn.commit()
 
@@ -1177,24 +1358,62 @@ def _latest_apply_run_started_run_id(conn, url: str) -> str | None:
     return str(run_id) if run_id else None
 
 
-def release_lock(url: str, run_ctx: dict | None = None) -> None:
+def release_lock(
+    job_id: JobId,
+    run_ctx: dict | None = None,
+    *,
+    tenant_id: TenantId | None = None,
+) -> None:
     """Record that launcher cleanup ran without making retry decisions."""
     conn = get_connection()
+    stable_job_id = canonical_job_id(str(job_id))
+    stable_tenant_id = TenantId(str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT))
     ctx_run_id = run_ctx.get("run_id") if run_ctx else None
     run_id = (
         ctx_run_id
-        or _latest_apply_run_started_run_id(conn, url)
+        or _latest_apply_run_started_run_id_for_job_id(
+            conn,
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+        )
         or new_apply_run_id()
     )
     record_job_event(
         conn,
-        url,
+        stable_job_id,
         "apply",
         "LockReleased",
+        tenant_id=stable_tenant_id,
         message="Apply lock released",
         payload={"run_id": str(run_id)},
     )
     conn.commit()
+
+
+def _latest_apply_run_started_run_id_for_job_id(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> str | None:
+    row = conn.execute(
+        "SELECT payload_json FROM job_events "
+        "WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'apply' AND event_type = 'ApplyRunStarted' "
+        "ORDER BY event_id DESC LIMIT 1",
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if row is None:
+        return None
+    payload_json = row["payload_json"] if not isinstance(row, tuple) else row[0]
+    try:
+        payload = json.loads(payload_json)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    run_id = payload.get("run_id")
+    return str(run_id) if run_id else None
 
 
 def recover_ambiguous_running_apply(console: Console | None = None) -> int:
@@ -1202,24 +1421,49 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
     try:
         conn = get_connection()
         rows = conn.execute(
-            "SELECT job_url FROM job_stage_states "
-            "WHERE stage = 'apply' AND state = 'running'"
+            "SELECT tenant_id, job_id FROM job_stage_states WHERE stage = 'apply' AND state = 'running'"
         ).fetchall()
         recovered = 0
         for row in rows:
-            url = str(row["job_url"] if hasattr(row, "keys") else row[0])
+            tenant_id = TenantId(str(row["tenant_id"] if hasattr(row, "keys") else row[0]))
+            job_id = canonical_job_id(str(row["job_id"] if hasattr(row, "keys") else row[1]))
+            posting_url = _posting_url_for_job_id(
+                conn,
+                tenant_id=tenant_id,
+                job_id=job_id,
+            )
             try:
-                run_id, workflow_id = _latest_apply_run_started_identity(conn, url)
-                if not _workflow_terminal_or_gone(conn, workflow_id or run_id):
+                run_id, workflow_id = _latest_apply_run_started_identity(
+                    conn,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                )
+                if not _workflow_terminal_or_gone(
+                    conn,
+                    tenant_id=tenant_id,
+                    workflow_id=workflow_id or run_id,
+                ):
                     continue
-                if run_id and _has_apply_submit_intent(conn, url, run_id):
-                    if _has_apply_terminal_result(conn, url, run_id):
+                if run_id:
+                    if _has_apply_terminal_result(
+                        conn,
+                        tenant_id=tenant_id,
+                        job_id=job_id,
+                        run_id=run_id,
+                    ):
                         continue
+                if run_id and _has_apply_submit_intent(
+                    conn,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    run_id=run_id,
+                ):
                     set_stage_state(
                         conn,
-                        url,
+                        job_id,
                         "apply",
                         "needs_verification",
+                        tenant_id=tenant_id,
                         error_code="APPLY_NEEDS_VERIFICATION",
                         error_message="Live apply reached the submit-intent checkpoint without a terminal result.",
                         retryable=False,
@@ -1229,34 +1473,43 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
                 else:
                     set_stage_state(
                         conn,
-                        url,
+                        job_id,
                         "apply",
                         "pending",
-                        next_action=f"jobctrl apply --url {url}",
+                        tenant_id=tenant_id,
+                        next_action=(f"jobctrl apply --url {posting_url}" if posting_url else None),
                         validate_transition=False,
                     )
                 recovered += 1
             except Exception:  # noqa: BLE001
-                logger.exception("Apply recovery failed for %s", url)
+                logger.exception(
+                    "Apply recovery failed for %s/%s",
+                    tenant_id,
+                    job_id,
+                )
                 continue
         if recovered:
             conn.commit()
             if console is not None:
-                console.print(
-                    f"[yellow]Recovered {recovered} ambiguous apply run(s) from prior crash[/yellow]"
-                )
+                console.print(f"[yellow]Recovered {recovered} ambiguous apply run(s) from prior crash[/yellow]")
         return recovered
     except Exception:  # noqa: BLE001
         logger.exception("Apply recovery sweep failed")
         return 0
 
 
-def _latest_apply_run_started_identity(conn, url: str) -> tuple[str | None, str | None]:
+def _latest_apply_run_started_identity(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> tuple[str | None, str | None]:
     row = conn.execute(
         "SELECT payload_json FROM job_events "
-        "WHERE job_url = ? AND stage = 'apply' AND event_type = 'ApplyRunStarted' "
+        "WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'apply' AND event_type = 'ApplyRunStarted' "
         "ORDER BY event_id DESC LIMIT 1",
-        (url,),
+        (str(tenant_id), str(canonical_job_id(str(job_id)))),
     ).fetchone()
     if row is None:
         return None, None
@@ -1272,13 +1525,18 @@ def _latest_apply_run_started_identity(conn, url: str) -> tuple[str | None, str 
     return run_id, workflow_id
 
 
-def _workflow_terminal_or_gone(conn, workflow_id: str | None) -> bool:
+def _workflow_terminal_or_gone(
+    conn,
+    *,
+    tenant_id: TenantId,
+    workflow_id: str | None,
+) -> bool:
     if not workflow_id:
         return True
     try:
         row = conn.execute(
-            "SELECT status FROM workflow_run_projections WHERE workflow_id = ? LIMIT 1",
-            (workflow_id,),
+            "SELECT status FROM workflow_run_projections WHERE tenant_id = ? AND workflow_id = ? LIMIT 1",
+            (str(tenant_id), workflow_id),
         ).fetchone()
     except Exception:  # noqa: BLE001
         return True
@@ -1288,27 +1546,63 @@ def _workflow_terminal_or_gone(conn, workflow_id: str | None) -> bool:
     return status in {"succeeded", "failed", "canceled", "timed_out", "terminated"}
 
 
-def _has_apply_submit_intent(conn, url: str, run_id: str) -> bool:
-    return _has_apply_event(conn, url, run_id, {"ApplySubmitIntended"})
-
-
-def _has_apply_terminal_result(conn, url: str, run_id: str) -> bool:
+def _has_apply_submit_intent(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    run_id: str,
+) -> bool:
     return _has_apply_event(
         conn,
-        url,
-        run_id,
-        {"ApplicationSubmitted", "ApplicationFailed", "DryRunCompleted", "ApplyManualSkip"},
+        tenant_id=tenant_id,
+        job_id=job_id,
+        run_id=run_id,
+        event_types={"ApplySubmitIntended"},
     )
 
 
-def _has_apply_event(conn, url: str, run_id: str, event_types: set[str]) -> bool:
+def _has_apply_terminal_result(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    run_id: str,
+) -> bool:
+    return _has_apply_event(
+        conn,
+        tenant_id=tenant_id,
+        job_id=job_id,
+        run_id=run_id,
+        event_types={
+            "ApplicationSubmitted",
+            "ApplicationFailed",
+            "DryRunCompleted",
+            "ApplyManualSkip",
+        },
+    )
+
+
+def _has_apply_event(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    run_id: str,
+    event_types: set[str],
+) -> bool:
     placeholders = ",".join("?" for _ in event_types)
     rows = conn.execute(
         f"""
         SELECT payload_json FROM job_events
-        WHERE job_url = ? AND stage = 'apply' AND event_type IN ({placeholders})
+        WHERE tenant_id = ? AND job_id = ?
+          AND stage = 'apply' AND event_type IN ({placeholders})
         """,
-        (url, *event_types),
+        (
+            str(tenant_id),
+            str(canonical_job_id(str(job_id))),
+            *event_types,
+        ),
     ).fetchall()
     for row in rows:
         payload_json = row["payload_json"] if hasattr(row, "keys") else row[0]
@@ -1327,17 +1621,30 @@ def _has_apply_event(conn, url: str, run_id: str, event_types: set[str]) -> bool
 # ---------------------------------------------------------------------------
 
 
-def mark_job(url: str, status: str, reason: str | None = None) -> None:
+def mark_job(
+    job_id: JobId,
+    status: str,
+    reason: str | None = None,
+    *,
+    tenant_id: TenantId | None = None,
+) -> None:
     """Manually mark a job's apply status."""
+    stable_job_id = canonical_job_id(str(job_id))
+    stable_tenant_id = tenant_id or LOCAL_TENANT
     if status == "applied":
         conn = get_connection()
         now = _utc_now()
-        ensure_job_stage_rows(conn, url)
+        ensure_job_stage_rows(
+            conn,
+            stable_job_id,
+            tenant_id=stable_tenant_id,
+        )
         set_stage_state(
             conn,
-            url,
+            stable_job_id,
             "apply",
             "succeeded",
+            tenant_id=stable_tenant_id,
             finished_at=now,
             duration_ms=0,
             retryable=False,
@@ -1345,9 +1652,10 @@ def mark_job(url: str, status: str, reason: str | None = None) -> None:
         )
         record_job_event(
             conn,
-            url,
+            stable_job_id,
             "apply",
             "ApplicationManuallyMarked",
+            tenant_id=stable_tenant_id,
             message="Job manually marked as applied",
             payload={
                 "reason": reason or "",
@@ -1358,11 +1666,12 @@ def mark_job(url: str, status: str, reason: str | None = None) -> None:
         conn.commit()
     else:
         mark_result(
-            url,
+            stable_job_id,
             "failed",
             error=reason or "manual",
             permanent=True,
             duration_ms=0,
+            tenant_id=stable_tenant_id,
         )
 
 
@@ -1378,17 +1687,31 @@ def reset_failed() -> int:
     conn = get_connection()
     rows = conn.execute(
         """
-        SELECT job_url FROM job_stage_states
+        SELECT tenant_id, job_id FROM job_stage_states
         WHERE stage = 'apply' AND state IN ('failed', 'exhausted')
         """
     ).fetchall()
     count = 0
     for row in rows:
-        url = row["job_url"]
+        tenant_id = TenantId(str(row["tenant_id"] if hasattr(row, "keys") else row[0]))
+        job_id = canonical_job_id(str(row["job_id"] if hasattr(row, "keys") else row[1]))
+        posting_url = _posting_url_for_job_id(
+            conn,
+            tenant_id=tenant_id,
+            job_id=job_id,
+        )
         # Skip jobs that already succeeded on a prior run.
-        if _has_succeeded_apply(conn, url):
+        if _has_succeeded_apply(
+            conn,
+            tenant_id=str(tenant_id),
+            job_id=str(job_id),
+        ):
             continue
-        ensure_job_stage_rows(conn, url)
+        ensure_job_stage_rows(
+            conn,
+            job_id,
+            tenant_id=tenant_id,
+        )
         # Per-row try/except so one race-induced failure (e.g., another
         # worker flipped the row to ``running`` between the SELECT and
         # this write) doesn't strand every subsequent row in the batch
@@ -1399,18 +1722,24 @@ def reset_failed() -> int:
         try:
             set_stage_state(
                 conn,
-                url,
+                job_id,
                 "apply",
                 "pending",
+                tenant_id=tenant_id,
                 attempt_count=0,
                 error_code=None,
                 error_message=None,
-                next_action=f"jobctrl apply --url {url}",
+                next_action=(f"jobctrl apply --url {posting_url}" if posting_url else None),
                 validate_transition=False,
             )
             count += 1
         except Exception as exc:  # noqa: BLE001 — keep batch reset alive
-            logger.warning("reset_failed: skipping %s — %s", url, exc)
+            logger.warning(
+                "reset_failed: skipping %s/%s — %s",
+                tenant_id,
+                job_id,
+                exc,
+            )
     conn.commit()
     return count
 
@@ -1432,18 +1761,21 @@ def _load_profile_snapshot() -> ProfileSnapshot:
 # ---------------------------------------------------------------------------
 
 
-def _load_job_for_prompt(target_url: str, min_score: int) -> dict[str, Any] | None:
+def _load_job_for_prompt(
+    job_id: JobId,
+    *,
+    tenant_id: TenantId,
+    min_score: int,
+) -> dict[str, Any] | None:
     """Read one eligible job without creating an apply attempt or consuming authority."""
 
     conn = get_connection()
     common_columns, common_joins = _apply_candidate_select_parts()
-    like = f"%{target_url.split('?')[0].rstrip('/')}%"
     row = conn.execute(
         f"""
         SELECT {common_columns}
         FROM jobs {common_joins}
-        WHERE (jobs.url = ? OR {_EFFECTIVE_APPLICATION_URL} = ?
-               OR {_EFFECTIVE_APPLICATION_URL} LIKE ? OR jobs.url LIKE ?)
+        WHERE jobs.tenant_id = ? AND jobs.job_id = ?
           AND {_READY_TAILORED_RESUME_WITH_PDF}
           AND {_EFFECTIVE_FIT_SCORE} >= ?
           AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
@@ -1451,21 +1783,27 @@ def _load_job_for_prompt(target_url: str, min_score: int) -> dict[str, Any] | No
           AND {_NOT_CLOSED_ACTIVE_STATE}
         LIMIT 1
         """,
-        (target_url, target_url, like, like, min_score),
+        (str(tenant_id), str(canonical_job_id(str(job_id))), min_score),
     ).fetchone()
     return _row_to_job_dict(row) if row is not None else None
 
 
 def gen_prompt(
-    target_url: str,
+    job_id: JobId,
     min_score: int = 7,
     model: str = "default",
     worker_id: int = 0,
     snapshot: ProfileSnapshot | None = None,
+    *,
+    tenant_id: TenantId | None = None,
 ) -> Path | None:
     """Render an inspection-only dry-run prompt without claiming the job."""
 
-    job = _load_job_for_prompt(target_url, min_score)
+    job = _load_job_for_prompt(
+        canonical_job_id(str(job_id)),
+        tenant_id=tenant_id or LOCAL_TENANT,
+        min_score=min_score,
+    )
     if not job:
         return None
 
@@ -1474,9 +1812,7 @@ def gen_prompt(
 
     decision = validate_public_http_url(apply_url)
     if not decision.allowed:
-        raise ValueError(
-            f"unsafe apply target URL: {decision.reason or 'not a public HTTP(S) destination'}"
-        )
+        raise ValueError(f"unsafe apply target URL: {decision.reason or 'not a public HTTP(S) destination'}")
 
     snapshot = snapshot or _load_profile_snapshot()
     cdp_port = BASE_CDP_PORT + worker_id
@@ -1547,9 +1883,7 @@ def _build_use_case():
         repository=SqliteApplyRunRepository(),
         browser_port=browser_port,
         agent_port=agent_port,
-        eligibility_checker=ApplyEligibilityChecker(
-            max_attempts=int(config.DEFAULTS["max_apply_attempts"])
-        ),
+        eligibility_checker=ApplyEligibilityChecker(max_attempts=int(config.DEFAULTS["max_apply_attempts"])),
         prompt_builder=ApplyPromptBuilder(),
         publisher=get_default_publisher(),
         saga=saga,
@@ -1561,14 +1895,21 @@ class SqliteApplyRunRepository:
     """Persist ``ApplyRun`` aggregate events into the canonical event stream."""
 
     def save(self, run) -> None:
-        job_url = str(getattr(run, "job_id", "") or "")
+        job_id_raw = str(getattr(run, "job_id", "") or "")
         run_id = str(getattr(run, "run_id", "") or "")
-        if not job_url or not run_id:
+        if not job_id_raw or not run_id:
             return
+        job_id = canonical_job_id(job_id_raw)
+        tenant_id = TenantId(str(getattr(run, "tenant_id", "") or LOCAL_TENANT))
 
         conn = get_connection()
         try:
-            seen = _existing_apply_event_ids(conn, job_url, run_id)
+            seen = _existing_apply_event_ids(
+                conn,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                run_id=run_id,
+            )
             for event in list(getattr(run, "events", ()) or ()):
                 event_id = int(getattr(event, "event_id", 0) or 0)
                 if event_id and event_id in seen:
@@ -1582,15 +1923,23 @@ class SqliteApplyRunRepository:
                 payload.setdefault("apply_status", str(getattr(run, "status", "") or ""))
                 record_job_event(
                     conn,
-                    job_url,
+                    job_id,
                     "apply",
                     event_type,
+                    tenant_id=tenant_id,
                     level=str(getattr(event, "level", "info") or "info"),
                     message=getattr(event, "message", None),
                     payload=payload,
                     occurred_at=str(getattr(event, "occurred_at", "") or "") or None,
                 )
-                _persist_agent_artifacts(conn, job_url, run_id, event_type, payload)
+                _persist_agent_artifacts(
+                    conn,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    run_id=run_id,
+                    event_type=event_type,
+                    payload=payload,
+                )
                 if event_id:
                     seen.add(event_id)
             conn.commit()
@@ -1611,13 +1960,20 @@ class SqliteApplyRunRepository:
         return []
 
 
-def _existing_apply_event_ids(conn, job_url: str, run_id: str) -> set[int]:
+def _existing_apply_event_ids(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    run_id: str,
+) -> set[int]:
     rows = conn.execute(
         """
         SELECT payload_json FROM job_events
-        WHERE job_url = ? AND stage = 'apply' AND payload_json IS NOT NULL
+        WHERE tenant_id = ? AND job_id = ?
+          AND stage = 'apply' AND payload_json IS NOT NULL
         """,
-        (job_url,),
+        (str(tenant_id), str(canonical_job_id(str(job_id)))),
     ).fetchall()
     seen: set[int] = set()
     for row in rows:
@@ -1639,7 +1995,9 @@ def _existing_apply_event_ids(conn, job_url: str, run_id: str) -> set[int]:
 
 def _persist_agent_artifacts(
     conn,
-    job_url: str,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
     run_id: str,
     event_type: str,
     payload: dict[str, Any],
@@ -1665,12 +2023,12 @@ def _persist_agent_artifacts(
             ),
             encoding="utf-8",
         )
-        record_job_artifact(
+        _record_apply_artifact(
             conn,
-            job_url,
-            "apply",
-            "apply_dryrun_blocked",
-            blocked_path,
+            job_id,
+            tenant_id=tenant_id,
+            artifact_type="apply_dryrun_blocked",
+            path=blocked_path,
             status="active",
             metadata={
                 "run_id": run_id,
@@ -1687,12 +2045,12 @@ def _persist_agent_artifacts(
     artifact_dir.mkdir(parents=True, exist_ok=True)
     output_path = artifact_dir / f"{safe_run}-agent-output.txt"
     output_path.write_text(raw_output, encoding="utf-8")
-    record_job_artifact(
+    _record_apply_artifact(
         conn,
-        job_url,
-        "apply",
-        "apply_agent_output",
-        output_path,
+        job_id,
+        tenant_id=tenant_id,
+        artifact_type="apply_agent_output",
+        path=output_path,
         status="active",
         metadata={"run_id": run_id},
     )
@@ -1700,16 +2058,15 @@ def _persist_agent_artifacts(
         return
     confirmation_path = artifact_dir / f"{safe_run}-confirmation.html"
     confirmation_path.write_text(
-        "<!doctype html><meta charset=\"utf-8\"><title>Apply confirmation</title>"
-        f"<pre>{html.escape(raw_output)}</pre>",
+        f'<!doctype html><meta charset="utf-8"><title>Apply confirmation</title><pre>{html.escape(raw_output)}</pre>',
         encoding="utf-8",
     )
-    record_job_artifact(
+    _record_apply_artifact(
         conn,
-        job_url,
-        "apply",
-        "apply_confirmation",
-        confirmation_path,
+        job_id,
+        tenant_id=tenant_id,
+        artifact_type="apply_confirmation",
+        path=confirmation_path,
         status="active",
         metadata={"run_id": run_id, "source": "agent_output"},
     )
@@ -1755,6 +2112,8 @@ def run_job(
     dry_run: bool = False,
     run_ctx: dict | None = None,
     snapshot: ProfileSnapshot | None = None,
+    *,
+    tenant_id: TenantId,
 ) -> tuple[str, int]:
     """Spawn a Claude Code session for one job application.
 
@@ -1791,13 +2150,10 @@ def run_job(
         actions=0,
         last_action="starting",
     )
-    add_event(
-        f"[W{worker_id} {run_id[:8]}] Starting: "
-        f"{(job.get('title') or '')[:40]} @ {job.get('site', '')}"
-    )
+    add_event(f"[W{worker_id} {run_id[:8]}] Starting: {(job.get('title') or '')[:40]} @ {job.get('site', '')}")
 
     outcome = use_case.execute(
-        tenant_id=LOCAL_TENANT,
+        tenant_id=tenant_id,
         job=job,
         snapshot=snapshot,
         worker_id=worker_id,
@@ -1872,7 +2228,7 @@ def _is_permanent_failure(result: str) -> bool:
 def worker_loop(
     worker_id: int = 0,
     limit: int = 1,
-    target_url: str | None = None,
+    target_job_id: JobId | None = None,
     min_score: int = 7,
     headless: bool = False,
     model: str = "default",
@@ -1880,6 +2236,7 @@ def worker_loop(
     snapshot: ProfileSnapshot | None = None,
     approval_required: bool = True,
     workflow_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> tuple[int, int]:
     """Run jobs sequentially until ``limit`` is reached or the queue is empty."""
     applied = 0
@@ -1888,6 +2245,7 @@ def worker_loop(
     jobs_done = 0
     empty_polls = 0
     port = BASE_CDP_PORT + worker_id
+    stable_tenant_id = TenantId(str(tenant_id or LOCAL_TENANT))
 
     while not _stop_event.is_set():
         if not continuous and jobs_done >= limit:
@@ -1924,16 +2282,18 @@ def worker_loop(
             "model": model,
             "dry_run": dry_run,
             "workflow_id": workflow_id,
-            "target_url": target_url,
+            "target_job_id": str(target_job_id) if target_job_id is not None else None,
+            "tenant_id": str(stable_tenant_id),
             "min_score": min_score,
             "headless": headless,
         }
         job = acquire_job(
-            target_url=target_url,
+            target_job_id=target_job_id,
             min_score=min_score,
             worker_id=worker_id,
             run_ctx=run_ctx,
             approval_required=approval_required,
+            tenant_id=str(stable_tenant_id),
         )
         if not job:
             if not continuous:
@@ -1941,18 +2301,16 @@ def worker_loop(
                 update_state(worker_id, status="done", last_action="queue empty")
                 break
             empty_polls += 1
-            update_state(
-                worker_id, status="idle", last_action=f"polling ({empty_polls})"
-            )
+            update_state(worker_id, status="idle", last_action=f"polling ({empty_polls})")
             if empty_polls == 1:
-                add_event(
-                    f"[W{worker_id}] Queue empty, polling every {POLL_INTERVAL}s..."
-                )
+                add_event(f"[W{worker_id}] Queue empty, polling every {POLL_INTERVAL}s...")
             if _stop_event.wait(timeout=POLL_INTERVAL):
                 break
             continue
 
         empty_polls = 0
+        job_id = canonical_job_id(str(job["job_id"]))
+        job_tenant_id = TenantId(str(job["tenant_id"]))
         try:
             result, duration_ms = run_job(
                 job,
@@ -1962,22 +2320,25 @@ def worker_loop(
                 dry_run=dry_run,
                 run_ctx=run_ctx,
                 snapshot=snapshot,
+                tenant_id=stable_tenant_id,
             )
 
             if result == "skipped":
-                release_lock(job["url"], run_ctx=run_ctx)
-                add_event(
-                    f"[W{worker_id} {run_ctx['run_id'][:8]}] Skipped: "
-                    f"{(job.get('title') or '')[:30]}"
+                release_lock(
+                    job_id,
+                    run_ctx=run_ctx,
+                    tenant_id=job_tenant_id,
                 )
+                add_event(f"[W{worker_id} {run_ctx['run_id'][:8]}] Skipped: {(job.get('title') or '')[:30]}")
                 continue
             if result == "applied":
                 mark_result(
-                    job["url"],
+                    job_id,
                     "applied",
                     duration_ms=duration_ms,
                     task_id=run_ctx.get("run_id"),
                     run_ctx=run_ctx,
+                    tenant_id=job_tenant_id,
                 )
                 applied += 1
                 update_state(
@@ -1987,47 +2348,51 @@ def worker_loop(
                 )
             elif result == "dry_run":
                 mark_result(
-                    job["url"],
+                    job_id,
                     "dry_run",
                     duration_ms=duration_ms,
                     task_id=run_ctx.get("run_id"),
                     run_ctx=run_ctx,
+                    tenant_id=job_tenant_id,
                 )
                 update_state(worker_id, jobs_done=applied + failed)
             else:
                 reason = result.split(":", 1)[-1] if ":" in result else result
                 mark_result(
-                    job["url"],
+                    job_id,
                     "failed",
                     reason,
                     permanent=_is_permanent_failure(result),
                     duration_ms=duration_ms,
                     task_id=run_ctx.get("run_id"),
                     run_ctx=run_ctx,
+                    tenant_id=job_tenant_id,
                 )
                 failed += 1
-                update_state(
-                    worker_id, jobs_failed=failed, jobs_done=applied + failed
-                )
+                update_state(worker_id, jobs_failed=failed, jobs_done=applied + failed)
         except KeyboardInterrupt:
-            release_lock(job["url"], run_ctx=run_ctx)
-            add_event(
-                f"[W{worker_id} {run_ctx['run_id'][:8]}] Job skipped (Ctrl+C)"
+            release_lock(
+                job_id,
+                run_ctx=run_ctx,
+                tenant_id=job_tenant_id,
             )
+            add_event(f"[W{worker_id} {run_ctx['run_id'][:8]}] Job skipped (Ctrl+C)")
             if _stop_event.is_set():
                 break
             continue
         except Exception as exc:  # noqa: BLE001
             logger.exception("Worker %d launcher error", worker_id)
-            add_event(
-                f"[W{worker_id} {run_ctx['run_id'][:8]}] Launcher error: {str(exc)[:40]}"
+            add_event(f"[W{worker_id} {run_ctx['run_id'][:8]}] Launcher error: {str(exc)[:40]}")
+            release_lock(
+                job_id,
+                run_ctx=run_ctx,
+                tenant_id=job_tenant_id,
             )
-            release_lock(job["url"], run_ctx=run_ctx)
             failed += 1
             update_state(worker_id, jobs_failed=failed)
 
         jobs_done += 1
-        if target_url:
+        if target_job_id is not None:
             break
 
     update_state(worker_id, run_id="", status="done", last_action="finished")
@@ -2041,7 +2406,8 @@ def worker_loop(
 
 def main(
     limit: int = 1,
-    target_url: str | None = None,
+    target_job_id: JobId | None = None,
+    tenant_id: str | None = None,
     min_score: int = 7,
     headless: bool = False,
     model: str = "default",
@@ -2063,11 +2429,13 @@ def main(
     batch_started = time.time()
     metric_error_class: str | None = None
     metric_error_message: str | None = None
+    stable_tenant_id = TenantId(str(tenant_id or LOCAL_TENANT))
 
     _record_apply_batch_metric(
         outcome="started",
         run_id=batch_run_id,
-        target_url=target_url,
+        tenant_id=stable_tenant_id,
+        job_id=target_job_id,
         dry_run=dry_run,
         workers=workers,
         model=model,
@@ -2095,9 +2463,7 @@ def main(
         init_worker(i)
 
     worker_label = f"{workers} worker{'s' if workers > 1 else ''}"
-    console.print(
-        f"Launching apply pipeline ({mode_label}, {worker_label}, poll every {POLL_INTERVAL}s)..."
-    )
+    console.print(f"Launching apply pipeline ({mode_label}, {worker_label}, poll every {POLL_INTERVAL}s)...")
     console.print("[dim]Ctrl+C = skip current job(s) | Ctrl+C x2 = stop[/dim]")
 
     _ctrl_c_count = 0
@@ -2106,9 +2472,7 @@ def main(
         nonlocal _ctrl_c_count
         _ctrl_c_count += 1
         if _ctrl_c_count == 1:
-            console.print(
-                "\n[yellow]Skipping current job(s)... (Ctrl+C again to STOP)[/yellow]"
-            )
+            console.print("\n[yellow]Skipping current job(s)... (Ctrl+C again to STOP)[/yellow]")
             _kill_claude_processes_for_interrupt()
         else:
             console.print("\n[red bold]STOPPING[/red bold]")
@@ -2136,7 +2500,7 @@ def main(
                 total_applied, total_failed = worker_loop(
                     worker_id=0,
                     limit=effective_limit,
-                    target_url=target_url,
+                    target_job_id=target_job_id,
                     min_score=min_score,
                     headless=headless,
                     model=model,
@@ -2144,26 +2508,23 @@ def main(
                     snapshot=snapshot,
                     approval_required=approval_required,
                     workflow_id=workflow_id,
+                    tenant_id=stable_tenant_id,
                 )
             else:
                 if effective_limit:
                     base = effective_limit // workers
                     extra = effective_limit % workers
-                    limits = [
-                        base + (1 if i < extra else 0) for i in range(workers)
-                    ]
+                    limits = [base + (1 if i < extra else 0) for i in range(workers)]
                 else:
                     limits = [0] * workers
 
-                with ThreadPoolExecutor(
-                    max_workers=workers, thread_name_prefix="apply-worker"
-                ) as executor:
+                with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="apply-worker") as executor:
                     futures = {
                         executor.submit(
                             worker_loop,
                             worker_id=i,
                             limit=limits[i],
-                            target_url=target_url,
+                            target_job_id=target_job_id,
                             min_score=min_score,
                             headless=headless,
                             model=model,
@@ -2171,6 +2532,7 @@ def main(
                             snapshot=snapshot,
                             approval_required=approval_required,
                             workflow_id=workflow_id,
+                            tenant_id=stable_tenant_id,
                         ): i
                         for i in range(workers)
                     }
@@ -2192,10 +2554,7 @@ def main(
             live.update(render_full())
 
         totals = get_totals()
-        console.print(
-            f"\n[bold]Done: {total_applied} applied, {total_failed} failed "
-            f"(${totals['cost']:.3f})[/bold]"
-        )
+        console.print(f"\n[bold]Done: {total_applied} applied, {total_failed} failed (${totals['cost']:.3f})[/bold]")
         console.print(f"Logs: {config.LOG_DIR}")
     except KeyboardInterrupt:
         metric_error_class = "manual_abort_apply"
@@ -2217,7 +2576,8 @@ def main(
         _record_apply_batch_metric(
             outcome=metric_outcome,
             run_id=batch_run_id,
-            target_url=target_url,
+            tenant_id=stable_tenant_id,
+            job_id=target_job_id,
             dry_run=dry_run,
             workers=workers,
             model=model,
@@ -2235,7 +2595,8 @@ def _record_apply_batch_metric(
     *,
     outcome: str,
     run_id: str,
-    target_url: str | None,
+    tenant_id: str | None,
+    job_id: JobId | None,
     dry_run: bool,
     workers: int,
     model: str,
@@ -2254,7 +2615,8 @@ def _record_apply_batch_metric(
             outcome=outcome,
             adapter="browser",
             run_id=run_id,
-            job_url=target_url,
+            tenant_id=tenant_id,
+            job_id=str(canonical_job_id(str(job_id))) if job_id is not None else None,
             duration_ms=duration_ms,
             counts={"total": total_applied + total_failed},
             error_class=error_class,

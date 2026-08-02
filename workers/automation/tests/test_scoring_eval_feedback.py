@@ -214,7 +214,11 @@ def test_acquire_job_does_not_apply_unaccepted_feedback_to_candidate_order(
 
     monkeypatch.setattr(launcher_module, "get_connection", lambda: acquire_conn)
     monkeypatch.setattr(launcher_module, "_load_blocked", lambda: ([], []))
-    monkeypatch.setattr(launcher_module, "ensure_job_stage_rows", lambda *_args: None)
+    monkeypatch.setattr(
+        launcher_module,
+        "ensure_job_stage_rows",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(launcher_module, "set_stage_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(launcher_module, "record_job_event", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(launcher_module, "_current_profile_version", lambda *_args, **_kwargs: 1)

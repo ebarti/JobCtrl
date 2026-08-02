@@ -20,6 +20,7 @@ from jobctrl.discovery.workflow import (
     discover_workflow_id,
 )
 from jobctrl.domain.discovery.source_registry import ManualCaptureMode
+from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.rpc.messages import WorkflowStartSpec
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.interview.workflow import InterviewPrepWorkflow, InterviewPrepWorkflowInput
@@ -29,6 +30,7 @@ from jobctrl.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowIn
 
 WORKFLOW_STAGES = {"discover", "enrich", "score", "tailor", "cover", "apply"}
 _WORKFLOW_STAGE_ORDER = ("discover", "enrich", "score", "tailor", "cover", "apply")
+_APPLY_SELECTOR_KEYS = ("jobId", "jobIds", "jobUrl", "jobUrls")
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +53,7 @@ class StartedWorkflowResult:
 def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = _tenant_id(params)
     stages = _stage_list(params)
+    apply_selector = _apply_selector(params) if "apply" in stages else None
     if "apply" in stages:
         _require_auto_apply_browser_capability()
     raw_judge_min_score = params.get("tailorJudgeMinScore")
@@ -65,9 +68,7 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
             validation_mode=str(params.get("validationMode", "normal")),
             tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
             tailor_judge_model=str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None,
-            tailor_judge_min_score=(
-                float(raw_judge_min_score) if raw_judge_min_score is not None else None
-            ),
+            tailor_judge_min_score=(float(raw_judge_min_score) if raw_judge_min_score is not None else None),
             source_ids=_source_ids(params),
             llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
         )
@@ -90,11 +91,11 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
         retailor=bool(params.get("retailor", False)),
         tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
         tailor_judge_model=str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None,
-        tailor_judge_min_score=(
-            float(raw_judge_min_score) if raw_judge_min_score is not None else None
-        ),
+        tailor_judge_min_score=(float(raw_judge_min_score) if raw_judge_min_score is not None else None),
         job_url=params.get("jobUrl") if params.get("jobUrl") else None,
         job_urls=_job_urls(params),
+        apply_job_id=apply_selector.job_id if apply_selector else None,
+        apply_selector_keys=apply_selector.keys if apply_selector else (),
         source_ids=_source_ids(params),
         headless=bool(params.get("headless", False)),
         model=str(params.get("model", "default")),
@@ -118,6 +119,7 @@ def build_pipeline_workflow_spec(
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
+    apply_selector = _apply_selector(params, job_url=job_url, job_urls=job_urls) if "apply" in stages else None
     if "apply" in stages:
         _require_auto_apply_browser_capability()
     tenant_id = _tenant_id(params)
@@ -136,11 +138,11 @@ def build_pipeline_workflow_spec(
         retailor=retailor,
         tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
         tailor_judge_model=str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None,
-        tailor_judge_min_score=(
-            float(raw_judge_min_score) if raw_judge_min_score is not None else None
-        ),
+        tailor_judge_min_score=(float(raw_judge_min_score) if raw_judge_min_score is not None else None),
         job_url=job_url,
         job_urls=job_urls,
+        apply_job_id=apply_selector.job_id if apply_selector else None,
+        apply_selector_keys=apply_selector.keys if apply_selector else (),
         score_current_policy_only=score_current_policy_only,
         tailor_current_policy_only=tailor_current_policy_only,
         suppress_existing_artifacts=suppress_existing_artifacts,
@@ -151,14 +153,14 @@ def build_pipeline_workflow_spec(
 
 
 def build_apply_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
-    _require_auto_apply_browser_capability()
     tenant_id = _tenant_id(params)
-    job_url = params.get("jobUrl")
+    selector = _apply_selector(params)
+    _require_auto_apply_browser_capability()
     payload = ApplyWorkflowInput(
         tenant_id=tenant_id,
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
-        job_url=job_url,
+        job_id=selector.job_id,
         dry_run=bool(params.get("dryRun", False)),
         headless=bool(params.get("headless", False)),
         model=str(params.get("model", "default")),
@@ -168,8 +170,46 @@ def build_apply_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
         continuous=bool(params.get("continuous", False)),
         approval_required=bool(params.get("applyApprovalRequired", True)),
     )
-    workflow_id = apply_workflow_id(tenant_id, str(job_url)) if job_url else None
+    workflow_id = apply_workflow_id(tenant_id, str(selector.job_id)) if selector.job_id is not None else None
     return WorkflowStartSpec(workflow=ApplyWorkflow, args=(payload,), workflow_id=workflow_id)
+
+
+@dataclass(frozen=True)
+class _ApplySelector:
+    """The only selector shape permitted to start an Apply workflow."""
+
+    keys: tuple[str, ...] = ()
+    job_id: str | None = None
+
+
+def _apply_selector(
+    params: dict[str, Any],
+    *,
+    job_url: str | None = None,
+    job_urls: tuple[str, ...] = (),
+) -> _ApplySelector:
+    """Preserve selector key presence so invalid scopes cannot become batch Apply.
+
+    Batch Apply is intentional only when callers supplied none of the known
+    selector keys. A canonical singular ``jobId`` is the sole targeted shape;
+    URL selectors and plural ``jobIds`` cannot safely cross the Apply boundary.
+    """
+
+    keys = tuple(key for key in _APPLY_SELECTOR_KEYS if key in params)
+    if job_url is not None and "jobUrl" not in keys:
+        keys += ("jobUrl",)
+    if job_urls and "jobUrls" not in keys:
+        keys += ("jobUrls",)
+
+    if not keys:
+        return _ApplySelector()
+    if keys != ("jobId",):
+        raise ValueError("apply accepts only a canonical jobId; omit all selector keys for batch apply")
+
+    raw_job_id = params["jobId"]
+    if not isinstance(raw_job_id, str) or not raw_job_id.strip():
+        raise ValueError("apply jobId must be a non-empty canonical UUID")
+    return _ApplySelector(keys=keys, job_id=canonical_job_id(raw_job_id))
 
 
 def _require_auto_apply_browser_capability() -> None:
@@ -294,15 +334,9 @@ def build_compensation_refresh_workflow_spec(params: dict[str, Any]) -> Workflow
         job_url=str(job_url_param) if job_url_param else None,
         limit=int(params.get("limit") or 0),
         include_euro_top_tech=(
-            bool(params["includeEuroTopTech"])
-            if params.get("includeEuroTopTech") is not None
-            else True
+            bool(params["includeEuroTopTech"]) if params.get("includeEuroTopTech") is not None else True
         ),
-        observations_json_path=(
-            str(params["observationsJsonPath"])
-            if params.get("observationsJsonPath")
-            else None
-        ),
+        observations_json_path=(str(params["observationsJsonPath"]) if params.get("observationsJsonPath") else None),
         euro_top_tech_max_pages=int(params.get("euroTopTechMaxPages") or 10),
     )
     return WorkflowStartSpec(workflow=CompensationRefreshWorkflow, args=(payload,))
@@ -346,9 +380,7 @@ def build_manual_capture_import_workflow_spec(
     )
     captured_url = _optional_string(params, "capturedUrl")
     if content_text is None and content_html_base64 is None and captured_url is None:
-        raise ValueError(
-            "one of contentText, contentHtmlBase64, or capturedUrl is required"
-        )
+        raise ValueError("one of contentText, contentHtmlBase64, or capturedUrl is required")
     future_manual_action_required = params.get("futureManualActionRequired", False)
     if not isinstance(future_manual_action_required, bool):
         raise ValueError("futureManualActionRequired must be a boolean")
@@ -371,8 +403,8 @@ def build_manual_capture_import_workflow_spec(
     )
 
 
-def apply_workflow_id(tenant_id: str, job_key: str) -> str:
-    return f"apply-{tenant_id}-{job_key}"
+def apply_workflow_id(tenant_id: str, job_id: str) -> str:
+    return f"apply-{tenant_id}-{canonical_job_id(job_id)}"
 
 
 def interview_prep_workflow_id(tenant_id: str, job_key: str) -> str:

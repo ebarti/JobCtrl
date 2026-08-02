@@ -47,6 +47,10 @@ from jobctrl.pipeline.workflow import (
 )
 from jobctrl.scoring.activities import score_activity
 from jobctrl.llm import SpendBudgetStatus
+from jobctrl.workflow_specs import (
+    build_pipeline_workflow_spec,
+    build_run_stage_workflow_spec,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -63,6 +67,7 @@ def permit_browser_for_existing_pipeline_workflow_tests(monkeypatch: pytest.Monk
 
 
 _OK_OBSERVED = ({"status": "ok"}, 0.0, "ok")
+_APPLY_JOB_ID = "90000000-0000-4000-8000-000000000001"
 
 
 def test_stage_retry_policies_are_stage_specific():
@@ -220,7 +225,8 @@ async def test_pipeline_workflow_runs_apply_as_child_workflow():
     assert result.stages_failed == []
     assert apply_mock.call_args.kwargs == {
         "limit": 2,
-        "target_url": None,
+        "target_job_id": None,
+        "tenant_id": "local",
         "min_score": 8,
         "headless": True,
         "model": "sonnet",
@@ -230,6 +236,139 @@ async def test_pipeline_workflow_runs_apply_as_child_workflow():
         "workflow_id": f"{workflow_id}-apply",
         "install_signal_handlers": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_pipeline_workflow_preserves_canonical_apply_target():
+    queue = f"pipeline-apply-target-{uuid.uuid4()}"
+    workflow_id = f"pipeline-apply-target-wf-{uuid.uuid4()}"
+
+    with patch("jobctrl.apply.launcher.main", return_value=(0, 0)) as apply_mock:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow, ApplyWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await env.client.execute_workflow(
+                    JobPipelineWorkflow.run,
+                    JobPipelineWorkflowInput(
+                        tenant_id="local",
+                        stages=["apply"],
+                        apply_job_id=_APPLY_JOB_ID,
+                        apply_selector_keys=("jobId",),
+                        dry_run=True,
+                    ),
+                    id=workflow_id,
+                    task_queue=queue,
+                )
+
+    assert result.stages_completed == ["apply"]
+    assert apply_mock.call_args.kwargs["target_job_id"] == _APPLY_JOB_ID
+
+
+@pytest.mark.asyncio
+async def test_pipeline_rejects_present_legacy_apply_selector_before_child_start():
+    queue = f"pipeline-apply-selector-{uuid.uuid4()}"
+
+    with patch("jobctrl.apply.launcher.main", return_value=(0, 0)) as apply_mock:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow, ApplyWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                with pytest.raises(WorkflowFailureError) as exc_info:
+                    await env.client.execute_workflow(
+                        JobPipelineWorkflow.run,
+                        JobPipelineWorkflowInput(
+                            tenant_id="local",
+                            stages=["apply"],
+                            apply_selector_keys=("jobUrls",),
+                            dry_run=True,
+                        ),
+                        id=f"pipeline-apply-selector-wf-{uuid.uuid4()}",
+                        task_queue=queue,
+                    )
+
+    cause = exc_info.value.cause
+    assert isinstance(cause, ApplicationError)
+    assert cause.non_retryable is True
+    assert "canonical jobId" in str(cause.message)
+    apply_mock.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        {"jobId": None},
+        {"jobId": ""},
+        {"jobId": "   "},
+        {"jobIds": None},
+        {"jobIds": []},
+        {"jobIds": [_APPLY_JOB_ID]},
+        {"jobUrl": None},
+        {"jobUrl": ""},
+        {"jobUrl": "   "},
+        {"jobUrl": "https://example.test/job"},
+        {"jobUrls": None},
+        {"jobUrls": []},
+        {"jobUrls": [""]},
+        {"jobUrls": ["   "]},
+        {"jobUrls": ["https://example.test/job"]},
+    ],
+)
+def test_pipeline_apply_spec_boundaries_reject_present_unsupported_or_empty_selectors(
+    selector: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="apply (accepts|jobId)"):
+        build_run_stage_workflow_spec({"tenantId": "local", "stage": "apply", **selector})
+    with pytest.raises(ValueError, match="apply (accepts|jobId)"):
+        build_pipeline_workflow_spec(
+            {"tenantId": "local", **selector},
+            stages=["apply"],
+            limit=1,
+        )
+
+
+def test_pipeline_apply_spec_boundaries_preserve_batch_and_canonical_target() -> None:
+    batch = build_run_stage_workflow_spec({"tenantId": "local", "stage": "apply"})
+    (batch_payload,) = batch.args
+    assert batch_payload.apply_selector_keys == ()
+    assert batch_payload.apply_job_id is None
+
+    targeted = build_pipeline_workflow_spec(
+        {"tenantId": "local", "jobId": _APPLY_JOB_ID},
+        stages=["apply"],
+        limit=1,
+    )
+    (targeted_payload,) = targeted.args
+    assert targeted_payload.apply_selector_keys == ("jobId",)
+    assert targeted_payload.apply_job_id == _APPLY_JOB_ID
+
+
+@pytest.mark.parametrize(
+    "selector_kwargs",
+    [
+        {"job_url": "https://example.test/job"},
+        {"job_url": ""},
+        {"job_urls": ("https://example.test/job",)},
+    ],
+)
+def test_pipeline_apply_spec_rejects_direct_legacy_scope_arguments(
+    selector_kwargs: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="apply accepts only a canonical jobId"):
+        build_pipeline_workflow_spec(
+            {"tenantId": "local"},
+            stages=["apply"],
+            limit=1,
+            **selector_kwargs,
+        )
 
 
 @pytest.mark.asyncio
@@ -370,10 +509,7 @@ async def test_pipeline_workflow_forwards_validation_mode_to_tailor_and_cover():
                     task_queue=queue,
                 )
 
-    by_stage = {
-        call.args[0]: call.args[2].get("validation_mode")
-        for call in observed_mock.call_args_list
-    }
+    by_stage = {call.args[0]: call.args[2].get("validation_mode") for call in observed_mock.call_args_list}
     assert by_stage == {"tailor": "lenient", "cover": "lenient"}
 
 
@@ -449,7 +585,10 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
         # dummy), so stub the finalize writer — the finalize wiring itself is
         # covered by test_workflow_finalize.py.
         patch("jobctrl.infrastructure.temporal.finalize._emit"),
-        patch("jobctrl.pipeline.current_policy_selectors.tailoring_current_policy_job_urls", side_effect=fake_current_policy_urls),
+        patch(
+            "jobctrl.pipeline.current_policy_selectors.tailoring_current_policy_job_urls",
+            side_effect=fake_current_policy_urls,
+        ),
         patch("jobctrl.scoring.tailor.tailor_job_by_url", side_effect=fake_tailor_job_by_url),
         patch("jobctrl.scoring.cover_letter.cover_letter_by_url", side_effect=fake_cover_letter_by_url),
     ):
@@ -513,10 +652,7 @@ async def test_pipeline_workflow_preserves_stage_options():
                     task_queue=queue,
                 )
 
-    by_stage = {
-        call.args[0]: call.args[2]
-        for call in observed_mock.call_args_list
-    }
+    by_stage = {call.args[0]: call.args[2] for call in observed_mock.call_args_list}
     assert "discover" not in by_stage
     assert by_stage["score"]["rescore"] is True
     assert by_stage["tailor"]["min_score"] == 8

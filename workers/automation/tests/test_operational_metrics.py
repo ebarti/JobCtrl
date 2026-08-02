@@ -108,6 +108,33 @@ def test_record_operational_attempt_metric_is_append_only_and_structured(tmp_pat
         close_connection(db_path)
 
 
+def test_record_operational_attempt_metric_preserves_tenant_and_job_id(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    job_id = "90000000-0000-4000-8000-000000000001"
+    conn.execute(
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+        VALUES ('other', ?, 'https://example.com/job', 'Example', '2026-07-31T00:00:00+00:00')
+        """,
+        (job_id,),
+    )
+    record_operational_attempt_metric(
+        conn,
+        stage="apply",
+        attempt_kind="apply_batch",
+        outcome="started",
+        tenant_id="other",
+        job_id=job_id,
+    )
+    row = conn.execute(
+        "SELECT tenant_id, job_id FROM operational_attempt_metrics ORDER BY metric_id DESC LIMIT 1"
+    ).fetchone()
+    assert (row["tenant_id"], row["job_id"]) == ("other", job_id)
+    assert "job_url" not in row.keys()
+    close_connection(db_path)
+
+
 def test_discovery_source_attempts_model_board_and_canonical_source_roles(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
     sources = (
