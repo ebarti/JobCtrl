@@ -31,6 +31,8 @@ import {
 import {
   sampleLearningRecommendationEvidence,
   sampleLearningRecommendationList,
+  sampleTailoringPolicyRevisionList,
+  sampleTailoringPolicyRollback,
 } from "../fixtures/learning.js";
 import {
   makeArtifactDetail,
@@ -291,6 +293,12 @@ export const handlers = [
         reviewedAt: "2026-08-01T12:05:00.000Z",
       });
     },
+  ),
+  http.get("*/v1/learning/policies/materials", () =>
+    HttpResponse.json(sampleTailoringPolicyRevisionList),
+  ),
+  http.post("*/v1/learning/policies/materials/rollbacks", () =>
+    HttpResponse.json(sampleTailoringPolicyRollback),
   ),
   http.get("*/v1/digest", () => HttpResponse.json(sampleDailyDigest)),
   http.post("*/v1/digest/acknowledge", async ({ request }) => {
