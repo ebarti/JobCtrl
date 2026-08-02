@@ -11,6 +11,7 @@ from temporalio import activity
 
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.errors import JobCtrlError, LlmTransientError, to_application_error
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.infrastructure.temporal.pipeline_step_lifecycle import (
     PipelineStepScope,
     begin_pipeline_step_attempt,
@@ -59,7 +60,7 @@ class TailorActivityOutput:
 @dataclass(frozen=True)
 class TailorJobActivityInput:
     tenant_id: str
-    job_url: str
+    job_id: JobId
     min_score: int = 7
     workers: int = 1
     validation_mode: str = "normal"
@@ -70,6 +71,9 @@ class TailorJobActivityInput:
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
 @dataclass(frozen=True)
@@ -172,11 +176,7 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
         stage_result, elapsed, status = result
         errors: dict[str, str] = {}
         if status not in _SUCCESS_STATUSES:
-            errors["tailor"] = str(
-                stage_result.get("error")
-                or stage_result.get("error_message")
-                or status
-            )
+            errors["tailor"] = str(stage_result.get("error") or stage_result.get("error_message") or status)
         stages = [{"stage": "tailor", "status": status, "elapsed": elapsed, **stage_result}]
         activity_result = {
             "status": status,
@@ -338,7 +338,7 @@ def _tailor_one_job(payload: TailorJobActivityInput) -> dict[str, Any]:
     from jobctrl.scoring.tailor import tailor_job_by_url
 
     return tailor_job_by_url(
-        payload.job_url,
+        payload.job_id,
         min_score=payload.min_score,
         validation_mode=payload.validation_mode,
         workers=payload.workers,
@@ -385,10 +385,13 @@ class CoverActivityOutput:
 @dataclass(frozen=True)
 class CoverLetterActivityInput:
     tenant_id: str
-    job_url: str
+    job_id: JobId
     min_score: int = 7
     validation_mode: str = "normal"
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
 @dataclass(frozen=True)
@@ -402,28 +405,19 @@ class CoverLetterActivityOutput:
 @dataclass(frozen=True)
 class RenderPdfActivityInput:
     tenant_id: str
-    job_url: str
+    job_id: JobId
     expected_app_dir: str | None = None
     expected_db_path: str | None = None
     discovery_execution: DiscoveryExecutionRef | None = None
     pipeline_step_idempotency_key: str | None = None
 
     def __post_init__(self) -> None:
-        if (self.discovery_execution is None) != (
-            self.pipeline_step_idempotency_key is None
-        ):
-            raise ValueError(
-                "discovery_execution and pipeline_step_idempotency_key must be supplied together"
-            )
-        if (
-            self.discovery_execution is not None
-            and self.discovery_execution.tenant_id != self.tenant_id
-        ):
+        object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
+        if (self.discovery_execution is None) != (self.pipeline_step_idempotency_key is None):
+            raise ValueError("discovery_execution and pipeline_step_idempotency_key must be supplied together")
+        if self.discovery_execution is not None and self.discovery_execution.tenant_id != self.tenant_id:
             raise ValueError("PDF tenant does not match discovery execution")
-        if (
-            self.pipeline_step_idempotency_key is not None
-            and not self.pipeline_step_idempotency_key.strip()
-        ):
+        if self.pipeline_step_idempotency_key is not None and not self.pipeline_step_idempotency_key.strip():
             raise ValueError("PDF pipeline-step idempotency key must be non-empty")
 
 
@@ -503,11 +497,7 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
         stage_result, elapsed, status = result
         errors: dict[str, str] = {}
         if status not in _SUCCESS_STATUSES:
-            errors["cover"] = str(
-                stage_result.get("error")
-                or stage_result.get("error_message")
-                or status
-            )
+            errors["cover"] = str(stage_result.get("error") or stage_result.get("error_message") or status)
         stages = [{"stage": "cover", "status": status, "elapsed": elapsed, **stage_result}]
         activity_result = {
             "status": status,
@@ -551,7 +541,7 @@ def _run_selected_cover(
                     "dry_run": True,
                 }
             ],
-    }
+        }
 
     t0 = time.time()
     generated = 0
@@ -642,7 +632,7 @@ def _cover_one_job(payload: CoverLetterActivityInput) -> dict[str, Any]:
     from jobctrl.scoring.cover_letter import cover_letter_by_url
 
     return cover_letter_by_url(
-        payload.job_url,
+        payload.job_id,
         min_score=payload.min_score,
         validation_mode=payload.validation_mode,
         llm_model=payload.llm_model,
@@ -712,7 +702,6 @@ async def render_pdf_activity(payload: RenderPdfActivityInput) -> RenderPdfActiv
 
 def _render_pdf_for_job(payload: RenderPdfActivityInput) -> dict[str, Any]:
     from jobctrl.database import get_connection
-    from jobctrl.domain.identifiers import JobId
     from jobctrl.domain.materials.use_cases import RenderPdfUseCase
     from jobctrl.domain.tenant import TenantId
     from jobctrl.infrastructure.materials import (
@@ -730,7 +719,7 @@ def _render_pdf_for_job(payload: RenderPdfActivityInput) -> dict[str, Any]:
         resume_renderer=HtmlResumePdfAdapter(),
         cover_letter_renderer=PlaywrightHtmlPdfAdapter(),
     ).execute(
-        job_id=JobId(payload.job_url),
+        job_id=payload.job_id,
         profile_dict=profile.as_dict(),
         tenant_id=tenant_id,
     )
