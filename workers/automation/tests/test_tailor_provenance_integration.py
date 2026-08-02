@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.materials import (
     Artifact,
     ArtifactStatus,
@@ -54,6 +54,7 @@ from jobctrl.domain.scoring import (
 from jobctrl.domain.tenant import LOCAL_TENANT
 
 JOB_URL = "https://example.com/job/provenance"
+JOB_ID = canonical_job_id("70000000-0000-4000-8000-000000000001")
 
 
 # --------------------------------------------------------------------------
@@ -89,7 +90,7 @@ class _FakeAnalyze:
         )
         analysis = EmployerAnalysis.build(
             tenant_id=tenant_id,
-            job_id=JobId(str(job["url"])),
+            job_id=canonical_job_id(str(job["job_id"])),
             generation=1,
             snapshot_hash=compute_snapshot_hash(str(job.get("full_description") or "jd")),
             canonical=canonical,
@@ -346,6 +347,7 @@ def _snapshot() -> ProfileSnapshot:
 
 def _job() -> dict:
     return {
+        "job_id": str(JOB_ID),
         "url": JOB_URL,
         "title": "Senior Backend Engineer",
         "site": "Acme",
@@ -363,7 +365,7 @@ def _requirement_fit_report() -> RequirementFitReport:
         )
 
     return RequirementFitReport(
-        job_id=JOB_URL,
+        job_id=JOB_ID,
         score_version=1,
         employer_analysis_generation=1,
         profile_snapshot_version=1,
@@ -589,7 +591,7 @@ def test_accepted_resume_records_provenance_and_publishes_event(tmp_path: Path) 
     assert outcome.materials is not None and outcome.materials.is_resume_approved
 
     # Provenance was saved for the accepted generation, bound to the artifact.
-    saved = provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None
     assert saved.artifact_id == outcome.materials.tailored_resume.artifact_id
     assert saved.generation == outcome.materials.generation
@@ -677,7 +679,7 @@ def test_suffixed_bare_magnitude_is_hard_rejected_by_detector_and_writes_no_prov
     assert outcome.materials is not None
     assert not outcome.materials.is_resume_approved
     # No provenance was persisted for the rejected candidate.
-    assert provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL)) is None
+    assert provenance_repo.load(LOCAL_TENANT, JOB_ID) is None
     assert not any(
         getattr(e, "event_type", "") == "BulletProvenanceRecorded" for e in publisher.events
     )
@@ -709,7 +711,7 @@ def test_fabricated_employer_is_hard_rejected_by_detector_and_writes_no_provenan
     assert not outcome.materials.is_resume_approved
     # No provenance was persisted for a rejected candidate (last accepted
     # generation, if any, is preserved — here there is none).
-    assert provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL)) is None
+    assert provenance_repo.load(LOCAL_TENANT, JOB_ID) is None
     assert not any(
         getattr(e, "event_type", "") == "BulletProvenanceRecorded" for e in publisher.events
     )
@@ -757,7 +759,7 @@ def test_retailor_pdf_render_failure_preserves_previous_approved_generation(
     assert gen1.materials is not None and gen1.materials.generation == 1
     assert gen1.materials.resume_pdf is not None
     assert gen1.pdf_path is not None
-    assert provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL), generation=1) is not None
+    assert provenance_repo.load(LOCAL_TENANT, JOB_ID, generation=1) is not None
     assert (
         sum(1 for e in publisher.events if getattr(e, "event_type", "") == "ResumeApproved")
         == 1
@@ -781,7 +783,7 @@ def test_retailor_pdf_render_failure_preserves_previous_approved_generation(
 
     # Preservation invariant: generation 1 is STILL the current approved resume,
     # with its PDF and provenance intact.
-    current = materials_repo.load_current_approved(LOCAL_TENANT, JobId(JOB_URL))
+    current = materials_repo.load_current_approved(LOCAL_TENANT, JOB_ID)
     assert current is not None
     assert current.generation == 1
     assert current.is_resume_approved
@@ -790,8 +792,8 @@ def test_retailor_pdf_render_failure_preserves_previous_approved_generation(
     assert current.tailored_resume.status is ArtifactStatus.APPROVED
 
     # Generation 1 provenance survived; the failed generation 2 orphaned none.
-    assert provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL), generation=1) is not None
-    assert provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL), generation=2) is None
+    assert provenance_repo.load(LOCAL_TENANT, JOB_ID, generation=1) is not None
+    assert provenance_repo.load(LOCAL_TENANT, JOB_ID, generation=2) is None
 
     # No dangling second ResumeApproved; the failed re-tailor published ResumeFailed.
     assert (
@@ -832,7 +834,7 @@ def test_tailor_opens_unit_of_work_around_generation_flip(tmp_path: Path) -> Non
     # The flip opened the unit of work and committed it (clean exit) exactly once.
     assert unit_of_work.events == ["enter", "exit_ok"]
     # Provenance + the BulletProvenanceRecorded event still land on the happy path.
-    assert provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL)) is not None
+    assert provenance_repo.load(LOCAL_TENANT, JOB_ID) is not None
     assert any(
         getattr(e, "event_type", "") == "BulletProvenanceRecorded" for e in publisher.events
     )

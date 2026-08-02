@@ -34,7 +34,8 @@ from jobctrl import database as db_module
 from jobctrl import config
 from jobctrl.config import TAILORED_DIR
 from jobctrl.database import get_connection, get_jobs_by_stage
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.discovery.value_objects import PostingUrl
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
 from jobctrl.domain.materials.use_cases import (
     TailorOutcome,
@@ -53,6 +54,7 @@ from jobctrl.domain.ports.materials import (
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.llm import get_llm_adapter
+from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
 from jobctrl.infrastructure.materials import (
     HtmlResumePdfAdapter,
     SqliteBulletProvenanceRepository,
@@ -60,6 +62,7 @@ from jobctrl.infrastructure.materials import (
     SqliteTailoringPolicyRepository,
     SqliteUnitOfWork,
 )
+from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
 from jobctrl.infrastructure.scoring import (
     SqliteRequirementFitReportRepository,
     SqliteScoreRepository,
@@ -205,12 +208,12 @@ def _build_pdf_renderer() -> PdfRendererPort:
 
 
 def _load_requirement_fit_report_for_job(*, tenant_id: TenantId, job: dict):
-    job_url = str(job.get("url") or "").strip()
-    if not job_url:
+    job_id = job.get("job_id")
+    if not job_id:
         return None
     return SqliteRequirementFitReportRepository(get_connection()).load(
         tenant_id,
-        JobId(job_url),
+        canonical_job_id(str(job_id)),
     )
 
 
@@ -230,12 +233,12 @@ def _mark_cover_pending_after_tailor_success(
     *,
     reason: str,
 ) -> None:
-    """Invalidate downstream cover readiness after a new resume generation.
+    """Legacy batch-runner cover reset.
 
-    A stale ``cover=succeeded`` row is unsafe after re-tailoring because it can
-    refer to a superseded cover letter from an older material generation. The
-    cover stage must become visibly pending so the next pipeline step generates
-    cover artifacts for the current approved resume.
+    ``run_tailoring`` remains outside the canonical JobId cutover in this
+    slice. Its URL-shaped selector is kept untouched until its own bounded
+    migration; the per-job preparation entry point uses the exact helper
+    below.
     """
     now = utc_now()
     metadata = json.dumps(
@@ -271,6 +274,56 @@ def _mark_cover_pending_after_tailor_success(
         job_url,
         "cover",
         "StageReset",
+        message="Cover stage reset after tailored resume generation",
+        payload={"reason": reason},
+    )
+
+
+def _mark_cover_pending_after_tailor_success_by_id(
+    conn: sqlite3.Connection,
+    job_id: JobId,
+    *,
+    tenant_id: TenantId,
+    reason: str,
+) -> None:
+    """Invalidate downstream cover readiness after a new resume generation.
+
+    A stale ``cover=succeeded`` row is unsafe after re-tailoring because it can
+    refer to a superseded cover letter from an older material generation. The
+    cover stage must become visibly pending so the next pipeline step generates
+    cover artifacts for the current approved resume.
+    """
+    now = utc_now()
+    metadata = json.dumps(
+        {"invalidated_at": now, "reason": reason},
+        sort_keys=True,
+    )
+    conn.execute(
+        """
+        UPDATE job_stage_states
+        SET state = 'pending',
+            attempt_count = 0,
+            max_attempts = 5,
+            started_at = NULL,
+            updated_at = ?,
+            finished_at = NULL,
+            duration_ms = NULL,
+            error_code = NULL,
+            error_message = NULL,
+            retryable = 1,
+            blocked_by_json = '[]',
+            next_action = NULL,
+            metadata_json = ?
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
+        """,
+        (now, metadata, str(tenant_id), str(canonical_job_id(str(job_id)))),
+    )
+    record_job_event(
+        conn,
+        job_id,
+        "cover",
+        "StageReset",
+        tenant_id=tenant_id,
         message="Cover stage reset after tailored resume generation",
         payload={"reason": reason},
     )
@@ -316,6 +369,7 @@ def _tailor_one_job(
     # only surfaces the resulting outcome.
     outcome = use_case.execute(
         job=job,
+        job_id=canonical_job_id(str(job["job_id"])),
         profile_snapshot=snapshot,
         tailored_dir=TAILORED_DIR,
         validation_mode=validation_mode,
@@ -634,21 +688,72 @@ def tailor_job_by_url(
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> dict:
-    """Tailor exactly one eligible job by URL.
-
-    Durable Discovery-preparation items are job-scoped. This helper keeps the
-    existing Materials use case and stage-state behavior while avoiding the
-    batch ``pending_tailor`` selector from choosing a different job.
-    """
-    if snapshot is None:
-        from jobctrl.infrastructure.profile import get_profile_repository
-
-        snapshot = get_profile_repository().load_snapshot(tenant_id)
-
+    """Resolve an active external posting locator, then tailor its JobId."""
     conn = get_connection()
-    job = _load_tailor_eligible_job_by_url(
+    identity = SqliteJobIdentityResolver(conn).resolve_current_by_posting_url(
+        tenant_id,
+        PostingUrl(value=job_url),
+    )
+    if identity is None:
+        return {"url": job_url, "status": "skipped", "reason": "not_found"}
+    return tailor_job_by_id(
+        identity.job_id,
+        min_score=min_score,
+        validation_mode=validation_mode,
+        workers=workers,
+        retailor=retailor,
+        snapshot=snapshot,
+        tenant_id=tenant_id,
+        llm_model=llm_model,
+        tailor_models=tailor_models,
+        tailor_judge_model=tailor_judge_model,
+        tailor_judge_min_score=tailor_judge_min_score,
+        pdf_renderer=pdf_renderer,
+        suppress_existing_artifacts=suppress_existing_artifacts,
+        allow_low_fit_override=allow_low_fit_override,
+    )
+
+
+def tailor_job_by_id(
+    job_id: JobId,
+    *,
+    min_score: int = 7,
+    validation_mode: str = "normal",
+    workers: int = 1,
+    retailor: bool = False,
+    snapshot: ProfileSnapshot | None = None,
+    tenant_id: TenantId = LOCAL_TENANT,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float | None = None,
+    pdf_renderer: PdfRendererPort | None = None,
+    suppress_existing_artifacts: bool = False,
+    allow_low_fit_override: bool = False,
+) -> dict:
+    """Tailor one active, eligible JobId for its tenant-scoped preparation step.
+
+    This is the canonical single-job entry point. It deliberately does not use
+    the batch selector or URL-shaped primary keys: a preparation workflow owns
+    one JobId, and all target, score, materials, state, and event access stays
+    scoped to that identity.
+    """
+    stable_job_id = canonical_job_id(str(job_id))
+    conn = get_connection()
+    target_reader = SqlitePreparationTargetReader(conn)
+    target = target_reader.load(tenant_id, stable_job_id)
+    if target is None:
+        return {
+            "job_id": str(stable_job_id),
+            "status": "skipped",
+            "reason": "not_found",
+        }
+
+    job = _load_tailor_eligible_job_by_id(
         conn,
-        job_url,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        job=target,
         min_score=min_score,
         retailor=retailor,
         allow_low_fit_override=allow_low_fit_override,
@@ -656,23 +761,36 @@ def tailor_job_by_url(
     if job is None:
         if _reconcile_score_eligibility_skip(
             conn,
-            job_url=job_url,
+            job_id=stable_job_id,
             tenant_id=tenant_id,
         ):
             conn.commit()
             return {
-                "url": job_url,
+                "url": target["url"],
+                "job_id": str(stable_job_id),
                 "status": "skipped",
                 "reason": "score_eligibility_blocked",
             }
         _record_tailor_skip(
             conn,
-            job_url=job_url,
+            job_id=stable_job_id,
+            tenant_id=tenant_id,
+            discovered_at=target.get("discovered_at"),
             reason="not_eligible",
             message="Tailoring skipped because the job is not currently eligible.",
         )
         conn.commit()
-        return {"url": job_url, "status": "skipped", "reason": "not_eligible"}
+        return {
+            "url": target["url"],
+            "job_id": str(stable_job_id),
+            "status": "skipped",
+            "reason": "not_eligible",
+        }
+
+    if snapshot is None:
+        from jobctrl.infrastructure.profile import get_profile_repository
+
+        snapshot = get_profile_repository().load_snapshot(tenant_id)
 
     worker_count = max(1, workers)
     _ = worker_count  # same validation surface as batch runner; single work item runs one job.
@@ -686,17 +804,30 @@ def tailor_job_by_url(
         llm_model=llm_model,
     )
 
-    ensure_job_stage_rows(conn, job_url, discovered_at=job.get("discovered_at"))
+    ensure_job_stage_rows(
+        conn,
+        stable_job_id,
+        tenant_id=tenant_id,
+        discovered_at=job.get("discovered_at"),
+    )
     started_at = utc_now()
     set_stage_state(
         conn,
-        job_url,
+        stable_job_id,
         "tailor",
         "running",
+        tenant_id=tenant_id,
         started_at=started_at,
         validate_transition=False,
     )
-    record_job_event(conn, job_url, "tailor", "StageStarted", message="Tailoring started")
+    record_job_event(
+        conn,
+        stable_job_id,
+        "tailor",
+        "StageStarted",
+        tenant_id=tenant_id,
+        message="Tailoring started",
+    )
     conn.commit()
 
     result = _tailor_one_job(
@@ -716,33 +847,37 @@ def tailor_job_by_url(
     if result.get("status") == "approved":
         set_stage_state(
             conn,
-            job_url,
+            stable_job_id,
             "tailor",
             "succeeded",
+            tenant_id=tenant_id,
             attempt_count=attempts,
             started_at=started_at,
             finished_at=finished_at,
         )
         record_job_event(
             conn,
-            job_url,
+            stable_job_id,
             "tailor",
             "StageCompleted",
+            tenant_id=tenant_id,
             message="Tailoring approved",
             payload={"attempts": attempts},
         )
-        _mark_cover_pending_after_tailor_success(
+        _mark_cover_pending_after_tailor_success_by_id(
             conn,
-            job_url,
+            stable_job_id,
+            tenant_id=tenant_id,
             reason="tailor_stage_completed",
         )
     else:
         exhausted = attempts >= config.DEFAULTS["max_tailor_attempts"] or result.get("status") == "exhausted_retries"
         set_stage_state(
             conn,
-            job_url,
+            stable_job_id,
             "tailor",
             "exhausted" if exhausted else "failed",
+            tenant_id=tenant_id,
             attempt_count=attempts,
             max_attempts=config.DEFAULTS["max_tailor_attempts"],
             started_at=started_at,
@@ -751,15 +886,20 @@ def tailor_job_by_url(
             error_message=f"Tailoring ended with status {result.get('status', 'error')}",
             retryable=True,
             next_action=(
-                f"jobctrl retry tailor {job_url} --reset-attempts" if exhausted else f"jobctrl retry tailor {job_url}"
+                (
+                    f"jobctrl retry tailor {job['url']} --reset-attempts"
+                    if exhausted
+                    else f"jobctrl retry tailor {job['url']}"
+                )
             ),
             validate_transition=False,
         )
         record_job_event(
             conn,
-            job_url,
+            stable_job_id,
             "tailor",
             "StageFailed",
+            tenant_id=tenant_id,
             level="error",
             message=f"Tailoring ended with status {result.get('status', 'error')}",
         )
@@ -770,10 +910,11 @@ def tailor_job_by_url(
 def _reconcile_score_eligibility_skip(
     conn: sqlite3.Connection,
     *,
-    job_url: str,
+    job_id: JobId,
     tenant_id: TenantId,
 ) -> bool:
-    score = SqliteScoreRepository(conn).load(tenant_id, JobId(job_url))
+    stable_job_id = canonical_job_id(str(job_id))
+    score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
     if score is None:
         return False
     eligibility = score.breakdown.eligibility
@@ -803,113 +944,119 @@ def _reconcile_score_eligibility_skip(
 def _record_tailor_skip(
     conn: sqlite3.Connection,
     *,
-    job_url: str,
+    job_id: JobId,
+    tenant_id: TenantId,
+    discovered_at: str | None,
     reason: str,
     message: str,
 ) -> None:
-    row = conn.execute(
-        "SELECT discovered_at FROM jobs WHERE url = ?",
-        (job_url,),
-    ).fetchone()
-    discovered_at = row["discovered_at"] if row is not None else None
-    ensure_job_stage_rows(conn, job_url, discovered_at=discovered_at)
+    stable_job_id = canonical_job_id(str(job_id))
+    ensure_job_stage_rows(
+        conn,
+        stable_job_id,
+        tenant_id=tenant_id,
+        discovered_at=discovered_at,
+    )
     record_job_event(
         conn,
-        job_url,
+        stable_job_id,
         "tailor",
         "StageSkipped",
+        tenant_id=tenant_id,
         level="warning",
         message=message,
         payload={"reason": reason},
     )
 
 
-def _load_tailor_eligible_job_by_url(
+def _load_tailor_eligible_job_by_id(
     conn: sqlite3.Connection,
-    job_url: str,
     *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    job: dict,
     min_score: int,
     retailor: bool,
     allow_low_fit_override: bool = False,
 ) -> dict | None:
-    min_score = 0 if allow_low_fit_override else db_module.effective_tailoring_min_score(min_score)
-    if retailor:
-        where = (
-            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
-            f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
-            f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
-            f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
-            f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
-            f"AND ({db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL "
-            f"OR {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
-        )
-    else:
-        where = (
-            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
-            f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
-            f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
-            f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
-            f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
-            f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
-            f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5"
-        )
-    row = conn.execute(
-        f"""
-        SELECT jobs.*, js.js_fit_score AS js_fit_score,
-               jm.jm_job_url AS jm_job_url,
-               jm.jm_tailored_path AS jm_tailored_path,
-               jm.jm_tailored_at AS jm_tailored_at,
-               jm.jm_cover_path AS jm_cover_path,
-               jm.jm_cover_at AS jm_cover_at,
-               jm.jm_resume_pdf_path AS jm_resume_pdf_path,
-               jm.jm_cover_pdf_path AS jm_cover_pdf_path,
-               jm.jm_generation AS jm_generation,
-               jm.jm_status AS jm_status,
-               je.full_description AS je_full_description,
-               je.application_url AS je_application_url,
-               je.enriched_at AS je_enriched_at,
-               je.current_status AS je_current_status,
-               je.extraction_tier AS je_extraction_tier
-        FROM jobs {db_module._LATEST_SCORE_JOIN} {db_module._LATEST_MATERIALS_JOIN}
-        {db_module._LATEST_STAGE_ATTEMPTS_JOIN} {db_module._SCORE_DOWNSTREAM_STATE_JOIN}
-        {db_module._ENRICHMENT_JOIN}
-        WHERE jobs.url = ? AND {where}
+    stable_job_id = canonical_job_id(str(job_id))
+    if not str(job.get("full_description") or "").strip():
+        return None
+    score_stage = conn.execute(
+        """
+        SELECT state
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'score'
+        """,
+        (str(tenant_id), str(stable_job_id)),
+    ).fetchone()
+    if score_stage is not None and str(score_stage["state"]) != "succeeded":
+        return None
+    if conn.execute(
+        """
+        SELECT 1
+        FROM job_score_staleness
+        WHERE tenant_id = ? AND job_id = ? AND resolved = 0
         LIMIT 1
         """,
-        (job_url, int(min_score)),
-    ).fetchone()
-    if row is None:
+        (str(tenant_id), str(stable_job_id)),
+    ).fetchone() is not None:
         return None
-    return _promote_tailor_job_row(row)
-
-
-def _promote_tailor_job_row(row: sqlite3.Row) -> dict:
-    record = dict(row)
-    js_value = record.pop("js_fit_score", None)
-    if js_value is not None:
-        record["fit_score"] = js_value
-    jm_job_url = record.pop("jm_job_url", None)
-    jm_tailored = record.pop("jm_tailored_path", None)
-    jm_tailored_at = record.pop("jm_tailored_at", None)
-    jm_cover = record.pop("jm_cover_path", None)
-    jm_cover_at = record.pop("jm_cover_at", None)
-    if jm_job_url is not None:
-        record["tailored_resume_path"] = jm_tailored
-        record["tailored_at"] = jm_tailored_at
-        record["cover_letter_path"] = jm_cover
-        record["cover_letter_at"] = jm_cover_at
-    je_full = record.pop("je_full_description", None)
-    je_app = record.pop("je_application_url", None)
-    je_at = record.pop("je_enriched_at", None)
-    record.pop("je_current_status", None)
-    record.pop("je_extraction_tier", None)
-    if je_full is not None:
-        record["full_description"] = je_full
-    if je_app is not None:
-        record["application_url"] = je_app
-    if je_at is not None:
-        record["detail_scraped_at"] = je_at
-    return record
+    posting_state = conn.execute(
+        """
+        SELECT latest_active_state, latest_confidence, latest_quarantine_reason
+        FROM posting_snapshot_sets
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(tenant_id), str(stable_job_id)),
+    ).fetchone()
+    if posting_state is not None:
+        active_state = str(posting_state["latest_active_state"] or "").lower()
+        if active_state in {
+            "closed",
+            "expired",
+            "removed",
+            "location_incompatible",
+        }:
+            return None
+        confidence = str(posting_state["latest_confidence"] or "").lower()
+        quarantine_reason = str(
+            posting_state["latest_quarantine_reason"] or ""
+        ).lower()
+        if confidence == "low" and quarantine_reason not in {"", "none"}:
+            return None
+    tailor_stage = conn.execute(
+        """
+        SELECT state, attempt_count
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (str(tenant_id), str(stable_job_id)),
+    ).fetchone()
+    if tailor_stage is not None:
+        tailor_state = str(tailor_stage["state"])
+        attempt_count = int(tailor_stage["attempt_count"] or 0)
+        if tailor_state == "exhausted" or attempt_count >= 5:
+            return None
+        if not retailor and tailor_state not in {
+            "pending",
+            "running",
+            "failed",
+            "stale",
+        }:
+            return None
+    score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
+    if score is None:
+        return None
+    eligibility = score.breakdown.eligibility
+    if eligibility.status == "blocked" or eligibility.hard_blockers:
+        return None
+    effective_min_score = 0 if allow_low_fit_override else db_module.effective_tailoring_min_score(min_score)
+    if score.fit_score.value < effective_min_score:
+        return None
+    if not retailor and SqliteMaterialsRepository(conn).load_current_approved(tenant_id, stable_job_id) is not None:
+        return None
+    return job
 
 
 __all__ = [
@@ -919,5 +1066,6 @@ __all__ = [
     "_tailor_one_job",
     "run_tailoring",
     "tailor_resume",
+    "tailor_job_by_id",
     "tailor_job_by_url",
 ]

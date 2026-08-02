@@ -62,6 +62,7 @@ from jobctrl.infrastructure.materials.html_resume_pdf import (
 )
 
 JOB_URL = "https://example.com/job/voice"
+JOB_ID = JobId("00000000-0000-4000-8000-000000000043")
 
 
 # --------------------------------------------------------------------------
@@ -93,7 +94,7 @@ class _FakeAnalyze:
         )
         analysis = EmployerAnalysis.build(
             tenant_id=tenant_id,
-            job_id=JobId(str(job["url"])),
+            job_id=JobId(str(job["job_id"])),
             generation=1,
             snapshot_hash=compute_snapshot_hash(str(job.get("full_description") or "jd")),
             canonical=canonical,
@@ -277,6 +278,7 @@ def _snapshot() -> ProfileSnapshot:
 
 def _job() -> dict:
     return {
+        "job_id": JOB_ID,
         "url": JOB_URL,
         "title": "Senior Backend Engineer",
         "site": "Acme",
@@ -292,7 +294,7 @@ def _requirement_fit_report() -> RequirementFitReport:
         weighted_impact=1.125,
     )
     return RequirementFitReport(
-        job_id=JOB_URL,
+        job_id=JOB_ID,
         score_version=1,
         employer_analysis_generation=1,
         profile_snapshot_version=1,
@@ -442,7 +444,7 @@ def test_voice_runs_before_audit_and_provenance_anchors_to_voiced_text(tmp_path:
 
     assert outcome.status == "approved"
     assert voice.calls, "voice pass must have run"
-    saved = provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None
     experience = next(row for row in saved.bullets if row.section == "experience")
     # The provenance anchors to the VOICED bullet, not the buzzword generator draft.
@@ -498,7 +500,7 @@ def test_gate_grounding_and_shipped_fit_persist_with_lifecycle_labels(tmp_path: 
     # Persisted provenance rows carry the grounded claim requirement link on the
     # voiced bullet, and enrichment never injected the claim's evidence ids
     # beyond what the builder bound from the profile.
-    saved = provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None
     experience = next(row for row in saved.bullets if row.section == "experience")
     assert "req_latency" in experience.requirement_ids
@@ -525,7 +527,7 @@ def test_voiced_bullet_is_recorded_as_voice_transform(tmp_path: Path) -> None:
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
 
-    saved = provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None
     experience = next(row for row in saved.bullets if row.section == "experience")
     assert experience.transform_type is TransformType.VOICE
@@ -559,7 +561,7 @@ def test_voice_introduced_fabrication_is_rejected_and_pre_voice_ships(tmp_path: 
 
     # The resume is STILL approved — the pre-voice candidate was clean and grounded.
     assert outcome.status == "approved"
-    saved = provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None
     shipped = Path(outcome.text_path).read_text(encoding="utf-8")
     # The fabricated "10m users" never reaches the shipped resume or the provenance.
@@ -594,7 +596,7 @@ def test_coverage_is_computed_against_rendered_text_and_provenance_backed(tmp_pa
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
 
-    saved = provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None and saved.coverage is not None
     coverage = saved.coverage
     assert coverage.computed_against == "rendered_text"
@@ -625,7 +627,7 @@ def test_round_trip_audited_bullet_text_equals_rendered_text(tmp_path: Path) -> 
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
 
-    saved = provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None
     shipped = Path(outcome.text_path).read_text(encoding="utf-8")
     # The rendered resume lines (sanitised exactly as the assembler ships them).
@@ -674,7 +676,7 @@ def test_round_trip_audited_bullet_text_equals_rendered_html_resume(tmp_path: Pa
     assert outcome.status == "approved"
     assert outcome.final_payload is not None
 
-    saved = provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None and saved.bullets
 
     # Render the ACCEPTED (voiced) payload through the resume document builder
@@ -722,7 +724,7 @@ def test_voice_failure_falls_back_to_pre_voice_candidate(tmp_path: Path) -> None
     )
 
     assert outcome.status == "approved"
-    saved = provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None
     assert saved.voice is not None and saved.voice.ran and not saved.voice.accepted
     # The pre-voice (buzzword-y but grounded) bullet shipped — no voice transform rows.
@@ -753,7 +755,7 @@ def test_no_voice_port_keeps_pre_phase3_behaviour(tmp_path: Path) -> None:
         ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
 
     assert outcome.status == "approved"
-    saved = provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None
     # Coverage is still computed canonically (Phase 3 computes it regardless of voice).
     assert saved.coverage is not None

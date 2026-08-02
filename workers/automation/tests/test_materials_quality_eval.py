@@ -29,6 +29,7 @@ from jobctrl.domain.tenant import LOCAL_TENANT
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "resume_tailoring_quality_eval.json"
+JOB_ID = JobId("00000000-0000-4000-8000-000000000042")
 
 
 def _employer_analysis(*keywords: str) -> EmployerAnalysis:
@@ -42,7 +43,7 @@ def _employer_analysis(*keywords: str) -> EmployerAnalysis:
     )
     return EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId("https://example.com/eval"),
+        job_id=JOB_ID,
         generation=1,
         snapshot_hash=compute_snapshot_hash(" ".join(keywords) or "jd"),
         canonical=canonical,
@@ -69,7 +70,7 @@ def test_tailoring_quality_eval_preserves_claim_safety_controls(
 ) -> None:
     plan = build_tailoring_plan(
         fixture["profile"],
-        fixture["jobs"]["high_fit_senior_backend"],
+        _job_for_plan(fixture["jobs"]["high_fit_senior_backend"]),
         employer_analysis=_employer_analysis("python", "latency"),
     )
 
@@ -92,7 +93,7 @@ def test_tailoring_quality_eval_covers_combined_failure_modes(
     }
 
     for case in fixture["quality_cases"]:
-        job = fixture["jobs"][case["job"]]
+        job = _job_for_plan(fixture["jobs"][case["job"]])
         # The analysis reflects the job: its keywords are the job's skills (lower-
         # cased) plus the canonical backend terms, so required-evidence selection
         # mirrors what a real ensemble analysis of this posting would drive.
@@ -164,6 +165,10 @@ def _payload(bullet: str) -> dict[str, Any]:
             {"id": "languages", "items": ["Python", "Go"]},
         ],
     }
+
+
+def _job_for_plan(job: dict[str, Any]) -> dict[str, Any]:
+    return {**job, "job_id": JOB_ID}
 
 
 def _resume_text(bullet: str) -> str:

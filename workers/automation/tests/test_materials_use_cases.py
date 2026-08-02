@@ -19,7 +19,7 @@ from typing import Any, Iterable
 
 import pytest
 
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials import (
     Artifact,
     ArtifactStatus,
@@ -147,6 +147,7 @@ def snapshot() -> ProfileSnapshot:
 @pytest.fixture()
 def job() -> dict:
     return {
+        "job_id": "10000000-0000-4000-8000-000000000001",
         "url": "https://example.com/job/1",
         "title": "Backend Engineer",
         "site": "Acme",
@@ -190,7 +191,7 @@ class _FakeAnalyzeUseCase:
         )
         analysis = EmployerAnalysis.build(
             tenant_id=tenant_id,
-            job_id=JobId(str(job["url"])),
+            job_id=canonical_job_id(str(job["job_id"])),
             generation=1,
             snapshot_hash=compute_snapshot_hash(str(job.get("full_description") or "jd")),
             canonical=canonical,
@@ -226,7 +227,7 @@ def _analysis_with_keywords(job: dict, keywords: list[str]):
     )
     return EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(str(job["url"])),
+        job_id=canonical_job_id(str(job["job_id"])),
         generation=1,
         snapshot_hash=compute_snapshot_hash(str(job.get("full_description") or "jd")),
         canonical=canonical,
@@ -1546,7 +1547,7 @@ def test_tailor_use_case_retailor_supersedes_previous_generation(
     # Pre-seed a previous approved generation.
     initial = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=canonical_job_id(str(job["job_id"])),
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         Artifact.create(
@@ -1593,7 +1594,7 @@ def test_tailor_use_case_retailor_suppresses_previous_generation_when_requested(
     repo = _FakeRepository()
     initial = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=canonical_job_id(str(job["job_id"])),
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         Artifact.create(
@@ -1649,7 +1650,7 @@ def test_tailor_use_case_failed_retailor_keeps_previous_generation_active(
     repo = _FakeRepository()
     initial = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=canonical_job_id(str(job["job_id"])),
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         Artifact.create(
@@ -1685,7 +1686,7 @@ def test_tailor_use_case_failed_retailor_keeps_previous_generation_active(
     assert outcome.materials.generation == 2
     assert outcome.materials.tailored_resume is not None
     assert outcome.materials.tailored_resume.status is ArtifactStatus.REJECTED
-    previous = repo.load(LOCAL_TENANT, JobId(job["url"]), generation=1)
+    previous = repo.load(LOCAL_TENANT, canonical_job_id(str(job["job_id"])), generation=1)
     assert previous is not None
     assert previous.tailored_resume is not None
     assert previous.tailored_resume.status is ArtifactStatus.APPROVED
@@ -1716,7 +1717,7 @@ def test_tailor_use_case_renders_and_attaches_resume_pdf_when_renderer_present(
     assert outcome.materials.resume_pdf is not None
     assert outcome.pdf_path == str(Path(outcome.text_path).with_suffix(".pdf"))
     assert renderer.calls and renderer.calls[0]["tailored_payload"] == outcome.final_payload
-    saved = repo.load(LOCAL_TENANT, JobId(job["url"]))
+    saved = repo.load(LOCAL_TENANT, canonical_job_id(str(job["job_id"])))
     assert saved is not None and saved.resume_pdf is not None
     assert any(getattr(e, "event_type", "") == "ResumeApproved" for e in publisher.events)
 
@@ -1748,7 +1749,7 @@ def test_tailor_use_case_first_generation_pdf_failure_leaves_nothing_current(
     assert outcome.materials is not None
     assert outcome.materials.tailored_resume is not None
     assert outcome.materials.tailored_resume.status is ArtifactStatus.REJECTED
-    assert repo.load_current_approved(LOCAL_TENANT, JobId(job["url"])) is None
+    assert repo.load_current_approved(LOCAL_TENANT, canonical_job_id(str(job["job_id"]))) is None
     assert not any(getattr(e, "event_type", "") == "ResumeApproved" for e in publisher.events)
     assert any(getattr(e, "event_type", "") == "ResumeFailed" for e in publisher.events)
 
@@ -1763,7 +1764,7 @@ def test_tailor_use_case_rejects_prose_skill_fabrication_and_preserves_prior(
     repo = _FakeRepository()
     approved_gen1 = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=canonical_job_id(str(job["job_id"])),
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         Artifact.create(
@@ -1810,7 +1811,7 @@ def test_tailor_use_case_rejects_prose_skill_fabrication_and_preserves_prior(
     )
 
     # The last accepted generation is preserved, not superseded/destroyed.
-    still_approved = repo.load_current_approved(LOCAL_TENANT, JobId(job["url"]))
+    still_approved = repo.load_current_approved(LOCAL_TENANT, canonical_job_id(str(job["job_id"])))
     assert still_approved is not None
     assert still_approved.generation == 1
     assert still_approved.is_resume_approved
@@ -1986,7 +1987,7 @@ def test_tailor_use_case_hard_fails_when_every_candidate_trips_gate(
     repo = _FakeRepository()
     approved_gen1 = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=canonical_job_id(str(job["job_id"])),
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         Artifact.create(
@@ -2030,7 +2031,7 @@ def test_tailor_use_case_hard_fails_when_every_candidate_trips_gate(
     assert history[0]["candidates"][0]["status"] == "failed_fabrication_gate"
     assert history[1]["candidates"][0]["status"] == "failed_fabrication_gate"
     # The last accepted generation survives untouched.
-    still = repo.load_current_approved(LOCAL_TENANT, JobId(job["url"]))
+    still = repo.load_current_approved(LOCAL_TENANT, canonical_job_id(str(job["job_id"])))
     assert still is not None
     assert still.generation == 1
     assert still.is_resume_approved
@@ -2779,7 +2780,7 @@ def test_render_pdf_use_case_renders_missing_pdfs(tmp_path: Path, job: dict) -> 
 
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=canonical_job_id(str(job["job_id"])),
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         Artifact.create(
@@ -2812,7 +2813,7 @@ def test_render_pdf_use_case_renders_missing_pdfs(tmp_path: Path, job: dict) -> 
         publisher=publisher,
     )
     outcome = use_case.execute(
-        job_id=JobId(job["url"]),
+        job_id=canonical_job_id(str(job["job_id"])),
         tailored_payload=_good_json_payload_dict(),
         profile_dict=_profile_dict(),
     )
@@ -2844,7 +2845,7 @@ def test_render_pdf_use_case_passes_effective_template_to_resume_renderer(
     repo.save(
         MaterialsSetFactory.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(job["url"]),
+            job_id=canonical_job_id(str(job["job_id"])),
             created_at="2024-01-01T00:00:00+00:00",
         ).with_resume_attempt(
             Artifact.create(
@@ -2866,7 +2867,7 @@ def test_render_pdf_use_case_passes_effective_template_to_resume_renderer(
         cover_letter_renderer=renderer,
     )
     outcome = use_case.execute(
-        job_id=JobId(job["url"]),
+        job_id=canonical_job_id(str(job["job_id"])),
         tailored_payload=_good_json_payload_dict(),
         profile_dict=_profile_dict(),
     )
@@ -2885,7 +2886,7 @@ def test_render_pdf_use_case_noop_when_pdfs_already_present(
     resume_path.write_text("body", encoding="utf-8")
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job["url"]),
+        job_id=canonical_job_id(str(job["job_id"])),
         created_at="2024-01-01T00:00:00+00:00",
     ).with_resume_attempt(
         Artifact.create(
@@ -2915,7 +2916,7 @@ def test_render_pdf_use_case_noop_when_pdfs_already_present(
         cover_letter_renderer=renderer,
     )
     outcome = use_case.execute(
-        job_id=JobId(job["url"]),
+        job_id=canonical_job_id(str(job["job_id"])),
         tailored_payload=_good_json_payload_dict(),
         profile_dict=_profile_dict(),
     )
