@@ -47,25 +47,16 @@ def _insert_apply_ready_job(
     *,
     url: str = "https://example.com/job",
     application_url: str | None = "https://example.com/apply",
-):
-    conn.execute(
-        """
-        INSERT INTO jobs (
-            url, title, site, full_description, application_url,
-            fit_score, tailored_resume_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            url,
-            "Eng",
-            "ExampleCo",
-            "Build distributed systems.",
-            application_url,
-            9,
-            "/tmp/resume.txt",
-        ),
+) -> JobId:
+    job_id = canonical_job_id("90000000-0000-4000-8000-000000000999")
+    _insert_canonical_apply_job(
+        conn,
+        job_id=job_id,
+        posting_url=url,
+        application_url=application_url,
+        with_pdf=True,
     )
-    conn.commit()
+    return job_id
 
 
 def _selector_job_id(number: int) -> JobId:
@@ -79,42 +70,13 @@ def _insert_selector_apply_ready_job(
     posting_url: str = "https://example.com/job",
     application_url: str | None = "https://example.com/apply",
 ) -> None:
-    conn.execute(
-        """
-        INSERT INTO jobs (
-            tenant_id, job_id, url, title, site, full_description,
-            application_url, fit_score, tailored_resume_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            str(LOCAL_TENANT),
-            str(job_id),
-            posting_url,
-            "Eng",
-            "ExampleCo",
-            "Build distributed systems.",
-            application_url,
-            9,
-            "/tmp/resume.txt",
-        ),
+    _insert_canonical_apply_job(
+        conn,
+        job_id=job_id,
+        posting_url=posting_url,
+        application_url=application_url,
+        with_pdf=True,
     )
-    conn.commit()
-
-
-def _mark_closed(conn, url: str, state: str = "removed") -> None:
-    conn.execute(
-        """
-        INSERT INTO posting_snapshot_sets (
-            tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
-            latest_active_state, updated_at
-        ) VALUES (?, ?, '{}', 0, ?, ?)
-        ON CONFLICT(tenant_id, job_url) DO UPDATE SET
-            latest_active_state = excluded.latest_active_state,
-            updated_at = excluded.updated_at
-        """,
-        (str(LOCAL_TENANT), url, state, utc_now()),
-    )
-    conn.commit()
 
 
 def _mark_selector_closed(conn, job_id: JobId, state: str = "removed") -> None:
@@ -162,9 +124,8 @@ def _insert_canonical_apply_job(
     conn.execute(
         """
         INSERT INTO jobs (
-            tenant_id, job_id, url, title, site, full_description,
-            application_url, fit_score
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, site
+        ) VALUES (?, ?, ?, ?, ?)
         """,
         (
             str(LOCAL_TENANT),
@@ -172,9 +133,48 @@ def _insert_canonical_apply_job(
             posting_url,
             "Eng",
             "ExampleCo",
+        ),
+    )
+    now = "2024-01-01T00:00:00+00:00"
+    conn.execute(
+        """
+        INSERT INTO job_enrichments (
+            tenant_id, job_id, current_status, full_description,
+            application_url, enriched_at, extraction_tier,
+            attempts_json, updated_at
+        ) VALUES (?, ?, 'enriched', ?, ?, ?, 'fixture', '[]', ?)
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
             "Build distributed systems.",
             application_url,
-            9,
+            now,
+            now,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_scores (
+            tenant_id, job_id, version, fit_score, breakdown_json,
+            keywords_json, scored_at, correction_json, criteria_json, trace_json
+        ) VALUES (?, ?, 1, 9, ?, '["python"]', ?, NULL, '{}', '{}')
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
+            json.dumps(
+                {
+                    "reasoning": "Strong canonical fixture match.",
+                    "eligibility": {
+                        "status": "eligible",
+                        "hard_blockers": [],
+                        "warnings": [],
+                    },
+                },
+                sort_keys=True,
+            ),
+            now,
         ),
     )
     materials = MaterialsSetFactory.initial(
@@ -193,6 +193,15 @@ def _insert_canonical_apply_job(
             updated_at="2024-01-02T01:00:00+00:00",
         )
     SqliteMaterialsRepository(conn).save(materials)
+    ensure_job_stage_rows(conn, job_id)
+    set_stage_state(
+        conn,
+        job_id,
+        "score",
+        "succeeded",
+        finished_at=now,
+        validate_transition=False,
+    )
     conn.commit()
 
 
@@ -202,7 +211,7 @@ def _insert_blocked_score(conn, job_id: JobId, *, fit_score: int = 9) -> None:
         INSERT INTO job_scores (
             tenant_id, job_id, version, fit_score, breakdown_json,
             keywords_json, scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, ?, 1, ?, ?, '["python"]', ?, NULL, '{}', '{}')
+        ) VALUES (?, ?, 2, ?, ?, '["python"]', ?, NULL, '{}', '{}')
         """,
         (
             str(LOCAL_TENANT),
@@ -214,35 +223,6 @@ def _insert_blocked_score(conn, job_id: JobId, *, fit_score: int = 9) -> None:
                     "eligibility": {
                         "status": "blocked",
                         "hard_blockers": ["Requires sponsorship."],
-                        "warnings": [],
-                    },
-                },
-                sort_keys=True,
-            ),
-            "2026-05-14T00:00:00+00:00",
-        ),
-    )
-    conn.commit()
-
-
-def _insert_allowed_score(conn, job_id: JobId, *, fit_score: int = 9) -> None:
-    conn.execute(
-        """
-        INSERT INTO job_scores (
-            tenant_id, job_id, version, fit_score, breakdown_json,
-            keywords_json, scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, ?, 1, ?, ?, '["python"]', ?, NULL, '{}', '{}')
-        """,
-        (
-            str(LOCAL_TENANT),
-            str(job_id),
-            fit_score,
-            json.dumps(
-                {
-                    "reasoning": "Strong match.",
-                    "eligibility": {
-                        "status": "eligible",
-                        "hard_blockers": [],
                         "warnings": [],
                     },
                 },
@@ -270,30 +250,30 @@ def _insert_active_score_staleness_marker(conn, job_id: JobId) -> None:
     conn.commit()
 
 
-def _emit_started(conn, url: str, run_id: str, *, when: str = "t0") -> None:
+def _emit_started(conn, job_id: JobId, run_id: str, *, when: str = "t0") -> None:
     record_job_event(
         conn,
-        url,
+        job_id,
         "apply",
         "ApplyRunStarted",
         payload={"run_id": run_id, "started_at": when},
     )
 
 
-def _emit_succeeded(conn, url: str, run_id: str, *, when: str = "t9") -> None:
+def _emit_succeeded(conn, job_id: JobId, run_id: str, *, when: str = "t9") -> None:
     record_job_event(
         conn,
-        url,
+        job_id,
         "apply",
         "ApplicationSubmitted",
         payload={"run_id": run_id, "finished_at": when, "result": "applied"},
     )
 
 
-def _emit_failed(conn, url: str, run_id: str, *, when: str = "t9") -> None:
+def _emit_failed(conn, job_id: JobId, run_id: str, *, when: str = "t9") -> None:
     record_job_event(
         conn,
-        url,
+        job_id,
         "apply",
         "ApplicationFailed",
         payload={"run_id": run_id, "finished_at": when, "result": "failed"},
@@ -413,7 +393,6 @@ def test_pending_apply_excludes_non_current_scores(conn, score_state: str, activ
     job_id = _selector_job_id(7)
     posting_url = f"https://example.com/non-current-apply-{score_state}-{active_marker}"
     _insert_selector_apply_ready_job(conn, job_id=job_id, posting_url=posting_url)
-    _insert_allowed_score(conn, job_id)
     ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
     set_stage_state(
         conn,
@@ -446,18 +425,18 @@ def test_pending_apply_excludes_closed_postings(conn):
 
 
 def test_pending_apply_excludes_jobs_with_succeeded_apply_run(conn):
-    _insert_apply_ready_job(conn)
-    ensure_job_stage_rows(conn, "https://example.com/job")
+    job_id = _insert_apply_ready_job(conn)
+    ensure_job_stage_rows(conn, job_id)
     set_stage_state(
         conn,
-        "https://example.com/job",
+        job_id,
         "apply",
         "succeeded",
         finished_at="t9",
         validate_transition=False,
     )
-    _emit_started(conn, "https://example.com/job", "run-1")
-    _emit_succeeded(conn, "https://example.com/job", "run-1")
+    _emit_started(conn, job_id, "run-1")
+    _emit_succeeded(conn, job_id, "run-1")
     conn.commit()
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
@@ -470,19 +449,19 @@ def test_pending_apply_excludes_jobs_with_succeeded_apply_run(conn):
 
 def test_applied_selector_excludes_closed_postings(conn):
     url = "https://example.com/closed-applied"
-    _insert_apply_ready_job(conn, url=url)
-    ensure_job_stage_rows(conn, url)
+    job_id = _insert_apply_ready_job(conn, url=url)
+    ensure_job_stage_rows(conn, job_id)
     set_stage_state(
         conn,
-        url,
+        job_id,
         "apply",
         "succeeded",
         finished_at="t9",
         validate_transition=False,
     )
-    _emit_started(conn, url, "closed-run")
-    _emit_succeeded(conn, url, "closed-run")
-    _mark_closed(conn, url)
+    _emit_started(conn, job_id, "closed-run")
+    _emit_succeeded(conn, job_id, "closed-run")
+    _mark_selector_closed(conn, job_id)
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     assert get_jobs_by_stage(conn, "pending_apply", min_score=7) == []
@@ -492,29 +471,29 @@ def test_applied_selector_excludes_closed_postings(conn):
 
 def test_closed_apply_failures_are_excluded_from_stats(conn):
     url = "https://example.com/closed-apply-error"
-    _insert_apply_ready_job(conn, url=url)
-    ensure_job_stage_rows(conn, url)
+    job_id = _insert_apply_ready_job(conn, url=url)
+    ensure_job_stage_rows(conn, job_id)
     set_stage_state(
         conn,
-        url,
+        job_id,
         "apply",
         "failed",
         finished_at="t9",
         validate_transition=False,
     )
-    _emit_started(conn, url, "closed-failed-run")
-    _emit_failed(conn, url, "closed-failed-run")
-    _mark_closed(conn, url)
+    _emit_started(conn, job_id, "closed-failed-run")
+    _emit_failed(conn, job_id, "closed-failed-run")
+    _mark_selector_closed(conn, job_id)
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     assert get_stats(conn)["apply_errors"] == 0
 
 
 def test_pending_apply_excludes_jobs_with_in_progress_apply_run(conn):
-    _insert_apply_ready_job(conn)
-    ensure_job_stage_rows(conn, "https://example.com/job")
-    set_stage_state(conn, "https://example.com/job", "apply", "running", started_at="t0")
-    _emit_started(conn, "https://example.com/job", "run-2")
+    job_id = _insert_apply_ready_job(conn)
+    ensure_job_stage_rows(conn, job_id)
+    set_stage_state(conn, job_id, "apply", "running", started_at="t0")
+    _emit_started(conn, job_id, "run-2")
     conn.commit()
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
@@ -526,19 +505,19 @@ def test_pending_apply_includes_jobs_with_failed_apply_run(conn):
     """A failed run leaves the job re-queued (the eligibility checker
     enforces the per-attempt cap; the SQL selector only checks for an
     ACTIVE lock and the canonical attempts counter)."""
-    _insert_apply_ready_job(conn)
-    ensure_job_stage_rows(conn, "https://example.com/job")
+    job_id = _insert_apply_ready_job(conn)
+    ensure_job_stage_rows(conn, job_id)
     set_stage_state(
         conn,
-        "https://example.com/job",
+        job_id,
         "apply",
         "failed",
         finished_at="t9",
         attempt_count=1,
         validate_transition=False,
     )
-    _emit_started(conn, "https://example.com/job", "run-3")
-    _emit_failed(conn, "https://example.com/job", "run-3")
+    _emit_started(conn, job_id, "run-3")
+    _emit_failed(conn, job_id, "run-3")
     conn.commit()
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
@@ -547,22 +526,22 @@ def test_pending_apply_includes_jobs_with_failed_apply_run(conn):
 
 
 def test_get_stats_reflects_apply_run_projections(conn):
-    _insert_apply_ready_job(conn)
+    job_id = _insert_apply_ready_job(conn)
     stats = get_stats(conn)
     assert stats["applied"] == 0
     assert stats["ready_to_apply"] == 1
 
-    ensure_job_stage_rows(conn, "https://example.com/job")
+    ensure_job_stage_rows(conn, job_id)
     set_stage_state(
         conn,
-        "https://example.com/job",
+        job_id,
         "apply",
         "succeeded",
         finished_at="t9",
         validate_transition=False,
     )
-    _emit_started(conn, "https://example.com/job", "run-stats")
-    _emit_succeeded(conn, "https://example.com/job", "run-stats")
+    _emit_started(conn, job_id, "run-stats")
+    _emit_succeeded(conn, job_id, "run-stats")
     conn.commit()
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
@@ -576,11 +555,11 @@ def test_apply_join_tie_breaks_by_run_id_on_same_started_at(conn):
     ``started_at`` (same-second collisions), the join must
     deterministically return ONE parent ``jobs`` row — the previous
     MAX(started_at) GROUP BY pattern duplicated the parent."""
-    _insert_apply_ready_job(conn, url="https://example.com/job-tied")
-    ensure_job_stage_rows(conn, "https://example.com/job-tied")
+    job_id = _insert_apply_ready_job(conn, url="https://example.com/job-tied")
+    ensure_job_stage_rows(conn, job_id)
     set_stage_state(
         conn,
-        "https://example.com/job-tied",
+        job_id,
         "apply",
         "failed",
         finished_at="2026-05-01T00:00:02+00:00",
@@ -589,14 +568,14 @@ def test_apply_join_tie_breaks_by_run_id_on_same_started_at(conn):
     )
     record_job_event(
         conn,
-        "https://example.com/job-tied",
+        job_id,
         "apply",
         "ApplyRunStarted",
         payload={"run_id": "run-aaaa", "started_at": "2026-05-01T00:00:00+00:00"},
     )
     record_job_event(
         conn,
-        "https://example.com/job-tied",
+        job_id,
         "apply",
         "ApplicationFailed",
         payload={
@@ -607,14 +586,14 @@ def test_apply_join_tie_breaks_by_run_id_on_same_started_at(conn):
     )
     record_job_event(
         conn,
-        "https://example.com/job-tied",
+        job_id,
         "apply",
         "ApplyRunStarted",
         payload={"run_id": "run-bbbb", "started_at": "2026-05-01T00:00:00+00:00"},
     )
     record_job_event(
         conn,
-        "https://example.com/job-tied",
+        job_id,
         "apply",
         "ApplicationFailed",
         payload={
@@ -637,19 +616,19 @@ def test_pending_apply_promotes_apply_status_into_row_dict(conn):
     """``get_jobs_by_stage`` promotes the projection's status into the
     legacy ``apply_status`` slot so consumers that still read
     ``row["apply_status"]`` see canonical values."""
-    _insert_apply_ready_job(conn, url="https://example.com/job-with-fail")
-    ensure_job_stage_rows(conn, "https://example.com/job-with-fail")
+    job_id = _insert_apply_ready_job(conn, url="https://example.com/job-with-fail")
+    ensure_job_stage_rows(conn, job_id)
     set_stage_state(
         conn,
-        "https://example.com/job-with-fail",
+        job_id,
         "apply",
         "failed",
         finished_at="t9",
         attempt_count=1,
         validate_transition=False,
     )
-    _emit_started(conn, "https://example.com/job-with-fail", "run-fail")
-    _emit_failed(conn, "https://example.com/job-with-fail", "run-fail")
+    _emit_started(conn, job_id, "run-fail")
+    _emit_failed(conn, job_id, "run-fail")
     conn.commit()
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
