@@ -36,6 +36,7 @@ export {
   EmployerAnalysisPanel,
   type EmployerAnalysisPanelProps,
 } from "./components/EmployerAnalysisPanel.js";
+export { LearningRecommendationReviewPanel } from "./components/LearningRecommendationReviewPanel.js";
 export {
   ArtifactTypeBadge,
   type ArtifactTypeBadgeProps,

@@ -26,11 +26,13 @@ export function useLearningRecommendationsQuery(
 export function useLearningRecommendationEvidenceQuery(
   recommendationId: string,
   input: Partial<LearningRecommendationEvidenceListQuery> = DEFAULT_PAGE,
+  enabled = true,
 ): UseQueryResult<LearningRecommendationEvidenceListResponse> {
   const tenantId = useTenantId();
   const { api } = usePorts();
   return useQuery({
     queryKey: learningKeys.evidenceList(tenantId, recommendationId, input),
     queryFn: () => api.learningRecommendationEvidence(recommendationId, input),
+    enabled,
   });
 }
