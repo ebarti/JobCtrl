@@ -35,6 +35,8 @@ from jobctrl.infrastructure.learning.sqlite_repository import (
 from jobctrl.infrastructure.materials import (
     LearningRecommendationReviewError,
     SqliteLearningRecommendationReviewRepository,
+    SqliteTailoringPolicyRepository,
+    TailoringPolicyRevisionError,
 )
 from jobctrl.infrastructure.rpc.server import JsonRpcServer, invalid_params
 from jobctrl.infrastructure.rpc.workflow_starter import WorkflowCanceler
@@ -861,6 +863,45 @@ def review_learning_recommendation(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
+    """Append a Materials policy revision that restores a prior version."""
+
+    tenant_id = TenantId(_tenant_id(params))
+    target_version = _require(params, "targetVersion")
+    if (
+        not isinstance(target_version, int)
+        or isinstance(target_version, bool)
+        or target_version < 1
+    ):
+        raise invalid_params("targetVersion must be a positive integer")
+    assert_expected_runtime(
+        expected_app_dir=params.get("expectedAppDir"),
+        expected_db_path=params.get("expectedDbPath"),
+    )
+    try:
+        policy = SqliteTailoringPolicyRepository(get_connection()).rollback_to(
+            tenant_id,
+            target_version=target_version,
+            reason="user_requested",
+            rolled_back_at=datetime.now(UTC).isoformat(),
+        )
+    except TailoringPolicyRevisionError as exc:
+        raise invalid_params(str(exc)) from exc
+    return {
+        "status": "succeeded",
+        "context": "materials",
+        "policyKind": "tailoring_rule",
+        "policyVersion": policy.version,
+        "rollbackOfVersion": policy.rollback_of_version,
+        "rollbackReasonCode": policy.rollback_reason,
+        "learnedRules": [
+            {"ruleKey": rule_key, "ruleValue": rule_value}
+            for rule_key, rule_value in policy.learned_tailoring_rules.rules
+        ],
+        "rolledBackAt": policy.created_at,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -901,6 +942,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
         review_learning_recommendation,
         mode="sync",
     )
+    server.register("rollback_tailoring_policy", rollback_tailoring_policy, mode="sync")
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
     server.register("generate_interview_prep", generate_interview_prep, mode="workflow")
     server.register("run_contact_research", run_contact_research, mode="workflow")

@@ -13,6 +13,7 @@ import {
   LearningRecommendationReviewIdSchema,
   MANUAL_CAPTURE_MODE_VALUES,
   STAGES,
+  TailoringPolicyLearnedRuleSchema,
 } from "./schemas.js";
 
 /* ------------------------------------------------------------------ codes */
@@ -90,6 +91,7 @@ export const RpcMethods = {
   BrowserProfileCopy: "browser_profile_copy",
   RederiveLearningRecommendations: "rederive_learning_recommendations",
   ReviewLearningRecommendation: "review_learning_recommendation",
+  RollbackTailoringPolicy: "rollback_tailoring_policy",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
 
@@ -586,6 +588,34 @@ export const ReviewLearningRecommendationResultSchema = z.discriminatedUnion("de
 ]);
 export type ReviewLearningRecommendationResult = z.infer<
   typeof ReviewLearningRecommendationResultSchema
+>;
+
+export const RollbackTailoringPolicyParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
+    targetVersion: z.number().int().positive(),
+  })
+  .strict();
+export type RollbackTailoringPolicyParams = z.infer<
+  typeof RollbackTailoringPolicyParamsSchema
+>;
+
+export const RollbackTailoringPolicyResultSchema = z
+  .object({
+    status: z.literal("succeeded"),
+    context: z.literal("materials"),
+    policyKind: z.literal("tailoring_rule"),
+    policyVersion: z.number().int().positive(),
+    rollbackOfVersion: z.number().int().positive(),
+    rollbackReasonCode: z.literal("user_requested"),
+    learnedRules: z.array(TailoringPolicyLearnedRuleSchema).max(5),
+    rolledBackAt: WorkerUtcTimestampSchema,
+  })
+  .strict();
+export type RollbackTailoringPolicyResult = z.infer<
+  typeof RollbackTailoringPolicyResultSchema
 >;
 
 export const ProfileImportParamsSchema = z
