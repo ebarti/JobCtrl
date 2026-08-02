@@ -1908,7 +1908,7 @@ function loadRequirementFitReportJson(
     [tenantId, jobUrl, scoreVersion],
   );
   const readModel = {
-    jobKey: row.job_url,
+    jobId: jobUrl,
     scoreVersion,
     employerAnalysisGeneration: Number(row.employer_analysis_generation ?? 0),
     profileSnapshotVersion: Number(row.profile_snapshot_version ?? 0),
@@ -1972,7 +1972,7 @@ function loadInterviewPrepJson(
     [tenantId, jobUrl, generation],
   );
   const readModel = {
-    jobKey: row.job_url,
+    jobId: jobUrl,
     generation,
     status: row.status,
     generatedAt: row.generated_at,

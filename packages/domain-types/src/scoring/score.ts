@@ -179,7 +179,7 @@ export interface RequirementFitSummary {
 }
 
 export interface RequirementFitReport {
-  readonly jobKey: string;
+  readonly jobId: string;
   readonly scoreVersion: number;
   readonly employerAnalysisGeneration: number;
   readonly profileSnapshotVersion: number;

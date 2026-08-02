@@ -2362,7 +2362,7 @@ export interface RequirementFitSummary {
 }
 
 export interface RequirementFitReport {
-  jobKey: string;
+  jobId: string;
   scoreVersion: number;
   employerAnalysisGeneration: number;
   profileSnapshotVersion: number;
@@ -2506,7 +2506,7 @@ export interface InterviewPrepItem {
 }
 
 export interface InterviewPrep {
-  jobKey: string;
+  jobId: string;
   generation: number;
   status: InterviewPrepStatus;
   generatedAt: string;

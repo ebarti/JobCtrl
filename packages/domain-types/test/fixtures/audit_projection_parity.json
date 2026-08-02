@@ -735,7 +735,7 @@
             ]
           }
         ],
-        "jobKey": "https://example.com/jobs/parity-developer-platform",
+        "jobId": "https://example.com/jobs/parity-developer-platform",
         "model": "gpt-test",
         "status": "accepted"
       },
@@ -1170,7 +1170,7 @@
       ]
     },
     "interviewPrepJson": {
-      "jobKey": "https://example.com/jobs/parity-developer-platform",
+      "jobId": "https://example.com/jobs/parity-developer-platform",
       "generation": 2,
       "status": "accepted",
       "generatedAt": "2026-06-08T12:25:00+00:00",
