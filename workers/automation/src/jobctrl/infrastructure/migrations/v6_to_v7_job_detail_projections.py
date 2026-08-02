@@ -297,7 +297,7 @@ def _score_projection(
 ) -> dict[str, object]:
     row = candidate.execute(
         """
-        SELECT version, scored_at, breakdown_json, keywords_json,
+        SELECT version, fit_score, scored_at, breakdown_json, keywords_json,
                criteria_json, trace_json, correction_json
         FROM job_scores
         WHERE tenant_id = ? AND job_id = ?
@@ -309,6 +309,7 @@ def _score_projection(
     if row is None:
         return {
             "version": None,
+            "fit_score": None,
             "scored_at": None,
             "breakdown_json": None,
             "keywords_json": "[]",
@@ -317,13 +318,14 @@ def _score_projection(
             "trace_json": None,
             "correction_json": None,
         }
-    breakdown = _json_value(row[2], default={})
+    breakdown = _json_value(row[3], default={})
     legacy = isinstance(breakdown, dict) and breakdown.get("legacy") is True
     reasoning = breakdown.get("reasoning", "") if isinstance(breakdown, dict) else ""
-    keywords = _json_value(row[3], default=[])
+    keywords = _json_value(row[4], default=[])
     return {
         "version": row[0],
-        "scored_at": row[1],
+        "fit_score": row[1],
+        "scored_at": row[2],
         "breakdown_json": (
             None
             if legacy
@@ -332,9 +334,9 @@ def _score_projection(
         "keywords_json": _json([] if legacy and keywords == ["legacy"] else keywords),
         "reasoning": reasoning if isinstance(reasoning, str) else "",
         # Criteria, trace, and correction are opaque generation-time audit data.
-        "criteria_json": row[4],
-        "trace_json": row[5],
-        "correction_json": row[6],
+        "criteria_json": row[5],
+        "trace_json": row[6],
+        "correction_json": row[7],
     }
 
 
