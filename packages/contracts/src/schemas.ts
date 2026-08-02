@@ -2183,6 +2183,76 @@ export const ScoringKeywordAggregationResponseSchema = z
   .strict();
 export type ScoringKeywordAggregationResponse = z.infer<typeof ScoringKeywordAggregationResponseSchema>;
 
+const LearningRecommendationIdSchema = z
+  .string()
+  .regex(/^learning-recommendation:[a-f0-9]{64}$/);
+
+export const LearningRecommendationListQuerySchema = z
+  .object({
+    page: z.coerce.number().int().min(1).default(1).catch(1),
+    pageSize: z.coerce.number().int().min(1).max(100).optional().catch(undefined),
+    page_size: z.coerce.number().int().min(1).max(100).optional().catch(undefined),
+  })
+  .transform((value) => ({
+    page: value.page,
+    pageSize: value.pageSize ?? value.page_size ?? 50,
+  }));
+export type LearningRecommendationListQuery = z.infer<
+  typeof LearningRecommendationListQuerySchema
+>;
+
+export const LearningRecommendationSummarySchema = z
+  .object({
+    recommendationId: LearningRecommendationIdSchema,
+    derivationVersion: z.number().int().positive(),
+    evaluationFixtureVersion: z.number().int().positive(),
+    context: z.literal("materials"),
+    policyKind: z.literal("tailoring_rule"),
+    signalKind: z.enum([
+      "style_preference",
+      "factual_correction",
+      "claim_policy_correction",
+      "keyword_strategy",
+      "provenance_dispute",
+    ]),
+    ruleKey: z.string().min(1).max(80).regex(/^[a-z0-9_]+$/),
+    ruleValue: z.string().min(1).max(160).regex(/^[a-z0-9_]+$/),
+    allowlistVersion: z.number().int().positive(),
+    status: z.literal("pending"),
+    active: z.boolean(),
+    observedSignalCount: z.number().int().min(3),
+    observedJobCount: z.number().int().min(2),
+    minimumSignalCount: z.number().int().min(3),
+    minimumJobCount: z.number().int().min(2),
+    confidenceLimit: z.literal("sample_gated_no_population_inference"),
+    supportingEvidenceCount: z.number().int().min(3),
+    contradictingEvidenceCount: z.number().int().nonnegative(),
+    tombstoneCount: z.number().int().nonnegative(),
+    derivedAt: IsoTimestampSchema,
+  })
+  .strict();
+export type LearningRecommendationSummary = z.infer<
+  typeof LearningRecommendationSummarySchema
+>;
+
+export const LearningRecommendationListResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    recommendations: z.array(LearningRecommendationSummarySchema).max(100),
+    page: z.number().int().min(1),
+    pageSize: z.number().int().min(1).max(100),
+    total: z.number().int().nonnegative(),
+    totalPages: z.number().int().nonnegative(),
+  })
+  .strict()
+  .refine(
+    (value) => value.recommendations.length <= value.pageSize,
+    "Recommendation page exceeds its declared page size.",
+  );
+export type LearningRecommendationListResponse = z.infer<
+  typeof LearningRecommendationListResponseSchema
+>;
+
 export const ArtifactListQuerySchema = z
   .object({
     page: z.coerce.number().int().min(1).default(1).catch(1),

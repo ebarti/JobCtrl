@@ -83,6 +83,8 @@ import type {
   JobDetail,
   JobApplicationOutcomeListResponse,
   JobListQuery,
+  LearningRecommendationListResponse,
+  LearningRecommendationListQuery,
   JobMutationResponse,
   JobSummary,
   MarkJobActionRequest,
@@ -154,6 +156,7 @@ import type {
   WorkflowRunSummary,
   WorkflowRunsListQuery,
 } from "@jobctrl/contracts";
+import { LearningRecommendationListResponseSchema } from "@jobctrl/contracts";
 
 type QueryValue = boolean | number | string | null | undefined;
 const DEFAULT_NODE_BASE_URL = "http://127.0.0.1:8766";
@@ -243,6 +246,14 @@ export class JobCtrlApiClient {
 
   scoringKeywords(): Promise<ScoringKeywordAggregationResponse> {
     return this.get("/v1/scoring/keywords");
+  }
+
+  async learningRecommendations(
+    query: Partial<LearningRecommendationListQuery> = {},
+  ): Promise<LearningRecommendationListResponse> {
+    return LearningRecommendationListResponseSchema.parse(
+      await this.get("/v1/learning/recommendations", query),
+    );
   }
 
   digest(): Promise<DailyDigest> {
