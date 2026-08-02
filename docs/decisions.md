@@ -38,6 +38,7 @@ the Historical Spec Ledger in `plans/README.md`.
 - [Per-Aggregate Repositories](#_2026-05-06-per-aggregate-repositories) · 2026-05-06
 - [In-Process EventPublisher + Read-Model Projections](#_2026-05-06-in-process-eventpublisher-read-model-projections) · 2026-05-06
 - [JSON-RPC 2.0 for the TS API ↔ Python Worker](#_2026-05-06-json-rpc-2-0-for-the-ts-api-↔-python-worker) · 2026-05-06
+- [Stable Job Identity And Human-Approved Feedback Learning](#_2026-07-29-stable-job-identity-and-human-approved-feedback-learning) · 2026-07-29
 - [Contact and Outreach Bounded Context With No Auto-Send](#_2026-07-06-contact-and-outreach-bounded-context-with-no-auto-send) · 2026-07-06
 
 **Frontend architecture**
@@ -2130,3 +2131,73 @@ Consequences:
 Cites: `docs/plans/implemented/2026-07-17-resumable-jobstreaming-discovery-plan.md`;
 `docs/architecture/pipeline/envelope.md`; `docs/architecture/storage.md`;
 `workers/automation/tests/test_jobstreaming_resumable_discovery.py`.
+
+## 2026-07-29: Stable Job Identity And Human-Approved Feedback Learning
+
+Status: accepted
+
+Decision: `JobId` is an opaque, system-generated UUID and the canonical
+tenant-scoped identity of a job. Posting and application URLs are external
+locators; content and duplicate observations are explicit deduplication
+evidence rather than identity. Canonical storage, cross-context references,
+events, projections, API contracts, and routes move to `JobId`. A guarded
+locator boundary may resolve a posting URL during the one forward migration or
+an explicit user/API/import lookup, but current repositories and contracts must
+not inspect legacy schema shapes or emit URL-shaped identity.
+
+JobCtrl unifies its existing score-correction calibration anchors, approved
+role-match title exclusions, and structured tailoring-review feedback through
+typed, provenance-backed `FeedbackSignal` facts and deterministic, versioned
+`LearningRecommendation` proposals. The shipped scoring and discovery paths
+remain intact and become visible through the shared audit contract rather than
+being duplicated. Only explicit reviewed actions become signals.
+Recommendations are inspectable and rejectable, show support and contradiction,
+and cannot execute. Accepting one creates a new versioned policy or preference
+revision; a direct score correction or role-rule approval already constitutes
+that explicit user action. Neither path rewrites the profile, prior scores,
+accepted artifacts, thresholds, outcomes, or Apply decisions. Existing work
+changes only through the normal explicit rescore, re-tailor, or future-work
+path. Outcome associations stay sample-gated, descriptive, and insufficient on
+their own to generate a policy recommendation.
+
+Rationale:
+
+- URLs change and can have multiple source observations, so they cannot safely
+  own durable aggregate identity;
+- source board and employer are different facts and must not be inferred from
+  each other;
+- canonical projection inputs and DB-backed artifacts prevent read models from
+  presenting fabricated state;
+- explicit user feedback can improve future work without granting an inferred
+  or model-authored signal authority over user data; and
+- versioned recommendations preserve provenance, review, rollback, and the
+  difference between correlation and causation.
+
+Consequences:
+
+- the locally installed application advances once from shipped schema v6 to
+  exact schema v7: stop the old runtime, require old-identity workflows to be
+  idle, take a paired SQLite/Temporal backup, run one transactional migration,
+  verify it, and start only the v7 runtime;
+- review PR boundaries never create schema versions or mixed-version runtime
+  modes; historical event upcasting runs only inside the migration, and current
+  repositories perform no dual reads, dual writes, legacy-column fallback, or
+  runtime table-shape detection;
+- `Source.board`, `Employer.name`, and normalized scoring keywords become
+  separately persisted canonical fields;
+- Discover, JobPreparation, and Apply use one run-history and cancellation
+  contract, while exact SSE patches preserve active list context;
+- raw notes, resumes, job descriptions, mail bodies, prompts, model output,
+  credentials, and local paths stay outside the learning ledger and broad
+  projections; and
+- Scoring, Discovery, and Materials retain ownership of their own closed
+  revision types; Operations exposes only a read union, and tailoring
+  recommendations require allowlisted structured facts plus deterministic
+  quality/privacy fixtures; and
+- the accepted work ships as small stacked PRs with cumulative Tier 3
+  migration, privacy, workflow, and product QA on the final branch.
+
+Cites:
+`docs/plans/2026-07-29-stable-job-identity-workflow-feedback-learning.md`;
+`docs/architecture/domain-model/tactical.md`;
+`docs/user/outcomes-and-feedback.md`.

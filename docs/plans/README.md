@@ -8,11 +8,11 @@ at the top of `docs/`.
   that has landed, been superseded by canonical docs, or been closed with a
   recorded outcome.
 
-As of 2026-07-29, no accepted public implementation plans remain active at the
-top level. Bundled distribution and the public live demo are delivered and
-archived under `implemented/`; their separately deferred operational and
-privacy follow-ups live in `docs/publish-checklist.md` and `docs/backlog.md`.
-Add new accepted-but-not-yet-delivered public product plans at the top level.
+As of 2026-07-29, one accepted public implementation plan is active at the top
+level. Bundled distribution and the public live demo are delivered and archived
+under `implemented/`; their separately deferred operational and privacy
+follow-ups live in `docs/publish-checklist.md` and `docs/backlog.md`. Add new
+accepted-but-not-yet-delivered public product plans at the top level.
 
 This is a public repository. Owner-only launch/growth strategy, campaign
 sequencing, targeting, unpublished messaging, and private traffic or conversion
@@ -31,7 +31,8 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 
 ## Active Plans
 
-None.
+- [Stable Job Identity, Workflow Parity, And Feedback Learning](2026-07-29-stable-job-identity-workflow-feedback-learning.md)
+  — accepted; implementation in progress as small stacked PRs.
 
 ## Historical Spec Ledger
 
