@@ -9,6 +9,7 @@ import {
   CREDENTIAL_VALUE_MAX_LENGTH,
   CredentialKeys,
   JsonRpcErrorCodes,
+  LearningRecommendationEvidenceListResponseSchema,
   LearningRecommendationListResponseSchema,
   PipelineOperationsSnapshotSchema,
   ProviderConfigurationKeys,
@@ -2536,6 +2537,166 @@ describe("local TypeScript API", () => {
       expect.objectContaining({ method: "GET" }),
     );
     fetchMock.mockRestore();
+    const unchanged = new Database(options.dbPath);
+    expect(learningAuditSnapshot(unchanged)).toBe(auditBefore);
+    unchanged.close();
+    await app.close();
+  });
+
+  it("serves paginated recommendation evidence links without source content", async () => {
+    const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
+    const otherTenantRecommendationId = `learning-recommendation:${"b".repeat(64)}`;
+    const db = new Database(options.dbPath);
+    insertLearningRecommendationFixture(db, {
+      tenantId: "local",
+      recommendationId,
+      tombstoned: false,
+    });
+    insertLearningRecommendationFixture(db, {
+      tenantId: "other",
+      recommendationId: otherTenantRecommendationId,
+      tombstoned: false,
+    });
+    const auditBefore = learningAuditSnapshot(db);
+    db.close();
+
+    const app = buildApp(options);
+    const firstResponse = await app.inject({
+      method: "GET",
+      url: `/v1/learning/recommendations/${encodeURIComponent(recommendationId)}/evidence?page=1&pageSize=3`,
+    });
+
+    expect(firstResponse.statusCode, firstResponse.body).toBe(200);
+    const firstPage = LearningRecommendationEvidenceListResponseSchema.parse(
+      firstResponse.json(),
+    );
+    expect(firstPage).toMatchObject({
+      recommendationId,
+      page: 1,
+      pageSize: 3,
+      total: 4,
+      totalPages: 2,
+    });
+    expect(firstPage.evidence).toEqual([
+      {
+        signalId: "signal-local-1",
+        evidenceRole: "supporting",
+        sourceKind: "tailoring_feedback_signal",
+        sourceRevision: 1,
+        jobId: "11111111-1111-4111-8111-111111111111",
+        recordedAt: "2026-08-01T10:00:01.000Z",
+      },
+      {
+        signalId: "signal-local-2",
+        evidenceRole: "supporting",
+        sourceKind: "tailoring_feedback_signal",
+        sourceRevision: 2,
+        jobId: "11111111-1111-4111-8111-111111111111",
+        recordedAt: "2026-08-01T10:00:02.000Z",
+      },
+      {
+        signalId: "signal-local-3",
+        evidenceRole: "supporting",
+        sourceKind: "tailoring_feedback_signal",
+        sourceRevision: 3,
+        jobId: "22222222-2222-4222-8222-222222222222",
+        recordedAt: "2026-08-01T10:00:03.000Z",
+      },
+    ]);
+    expect(firstResponse.body).not.toContain(
+      "private resume, prompt, note, and job description",
+    );
+    expect(firstResponse.body).not.toContain("source-local-1");
+
+    const secondResponse = await app.inject({
+      method: "GET",
+      url: `/v1/learning/recommendations/${encodeURIComponent(recommendationId)}/evidence?page=2&pageSize=3`,
+    });
+    expect(secondResponse.statusCode, secondResponse.body).toBe(200);
+    const secondPage = LearningRecommendationEvidenceListResponseSchema.parse(
+      secondResponse.json(),
+    );
+    expect(secondPage.evidence).toEqual([
+      {
+        signalId: "contradiction-local",
+        evidenceRole: "contradicting",
+        sourceKind: "tailoring_feedback_signal",
+        sourceRevision: 4,
+        jobId: "33333333-3333-4333-8333-333333333333",
+        recordedAt: "2026-08-01T10:00:04.000Z",
+      },
+    ]);
+    expect(secondResponse.body).not.toContain(
+      "private resume, prompt, note, and job description",
+    );
+
+    const otherTenant = await app.inject({
+      method: "GET",
+      url: `/v1/learning/recommendations/${encodeURIComponent(otherTenantRecommendationId)}/evidence`,
+    });
+    expect(otherTenant.statusCode, otherTenant.body).toBe(404);
+    expect(otherTenant.json()).toEqual({
+      ok: false,
+      error: "learning_recommendation_not_found",
+    });
+    const invalid = await app.inject({
+      method: "GET",
+      url: `/v1/learning/recommendations/${encodeURIComponent("https://jobs.example/not-an-id")}/evidence`,
+    });
+    expect(invalid.statusCode, invalid.body).toBe(400);
+    expect(invalid.json()).toEqual({
+      ok: false,
+      error: "invalid_learning_recommendation_id",
+    });
+    expect(() =>
+      LearningRecommendationEvidenceListResponseSchema.parse({
+        ...firstPage,
+        evidence: [
+          {
+            ...firstPage.evidence[0],
+            signalId: "private free text",
+          },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      LearningRecommendationEvidenceListResponseSchema.parse({
+        ...firstPage,
+        evidence: [
+          {
+            ...firstPage.evidence[0],
+            jobId: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+          },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      LearningRecommendationEvidenceListResponseSchema.parse({
+        ...firstPage,
+        evidence: [
+          {
+            ...firstPage.evidence[0],
+            jobId: "https://jobs.example/url-is-not-a-job-id",
+          },
+        ],
+      }),
+    ).toThrow();
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(firstResponse.body, { status: 200, statusText: "OK" }),
+    );
+    await expect(
+      createJobCtrlApiClient().learningRecommendationEvidence(recommendationId, {
+        page: 1,
+        pageSize: 3,
+      }),
+    ).resolves.toEqual(firstPage);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://127.0.0.1:8766/v1/learning/recommendations/${encodeURIComponent(recommendationId)}/evidence?page=1&pageSize=3`,
+      expect.objectContaining({ method: "GET" }),
+    );
+    fetchMock.mockRestore();
+
     const unchanged = new Database(options.dbPath);
     expect(learningAuditSnapshot(unchanged)).toBe(auditBefore);
     unchanged.close();
