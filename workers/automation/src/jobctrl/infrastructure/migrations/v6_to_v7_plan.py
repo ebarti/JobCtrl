@@ -239,6 +239,7 @@ def _table_plans() -> dict[str, TablePlan]:
     # evidence, or tombstone rows, so all begin empty after cutover.
     for table in (
         "learning_recommendation_evidence",
+        "learning_recommendation_evidence_jobs",
         "learning_recommendation_jobs",
         "learning_recommendation_tombstones",
         "learning_recommendations",
@@ -405,6 +406,7 @@ _TARGET_JOB_ID_COLUMNS: Final = frozenset(
         ("job_duplicate_links", "surviving_job_id"),
         ("job_events", "job_id"),
         ("job_locators", "job_id"),
+        ("learning_recommendation_evidence_jobs", "job_id"),
         ("learning_recommendation_jobs", "job_id"),
         ("job_score_keywords", "job_id"),
         ("jobs", "job_id"),
@@ -516,6 +518,7 @@ _DECLARED_COLUMNS: Final[Mapping[str, frozenset[str]]] = _column_manifest(
         "jobs": "url title company salary description location site strategy discovered_at full_description application_url detail_scraped_at detail_error fit_score score_reasoning scored_at tailored_resume_path tailored_at tailor_attempts cover_letter_path cover_letter_at cover_attempts applied_at apply_status apply_error apply_attempts agent_id last_attempted_at apply_duration_ms apply_task_id verification_confidence tenant_id job_id",
         "llm_spend": "day input_tokens output_tokens estimated_usd",
         "learning_recommendation_evidence": "tenant_id recommendation_id signal_id evidence_role source_kind source_id source_revision recorded_at",
+        "learning_recommendation_evidence_jobs": "tenant_id recommendation_id signal_id job_id",
         "learning_recommendation_jobs": "tenant_id recommendation_id job_id",
         "learning_recommendation_tombstones": "tenant_id tombstone_id recommendation_id affected_signal_id affected_source_revision reason_code derivation_version tombstoned_at rederived_at replacement_recommendation_id",
         "learning_recommendations": "tenant_id recommendation_id derivation_version evaluation_fixture_version context policy_kind signal_kind rule_key rule_value allowlist_version status observed_signal_count observed_job_count minimum_signal_count minimum_job_count confidence_limit input_fingerprint derived_at",

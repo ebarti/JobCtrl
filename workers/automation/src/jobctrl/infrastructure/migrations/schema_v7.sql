@@ -1869,6 +1869,55 @@ BEGIN
       AND recommendation_id = NEW.recommendation_id
   ) != NEW.observed_job_count
   THEN RAISE(ABORT, 'learning recommendation job count mismatch') END;
+  SELECT CASE WHEN EXISTS (
+    SELECT 1
+    FROM learning_recommendation_evidence AS evidence
+    WHERE evidence.tenant_id = NEW.tenant_id
+      AND evidence.recommendation_id = NEW.recommendation_id
+      AND NOT EXISTS (
+        SELECT 1
+        FROM learning_recommendation_evidence_jobs AS evidence_job
+        WHERE evidence_job.tenant_id = evidence.tenant_id
+          AND evidence_job.recommendation_id = evidence.recommendation_id
+          AND evidence_job.signal_id = evidence.signal_id
+      )
+  ) THEN RAISE(ABORT, 'learning recommendation evidence job provenance missing') END;
+  SELECT CASE WHEN EXISTS (
+    SELECT 1
+    FROM learning_recommendation_evidence AS evidence
+    JOIN learning_recommendation_evidence_jobs AS evidence_job
+      ON evidence_job.tenant_id = evidence.tenant_id
+     AND evidence_job.recommendation_id = evidence.recommendation_id
+     AND evidence_job.signal_id = evidence.signal_id
+    WHERE evidence.tenant_id = NEW.tenant_id
+      AND evidence.recommendation_id = NEW.recommendation_id
+      AND evidence.evidence_role = 'supporting'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM learning_recommendation_jobs AS recommendation_job
+        WHERE recommendation_job.tenant_id = evidence_job.tenant_id
+          AND recommendation_job.recommendation_id = evidence_job.recommendation_id
+          AND recommendation_job.job_id = evidence_job.job_id
+      )
+  ) THEN RAISE(ABORT, 'learning recommendation supporting evidence job mismatch') END;
+  SELECT CASE WHEN EXISTS (
+    SELECT 1
+    FROM learning_recommendation_jobs AS recommendation_job
+    WHERE recommendation_job.tenant_id = NEW.tenant_id
+      AND recommendation_job.recommendation_id = NEW.recommendation_id
+      AND NOT EXISTS (
+        SELECT 1
+        FROM learning_recommendation_evidence_jobs AS evidence_job
+        JOIN learning_recommendation_evidence AS evidence
+          ON evidence.tenant_id = evidence_job.tenant_id
+         AND evidence.recommendation_id = evidence_job.recommendation_id
+         AND evidence.signal_id = evidence_job.signal_id
+        WHERE evidence_job.tenant_id = recommendation_job.tenant_id
+          AND evidence_job.recommendation_id = recommendation_job.recommendation_id
+          AND evidence_job.job_id = recommendation_job.job_id
+          AND evidence.evidence_role = 'supporting'
+      )
+  ) THEN RAISE(ABORT, 'learning recommendation job lacks supporting evidence') END;
 END;
 CREATE TABLE learning_recommendation_evidence (
       tenant_id         TEXT NOT NULL DEFAULT 'local',
@@ -1904,6 +1953,48 @@ CREATE TRIGGER prevent_learning_recommendation_evidence_delete
 BEFORE DELETE ON learning_recommendation_evidence
 BEGIN
   SELECT RAISE(ABORT, 'learning recommendation evidence is append-only');
+END;
+CREATE TABLE learning_recommendation_evidence_jobs (
+      tenant_id         TEXT NOT NULL DEFAULT 'local',
+      recommendation_id TEXT NOT NULL,
+      signal_id         TEXT NOT NULL,
+      job_id            TEXT NOT NULL CHECK(
+        length(job_id) = 36
+        AND substr(job_id, 9, 1) = '-'
+        AND substr(job_id, 14, 1) = '-'
+        AND substr(job_id, 19, 1) = '-'
+        AND substr(job_id, 24, 1) = '-'
+        AND replace(job_id, '-', '') NOT GLOB '*[^a-f0-9]*'
+      ),
+      PRIMARY KEY (tenant_id, recommendation_id, signal_id, job_id),
+      FOREIGN KEY (tenant_id, recommendation_id, signal_id)
+        REFERENCES learning_recommendation_evidence(
+          tenant_id,
+          recommendation_id,
+          signal_id
+        )
+        ON DELETE RESTRICT
+        DEFERRABLE INITIALLY DEFERRED
+    );
+CREATE TRIGGER prevent_learning_recommendation_evidence_job_after_seal
+BEFORE INSERT ON learning_recommendation_evidence_jobs
+WHEN EXISTS (
+  SELECT 1 FROM learning_recommendations
+  WHERE tenant_id = NEW.tenant_id
+    AND recommendation_id = NEW.recommendation_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation evidence jobs are sealed');
+END;
+CREATE TRIGGER prevent_learning_recommendation_evidence_job_update
+BEFORE UPDATE ON learning_recommendation_evidence_jobs
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation evidence jobs are append-only');
+END;
+CREATE TRIGGER prevent_learning_recommendation_evidence_job_delete
+BEFORE DELETE ON learning_recommendation_evidence_jobs
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation evidence jobs are append-only');
 END;
 CREATE TABLE learning_recommendation_jobs (
       tenant_id         TEXT NOT NULL DEFAULT 'local',
@@ -2374,6 +2465,13 @@ CREATE INDEX idx_learning_recommendations_tenant_derived
       ON learning_recommendations(tenant_id, derived_at DESC, recommendation_id);
 CREATE INDEX idx_learning_recommendation_evidence_signal
       ON learning_recommendation_evidence(tenant_id, signal_id, evidence_role);
+CREATE INDEX idx_learning_recommendation_evidence_jobs_job
+      ON learning_recommendation_evidence_jobs(
+        tenant_id,
+        job_id,
+        recommendation_id,
+        signal_id
+      );
 CREATE INDEX idx_learning_recommendation_jobs_job
       ON learning_recommendation_jobs(tenant_id, job_id, recommendation_id);
 CREATE INDEX idx_learning_recommendation_tombstones_recommendation
