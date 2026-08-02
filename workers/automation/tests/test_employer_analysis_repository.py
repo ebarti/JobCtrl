@@ -26,10 +26,12 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysisDraft,
     compute_snapshot_hash,
 )
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.materials import SqliteEmployerAnalysisRepository
 
+JOB_ID = JobId("00000000-0000-4000-8000-000000000031")
 JOB_URL = "https://example.com/jobs/staff-be"
+OTHER_TENANT = TenantId("other")
 JD = "Staff Backend Engineer. Requires 8+ years in Go. Kafka is a plus."
 
 
@@ -38,8 +40,17 @@ def conn(tmp_path) -> Iterator[sqlite3.Connection]:
     db_path = tmp_path / "jobs.db"
     connection = init_db(db_path)
     connection.execute(
-        "INSERT INTO jobs (url, title, site) VALUES (?, ?, ?)",
-        (JOB_URL, "Staff Backend Engineer", "example"),
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, site)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(JOB_ID),
+            JOB_URL,
+            "Staff Backend Engineer",
+            "example",
+        ),
     )
     connection.commit()
     yield connection
@@ -60,16 +71,19 @@ def _analysis() -> JobAnalysis:
                 "evidence_span": "8+ years in Go",
             }
         ],
-        keywords=[
-            {"keyword": "Go", "evidence_span": "8+ years in Go", "requirement_ref": "r1"}
-        ],
+        keywords=[{"keyword": "Go", "evidence_span": "8+ years in Go", "requirement_ref": "r1"}],
     )
 
 
-def _record(generation: int) -> EmployerAnalysis:
+def _record(
+    generation: int,
+    *,
+    job_id: JobId = JOB_ID,
+    tenant_id: TenantId = LOCAL_TENANT,
+) -> EmployerAnalysis:
     return EmployerAnalysis.build(
-        tenant_id=LOCAL_TENANT,
-        job_id=JobId(JOB_URL),
+        tenant_id=tenant_id,
+        job_id=job_id,
         generation=generation,
         snapshot_hash=compute_snapshot_hash(JD),
         canonical=_analysis(),
@@ -84,7 +98,7 @@ def test_round_trip_preserves_canonical_subanalyses_failures(conn: sqlite3.Conne
     repo = SqliteEmployerAnalysisRepository(conn)
     repo.save(_record(generation=1))
 
-    loaded = repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    loaded = repo.load(LOCAL_TENANT, JOB_ID)
     assert loaded is not None
     assert loaded.generation == 1
     assert loaded.canonical.requirements[0].tier == "must_have"
@@ -102,19 +116,19 @@ def test_cache_hit_by_snapshot_and_version(conn: sqlite3.Connection) -> None:
     record = _record(generation=1)
     repo.save(record)
 
-    hit = repo.get_by_cache_key(LOCAL_TENANT, JobId(JOB_URL), record.cache_key)
+    hit = repo.get_by_cache_key(LOCAL_TENANT, JOB_ID, record.cache_key)
     assert hit is not None
     assert hit.generation == 1
 
-    miss = repo.get_by_cache_key(LOCAL_TENANT, JobId(JOB_URL), "different-snapshot:p:s")
+    miss = repo.get_by_cache_key(LOCAL_TENANT, JOB_ID, "different-snapshot:p:s")
     assert miss is None
 
 
 def test_next_generation_is_monotonic(conn: sqlite3.Connection) -> None:
     repo = SqliteEmployerAnalysisRepository(conn)
-    assert repo.next_generation(LOCAL_TENANT, JobId(JOB_URL)) == 1
+    assert repo.next_generation(LOCAL_TENANT, JOB_ID) == 1
     repo.save(_record(generation=1))
-    assert repo.next_generation(LOCAL_TENANT, JobId(JOB_URL)) == 2
+    assert repo.next_generation(LOCAL_TENANT, JOB_ID) == 2
 
 
 def test_new_generation_supersedes_but_does_not_destroy_prior(conn: sqlite3.Connection) -> None:
@@ -123,10 +137,10 @@ def test_new_generation_supersedes_but_does_not_destroy_prior(conn: sqlite3.Conn
     repo.save(_record(generation=2))
 
     # load() returns the latest...
-    latest = repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    latest = repo.load(LOCAL_TENANT, JOB_ID)
     assert latest is not None and latest.generation == 2
     # ...but the prior generation remains as audit history (D-13).
-    prior = repo.load(LOCAL_TENANT, JobId(JOB_URL), generation=1)
+    prior = repo.load(LOCAL_TENANT, JOB_ID, generation=1)
     assert prior is not None and prior.generation == 1
 
 
@@ -134,7 +148,7 @@ def test_round_trip_preserves_eeo_screen_hits(conn: sqlite3.Connection) -> None:
     repo = SqliteEmployerAnalysisRepository(conn)
     record = EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(JOB_URL),
+        job_id=JOB_ID,
         generation=1,
         snapshot_hash=compute_snapshot_hash(JD),
         canonical=_analysis(),
@@ -153,7 +167,7 @@ def test_round_trip_preserves_eeo_screen_hits(conn: sqlite3.Connection) -> None:
     )
     repo.save(record)
 
-    loaded = repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    loaded = repo.load(LOCAL_TENANT, JOB_ID)
     assert loaded is not None
     assert loaded.eeo_screen_hits == record.eeo_screen_hits
 
@@ -164,7 +178,7 @@ def test_resave_same_generation_overwrites_children(conn: sqlite3.Connection) ->
     # Re-save the same generation with no failures -> child rows replaced.
     no_failures = EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(JOB_URL),
+        job_id=JOB_ID,
         generation=1,
         snapshot_hash=compute_snapshot_hash(JD),
         canonical=_analysis(),
@@ -174,7 +188,99 @@ def test_resave_same_generation_overwrites_children(conn: sqlite3.Connection) ->
         legs_attempted=1,
     )
     repo.save(no_failures)
-    loaded = repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    loaded = repo.load(LOCAL_TENANT, JOB_ID)
     assert loaded is not None
     assert loaded.failures == ()
     assert loaded.ensemble_completeness == "1/1"
+
+
+def test_failed_child_replacement_preserves_complete_prior_aggregate(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteEmployerAnalysisRepository(conn)
+    prior = _record(generation=1)
+    repo.save(prior)
+    draft = JobAnalysisDraft(
+        model_id="duplicate-model",
+        **_analysis().model_dump(),
+    )
+    invalid_replacement = EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=JOB_ID,
+        generation=1,
+        snapshot_hash="replacement-snapshot",
+        canonical=_analysis().model_copy(update={"role_framing": "Replacement framing."}),
+        sub_analyses=(draft, draft),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=2,
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        repo.save(invalid_replacement)
+
+    assert conn.in_transaction is False
+    conn.commit()
+    preserved = repo.load(LOCAL_TENANT, JOB_ID)
+    assert preserved is not None
+    assert preserved.snapshot_hash == prior.snapshot_hash
+    assert preserved.canonical.role_framing == prior.canonical.role_framing
+    assert preserved.failures == prior.failures
+    assert preserved.sub_analyses == prior.sub_analyses
+
+
+def test_repository_requires_canonical_job_id(conn: sqlite3.Connection) -> None:
+    repo = SqliteEmployerAnalysisRepository(conn)
+
+    with pytest.raises(ValueError, match="canonical UUID"):
+        repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    with pytest.raises(ValueError, match="canonical UUID"):
+        repo.get_by_cache_key(LOCAL_TENANT, JobId(JOB_URL), "cache-key")
+    with pytest.raises(ValueError, match="canonical UUID"):
+        repo.next_generation(LOCAL_TENANT, JobId(JOB_URL))
+    with pytest.raises(ValueError, match="canonical UUID"):
+        repo.save(_record(generation=1, job_id=JobId(JOB_URL)))
+
+
+def test_repository_does_not_create_runtime_schema() -> None:
+    connection = sqlite3.connect(":memory:")
+    try:
+        SqliteEmployerAnalysisRepository(connection)
+
+        tables = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        assert tables == []
+    finally:
+        connection.close()
+
+
+def test_same_job_id_is_isolated_by_tenant(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, site)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            str(OTHER_TENANT),
+            str(JOB_ID),
+            JOB_URL,
+            "Staff Backend Engineer",
+            "example",
+        ),
+    )
+    conn.commit()
+    repo = SqliteEmployerAnalysisRepository(conn)
+
+    repo.save(_record(generation=1))
+    repo.save(_record(generation=1, tenant_id=OTHER_TENANT))
+
+    local = repo.load(LOCAL_TENANT, JOB_ID)
+    other = repo.load(OTHER_TENANT, JOB_ID)
+    assert local is not None and local.tenant_id == LOCAL_TENANT
+    assert other is not None and other.tenant_id == OTHER_TENANT
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_employer_analysis WHERE job_id = ? AND generation = 1",
+            (str(JOB_ID),),
+        ).fetchone()[0]
+        == 2
+    )
