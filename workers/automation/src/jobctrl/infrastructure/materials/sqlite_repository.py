@@ -27,7 +27,7 @@ from jobctrl.database import effective_tailoring_min_score, ensure_tailoring_pol
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.aggregate import MaterialsSet
 from jobctrl.domain.materials.entities import Artifact
-from jobctrl.domain.materials.policy import TailoringPolicy
+from jobctrl.domain.materials.policy import TailoringPolicy, TailoringPolicyChangedError
 from jobctrl.domain.materials.value_objects import (
     ArtifactStatus,
     ArtifactType,
@@ -999,10 +999,28 @@ class SqliteTailoringPolicyRepository:
             ),
         )
 
-    def resolve_current(self, candidate: TailoringPolicy) -> TailoringPolicy:
+    def resolve_current(
+        self,
+        candidate: TailoringPolicy,
+        *,
+        expected_current_version: int | None = None,
+    ) -> TailoringPolicy:
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             current = self.get_current(candidate.tenant_id)
+            actual_current_version = 0 if current is None else current.version
+            if (
+                expected_current_version is not None
+                and actual_current_version != expected_current_version
+            ):
+                raise TailoringPolicyChangedError(
+                    "tailoring policy advanced before artifact persistence"
+                )
+            if current is not None and current.learned_tailoring_rules.rules:
+                candidate = candidate.with_learned_tailoring_rules(
+                    current.learned_tailoring_rules,
+                    created_at=candidate.created_at,
+                )
             if current is not None and current.same_config_as(candidate):
                 self._conn.commit()
                 return current
