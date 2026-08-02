@@ -133,6 +133,8 @@ import type {
   ResumeReviewDraftRevisionResponse,
   ResumeReviewDraftRevisionSaveRequest,
   ResumeReviewFeedbackListResponse,
+  TailoringFeedbackSignalReviewRequest,
+  TailoringFeedbackSignalReviewResponse,
   TailorJobRequest,
   RetryStageRequest,
   RunJobStageRequest,
@@ -508,6 +510,16 @@ export class JobCtrlApiClient {
   ): Promise<ResumeReviewFeedbackListResponse> {
     return this.get(
       `/v1/jobs/${encodeURIComponent(jobKey)}/resume-review/feedback`,
+    );
+  }
+
+  reviewResumeFeedbackSignal(
+    signalId: string,
+    body: TailoringFeedbackSignalReviewRequest,
+  ): Promise<TailoringFeedbackSignalReviewResponse> {
+    return this.post(
+      `/v1/resume-review/feedback-signals/${encodeURIComponent(signalId)}/reviews`,
+      body,
     );
   }
 

@@ -333,6 +333,140 @@ describe("resume review draft API", () => {
     await app.close();
   });
 
+  it("reviews tailoring feedback through the versioned allowlist without exposing source text", async () => {
+    const privateSource = "private source text must never enter the review response";
+    const app = buildApp(options);
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+    const draftId = createResponse.json().draft.draftId as string;
+    const revisionResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
+      payload: {
+        editedText: "Led 4 platform reliability projects.",
+        editDeltas: [
+          {
+            kind: "replace_text",
+            section: "experience",
+            beforeText: `Led 3 projects. ${privateSource}`,
+            afterText: "Led 4 platform reliability projects.",
+          },
+        ],
+      },
+    });
+    expect(revisionResponse.statusCode, revisionResponse.body).toBe(200);
+    const signalId = revisionResponse.json().draft.feedbackSignals[0].signalId as string;
+
+    const invalidResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/feedback-signals/${encodeURIComponent(signalId)}/reviews`,
+      payload: {
+        decision: "accepted",
+        ruleKey: "style_guidance",
+        ruleValue: "preserve_user_edit_pattern",
+      },
+    });
+    expect(invalidResponse.statusCode, invalidResponse.body).toBe(400);
+    expect(invalidResponse.json()).toMatchObject({
+      ok: false,
+      error: "invalid_tailoring_feedback_review",
+    });
+
+    const acceptedResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/feedback-signals/${encodeURIComponent(signalId)}/reviews`,
+      payload: {
+        decision: "accepted",
+        ruleKey: "fact_handling",
+        ruleValue: "require_source_match",
+      },
+    });
+    expect(acceptedResponse.statusCode, acceptedResponse.body).toBe(200);
+    expect(acceptedResponse.json().review).toMatchObject({
+      signalId,
+      revision: 1,
+      decision: "accepted",
+      signalKind: "factual_correction",
+      ruleKey: "fact_handling",
+      ruleValue: "require_source_match",
+      allowlistVersion: 1,
+    });
+    expect(Object.keys(acceptedResponse.json().review).sort()).toEqual([
+      "allowlistVersion",
+      "decision",
+      "reviewId",
+      "reviewedAt",
+      "revision",
+      "ruleKey",
+      "ruleValue",
+      "signalId",
+      "signalKind",
+    ]);
+    expect(JSON.stringify(acceptedResponse.json())).not.toContain(privateSource);
+
+    const repeatedResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/feedback-signals/${encodeURIComponent(signalId)}/reviews`,
+      payload: {
+        decision: "accepted",
+        ruleKey: "fact_handling",
+        ruleValue: "require_source_match",
+      },
+    });
+    expect(repeatedResponse.statusCode, repeatedResponse.body).toBe(200);
+    expect(repeatedResponse.json().review).toEqual(acceptedResponse.json().review);
+
+    const rejectedResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/feedback-signals/${encodeURIComponent(signalId)}/reviews`,
+      payload: { decision: "rejected" },
+    });
+    expect(rejectedResponse.statusCode, rejectedResponse.body).toBe(200);
+    expect(rejectedResponse.json().review).toMatchObject({
+      signalId,
+      revision: 2,
+      decision: "rejected",
+      ruleKey: null,
+      ruleValue: null,
+    });
+
+    const db = new Database(options.dbPath);
+    try {
+      const reviews = db
+        .prepare(
+          `SELECT revision, decision, rule_key, rule_value
+             FROM tailoring_feedback_signal_reviews
+            WHERE tenant_id = 'local' AND signal_id = ?
+            ORDER BY revision`,
+        )
+        .all(signalId);
+      expect(reviews).toEqual([
+        {
+          revision: 1,
+          decision: "accepted",
+          rule_key: "fact_handling",
+          rule_value: "require_source_match",
+        },
+        { revision: 2, decision: "rejected", rule_key: null, rule_value: null },
+      ]);
+      expect(
+        db
+          .prepare(
+            `SELECT status FROM tailoring_feedback_signals
+              WHERE tenant_id = 'local' AND signal_id = ?`,
+          )
+          .get(signalId),
+      ).toEqual({ status: "rejected" });
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
+
   it("persists comment replies as safe feedback without changing approved artifacts", async () => {
     const app = buildApp(options);
     const createResponse = await app.inject({

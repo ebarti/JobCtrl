@@ -35,6 +35,12 @@ from jobctrl.domain.operations.feedback import (
     RoleMatchApprovalFeedbackSignal,
     ScoreCorrectionDirection,
     ScoreCorrectionFeedbackSignal,
+    TAILORING_FEEDBACK_RULE_ALLOWLIST,
+    TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION,
+    TailoringFeedbackRuleKey,
+    TailoringFeedbackRuleValue,
+    TailoringFeedbackSignal,
+    TailoringFeedbackSignalKind,
 )
 
 __all__ = [
@@ -55,5 +61,11 @@ __all__ = [
     "RoleMatchApprovalFeedbackSignal",
     "ScoreCorrectionDirection",
     "ScoreCorrectionFeedbackSignal",
+    "TAILORING_FEEDBACK_RULE_ALLOWLIST",
+    "TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION",
     "StageProjection",
+    "TailoringFeedbackRuleKey",
+    "TailoringFeedbackRuleValue",
+    "TailoringFeedbackSignal",
+    "TailoringFeedbackSignalKind",
 ]

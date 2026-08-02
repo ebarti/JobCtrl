@@ -74,6 +74,7 @@ import {
   ResumeReviewDraftCreateRequestSchema,
   ResumeReviewDraftRenderRequestSchema,
   ResumeReviewDraftRevisionSaveRequestSchema,
+  TailoringFeedbackSignalReviewRequestSchema,
   RunPipelineStagesRequestSchema,
   SettingsUpdateRequestSchema,
   type ExtensionCapabilityTokenResponse,
@@ -248,10 +249,12 @@ import {
   createOrLoadResumeReviewDraft,
   getResumeReviewDraftForJob,
   listResumeReviewFeedback,
+  reviewResumeFeedbackSignal,
   replyToResumeReviewComment,
   renderResumeReviewDraft,
   saveResumeReviewDraftRevision,
   seedResumeReviewCommentThreads,
+  TailoringFeedbackReviewInputError,
 } from "./resume-review-drafts.js";
 import {
   createResumeTemplateVersion,
@@ -1050,6 +1053,23 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       withDb(reply, options.dbPath, (db) =>
         listResumeReviewFeedback(db, decodeRouteParam(request.params.jobKey)),
       ),
+  );
+
+  app.post<{ Params: { signalId: string } }>(
+    "/v1/resume-review/feedback-signals/:signalId/reviews",
+    async (request, reply) => {
+      const body = parseBody(
+        reply,
+        TailoringFeedbackSignalReviewRequestSchema,
+        request.body ?? {},
+      );
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        reviewResumeFeedbackSignal(db, decodeRouteParam(request.params.signalId), body),
+      );
+    },
   );
 
   app.post<{ Params: { draftId: string } }>(
@@ -3965,6 +3985,14 @@ async function withWritableDb<T>(
       return {
         ok: false,
         error: "role_match_feedback_decision_conflict",
+        message: error.message,
+      };
+    }
+    if (error instanceof TailoringFeedbackReviewInputError) {
+      void reply.code(400);
+      return {
+        ok: false,
+        error: "invalid_tailoring_feedback_review",
         message: error.message,
       };
     }

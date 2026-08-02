@@ -27,7 +27,14 @@ import type {
   ResumeReviewEditKind,
   TailoringFeedbackSignal,
   TailoringFeedbackSignalKind,
+  TailoringFeedbackSignalReview,
+  TailoringFeedbackSignalReviewRequest,
+  TailoringFeedbackSignalReviewResponse,
   TailoringFeedbackSourceKind,
+} from "./contracts.js";
+import {
+  TAILORING_FEEDBACK_RULE_ALLOWLIST,
+  TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION,
 } from "./contracts.js";
 import { allRows, getRow, type SqliteDatabase } from "./db.js";
 import { defaultResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
@@ -156,6 +163,30 @@ interface TailoringFeedbackSignalRow extends Record<string, unknown> {
   semantic_id: string | null;
   created_at: string;
   reviewed_at: string | null;
+}
+
+interface TailoringFeedbackSignalReviewRow extends Record<string, unknown> {
+  review_id: string;
+  signal_id: string;
+  revision: number;
+  decision: string;
+  signal_kind: string;
+  rule_key: string | null;
+  rule_value: string | null;
+  allowlist_version: number;
+  reviewed_at: string;
+}
+
+interface TailoringFeedbackSignalIdentityRow extends Record<string, unknown> {
+  signal_id: string;
+  signal_kind: string;
+}
+
+export class TailoringFeedbackReviewInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TailoringFeedbackReviewInputError";
+  }
 }
 
 interface MaterialArtifactRow extends Record<string, unknown> {
@@ -596,6 +627,139 @@ export function listResumeReviewFeedback(
     ok: true,
     jobKey: jobId,
     feedbackSignals: feedbackSignalsForJob(db, jobId),
+  };
+}
+
+export function reviewResumeFeedbackSignal(
+  db: SqliteDatabase,
+  signalId: string,
+  request: TailoringFeedbackSignalReviewRequest,
+): TailoringFeedbackSignalReviewResponse {
+  const tx = db.transaction(() => {
+    const signal = getRow<TailoringFeedbackSignalIdentityRow>(
+      db,
+      `SELECT signal_id, signal_kind
+         FROM tailoring_feedback_signals
+        WHERE tenant_id = ? AND signal_id = ?`,
+      [DEFAULT_TENANT, signalId],
+    );
+    if (!signal) {
+      throw new InputError(`Tailoring feedback signal not found: ${signalId}`);
+    }
+
+    const signalKind = feedbackSignalKind(signal.signal_kind);
+    const expectedRule = TAILORING_FEEDBACK_RULE_ALLOWLIST[signalKind];
+    const ruleKey = request.decision === "accepted" ? request.ruleKey : null;
+    const ruleValue = request.decision === "accepted" ? request.ruleValue : null;
+    if (
+      request.decision === "accepted"
+      && (ruleKey !== expectedRule.ruleKey || ruleValue !== expectedRule.ruleValue)
+    ) {
+      throw new TailoringFeedbackReviewInputError(
+        `Rule ${ruleKey}/${ruleValue} is not allowed for ${signalKind}.`,
+      );
+    }
+
+    const latest = getRow<TailoringFeedbackSignalReviewRow>(
+      db,
+      `SELECT review_id, signal_id, revision, decision, signal_kind,
+              rule_key, rule_value, allowlist_version, reviewed_at
+         FROM tailoring_feedback_signal_reviews
+        WHERE tenant_id = ? AND signal_id = ?
+        ORDER BY revision DESC
+        LIMIT 1`,
+      [DEFAULT_TENANT, signalId],
+    );
+    if (
+      latest
+      && latest.decision === request.decision
+      && latest.rule_key === ruleKey
+      && latest.rule_value === ruleValue
+      && latest.allowlist_version === TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION
+    ) {
+      projectLatestTailoringFeedbackDecision(db, signalId, request.decision, latest.reviewed_at);
+      return { ok: true as const, review: tailoringFeedbackReviewFromRow(latest) };
+    }
+
+    const reviewId = `tailoring_feedback_review_${crypto.randomUUID()}`;
+    const revision = (latest?.revision ?? 0) + 1;
+    const reviewedAt = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO tailoring_feedback_signal_reviews (
+         tenant_id, review_id, signal_id, revision, decision, signal_kind,
+         rule_key, rule_value, allowlist_version, reviewed_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      DEFAULT_TENANT,
+      reviewId,
+      signalId,
+      revision,
+      request.decision,
+      signalKind,
+      ruleKey,
+      ruleValue,
+      TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION,
+      reviewedAt,
+    );
+    projectLatestTailoringFeedbackDecision(db, signalId, request.decision, reviewedAt);
+
+    const review = getRow<TailoringFeedbackSignalReviewRow>(
+      db,
+      `SELECT review_id, signal_id, revision, decision, signal_kind,
+              rule_key, rule_value, allowlist_version, reviewed_at
+         FROM tailoring_feedback_signal_reviews
+        WHERE tenant_id = ? AND review_id = ?`,
+      [DEFAULT_TENANT, reviewId],
+    );
+    if (!review) {
+      throw new Error("Tailoring feedback review was not persisted.");
+    }
+    return { ok: true as const, review: tailoringFeedbackReviewFromRow(review) };
+  });
+  return tx();
+}
+
+function projectLatestTailoringFeedbackDecision(
+  db: SqliteDatabase,
+  signalId: string,
+  decision: "accepted" | "rejected",
+  reviewedAt: string,
+): void {
+  db.prepare(
+    `UPDATE tailoring_feedback_signals
+        SET status = ?, reviewed_at = ?
+      WHERE tenant_id = ? AND signal_id = ?`,
+  ).run(decision, reviewedAt, DEFAULT_TENANT, signalId);
+}
+
+function tailoringFeedbackReviewFromRow(
+  row: TailoringFeedbackSignalReviewRow,
+): TailoringFeedbackSignalReview {
+  const signalKind = feedbackSignalKind(row.signal_kind);
+  const expectedRule = TAILORING_FEEDBACK_RULE_ALLOWLIST[signalKind];
+  const decision = row.decision === "accepted" ? "accepted" : row.decision === "rejected" ? "rejected" : null;
+  if (!decision || row.allowlist_version !== TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION) {
+    throw new Error("Tailoring feedback review has an unsupported decision or allowlist version.");
+  }
+  if (
+    decision === "accepted"
+    && (row.rule_key !== expectedRule.ruleKey || row.rule_value !== expectedRule.ruleValue)
+  ) {
+    throw new Error("Tailoring feedback review contains a non-allowlisted rule.");
+  }
+  if (decision === "rejected" && (row.rule_key !== null || row.rule_value !== null)) {
+    throw new Error("Rejected tailoring feedback review contains a rule.");
+  }
+  return {
+    reviewId: row.review_id,
+    signalId: row.signal_id,
+    revision: row.revision,
+    decision,
+    signalKind,
+    ruleKey: decision === "accepted" ? expectedRule.ruleKey : null,
+    ruleValue: decision === "accepted" ? expectedRule.ruleValue : null,
+    allowlistVersion: TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION,
+    reviewedAt: row.reviewed_at,
   };
 }
 
