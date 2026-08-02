@@ -4,15 +4,14 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  ensureResumeReviewTables,
-} from "../src/resume-review-drafts.js";
 import type { ResumeHtmlPdfRenderInput, ResumeHtmlPdfRenderer } from "../src/resume-pdf-render.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 import type { ActionDispatcher, ActionDispatchResult } from "../src/local-actions.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 const JOB_KEY = "https://example.com/jobs/live-editor";
+const JOB_ID = "00000000-0000-4000-8000-000000000201";
 const NOW = "2026-06-24T09:00:00.000Z";
 
 let tempDir = "";
@@ -59,7 +58,7 @@ describe("resume review draft API", () => {
     expect(response.statusCode, response.body).toBe(200);
     const body = response.json();
     expect(body.draft).toMatchObject({
-      jobKey: JOB_KEY,
+      jobKey: JOB_ID,
       baseGeneration: 2,
       baseResumeTextArtifactId: "resume-text-v2",
       baseResumePdfArtifactId: "resume-pdf-v2",
@@ -87,33 +86,57 @@ describe("resume review draft API", () => {
     await app.close();
   });
 
-  it("creates a draft from legacy artifact tables without render_format", async () => {
+  it("keeps same-UUID tenants isolated while resolving the local URL locator once", async () => {
+    const otherResumePath = path.join(tempDir, "other-resume.txt");
+    const otherPdfPath = path.join(tempDir, "other-resume.pdf");
+    fs.writeFileSync(otherResumePath, "Other tenant resume text.");
+    fs.writeFileSync(otherPdfPath, "%PDF other");
     const db = new Database(options.dbPath);
+    db.pragma("foreign_keys = ON");
     try {
-      db.exec(`
-        ALTER TABLE job_materials_artifacts RENAME TO job_materials_artifacts_with_render_format;
-        CREATE TABLE job_materials_artifacts (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          artifact_id TEXT NOT NULL,
-          artifact_type TEXT NOT NULL,
-          status TEXT NOT NULL,
-          path TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          size_bytes INTEGER,
-          metadata_json TEXT,
-          superseded_at TEXT,
-          PRIMARY KEY (job_url, generation, artifact_type)
-        );
-        INSERT INTO job_materials_artifacts (
-          job_url, generation, artifact_id, artifact_type, status, path,
-          created_at, size_bytes, metadata_json, superseded_at
-        )
-        SELECT job_url, generation, artifact_id, artifact_type, status, path,
-               created_at, size_bytes, metadata_json, superseded_at
-          FROM job_materials_artifacts_with_render_format;
-        DROP TABLE job_materials_artifacts_with_render_format;
-      `);
+      db.prepare(
+        `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+         VALUES ('other', ?, 'https://other.example/jobs/live-editor', 'Other tenant role', 'Other', 'other', ?)`,
+      ).run(JOB_ID, NOW);
+      db.prepare(
+        `INSERT INTO job_materials (
+           tenant_id, job_id, generation, status, created_at, updated_at,
+           last_validation_json, last_verdict_json, metadata_json
+         ) VALUES ('other', ?, 99, 'resume_approved', ?, ?, '{}', '{}', '{}')`,
+      ).run(JOB_ID, NOW, NOW);
+      const insertOtherArtifact = db.prepare(
+        `INSERT INTO job_materials_artifacts (
+           tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
+           render_format, size_bytes, metadata_json, created_at, superseded_at
+         ) VALUES ('other', ?, 99, ?, ?, 'approved', ?, ?, ?, '{}', ?, NULL)`,
+      );
+      insertOtherArtifact.run(
+        JOB_ID,
+        "tailored_resume",
+        "other-resume-text",
+        otherResumePath,
+        "text",
+        fs.statSync(otherResumePath).size,
+        NOW,
+      );
+      insertOtherArtifact.run(
+        JOB_ID,
+        "resume_pdf",
+        "other-resume-pdf",
+        otherPdfPath,
+        "html_pdf",
+        fs.statSync(otherPdfPath).size,
+        NOW,
+      );
+      db.prepare(
+        `INSERT INTO resume_review_drafts (
+           tenant_id, draft_id, job_id, base_generation,
+           base_resume_text_artifact_id, base_resume_pdf_artifact_id,
+           renderer_format, state, current_revision_id, latest_revision_number,
+           created_at, updated_at
+         ) VALUES ('other', 'other-draft', ?, 99, 'other-resume-text', 'other-resume-pdf',
+                   'html_pdf', 'active', NULL, 0, ?, ?)`,
+      ).run(JOB_ID, NOW, NOW);
     } finally {
       db.close();
     }
@@ -127,12 +150,33 @@ describe("resume review draft API", () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json().draft).toMatchObject({
-      jobKey: JOB_KEY,
+      jobKey: JOB_ID,
       baseGeneration: 2,
       baseResumeTextArtifactId: "resume-text-v2",
       baseResumePdfArtifactId: "resume-pdf-v2",
-      rendererFormat: "unknown",
+      rendererFormat: "html_pdf",
     });
+
+    const verifyDb = new Database(options.dbPath);
+    try {
+      const drafts = verifyDb
+        .prepare(
+          `SELECT tenant_id, draft_id, base_generation
+             FROM resume_review_drafts
+            WHERE job_id = ?
+            ORDER BY tenant_id`,
+        )
+        .all(JOB_ID) as Array<{ tenant_id: string; draft_id: string; base_generation: number }>;
+      expect(drafts).toHaveLength(2);
+      expect(drafts.find((draft) => draft.tenant_id === "local")).toMatchObject({ base_generation: 2 });
+      expect(drafts.find((draft) => draft.tenant_id === "other")).toEqual({
+        tenant_id: "other",
+        draft_id: "other-draft",
+        base_generation: 99,
+      });
+    } finally {
+      verifyDb.close();
+    }
 
     await app.close();
   });
@@ -254,7 +298,7 @@ describe("resume review draft API", () => {
     });
     expect(revisionBody.draft.feedbackSignals).toHaveLength(1);
     expect(revisionBody.draft.feedbackSignals[0]).toMatchObject({
-      jobKey: JOB_KEY,
+      jobKey: JOB_ID,
       draftId,
       sourceKind: "edit_delta",
       kind: "factual_correction",
@@ -301,10 +345,9 @@ describe("resume review draft API", () => {
 
     const db = new Database(options.dbPath);
     try {
-      ensureResumeReviewTables(db);
       db.prepare(
         `INSERT INTO resume_review_comment_threads (
-           tenant_id, thread_id, draft_id, job_key, base_artifact_id, semantic_id,
+           tenant_id, thread_id, draft_id, job_id, base_artifact_id, semantic_id,
            line_anchor_json, source_pin_id, risk_label, comment_body,
            lifecycle_state, anchor_resolved, created_at, updated_at
          ) VALUES (
@@ -315,7 +358,7 @@ describe("resume review draft API", () => {
       ).run(
         threadId,
         draftId,
-        JOB_KEY,
+        JOB_ID,
         JSON.stringify({ semanticId: "experience:acme:bullet:1", lineNumber: 6, pageNumber: 1 }),
         NOW,
         NOW,
@@ -583,10 +626,10 @@ describe("resume review draft API", () => {
         .prepare(
           `SELECT generation, artifact_id, artifact_type, status, path, render_format, metadata_json
              FROM job_materials_artifacts
-            WHERE job_url = ?
+            WHERE job_id = ?
             ORDER BY generation, artifact_type`,
         )
-        .all(JOB_KEY) as Array<{
+        .all(JOB_ID) as Array<{
         artifact_id: string;
         artifact_type: string;
         generation: number;
@@ -890,77 +933,53 @@ function seedDatabase(dbPath: string): void {
   fs.writeFileSync(pdfV1Path, "%PDF v1");
   fs.writeFileSync(pdfV2Path, "%PDF v2");
 
+  initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
+  db.pragma("foreign_keys = ON");
   try {
-    db.exec(`
-      CREATE TABLE job_materials (
-        job_url TEXT NOT NULL,
-        generation INTEGER NOT NULL,
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        last_validation_json TEXT,
-        last_verdict_json TEXT,
-        metadata_json TEXT,
-        PRIMARY KEY (job_url, generation)
-      );
-      CREATE TABLE job_materials_artifacts (
-        job_url TEXT NOT NULL,
-        generation INTEGER NOT NULL,
-        artifact_id TEXT NOT NULL,
-        artifact_type TEXT NOT NULL,
-        status TEXT NOT NULL,
-        path TEXT NOT NULL,
-        render_format TEXT,
-        created_at TEXT NOT NULL,
-        size_bytes INTEGER,
-        metadata_json TEXT,
-        superseded_at TEXT,
-        PRIMARY KEY (job_url, generation, artifact_type)
-      );
-      CREATE TABLE job_material_layout_boxes (
-        job_url TEXT NOT NULL,
-        generation INTEGER NOT NULL,
-        artifact_id TEXT NOT NULL,
-        box_index INTEGER NOT NULL,
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        semantic_id TEXT NOT NULL,
-        page_number INTEGER NOT NULL,
-        line_number INTEGER,
-        text_excerpt TEXT NOT NULL,
-        left_pct REAL NOT NULL,
-        top_pct REAL NOT NULL,
-        width_pct REAL NOT NULL,
-        height_pct REAL NOT NULL,
-        audit_target_json TEXT NOT NULL DEFAULT '{}',
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (job_url, generation, artifact_id, box_index)
-      );
-    `);
+    seedBuiltInTemplate(db);
+    db.prepare(
+      `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+       VALUES ('local', ?, ?, 'Platform Reliability Engineer', 'Example', 'example', ?)`,
+    ).run(JOB_ID, JOB_KEY, NOW);
     db.prepare(
       `INSERT INTO job_materials (
-         job_url, generation, tenant_id, status, created_at, updated_at,
+         tenant_id, job_id, generation, status, created_at, updated_at,
          last_validation_json, last_verdict_json, metadata_json
-       ) VALUES (?, ?, 'local', 'resume_approved', ?, ?, '{}', '{}', '{}')`,
-    ).run(JOB_KEY, 1, NOW, NOW);
+       ) VALUES ('local', ?, ?, 'resume_approved', ?, ?, '{}', '{}', '{}')`,
+    ).run(JOB_ID, 1, NOW, NOW);
     db.prepare(
       `INSERT INTO job_materials (
-         job_url, generation, tenant_id, status, created_at, updated_at,
+         tenant_id, job_id, generation, status, created_at, updated_at,
          last_validation_json, last_verdict_json, metadata_json
-       ) VALUES (?, ?, 'local', 'resume_approved', ?, ?, '{}', '{}', '{}')`,
-    ).run(JOB_KEY, 2, NOW, NOW);
+       ) VALUES ('local', ?, ?, 'resume_approved', ?, ?, '{}', '{}', '{}')`,
+    ).run(JOB_ID, 2, NOW, NOW);
     const insert = db.prepare(
       `INSERT INTO job_materials_artifacts (
-         job_url, generation, artifact_id, artifact_type, status, path,
+         tenant_id, job_id, generation, artifact_id, artifact_type, status, path,
          render_format, created_at, size_bytes, metadata_json, superseded_at
-       ) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, '{}', NULL)`,
+       ) VALUES ('local', ?, ?, ?, ?, 'approved', ?, ?, ?, ?, '{}', NULL)`,
     );
-    insert.run(JOB_KEY, 1, "resume-text-v1", "tailored_resume", resumeV1Path, "text", NOW, 25);
-    insert.run(JOB_KEY, 1, "resume-pdf-v1", "resume_pdf", pdfV1Path, "legacy_pdf", NOW, 7);
-    insert.run(JOB_KEY, 2, "resume-text-v2", "tailored_resume", resumeV2Path, "text", NOW, 31);
-    insert.run(JOB_KEY, 2, "resume-pdf-v2", "resume_pdf", pdfV2Path, "html_pdf", NOW, 7);
+    insert.run(JOB_ID, 1, "resume-text-v1", "tailored_resume", resumeV1Path, "text", NOW, 25);
+    insert.run(JOB_ID, 1, "resume-pdf-v1", "resume_pdf", pdfV1Path, "legacy_pdf", NOW, 7);
+    insert.run(JOB_ID, 2, "resume-text-v2", "tailored_resume", resumeV2Path, "text", NOW, 31);
+    insert.run(JOB_ID, 2, "resume-pdf-v2", "resume_pdf", pdfV2Path, "html_pdf", NOW, 7);
   } finally {
     db.close();
   }
+}
+
+function seedBuiltInTemplate(db: Database.Database): void {
+  db.prepare(
+    `INSERT INTO resume_templates (
+       tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+     ) VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)`,
+  ).run(NOW, NOW);
+  db.prepare(
+    `INSERT INTO resume_template_versions (
+       tenant_id, version_id, template_id, version_number, display_name, status,
+       theme_json, layout_json, content_hash, created_at
+     ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
+               'Modern HTML', 'active', ?, '{}', 'seed-hash', ?)`,
+  ).run(JSON.stringify(BUILT_IN_RESUME_TEMPLATE_THEME), NOW);
 }
