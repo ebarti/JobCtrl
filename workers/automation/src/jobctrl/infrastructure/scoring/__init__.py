@@ -2,10 +2,8 @@
 
 from jobctrl.infrastructure.scoring.criteria_provider import LocalScoringCriteriaProvider
 from jobctrl.infrastructure.scoring.feedback import (
-    FeedbackRankedJob,
     ScoringFeedbackSignal,
     collect_feedback_signals,
-    rank_jobs_with_feedback,
 )
 from jobctrl.infrastructure.scoring.sqlite_repository import (
     SqliteRequirementFitReportRepository,
@@ -15,7 +13,6 @@ from jobctrl.infrastructure.scoring.sqlite_repository import (
 )
 
 __all__ = [
-    "FeedbackRankedJob",
     "LocalScoringCriteriaProvider",
     "ScoringFeedbackSignal",
     "SqliteRequirementFitReportRepository",
@@ -23,5 +20,4 @@ __all__ = [
     "SqliteScoreStalenessRepository",
     "SqliteScoringPolicyRepository",
     "collect_feedback_signals",
-    "rank_jobs_with_feedback",
 ]

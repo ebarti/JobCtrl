@@ -79,7 +79,6 @@ from jobctrl.database import (
     _SCORE_DOWNSTREAM_STATE_JOIN,
     _SCORE_CURRENT_FOR_DOWNSTREAM,
     _SCORE_ELIGIBLE_FOR_DOWNSTREAM,
-    _order_rows_by_feedback,
     ensure_application_review_decision_columns,
     get_connection,
 )
@@ -612,6 +611,7 @@ def _apply_candidate_select_parts() -> tuple[str, str]:
         "WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply' LIMIT 1) AS apply_attempts"
     )
     columns = (
+        f"jobs.tenant_id AS tenant_id, jobs.job_id AS job_id, "
         f"jobs.url AS url, jobs.title AS title, jobs.site AS site, "
         f"{_EFFECTIVE_APPLICATION_URL} AS application_url, "
         f"{_EFFECTIVE_TAILOR_PATH} AS tailored_resume_path, "
@@ -719,7 +719,7 @@ def acquire_job(
                 """,
                 params,
             ).fetchall()
-            candidate_rows = _order_rows_by_feedback(conn, rows)
+            candidate_rows = rows
 
         if not candidate_rows:
             conn.rollback()

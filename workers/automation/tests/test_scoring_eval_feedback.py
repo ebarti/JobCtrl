@@ -2,110 +2,237 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from pathlib import Path
+from collections.abc import Sequence
+from typing import Any
 
-from jobctrl.database import get_jobs_by_stage, init_db
-from jobctrl.infrastructure.scoring import collect_feedback_signals, rank_jobs_with_feedback
-from jobctrl.state import record_job_event
+from jobctrl.apply import launcher as launcher_module
+from jobctrl.domain.identifiers import canonical_job_id
+from jobctrl.infrastructure.scoring import collect_feedback_signals
+
+_TENANT_A = "tenant-a"
+_TENANT_B = "tenant-b"
+_JOB_A = canonical_job_id("a0000000-0000-4000-8000-000000000001")
+_JOB_B = canonical_job_id("a0000000-0000-4000-8000-000000000002")
 
 
-def test_feedback_signals_use_corrections_and_job_actions_transparently() -> None:
+def _connection() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.executescript(
         """
         CREATE TABLE job_scores (
-          job_url TEXT NOT NULL,
+          tenant_id TEXT NOT NULL,
+          job_id TEXT NOT NULL,
           version INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
           fit_score INTEGER NOT NULL,
           breakdown_json TEXT NOT NULL,
           keywords_json TEXT NOT NULL,
           scored_at TEXT NOT NULL,
           correction_json TEXT,
           trace_json TEXT NOT NULL DEFAULT '{}',
-          PRIMARY KEY (job_url, version)
+          PRIMARY KEY (tenant_id, job_id, version)
         );
         CREATE TABLE job_events (
           event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          job_url TEXT,
+          tenant_id TEXT NOT NULL,
+          job_id TEXT,
           event_type TEXT NOT NULL,
           message TEXT
         );
         """
     )
+    return conn
+
+
+def _insert_corrected_score(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    job_id: str,
+) -> None:
     conn.execute(
         """INSERT INTO job_scores (
-          job_url, version, fit_score, breakdown_json, keywords_json, scored_at,
-          correction_json, trace_json
-        ) VALUES (?, 2, ?, '{}', '[]', ?, ?, ?)""",
+          tenant_id, job_id, version, fit_score, breakdown_json, keywords_json,
+          scored_at, correction_json, trace_json
+        ) VALUES (?, ?, 2, 9, '{}', '[]', ?, ?, ?)""",
         (
-            "job-a",
-            9,
+            tenant_id,
+            job_id,
             "2026-05-14T10:00:00Z",
-            json.dumps({"corrected_fit_score": 9, "rationale": "Better leadership fit."}),
-            json.dumps({"correction_history": [{"original_score": 6, "corrected_score": 9}]}),
+            json.dumps(
+                {
+                    "corrected_fit_score": 9,
+                    "rationale": "Better leadership fit.",
+                }
+            ),
+            json.dumps(
+                {
+                    "correction_history": [
+                        {"original_score": 6, "corrected_score": 9}
+                    ]
+                }
+            ),
         ),
     )
+
+
+def test_feedback_signals_use_canonical_corrections_and_actions_transparently() -> None:
+    conn = _connection()
+    _insert_corrected_score(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=str(_JOB_A),
+    )
     conn.execute(
-        "INSERT INTO job_events (job_url, event_type, message) VALUES (?, ?, ?)",
-        ("job-b", "StageSkipped", "Skipped after review."),
+        """
+        INSERT INTO job_events (tenant_id, job_id, event_type, message)
+        VALUES (?, ?, 'StageSkipped', 'Skipped after review.')
+        """,
+        (_TENANT_A, str(_JOB_B)),
     )
 
     signals = collect_feedback_signals(conn)
-    ranked = rank_jobs_with_feedback({"job-a": 7.5, "job-b": 8.0}, signals)
-
-    assert [signal.kind for signal in signals] == ["score_correction", "StageSkipped"]
-    assert ranked[0].job_id == "job-a"
-    assert ranked[0].feedback_adjustment > 0
-    assert "Better leadership fit" in ranked[0].evidence[0]
-    assert ranked[1].feedback_adjustment < 0
-    assert "Skipped after review" in ranked[1].evidence[0]
-
-
-def test_feedback_adjustments_affect_downstream_selector_order(tmp_path: Path) -> None:
-    conn = init_db(tmp_path / "jobctrl.db")
-    corrected = "https://example.com/corrected"
-    skipped = "https://example.com/skipped"
-    for url in (corrected, skipped):
-        conn.execute(
-            "INSERT INTO jobs (url, title, site, full_description, discovered_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (url, "Engineer", "Acme", "Need Python.", "2026-05-14T00:00:00+00:00"),
-        )
-    conn.execute(
-        """INSERT INTO job_scores (
-          job_url, version, tenant_id, fit_score, breakdown_json, keywords_json, scored_at,
-          correction_json, criteria_json, trace_json
-        ) VALUES (?, 2, 'local', 9, ?, '["python"]', ?, ?, '{}', ?)""",
-        (
-            corrected,
-            json.dumps({"reasoning": "Corrected after review.", "eligibility": {"status": "eligible"}}),
-            "2026-05-14T10:00:00+00:00",
-            json.dumps({"corrected_fit_score": 9, "rationale": "Better leadership fit."}),
-            json.dumps({"correction_history": [{"original_score": 6, "corrected_score": 9}]}),
-        ),
-    )
-    conn.execute(
-        """INSERT INTO job_scores (
-          job_url, version, tenant_id, fit_score, breakdown_json, keywords_json, scored_at,
-          correction_json, criteria_json, trace_json
-        ) VALUES (?, 1, 'local', 10, ?, '["python"]', ?, NULL, '{}', '{}')""",
-        (
-            skipped,
-            json.dumps({"reasoning": "High raw score.", "eligibility": {"status": "eligible"}}),
-            "2026-05-14T10:00:00+00:00",
-        ),
-    )
-    record_job_event(
-        conn,
-        skipped,
-        "tailor",
+    assert [signal.kind for signal in signals] == [
+        "score_correction",
         "StageSkipped",
-        message="Skipped after manual review.",
+    ]
+    assert (signals[0].tenant_id, signals[0].job_id) == (
+        _TENANT_A,
+        str(_JOB_A),
     )
+    assert "Better leadership fit" in signals[0].evidence
+    assert (signals[1].tenant_id, signals[1].job_id) == (
+        _TENANT_A,
+        str(_JOB_B),
+    )
+    assert "Skipped after review" in signals[1].evidence
+
+
+def test_feedback_history_isolates_same_job_id_across_tenants() -> None:
+    conn = _connection()
+    shared_job_id = str(_JOB_A)
+    _insert_corrected_score(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=shared_job_id,
+    )
+    conn.execute(
+        """
+        INSERT INTO job_events (tenant_id, job_id, event_type, message)
+        VALUES (?, ?, 'StageSkipped', 'Tenant B skipped this job.')
+        """,
+        (_TENANT_B, shared_job_id),
+    )
+    signals = collect_feedback_signals(conn)
+
+    assert [(signal.tenant_id, signal.job_id) for signal in signals] == [
+        (_TENANT_A, shared_job_id),
+        (_TENANT_B, shared_job_id),
+    ]
+
+
+class _RowsCursor:
+    def __init__(self, rows: Sequence[sqlite3.Row]) -> None:
+        self._rows = list(rows)
+
+    def fetchall(self) -> list[sqlite3.Row]:
+        return self._rows
+
+    def fetchone(self) -> sqlite3.Row | None:
+        return self._rows[0] if self._rows else None
+
+
+class _AcquireConnection:
+    """Supply the Apply candidate projection to the acquisition boundary."""
+
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        candidates: Sequence[sqlite3.Row],
+    ) -> None:
+        self._conn = conn
+        self._candidates = candidates
+        self.projected_canonical_identity = False
+
+    def execute(
+        self,
+        sql: str,
+        parameters: Sequence[Any] = (),
+    ) -> sqlite3.Cursor | _RowsCursor:
+        if "FROM jobs" in sql and "ORDER BY" in sql:
+            self.projected_canonical_identity = (
+                "jobs.tenant_id AS tenant_id" in sql
+                and "jobs.job_id AS job_id" in sql
+            )
+            return _RowsCursor(self._candidates)
+        if "FROM job_stage_states" in sql:
+            return _RowsCursor([])
+        return self._conn.execute(sql, parameters)
+
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        self._conn.rollback()
+
+
+def test_acquire_job_does_not_apply_unaccepted_feedback_to_candidate_order(
+    monkeypatch,
+) -> None:
+    conn = _connection()
+    _insert_corrected_score(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=str(_JOB_A),
+    )
+    candidates = conn.execute(
+        """
+        SELECT ? AS tenant_id, ? AS job_id, 'https://example.com/b' AS url,
+               'B' AS title, 'example' AS site,
+               'https://example.com/b/apply' AS application_url,
+               '/tmp/b.txt' AS tailored_resume_path,
+               '/tmp/b.pdf' AS resume_pdf_path,
+               'artifact-b' AS resume_pdf_artifact_id,
+               1 AS materials_generation, 8.0 AS fit_score,
+               8.0 AS js_fit_score, NULL AS location, NULL AS description,
+               NULL AS full_description, NULL AS cover_letter_path,
+               NULL AS applied_at, NULL AS apply_status, 0 AS apply_attempts
+        UNION ALL
+        SELECT ?, ?, 'https://example.com/a', 'A', 'example',
+               'https://example.com/a/apply', '/tmp/a.txt', '/tmp/a.pdf',
+               'artifact-a', 1, 7.5, 7.5, NULL, NULL, NULL, NULL, NULL, NULL, 0
+        """,
+        (
+            _TENANT_A,
+            str(_JOB_B),
+            _TENANT_A,
+            str(_JOB_A),
+        ),
+    ).fetchall()
     conn.commit()
+    acquire_conn = _AcquireConnection(conn, candidates)
 
-    rows = get_jobs_by_stage(conn, "pending_tailor", min_score=7, limit=1)
+    monkeypatch.setattr(launcher_module, "get_connection", lambda: acquire_conn)
+    monkeypatch.setattr(launcher_module, "_load_blocked", lambda: ([], []))
+    monkeypatch.setattr(launcher_module, "ensure_job_stage_rows", lambda *_args: None)
+    monkeypatch.setattr(launcher_module, "set_stage_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(launcher_module, "record_job_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(launcher_module, "_current_profile_version", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(
+        launcher_module,
+        "_latest_apply_review_decision",
+        lambda *_args, **_kwargs: None,
+    )
 
-    assert [row["url"] for row in rows] == [corrected]
+    selected = launcher_module.acquire_job(
+        worker_id=1,
+        run_ctx={"dry_run": True},
+        approval_required=False,
+    )
+
+    assert acquire_conn.projected_canonical_identity is True
+    assert selected is not None
+    assert (selected["tenant_id"], selected["job_id"]) == (
+        _TENANT_A,
+        str(_JOB_B),
+    )

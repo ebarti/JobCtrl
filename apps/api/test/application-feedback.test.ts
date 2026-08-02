@@ -9,11 +9,16 @@ import { ensureApplicationFeedbackTables } from "../src/application-feedback.js"
 import type { ApplyReviewQueueResponse } from "../src/contracts.js";
 import { GmailFeedbackScanError, type GmailFeedbackScanner } from "../src/gmail-feedback-worker.js";
 import { type ActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
+import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { type BuildAppOptions, buildApp } from "../src/server.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 const READY_JOB = "https://example.com/jobs/apply-ready";
 const DRY_RUN_JOB = "https://example.com/jobs/apply-dry-run";
 const APPLIED_JOB = "https://example.com/jobs/already-applied";
+const READY_JOB_ID = "00000000-0000-4000-8000-000000000101";
+const DRY_RUN_JOB_ID = "00000000-0000-4000-8000-000000000102";
+const APPLIED_JOB_ID = "00000000-0000-4000-8000-000000000103";
 const NOW = "2026-06-01T10:00:00.000Z";
 const LONG_TAILORED_REQUIREMENT_EVIDENCE =
   "Owned platform reliability improvements for incident response across four production services, reduced high-severity repeat incidents through clearer ownership, and built review habits that kept customer-facing systems stable during launch pressure.";
@@ -49,11 +54,11 @@ describe("application feedback API", () => {
     expect(response.statusCode, response.body).toBe(200);
     const body = response.json();
     expect(body.items.map((item: { jobKey: string }) => item.jobKey)).toEqual([
-      READY_JOB,
-      DRY_RUN_JOB,
+      READY_JOB_ID,
+      DRY_RUN_JOB_ID,
     ]);
     expect(body.items[0]).toMatchObject({
-      jobKey: READY_JOB,
+      jobKey: READY_JOB_ID,
       title: "Principal Platform Engineer",
       currentStage: "apply",
       currentState: "pending",
@@ -214,17 +219,17 @@ describe("application feedback API", () => {
       UPDATE job_stage_states
          SET state = 'running',
              updated_at = '2026-06-01T11:30:00.000Z'
-       WHERE job_url = ?
+       WHERE job_id = ?
          AND stage = 'tailor'
       `,
-    ).run(READY_JOB);
+    ).run(READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+    expect(queueItem(response.json(), READY_JOB_ID)).toMatchObject({
       currentStage: "discover",
       currentState: "running",
       materialsPreview: {
@@ -250,17 +255,17 @@ describe("application feedback API", () => {
          SET state = 'failed',
              error_code = 'FAILED',
              error_message = 'SKIPPED: process killed by signal'
-       WHERE job_url = ?
+       WHERE job_id = ?
          AND stage = 'apply'
       `,
-    ).run(READY_JOB);
+    ).run(READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+    expect(queueItem(response.json(), READY_JOB_ID)).toMatchObject({
       currentStage: "apply",
       currentState: "failed",
       blockers: ["SKIPPED: process killed by signal"],
@@ -288,17 +293,17 @@ describe("application feedback API", () => {
              error_code = 'FAILED',
              error_message = 'missing_profile_data:age_18_plus',
              retryable = 0
-       WHERE job_url = ?
+       WHERE job_id = ?
          AND stage = 'apply'
       `,
-    ).run(READY_JOB);
+    ).run(READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+    expect(queueItem(response.json(), READY_JOB_ID)).toMatchObject({
       currentStage: "apply",
       currentState: "failed",
       blockers: ["missing_profile_data:age_18_plus"],
@@ -318,19 +323,6 @@ describe("application feedback API", () => {
 
   it("surfaces incomplete application attestations before approval", async () => {
     const db = new Database(options.dbPath);
-    db.exec(`
-      CREATE TABLE candidate_profiles (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        application_attestation_age_18_plus INTEGER DEFAULT NULL,
-        application_attestation_background_check_consent INTEGER DEFAULT NULL,
-        application_attestation_felony_conviction INTEGER DEFAULT NULL,
-        application_attestation_previously_worked_at_employer INTEGER DEFAULT NULL,
-        version INTEGER NOT NULL DEFAULT 1,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, profile_id)
-      );
-    `);
     db.prepare(
       `INSERT INTO candidate_profiles (
          tenant_id, profile_id, application_attestation_age_18_plus,
@@ -346,7 +338,7 @@ describe("application feedback API", () => {
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(queueItem(response.json(), READY_JOB)?.applyAudit).toMatchObject({
+    expect(queueItem(response.json(), READY_JOB_ID)?.applyAudit).toMatchObject({
       state: "preparing",
       missingPrerequisites: [
         expect.objectContaining({
@@ -375,17 +367,17 @@ describe("application feedback API", () => {
          SET state = 'failed',
              error_code = 'RENDER_FAILED',
              error_message = 'Cover PDF render failed'
-       WHERE job_url = ?
+       WHERE job_id = ?
          AND stage = 'cover'
       `,
-    ).run(READY_JOB);
+    ).run(READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+    expect(queueItem(response.json(), READY_JOB_ID)).toMatchObject({
       currentStage: "apply",
       currentState: "failed",
       blockers: ["Cover PDF render failed"],
@@ -413,17 +405,17 @@ describe("application feedback API", () => {
          SET state = 'needs_verification',
              error_code = 'APPLY_NEEDS_VERIFICATION',
              error_message = 'Submit intent was recorded but no terminal result exists.'
-       WHERE job_url = ?
+       WHERE job_id = ?
          AND stage = 'apply'
       `,
-    ).run(READY_JOB);
+    ).run(READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+    expect(queueItem(response.json(), READY_JOB_ID)).toMatchObject({
       currentStage: "apply",
       currentState: "needs_verification",
       blockers: ["Submit intent was recorded but no terminal result exists."],
@@ -441,17 +433,17 @@ describe("application feedback API", () => {
              error_code = 'BLOCKED',
              error_message = 'Materials are not ready.',
              retryable = 0
-       WHERE job_url = ?
+       WHERE job_id = ?
          AND stage = 'apply'
       `,
-    ).run(READY_JOB);
+    ).run(READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+    expect(queueItem(response.json(), READY_JOB_ID)).toMatchObject({
       currentStage: "apply",
       currentState: "pending",
       blockers: [],
@@ -464,11 +456,11 @@ describe("application feedback API", () => {
         `
         SELECT state, error_code, error_message
           FROM job_stage_states
-         WHERE job_url = ?
+         WHERE job_id = ?
            AND stage = 'apply'
         `,
       )
-      .get(READY_JOB) as { state: string; error_code: string | null; error_message: string | null };
+      .get(READY_JOB_ID) as { state: string; error_code: string | null; error_message: string | null };
     readDb.close();
 
     expect(stage).toEqual({
@@ -491,17 +483,17 @@ describe("application feedback API", () => {
              retryable = 1,
              next_action = ?,
              updated_at = '2026-06-01T11:30:00.000Z'
-       WHERE job_url = ?
+       WHERE job_id = ?
          AND stage = 'cover'
       `,
-    ).run(staleConflict, `jobctrl retry cover ${READY_JOB}`, READY_JOB);
+    ).run(staleConflict, `jobctrl retry cover ${READY_JOB}`, READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    const item = queueItem(response.json(), READY_JOB);
+    const item = queueItem(response.json(), READY_JOB_ID);
     expect(item).toMatchObject({
       currentStage: "apply",
       currentState: "pending",
@@ -522,11 +514,11 @@ describe("application feedback API", () => {
         `
         SELECT state, error_code, error_message, retryable, next_action, metadata_json
           FROM job_stage_states
-         WHERE job_url = ?
+         WHERE job_id = ?
            AND stage = 'cover'
         `,
       )
-      .get(READY_JOB) as {
+      .get(READY_JOB_ID) as {
       state: string;
       error_code: string | null;
       error_message: string | null;
@@ -559,7 +551,7 @@ describe("application feedback API", () => {
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+    expect(queueItem(response.json(), READY_JOB_ID)).toMatchObject({
       applicationUrl: READY_JOB,
       blockers: [],
       applyAudit: {
@@ -575,13 +567,13 @@ describe("application feedback API", () => {
     const newerResumePath = path.join(tempDir, "newer-resume.txt");
     fs.writeFileSync(newerResumePath, "newer orphan resume text");
     const db = new Database(options.dbPath);
-    db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(READY_JOB, 2);
+    insertMaterialSet(db, READY_JOB_ID, 2, "candidate");
     db.prepare(
       `INSERT INTO job_materials_artifacts (
-         job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         job_id, generation, artifact_id, artifact_type, status, path, render_format, created_at, size_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?)`,
     ).run(
-      READY_JOB,
+      READY_JOB_ID,
       2,
       "apply-ready-resume-text-v2",
       "tailored_resume",
@@ -596,7 +588,7 @@ describe("application feedback API", () => {
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+    expect(queueItem(response.json(), READY_JOB_ID)).toMatchObject({
       materialsPreview: {
         resumeText: "tailored resume",
         resumeTextArtifactId: "apply-ready-resume-text",
@@ -613,7 +605,7 @@ describe("application feedback API", () => {
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(queueItem(response.json(), READY_JOB)?.materialsPreview.resumePdfLayoutBoxes).toEqual([
+    expect(queueItem(response.json(), READY_JOB_ID)?.materialsPreview.resumePdfLayoutBoxes).toEqual([
       {
         semanticId: "experience:acme:bullet:1",
         pageNumber: 1,
@@ -646,16 +638,16 @@ describe("application feedback API", () => {
     db.prepare(
       `UPDATE job_materials_artifacts
           SET path = ?, size_bytes = ?
-        WHERE job_url = ?
+        WHERE job_id = ?
           AND artifact_id = 'apply-ready-resume-text'`,
-    ).run(longResumePath, Buffer.byteLength(longResumeText), READY_JOB);
+    ).run(longResumePath, Buffer.byteLength(longResumeText), READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    const resumeText = queueItem(response.json(), READY_JOB)?.materialsPreview.resumeText ?? "";
+    const resumeText = queueItem(response.json(), READY_JOB_ID)?.materialsPreview.resumeText ?? "";
     expect(resumeText).toContain("Wrote Python APIs for real-time factory floor communication");
     expect(resumeText).toContain("Stakeholder Communication.");
     expect(resumeText).not.toMatch(/\.\.\.$/);
@@ -679,10 +671,10 @@ describe("application feedback API", () => {
     const db = new Database(options.dbPath);
     db.prepare(
       `INSERT INTO job_materials_artifacts (
-         job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         job_id, generation, artifact_id, artifact_type, status, path, render_format, created_at, size_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?)`,
     ).run(
-      READY_JOB,
+      READY_JOB_ID,
       1,
       "apply-ready-cover-letter-text",
       "cover_letter",
@@ -697,7 +689,7 @@ describe("application feedback API", () => {
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    const coverLetterText = queueItem(response.json(), READY_JOB)?.materialsPreview.coverLetterText ?? "";
+    const coverLetterText = queueItem(response.json(), READY_JOB_ID)?.materialsPreview.coverLetterText ?? "";
     expect(coverLetterText).toContain("Cover paragraph 75");
     expect(coverLetterText).toContain("This final sentence must remain visible");
     expect(coverLetterText).toContain("Jordan");
@@ -708,26 +700,17 @@ describe("application feedback API", () => {
 
   it("includes sanitized Profile source fields for apply-review PDF audit matching", async () => {
     const db = new Database(options.dbPath);
-    db.exec(`
-      CREATE TABLE candidate_profiles (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        personal_full_name TEXT NOT NULL DEFAULT '',
-        personal_address TEXT NOT NULL DEFAULT '',
-        personal_password TEXT NOT NULL DEFAULT '',
-        resume_baseline_text TEXT NOT NULL DEFAULT '',
-        PRIMARY KEY (tenant_id, profile_id)
-      );
-    `);
     db.prepare(
       `INSERT INTO candidate_profiles (
-         tenant_id, profile_id, personal_full_name, personal_address, personal_password, resume_baseline_text
-       ) VALUES ('local', 'default', ?, ?, ?, ?)`,
+         tenant_id, profile_id, personal_full_name, personal_address, personal_password,
+         resume_baseline_text, updated_at
+       ) VALUES ('local', 'default', ?, ?, ?, ?, ?)`,
     ).run(
       "Jordan Candidate",
       "42 Example Avenue, Harbor City",
       "do-not-send-this-field",
       "Experienced platform leader with reliable operations depth.",
+      NOW,
     );
     db.close();
     const app = buildApp(options);
@@ -735,7 +718,7 @@ describe("application feedback API", () => {
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    const fields = queueItem(response.json(), READY_JOB)?.materialsPreview.profileSourceFields ?? [];
+    const fields = queueItem(response.json(), READY_JOB_ID)?.materialsPreview.profileSourceFields ?? [];
     expect(fields).toEqual(
       expect.arrayContaining([
         {
@@ -769,16 +752,16 @@ describe("application feedback API", () => {
     const db = new Database(options.dbPath);
     db.prepare(
       `DELETE FROM job_materials_artifacts
-        WHERE job_url = ?
+        WHERE job_id = ?
           AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_txt')`,
-    ).run(READY_JOB);
-    db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(READY_JOB, 2);
+    ).run(READY_JOB_ID);
+    insertMaterialSet(db, READY_JOB_ID, 2, "candidate");
     db.prepare(
       `INSERT INTO job_materials_artifacts (
-         job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         job_id, generation, artifact_id, artifact_type, status, path, render_format, created_at, size_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?)`,
     ).run(
-      READY_JOB,
+      READY_JOB_ID,
       2,
       "apply-ready-resume-text-v2",
       "tailored_resume",
@@ -793,7 +776,7 @@ describe("application feedback API", () => {
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+    expect(queueItem(response.json(), READY_JOB_ID)).toMatchObject({
       materialsPreview: {
         resumeText: null,
         resumeTextArtifactId: null,
@@ -809,16 +792,16 @@ describe("application feedback API", () => {
     db.prepare(
       `UPDATE job_materials_artifacts
           SET metadata_json = ?
-        WHERE job_url = ?
+        WHERE job_id = ?
           AND artifact_id = 'apply-ready-resume-text'`,
-    ).run(JSON.stringify(requirementLedAuditMetadata()), READY_JOB);
+    ).run(JSON.stringify(requirementLedAuditMetadata()), READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    const audit = queueItem(response.json(), READY_JOB)?.materialsPreview.requirementLedAudit;
+    const audit = queueItem(response.json(), READY_JOB_ID)?.materialsPreview.requirementLedAudit;
     expect(audit).toMatchObject({
       requirementCount: 2,
       achievementCount: 3,
@@ -905,16 +888,16 @@ describe("application feedback API", () => {
     db.prepare(
       `UPDATE job_materials_artifacts
           SET metadata_json = ?
-        WHERE job_url = ?
+        WHERE job_id = ?
           AND artifact_id = 'apply-ready-resume-text'`,
-    ).run(JSON.stringify(metadata), READY_JOB);
+    ).run(JSON.stringify(metadata), READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    const audit = queueItem(response.json(), READY_JOB)?.materialsPreview.requirementLedAudit;
+    const audit = queueItem(response.json(), READY_JOB_ID)?.materialsPreview.requirementLedAudit;
     expect(audit?.coveredRequirements.map((requirement) => requirement.id)).toEqual(["r1"]);
     expect(audit?.uncoveredRequirements).toEqual([
       {
@@ -966,16 +949,16 @@ describe("application feedback API", () => {
     db.prepare(
       `UPDATE job_materials_artifacts
           SET metadata_json = ?
-        WHERE job_url = ?
+        WHERE job_id = ?
           AND artifact_id = 'apply-ready-resume-text'`,
-    ).run(JSON.stringify(metadata), READY_JOB);
+    ).run(JSON.stringify(metadata), READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    const audit = queueItem(response.json(), READY_JOB)?.materialsPreview.requirementLedAudit;
+    const audit = queueItem(response.json(), READY_JOB_ID)?.materialsPreview.requirementLedAudit;
     expect(audit?.revision).toMatchObject({
       coverageBasis: "grounded_shipped_text_v1",
       claimedOnlyRequirementIds: ["r2"],
@@ -1047,37 +1030,37 @@ describe("application feedback API", () => {
           SET state = 'failed',
               error_code = 'FAILED_VALIDATION',
               error_message = 'Tailoring ended with status failed_validation'
-        WHERE job_url = ?
+        WHERE job_id = ?
           AND stage = 'tailor'`,
-    ).run(READY_JOB);
+    ).run(READY_JOB_ID);
     db.prepare(
       `UPDATE job_stage_states
           SET state = 'blocked',
               error_code = 'BLOCKED',
               error_message = 'Materials are not ready.'
-        WHERE job_url = ?
+        WHERE job_id = ?
           AND stage = 'apply'`,
-    ).run(READY_JOB);
+    ).run(READY_JOB_ID);
     db.prepare(
       `UPDATE job_materials_artifacts
           SET status = 'rejected',
               metadata_json = ?
-        WHERE job_url = ?
+        WHERE job_id = ?
           AND artifact_id = 'apply-ready-resume-text'`,
-    ).run(JSON.stringify(metadata), READY_JOB);
+    ).run(JSON.stringify(metadata), READY_JOB_ID);
     db.prepare(
       `UPDATE job_materials_artifacts
           SET status = 'rejected'
-        WHERE job_url = ?
+        WHERE job_id = ?
           AND artifact_id = 'apply-ready-resume-pdf'`,
-    ).run(READY_JOB);
+    ).run(READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    const item = queueItem(response.json(), READY_JOB);
+    const item = queueItem(response.json(), READY_JOB_ID);
     expect(item?.materials).toMatchObject({
       hasResume: false,
       hasPdf: false,
@@ -1116,16 +1099,16 @@ describe("application feedback API", () => {
     db.prepare(
       `UPDATE job_materials_artifacts
           SET metadata_json = ?
-        WHERE job_url = ?
+        WHERE job_id = ?
           AND artifact_id = 'apply-ready-resume-text'`,
-    ).run(JSON.stringify(requirementLedAuditMetadata()), READY_JOB);
+    ).run(JSON.stringify(requirementLedAuditMetadata()), READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    const audit = queueItem(response.json(), READY_JOB)?.materialsPreview.requirementLedAudit;
+    const audit = queueItem(response.json(), READY_JOB_ID)?.materialsPreview.requirementLedAudit;
     expect(audit?.revision).toMatchObject({
       coverageBasis: "judge_claimed_legacy",
       claimedOnlyRequirementIds: [],
@@ -1148,16 +1131,16 @@ describe("application feedback API", () => {
     db.prepare(
       `UPDATE job_materials_artifacts
           SET metadata_json = ?
-        WHERE job_url = ?
+        WHERE job_id = ?
           AND artifact_id = 'apply-ready-resume-text'`,
-    ).run(JSON.stringify(metadata), READY_JOB);
+    ).run(JSON.stringify(metadata), READY_JOB_ID);
     db.close();
     const app = buildApp(options);
 
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    const audit = queueItem(response.json(), READY_JOB)?.materialsPreview.requirementLedAudit;
+    const audit = queueItem(response.json(), READY_JOB_ID)?.materialsPreview.requirementLedAudit;
     expect(audit?.revision?.attempt).toBeNull();
     expect(audit?.revision?.revisionsUsed).toBeNull();
 
@@ -1170,14 +1153,15 @@ describe("application feedback API", () => {
     fs.writeFileSync(ignoredCandidatePath, "ordinary candidate should not be shown");
     fs.writeFileSync(reviewCandidatePath, "review required candidate resume");
     const db = new Database(options.dbPath);
-    db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(READY_JOB, 2);
-    db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(READY_JOB, 3);
+    insertMaterialSet(db, READY_JOB_ID, 2, "candidate");
+    insertMaterialSet(db, READY_JOB_ID, 3, "candidate");
     db.prepare(
       `INSERT INTO job_materials_artifacts (
-         job_url, generation, artifact_id, artifact_type, status, path, metadata_json, created_at, size_bytes
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         job_id, generation, artifact_id, artifact_type, status, path, render_format,
+         metadata_json, created_at, size_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?, ?)`,
     ).run(
-      READY_JOB,
+      READY_JOB_ID,
       3,
       "ignored-candidate-resume",
       "tailored_resume",
@@ -1189,10 +1173,11 @@ describe("application feedback API", () => {
     );
     db.prepare(
       `INSERT INTO job_materials_artifacts (
-         job_url, generation, artifact_id, artifact_type, status, path, metadata_json, created_at, size_bytes
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         job_id, generation, artifact_id, artifact_type, status, path, render_format,
+         metadata_json, created_at, size_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?, ?)`,
     ).run(
-      READY_JOB,
+      READY_JOB_ID,
       2,
       "review-candidate-resume",
       "tailored_resume",
@@ -1208,29 +1193,20 @@ describe("application feedback API", () => {
     const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(queueItem(response.json(), READY_JOB)?.materialsPreview).toMatchObject({
+    expect(queueItem(response.json(), READY_JOB_ID)?.materialsPreview).toMatchObject({
       materialsGeneration: 2,
       resumeText: "review required candidate resume",
       resumeTextArtifactId: "review-candidate-resume",
       resumePdfArtifactId: null,
     });
-    expect(queueItem(response.json(), READY_JOB)?.approvalGate).toMatchObject({
+    expect(queueItem(response.json(), READY_JOB_ID)?.approvalGate).toMatchObject({
       materialsGeneration: 2,
     });
-    expect(queueItem(response.json(), READY_JOB)?.materialsPreview.requirementLedAudit?.revision?.reason).toBe(
+    expect(queueItem(response.json(), READY_JOB_ID)?.materialsPreview.requirementLedAudit?.revision?.reason).toBe(
       "review_blocked_claims",
     );
 
     const decisionDb = new Database(options.dbPath);
-    decisionDb.exec(`
-      CREATE TABLE IF NOT EXISTS candidate_profiles (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        version INTEGER NOT NULL DEFAULT 1,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, profile_id)
-      );
-    `);
     decisionDb
       .prepare(
         "INSERT OR REPLACE INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
@@ -1262,11 +1238,11 @@ describe("application feedback API", () => {
         .prepare(
           `SELECT materials_generation
              FROM application_review_decisions
-            WHERE job_key = ?
+            WHERE job_id = ?
             ORDER BY decided_at DESC, decision_id DESC
             LIMIT 1`,
         )
-        .get(READY_JOB) as { materials_generation?: number } | undefined;
+        .get(READY_JOB_ID) as { materials_generation?: number } | undefined;
       expect(row?.materials_generation).toBe(2);
     } finally {
       boundDb.close();
@@ -1277,15 +1253,6 @@ describe("application feedback API", () => {
 
   it("records approve, defer, reset, and decline review decisions without dispatching apply", async () => {
     const profileDb = new Database(options.dbPath);
-    profileDb.exec(`
-      CREATE TABLE candidate_profiles (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        version INTEGER NOT NULL DEFAULT 1,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, profile_id)
-      );
-    `);
     profileDb
       .prepare(
         "INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
@@ -1317,7 +1284,7 @@ describe("application feedback API", () => {
     expect(approve.json()).toMatchObject({
       ok: true,
       decision: {
-        jobKey: READY_JOB,
+        jobKey: READY_JOB_ID,
         decision: "approve_submit",
       },
     });
@@ -1328,10 +1295,10 @@ describe("application feedback API", () => {
         .prepare(
           `SELECT decision, materials_generation, profile_version, application_url
            FROM application_review_decisions
-           WHERE job_key = ?
+           WHERE job_id = ?
            ORDER BY decided_at DESC LIMIT 1`,
         )
-        .get(READY_JOB) as {
+        .get(READY_JOB_ID) as {
           decision?: string;
           materials_generation?: number;
           profile_version?: number;
@@ -1346,7 +1313,7 @@ describe("application feedback API", () => {
     }
 
     const afterApprove = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
-    expect(queueItem(afterApprove.json(), READY_JOB)).toMatchObject({
+    expect(queueItem(afterApprove.json(), READY_JOB_ID)).toMatchObject({
       review: { state: "approved_submit", decision: "approve_submit" },
     });
 
@@ -1357,7 +1324,7 @@ describe("application feedback API", () => {
     });
     expect(defer.statusCode, defer.body).toBe(200);
     const afterDefer = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
-    expect(queueItem(afterDefer.json(), READY_JOB)).toBeUndefined();
+    expect(queueItem(afterDefer.json(), READY_JOB_ID)).toBeUndefined();
 
     const reset = await app.inject({
       method: "POST",
@@ -1366,7 +1333,7 @@ describe("application feedback API", () => {
     });
     expect(reset.statusCode, reset.body).toBe(200);
     const afterReset = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
-    expect(queueItem(afterReset.json(), READY_JOB)).toMatchObject({
+    expect(queueItem(afterReset.json(), READY_JOB_ID)).toMatchObject({
       review: { state: "pending", decision: "reset" },
     });
 
@@ -1384,32 +1351,23 @@ describe("application feedback API", () => {
     });
     expect(decline.statusCode, decline.body).toBe(200);
     const afterDecline = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
-    expect(queueItem(afterDecline.json(), DRY_RUN_JOB)).toBeUndefined();
+    expect(queueItem(afterDecline.json(), DRY_RUN_JOB_ID)).toBeUndefined();
 
     await app.close();
   });
 
   it("returns approval precondition errors with stable conflict codes", async () => {
     const db = new Database(options.dbPath);
-    db.exec(`
-      CREATE TABLE candidate_profiles (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        version INTEGER NOT NULL DEFAULT 1,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, profile_id)
-      );
-    `);
     db.prepare(
       "INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
     ).run(7, NOW);
     db.prepare("DELETE FROM job_events WHERE event_type = 'DryRunCompleted'").run();
     db.prepare(
       `INSERT INTO job_events (
-         job_url, stage, event_type, level, message, occurred_at, payload_json
-       ) VALUES (?, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
+         tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES ('local', ?, 1, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
     ).run(
-      READY_JOB,
+      READY_JOB_ID,
       "Unbound full dry run completed",
       "2026-06-01T12:01:00.000Z",
       JSON.stringify({
@@ -1465,15 +1423,6 @@ describe("application feedback API", () => {
 
   it("requires submit approval to bind the email application candidate", async () => {
     const db = new Database(options.dbPath);
-    db.exec(`
-      CREATE TABLE candidate_profiles (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        version INTEGER NOT NULL DEFAULT 1,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, profile_id)
-      );
-    `);
     db.prepare(
       "INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
     ).run(7, NOW);
@@ -1485,10 +1434,10 @@ describe("application feedback API", () => {
     });
     db.prepare(
       `INSERT INTO job_events (
-         job_url, stage, event_type, level, message, occurred_at, payload_json
-       ) VALUES (?, 'apply', 'EmailApplicationCandidateRecorded', 'info', ?, ?, ?)`,
+         tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES ('local', ?, 1, 'apply', 'EmailApplicationCandidateRecorded', 'info', ?, ?, ?)`,
     ).run(
-      READY_JOB,
+      READY_JOB_ID,
       "Email application candidate recorded",
       "2026-06-01T12:02:00.000Z",
       JSON.stringify({
@@ -1504,7 +1453,7 @@ describe("application feedback API", () => {
     const app = buildApp(options);
     const readyKey = encodeURIComponent(READY_JOB);
     const queue = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
-    expect(queueItem(queue.json(), READY_JOB)?.emailApplication).toMatchObject({
+    expect(queueItem(queue.json(), READY_JOB_ID)?.emailApplication).toMatchObject({
       recipient: "apply@example.com",
       subject: "Application for Staff Engineer",
       attachmentArtifactId: "resume-pdf-1",
@@ -1551,15 +1500,6 @@ describe("application feedback API", () => {
 
   it("rejects submit approval when the displayed review binding is stale", async () => {
     const db = new Database(options.dbPath);
-    db.exec(`
-      CREATE TABLE candidate_profiles (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        version INTEGER NOT NULL DEFAULT 1,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, profile_id)
-      );
-    `);
     db.prepare(
       "INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
     ).run(7, NOW);
@@ -1617,25 +1557,16 @@ describe("application feedback API", () => {
 
   it("rejects submit approval when dry-run evidence belongs to an older profile version", async () => {
     const db = new Database(options.dbPath);
-    db.exec(`
-      CREATE TABLE candidate_profiles (
-        tenant_id TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        version INTEGER NOT NULL DEFAULT 1,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, profile_id)
-      );
-    `);
     db.prepare(
       "INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
     ).run(2, NOW);
     db.prepare("DELETE FROM job_events WHERE event_type IN ('ApplyRunStarted', 'DryRunCompleted')").run();
     db.prepare(
       `INSERT INTO job_events (
-         job_url, stage, event_type, level, message, occurred_at, payload_json
-       ) VALUES (?, 'apply', 'ApplyRunStarted', 'info', ?, ?, ?)`,
+         tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES ('local', ?, 1, 'apply', 'ApplyRunStarted', 'info', ?, ?, ?)`,
     ).run(
-      READY_JOB,
+      READY_JOB_ID,
       "Stale-profile dry run started",
       "2026-06-01T12:00:00.000Z",
       JSON.stringify({
@@ -1648,10 +1579,10 @@ describe("application feedback API", () => {
     );
     db.prepare(
       `INSERT INTO job_events (
-         job_url, stage, event_type, level, message, occurred_at, payload_json
-       ) VALUES (?, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
+         tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES ('local', ?, 1, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
     ).run(
-      READY_JOB,
+      READY_JOB_ID,
       "Stale-profile dry run completed",
       "2026-06-01T12:01:00.000Z",
       JSON.stringify({
@@ -1667,10 +1598,10 @@ describe("application feedback API", () => {
     );
     db.prepare(
       `INSERT INTO job_events (
-         job_url, stage, event_type, level, message, occurred_at, payload_json
-       ) VALUES (?, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
+         tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES ('local', ?, 1, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
     ).run(
-      READY_JOB,
+      READY_JOB_ID,
       "Stale-profile partial dry run completed",
       "2026-06-01T12:02:00.000Z",
       JSON.stringify({
@@ -1741,7 +1672,7 @@ describe("application feedback API", () => {
     expect(write.statusCode, write.body).toBe(200);
     const outcome = write.json().outcome;
     expect(outcome).toMatchObject({
-      jobKey: READY_JOB,
+      jobKey: READY_JOB_ID,
       kind: "interview",
       source: "manual",
       note,
@@ -1755,14 +1686,14 @@ describe("application feedback API", () => {
     expect(jobOutcomes.statusCode, jobOutcomes.body).toBe(200);
     expect(jobOutcomes.json()).toMatchObject({
       ok: true,
-      jobKey: READY_JOB,
+      jobKey: READY_JOB_ID,
       outcomes: [expect.objectContaining({ outcomeId: outcome.outcomeId, note })],
     });
 
     const allOutcomes = await app.inject({ method: "GET", url: "/v1/outcomes" });
     expect(allOutcomes.statusCode, allOutcomes.body).toBe(200);
     expect(allOutcomes.json().outcomes).toEqual([
-      expect.objectContaining({ outcomeId: outcome.outcomeId, jobKey: READY_JOB }),
+      expect.objectContaining({ outcomeId: outcome.outcomeId, jobKey: READY_JOB_ID }),
     ]);
 
     expect(eventPayloadText(options.dbPath)).not.toContain(note);
@@ -1770,7 +1701,7 @@ describe("application feedback API", () => {
   });
 
   it("links post-interview reflections to an accepted prep generation without leaking notes", async () => {
-    seedInterviewPrepGeneration(options.dbPath, READY_JOB, 2);
+    seedInterviewPrepGeneration(options.dbPath, READY_JOB_ID, 2);
     const app = buildApp(options);
     const note = "private reflection after a platform design interview";
 
@@ -1788,7 +1719,7 @@ describe("application feedback API", () => {
     expect(write.statusCode, write.body).toBe(200);
     const outcome = write.json().outcome;
     expect(outcome).toMatchObject({
-      jobKey: READY_JOB,
+      jobKey: READY_JOB_ID,
       kind: "interview",
       source: "manual",
       note,
@@ -1850,7 +1781,7 @@ describe("application feedback API", () => {
       evidence: [
         {
           evidenceId: "evidence-1",
-          jobKey: READY_JOB,
+          jobKey: READY_JOB_ID,
           providerMessageId: "gmail-message-1",
           linkConfidence: 0.94,
           bodyText: rawBody,
@@ -1860,7 +1791,7 @@ describe("application feedback API", () => {
         {
           suggestionId: "suggestion-1",
           evidenceId: "evidence-1",
-          jobKey: READY_JOB,
+          jobKey: READY_JOB_ID,
           kind: "interview",
           confidence: 0.9,
           bodyText: rawBody,
@@ -1901,7 +1832,7 @@ describe("application feedback API", () => {
       evidence: [
         {
           evidenceId: "evidence-1",
-          jobKey: READY_JOB,
+          jobKey: READY_JOB_ID,
           providerMessageId: "gmail-message-1",
           linkConfidence: 0.94,
         },
@@ -1910,7 +1841,7 @@ describe("application feedback API", () => {
         {
           suggestionId: "suggestion-1",
           evidenceId: "evidence-1",
-          jobKey: READY_JOB,
+          jobKey: READY_JOB_ID,
           kind: "interview",
           confidence: 0.9,
         },
@@ -2015,7 +1946,7 @@ describe("application feedback API", () => {
         decidedOutcomeId: expect.any(String),
       },
       outcome: {
-        jobKey: READY_JOB,
+        jobKey: READY_JOB_ID,
         kind: "applied_confirmation",
         source: "email_suggestion",
         note: privateNote,
@@ -2071,13 +2002,13 @@ describe("application feedback API", () => {
 
     const queue = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
     expect(queue.statusCode, queue.body).toBe(200);
-    const assessment = queueItem(queue.json(), READY_JOB)?.repeatApplication;
+    const assessment = queueItem(queue.json(), READY_JOB_ID)?.repeatApplication;
     expect(assessment).toMatchObject({
       status: "confirmation_required",
       matches: [
         {
           relationship: "same_employer_equivalent_role",
-          priorApplication: { jobKey: APPLIED_JOB, factKind: "legacy_applied_status" },
+          priorApplication: { jobId: APPLIED_JOB_ID, factKind: "legacy_applied_status" },
         },
       ],
     });
@@ -2107,7 +2038,7 @@ describe("application feedback API", () => {
       url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/repeat-application/override`,
       payload: {
         evidenceFingerprint: assessment?.evidenceFingerprint,
-        priorJobKey: APPLIED_JOB,
+        priorJobId: APPLIED_JOB_ID,
         reason: "The prior application was withdrawn before review.",
         confirmedBy: "api-test-user",
       },
@@ -2117,8 +2048,8 @@ describe("application feedback API", () => {
       assessment: {
         status: "override_ready",
         override: {
-          targetJobKey: READY_JOB,
-          priorJobKey: APPLIED_JOB,
+          targetJobId: READY_JOB_ID,
+          priorJobId: APPLIED_JOB_ID,
           confirmedBy: "api-test-user",
         },
       },
@@ -2135,9 +2066,9 @@ describe("application feedback API", () => {
     const audit = new Database(options.dbPath, { readonly: true });
     const auditActions = audit
       .prepare(
-        "SELECT action FROM application_repeat_audit WHERE target_job_key = ? ORDER BY occurred_at",
+        "SELECT action FROM application_repeat_audit WHERE target_job_id = ? ORDER BY occurred_at",
       )
-      .all(READY_JOB)
+      .all(READY_JOB_ID)
       .map((row) => (row as { action: string }).action);
     audit.close();
     expect(auditActions).toEqual(["confirmation_required", "override_recorded"]);
@@ -2158,251 +2089,13 @@ function seedDatabase(dbPath: string): void {
   fs.writeFileSync(resumePath, "tailored resume");
   fs.writeFileSync(resumePdfPath, "%PDF-1.4\n% test\n");
   fs.writeFileSync(rejectedResumePdfPath, "%PDF-1.4\n% rejected test\n");
+  initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE jobs (
-      url TEXT PRIMARY KEY,
-      title TEXT,
-      site TEXT,
-      strategy TEXT,
-      location TEXT,
-      salary TEXT,
-      discovered_at TEXT,
-      application_url TEXT,
-      description TEXT,
-      full_description TEXT,
-      detail_scraped_at TEXT,
-      detail_error TEXT,
-      fit_score INTEGER,
-      score_reasoning TEXT,
-      scored_at TEXT,
-      tailored_resume_path TEXT,
-      tailored_at TEXT,
-      tailor_attempts INTEGER,
-      cover_letter_path TEXT,
-      cover_letter_at TEXT,
-      cover_attempts INTEGER,
-      apply_status TEXT,
-      apply_error TEXT,
-      applied_at TEXT
-    );
-    CREATE TABLE job_stage_states (
-      job_url TEXT,
-      stage TEXT,
-      state TEXT,
-      attempt_count INTEGER,
-      max_attempts INTEGER,
-      started_at TEXT,
-      updated_at TEXT,
-      finished_at TEXT,
-      duration_ms INTEGER,
-      error_code TEXT,
-      error_message TEXT,
-      retryable INTEGER,
-      blocked_by_json TEXT,
-      next_action TEXT,
-      metadata_json TEXT
-    );
-    CREATE TABLE job_events (
-      event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_url TEXT,
-      stage TEXT,
-      event_type TEXT NOT NULL DEFAULT '',
-      level TEXT NOT NULL DEFAULT 'info',
-      message TEXT,
-      occurred_at TEXT NOT NULL,
-      payload_json TEXT
-    );
-    CREATE TABLE apply_run_projections (
-      run_id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_id TEXT NOT NULL,
-      job_title TEXT NOT NULL DEFAULT '',
-      job_employer TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT '',
-      result TEXT,
-      dry_run INTEGER NOT NULL DEFAULT 0,
-      worker_id INTEGER,
-      model TEXT,
-      started_at TEXT,
-      finished_at TEXT,
-      duration_ms INTEGER,
-      events_json TEXT NOT NULL DEFAULT '[]'
-    );
-    CREATE TABLE job_scores (
-      job_url TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      fit_score INTEGER NOT NULL,
-      breakdown_json TEXT NOT NULL,
-      keywords_json TEXT NOT NULL,
-      scored_at TEXT,
-      correction_json TEXT NOT NULL DEFAULT '{}',
-      criteria_json TEXT NOT NULL DEFAULT '{}',
-      trace_json TEXT NOT NULL DEFAULT '{}',
-      PRIMARY KEY (job_url, version)
-    );
-    CREATE TABLE job_materials (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL
-    );
-    CREATE TABLE job_materials_artifacts (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      artifact_id TEXT,
-      artifact_type TEXT,
-      status TEXT,
-      path TEXT,
-      created_at TEXT,
-      size_bytes INTEGER,
-      metadata_json TEXT
-    );
-    CREATE TABLE job_bullet_provenance (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      bullet_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      artifact_id TEXT NOT NULL,
-      section TEXT NOT NULL,
-      source_id TEXT,
-      evidence_ids_json TEXT NOT NULL DEFAULT '[]',
-      requirement_ids_json TEXT NOT NULL DEFAULT '[]',
-      matched_keywords_json TEXT NOT NULL DEFAULT '[]',
-      transform_type TEXT NOT NULL,
-      control TEXT NOT NULL,
-      rationale TEXT NOT NULL DEFAULT '',
-      generated_text TEXT NOT NULL,
-      position INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (job_url, generation, bullet_id)
-    );
-    CREATE TABLE job_material_layout_boxes (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      artifact_id TEXT NOT NULL,
-      box_index INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      semantic_id TEXT NOT NULL,
-      page_number INTEGER NOT NULL,
-      line_number INTEGER,
-      text_excerpt TEXT NOT NULL,
-      left_pct REAL NOT NULL,
-      top_pct REAL NOT NULL,
-      width_pct REAL NOT NULL,
-      height_pct REAL NOT NULL,
-      audit_target_json TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (job_url, generation, artifact_id, box_index)
-    );
-    CREATE TABLE job_employer_analysis (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      ideal_candidate_narrative TEXT NOT NULL DEFAULT '',
-      requirements_json TEXT NOT NULL DEFAULT '[]'
-    );
-    CREATE TABLE job_employer_analysis_sub_analyses (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      model_id TEXT NOT NULL,
-      analysis_json TEXT NOT NULL DEFAULT '{}'
-    );
-    CREATE TABLE job_employer_analysis_failures (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      model_id TEXT NOT NULL,
-      error TEXT NOT NULL DEFAULT '',
-      raw_output TEXT
-    );
-    CREATE TABLE job_requirement_fit_reports (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      score_version INTEGER NOT NULL,
-      employer_analysis_generation INTEGER NOT NULL,
-      profile_snapshot_version INTEGER NOT NULL,
-      scoring_policy_version INTEGER NOT NULL,
-      formula_version TEXT NOT NULL,
-      resolved_fit_score INTEGER,
-      fit_band TEXT NOT NULL,
-      confidence TEXT NOT NULL,
-      summary_json TEXT NOT NULL DEFAULT '{}',
-      PRIMARY KEY (tenant_id, job_url, score_version)
-    );
-    CREATE TABLE job_requirement_fit_items (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      score_version INTEGER NOT NULL,
-      requirement_id TEXT NOT NULL,
-      requirement_text TEXT NOT NULL,
-      tier TEXT NOT NULL,
-      weight REAL NOT NULL,
-      job_evidence_span TEXT NOT NULL,
-      fit_json TEXT NOT NULL DEFAULT '{}',
-      contribution_json TEXT NOT NULL DEFAULT '{}',
-      tailoring_json TEXT NOT NULL DEFAULT '{}',
-      artifact_coverage_json TEXT,
-      position INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (tenant_id, job_url, score_version, requirement_id)
-    );
-    CREATE TABLE job_posted_compensation_facts (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      source_field TEXT NOT NULL DEFAULT 'jobs.salary',
-      source_text TEXT,
-      legacy_raw_salary TEXT,
-      parse_state TEXT NOT NULL,
-      currency TEXT,
-      period TEXT NOT NULL DEFAULT 'unknown',
-      component TEXT NOT NULL DEFAULT 'unknown',
-      minimum_amount INTEGER,
-      maximum_amount INTEGER,
-      annualized_minimum_amount INTEGER,
-      annualized_maximum_amount INTEGER,
-      annualization_assumption TEXT,
-      confidence TEXT NOT NULL DEFAULT 'none',
-      warnings_json TEXT NOT NULL DEFAULT '[]',
-      parser_version TEXT NOT NULL,
-      source_hash TEXT NOT NULL,
-      parsed_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, job_url)
-    );
-    CREATE TABLE job_market_compensation_estimates (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      estimate_state TEXT NOT NULL,
-      currency TEXT,
-      period TEXT NOT NULL DEFAULT 'year',
-      component TEXT NOT NULL DEFAULT 'base_salary',
-      minimum_amount INTEGER,
-      maximum_amount INTEGER,
-      confidence_band TEXT NOT NULL DEFAULT 'none',
-      confidence_score REAL NOT NULL DEFAULT 0,
-      source_count INTEGER NOT NULL DEFAULT 0,
-      sample_count INTEGER,
-      aggregate_bucket TEXT,
-      geography_scope TEXT,
-      occupation_code TEXT,
-      occupation_label TEXT,
-      seniority_label TEXT,
-      source_snapshot_json TEXT NOT NULL DEFAULT '[]',
-      factor_reasons_json TEXT NOT NULL DEFAULT '[]',
-      insufficient_reasons_json TEXT NOT NULL DEFAULT '[]',
-      unsupported_reasons_json TEXT NOT NULL DEFAULT '[]',
-      source_unavailable_reasons_json TEXT NOT NULL DEFAULT '[]',
-      warnings_json TEXT NOT NULL DEFAULT '[]',
-      estimator_version TEXT NOT NULL,
-      estimated_at TEXT NOT NULL,
-      company_name TEXT,
-      normalized_company TEXT,
-      role_title TEXT,
-      normalized_role TEXT,
-      company_tier TEXT NOT NULL DEFAULT 'unknown',
-      match_scope TEXT NOT NULL DEFAULT 'none',
-      PRIMARY KEY (tenant_id, job_url)
-    );
-  `);
+  db.pragma("foreign_keys = ON");
+  seedBuiltInResumeTemplate(db);
 
   insertJob(db, {
+    jobId: READY_JOB_ID,
     url: READY_JOB,
     title: "Principal Platform Engineer",
     site: "ExampleCo",
@@ -2413,6 +2106,7 @@ function seedDatabase(dbPath: string): void {
     applyState: "pending",
   });
   insertJob(db, {
+    jobId: DRY_RUN_JOB_ID,
     url: DRY_RUN_JOB,
     title: "Staff Backend Engineer",
     site: "ExampleCo",
@@ -2423,6 +2117,7 @@ function seedDatabase(dbPath: string): void {
     applyState: "pending",
   });
   insertJob(db, {
+    jobId: APPLIED_JOB_ID,
     url: APPLIED_JOB,
     title: "Already Applied Engineer",
     site: "ExampleCo",
@@ -2439,7 +2134,7 @@ function seedDatabase(dbPath: string): void {
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "dry-run-ready",
-    READY_JOB,
+    READY_JOB_ID,
     "Principal Platform Engineer",
     "ExampleCo",
     "dry_run_complete",
@@ -2450,10 +2145,10 @@ function seedDatabase(dbPath: string): void {
   );
   db.prepare(
     `INSERT INTO job_events (
-       job_url, stage, event_type, level, message, occurred_at, payload_json
-     ) VALUES (?, 'apply', 'ApplyRunStarted', 'info', ?, ?, ?)`,
+       tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+     ) VALUES ('local', ?, 1, 'apply', 'ApplyRunStarted', 'info', ?, ?, ?)`,
   ).run(
-    READY_JOB,
+    READY_JOB_ID,
     "Apply dry-run started",
     "2026-05-31T09:00:00.000Z",
     JSON.stringify({
@@ -2465,10 +2160,10 @@ function seedDatabase(dbPath: string): void {
   );
   db.prepare(
     `INSERT INTO job_events (
-       job_url, stage, event_type, level, message, occurred_at, payload_json
-     ) VALUES (?, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
+       tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+     ) VALUES ('local', ?, 1, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
   ).run(
-    READY_JOB,
+    READY_JOB_ID,
     "Dry run completed",
     "2026-05-31T09:01:00.000Z",
     JSON.stringify({
@@ -2483,8 +2178,23 @@ function seedDatabase(dbPath: string): void {
     }),
   );
   insertBulletProvenance(db);
-  insertCompensationRows(db, READY_JOB);
+  insertCompensationRows(db, READY_JOB_ID, READY_JOB);
   db.close();
+}
+
+function seedBuiltInResumeTemplate(db: Database.Database): void {
+  db.prepare(
+    `INSERT INTO resume_templates (
+       tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+     ) VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)`,
+  ).run(NOW, NOW);
+  db.prepare(
+    `INSERT INTO resume_template_versions (
+       tenant_id, version_id, template_id, version_number, display_name, status,
+       theme_json, layout_json, content_hash, created_at
+     ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
+               'Modern HTML', 'active', ?, '{}', 'application-feedback-fixture', ?)`,
+  ).run(JSON.stringify(BUILT_IN_RESUME_TEMPLATE_THEME), NOW);
 }
 
 function insertVersionedDryRunEvidence(
@@ -2500,10 +2210,10 @@ function insertVersionedDryRunEvidence(
   const coverage = options.coverage ?? "full";
   db.prepare(
     `INSERT INTO job_events (
-       job_url, stage, event_type, level, message, occurred_at, payload_json
-     ) VALUES (?, 'apply', 'ApplyRunStarted', 'info', ?, ?, ?)`,
+       tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+     ) VALUES ('local', ?, 1, 'apply', 'ApplyRunStarted', 'info', ?, ?, ?)`,
   ).run(
-    READY_JOB,
+    READY_JOB_ID,
     "Versioned dry run started",
     "2026-06-01T12:00:00.000Z",
     JSON.stringify({
@@ -2516,10 +2226,10 @@ function insertVersionedDryRunEvidence(
   );
   db.prepare(
     `INSERT INTO job_events (
-       job_url, stage, event_type, level, message, occurred_at, payload_json
-     ) VALUES (?, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
+       tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+     ) VALUES ('local', ?, 1, 'apply', 'DryRunCompleted', 'info', ?, ?, ?)`,
   ).run(
-    READY_JOB,
+    READY_JOB_ID,
     "Versioned dry run completed",
     "2026-06-01T12:01:00.000Z",
     JSON.stringify({
@@ -2551,18 +2261,18 @@ function runBoundNavigation(applicationUrl: string): Array<Record<string, string
   ];
 }
 
-function insertCompensationRows(db: Database.Database, jobUrl: string): void {
+function insertCompensationRows(db: Database.Database, jobId: string, jobUrl: string): void {
   db.prepare("UPDATE jobs SET salary = ? WHERE url = ?").run("EUR 70000-90000/year", jobUrl);
   db.prepare(
     `INSERT INTO job_posted_compensation_facts (
-       tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+       tenant_id, job_id, source_field, source_text, legacy_raw_salary,
        parse_state, currency, period, component, minimum_amount, maximum_amount,
        annualized_minimum_amount, annualized_maximum_amount, annualization_assumption,
        confidence, warnings_json, parser_version, source_hash, parsed_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
-    jobUrl,
+    jobId,
     "jobs.salary",
     "EUR 70000-90000/year",
     "EUR 70000-90000/year",
@@ -2583,7 +2293,7 @@ function insertCompensationRows(db: Database.Database, jobUrl: string): void {
   );
   db.prepare(
     `INSERT INTO job_market_compensation_estimates (
-       tenant_id, job_url, estimate_state, currency, period, component,
+       tenant_id, job_id, estimate_state, currency, period, component,
        minimum_amount, maximum_amount, confidence_band, confidence_score,
        source_count, sample_count, aggregate_bucket, geography_scope,
        occupation_code, occupation_label, seniority_label, source_snapshot_json,
@@ -2593,7 +2303,7 @@ function insertCompensationRows(db: Database.Database, jobUrl: string): void {
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
-    jobUrl,
+    jobId,
     "estimated_range",
     "EUR",
     "year",
@@ -2666,6 +2376,7 @@ function insertCompensationRows(db: Database.Database, jobUrl: string): void {
 function insertJob(
   db: Database.Database,
   job: {
+    jobId: string;
     url: string;
     title: string;
     site: string;
@@ -2679,11 +2390,12 @@ function insertJob(
 ): void {
   db.prepare(
     `INSERT INTO jobs (
-       url, title, site, strategy, location, salary, discovered_at, application_url,
+       tenant_id, job_id, url, title, site, strategy, location, salary, discovered_at, application_url,
        description, full_description, detail_scraped_at, fit_score, score_reasoning,
        scored_at, tailored_resume_path, tailored_at, apply_status, applied_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
+    job.jobId,
     job.url,
     job.title,
     job.site,
@@ -2704,27 +2416,27 @@ function insertJob(
     job.appliedAt ?? null,
   );
   for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
-    insertStage(db, job.url, stage, "succeeded");
+    insertStage(db, job.jobId, stage, "succeeded");
   }
-  insertStage(db, job.url, "apply", job.applyState);
-  insertScore(db, job.url, job.fitScore);
-  insertEmployerAnalysis(db, job.url);
-  insertRequirementFitReport(db, job.url);
-  insertMaterials(db, job.url, job.resumePath, job.resumePdfPath, job.rejectedResumePdfPath);
+  insertStage(db, job.jobId, "apply", job.applyState);
+  insertScore(db, job.jobId, job.fitScore);
+  insertEmployerAnalysis(db, job.jobId);
+  insertRequirementFitReport(db, job.jobId);
+  insertMaterials(db, job.jobId, job.url, job.resumePath, job.resumePdfPath, job.rejectedResumePdfPath);
 }
 
-function insertEmployerAnalysis(db: Database.Database, jobUrl: string): void {
-  if (jobUrl !== READY_JOB) {
+function insertEmployerAnalysis(db: Database.Database, jobId: string): void {
+  if (jobId !== READY_JOB_ID) {
     return;
   }
   db.prepare(
     `INSERT INTO job_employer_analysis (
-       job_url, generation, tenant_id, ideal_candidate_narrative, requirements_json
-     ) VALUES (?, ?, ?, ?, ?)`,
+       tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
+       cache_key, ideal_candidate_narrative, requirements_json, legs_attempted,
+       legs_succeeded, created_at
+     ) VALUES ('local', ?, 1, 'snapshot', 'prompt-v1', 'sdk-v1', 'cache-v1', ?, ?, 1, 1, ?)`,
   ).run(
-    jobUrl,
-    1,
-    "local",
+    jobId,
     "A senior platform leader who improves developer experience and incident response across teams.",
     JSON.stringify([
       {
@@ -2742,11 +2454,13 @@ function insertEmployerAnalysis(db: Database.Database, jobUrl: string): void {
         evidence_span: "developer experience improvements",
       },
     ]),
+    NOW,
   );
 }
 
 function insertMaterials(
   db: Database.Database,
+  jobId: string,
   jobUrl: string,
   resumePath: string,
   resumePdfPath: string,
@@ -2754,25 +2468,31 @@ function insertMaterials(
 ): void {
   const artifactPrefix =
     jobUrl === READY_JOB ? "apply-ready" : jobUrl === DRY_RUN_JOB ? "dry-run" : "already-applied";
-  db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(jobUrl, 1);
+  db.prepare(
+    `INSERT INTO job_materials (
+       tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+     ) VALUES ('local', ?, 1, 'resume_approved', ?, ?, '{}')`,
+  ).run(jobId, NOW, NOW);
   db.prepare(
     `INSERT INTO job_materials_artifacts (
-       job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(jobUrl, 1, `${artifactPrefix}-resume-text`, "tailored_resume", "approved", resumePath, NOW, 15);
+       tenant_id, job_id, generation, artifact_id, artifact_type, status, path,
+       render_format, created_at, size_bytes, metadata_json
+     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')`,
+  ).run(jobId, 1, `${artifactPrefix}-resume-text`, "tailored_resume", "approved", resumePath, "text", NOW, 15);
   db.prepare(
     `INSERT INTO job_materials_artifacts (
-       job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(jobUrl, 1, `${artifactPrefix}-resume-pdf`, "resume_pdf", "approved", resumePdfPath, NOW, 15);
+       tenant_id, job_id, generation, artifact_id, artifact_type, status, path,
+       render_format, created_at, size_bytes, metadata_json
+     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')`,
+  ).run(jobId, 1, `${artifactPrefix}-resume-pdf`, "resume_pdf", "approved", resumePdfPath, "html_pdf", NOW, 15);
   db.prepare(
     `INSERT INTO job_material_layout_boxes (
-       job_url, generation, artifact_id, box_index, tenant_id,
+       tenant_id, job_id, generation, artifact_id, box_index,
        semantic_id, page_number, line_number, text_excerpt,
        left_pct, top_pct, width_pct, height_pct, audit_target_json, created_at
-     ) VALUES (?, 1, ?, 0, 'local', ?, 1, 6, ?, 12.5, 24.0, 62.0, 2.4, '{}', ?)`,
+     ) VALUES ('local', ?, 1, ?, 0, ?, 1, 6, ?, 12.5, 24.0, 62.0, 2.4, '{}', ?)`,
   ).run(
-    jobUrl,
+    jobId,
     `${artifactPrefix}-resume-pdf`,
     "experience:acme:bullet:1",
     "Owned platform reliability improvements for incident response.",
@@ -2780,18 +2500,33 @@ function insertMaterials(
   );
   db.prepare(
     `INSERT INTO job_materials_artifacts (
-       job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       tenant_id, job_id, generation, artifact_id, artifact_type, status, path,
+       render_format, created_at, size_bytes, metadata_json
+     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')`,
   ).run(
-    jobUrl,
+    jobId,
     1,
     `${artifactPrefix}-rejected-resume-pdf`,
-    "resume_pdf",
+    "tailored_resume_pdf",
     "rejected",
     rejectedResumePdfPath,
+    "html_pdf",
     "2026-06-01T11:00:00.000Z",
     22,
   );
+}
+
+function insertMaterialSet(
+  db: Database.Database,
+  jobId: string,
+  generation: number,
+  status: string,
+): void {
+  db.prepare(
+    `INSERT INTO job_materials (
+       tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+     ) VALUES ('local', ?, ?, ?, ?, ?, '{}')`,
+  ).run(jobId, generation, status, NOW, NOW);
 }
 
 function requirementLedAuditMetadata(): Record<string, unknown> {
@@ -2910,19 +2645,19 @@ function requirementLedAuditMetadata(): Record<string, unknown> {
   };
 }
 
-function insertRequirementFitReport(db: Database.Database, jobUrl: string): void {
-  if (jobUrl !== READY_JOB) {
+function insertRequirementFitReport(db: Database.Database, jobId: string): void {
+  if (jobId !== READY_JOB_ID) {
     return;
   }
   db.prepare(
     `INSERT INTO job_requirement_fit_reports (
-       tenant_id, job_url, score_version, employer_analysis_generation,
+       tenant_id, job_id, score_version, employer_analysis_generation,
        profile_snapshot_version, scoring_policy_version, formula_version,
-       resolved_fit_score, fit_band, confidence, summary_json
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       resolved_fit_score, fit_band, confidence, summary_json, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
-    jobUrl,
+    jobId,
     1,
     1,
     4,
@@ -2932,17 +2667,18 @@ function insertRequirementFitReport(db: Database.Database, jobUrl: string): void
     "strong",
     "high",
     JSON.stringify({ weighted_fit: 0.86, must_have_coverage: 1, blocker_count: 0, missing_high_weight_count: 0 }),
+    NOW,
   );
   const insertItem = db.prepare(
     `INSERT INTO job_requirement_fit_items (
-       tenant_id, job_url, score_version, requirement_id, requirement_text,
+       tenant_id, job_id, score_version, requirement_id, requirement_text,
        tier, weight, job_evidence_span, fit_json, contribution_json,
        tailoring_json, artifact_coverage_json, position
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   insertItem.run(
     "local",
-    jobUrl,
+    jobId,
     1,
     "r1",
     "Lead platform reliability improvements across critical services.",
@@ -2969,7 +2705,7 @@ function insertRequirementFitReport(db: Database.Database, jobUrl: string): void
   );
   insertItem.run(
     "local",
-    jobUrl,
+    jobId,
     1,
     "r2",
     "Improve developer experience and incident-response practices.",
@@ -3004,12 +2740,12 @@ function insertRequirementFitReport(db: Database.Database, jobUrl: string): void
 function insertBulletProvenance(db: Database.Database): void {
   db.prepare(
     `INSERT INTO job_bullet_provenance (
-       job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+       job_id, generation, bullet_id, tenant_id, artifact_id, section, source_id,
        evidence_ids_json, requirement_ids_json, matched_keywords_json,
        transform_type, control, rationale, generated_text, position, created_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    READY_JOB,
+    READY_JOB_ID,
     1,
     "summary-1",
     "local",
@@ -3028,14 +2764,14 @@ function insertBulletProvenance(db: Database.Database): void {
   );
 }
 
-function insertScore(db: Database.Database, jobUrl: string, fitScore: number): void {
+function insertScore(db: Database.Database, jobId: string, fitScore: number): void {
   db.prepare(
     `INSERT INTO job_scores (
-       job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+       job_id, version, tenant_id, fit_score, breakdown_json, keywords_json,
        scored_at, correction_json, criteria_json, trace_json
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    jobUrl,
+    jobId,
     1,
     "local",
     fitScore,
@@ -3078,13 +2814,13 @@ function insertScore(db: Database.Database, jobUrl: string, fitScore: number): v
   );
 }
 
-function insertStage(db: Database.Database, jobUrl: string, stage: string, state: string): void {
+function insertStage(db: Database.Database, jobId: string, stage: string, state: string): void {
   db.prepare(
     `INSERT INTO job_stage_states (
-       job_url, stage, state, attempt_count, max_attempts, updated_at,
+       job_id, stage, state, attempt_count, max_attempts, updated_at,
        error_code, error_message, retryable, blocked_by_json
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(jobUrl, stage, state, 0, 3, NOW, null, null, 1, "[]");
+  ).run(jobId, stage, state, 0, 3, NOW, null, null, 1, "[]");
 }
 
 function seedOutcomeSuggestion(dbPath: string): void {
@@ -3092,7 +2828,7 @@ function seedOutcomeSuggestion(dbPath: string): void {
   ensureApplicationFeedbackTables(db);
   db.prepare(
     `INSERT INTO application_email_evidence (
-       tenant_id, evidence_id, job_key, provider, provider_message_id,
+       tenant_id, evidence_id, job_id, provider, provider_message_id,
        provider_thread_id, from_address, to_addresses_json, subject, snippet,
        received_at, linked_at, link_confidence, link_signals_json,
        body_text, body_sha256, body_stored_at
@@ -3100,7 +2836,7 @@ function seedOutcomeSuggestion(dbPath: string): void {
   ).run(
     "local",
     "evidence-1",
-    READY_JOB,
+    READY_JOB_ID,
     "gmail",
     "gmail-message-1",
     "gmail-thread-1",
@@ -3118,13 +2854,13 @@ function seedOutcomeSuggestion(dbPath: string): void {
   );
   db.prepare(
     `INSERT INTO application_outcome_suggestions (
-       tenant_id, suggestion_id, job_key, evidence_id, suggested_kind,
+       tenant_id, suggestion_id, job_id, evidence_id, suggested_kind,
        confidence, rationale, status, created_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
     "suggestion-1",
-    READY_JOB,
+    READY_JOB_ID,
     "evidence-1",
     "applied_confirmation",
     0.91,
@@ -3147,26 +2883,14 @@ function eventPayloadText(dbPath: string): string {
   }
 }
 
-function seedInterviewPrepGeneration(dbPath: string, jobUrl: string, generation: number): void {
+function seedInterviewPrepGeneration(dbPath: string, jobId: string, generation: number): void {
   const db = new Database(dbPath);
   try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS job_interview_prep (
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        job_url TEXT NOT NULL,
-        generation INTEGER NOT NULL,
-        status TEXT NOT NULL,
-        generated_at TEXT NOT NULL,
-        model TEXT,
-        gate_audit_json TEXT NOT NULL DEFAULT '{}',
-        PRIMARY KEY (job_url, generation)
-      );
-    `);
     db.prepare(
       `INSERT INTO job_interview_prep (
-         tenant_id, job_url, generation, status, generated_at, model, gate_audit_json
-       ) VALUES ('local', ?, ?, 'accepted', '2026-06-01T10:30:00.000Z', 'gpt-test', '{}')`,
-    ).run(jobUrl, generation);
+         tenant_id, job_id, generation, status, generated_at, model, gate_status
+       ) VALUES ('local', ?, ?, 'accepted', '2026-06-01T10:30:00.000Z', 'gpt-test', 'passed')`,
+    ).run(jobId, generation);
   } finally {
     db.close();
   }
