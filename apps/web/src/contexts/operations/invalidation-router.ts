@@ -125,6 +125,12 @@ import type { KnownDomainEvent, KnownDomainEventType } from "./types.js";
 export type InvalidationItem =
   | { readonly kind: "invalidate"; readonly queryKey: QueryKey }
   | {
+      readonly kind: "patch-query";
+      readonly queryKey: QueryKey;
+      readonly exact: boolean;
+      readonly updater: (current: unknown) => unknown;
+    }
+  | {
       readonly kind: "apply-run-event-append";
       readonly tenantId: TenantId;
       readonly runId: string;
@@ -138,6 +144,17 @@ export type InvalidationHandler<TEvent extends KnownDomainEvent = KnownDomainEve
 export const invalidate = (queryKey: QueryKey): InvalidationItem => ({
   kind: "invalidate",
   queryKey,
+});
+
+export const patchQuery = (
+  queryKey: QueryKey,
+  updater: (current: unknown) => unknown,
+  exact = true,
+): InvalidationItem => ({
+  kind: "patch-query",
+  queryKey,
+  exact,
+  updater,
 });
 
 export const patchApplyRunEvent = (
@@ -280,6 +297,13 @@ export const invalidationRouter: InvalidationRouter = {
     for (const item of items) {
       if (item.kind === "invalidate") {
         void queryClient.invalidateQueries({ queryKey: item.queryKey });
+        continue;
+      }
+      if (item.kind === "patch-query") {
+        queryClient.setQueriesData(
+          { queryKey: item.queryKey, exact: item.exact },
+          item.updater,
+        );
         continue;
       }
       // High-frequency `ApplyRunEventRecorded` events patch the apply-run

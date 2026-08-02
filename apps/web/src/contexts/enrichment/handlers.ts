@@ -10,8 +10,13 @@ import type {
 
 import { dashboardKeys } from "../operations/dashboardKeys.js";
 import { discoveryKeys } from "../discovery/queryKeys.js";
-import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
+import {
+  invalidate,
+  patchQuery,
+  type InvalidationItem,
+} from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
+import { patchJobActiveState } from "../operations/realtimePatches.js";
 
 export const jobEnrichedHandler = (event: JobEnriched): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
@@ -62,6 +67,12 @@ export const postingContentSnapshotFailedHandler = (
 export const jobActiveStateChangedHandler = (
   event: JobActiveStateChanged,
 ): readonly InvalidationItem[] => [
+  // Active state is exact on an open detail. List membership can cross the
+  // active/closed filters, so list reconciliation remains bounded by tenant.
+  patchQuery(
+    jobsKeys.detail(event.tenantId, event.payload.jobId),
+    (current) => patchJobActiveState(current, event.payload),
+  ),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(discoveryKeys.sourceQuality(event.tenantId)),

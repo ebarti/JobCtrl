@@ -20,13 +20,28 @@ import type {
 import { applyReviewKeys } from "../operations/applyReviewKeys.js";
 import { artifactsKeys } from "../operations/artifactsKeys.js";
 import { dashboardKeys } from "../operations/dashboardKeys.js";
-import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
+import {
+  invalidate,
+  patchQuery,
+  type InvalidationItem,
+} from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
+import { patchResumeApproved } from "../operations/realtimePatches.js";
 import { profileKeys } from "../profile/queryKeys.js";
 
 export const resumeApprovedHandler = (
   event: ResumeApproved,
 ): readonly InvalidationItem[] => [
+  // Patch only already-registered detail rows. This event does not carry the
+  // complete artifact summary needed to insert or refilter an artifact page.
+  patchQuery(
+    jobsKeys.detail(event.tenantId, event.payload.jobId),
+    (current) => patchResumeApproved(current, event.payload),
+  ),
+  patchQuery(
+    artifactsKeys.detail(event.tenantId, event.payload.artifactId),
+    (current) => patchResumeApproved(current, event.payload),
+  ),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(artifactsKeys.lists(event.tenantId)),
