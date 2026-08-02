@@ -236,8 +236,9 @@ def _table_plans() -> dict[str, TablePlan]:
     )
     # Reviewed tailoring facts and derived recommendation audit records exist
     # only in exact v7. The v6 source cannot imply review, recommendation, job
-    # evidence, or tombstone rows, so all begin empty after cutover.
+    # evidence, decision, or tombstone rows, so all begin empty after cutover.
     for table in (
+        "learning_recommendation_reviews",
         "learning_recommendation_evidence",
         "learning_recommendation_evidence_jobs",
         "learning_recommendation_jobs",
@@ -518,6 +519,7 @@ _DECLARED_COLUMNS: Final[Mapping[str, frozenset[str]]] = _column_manifest(
         "jobctrl_hidden_jobs": "job_url tenant_id job_id hidden_at reason unhidden_at",
         "jobs": "url title company salary description location site strategy discovered_at full_description application_url detail_scraped_at detail_error fit_score score_reasoning scored_at tailored_resume_path tailored_at tailor_attempts cover_letter_path cover_letter_at cover_attempts applied_at apply_status apply_error apply_attempts agent_id last_attempted_at apply_duration_ms apply_task_id verification_confidence tenant_id job_id",
         "llm_spend": "day input_tokens output_tokens estimated_usd",
+        "learning_recommendation_reviews": "tenant_id review_id recommendation_id revision decision context policy_kind policy_version reviewed_at",
         "learning_recommendation_evidence": "tenant_id recommendation_id signal_id evidence_role source_kind source_id source_revision recorded_at",
         "learning_recommendation_evidence_jobs": "tenant_id recommendation_id signal_id job_id",
         "learning_recommendation_jobs": "tenant_id recommendation_id job_id",
