@@ -1,6 +1,6 @@
 """JobPipelineState aggregate — the collection of stage states for one job.
 
-See ddd-target.md S4.7.  Identity: (TenantId, job_url).
+See ddd-target.md S4.7.  Identity: (TenantId, JobId).
 The aggregate holds a dict mapping each Stage to its current StageState,
 plus a ``version`` counter for optimistic locking (S8.6).
 """
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.pipeline_types import (
     Pending,
     Stage,
@@ -20,13 +21,12 @@ from jobctrl.domain.tenant import TenantId
 class OptimisticLockError(Exception):
     """Raised when a save conflicts with a concurrent modification."""
 
-    def __init__(self, job_url: str, expected_version: int, actual_version: int) -> None:
-        self.job_url = job_url
+    def __init__(self, job_id: JobId, expected_version: int, actual_version: int) -> None:
+        self.job_id = canonical_job_id(str(job_id))
         self.expected_version = expected_version
         self.actual_version = actual_version
         super().__init__(
-            f"Optimistic lock conflict on {job_url}: "
-            f"expected version {expected_version}, found {actual_version}"
+            f"Optimistic lock conflict on {self.job_id}: expected version {expected_version}, found {actual_version}"
         )
 
 
@@ -41,9 +41,12 @@ class JobPipelineState:
     """
 
     tenant_id: TenantId
-    job_url: str
+    job_id: JobId
     stages: dict[Stage, StageState] = field(default_factory=dict)
     version: int = 0
+
+    def __post_init__(self) -> None:
+        self.job_id = canonical_job_id(str(self.job_id))
 
     # -- convenience helpers --------------------------------------------------
 
@@ -56,11 +59,11 @@ class JobPipelineState:
         self.stages[stage] = state
 
     @classmethod
-    def new_for_job(cls, tenant_id: TenantId, job_url: str) -> JobPipelineState:
+    def new_for_job(cls, tenant_id: TenantId, job_id: JobId) -> JobPipelineState:
         """Create a brand-new aggregate with every stage set to Pending."""
         return cls(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=canonical_job_id(str(job_id)),
             stages={stage: Pending() for stage in Stage},
             version=0,
         )

@@ -46,6 +46,12 @@ const DEFAULT_MAX_ATTEMPTS: Record<Stage, number> = {
   cover: 5,
   apply: 3,
 };
+const LOCAL_TENANT = "local";
+
+interface ResolvedJobIdentity {
+  readonly jobId: string;
+  readonly jobUrl: string;
+}
 
 const DEFAULT_SCORING_RUBRIC_VERSION = "default-scoring-rubric-v1";
 const DEFAULT_SCORING_DIMENSIONS = [
@@ -77,17 +83,26 @@ const DEFAULT_FIT_BAND_THRESHOLDS = [
  */
 export function validateStageTransition(
   db: SqliteDatabase,
-  jobUrl: string,
+  jobLocator: string,
   stage: Stage,
   targetState: StageState,
 ): void {
-  if (!tableExists(db, "job_stage_states")) {
-    return;
-  }
+  const job = resolveJobIdentity(db, LOCAL_TENANT, jobLocator);
+  if (!job) throw new InputError("Job not found.");
+  validateStageTransitionById(db, LOCAL_TENANT, job.jobId, stage, targetState);
+}
+
+function validateStageTransitionById(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobId: string,
+  stage: Stage,
+  targetState: StageState,
+): void {
   const row = getRow<{ state?: string }>(
     db,
-    "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
-    [jobUrl, stage],
+    "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = ?",
+    [tenantId, jobId, stage],
   );
   if (!row || !row.state) {
     return; // No existing row — INSERT path, always valid.
@@ -113,14 +128,39 @@ export function validateStageTransition(
 }
 
 export function resolveJobUrl(db: SqliteDatabase, jobKey: string): string | null {
-  if (!tableExists(db, "jobs")) {
-    return null;
-  }
-  const row = getRow<{ url?: string }>(db, "SELECT url FROM jobs WHERE url = ? OR application_url = ? LIMIT 1", [
-    jobKey,
-    jobKey,
-  ]);
-  return row?.url ?? null;
+  return resolveJobIdentity(db, LOCAL_TENANT, jobKey)?.jobUrl ?? null;
+}
+
+export function resolveJobId(db: SqliteDatabase, tenantId: string, jobLocator: string): string | null {
+  return resolveJobIdentity(db, tenantId, jobLocator)?.jobId ?? null;
+}
+
+function resolveJobIdentity(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobLocator: string,
+): ResolvedJobIdentity | null {
+  const row = getRow<{ job_id?: string; url?: string }>(
+    db,
+    `SELECT job_id, url
+       FROM jobs
+      WHERE tenant_id = ?
+        AND (
+          job_id = ?
+          OR url = ?
+          OR application_url = ?
+          OR EXISTS (
+            SELECT 1
+              FROM job_locators
+             WHERE job_locators.tenant_id = jobs.tenant_id
+               AND job_locators.job_id = jobs.job_id
+               AND job_locators.locator_value = ?
+          )
+        )
+      LIMIT 1`,
+    [tenantId, jobLocator, jobLocator, jobLocator, jobLocator],
+  );
+  return row?.job_id && row.url ? { jobId: row.job_id, jobUrl: row.url } : null;
 }
 
 export function resetJobStage(
@@ -129,17 +169,22 @@ export function resetJobStage(
   stage: Stage,
   options: { resetAttempts: boolean },
 ): { jobUrl: string; stage: StageSummary } {
-  const jobUrl = resolveJobUrl(db, jobKey);
-  if (!jobUrl) {
-    throw new InputError("Job not found.");
-  }
+  const job = resolveJobIdentity(db, LOCAL_TENANT, jobKey);
+  if (!job) throw new InputError("Job not found.");
+  return resetResolvedJobStage(db, job, stage, options);
+}
 
+function resetResolvedJobStage(
+  db: SqliteDatabase,
+  job: ResolvedJobIdentity,
+  stage: Stage,
+  options: { resetAttempts: boolean },
+): { jobUrl: string; stage: StageSummary } {
   // Reset is an admin override (parity with Python's `reset_job_stage`),
   // so even though we _call_ isValidTransition (via validateStageTransition)
   // when the gate is opt-in, this entry-point bypasses §8.5 — the user is
   // explicitly forcing the stage back to pending.
-  updateLegacyJobColumnsForReset(db, jobUrl, stage, options.resetAttempts);
-  const stageOptions: Parameters<typeof upsertStageState>[4] = {
+  const stageOptions: Parameters<typeof upsertStageStateById>[5] = {
     retryable: true,
     clearTiming: true,
     skipValidation: true,
@@ -147,9 +192,10 @@ export function resetJobStage(
   if (options.resetAttempts) {
     stageOptions.attemptCount = 0;
   }
-  upsertStageState(db, jobUrl, stage, "pending", stageOptions);
-  recordActionEvent(db, {
-    jobUrl,
+  upsertStageStateById(db, LOCAL_TENANT, job.jobId, stage, "pending", stageOptions);
+  recordActionEventById(db, {
+    tenantId: LOCAL_TENANT,
+    jobId: job.jobId,
     stage,
     // H1 (round-1 review): align with domain catalog — `StageReset` already
     // exists in `domain/events/orchestration.py`.  Python's
@@ -159,26 +205,27 @@ export function resetJobStage(
     message: `Retry reset requested for ${stage}`,
     payload: { reset_attempts: options.resetAttempts },
   });
-  return { jobUrl, stage: getStageState(db, jobUrl, stage) };
+  return { jobUrl: job.jobUrl, stage: getStageStateById(db, LOCAL_TENANT, job.jobId, stage) };
 }
 
 export function retryFailedJobs(db: SqliteDatabase, request: BulkJobMutationRequest): RetryFailedJobsResult {
-  const candidates = mutableJobKeys(db, request);
+  const candidates = mutableResolvedJobs(db, request);
   const targets = candidates
-    .map((jobUrl) => ({ jobUrl, stage: currentFailedStage(db, jobUrl) }))
-    .filter((target): target is { jobUrl: string; stage: Stage } => target.stage !== null);
+    .map((job) => ({ job, stage: currentFailedStageById(db, LOCAL_TENANT, job.jobId) }))
+    .filter((target): target is { job: ResolvedJobIdentity; stage: Stage } => target.stage !== null);
   const transaction = db.transaction((rows: typeof targets) => {
-    for (const { jobUrl, stage } of rows) {
-      resetJobStage(db, jobUrl, stage, { resetAttempts: false });
+    for (const { job, stage } of rows) {
+      resetResolvedJobStage(db, job, stage, { resetAttempts: false });
     }
   });
   transaction(targets);
+  const responseTargets = targets.map(({ job, stage }) => ({ jobUrl: job.jobUrl, stage }));
   return {
     ok: true,
-    count: targets.length,
-    jobKeys: targets.map((target) => target.jobUrl),
-    targets,
-    stageCounts: stageCountsForRetryTargets(targets),
+    count: responseTargets.length,
+    jobKeys: responseTargets.map((target) => target.jobUrl),
+    targets: responseTargets,
+    stageCounts: stageCountsForRetryTargets(responseTargets),
   };
 }
 
@@ -206,19 +253,22 @@ export function queueRetriedJobsForWorkflow(
   const source = workflow.source ?? "bulk_retry_failed";
   const transaction = db.transaction((rows: readonly RetryFailedJobTarget[]) => {
     for (const target of rows) {
+      const job = resolveJobIdentity(db, LOCAL_TENANT, target.jobUrl);
+      if (!job) throw new InputError("Job not found.");
       const current = getRow<{ state?: string }>(
         db,
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
-        [target.jobUrl, target.stage],
+        "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = ?",
+        [LOCAL_TENANT, job.jobId, target.stage],
       );
       if (current?.state && current.state !== "pending") {
         continue;
       }
-      upsertStageState(db, target.jobUrl, target.stage, "queued", {
+      upsertStageStateById(db, LOCAL_TENANT, job.jobId, target.stage, "queued", {
         retryable: true,
       });
-      recordActionEvent(db, {
-        jobUrl: target.jobUrl,
+      recordActionEventById(db, {
+        tenantId: LOCAL_TENANT,
+        jobId: job.jobId,
         stage: target.stage,
         eventType: "StageQueued",
         level: "info",
@@ -776,6 +826,13 @@ function mutableJobKeys(db: SqliteDatabase, request: BulkJobMutationRequest): st
   return uniqueJobKeys(request.jobKeys)
     .map((jobKey) => resolveJobUrl(db, jobKey))
     .filter((jobUrl): jobUrl is string => Boolean(jobUrl));
+}
+
+function mutableResolvedJobs(db: SqliteDatabase, request: BulkJobMutationRequest): ResolvedJobIdentity[] {
+  const locators = request.allMatching ? matchingJobKeys(db, request.filter ?? {}) : request.jobKeys;
+  return uniqueJobKeys(locators)
+    .map((locator) => resolveJobIdentity(db, LOCAL_TENANT, locator))
+    .filter((job): job is ResolvedJobIdentity => Boolean(job));
 }
 
 function uniqueJobKeys(jobKeys: string[]): string[] {
@@ -1578,6 +1635,180 @@ function recordActionEvent(
   db.prepare(
     `INSERT INTO job_events (${entries.map(([name]) => name).join(", ")}) VALUES (${entries.map(() => "?").join(", ")})`,
   ).run(...entries.map(([, value]) => value));
+}
+
+function upsertStageStateById(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobId: string,
+  stage: Stage,
+  state: StageState,
+  options: {
+    attemptCount?: number;
+    clearTiming?: boolean;
+    finishedAt?: string;
+    retryable?: boolean;
+    skipValidation?: boolean;
+  } = {},
+): void {
+  if (!options.skipValidation) {
+    validateStageTransitionById(db, tenantId, jobId, stage, state);
+  }
+  const now = new Date().toISOString();
+  const updates: Record<string, SqliteValue> = {
+    state,
+    updated_at: now,
+    error_code: null,
+    error_message: null,
+    retryable: options.retryable === false ? 0 : 1,
+    blocked_by_json: "[]",
+    next_action: null,
+  };
+  if (options.attemptCount !== undefined) {
+    updates.attempt_count = options.attemptCount;
+  }
+  if (options.clearTiming) {
+    updates.started_at = null;
+    updates.finished_at = null;
+    updates.duration_ms = null;
+  }
+  if (options.finishedAt) {
+    updates.finished_at = options.finishedAt;
+  }
+
+  const updateEntries = Object.entries(updates);
+  const assignments = updateEntries.map(([name]) => `${name} = ?`).join(", ");
+  const result = db
+    .prepare(`UPDATE job_stage_states SET ${assignments} WHERE tenant_id = ? AND job_id = ? AND stage = ?`)
+    .run(...updateEntries.map(([, value]) => value), tenantId, jobId, stage);
+  if (result.changes > 0) {
+    return;
+  }
+
+  const insert: Record<string, SqliteValue> = {
+    tenant_id: tenantId,
+    job_id: jobId,
+    stage,
+    state,
+    attempt_count: options.attemptCount ?? 0,
+    max_attempts: DEFAULT_MAX_ATTEMPTS[stage],
+    updated_at: now,
+    retryable: options.retryable === false ? 0 : 1,
+    blocked_by_json: "[]",
+  };
+  if (options.finishedAt) {
+    insert.finished_at = options.finishedAt;
+  }
+  const insertEntries = Object.entries(insert);
+  db.prepare(
+    `INSERT INTO job_stage_states (${insertEntries.map(([name]) => name).join(", ")}) VALUES (${insertEntries
+      .map(() => "?")
+      .join(", ")})`,
+  ).run(...insertEntries.map(([, value]) => value));
+}
+
+function getStageStateById(db: SqliteDatabase, tenantId: string, jobId: string, stage: Stage): StageSummary {
+  const row = getRow<Record<string, unknown>>(
+    db,
+    "SELECT * FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = ? LIMIT 1",
+    [tenantId, jobId, stage],
+  );
+  if (!row) {
+    return defaultStage(stage, "pending");
+  }
+  return {
+    stage,
+    state: isStageState(row.state) ? row.state : "pending",
+    attemptCount: Number(row.attempt_count ?? 0),
+    maxAttempts: nullableNumber(row.max_attempts) ?? DEFAULT_MAX_ATTEMPTS[stage],
+    startedAt: nullableString(row.started_at),
+    updatedAt: nullableString(row.updated_at),
+    finishedAt: nullableString(row.finished_at),
+    durationMs: nullableNumber(row.duration_ms),
+    errorCode: nullableString(row.error_code),
+    errorMessage: nullableString(row.error_message),
+    retryable: row.retryable === null || row.retryable === undefined ? true : Boolean(row.retryable),
+    blockedBy: parseStringArray(nullableString(row.blocked_by_json)),
+    nextAction: nullableString(row.next_action),
+  };
+}
+
+function currentFailedStageById(db: SqliteDatabase, tenantId: string, jobId: string): Stage | null {
+  const rows = allRows<{ stage: Stage; state: string; retryable: number | null }>(
+    db,
+    "SELECT stage, state, retryable FROM job_stage_states WHERE tenant_id = ? AND job_id = ?",
+    [tenantId, jobId],
+  );
+  const failedStages = new Set(
+    rows
+      .filter(
+        (row) =>
+          STAGES.includes(row.stage) &&
+          ["failed", "exhausted"].includes(row.state) &&
+          (row.stage === "enrich" ||
+            (row.retryable !== 0 &&
+              latestStageRetryableOverrideById(db, tenantId, jobId, row.stage) !== false)),
+      )
+      .map((row) => row.stage),
+  );
+  return STAGES.find((stage) => failedStages.has(stage)) ?? null;
+}
+
+function latestStageRetryableOverrideById(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobId: string,
+  stage: Stage,
+): boolean | null {
+  const rows = allRows<{ payload_json: string | null }>(
+    db,
+    `SELECT payload_json
+     FROM job_events
+     WHERE tenant_id = ?
+       AND job_id = ?
+       AND stage = ?
+       AND payload_json IS NOT NULL
+     ORDER BY event_id ASC`,
+    [tenantId, jobId, stage],
+  );
+  let latest: boolean | null = null;
+  for (const row of rows) {
+    const payload = parseJsonRecord(row.payload_json);
+    const retryable = payload?.["retryable"];
+    if (typeof retryable === "boolean") {
+      latest = retryable;
+    }
+  }
+  return latest;
+}
+
+function recordActionEventById(
+  db: SqliteDatabase,
+  event: {
+    tenantId: string;
+    jobId: string;
+    stage: Stage;
+    eventType: string;
+    level: string;
+    message: string;
+    payload: Record<string, unknown>;
+  },
+): void {
+  db.prepare(
+    `INSERT INTO job_events (
+       tenant_id, job_id, identity_version, stage, event_type, level,
+       message, occurred_at, payload_json
+     ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    event.tenantId,
+    event.jobId,
+    event.stage,
+    event.eventType,
+    event.level,
+    event.message,
+    new Date().toISOString(),
+    JSON.stringify({ tenantId: event.tenantId, jobId: event.jobId, ...event.payload }),
+  );
 }
 
 function parseJsonObjectInput(raw: unknown, rawText: string | undefined, label: string): Record<string, unknown> {

@@ -14,6 +14,7 @@ import json
 import sqlite3
 from typing import Any
 
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.pipeline.aggregate import JobPipelineState
 from jobctrl.domain.pipeline_types import (
     Blocked,
@@ -234,10 +235,11 @@ class SqlitePipelineStateRepository:
 
     # -- port methods ---------------------------------------------------------
 
-    def load(self, tenant_id: TenantId, job_url: str) -> JobPipelineState | None:
+    def load(self, tenant_id: TenantId, job_id: JobId) -> JobPipelineState | None:
+        stable_job_id = canonical_job_id(str(job_id))
         rows = self._conn.execute(
-            "SELECT * FROM job_stage_states WHERE job_url = ?",
-            (job_url,),
+            "SELECT * FROM job_stage_states WHERE tenant_id = ? AND job_id = ?",
+            (str(tenant_id), str(stable_job_id)),
         ).fetchall()
         if not rows:
             return None
@@ -258,7 +260,7 @@ class SqlitePipelineStateRepository:
 
         return JobPipelineState(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=stable_job_id,
             stages=stages,
             version=version,
         )
@@ -274,7 +276,11 @@ class SqlitePipelineStateRepository:
         :func:`jobctrl.state.record_job_event` so the read-model stays in
         sync with the same fan-out used by the per-stage runners.
         """
-        existing_states = self._existing_state_strings(state.job_url)
+        stable_job_id = canonical_job_id(str(state.job_id))
+        existing_states = self._existing_state_strings(
+            state.tenant_id,
+            stable_job_id,
+        )
 
         completed_stages: list[str] = []
         for stage, stage_state in state.stages.items():
@@ -283,9 +289,10 @@ class SqlitePipelineStateRepository:
 
             set_stage_state(
                 self._conn,
-                state.job_url,
+                stable_job_id,
                 stage_str,
                 new_state_str,
+                tenant_id=state.tenant_id,
                 expected_version=state.version,
                 validate_transition=False,
                 **_stage_state_to_kwargs(stage_state),
@@ -296,9 +303,10 @@ class SqlitePipelineStateRepository:
             event_type, level = _EVENTS_BY_KIND[stage_state.kind]
             record_job_event(
                 self._conn,
-                state.job_url,
+                stable_job_id,
                 stage_str,
                 event_type,
+                tenant_id=state.tenant_id,
                 level=level,
                 message=_event_message(stage_state),
             )
@@ -306,7 +314,12 @@ class SqlitePipelineStateRepository:
                 completed_stages.append(stage_str)
 
         for stage_str in completed_stages:
-            reconcile_dependency_blockers(self._conn, job_url=state.job_url, completed_stage=stage_str)
+            reconcile_dependency_blockers(
+                self._conn,
+                tenant_id=state.tenant_id,
+                job_id=stable_job_id,
+                completed_stage=stage_str,
+            )
         state.version = state.version + 1
 
     def list_by_stage(
@@ -317,30 +330,34 @@ class SqlitePipelineStateRepository:
     ) -> list[JobPipelineState]:
         if state_filter:
             rows = self._conn.execute(
-                "SELECT DISTINCT job_url FROM job_stage_states WHERE stage = ? AND state = ?",
-                (stage, state_filter),
+                "SELECT DISTINCT job_id FROM job_stage_states WHERE tenant_id = ? AND stage = ? AND state = ?",
+                (str(tenant_id), stage, state_filter),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT DISTINCT job_url FROM job_stage_states WHERE stage = ?",
-                (stage,),
+                "SELECT DISTINCT job_id FROM job_stage_states WHERE tenant_id = ? AND stage = ?",
+                (str(tenant_id), stage),
             ).fetchall()
 
         results: list[JobPipelineState] = []
         for row in rows:
-            job_url = row[0] if not isinstance(row, dict) else row["job_url"]
-            agg = self.load(tenant_id, job_url)
+            job_id = canonical_job_id(str(row[0] if not isinstance(row, dict) else row["job_id"]))
+            agg = self.load(tenant_id, job_id)
             if agg is not None:
                 results.append(agg)
         return results
 
     # -- helpers --------------------------------------------------------------
 
-    def _existing_state_strings(self, job_url: str) -> dict[str, str]:
+    def _existing_state_strings(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> dict[str, str]:
         """Return the persisted ``stage -> state`` map for change detection."""
         rows = self._conn.execute(
-            "SELECT stage, state FROM job_stage_states WHERE job_url = ?",
-            (job_url,),
+            "SELECT stage, state FROM job_stage_states WHERE tenant_id = ? AND job_id = ?",
+            (str(tenant_id), str(job_id)),
         ).fetchall()
         return {row["stage"]: row["state"] for row in rows}
 
