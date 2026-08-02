@@ -50,6 +50,7 @@ import {
   LearningRecommendationListQuerySchema,
   LearningRecommendationReviewRequestSchema,
   LearningRecommendationReviewResponseSchema,
+  TailoringPolicyRevisionListQuerySchema,
   JsonRpcErrorCodes,
   JsonRpcRequestSchema,
   MarkJobActionRequestSchema,
@@ -250,6 +251,7 @@ import {
   listLearningRecommendationEvidence,
   listLearningRecommendations,
 } from "./learning-recommendations.js";
+import { listTailoringPolicyRevisions } from "./tailoring-policy-revisions.js";
 import { refreshProjections } from "./projections.js";
 import { createResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 import {
@@ -587,6 +589,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       listLearningRecommendations(
         db,
         LearningRecommendationListQuerySchema.parse(request.query),
+      ),
+    ),
+  );
+
+  app.get("/v1/learning/policies/materials", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) =>
+      listTailoringPolicyRevisions(
+        db,
+        TailoringPolicyRevisionListQuerySchema.parse(request.query),
       ),
     ),
   );
