@@ -18,6 +18,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveApiConfig } from "../src/config.js";
+import { SUPPORTED_SCHEMA_VERSION } from "../src/db.js";
 import {
   CredentialStoreUnavailableError,
   KeychainCredentialStore,
@@ -33,6 +34,7 @@ let strayProfileExportPath = "";
 let strayStyleExportPath = "";
 let strayTemplateExportPath = "";
 const CHROME_EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const COMPENSATION_JOB_ID = "11111111-1111-4111-8111-111111111111";
 const INERT_RESUME_TEMPLATE = "{{ personal_data }}\n\n{{ resume_body }}\n";
 const REJECTED_CREDENTIAL_VALUE_MARKER =
   "rejected-credential-must-not-appear";
@@ -2166,19 +2168,25 @@ describe("local TypeScript API", () => {
   });
 
   it("dispatches a focused compensation refresh without running the full pipeline", async () => {
-    options.actionDispatcher = vi.fn(async (): Promise<ActionDispatchResult> => ({
+    const jobUrl = "https://example.com/jobs/ready";
+    const exactV7DbPath = path.join(tempDir, "compensation-focused-v7.db");
+    seedExactV7CompensationDatabase(exactV7DbPath, {
+      jobId: COMPENSATION_JOB_ID,
+      postingUrl: jobUrl,
+    });
+    const actionDispatcher = vi.fn(async (): Promise<ActionDispatchResult> => ({
       status: "succeeded",
       result: {
         ok: true,
         status: "succeeded",
-        jobUrl: "https://example.com/jobs/ready",
+        postingUrl: jobUrl,
         postedFactsRefreshed: 1,
         reportedObservationsLoaded: 0,
         estimatesRefreshed: 0,
         tenantId: "local",
       },
     }));
-    const app = buildApp(options);
+    const app = buildApp({ ...options, dbPath: exactV7DbPath, actionDispatcher });
     const response = await app.inject({
       method: "POST",
       url: "/v1/jobs/https%3A%2F%2Fexample.com%2Fjobs%2Fready/actions/refresh-compensation",
@@ -2190,39 +2198,41 @@ describe("local TypeScript API", () => {
       ok: true,
       action: "refresh_compensation",
       status: "succeeded",
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: COMPENSATION_JOB_ID,
       command: {
         action: "refresh_compensation",
-        jobKey: "https://example.com/jobs/ready",
+        jobKey: COMPENSATION_JOB_ID,
         observationsJsonPath: "/tmp/reported-compensation.json",
       },
     });
-    expect(options.actionDispatcher).toHaveBeenCalledWith(
+    expect(actionDispatcher).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "refresh_compensation",
-        jobKey: "https://example.com/jobs/ready",
+        jobKey: COMPENSATION_JOB_ID,
         observationsJsonPath: "/tmp/reported-compensation.json",
       }),
-      expect.objectContaining({ dbPath: options.dbPath }),
+      expect.objectContaining({ dbPath: exactV7DbPath }),
     );
 
     await app.close();
   });
 
   it("dispatches an all-jobs compensation refresh without running the full pipeline", async () => {
-    options.actionDispatcher = vi.fn(async (): Promise<ActionDispatchResult> => ({
+    const exactV7DbPath = path.join(tempDir, "compensation-all-jobs-v7.db");
+    seedExactV7CompensationDatabase(exactV7DbPath);
+    const actionDispatcher = vi.fn(async (): Promise<ActionDispatchResult> => ({
       status: "succeeded",
       result: {
         ok: true,
         status: "succeeded",
-        jobUrl: null,
+        postingUrl: null,
         postedFactsRefreshed: 2,
         reportedObservationsLoaded: 0,
         estimatesRefreshed: 2,
         tenantId: "local",
       },
     }));
-    const app = buildApp(options);
+    const app = buildApp({ ...options, dbPath: exactV7DbPath, actionDispatcher });
     const response = await app.inject({
       method: "POST",
       url: "/v1/jobs/actions/refresh-compensation",
@@ -2242,14 +2252,14 @@ describe("local TypeScript API", () => {
         euroTopTechMaxPages: 3,
       },
     });
-    expect(options.actionDispatcher).toHaveBeenCalledWith(
+    expect(actionDispatcher).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "refresh_compensation",
         jobKey: "pipeline",
         includeEuroTopTech: false,
         euroTopTechMaxPages: 3,
       }),
-      expect.objectContaining({ dbPath: options.dbPath }),
+      expect.objectContaining({ dbPath: exactV7DbPath }),
     );
 
     await app.close();
@@ -9741,6 +9751,37 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 });
+
+function seedExactV7CompensationDatabase(
+  dbPath: string,
+  job?: { jobId: string; postingUrl: string },
+): void {
+  const schemaPath = path.resolve(
+    process.cwd(),
+    "../../workers/automation/src/jobctrl/infrastructure/migrations/schema_v7.sql",
+  );
+  const db = new Database(dbPath);
+  db.exec(fs.readFileSync(schemaPath, "utf8"));
+  db.pragma(`user_version = ${SUPPORTED_SCHEMA_VERSION}`);
+  if (job) {
+    db.prepare(
+      `INSERT INTO jobs (
+        tenant_id, job_id, url, title, site, strategy, location, discovered_at, application_url
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "local",
+      job.jobId,
+      job.postingUrl,
+      "Platform Engineer",
+      "example",
+      "test",
+      "Remote",
+      "2026-04-29T10:00:00+00:00",
+      `${job.postingUrl}/apply`,
+    );
+  }
+  db.close();
+}
 
 function seedDatabase(dbPath: string): void {
   const artifactPath = path.join(path.dirname(dbPath), "ready-resume.txt");

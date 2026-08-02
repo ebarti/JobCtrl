@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from statistics import median
 from typing import Literal
 
+from jobctrl.domain.identifiers import JobId, canonical_job_id
+
 ESTIMATOR_VERSION = "company-role-reported-compensation-v2"
 
 MarketEstimateState = Literal[
@@ -323,7 +325,7 @@ class ReportedCompensationObservation:
 @dataclass(frozen=True)
 class MarketCompensationEstimate:
     tenant_id: str
-    job_url: str
+    job_id: JobId
     estimate_state: MarketEstimateState
     currency: str | None
     period: MarketPeriod
@@ -360,7 +362,7 @@ class MarketCompensationEstimate:
 
 def estimate_market_compensation(
     *,
-    job_url: str,
+    job_id: JobId,
     title: str,
     company: str | None,
     location: str | None,
@@ -374,6 +376,7 @@ def estimate_market_compensation(
 ) -> MarketCompensationEstimate:
     """Estimate compensation from reported company-role salary observations."""
 
+    job_id = canonical_job_id(str(job_id))
     now = estimated_at or datetime.now(timezone.utc).isoformat()
     warnings: list[MarketWarningCode] = []
     unsupported_reasons: list[MarketReasonCode] = []
@@ -391,7 +394,7 @@ def estimate_market_compensation(
         factors.append(_factor("component", 0.0, "Unsupported compensation component."))
         return _estimate(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             state="unsupported",
             component="total_compensation",
             factors=factors,
@@ -408,7 +411,7 @@ def estimate_market_compensation(
         factors.append(_factor("company", 0.0, "The job has no company name to match reported compensation."))
         return _estimate(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             state="insufficient_evidence",
             component=component_value,
             factors=factors,
@@ -423,7 +426,7 @@ def estimate_market_compensation(
         factors.append(_factor("role", 0.0, "The job title has no role terms to match reported compensation."))
         return _estimate(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             state="insufficient_evidence",
             component=component_value,
             factors=factors,
@@ -440,7 +443,7 @@ def estimate_market_compensation(
         factors.append(_factor("company", 0.0, "Unsupported reported-compensation source evidence was rejected."))
         return _estimate(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             state="unsupported",
             component=component_value,
             factors=factors,
@@ -461,7 +464,7 @@ def estimate_market_compensation(
         factors.append(_factor("component", 0.0, f"No reported compensation observations use {component_value}."))
         return _insufficient(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             component=component_value,
             company=company,
             normalized_company=normalized_company,
@@ -493,7 +496,7 @@ def estimate_market_compensation(
         factors.append(_factor("freshness", 0.0, "Reported compensation source snapshots are stale."))
         return _estimate(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             state="source_unavailable",
             component=component_value,
             factors=factors,
@@ -509,7 +512,7 @@ def estimate_market_compensation(
         factors.append(_factor("sample", 0.0, "No reported compensation row had usable amount evidence."))
         return _insufficient(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             component=component_value,
             company=company,
             normalized_company=normalized_company,
@@ -539,7 +542,7 @@ def estimate_market_compensation(
         )
         return _insufficient(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             component=component_value,
             company=company,
             normalized_company=normalized_company,
@@ -668,7 +671,7 @@ def estimate_market_compensation(
     if confidence_score < minimum_score:
         return _estimate(
             tenant_id=tenant_id,
-            job_url=job_url,
+            job_id=job_id,
             state="insufficient_evidence",
             component=component_value,
             factors=factors,
@@ -695,7 +698,7 @@ def estimate_market_compensation(
 
     return _estimate(
         tenant_id=tenant_id,
-        job_url=job_url,
+        job_id=job_id,
         state="estimated_range",
         currency=selected_rows[0].currency,
         period=selected_rows[0].period,
@@ -729,14 +732,15 @@ def estimate_market_compensation(
 def not_requested_market_estimate(
     *,
     tenant_id: str = "local",
-    job_url: str,
+    job_id: JobId,
     estimated_at: str | None = None,
 ) -> MarketCompensationEstimate:
     """Create an explicit not-requested market estimate value without persisting it."""
 
+    job_id = canonical_job_id(str(job_id))
     return _estimate(
         tenant_id=tenant_id,
-        job_url=job_url,
+        job_id=job_id,
         state="not_requested",
         component="total_compensation",
         estimated_at=estimated_at or datetime.now(timezone.utc).isoformat(),
@@ -746,7 +750,7 @@ def not_requested_market_estimate(
 def _insufficient(
     *,
     tenant_id: str,
-    job_url: str,
+    job_id: JobId,
     component: MarketComponent,
     company: str | None,
     normalized_company: str | None,
@@ -759,7 +763,7 @@ def _insufficient(
 ) -> MarketCompensationEstimate:
     return _estimate(
         tenant_id=tenant_id,
-        job_url=job_url,
+        job_id=job_id,
         state="insufficient_evidence",
         component=component,
         factors=factors,
@@ -776,7 +780,7 @@ def _insufficient(
 def _estimate(
     *,
     tenant_id: str,
-    job_url: str,
+    job_id: JobId,
     state: MarketEstimateState,
     component: MarketComponent,
     estimated_at: str,
@@ -816,7 +820,7 @@ def _estimate(
         confidence_interval_maximum_amount = None
     return MarketCompensationEstimate(
         tenant_id=tenant_id,
-        job_url=job_url,
+        job_id=job_id,
         estimate_state=state,
         currency=currency,
         period=period,

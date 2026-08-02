@@ -4,18 +4,17 @@ import type {
   PostedCompensationWarning,
   PostedCompensationWarningCode,
 } from "./contracts.js";
-import { getRow, tableExists, type SqliteDatabase } from "./db.js";
-
-const DEFAULT_TENANT = "local";
+import { getRow, type SqliteDatabase } from "./db.js";
 
 type JobSalaryRow = {
+  job_id: string;
   url: string;
   salary: string | null;
 };
 
 type PostedCompensationFactRow = {
   tenant_id: string;
-  job_url: string;
+  job_id: string;
   source_field: string;
   source_text: string | null;
   legacy_raw_salary: string | null;
@@ -53,27 +52,29 @@ const WARNING_MESSAGES: Record<PostedCompensationWarningCode, string> = {
 
 export function getPostedCompensationFact(
   db: SqliteDatabase,
-  jobKey: string,
+  tenantId: string,
+  jobId: string,
 ): PostedCompensationFactResponse | null {
-  const job = getRow<JobSalaryRow>(db, "SELECT url, salary FROM jobs WHERE url = ?", [jobKey]);
+  const job = getRow<JobSalaryRow>(
+    db,
+    "SELECT job_id, url, salary FROM jobs WHERE tenant_id = ? AND job_id = ?",
+    [tenantId, jobId],
+  );
   if (!job) {
     return null;
-  }
-  if (!tableExists(db, "job_posted_compensation_facts")) {
-    return notRecorded(job);
   }
   const row = getRow<PostedCompensationFactRow>(
     db,
     `
-    SELECT tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+    SELECT tenant_id, job_id, source_field, source_text, legacy_raw_salary,
            parse_state, currency, period, component, minimum_amount,
            maximum_amount, annualized_minimum_amount, annualized_maximum_amount,
            annualization_assumption, confidence, warnings_json, parser_version,
            source_hash, parsed_at
     FROM job_posted_compensation_facts
-    WHERE tenant_id = ? AND job_url = ?
+    WHERE tenant_id = ? AND job_id = ?
     `,
-    [DEFAULT_TENANT, jobKey],
+    [tenantId, jobId],
   );
   if (!row) {
     return notRecorded(job);
@@ -89,7 +90,7 @@ function notRecorded(job: JobSalaryRow): PostedCompensationFactResponse {
   return {
     ok: true,
     recordStatus: "not_recorded",
-    jobKey: job.url,
+    jobKey: job.job_id,
     legacyRawSalary: nullableText(job.salary),
   };
 }
@@ -97,7 +98,7 @@ function notRecorded(job: JobSalaryRow): PostedCompensationFactResponse {
 function mapFactRow(row: PostedCompensationFactRow): PostedCompensationFact {
   const base = {
     tenantId: row.tenant_id,
-    jobKey: row.job_url,
+    jobKey: row.job_id,
     sourceField: row.source_field,
     legacyRawSalary: nullableText(row.legacy_raw_salary),
     parserVersion: row.parser_version,

@@ -1457,7 +1457,7 @@ def compensation_refresh(
         dir_okay=False,
         readable=True,
     ),
-    url: Optional[str] = typer.Option(None, "--url", help="Refresh one existing job URL instead of every job."),
+    job_id: Optional[str] = typer.Option(None, "--job-id", help="Refresh one existing job by canonical JobId."),
     limit: int = typer.Option(0, "--limit", help="Maximum jobs to refresh. 0 means all matching jobs."),
     tenant_id: str = typer.Option("local", "--tenant-id", help="Tenant id for local canonical compensation rows."),
     include_eurotoptech: Optional[bool] = typer.Option(
@@ -1480,8 +1480,8 @@ def compensation_refresh(
         build_compensation_refresh_workflow_spec(
             {
                 "tenantId": tenant_id,
-                "jobUrl": url,
-                "allJobs": url is None,
+                "jobId": job_id,
+                "allJobs": job_id is None,
                 "limit": limit,
                 "observationsJsonPath": str(observations_json) if observations_json else None,
                 "includeEuroTopTech": include_eurotoptech if include_eurotoptech is not None else True,

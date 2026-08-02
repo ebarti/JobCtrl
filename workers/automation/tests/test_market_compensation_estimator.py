@@ -7,6 +7,10 @@ from jobctrl.domain.compensation import (
     ReportedCompensationObservation,
     estimate_market_compensation,
 )
+from jobctrl.domain.identifiers import JobId
+
+
+TEST_JOB_ID = JobId("11111111-1111-4111-8111-111111111111")
 
 
 def _levels(
@@ -119,7 +123,7 @@ def _posted_salary(
 
 def test_estimates_exact_company_role_from_reported_levels_and_glassdoor_rows() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/platform",
+        job_id=TEST_JOB_ID,
         company="Acme AI Ltd.",
         title="Senior Platform Engineer",
         location="Remote Europe",
@@ -163,7 +167,7 @@ def test_estimates_exact_company_role_from_reported_levels_and_glassdoor_rows() 
 
 def test_executive_titles_use_executive_baseline_not_staff_plus_fallback() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/cto",
+        job_id=TEST_JOB_ID,
         company="Different Company",
         title="CTO (Chief Technology Officer)",
         location="Spain (Remote)",
@@ -196,7 +200,7 @@ def test_executive_titles_use_executive_baseline_not_staff_plus_fallback() -> No
 
 def test_executive_titles_do_not_use_staff_plus_posted_salary_fallback() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/cto-posted",
+        job_id=TEST_JOB_ID,
         company="Different Company",
         title="Chief Technology Officer (CTO)",
         location="Spain (Remote)",
@@ -216,7 +220,7 @@ def test_executive_titles_do_not_use_staff_plus_posted_salary_fallback() -> None
 
 def test_estimates_company_adjacent_role_with_explicit_fallback_warning() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/backend",
+        job_id=TEST_JOB_ID,
         company="Acme AI",
         title="Senior Backend Engineer",
         location="Remote Europe",
@@ -231,7 +235,7 @@ def test_estimates_company_adjacent_role_with_explicit_fallback_warning() -> Non
 
 def test_estimates_trimodal_tier_role_fallback_with_explicit_warning() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/trimodal-tier",
+        job_id=TEST_JOB_ID,
         company="Trimodal Labs",
         title="Senior Platform Engineer",
         location="Remote Europe",
@@ -264,7 +268,7 @@ def test_estimates_trimodal_tier_role_fallback_with_explicit_warning() -> None:
 
 def test_infers_trimodal_tier_from_reported_compensation_midpoint() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/inferred-tier",
+        job_id=TEST_JOB_ID,
         company="Acme AI",
         title="Senior Platform Engineer",
         location="Remote Europe",
@@ -284,7 +288,7 @@ def test_infers_trimodal_tier_from_reported_compensation_midpoint() -> None:
 
 def test_weak_market_factors_emit_low_confidence_ranges_with_wider_intervals() -> None:
     low_sample = estimate_market_compensation(
-        job_url="https://example.com/jobs/low-sample",
+        job_id=TEST_JOB_ID,
         company="Acme AI",
         title="Senior Platform Engineer",
         location="Remote Europe",
@@ -293,7 +297,7 @@ def test_weak_market_factors_emit_low_confidence_ranges_with_wider_intervals() -
     )
 
     weak_level = estimate_market_compensation(
-        job_url="https://example.com/jobs/weak-level",
+        job_id=TEST_JOB_ID,
         company="Acme AI",
         title="Senior Platform Engineer",
         location="Remote Europe",
@@ -305,7 +309,7 @@ def test_weak_market_factors_emit_low_confidence_ranges_with_wider_intervals() -
     )
 
     weak_location = estimate_market_compensation(
-        job_url="https://example.com/jobs/weak-location",
+        job_id=TEST_JOB_ID,
         company="Acme AI",
         title="Senior Platform Engineer",
         location="Remote Europe",
@@ -317,7 +321,7 @@ def test_weak_market_factors_emit_low_confidence_ranges_with_wider_intervals() -
     )
 
     source_dispersion = estimate_market_compensation(
-        job_url="https://example.com/jobs/source-dispersion",
+        job_id=TEST_JOB_ID,
         company="Acme AI",
         title="Senior Platform Engineer",
         location="Remote Europe",
@@ -351,7 +355,7 @@ def test_weak_market_factors_emit_low_confidence_ranges_with_wider_intervals() -
 
 def test_unknown_sample_support_stays_unknown_without_inventing_a_single_sample() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/unknown-support",
+        job_id=TEST_JOB_ID,
         company="Acme AI",
         title="Senior Platform Engineer",
         location="Remote Europe",
@@ -369,7 +373,7 @@ def test_unknown_sample_support_stays_unknown_without_inventing_a_single_sample(
 
 def test_same_location_role_fallback_estimates_when_company_role_is_missing() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/missing",
+        job_id=TEST_JOB_ID,
         company="Different Company",
         title="Senior Platform Engineer",
         location="Remote Europe",
@@ -410,7 +414,7 @@ def test_levels_public_market_fallback_uses_aggregate_instead_of_top_payer_range
     )
 
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/senior-platform",
+        job_id=TEST_JOB_ID,
         company="Different Company",
         title="Senior Platform Engineer",
         location="Madrid, Spain",
@@ -427,7 +431,7 @@ def test_levels_public_market_fallback_uses_aggregate_instead_of_top_payer_range
 
 def test_missing_company_is_insufficient_instead_of_location_title_estimation() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/no-company",
+        job_id=TEST_JOB_ID,
         company="",
         title="Senior Platform Engineer",
         location="Remote Europe",
@@ -442,7 +446,7 @@ def test_missing_company_is_insufficient_instead_of_location_title_estimation() 
 
 def test_stale_reported_sources_are_source_unavailable() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/stale",
+        job_id=TEST_JOB_ID,
         company="Acme AI",
         title="Senior Platform Engineer",
         location="Remote Europe",
@@ -457,7 +461,7 @@ def test_stale_reported_sources_are_source_unavailable() -> None:
 
 def test_unsupported_components_never_emit_range() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/component",
+        job_id=TEST_JOB_ID,
         company="Acme AI",
         title="Senior Platform Engineer",
         location="Remote Europe",
@@ -485,7 +489,7 @@ def test_posted_salary_conflict_is_explicit(
     expected_warning: str | None,
 ) -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/conflict",
+        job_id=TEST_JOB_ID,
         company="Acme AI",
         title="Senior Platform Engineer",
         location="Remote Europe",

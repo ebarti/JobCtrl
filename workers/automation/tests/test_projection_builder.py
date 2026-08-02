@@ -10,6 +10,8 @@ from typing import Iterator
 import pytest
 
 from jobctrl.domain.compensation import ReportedCompensationObservation, parse_posted_compensation
+from jobctrl.domain.identifiers import JobId, generate_job_id
+from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.database import close_connection, init_db
 from jobctrl.infrastructure.compensation import SqliteMarketCompensationRepository, SqlitePostedCompensationRepository
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
@@ -21,6 +23,9 @@ from jobctrl.infrastructure.projections.projection_builder import (
 from jobctrl.state import record_job_event, utc_now
 
 
+_INERT_CONTEXT = {"userContext": "Attack vectors:\nPrompt injection"}
+
+
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     db_path = tmp_path / "jobs.db"
@@ -29,16 +34,41 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     close_connection(db_path)
 
 
-def _seed_job(conn: sqlite3.Connection, url: str) -> None:
+def _seed_job(
+    conn: sqlite3.Connection,
+    url: str,
+    *,
+    title: str = "Engineer",
+    company: str = "ExampleCo",
+    site: str = "jobspy",
+    location: str = "Remote",
+    salary: str = "",
+    description: str = "x",
+) -> JobId:
+    job_id = generate_job_id()
     conn.execute(
         """
-        INSERT INTO jobs (url, title, site, strategy, location, salary,
-                          discovered_at, application_url, description)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, company, site, strategy, location,
+            salary, discovered_at, application_url, description
+        ) VALUES (?, ?, ?, ?, ?, ?, 'jobspy', ?, ?, ?, ?, ?)
         """,
-        (url, "Engineer", "ExampleCo", "jobspy", "Remote", "", utc_now(), url, "x"),
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
+            url,
+            title,
+            company,
+            site,
+            location,
+            salary,
+            utc_now(),
+            url,
+            description,
+        ),
     )
     conn.commit()
+    return job_id
 
 
 def test_initial_watermark_is_zero(conn: sqlite3.Connection) -> None:
@@ -47,8 +77,10 @@ def test_initial_watermark_is_zero(conn: sqlite3.Connection) -> None:
 
 
 def test_refresh_advances_watermark(conn: sqlite3.Connection) -> None:
-    _seed_job(conn, "https://example.com/a")
-    record_job_event(conn, "https://example.com/a", "discover", "JobDiscovered")
+    job_id = _seed_job(conn, "https://example.com/a")
+    record_job_event(
+        conn, job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT
+    )
     conn.commit()
 
     builder = ProjectionBuilder(conn_factory=lambda: conn)
@@ -60,8 +92,10 @@ def test_refresh_advances_watermark(conn: sqlite3.Connection) -> None:
 
 
 def test_refresh_resumes_from_watermark(conn: sqlite3.Connection) -> None:
-    _seed_job(conn, "https://example.com/r1")
-    record_job_event(conn, "https://example.com/r1", "discover", "JobDiscovered")
+    first_job_id = _seed_job(conn, "https://example.com/r1")
+    record_job_event(
+        conn, first_job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT
+    )
     conn.commit()
 
     builder = ProjectionBuilder(conn_factory=lambda: conn)
@@ -71,8 +105,10 @@ def test_refresh_resumes_from_watermark(conn: sqlite3.Connection) -> None:
     # the delta.
     repo = SqliteEventWatermarkRepository(conn)
     pre_watermark = repo.get(PROJECTION_NAME)
-    _seed_job(conn, "https://example.com/r2")
-    record_job_event(conn, "https://example.com/r2", "discover", "JobDiscovered")
+    second_job_id = _seed_job(conn, "https://example.com/r2")
+    record_job_event(
+        conn, second_job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT
+    )
     conn.commit()
 
     builder.refresh()
@@ -81,11 +117,9 @@ def test_refresh_resumes_from_watermark(conn: sqlite3.Connection) -> None:
 
 
 def test_backfill_from_empty(conn: sqlite3.Connection) -> None:
-    """Initial backfill — existing jobs in the table get projected even if
-    no events have ever been emitted (legacy / pre-DDD-migration data).
-    """
-    _seed_job(conn, "https://example.com/legacy-1")
-    _seed_job(conn, "https://example.com/legacy-2")
+    """Fresh-v7 canonical jobs backfill even with no event history."""
+    first_job_id = _seed_job(conn, "https://example.com/canonical-1")
+    second_job_id = _seed_job(conn, "https://example.com/canonical-2")
     # No record_job_event calls.
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
@@ -93,17 +127,14 @@ def test_backfill_from_empty(conn: sqlite3.Connection) -> None:
     rows = conn.execute(
         "SELECT job_id FROM job_list_projections ORDER BY job_id"
     ).fetchall()
-    assert [row[0] for row in rows] == [
-        "https://example.com/legacy-1",
-        "https://example.com/legacy-2",
-    ]
+    assert [row[0] for row in rows] == sorted([str(first_job_id), str(second_job_id)])
 
 
 def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fit(
     conn: sqlite3.Connection,
 ) -> None:
     job_url = "https://example.com/evidence-map"
-    _seed_job(conn, job_url)
+    job_id = _seed_job(conn, job_url)
     conn.execute(
         """
         INSERT INTO candidate_profile_experience_entries (
@@ -146,31 +177,31 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at
-        ) VALUES (?, 1, 'local', 'complete',
+            tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES ('local', ?, 1, 'complete',
                   '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')
         """,
-        (job_url,),
+        (str(job_id),),
     )
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
+            tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
             render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'tailored_resume', 'artifact-resume-1', 'approved',
+        ) VALUES ('local', ?, 1, 'tailored_resume', 'artifact-resume-1', 'approved',
                   '/tmp/resume.txt', 'text', 12, '{}', '2026-07-05T12:05:00Z')
         """,
-        (job_url,),
+        (str(job_id),),
     )
     conn.execute(
         """
         INSERT INTO job_bullet_provenance (
-            job_url, generation, bullet_id, tenant_id, artifact_id, section,
+            tenant_id, job_id, generation, bullet_id, artifact_id, section,
             source_id, evidence_ids_json, requirement_ids_json,
             matched_keywords_json, transform_type, control, rationale,
             generated_text, position, created_at, coverage_json
         ) VALUES (
-            ?, 1, 'experience:exp-platform#0', 'local', 'artifact-resume-1',
+            'local', ?, 1, 'experience:exp-platform#0', 'artifact-resume-1',
             'experience', 'exp-platform', '["ev_platform"]',
             '["req-platform"]', '["latency"]', 'reframe',
             'rephrase_allowed', 'Used profile evidence.',
@@ -179,30 +210,40 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
             '{"covered":["Python"],"declared":[],"missing":["Kubernetes"]}'
         )
         """,
-        (job_url,),
+        (str(job_id),),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_scores (
+            tenant_id, job_id, version, fit_score, breakdown_json, keywords_json,
+            scored_at, correction_json, criteria_json, trace_json
+        ) VALUES ('local', ?, 2, 8, '{}', '["Python"]',
+                  '2026-07-05T12:20:00Z', NULL, '{}', '{}')
+        """,
+        (str(job_id),),
     )
     conn.execute(
         """
         INSERT INTO job_requirement_fit_reports (
-            job_url, score_version, tenant_id, employer_analysis_generation,
+            tenant_id, job_id, score_version, employer_analysis_generation,
             profile_snapshot_version, scoring_policy_version, formula_version,
             resolved_fit_score, fit_band, confidence, summary_json, created_at
         ) VALUES (
-            ?, 2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high',
+            'local', ?, 2, 1, 1, 1, 'v1', 8, 'strong', 'high',
             '{"weighted_fit":0.8,"must_have_coverage":0.5,"blocker_count":0,"missing_high_weight_count":1}',
             '2026-07-05T12:20:00Z'
         )
         """,
-        (job_url,),
+        (str(job_id),),
     )
     conn.execute(
         """
         INSERT INTO job_requirement_fit_items (
-            job_url, score_version, tenant_id, requirement_id, requirement_text,
+            tenant_id, job_id, score_version, requirement_id, requirement_text,
             tier, weight, job_evidence_span, fit_json, contribution_json,
             tailoring_json, artifact_coverage_json, position
         ) VALUES (
-            ?, 2, 'local', 'req-platform', 'Own platform migrations',
+            'local', ?, 2, 'req-platform', 'Own platform migrations',
             'must_have', 0.8, 'platform migrations',
             '{"kind":"matched","evidence_ids":["ev_platform"],"strength":"direct"}',
             '{}', '{}',
@@ -210,16 +251,16 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
             0
         )
         """,
-        (job_url,),
+        (str(job_id),),
     )
     conn.execute(
         """
         INSERT INTO job_requirement_fit_items (
-            job_url, score_version, tenant_id, requirement_id, requirement_text,
+            tenant_id, job_id, score_version, requirement_id, requirement_text,
             tier, weight, job_evidence_span, fit_json, contribution_json,
             tailoring_json, artifact_coverage_json, position
         ) VALUES (
-            ?, 2, 'local', 'req-kubernetes', 'Run Kubernetes clusters',
+            'local', ?, 2, 'req-kubernetes', 'Run Kubernetes clusters',
             'must_have', 0.7, 'Kubernetes clusters',
             '{"kind":"missing","reason":"No Kubernetes profile evidence."}',
             '{}', '{}',
@@ -227,9 +268,9 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
             1
         )
         """,
-        (job_url,),
+        (str(job_id),),
     )
-    record_job_event(conn, job_url, "score", "JobScored")
+    record_job_event(conn, job_id, "score", "JobScored", payload=_INERT_CONTEXT)
     conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
@@ -263,7 +304,7 @@ def test_evidence_usage_projection_inverts_profile_provenance_and_requirement_fi
     assert any(
         gap["kind"] == "missing_requirement"
         and gap["requirementId"] == "req-kubernetes"
-        and gap["jobRefs"][0]["jobKey"] == job_url
+        and gap["jobRefs"][0]["jobId"] == str(job_id)
         for gap in gaps
     )
     assert any(
@@ -327,30 +368,6 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
         """
     )
 
-    # jobctrl_deleted_jobs / jobctrl_hidden_jobs are owned by the TS
-    # write-model; create them here so the Python builder's _table_exists-guarded
-    # exclusion joins engage.
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-            job_url TEXT PRIMARY KEY,
-            deleted_at TEXT NOT NULL,
-            reason TEXT,
-            restored_at TEXT
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_hidden_jobs (
-            job_url TEXT PRIMARY KEY,
-            hidden_at TEXT NOT NULL,
-            reason TEXT,
-            unhidden_at TEXT
-        )
-        """
-    )
-
     def seed_job_evidence(
         job_url: str,
         *,
@@ -359,43 +376,42 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
         artifact_id: str,
         generated_text: str,
         created_at: str,
-    ) -> None:
-        conn.execute(
-            """
-            INSERT INTO jobs (url, title, site, strategy, location, salary,
-                              discovered_at, application_url, description)
-            VALUES (?, ?, ?, 'jobspy', 'Remote', '', ?, ?, 'x')
-            """,
-            (job_url, title, site, utc_now(), job_url),
+    ) -> JobId:
+        job_id = _seed_job(
+            conn,
+            job_url,
+            title=title,
+            company=site,
+            site=site,
         )
         conn.execute(
             """
             INSERT INTO job_materials (
-                job_url, generation, tenant_id, status, created_at, updated_at
-            ) VALUES (?, 1, 'local', 'complete',
+                tenant_id, job_id, generation, status, created_at, updated_at
+            ) VALUES ('local', ?, 1, 'complete',
                       '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')
             """,
-            (job_url,),
+            (str(job_id),),
         )
         conn.execute(
             """
             INSERT INTO job_materials_artifacts (
-                job_url, generation, artifact_type, artifact_id, status, path,
+                tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
                 render_format, size_bytes, metadata_json, created_at
-            ) VALUES (?, 1, 'tailored_resume', ?, 'approved',
+            ) VALUES ('local', ?, 1, 'tailored_resume', ?, 'approved',
                       '/tmp/resume.txt', 'text', 12, '{}', '2026-07-05T12:05:00Z')
             """,
-            (job_url, artifact_id),
+            (str(job_id), artifact_id),
         )
         conn.execute(
             """
             INSERT INTO job_bullet_provenance (
-                job_url, generation, bullet_id, tenant_id, artifact_id, section,
+                tenant_id, job_id, generation, bullet_id, artifact_id, section,
                 source_id, evidence_ids_json, requirement_ids_json,
                 matched_keywords_json, transform_type, control, rationale,
                 generated_text, position, created_at, coverage_json
             ) VALUES (
-                ?, 1, 'experience:exp-platform#0', 'local', ?,
+                'local', ?, 1, 'experience:exp-platform#0', ?,
                 'experience', 'exp-platform', '["ev_platform"]',
                 '["req-platform"]', '["latency"]', 'reframe',
                 'rephrase_allowed', 'Used profile evidence.',
@@ -403,30 +419,40 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
                 '{"covered":["Python"],"declared":[],"missing":["Kubernetes"]}'
             )
             """,
-            (job_url, artifact_id, generated_text, created_at),
+            (str(job_id), artifact_id, generated_text, created_at),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_scores (
+                tenant_id, job_id, version, fit_score, breakdown_json, keywords_json,
+                scored_at, correction_json, criteria_json, trace_json
+            ) VALUES ('local', ?, 2, 8, '{}', '["Python"]',
+                      '2026-07-05T12:20:00Z', NULL, '{}', '{}')
+            """,
+            (str(job_id),),
         )
         conn.execute(
             """
             INSERT INTO job_requirement_fit_reports (
-                job_url, score_version, tenant_id, employer_analysis_generation,
+                tenant_id, job_id, score_version, employer_analysis_generation,
                 profile_snapshot_version, scoring_policy_version, formula_version,
                 resolved_fit_score, fit_band, confidence, summary_json, created_at
             ) VALUES (
-                ?, 2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high',
+                'local', ?, 2, 1, 1, 1, 'v1', 8, 'strong', 'high',
                 '{"weighted_fit":0.8,"must_have_coverage":0.5,"blocker_count":0,"missing_high_weight_count":1}',
                 '2026-07-05T12:20:00Z'
             )
             """,
-            (job_url,),
+            (str(job_id),),
         )
         conn.execute(
             """
             INSERT INTO job_requirement_fit_items (
-                job_url, score_version, tenant_id, requirement_id, requirement_text,
+                tenant_id, job_id, score_version, requirement_id, requirement_text,
                 tier, weight, job_evidence_span, fit_json, contribution_json,
                 tailoring_json, artifact_coverage_json, position
             ) VALUES (
-                ?, 2, 'local', 'req-platform', 'Own platform migrations',
+                'local', ?, 2, 'req-platform', 'Own platform migrations',
                 'must_have', 0.8, 'platform migrations',
                 '{"kind":"matched","evidence_ids":["ev_platform"],"strength":"direct"}',
                 '{}', '{}',
@@ -434,16 +460,16 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
                 0
             )
             """,
-            (job_url,),
+            (str(job_id),),
         )
         conn.execute(
             """
             INSERT INTO job_requirement_fit_items (
-                job_url, score_version, tenant_id, requirement_id, requirement_text,
+                tenant_id, job_id, score_version, requirement_id, requirement_text,
                 tier, weight, job_evidence_span, fit_json, contribution_json,
                 tailoring_json, artifact_coverage_json, position
             ) VALUES (
-                ?, 2, 'local', 'req-kubernetes', 'Run Kubernetes clusters',
+                'local', ?, 2, 'req-kubernetes', 'Run Kubernetes clusters',
                 'must_have', 0.7, 'Kubernetes clusters',
                 '{"kind":"missing","reason":"No Kubernetes profile evidence."}',
                 '{}', '{}',
@@ -451,11 +477,12 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
                 1
             )
             """,
-            (job_url,),
+            (str(job_id),),
         )
-        record_job_event(conn, job_url, "score", "JobScored")
+        record_job_event(conn, job_id, "score", "JobScored", payload=_INERT_CONTEXT)
+        return job_id
 
-    seed_job_evidence(
+    active_job_id = seed_job_evidence(
         active_url,
         title="Active Platform Role",
         site="ActiveCorp",
@@ -463,7 +490,7 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
         generated_text="ACTIVE-bullet reduced latency 40%.",
         created_at="2026-07-05T12:10:00Z",
     )
-    seed_job_evidence(
+    deleted_job_id = seed_job_evidence(
         deleted_url,
         title="Deleted Platform Role",
         site="DeletedCorp",
@@ -471,7 +498,7 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
         generated_text="DELETED-bullet should never surface.",
         created_at="2026-07-04T12:10:00Z",
     )
-    seed_job_evidence(
+    hidden_job_id = seed_job_evidence(
         hidden_url,
         title="Hidden Platform Role",
         site="HiddenCorp",
@@ -481,14 +508,14 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
     )
 
     conn.execute(
-        "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at) "
-        "VALUES (?, '2026-07-05T13:00:00Z', 'user delete', NULL)",
-        (deleted_url,),
+        "INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at, reason, restored_at) "
+        "VALUES ('local', ?, '2026-07-05T13:00:00Z', 'user delete', NULL)",
+        (str(deleted_job_id),),
     )
     conn.execute(
-        "INSERT INTO jobctrl_hidden_jobs (job_url, hidden_at, reason, unhidden_at) "
-        "VALUES (?, '2026-07-05T13:00:00Z', 'user hide', NULL)",
-        (hidden_url,),
+        "INSERT INTO jobctrl_hidden_jobs (tenant_id, job_id, hidden_at, reason, unhidden_at) "
+        "VALUES ('local', ?, '2026-07-05T13:00:00Z', 'user hide', NULL)",
+        (str(hidden_job_id),),
     )
     conn.commit()
 
@@ -502,7 +529,7 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
            AND projection_kind IN ('entry', 'gap')
         """
     ).fetchall()
-    referenced_job_keys: set[str] = set()
+    referenced_job_ids: set[str] = set()
     serialized = ""
     for row in rows:
         payload_json = row["payload_json"]
@@ -511,16 +538,16 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
         if row["projection_kind"] == "entry":
             for key in ("resumeUsages", "requirementUsages", "coverageUsages"):
                 for usage in payload.get(key, []):
-                    referenced_job_keys.add(usage["jobKey"])
+                    referenced_job_ids.add(usage["jobId"])
         else:
             for ref in payload.get("jobRefs", []):
-                referenced_job_keys.add(ref["jobKey"])
+                referenced_job_ids.add(ref["jobId"])
 
     # The live job still populates the map (positive control) ...
-    assert active_url in referenced_job_keys
+    assert str(active_job_id) in referenced_job_ids
     # ... while the soft-deleted and hidden jobs are fully excluded.
-    assert deleted_url not in referenced_job_keys
-    assert hidden_url not in referenced_job_keys
+    assert str(deleted_job_id) not in referenced_job_ids
+    assert str(hidden_job_id) not in referenced_job_ids
 
     # No removed job's title, employer, or generated-text preview may leak
     # through any evidence field.
@@ -537,32 +564,20 @@ def test_evidence_map_excludes_soft_deleted_and_hidden_jobs(
 
 
 def test_job_projection_uses_explicit_company_before_source(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        INSERT INTO jobs (url, title, company, site, strategy, location, salary,
-                          discovered_at, application_url, description)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "https://www.linkedin.com/jobs/view/1",
-            "Head of Engineering",
-            "Keyrock",
-            "linkedin",
-            "jobspy",
-            "Barcelona, Spain",
-            "",
-            utc_now(),
-            "https://www.linkedin.com/jobs/view/1",
-            "x",
-        ),
+    job_id = _seed_job(
+        conn,
+        "https://www.linkedin.com/jobs/view/1",
+        title="Head of Engineering",
+        company="Keyrock",
+        site="linkedin",
+        location="Barcelona, Spain",
     )
-    conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
         "SELECT employer FROM job_list_projections WHERE job_id = ?",
-        ("https://www.linkedin.com/jobs/view/1",),
+        (str(job_id),),
     ).fetchone()
     assert row is not None
     assert row[0] == "Keyrock"
@@ -570,17 +585,20 @@ def test_job_projection_uses_explicit_company_before_source(conn: sqlite3.Connec
 
 def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) -> None:
     job_url = "https://example.com/compensation"
-    _seed_job(conn, job_url)
-    conn.execute("UPDATE jobs SET salary = ? WHERE url = ?", ("USD 70000-90000/year", job_url))
+    job_id = _seed_job(conn, job_url)
+    conn.execute(
+        "UPDATE jobs SET salary = ? WHERE tenant_id = ? AND job_id = ?",
+        ("USD 70000-90000/year", str(LOCAL_TENANT), str(job_id)),
+    )
     SqlitePostedCompensationRepository(conn).save_fact(
         parse_posted_compensation(
             "USD 70000-90000/year",
-            job_url=job_url,
+            job_id=job_id,
             parsed_at="2026-06-19T10:00:00Z",
         )
     )
     SqliteMarketCompensationRepository(conn).estimate_and_save_job(
-        job_url=job_url,
+        job_id=job_id,
         title="Senior Software Developer",
         company="ExampleCo",
         location="Madrid, Spain",
@@ -626,7 +644,7 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
         FROM job_list_projections
         WHERE job_id = ?
         """,
-        (job_url,),
+        (str(job_id),),
     ).fetchone()
     assert row is not None
     assert row["salary"] == "USD 70000-90000/year"
@@ -650,7 +668,7 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
         FROM job_detail_projections
         WHERE job_id = ?
         """,
-        (job_url,),
+        (str(job_id),),
     ).fetchone()
     assert detail is not None
     audit = json.loads(detail["compensation_audit_json"])
@@ -666,7 +684,7 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
 
 def _insert_score(
     conn: sqlite3.Connection,
-    job_url: str,
+    job_id: JobId,
     *,
     fit_score: int,
     scored_at: str,
@@ -676,13 +694,13 @@ def _insert_score(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+        INSERT INTO job_scores (tenant_id, job_id, version, fit_score,
                                 breakdown_json, keywords_json, scored_at,
                                 correction_json, criteria_json, trace_json)
-        VALUES (?, 1, 'local', ?, ?, ?, ?, ?, ?, ?)
+        VALUES ('local', ?, 1, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            job_url,
+            str(job_id),
             fit_score,
             json.dumps(
                 {
@@ -711,7 +729,7 @@ def test_projects_score_audit_columns_from_job_scores(conn: sqlite3.Connection) 
     normally-scored job even when the Python event handler owns the refresh.
     """
     url = "https://example.com/jobs/score-audit"
-    _seed_job(conn, url)
+    job_id = _seed_job(conn, url)
     criteria_json = json.dumps(
         {
             "formula_version": "score-v3",
@@ -733,14 +751,14 @@ def test_projects_score_audit_columns_from_job_scores(conn: sqlite3.Connection) 
     )
     _insert_score(
         conn,
-        url,
+        job_id,
         fit_score=8,
         scored_at="2026-06-20T10:00:00+00:00",
         criteria_json=criteria_json,
         trace_json=trace_json,
         correction_json=None,
     )
-    record_job_event(conn, url, "score", "JobScored")
+    record_job_event(conn, job_id, "score", "JobScored", payload=_INERT_CONTEXT)
     conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
@@ -750,7 +768,7 @@ def test_projects_score_audit_columns_from_job_scores(conn: sqlite3.Connection) 
         SELECT score_criteria_json, score_trace_json, score_correction_json
         FROM job_list_projections WHERE job_id = ?
         """,
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert list_row is not None
     assert list_row["score_criteria_json"] == criteria_json
@@ -764,7 +782,7 @@ def test_projects_score_audit_columns_from_job_scores(conn: sqlite3.Connection) 
         SELECT score_criteria_json, score_trace_json, score_correction_json
         FROM job_detail_projections WHERE job_id = ?
         """,
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert detail_row is not None
     assert detail_row["score_criteria_json"] == criteria_json
@@ -780,7 +798,7 @@ def test_projects_score_correction_json_when_correction_exists(
     history the score-audit surface renders.
     """
     url = "https://example.com/jobs/score-correction"
-    _seed_job(conn, url)
+    job_id = _seed_job(conn, url)
     correction_json = json.dumps(
         {
             "adjustments": [
@@ -794,28 +812,28 @@ def test_projects_score_correction_json_when_correction_exists(
     )
     _insert_score(
         conn,
-        url,
+        job_id,
         fit_score=7,
         scored_at="2026-06-20T11:00:00+00:00",
         criteria_json=json.dumps({"formula_version": "score-v3"}, sort_keys=True),
         trace_json=json.dumps({"prompt_version": "score-prompt-v7"}, sort_keys=True),
         correction_json=correction_json,
     )
-    record_job_event(conn, url, "score", "JobScored")
+    record_job_event(conn, job_id, "score", "JobScored", payload=_INERT_CONTEXT)
     conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     list_row = conn.execute(
         "SELECT score_correction_json FROM job_list_projections WHERE job_id = ?",
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert list_row is not None
     assert list_row["score_correction_json"] == correction_json
 
     detail_row = conn.execute(
         "SELECT score_correction_json FROM job_detail_projections WHERE job_id = ?",
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert detail_row is not None
     assert detail_row["score_correction_json"] == correction_json
@@ -835,20 +853,20 @@ def test_score_audit_backfill_repopulates_existing_null_rows(conn: sqlite3.Conne
     columns already exist, so the schema-migration reset never fires.
     """
     url = "https://example.com/jobs/backfill-existing-null"
-    _seed_job(conn, url)
+    job_id = _seed_job(conn, url)
     criteria_json = json.dumps({"formula_version": "score-v3"}, sort_keys=True)
     trace_json = json.dumps({"prompt_version": "score-prompt-v7"}, sort_keys=True)
     correction_json = json.dumps({"reason": "adversarial_self_correction"}, sort_keys=True)
     _insert_score(
         conn,
-        url,
+        job_id,
         fit_score=8,
         scored_at="2026-06-20T10:00:00+00:00",
         criteria_json=criteria_json,
         trace_json=trace_json,
         correction_json=correction_json,
     )
-    record_job_event(conn, url, "score", "JobScored")
+    record_job_event(conn, job_id, "score", "JobScored", payload=_INERT_CONTEXT)
     conn.commit()
 
     # Pre-fix projection rows: the old Python upsert never wrote the audit
@@ -856,12 +874,12 @@ def test_score_audit_backfill_repopulates_existing_null_rows(conn: sqlite3.Conne
     conn.execute(
         "INSERT INTO job_list_projections (tenant_id, job_id, title, fit_score) "
         "VALUES ('local', ?, 'Engineer', 8)",
-        (url,),
+        (str(job_id),),
     )
     conn.execute(
         "INSERT INTO job_detail_projections (tenant_id, job_id, description_preview) "
         "VALUES ('local', ?, 'Short job description')",
-        (url,),
+        (str(job_id),),
     )
     # Watermark already advanced past the score event: no event-driven rebuild.
     latest_event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
@@ -870,7 +888,7 @@ def test_score_audit_backfill_repopulates_existing_null_rows(conn: sqlite3.Conne
 
     pre = conn.execute(
         "SELECT score_criteria_json FROM job_list_projections WHERE job_id = ?",
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert pre["score_criteria_json"] is None
 
@@ -881,7 +899,7 @@ def test_score_audit_backfill_repopulates_existing_null_rows(conn: sqlite3.Conne
         SELECT score_criteria_json, score_trace_json, score_correction_json
         FROM job_list_projections WHERE job_id = ?
         """,
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert list_row is not None
     assert list_row["score_criteria_json"] == criteria_json
@@ -893,7 +911,7 @@ def test_score_audit_backfill_repopulates_existing_null_rows(conn: sqlite3.Conne
         SELECT score_criteria_json, score_trace_json, score_correction_json
         FROM job_detail_projections WHERE job_id = ?
         """,
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert detail_row is not None
     assert detail_row["score_criteria_json"] == criteria_json
@@ -921,10 +939,10 @@ def test_score_audit_backfill_runs_at_most_once(conn: sqlite3.Connection) -> Non
     # marker is set. With the watermark advanced, the next refresh must leave it
     # untouched — the one-time scan does not run again.
     later = "https://example.com/jobs/backfill-marker-later"
-    _seed_job(conn, later)
+    later_job_id = _seed_job(conn, later)
     _insert_score(
         conn,
-        later,
+        later_job_id,
         fit_score=6,
         scored_at="2026-06-20T12:00:00+00:00",
         criteria_json=json.dumps({"formula_version": "score-v3"}, sort_keys=True),
@@ -934,9 +952,11 @@ def test_score_audit_backfill_runs_at_most_once(conn: sqlite3.Connection) -> Non
     conn.execute(
         "INSERT INTO job_list_projections (tenant_id, job_id, title, fit_score) "
         "VALUES ('local', ?, 'Engineer', 6)",
-        (later,),
+        (str(later_job_id),),
     )
-    record_job_event(conn, later, "score", "JobScored")
+    record_job_event(
+        conn, later_job_id, "score", "JobScored", payload=_INERT_CONTEXT
+    )
     latest_event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
     SqliteEventWatermarkRepository(conn).set(PROJECTION_NAME, int(latest_event_id))
     conn.commit()
@@ -945,7 +965,7 @@ def test_score_audit_backfill_runs_at_most_once(conn: sqlite3.Connection) -> Non
 
     row = conn.execute(
         "SELECT score_criteria_json FROM job_list_projections WHERE job_id = ?",
-        (later,),
+        (str(later_job_id),),
     ).fetchone()
     assert row is not None
     assert row["score_criteria_json"] is None
@@ -954,15 +974,15 @@ def test_score_audit_backfill_runs_at_most_once(conn: sqlite3.Connection) -> Non
 def test_feedback_only_history_rebuilds_source_quality(conn: sqlite3.Connection) -> None:
     record_job_event(
         conn,
-        "job-1",
+        None,
         "discover",
         "DiscoveryFeedbackRecorded",
         payload={
             "feedback_id": "feedback-1",
-            "job_id": "job-1",
             "source_id": "greenhouse:acme",
             "kind": "bad_source",
             "recorded_at": utc_now(),
+            **_INERT_CONTEXT,
         },
     )
     conn.commit()
@@ -985,37 +1005,49 @@ def test_feedback_only_history_rebuilds_source_quality(conn: sqlite3.Connection)
 
 def test_subscribes_to_event_bus(conn: sqlite3.Connection) -> None:
     """Wiring the builder to the bus refreshes projections on publish."""
-    _seed_job(conn, "https://example.com/bus")
+    job_id = _seed_job(conn, "https://example.com/bus")
     builder = ProjectionBuilder(conn_factory=lambda: conn)
     bus = InProcessEventBus()
     builder.subscribe_to(bus)
 
     # Publish via the bus AFTER recording the event in the table.
-    record_job_event(conn, "https://example.com/bus", "discover", "JobDiscovered")
+    record_job_event(
+        conn, job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT
+    )
     conn.commit()
     from jobctrl.domain.events.base import create_domain_event
-    from jobctrl.domain.tenant import LOCAL_TENANT
 
-    bus.publish(create_domain_event("JobDiscovered", LOCAL_TENANT, {"job_url": "https://example.com/bus"}))
+    bus.publish(
+        create_domain_event(
+            "JobDiscovered",
+            LOCAL_TENANT,
+            {"jobId": str(job_id), **_INERT_CONTEXT},
+        )
+    )
 
     row = conn.execute(
         "SELECT job_id FROM job_list_projections WHERE job_id = ?",
-        ("https://example.com/bus",),
+        (str(job_id),),
     ).fetchone()
     assert row is not None
 
 
 def test_unsubscribe_stops_refreshes(conn: sqlite3.Connection) -> None:
-    _seed_job(conn, "https://example.com/sub")
+    job_id = _seed_job(conn, "https://example.com/sub")
     builder = ProjectionBuilder(conn_factory=lambda: conn)
     bus = InProcessEventBus()
     sub = builder.subscribe_to(bus)
     sub.unsubscribe()
 
     from jobctrl.domain.events.base import create_domain_event
-    from jobctrl.domain.tenant import LOCAL_TENANT
 
-    bus.publish(create_domain_event("JobDiscovered", LOCAL_TENANT, {"job_url": "https://example.com/sub"}))
+    bus.publish(
+        create_domain_event(
+            "JobDiscovered",
+            LOCAL_TENANT,
+            {"jobId": str(job_id), **_INERT_CONTEXT},
+        )
+    )
 
     rows = conn.execute("SELECT COUNT(*) FROM job_list_projections").fetchone()
     # Builder has not been called manually; nothing in projections yet.

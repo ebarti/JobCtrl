@@ -873,7 +873,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     "/v1/jobs/:jobKey/compensation/posted",
     async (request, reply) =>
       withDb(reply, options.dbPath, (db) => {
-        const response = getPostedCompensationFact(db, decodeRouteParam(request.params.jobKey));
+        const jobId = resolveJobId(db, "local", decodeRouteParam(request.params.jobKey));
+        const response = jobId ? getPostedCompensationFact(db, "local", jobId) : null;
         if (!response) {
           void reply.code(404);
           return { ok: false, error: "job_not_found" };
@@ -886,7 +887,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     "/v1/jobs/:jobKey/compensation/market",
     async (request, reply) =>
       withDb(reply, options.dbPath, (db) => {
-        const response = getMarketCompensationEstimate(db, decodeRouteParam(request.params.jobKey));
+        const jobId = resolveJobId(db, "local", decodeRouteParam(request.params.jobKey));
+        const response = jobId ? getMarketCompensationEstimate(db, "local", jobId) : null;
         if (!response) {
           void reply.code(404);
           return { ok: false, error: "job_not_found" };
@@ -903,13 +905,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return undefined;
       }
       const outcome = await withWritableDb(reply, options.dbPath, async (db) => {
-        const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
-        if (!jobUrl) {
+        const jobId = resolveJobId(db, "local", decodeRouteParam(request.params.jobKey));
+        if (!jobId) {
+          void reply.code(404);
           return { ok: false, error: "job_not_found" };
         }
         const command: ActionCommandPayload = {
           action: "refresh_compensation",
-          jobKey: jobUrl,
+          jobKey: jobId,
         };
         if (body.observationsJsonPath) {
           command.observationsJsonPath = body.observationsJsonPath;
@@ -1427,7 +1430,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         if (!jobId) {
           return { ok: false, error: "job_not_found" };
         }
-        const jobId = requireJobId(db, jobUrl);
         const command: ActionCommandPayload = {
           action: "rescore_job",
           jobKey: jobId,
@@ -1740,7 +1742,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         if (!jobId) {
           return { ok: false, error: "job_not_found" };
         }
-        const jobId = requireJobId(db, jobUrl);
         const command: ActionCommandPayload = {
           action: "retailor_job",
           jobKey: jobId,

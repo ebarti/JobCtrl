@@ -549,7 +549,7 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
       ...(command.euroTopTechMaxPages !== undefined ? { euroTopTechMaxPages: command.euroTopTechMaxPages } : {}),
     };
     if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
-      params.jobUrl = command.jobKey;
+      params.jobId = command.jobKey;
     } else {
       params.allJobs = true;
     }

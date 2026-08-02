@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from jobctrl.database import get_connection
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.infrastructure.compensation import (
     LevelsFyiPublicTarget,
     SqliteMarketCompensationRepository,
@@ -23,7 +24,7 @@ log = logging.getLogger(__name__)
 def refresh_compensation_facts(
     *,
     tenant_id: str,
-    job_url: str | None = None,
+    job_id: JobId | None = None,
     limit: int = 0,
     observations_json_path: str | None = None,
     include_euro_top_tech: bool = True,
@@ -32,16 +33,19 @@ def refresh_compensation_facts(
     conn = get_connection()
     refreshed_at = datetime.now(timezone.utc).isoformat()
     posted_repository = SqlitePostedCompensationRepository(conn)
-    if job_url:
+    posting_url: str | None = None
+    if job_id is not None:
+        job_id = canonical_job_id(str(job_id))
         row = conn.execute(
-            "SELECT url, salary, full_description, description FROM jobs WHERE url = ?",
-            (job_url,),
+            "SELECT job_id, url, salary, full_description, description FROM jobs WHERE tenant_id = ? AND job_id = ?",
+            (tenant_id, job_id),
         ).fetchone()
         if row is None:
-            raise ValueError(f"unknown jobUrl: {job_url}")
+            raise ValueError(f"unknown jobId: {job_id}")
+        posting_url = str(row["url"])
         source_text, source_field = posted_compensation_source_from_job(row)
         posted_repository.parse_and_save_job_salary(
-            job_url,
+            job_id,
             source_text,
             tenant_id=tenant_id,
             source_field=source_field,
@@ -49,7 +53,7 @@ def refresh_compensation_facts(
         )
         posted_count = 1
     else:
-        posted_count = posted_repository.backfill_from_legacy_jobs(
+        posted_count = posted_repository.backfill_from_jobs(
             tenant_id=tenant_id,
             parsed_at=refreshed_at,
         )
@@ -60,8 +64,9 @@ def refresh_compensation_facts(
     compensation_run_id = f"compensation:{refreshed_at}"
     levels_fyi_targets = _levels_fyi_targets(
         conn,
-        job_url=job_url,
-        limit=1 if job_url else limit,
+        tenant_id=tenant_id,
+        job_id=job_id,
+        limit=1 if job_id is not None else limit,
     )
     try:
         source_load = load_default_reported_compensation_observations(
@@ -88,15 +93,15 @@ def refresh_compensation_facts(
         observations,
         tenant_id=tenant_id,
         estimated_at=refreshed_at,
-        limit=1 if job_url else limit,
-        job_url=job_url,
+        limit=1 if job_id is not None else limit,
+        job_id=job_id,
     )
 
     ProjectionBuilder(conn_factory=get_connection).refresh()
     return {
         "ok": True,
         "status": "succeeded",
-        "jobUrl": job_url,
+        "postingUrl": posting_url,
         "postedFactsRefreshed": posted_count,
         "reportedObservationsLoaded": len(observations),
         "localReportedObservationsLoaded": source_load.local_count,
@@ -114,14 +119,15 @@ def refresh_compensation_facts(
 def _levels_fyi_targets(
     conn: Any,
     *,
-    job_url: str | None,
+    tenant_id: str,
+    job_id: JobId | None,
     limit: int,
 ) -> tuple[LevelsFyiPublicTarget, ...]:
-    sql = "SELECT title, location FROM jobs"
-    params: list[Any] = []
-    if job_url:
-        sql += " WHERE url = ?"
-        params.append(job_url)
+    sql = "SELECT title, location FROM jobs WHERE tenant_id = ?"
+    params: list[Any] = [tenant_id]
+    if job_id is not None:
+        sql += " AND job_id = ?"
+        params.append(job_id)
     sql += " ORDER BY url"
     if limit > 0:
         sql += " LIMIT ?"

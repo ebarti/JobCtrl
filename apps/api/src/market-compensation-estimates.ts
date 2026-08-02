@@ -12,17 +12,15 @@ import type {
   MarketCompensationWarning,
   MarketCompensationWarningCode,
 } from "./contracts.js";
-import { getRow, tableExists, type SqliteDatabase } from "./db.js";
-
-const DEFAULT_TENANT = "local";
+import { getRow, type SqliteDatabase } from "./db.js";
 
 type JobRow = {
-  url: string;
+  job_id: string;
 };
 
 type MarketCompensationEstimateRow = {
   tenant_id: string;
-  job_url: string;
+  job_id: string;
   estimate_state: string;
   currency: string | null;
   period: "year" | "month";
@@ -193,40 +191,37 @@ const UNSAFE_FACTOR_REASON_PATTERN =
 
 export function getMarketCompensationEstimate(
   db: SqliteDatabase,
-  jobKey: string,
+  tenantId: string,
+  jobId: string,
 ): MarketCompensationEstimateResponse | null {
-  const job = getRow<JobRow>(db, "SELECT url FROM jobs WHERE url = ?", [jobKey]);
+  const job = getRow<JobRow>(
+    db,
+    "SELECT job_id FROM jobs WHERE tenant_id = ? AND job_id = ?",
+    [tenantId, jobId],
+  );
   if (!job) {
     return null;
   }
-  if (!tableExists(db, "job_market_compensation_estimates")) {
-    return notRequested(job);
-  }
-  const tableColumns = columnsFor(db, "job_market_compensation_estimates");
   const row = getRow<MarketCompensationEstimateRow>(
     db,
     `
-    SELECT tenant_id, job_url, estimate_state, currency, period, component,
+    SELECT tenant_id, job_id, estimate_state, currency, period, component,
            minimum_amount, maximum_amount,
-           ${columnOrNull(tableColumns, "confidence_interval_minimum_amount")} AS confidence_interval_minimum_amount,
-           ${columnOrNull(tableColumns, "confidence_interval_maximum_amount")} AS confidence_interval_maximum_amount,
+           confidence_interval_minimum_amount,
+           confidence_interval_maximum_amount,
            confidence_band, confidence_score,
            source_count, sample_count, aggregate_bucket, geography_scope,
            occupation_code, occupation_label, seniority_label, source_snapshot_json,
            factor_reasons_json,
-           ${columnOrDefault(tableColumns, "selected_evidence_json", "[]")} AS selected_evidence_json,
+           selected_evidence_json,
            insufficient_reasons_json, unsupported_reasons_json,
            source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
-           ${columnOrNull(tableColumns, "company_name")} AS company_name,
-           ${columnOrNull(tableColumns, "normalized_company")} AS normalized_company,
-           ${columnOrNull(tableColumns, "role_title")} AS role_title,
-           ${columnOrNull(tableColumns, "normalized_role")} AS normalized_role,
-           ${columnOrDefault(tableColumns, "company_tier", "unknown")} AS company_tier,
-           ${columnOrDefault(tableColumns, "match_scope", "none")} AS match_scope
+           company_name, normalized_company, role_title, normalized_role,
+           company_tier, match_scope
     FROM job_market_compensation_estimates
-    WHERE tenant_id = ? AND job_url = ?
+    WHERE tenant_id = ? AND job_id = ?
     `,
-    [DEFAULT_TENANT, jobKey],
+    [tenantId, jobId],
   );
   if (!row) {
     return notRequested(job);
@@ -252,7 +247,7 @@ function notRequested(job: JobRow): MarketCompensationEstimateResponse {
   return {
     ok: true,
     recordStatus: "not_requested",
-    jobKey: job.url,
+    jobKey: job.job_id,
   };
 }
 
@@ -260,7 +255,7 @@ function mapEstimateRow(row: MarketCompensationRecordedEstimateRow): MarketCompe
   const sources = parseSources(row.source_snapshot_json);
   const base = {
     tenantId: row.tenant_id,
-    jobKey: row.job_url,
+    jobKey: row.job_id,
     estimateState: row.estimate_state,
     confidenceBand: row.confidence_band,
     confidenceScore: Number(row.confidence_score ?? 0),
@@ -602,19 +597,6 @@ function matchScope(
     value === "market_baseline_fallback"
     ? value
     : "none";
-}
-
-function columnsFor(db: SqliteDatabase, tableName: string): Set<string> {
-  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
-  return new Set(rows.map((row) => row.name));
-}
-
-function columnOrNull(columns: Set<string>, columnName: string): string {
-  return columns.has(columnName) ? columnName : "NULL";
-}
-
-function columnOrDefault(columns: Set<string>, columnName: string, fallback: string): string {
-  return columns.has(columnName) ? columnName : `'${fallback}'`;
 }
 
 function nullableNumber(value: unknown): number | null {

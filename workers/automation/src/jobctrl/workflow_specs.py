@@ -346,17 +346,17 @@ def build_compensation_refresh_workflow_spec(params: dict[str, Any]) -> Workflow
     )
 
     tenant_id = _tenant_id(params)
-    job_url_param = params.get("jobUrl")
+    job_id_param = params.get("jobId")
     all_jobs = params.get("allJobs") is True
-    if job_url_param and all_jobs:
-        raise ValueError("provide exactly one of jobUrl or allJobs")
-    if not job_url_param and not all_jobs:
-        raise ValueError("provide exactly one of jobUrl or allJobs")
+    if job_id_param and all_jobs:
+        raise ValueError("provide exactly one of jobId or allJobs")
+    if not job_id_param and not all_jobs:
+        raise ValueError("provide exactly one of jobId or allJobs")
     payload = CompensationRefreshWorkflowInput(
         tenant_id=tenant_id,
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
-        job_url=str(job_url_param) if job_url_param else None,
+        job_id=canonical_job_id(str(job_id_param)) if job_id_param else None,
         limit=int(params.get("limit") or 0),
         include_euro_top_tech=(
             bool(params["includeEuroTopTech"]) if params.get("includeEuroTopTech") is not None else True

@@ -6,11 +6,20 @@ import { describe, expect, it } from "vitest";
 
 import type { PostedCompensationFactResponse } from "../src/contracts.js";
 import { buildApp } from "../src/server.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
-function withTempApp(options: { factTable?: boolean } = {}) {
+const PARSED_JOB_ID = "11111111-1111-4111-8111-111111111111";
+const PARSED_JOB_URL = "https://example.com/jobs/parsed";
+const NOT_RECORDED_JOB_ID = "11111111-1111-4111-8111-111111111112";
+const MISSING_JOB_ID = "11111111-1111-4111-8111-111111111113";
+const UNPARSEABLE_JOB_ID = "11111111-1111-4111-8111-111111111114";
+const AMBIGUOUS_JOB_ID = "11111111-1111-4111-8111-111111111115";
+const UNKNOWN_JOB_ID = "11111111-1111-4111-8111-111111111199";
+
+function withTempApp() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-posted-compensation-"));
   const dbPath = path.join(dir, "jobs.db");
-  seedDatabase(dbPath, options);
+  seedDatabase(dbPath);
   const app = buildApp({
     dbPath,
     configPath: path.join(dir, "config.json"),
@@ -22,67 +31,49 @@ function withTempApp(options: { factTable?: boolean } = {}) {
   };
 }
 
-function seedDatabase(dbPath: string, options: { factTable?: boolean }): void {
+function seedDatabase(dbPath: string): void {
+  initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE jobs (
-      url TEXT PRIMARY KEY,
-      title TEXT,
-      salary TEXT,
-      description TEXT,
-      full_description TEXT
-    );
-  `);
-  db.prepare("INSERT INTO jobs (url, title, salary, description, full_description) VALUES (?, ?, ?, ?, ?)").run(
-    "https://example.com/jobs/parsed",
+  insertJob(
+    db,
+    PARSED_JOB_ID,
+    PARSED_JOB_URL,
     "Parsed Salary",
     "€80,000-€95,000/year",
     "Short description",
     "Full private description that must never appear",
   );
-  db.prepare("INSERT INTO jobs (url, title, salary, description, full_description) VALUES (?, ?, ?, ?, ?)").run(
+  insertJob(
+    db,
+    NOT_RECORDED_JOB_ID,
     "https://example.com/jobs/not-recorded",
     "Not Recorded",
     "€77,000/year",
     "Short description",
     "Private description",
   );
-  if (options.factTable ?? true) {
-    createFactTable(db);
-  }
   db.close();
 }
 
-function createFactTable(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE job_posted_compensation_facts (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      source_field TEXT NOT NULL DEFAULT 'jobs.salary',
-      source_text TEXT,
-      legacy_raw_salary TEXT,
-      parse_state TEXT NOT NULL,
-      currency TEXT,
-      period TEXT NOT NULL DEFAULT 'unknown',
-      component TEXT NOT NULL DEFAULT 'unknown',
-      minimum_amount INTEGER,
-      maximum_amount INTEGER,
-      annualized_minimum_amount INTEGER,
-      annualized_maximum_amount INTEGER,
-      annualization_assumption TEXT,
-      confidence TEXT NOT NULL DEFAULT 'none',
-      warnings_json TEXT NOT NULL DEFAULT '[]',
-      parser_version TEXT NOT NULL,
-      source_hash TEXT NOT NULL,
-      parsed_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, job_url)
-    );
-  `);
+function insertJob(
+  db: Database.Database,
+  jobId: string,
+  url: string,
+  title: string,
+  salary: string | null,
+  description: string,
+  fullDescription: string,
+): void {
+  db.prepare(
+    `INSERT INTO jobs (
+      tenant_id, job_id, url, title, salary, description, full_description
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?)`,
+  ).run(jobId, url, title, salary, description, fullDescription);
 }
 
 function insertFact(
   dbPath: string,
-  jobUrl: string,
+  jobId: string,
   values: Partial<{
     sourceText: string | null;
     legacyRawSalary: string | null;
@@ -102,14 +93,14 @@ function insertFact(
   const db = new Database(dbPath);
   db.prepare(
     `INSERT INTO job_posted_compensation_facts (
-      tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+      tenant_id, job_id, source_field, source_text, legacy_raw_salary,
       parse_state, currency, period, component, minimum_amount, maximum_amount,
       annualized_minimum_amount, annualized_maximum_amount, annualization_assumption,
       confidence, warnings_json, parser_version, source_hash, parsed_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
-    jobUrl,
+    jobId,
     "jobs.salary",
     values.sourceText ?? "€80,000-€95,000/year",
     values.legacyRawSalary ?? "€80,000-€95,000/year",
@@ -143,11 +134,11 @@ function factCount(dbPath: string): number {
 describe("posted compensation facts API", () => {
   it("serves a recorded parsed posted compensation fact", async () => {
     const { app, dbPath, cleanup } = withTempApp();
-    insertFact(dbPath, "https://example.com/jobs/parsed", { warnings: ["broad_range"] });
+    insertFact(dbPath, PARSED_JOB_ID, { warnings: ["broad_range"] });
     try {
       const response = await app.inject({
         method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/parsed")}/compensation/posted`,
+        url: `/v1/jobs/${encodeURIComponent(PARSED_JOB_URL)}/compensation/posted`,
       });
 
       expect(response.statusCode, response.body).toBe(200);
@@ -157,7 +148,7 @@ describe("posted compensation facts API", () => {
         recordStatus: "recorded",
         fact: {
           tenantId: "local",
-          jobKey: "https://example.com/jobs/parsed",
+          jobKey: PARSED_JOB_ID,
           sourceField: "jobs.salary",
           sourceText: "€80,000-€95,000/year",
           legacyRawSalary: "€80,000-€95,000/year",
@@ -188,21 +179,23 @@ describe("posted compensation facts API", () => {
   it("serves missing, unparseable, and ambiguous canonical facts without normalized range fields", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     const db = new Database(dbPath);
-    for (const [jobUrl, salary] of [
-      ["https://example.com/jobs/missing", null],
-      ["https://example.com/jobs/unparseable", "Competitive package"],
-      ["https://example.com/jobs/ambiguous", "€70k base plus €30k bonus plus €100k OTE"],
+    for (const [jobId, jobUrl, salary] of [
+      [MISSING_JOB_ID, "https://example.com/jobs/missing", null],
+      [UNPARSEABLE_JOB_ID, "https://example.com/jobs/unparseable", "Competitive package"],
+      [AMBIGUOUS_JOB_ID, "https://example.com/jobs/ambiguous", "€70k base plus €30k bonus plus €100k OTE"],
     ] as const) {
-      db.prepare("INSERT INTO jobs (url, title, salary, description, full_description) VALUES (?, ?, ?, ?, ?)").run(
+      insertJob(
+        db,
+        jobId,
         jobUrl,
-        jobUrl.split("/").at(-1),
+        jobUrl.split("/").at(-1) ?? jobId,
         salary,
         "Short",
         "Private",
       );
     }
     db.close();
-    insertFact(dbPath, "https://example.com/jobs/missing", {
+    insertFact(dbPath, MISSING_JOB_ID, {
       sourceText: null,
       legacyRawSalary: null,
       parseState: "missing",
@@ -217,14 +210,14 @@ describe("posted compensation facts API", () => {
       confidence: "none",
       warnings: [],
     });
-    insertFact(dbPath, "https://example.com/jobs/unparseable", {
+    insertFact(dbPath, UNPARSEABLE_JOB_ID, {
       sourceText: "Competitive package",
       legacyRawSalary: "Competitive package",
       parseState: "unparseable",
       confidence: "low",
       warnings: ["no_amount_found"],
     });
-    insertFact(dbPath, "https://example.com/jobs/ambiguous", {
+    insertFact(dbPath, AMBIGUOUS_JOB_ID, {
       sourceText: "€70k base plus €30k bonus plus €100k OTE",
       legacyRawSalary: "€70k base plus €30k bonus plus €100k OTE",
       parseState: "ambiguous",
@@ -232,14 +225,14 @@ describe("posted compensation facts API", () => {
       warnings: ["ambiguous_multiple_amounts", "bonus_component", "ote_component"],
     });
     try {
-      for (const [jobUrl, parseState] of [
-        ["https://example.com/jobs/missing", "missing"],
-        ["https://example.com/jobs/unparseable", "unparseable"],
-        ["https://example.com/jobs/ambiguous", "ambiguous"],
+      for (const [jobId, parseState] of [
+        [MISSING_JOB_ID, "missing"],
+        [UNPARSEABLE_JOB_ID, "unparseable"],
+        [AMBIGUOUS_JOB_ID, "ambiguous"],
       ] as const) {
         const response = await app.inject({
           method: "GET",
-          url: `/v1/jobs/${encodeURIComponent(jobUrl)}/compensation/posted`,
+          url: `/v1/jobs/${jobId}/compensation/posted`,
         });
         const body = response.json() as PostedCompensationFactResponse;
         expect(response.statusCode, response.body).toBe(200);
@@ -262,14 +255,14 @@ describe("posted compensation facts API", () => {
       expect(factCount(dbPath)).toBe(0);
       const response = await app.inject({
         method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/not-recorded")}/compensation/posted`,
+        url: `/v1/jobs/${NOT_RECORDED_JOB_ID}/compensation/posted`,
       });
 
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json()).toEqual({
         ok: true,
         recordStatus: "not_recorded",
-        jobKey: "https://example.com/jobs/not-recorded",
+        jobKey: NOT_RECORDED_JOB_ID,
         legacyRawSalary: "€77,000/year",
       });
       expect(factCount(dbPath)).toBe(0);
@@ -279,39 +272,19 @@ describe("posted compensation facts API", () => {
     }
   });
 
-  it("returns not-recorded for older databases without a fact table", async () => {
-    const { app, cleanup } = withTempApp({ factTable: false });
-    try {
-      const response = await app.inject({
-        method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/not-recorded")}/compensation/posted`,
-      });
-
-      expect(response.statusCode, response.body).toBe(200);
-      expect(response.json()).toMatchObject({
-        ok: true,
-        recordStatus: "not_recorded",
-        legacyRawSalary: "€77,000/year",
-      });
-    } finally {
-      await app.close();
-      cleanup();
-    }
-  });
-
   it("returns 404 for unknown jobs and does not leak private source data", async () => {
     const { app, dbPath, cleanup } = withTempApp();
-    insertFact(dbPath, "https://example.com/jobs/parsed");
+    insertFact(dbPath, PARSED_JOB_ID);
     try {
       const missing = await app.inject({
         method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/missing-job")}/compensation/posted`,
+        url: `/v1/jobs/${UNKNOWN_JOB_ID}/compensation/posted`,
       });
       expect(missing.statusCode, missing.body).toBe(404);
 
       const response = await app.inject({
         method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/parsed")}/compensation/posted`,
+        url: `/v1/jobs/${PARSED_JOB_ID}/compensation/posted`,
       });
       const serialized = JSON.stringify(response.json());
       expect(serialized).not.toContain("Full private description");

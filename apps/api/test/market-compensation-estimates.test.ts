@@ -6,11 +6,22 @@ import { describe, expect, it } from "vitest";
 
 import type { MarketCompensationEstimateResponse } from "../src/contracts.js";
 import { buildApp } from "../src/server.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
-function withTempApp(options: { estimateTable?: boolean } = {}) {
+const ESTIMATED_JOB_ID = "22222222-2222-4222-8222-222222222211";
+const ESTIMATED_APPLICATION_URL = "https://apply.example.com/jobs/estimated";
+const NOT_REQUESTED_JOB_ID = "22222222-2222-4222-8222-222222222212";
+const TRIMODAL_JOB_ID = "22222222-2222-4222-8222-222222222213";
+const UNSUPPORTED_JOB_ID = "22222222-2222-4222-8222-222222222214";
+const UNAVAILABLE_JOB_ID = "22222222-2222-4222-8222-222222222215";
+const INSUFFICIENT_JOB_ID = "22222222-2222-4222-8222-222222222216";
+const STALE_ESTIMATOR_JOB_ID = "22222222-2222-4222-8222-222222222217";
+const UNKNOWN_JOB_ID = "22222222-2222-4222-8222-222222222299";
+
+function withTempApp() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-market-compensation-"));
   const dbPath = path.join(dir, "jobs.db");
-  seedDatabase(dbPath, options);
+  seedDatabase(dbPath);
   const app = buildApp({
     dbPath,
     configPath: path.join(dir, "config.json"),
@@ -22,80 +33,53 @@ function withTempApp(options: { estimateTable?: boolean } = {}) {
   };
 }
 
-function seedDatabase(dbPath: string, options: { estimateTable?: boolean }): void {
+function seedDatabase(dbPath: string): void {
+  initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE jobs (
-      url TEXT PRIMARY KEY,
-      title TEXT,
-      salary TEXT,
-      description TEXT,
-      full_description TEXT
-    );
-  `);
-  db.prepare("INSERT INTO jobs (url, title, salary, description, full_description) VALUES (?, ?, ?, ?, ?)").run(
+  insertJob(
+    db,
+    ESTIMATED_JOB_ID,
     "https://example.com/jobs/estimated",
     "Estimated Salary",
     "€100,000-€130,000/year",
     "Short description",
     "Full private description that must never appear",
   );
-  db.prepare("INSERT INTO jobs (url, title, salary, description, full_description) VALUES (?, ?, ?, ?, ?)").run(
+  db.prepare("UPDATE jobs SET application_url = ? WHERE tenant_id = 'local' AND job_id = ?").run(
+    ESTIMATED_APPLICATION_URL,
+    ESTIMATED_JOB_ID,
+  );
+  insertJob(
+    db,
+    NOT_REQUESTED_JOB_ID,
     "https://example.com/jobs/not-requested",
     "Not Requested",
     "€77,000/year",
     "Short description",
     "Private description",
   );
-  if (options.estimateTable ?? true) {
-    createEstimateTable(db);
-  }
   db.close();
 }
 
-function createEstimateTable(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE job_market_compensation_estimates (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      estimate_state TEXT NOT NULL,
-      currency TEXT,
-      period TEXT NOT NULL DEFAULT 'year',
-      component TEXT NOT NULL DEFAULT 'total_compensation',
-      minimum_amount INTEGER,
-      maximum_amount INTEGER,
-      confidence_band TEXT NOT NULL DEFAULT 'none',
-      confidence_score REAL NOT NULL DEFAULT 0,
-      source_count INTEGER NOT NULL DEFAULT 0,
-      sample_count INTEGER,
-      aggregate_bucket TEXT,
-      geography_scope TEXT,
-      occupation_code TEXT,
-      occupation_label TEXT,
-      seniority_label TEXT,
-      source_snapshot_json TEXT NOT NULL DEFAULT '[]',
-      factor_reasons_json TEXT NOT NULL DEFAULT '[]',
-      selected_evidence_json TEXT NOT NULL DEFAULT '[]',
-      insufficient_reasons_json TEXT NOT NULL DEFAULT '[]',
-      unsupported_reasons_json TEXT NOT NULL DEFAULT '[]',
-      source_unavailable_reasons_json TEXT NOT NULL DEFAULT '[]',
-      warnings_json TEXT NOT NULL DEFAULT '[]',
-      estimator_version TEXT NOT NULL,
-      estimated_at TEXT NOT NULL,
-      company_name TEXT,
-      normalized_company TEXT,
-      role_title TEXT,
-      normalized_role TEXT,
-      company_tier TEXT NOT NULL DEFAULT 'unknown',
-      match_scope TEXT NOT NULL DEFAULT 'none',
-      PRIMARY KEY (tenant_id, job_url)
-    );
-  `);
+function insertJob(
+  db: Database.Database,
+  jobId: string,
+  url: string,
+  title: string,
+  salary: string | null,
+  description: string,
+  fullDescription: string,
+): void {
+  db.prepare(
+    `INSERT INTO jobs (
+      tenant_id, job_id, url, title, salary, description, full_description
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?)`,
+  ).run(jobId, url, title, salary, description, fullDescription);
 }
 
 function insertEstimate(
   dbPath: string,
-  jobUrl: string,
+  jobId: string,
   values: Partial<{
     state: string;
     currency: string | null;
@@ -129,7 +113,7 @@ function insertEstimate(
   const db = new Database(dbPath);
   db.prepare(
     `INSERT INTO job_market_compensation_estimates (
-      tenant_id, job_url, estimate_state, currency, period, component, minimum_amount, maximum_amount,
+      tenant_id, job_id, estimate_state, currency, period, component, minimum_amount, maximum_amount,
       confidence_band, confidence_score, source_count, sample_count, aggregate_bucket, geography_scope,
       occupation_code, occupation_label, seniority_label, source_snapshot_json, factor_reasons_json,
       selected_evidence_json, insufficient_reasons_json, unsupported_reasons_json, source_unavailable_reasons_json, warnings_json,
@@ -138,7 +122,7 @@ function insertEstimate(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
-    jobUrl,
+    jobId,
     values.state ?? "estimated_range",
     values.currency === undefined ? "EUR" : values.currency,
     "year",
@@ -239,11 +223,11 @@ function estimateCount(dbPath: string): number {
 describe("market compensation estimates API", () => {
   it("serves a recorded company-role reported compensation range", async () => {
     const { app, dbPath, cleanup } = withTempApp();
-    insertEstimate(dbPath, "https://example.com/jobs/estimated");
+    insertEstimate(dbPath, ESTIMATED_JOB_ID);
     try {
       const response = await app.inject({
         method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/estimated")}/compensation/market`,
+        url: `/v1/jobs/${encodeURIComponent(ESTIMATED_APPLICATION_URL)}/compensation/market`,
       });
 
       expect(response.statusCode, response.body).toBe(200);
@@ -253,7 +237,7 @@ describe("market compensation estimates API", () => {
         recordStatus: "recorded",
         estimate: {
           tenantId: "local",
-          jobKey: "https://example.com/jobs/estimated",
+          jobKey: ESTIMATED_JOB_ID,
           estimateState: "estimated_range",
           currency: "EUR",
           period: "year",
@@ -290,7 +274,7 @@ describe("market compensation estimates API", () => {
 
   it("preserves public and licensed Levels.fyi snapshot provenance", async () => {
     const { app, dbPath, cleanup } = withTempApp();
-    insertEstimate(dbPath, "https://example.com/jobs/estimated", {
+    insertEstimate(dbPath, ESTIMATED_JOB_ID, {
       sources: [
         {
           source_id: "levels_fyi",
@@ -315,7 +299,7 @@ describe("market compensation estimates API", () => {
     try {
       const response = await app.inject({
         method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/estimated")}/compensation/market`,
+        url: `/v1/jobs/${ESTIMATED_JOB_ID}/compensation/market`,
       });
 
       expect(response.statusCode, response.body).toBe(200);
@@ -345,7 +329,9 @@ describe("market compensation estimates API", () => {
   it("serves trimodal fallback and source-conflict evidence from canonical market rows", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     const db = new Database(dbPath);
-    db.prepare("INSERT INTO jobs (url, title, salary, description, full_description) VALUES (?, ?, ?, ?, ?)").run(
+    insertJob(
+      db,
+      TRIMODAL_JOB_ID,
       "https://example.com/jobs/trimodal",
       "Trimodal Fallback",
       "€70,000-€82,000/year",
@@ -353,7 +339,7 @@ describe("market compensation estimates API", () => {
       "Synthetic full description that must never appear",
     );
     db.close();
-    insertEstimate(dbPath, "https://example.com/jobs/trimodal", {
+    insertEstimate(dbPath, TRIMODAL_JOB_ID, {
       minimumAmount: 168_000,
       maximumAmount: 190_000,
       confidenceBand: "medium",
@@ -383,7 +369,7 @@ describe("market compensation estimates API", () => {
     try {
       const response = await app.inject({
         method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/trimodal")}/compensation/market`,
+        url: `/v1/jobs/${TRIMODAL_JOB_ID}/compensation/market`,
       });
 
       expect(response.statusCode, response.body).toBe(200);
@@ -446,12 +432,14 @@ describe("market compensation estimates API", () => {
   it("serves unsupported, source-unavailable, and insufficient-evidence rows without range fields", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     const db = new Database(dbPath);
-    for (const [jobUrl, title] of [
-      ["https://example.com/jobs/unsupported", "Unsupported"],
-      ["https://example.com/jobs/unavailable", "Unavailable"],
-      ["https://example.com/jobs/insufficient", "Insufficient"],
+    for (const [jobId, jobUrl, title] of [
+      [UNSUPPORTED_JOB_ID, "https://example.com/jobs/unsupported", "Unsupported"],
+      [UNAVAILABLE_JOB_ID, "https://example.com/jobs/unavailable", "Unavailable"],
+      [INSUFFICIENT_JOB_ID, "https://example.com/jobs/insufficient", "Insufficient"],
     ] as const) {
-      db.prepare("INSERT INTO jobs (url, title, salary, description, full_description) VALUES (?, ?, ?, ?, ?)").run(
+      insertJob(
+        db,
+        jobId,
         jobUrl,
         title,
         null,
@@ -460,7 +448,7 @@ describe("market compensation estimates API", () => {
       );
     }
     db.close();
-    insertEstimate(dbPath, "https://example.com/jobs/unsupported", {
+    insertEstimate(dbPath, UNSUPPORTED_JOB_ID, {
       state: "unsupported",
       minimumAmount: null,
       maximumAmount: null,
@@ -471,7 +459,7 @@ describe("market compensation estimates API", () => {
       unsupportedReasons: ["unsupported_component"],
       warnings: [],
     });
-    insertEstimate(dbPath, "https://example.com/jobs/unavailable", {
+    insertEstimate(dbPath, UNAVAILABLE_JOB_ID, {
       state: "source_unavailable",
       minimumAmount: null,
       maximumAmount: null,
@@ -480,7 +468,7 @@ describe("market compensation estimates API", () => {
       sourceUnavailableReasons: ["stale_source_snapshot"],
       warnings: ["stale_source_snapshot"],
     });
-    insertEstimate(dbPath, "https://example.com/jobs/insufficient", {
+    insertEstimate(dbPath, INSUFFICIENT_JOB_ID, {
       state: "insufficient_evidence",
       minimumAmount: null,
       maximumAmount: null,
@@ -490,14 +478,14 @@ describe("market compensation estimates API", () => {
       warnings: ["low_sample_count"],
     });
     try {
-      for (const [jobUrl, state, reasonKey] of [
-        ["https://example.com/jobs/unsupported", "unsupported", "unsupportedReasons"],
-        ["https://example.com/jobs/unavailable", "source_unavailable", "sourceUnavailableReasons"],
-        ["https://example.com/jobs/insufficient", "insufficient_evidence", "insufficientReasons"],
+      for (const [jobId, state, reasonKey] of [
+        [UNSUPPORTED_JOB_ID, "unsupported", "unsupportedReasons"],
+        [UNAVAILABLE_JOB_ID, "source_unavailable", "sourceUnavailableReasons"],
+        [INSUFFICIENT_JOB_ID, "insufficient_evidence", "insufficientReasons"],
       ] as const) {
         const response = await app.inject({
           method: "GET",
-          url: `/v1/jobs/${encodeURIComponent(jobUrl)}/compensation/market`,
+          url: `/v1/jobs/${jobId}/compensation/market`,
         });
         expect(response.statusCode, response.body).toBe(200);
         const estimate = (
@@ -521,14 +509,14 @@ describe("market compensation estimates API", () => {
       expect(estimateCount(dbPath)).toBe(0);
       const response = await app.inject({
         method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/not-requested")}/compensation/market`,
+        url: `/v1/jobs/${NOT_REQUESTED_JOB_ID}/compensation/market`,
       });
 
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json()).toEqual({
         ok: true,
         recordStatus: "not_requested",
-        jobKey: "https://example.com/jobs/not-requested",
+        jobKey: NOT_REQUESTED_JOB_ID,
       });
       expect(estimateCount(dbPath)).toBe(0);
     } finally {
@@ -537,67 +525,12 @@ describe("market compensation estimates API", () => {
     }
   });
 
-  it("returns not-requested when the market estimate table does not exist", async () => {
-    const { app, cleanup } = withTempApp({ estimateTable: false });
-    try {
-      const response = await app.inject({
-        method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/not-requested")}/compensation/market`,
-      });
-
-      expect(response.statusCode, response.body).toBe(200);
-      expect(response.json()).toMatchObject({
-        ok: true,
-        recordStatus: "not_requested",
-        jobKey: "https://example.com/jobs/not-requested",
-      });
-    } finally {
-      await app.close();
-      cleanup();
-    }
-  });
-
-  it("defensively treats persisted not-requested rows as not requested", async () => {
+  it("treats an estimate from the retired public estimator as not requested", async () => {
     const { app, dbPath, cleanup } = withTempApp();
-    insertEstimate(dbPath, "https://example.com/jobs/estimated", {
-      state: "not_requested",
-      minimumAmount: null,
-      maximumAmount: null,
-      confidenceBand: "none",
-      confidenceScore: 0,
-      sourceCount: 0,
-      sampleCount: null,
-      sources: [],
-      factors: [],
-      warnings: [],
-    });
-    try {
-      const response = await app.inject({
-        method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/estimated")}/compensation/market`,
-      });
-
-      expect(response.statusCode, response.body).toBe(200);
-      expect(response.json()).toEqual({
-        ok: true,
-        recordStatus: "not_requested",
-        jobKey: "https://example.com/jobs/estimated",
-      });
-    } finally {
-      await app.close();
-      cleanup();
-    }
-  });
-
-  it("defensively treats unknown states and stale public-estimator rows as not requested", async () => {
-    const { app, dbPath, cleanup } = withTempApp();
-    insertEstimate(dbPath, "https://example.com/jobs/estimated", {
-      state: "corrupt_state",
-      minimumAmount: 112_000,
-      maximumAmount: 142_000,
-    });
     const db = new Database(dbPath);
-    db.prepare("INSERT INTO jobs (url, title, salary, description, full_description) VALUES (?, ?, ?, ?, ?)").run(
+    insertJob(
+      db,
+      STALE_ESTIMATOR_JOB_ID,
       "https://example.com/jobs/public-stale",
       "Public stale",
       "",
@@ -605,22 +538,20 @@ describe("market compensation estimates API", () => {
       "Private",
     );
     db.close();
-    insertEstimate(dbPath, "https://example.com/jobs/public-stale", {
+    insertEstimate(dbPath, STALE_ESTIMATOR_JOB_ID, {
       estimatorVersion: "market-compensation-v1",
     });
     try {
-      for (const jobKey of ["https://example.com/jobs/estimated", "https://example.com/jobs/public-stale"]) {
-        const response = await app.inject({
-          method: "GET",
-          url: `/v1/jobs/${encodeURIComponent(jobKey)}/compensation/market`,
-        });
-        expect(response.statusCode, response.body).toBe(200);
-        expect(response.json()).toEqual({
-          ok: true,
-          recordStatus: "not_requested",
-          jobKey,
-        });
-      }
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${STALE_ESTIMATOR_JOB_ID}/compensation/market`,
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toEqual({
+        ok: true,
+        recordStatus: "not_requested",
+        jobKey: STALE_ESTIMATOR_JOB_ID,
+      });
     } finally {
       await app.close();
       cleanup();
@@ -632,7 +563,7 @@ describe("market compensation estimates API", () => {
     try {
       const response = await app.inject({
         method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/missing")}/compensation/market`,
+        url: `/v1/jobs/${UNKNOWN_JOB_ID}/compensation/market`,
       });
 
       expect(response.statusCode, response.body).toBe(404);
@@ -645,7 +576,7 @@ describe("market compensation estimates API", () => {
 
   it("drops unsafe source JSON but allows reported provider identities", async () => {
     const { app, dbPath, cleanup } = withTempApp();
-    insertEstimate(dbPath, "https://example.com/jobs/estimated", {
+    insertEstimate(dbPath, ESTIMATED_JOB_ID, {
       sources: [
         {
           source_id: "levels_fyi",
@@ -705,7 +636,7 @@ describe("market compensation estimates API", () => {
     try {
       const response = await app.inject({
         method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/estimated")}/compensation/market`,
+        url: `/v1/jobs/${ESTIMATED_JOB_ID}/compensation/market`,
       });
 
       expect(response.statusCode, response.body).toBe(200);
