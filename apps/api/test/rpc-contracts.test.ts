@@ -6,6 +6,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AnalyzeJobParamsSchema,
+  AnalyzeJobResultSchema,
+  ApplyParamsSchema,
   CancelRunParamsSchema,
   CancelRunResultSchema,
   DEFAULT_PIPELINE_LLM_MODEL,
@@ -21,9 +24,12 @@ import {
   RetailorCurrentPolicyParamsSchema,
   RetailorJobParamsSchema,
   RpcMethods,
+  RunStageParamsSchema,
   SettingsUpdateRequestSchema,
   TailorJobParamsSchema,
 } from "../src/contracts.js";
+
+const CANONICAL_JOB_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("cancel_run RPC contract", () => {
   it("registers cancel_run in RpcMethods", () => {
@@ -218,14 +224,61 @@ describe("preparation RPC contracts", () => {
     expect(RpcMethods.GenerateInterviewPrep).toBe("generate_interview_prep");
   });
 
+  it("accepts global, single-job, and explicit bulk run-stage selectors by canonical ID", () => {
+    expect(RunStageParamsSchema.parse({ stage: "score" })).toMatchObject({
+      tenantId: "local",
+      stage: "score",
+    });
+    expect(
+      RunStageParamsSchema.parse({ stage: "score", jobId: CANONICAL_JOB_ID }),
+    ).toMatchObject({ jobId: CANONICAL_JOB_ID });
+    expect(
+      RunStageParamsSchema.parse({ stage: "score", jobIds: [CANONICAL_JOB_ID] }),
+    ).toMatchObject({ jobIds: [CANONICAL_JOB_ID] });
+  });
+
+  it("rejects URL-shaped or ambiguous run-stage selectors", () => {
+    expect(() =>
+      RunStageParamsSchema.parse({
+        stage: "score",
+        jobUrl: "https://example.test/job/1",
+      }),
+    ).toThrow();
+    expect(() =>
+      RunStageParamsSchema.parse({
+        stage: "score",
+        jobUrls: ["https://example.test/job/1"],
+      }),
+    ).toThrow();
+    expect(() =>
+      RunStageParamsSchema.parse({
+        stage: "score",
+        jobId: "https://example.test/job/1",
+      }),
+    ).toThrow();
+    expect(() =>
+      RunStageParamsSchema.parse({
+        stage: "score",
+        jobIds: ["https://example.test/job/1"],
+      }),
+    ).toThrow();
+    expect(() =>
+      RunStageParamsSchema.parse({
+        stage: "score",
+        jobId: CANONICAL_JOB_ID,
+        jobIds: [CANONICAL_JOB_ID],
+      }),
+    ).toThrow();
+  });
+
   it("parses and defaults rescore_job request payloads", () => {
     const parsed = RescoreJobParamsSchema.parse({
-      jobUrl: "https://example.test/job/1",
+      jobId: CANONICAL_JOB_ID,
     });
 
     expect(parsed).toEqual({
       tenantId: "local",
-      jobUrl: "https://example.test/job/1",
+      jobId: CANONICAL_JOB_ID,
       dryRun: false,
     });
   });
@@ -300,7 +353,7 @@ describe("preparation RPC contracts", () => {
 
   it("parses and rejects stored interview prep generation payloads", () => {
     const parsed = GenerateInterviewPrepParamsSchema.parse({
-      jobUrl: "https://example.test/job/interview",
+      jobId: CANONICAL_JOB_ID,
       expectedAppDir: "/tmp/jobctrl",
       expectedDbPath: "/tmp/jobctrl/jobctrl.db",
     });
@@ -309,11 +362,12 @@ describe("preparation RPC contracts", () => {
       tenantId: "local",
       expectedAppDir: "/tmp/jobctrl",
       expectedDbPath: "/tmp/jobctrl/jobctrl.db",
-      jobUrl: "https://example.test/job/interview",
+      jobId: CANONICAL_JOB_ID,
       llmModel: DEFAULT_PIPELINE_LLM_MODEL,
     });
     expect(() => GenerateInterviewPrepParamsSchema.parse({})).toThrow();
-    expect(() => GenerateInterviewPrepParamsSchema.parse({ jobUrl: "" })).toThrow();
+    expect(() => GenerateInterviewPrepParamsSchema.parse({ jobUrl: "https://example.test/job/interview" })).toThrow();
+    expect(() => GenerateInterviewPrepParamsSchema.parse({ jobId: "https://example.test/job/interview" })).toThrow();
   });
 
   it("parses the REST generate-interview-prep request body", () => {
@@ -339,6 +393,13 @@ describe("preparation RPC contracts", () => {
   it("rejects invalid rescore_job request payloads", () => {
     expect(() => RescoreJobParamsSchema.parse({})).toThrow();
     expect(() => RescoreJobParamsSchema.parse({ jobUrl: "" })).toThrow();
+    expect(() => RescoreJobParamsSchema.parse({ jobId: "https://example.test/job/1" })).toThrow();
+    expect(() =>
+      RescoreJobParamsSchema.parse({
+        jobId: CANONICAL_JOB_ID,
+        jobUrl: "https://example.test/job/1",
+      }),
+    ).toThrow();
   });
 
   it("parses and defaults bulk rescore request payloads", () => {
@@ -347,7 +408,7 @@ describe("preparation RPC contracts", () => {
     expect(parsed).toEqual({
       tenantId: "local",
       limit: 100,
-      jobUrls: [],
+      jobIds: [],
       dryRun: false,
     });
   });
@@ -357,18 +418,18 @@ describe("preparation RPC contracts", () => {
       RescoreJobsNotOnCurrentScoringPolicyParamsSchema.parse({ limit: 0 }),
     ).toThrow();
     expect(() =>
-      RescoreJobsNotOnCurrentScoringPolicyParamsSchema.parse({ jobUrls: [""] }),
+      RescoreJobsNotOnCurrentScoringPolicyParamsSchema.parse({ jobIds: ["https://example.test/job/1"] }),
     ).toThrow();
   });
 
   it("parses and defaults retailor_job request payloads", () => {
     const parsed = RetailorJobParamsSchema.parse({
-      jobUrl: "https://example.test/job/1",
+      jobId: CANONICAL_JOB_ID,
     });
 
     expect(parsed).toEqual({
       tenantId: "local",
-      jobUrl: "https://example.test/job/1",
+      jobId: CANONICAL_JOB_ID,
       dryRun: false,
       suppressExistingArtifacts: true,
       tailorModels: [],
@@ -377,12 +438,12 @@ describe("preparation RPC contracts", () => {
 
   it("parses and defaults tailor_job request payloads", () => {
     const parsed = TailorJobParamsSchema.parse({
-      jobUrl: "https://example.test/job/1",
+      jobId: CANONICAL_JOB_ID,
     });
 
     expect(parsed).toEqual({
       tenantId: "local",
-      jobUrl: "https://example.test/job/1",
+      jobId: CANONICAL_JOB_ID,
       dryRun: false,
       allowLowFitOverride: true,
       tailorModels: [],
@@ -393,17 +454,27 @@ describe("preparation RPC contracts", () => {
     expect(() => TailorJobParamsSchema.parse({})).toThrow();
     expect(() =>
       TailorJobParamsSchema.parse({
-        jobUrl: "https://example.test/job/1",
+        jobId: CANONICAL_JOB_ID,
         tailorJudgeMinScore: 1.1,
       }),
+    ).toThrow();
+    expect(() =>
+      TailorJobParamsSchema.parse({ jobUrl: "https://example.test/job/1" }),
     ).toThrow();
   });
 
   it("rejects invalid retailor_job request payloads", () => {
     expect(() => RetailorJobParamsSchema.parse({})).toThrow();
+    expect(() => RetailorJobParamsSchema.parse({ jobId: "not-a-job-id" })).toThrow();
     expect(() =>
       RetailorJobParamsSchema.parse({
+        jobId: CANONICAL_JOB_ID,
         jobUrl: "https://example.test/job/1",
+      }),
+    ).toThrow();
+    expect(() =>
+      RetailorJobParamsSchema.parse({
+        jobId: CANONICAL_JOB_ID,
         tailorJudgeMinScore: 1.1,
       }),
     ).toThrow();
@@ -415,7 +486,7 @@ describe("preparation RPC contracts", () => {
     expect(parsed).toEqual({
       tenantId: "local",
       limit: 100,
-      jobUrls: [],
+      jobIds: [],
       dryRun: false,
       suppressExistingArtifacts: true,
       tailorModels: [],
@@ -426,8 +497,60 @@ describe("preparation RPC contracts", () => {
     expect(() => RetailorCurrentPolicyParamsSchema.parse({ limit: 0 })).toThrow();
     expect(() =>
       RetailorCurrentPolicyParamsSchema.parse({
+        jobIds: ["https://example.test/job/1"],
+      }),
+    ).toThrow();
+    expect(() =>
+      RetailorCurrentPolicyParamsSchema.parse({
         tailorModels: ["a", "b", "c", "d", "e", "f"],
       }),
+    ).toThrow();
+  });
+
+  it("parses canonical analyze params and results and rejects URL locators", () => {
+    expect(
+      AnalyzeJobParamsSchema.parse({ jobId: CANONICAL_JOB_ID }),
+    ).toEqual({ tenantId: "local", jobId: CANONICAL_JOB_ID, force: false });
+    expect(
+      AnalyzeJobResultSchema.parse({
+        jobId: CANONICAL_JOB_ID,
+        generation: 2,
+        cacheKey: "cache-key",
+        cached: false,
+        legsAttempted: 3,
+        legsSucceeded: 3,
+        degraded: false,
+      }),
+    ).toMatchObject({ jobId: CANONICAL_JOB_ID, generation: 2 });
+    expect(() =>
+      AnalyzeJobParamsSchema.parse({ jobUrl: "https://example.test/job/1" }),
+    ).toThrow();
+    expect(() =>
+      AnalyzeJobParamsSchema.parse({ jobId: "https://example.test/job/1" }),
+    ).toThrow();
+    expect(() =>
+      AnalyzeJobResultSchema.parse({
+        jobUrl: "https://example.test/job/1",
+        generation: 2,
+        cacheKey: "cache-key",
+        cached: false,
+        legsAttempted: 3,
+        legsSucceeded: 3,
+        degraded: false,
+      }),
+    ).toThrow();
+  });
+
+  it("keeps global apply while requiring canonical IDs for explicit targets", () => {
+    expect(ApplyParamsSchema.parse({})).toMatchObject({ tenantId: "local" });
+    expect(ApplyParamsSchema.parse({ jobId: CANONICAL_JOB_ID })).toMatchObject({
+      jobId: CANONICAL_JOB_ID,
+    });
+    expect(() =>
+      ApplyParamsSchema.parse({ jobUrl: "https://example.test/job/1" }),
+    ).toThrow();
+    expect(() =>
+      ApplyParamsSchema.parse({ jobId: "https://example.test/job/1" }),
     ).toThrow();
   });
 });

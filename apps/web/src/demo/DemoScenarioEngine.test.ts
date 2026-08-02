@@ -84,29 +84,33 @@ describe("DemoScenarioEngine", () => {
 
   it("runs Discover as a successful deterministic Q/R/T workflow and updates the source projection", async () => {
     const fixture = await buildEngine();
-    await expect(
-      fixture.engine.execute("runPipelineStages", [{
-        stages: ["discover"],
-        limit: 25,
-        workers: 1,
-        minScore: 7,
-        validationMode: "normal",
-        dryRun: true,
-        rescore: false,
-        retailor: false,
-        headless: false,
-        model: "default",
-        llmModel: "simulated",
-        tailorModels: [],
-        continuous: false,
-      }]),
-    ).resolves.toMatchObject({
+    const response = await fixture.engine.execute("runPipelineStages", [{
+      stages: ["discover"],
+      limit: 25,
+      workers: 1,
+      minScore: 7,
+      validationMode: "normal",
+      dryRun: true,
+      rescore: false,
+      retailor: false,
+      headless: false,
+      model: "default",
+      llmModel: "simulated",
+      tailorModels: [],
+      continuous: false,
+    }]);
+    expect(response).toMatchObject({
       ok: true,
       action: "run_stage",
       status: "queued",
       jobKey: "pipeline",
+      command: {
+        stages: ["discover"],
+        jobIds: [],
+      },
       actions: [expect.objectContaining({ status: "queued" })],
     });
+    expect(response).not.toHaveProperty("command.jobKeys");
     await fixture.advance(150);
     await fixture.advance(650);
 

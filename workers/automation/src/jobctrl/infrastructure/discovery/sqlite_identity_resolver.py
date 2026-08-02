@@ -55,6 +55,32 @@ class SqliteJobIdentityResolver:
         tenant_id: TenantId,
         posting_url: PostingUrl,
     ) -> ResolvedJobIdentity | None:
+        return self._resolve_by_posting_url(
+            tenant_id,
+            posting_url,
+            require_current=False,
+        )
+
+    def resolve_current_by_posting_url(
+        self,
+        tenant_id: TenantId,
+        posting_url: PostingUrl,
+    ) -> ResolvedJobIdentity | None:
+        """Resolve only an active posting URL used at an RPC admission boundary."""
+        return self._resolve_by_posting_url(
+            tenant_id,
+            posting_url,
+            require_current=True,
+        )
+
+    def _resolve_by_posting_url(
+        self,
+        tenant_id: TenantId,
+        posting_url: PostingUrl,
+        *,
+        require_current: bool,
+    ) -> ResolvedJobIdentity | None:
+        current_filter = "AND a.is_current = 1 AND a.retired_at IS NULL" if require_current else ""
         row = self._conn.execute(
             f"""
             SELECT
@@ -68,6 +94,7 @@ class SqliteJobIdentityResolver:
             WHERE a.tenant_id = ?
               AND a.locator_kind = 'posting_url'
               AND a.locator_value = ?
+              {current_filter}
             LIMIT 1
             """,
             (str(tenant_id), posting_url.value),

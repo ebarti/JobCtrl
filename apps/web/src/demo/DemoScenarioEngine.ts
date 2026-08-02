@@ -1093,9 +1093,9 @@ function actionResponse(pending: DemoScenarioInvocation): ActionRunResponse {
     action: spec.action,
     jobKey,
     ...(pending.targetRefs.stage ? { stage: pending.targetRefs.stage } : {}),
-    stages: pending.safeCommand.stages,
+    stages: [...pending.safeCommand.stages],
     dryRun: pending.safeCommand.dryRun,
-    jobKeys: pending.targetRefs.jobKeys,
+    jobIds: [...pending.targetRefs.jobKeys],
     ...(pending.safeCommand.limit === null ? {} : { limit: pending.safeCommand.limit }),
     runId: pending.runId,
   } as ActionRunResponse["command"];

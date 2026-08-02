@@ -3957,12 +3957,13 @@ export interface ActionCommandPayload {
     | "mark_skipped"
     | "profile_import";
   jobKey: string;
+  jobId?: string;
   stage?: Stage;
   stages?: Stage[];
   resetAttempts?: boolean;
   runAfter?: boolean;
   dryRun?: boolean;
-  jobKeys?: string[];
+  jobIds?: string[];
   limit?: number;
   workers?: number;
   minScore?: number;

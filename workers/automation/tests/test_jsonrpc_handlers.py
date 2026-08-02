@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,10 +12,13 @@ from unittest.mock import Mock
 import pytest
 from temporalio.common import WorkflowIDConflictPolicy
 
+from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
 from jobctrl.database import close_connection, get_connection, init_db
 from jobctrl.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
 from jobctrl.domain.compensation import ReportedCompensationObservation
 from jobctrl.domain.interview import INTERVIEW_PREP_ITEM_KINDS, INTERVIEW_PREP_STATUSES
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.compensation import refresh as compensation_refresh_mod
 from jobctrl.infrastructure.compensation import sqlite_market_repository as market_repository_mod
 from jobctrl.infrastructure.compensation.refresh import refresh_compensation_facts
@@ -84,9 +88,13 @@ def _server() -> JsonRpcServer:
 
 def _seed_job(db_path: Path, url: str = "https://example.com/job/1") -> None:
     conn = get_connection(db_path)
+    job_id = uuid.uuid5(uuid.NAMESPACE_URL, f"local:{url}")
     conn.execute(
-        "INSERT INTO jobs (url, title, discovered_at) VALUES (?, ?, datetime('now'))",
-        (url, "Test job"),
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+        VALUES ('local', ?, ?, ?, datetime('now'))
+        """,
+        (str(job_id), url, "Test job"),
     )
     conn.commit()
 
@@ -225,8 +233,15 @@ def test_provider_models_dispatches_sanitized_catalog(monkeypatch) -> None:
     verify_auth.assert_not_called()
 
 
-def test_generate_interview_prep_starts_user_triggered_workflow() -> None:
+def test_generate_interview_prep_starts_user_triggered_workflow(tmp_db: Path) -> None:
     seen: list[WorkflowStartSpec] = []
+    job_url = "https://example.com/job/interview"
+    job_id = _seed_v7_current_locator(
+        get_connection(tmp_db),
+        tenant_id=TenantId("local"),
+        job_url=job_url,
+        job_id=JobId("10000000-0000-4000-8000-000000000001"),
+    )
 
     async def starter(spec: WorkflowStartSpec) -> _StubHandle:
         seen.append(spec)
@@ -242,7 +257,7 @@ def test_generate_interview_prep_starts_user_triggered_workflow() -> None:
                 "tenantId": "local",
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
-                "jobUrl": "https://example.com/job/interview",
+                "jobId": str(job_id),
                 "llmModel": "gpt-test",
             },
             id=1,
@@ -257,13 +272,13 @@ def test_generate_interview_prep_starts_user_triggered_workflow() -> None:
     }
     assert len(seen) == 1
     assert seen[0].workflow is InterviewPrepWorkflow
-    assert seen[0].workflow_id == "interview-prep-local-https://example.com/job/interview"
+    assert seen[0].workflow_id == f"interview-prep-local-{job_url}"
     (payload,) = seen[0].args
     assert payload == InterviewPrepWorkflowInput(
         tenant_id="local",
         expected_app_dir="/tmp/jobctrl",
         expected_db_path="/tmp/jobctrl/jobctrl.db",
-        job_url="https://example.com/job/interview",
+        job_url=job_url,
         llm_model="gpt-test",
     )
 
@@ -315,10 +330,12 @@ def test_refresh_compensation_ignores_company_metric_money(tmp_db: Path) -> None
     conn.execute(
         """
         INSERT INTO jobs (
-            url, title, site, location, salary, description, full_description, discovered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, site, location, salary, description,
+            full_description, discovered_at
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{selected_url}")),
             selected_url,
             "Senior Platform Engineer",
             "Moniepoint",
@@ -363,10 +380,12 @@ def test_refresh_compensation_does_not_match_ote_inside_words(tmp_db: Path) -> N
     conn.execute(
         """
         INSERT INTO jobs (
-            url, title, site, location, salary, description, full_description, discovered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, site, location, salary, description,
+            full_description, discovered_at
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{selected_url}")),
             selected_url,
             "Senior Platform Engineer",
             "Acme",
@@ -461,10 +480,12 @@ def test_refresh_compensation_core_updates_one_job(tmp_db: Path, tmp_path: Path)
     conn.execute(
         """
         INSERT INTO jobs (
-            url, title, site, location, salary, description, full_description, discovered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, site, location, salary, description,
+            full_description, discovered_at
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{selected_url}")),
             selected_url,
             "Senior Platform Engineer",
             "Acme AI",
@@ -476,8 +497,14 @@ def test_refresh_compensation_core_updates_one_job(tmp_db: Path, tmp_path: Path)
         ),
     )
     conn.execute(
-        "INSERT INTO jobs (url, title, site, location, salary, description, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        """
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, site, location, salary, description,
+            discovered_at
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
         (
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{other_url}")),
             other_url,
             "Staff Platform Engineer",
             "Acme AI",
@@ -560,10 +587,12 @@ def test_refresh_compensation_core_updates_all_jobs(tmp_db: Path, tmp_path: Path
     conn.execute(
         """
         INSERT INTO jobs (
-            url, title, site, location, salary, description, full_description, discovered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, site, location, salary, description,
+            full_description, discovered_at
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{first_url}")),
             first_url,
             "Senior Platform Engineer",
             "Acme AI",
@@ -575,8 +604,14 @@ def test_refresh_compensation_core_updates_all_jobs(tmp_db: Path, tmp_path: Path
         ),
     )
     conn.execute(
-        "INSERT INTO jobs (url, title, site, location, salary, description, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        """
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, site, location, salary, description,
+            discovered_at
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
         (
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{second_url}")),
             second_url,
             "Staff Platform Engineer",
             "Acme AI",
@@ -622,10 +657,13 @@ def test_refresh_compensation_without_observations_uses_euro_top_tech_and_update
     job_url = "https://example.com/jobs/staff-engineer"
     conn.execute(
         """
-        INSERT INTO jobs (url, title, site, location, salary, description, discovered_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, site, location, salary, description,
+            discovered_at
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{job_url}")),
             job_url,
             "Staff Software Engineer",
             "Acme AI",
@@ -690,10 +728,13 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
     job_url = "https://example.com/jobs/platform"
     conn.execute(
         """
-        INSERT INTO jobs (url, title, site, location, salary, description, discovered_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, site, location, salary, description,
+            discovered_at
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{job_url}")),
             job_url,
             "Senior Platform Engineer",
             "Acme AI",
@@ -843,6 +884,23 @@ def test_missing_tenant_id_falls_back_to_local(tmp_db: Path, caplog) -> None:
 
 def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
     seen: list[WorkflowStartSpec] = []
+    selected_jobs = (
+        (
+            JobId("20000000-0000-4000-8000-000000000021"),
+            "https://example.com/job/score-a",
+        ),
+        (
+            JobId("20000000-0000-4000-8000-000000000022"),
+            "https://example.com/job/score-b",
+        ),
+    )
+    for job_id, job_url in selected_jobs:
+        _seed_v7_current_locator(
+            get_connection(tmp_db),
+            tenant_id=TenantId("local"),
+            job_url=job_url,
+            job_id=job_id,
+        )
 
     async def starter(spec: WorkflowStartSpec) -> _StubHandle:
         seen.append(spec)
@@ -860,10 +918,7 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
                 "stage": "score",
                 "stages": ["score", "tailor"],
-                "jobUrls": [
-                    "https://example.com/job/score-a",
-                    "https://example.com/job/score-b",
-                ],
+                "jobIds": [str(job_id) for job_id, _job_url in selected_jobs],
                 "limit": 5,
                 "workers": 2,
                 "minScore": 8,
@@ -994,13 +1049,13 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tenantId": "local",
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
-                "jobUrl": "https://example.com/job/score",
+                "jobId": "20000000-0000-4000-8000-000000000001",
                 "dryRun": True,
             },
             {
                 "steps": ["score"],
                 "rescore": True,
-                "job_url": "https://example.com/job/score",
+                "job_id": JobId("20000000-0000-4000-8000-000000000001"),
             },
         ),
         (
@@ -1010,9 +1065,9 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
                 "limit": 10,
-                "jobUrls": [
-                    "https://example.com/job/score-a",
-                    "https://example.com/job/score-b",
+                "jobIds": [
+                    "20000000-0000-4000-8000-000000000002",
+                    "20000000-0000-4000-8000-000000000003",
                 ],
                 "dryRun": False,
             },
@@ -1036,7 +1091,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tenantId": "local",
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
-                "jobUrl": "https://example.com/job/tailor",
+                "jobId": "20000000-0000-4000-8000-000000000008",
                 "dryRun": True,
                 "allowLowFitOverride": True,
                 "tailorModels": ["local:draft-a"],
@@ -1046,7 +1101,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
             {
                 "steps": ["tailor", "cover", "pdf"],
                 "retailor": False,
-                "job_url": "https://example.com/job/tailor",
+                "job_id": JobId("20000000-0000-4000-8000-000000000008"),
                 "allow_low_fit_override": True,
                 "tailor_models": ("local:draft-a",),
                 "tailor_judge_model": "gemini:judge-c",
@@ -1059,7 +1114,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tenantId": "local",
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
-                "jobUrl": "https://example.com/job/tailor",
+                "jobId": "20000000-0000-4000-8000-000000000009",
                 "dryRun": True,
                 "suppressExistingArtifacts": False,
                 "tailorModels": ["local:draft-a"],
@@ -1069,7 +1124,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
             {
                 "steps": ["tailor", "cover", "pdf"],
                 "retailor": True,
-                "job_url": "https://example.com/job/tailor",
+                "job_id": JobId("20000000-0000-4000-8000-000000000009"),
                 "suppress_existing_artifacts": False,
                 "tailor_models": ("local:draft-a",),
                 "tailor_judge_model": "gemini:judge-c",
@@ -1082,12 +1137,12 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tenantId": "local",
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
-                "jobUrl": "https://example.com/job/tailor",
+                "jobId": "20000000-0000-4000-8000-000000000010",
             },
             {
                 "steps": ["tailor", "cover", "pdf"],
                 "retailor": True,
-                "job_url": "https://example.com/job/tailor",
+                "job_id": JobId("20000000-0000-4000-8000-000000000010"),
                 "suppress_existing_artifacts": False,
             },
         ),
@@ -1098,9 +1153,9 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
                 "limit": 5,
-                "jobUrls": [
-                    "https://example.com/job/tailor-a",
-                    "https://example.com/job/tailor-b",
+                "jobIds": [
+                    "20000000-0000-4000-8000-000000000011",
+                    "20000000-0000-4000-8000-000000000012",
                 ],
                 "dryRun": False,
                 "suppressExistingArtifacts": True,
@@ -1127,7 +1182,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "expectedAppDir": "/tmp/jobctrl",
                 "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
                 "limit": 5,
-                "jobUrls": ["https://example.com/job/tailor-a"],
+                "jobIds": ["20000000-0000-4000-8000-000000000011"],
             },
             {
                 "stages": ["tailor", "cover"],
@@ -1154,6 +1209,27 @@ def test_current_policy_maintenance_methods_start_pipeline_workflows(
     async def starter(spec: WorkflowStartSpec) -> _StubHandle:
         seen.append(spec)
         return _StubHandle("maintenance-wf", "maintenance-run")
+
+    if method in {"rescore_job", "tailor_job", "retailor_job"}:
+        job_id = JobId(str(params["jobId"]))
+        _seed_v7_current_locator(
+            get_connection(tmp_db),
+            tenant_id=TenantId("local"),
+            job_url=f"https://example.com/job/{method}-{job_id}",
+            job_id=job_id,
+        )
+    else:
+        for job_id, job_url in zip(
+            params["jobIds"],
+            expected_payload["job_urls"],
+            strict=True,
+        ):
+            _seed_v7_current_locator(
+                get_connection(tmp_db),
+                tenant_id=TenantId("local"),
+                job_url=str(job_url),
+                job_id=JobId(str(job_id)),
+            )
 
     server = JsonRpcServer(workflow_starter=starter)
     register_default_handlers(server, canceler=_stub_canceler)
@@ -1183,17 +1259,415 @@ def test_current_policy_maintenance_methods_start_pipeline_workflows(
     assert payload.tenant_id == "local"
 
 
+def test_v7_canonical_job_ids_disambiguate_the_same_url_by_tenant(
+    tmp_db: Path,
+    monkeypatch,
+) -> None:
+    tenant_a = TenantId("tenant-a")
+    tenant_b = TenantId("tenant-b")
+    job_url = "https://example.com/jobs/same-url"
+    job_id_a = _seed_v7_current_locator(
+        get_connection(tmp_db),
+        tenant_id=tenant_a,
+        job_url=job_url,
+        job_id=JobId("10000000-0000-4000-8000-000000000001"),
+    )
+    job_id_b = _seed_v7_current_locator(
+        get_connection(tmp_db),
+        tenant_id=tenant_b,
+        job_url=job_url,
+        job_id=JobId("20000000-0000-4000-8000-000000000002"),
+    )
+    source_event_calls: list[tuple[TenantId, JobId]] = []
+
+    def fake_latest_source_event_id(conn, *, tenant_id: TenantId, job_id: JobId) -> str:
+        source_event_calls.append((tenant_id, job_id))
+        return "source-event"
+
+    monkeypatch.setattr(handlers_mod, "latest_source_event_id", fake_latest_source_event_id)
+    seen: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        seen.append(spec)
+        return _StubHandle("job-preparation", "preparation-run")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+
+    for method, tenant_id, expected_job_id in (
+        ("rescore_job", tenant_a, job_id_a),
+        ("tailor_job", tenant_b, job_id_b),
+        ("retailor_job", tenant_a, job_id_a),
+    ):
+        params = {
+            "tenantId": str(tenant_id),
+            "jobId": str(expected_job_id),
+        }
+        response = server.dispatch(
+            JsonRpcRequest(
+                method=method,
+                params=params,
+                id=1,
+            )
+        )
+
+        assert response is not None
+        assert "error" not in response.to_dict()
+        (payload,) = seen[-1].args
+        assert isinstance(payload, JobPreparationInput)
+        assert payload.tenant_id == str(tenant_id)
+        assert payload.job_id == expected_job_id
+
+    assert source_event_calls == [
+        (tenant_a, job_id_a),
+        (tenant_b, job_id_b),
+        (tenant_a, job_id_a),
+    ]
+
+
+@pytest.mark.parametrize("method", ("rescore_job", "tailor_job", "retailor_job"))
+def test_v7_job_id_workflow_targets_are_loaded_directly_and_tenant_scoped(
+    tmp_db: Path,
+    method: str,
+) -> None:
+    tenant_id = TenantId("tenant-a")
+    job_id = _seed_v7_current_locator(
+        get_connection(tmp_db),
+        tenant_id=tenant_id,
+        job_url="https://example.com/jobs/direct-job-id",
+        job_id=JobId("50000000-0000-4000-8000-000000000005"),
+    )
+    conn = get_connection(tmp_db)
+    conn.execute(
+        "DELETE FROM job_locators WHERE tenant_id = ? AND job_id = ?",
+        (str(tenant_id), str(job_id)),
+    )
+    conn.commit()
+    seen: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        seen.append(spec)
+        return _StubHandle("job-preparation", "preparation-run")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+    response = server.dispatch(
+        JsonRpcRequest(
+            method=method,
+            params={"tenantId": str(tenant_id), "jobId": str(job_id)},
+            id=1,
+        )
+    )
+
+    assert response is not None
+    assert "error" not in response.to_dict()
+    (payload,) = seen[0].args
+    assert isinstance(payload, JobPreparationInput)
+    assert payload.tenant_id == str(tenant_id)
+    assert payload.job_id == job_id
+
+    wrong_tenant = server.dispatch(
+        JsonRpcRequest(
+            method=method,
+            params={"tenantId": "tenant-b", "jobId": str(job_id)},
+            id=2,
+        )
+    )
+    assert wrong_tenant is not None
+    assert wrong_tenant.to_dict()["error"] == {
+        "code": INVALID_PARAMS,
+        "message": f"unknown or inactive jobId: {job_id}",
+    }
+
+
+@pytest.mark.parametrize("method", ("rescore_job", "tailor_job", "retailor_job"))
+@pytest.mark.parametrize(
+    ("params", "expected_message"),
+    [
+        ({"tenantId": "local"}, "missing required param: jobId"),
+        (
+            {"tenantId": "local", "jobUrl": "https://example.com/jobs/legacy"},
+            "jobUrl is not supported",
+        ),
+        (
+            {
+                "tenantId": "local",
+                "jobId": "50000000-0000-4000-8000-000000000005",
+                "jobUrl": "https://example.com/jobs/both",
+            },
+            "jobUrl is not supported",
+        ),
+        (
+            {"tenantId": "local", "jobId": "https://example.com/jobs/not-an-id"},
+            "JobId must be a canonical UUID",
+        ),
+    ],
+)
+def test_v7_direct_preparation_identity_requires_one_canonical_job_id(
+    tmp_db: Path,
+    method: str,
+    params: dict[str, object],
+    expected_message: str,
+) -> None:
+    response = _server().dispatch(JsonRpcRequest(method=method, params=params, id=1))
+
+    assert response is not None
+    body = response.to_dict()
+    assert body["error"]["code"] == INVALID_PARAMS
+    assert expected_message in body["error"]["message"]
+
+
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        ("run_stage", {"stage": "score", "jobUrl": "https://example.com/jobs/legacy"}),
+        (
+            "run_stage",
+            {"stage": "score", "jobUrls": ["https://example.com/jobs/legacy"]},
+        ),
+        (
+            "rescore_jobs_not_on_current_scoring_policy",
+            {"jobUrls": ["https://example.com/jobs/legacy"]},
+        ),
+        ("analyze_job", {"jobUrl": "https://example.com/jobs/legacy"}),
+        (
+            "generate_interview_prep",
+            {"jobUrl": "https://example.com/jobs/legacy"},
+        ),
+        ("apply", {"jobUrl": "https://example.com/jobs/legacy"}),
+        (
+            "retailor_current_policy",
+            {"jobUrls": ["https://example.com/jobs/legacy"]},
+        ),
+    ],
+)
+def test_v7_rpc_identity_boundary_rejects_url_locator_params(
+    method: str,
+    params: dict[str, object],
+) -> None:
+    response = _server().dispatch(JsonRpcRequest(method=method, params=params, id=1))
+
+    assert response is not None
+    body = response.to_dict()
+    assert body["error"]["code"] == INVALID_PARAMS
+    assert "is not supported" in body["error"]["message"]
+
+
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        ("run_stage", {"stage": "score", "jobId": "https://example.com/jobs/not-an-id"}),
+        (
+            "run_stage",
+            {"stage": "score", "jobIds": ["https://example.com/jobs/not-an-id"]},
+        ),
+        (
+            "rescore_jobs_not_on_current_scoring_policy",
+            {"jobIds": ["https://example.com/jobs/not-an-id"]},
+        ),
+        ("analyze_job", {"jobId": "https://example.com/jobs/not-an-id"}),
+        (
+            "generate_interview_prep",
+            {"jobId": "https://example.com/jobs/not-an-id"},
+        ),
+        ("apply", {"jobId": "https://example.com/jobs/not-an-id"}),
+        (
+            "retailor_current_policy",
+            {"jobIds": ["https://example.com/jobs/not-an-id"]},
+        ),
+    ],
+)
+def test_v7_rpc_identity_boundary_rejects_url_shaped_job_ids(
+    method: str,
+    params: dict[str, object],
+) -> None:
+    response = _server().dispatch(JsonRpcRequest(method=method, params=params, id=1))
+
+    assert response is not None
+    body = response.to_dict()
+    assert body["error"]["code"] == INVALID_PARAMS
+    assert "JobId must be a canonical UUID" in body["error"]["message"]
+
+
+def test_v7_apply_preserves_global_and_explicit_job_semantics(
+    tmp_db: Path,
+    monkeypatch,
+) -> None:
+    job_url = "https://example.com/jobs/apply"
+    job_id = _seed_v7_current_locator(
+        get_connection(tmp_db),
+        tenant_id=TenantId("local"),
+        job_url=job_url,
+        job_id=JobId("60000000-0000-4000-8000-000000000006"),
+    )
+    monkeypatch.setattr(
+        "jobctrl.browser_capabilities.require_system_browser_capability",
+        lambda _capability_id: None,
+    )
+
+    explicit = handlers_mod.apply_action(
+        {"tenantId": "local", "jobId": str(job_id), "dryRun": True}
+    )
+    global_selection = handlers_mod.apply_action(
+        {"tenantId": "local", "dryRun": True}
+    )
+
+    assert explicit.workflow is ApplyWorkflow
+    assert explicit.workflow_id == f"apply-local-{job_url}"
+    assert explicit.args == (
+        ApplyWorkflowInput(tenant_id="local", job_url=job_url, dry_run=True),
+    )
+    assert global_selection.workflow is ApplyWorkflow
+    assert global_selection.workflow_id is None
+    assert global_selection.args == (
+        ApplyWorkflowInput(tenant_id="local", job_url=None, dry_run=True),
+    )
+
+
+@pytest.mark.parametrize(
+    "method",
+    ("tailor_job", "analyze_job", "generate_interview_prep"),
+)
+def test_v7_canonical_job_ids_reject_unknown_and_deleted_jobs(
+    tmp_db: Path,
+    method: str,
+) -> None:
+    tenant_id = TenantId("tenant-a")
+    deleted_url = "https://example.com/jobs/deleted"
+    conn = get_connection(tmp_db)
+    deleted_job_id = _seed_v7_current_locator(
+        conn,
+        tenant_id=tenant_id,
+        job_url=deleted_url,
+    )
+    conn.execute(
+        """
+        INSERT INTO jobctrl_deleted_jobs (
+            tenant_id, job_id, deleted_at, reason
+        ) VALUES (?, ?, '2026-07-30T11:00:00+00:00', 'user_deleted')
+        """,
+        (str(tenant_id), str(deleted_job_id)),
+    )
+    conn.commit()
+    server = _server()
+
+    for job_id in (
+        JobId("90000000-0000-4000-8000-000000000009"),
+        deleted_job_id,
+    ):
+        response = server.dispatch(
+            JsonRpcRequest(
+                method=method,
+                params={"tenantId": str(tenant_id), "jobId": str(job_id)},
+                id=1,
+            )
+        )
+
+        assert response is not None
+        body = response.to_dict()
+        assert body["error"]["code"] == INVALID_PARAMS
+        assert "unknown or inactive jobId" in body["error"]["message"]
+
+
+def test_analyze_job_loads_the_canonical_tenant_scoped_target(
+    tmp_db: Path,
+    monkeypatch,
+) -> None:
+    tenant_a = TenantId("tenant-a")
+    tenant_b = TenantId("tenant-b")
+    job_url = "https://example.com/jobs/analyze"
+    job_id_a = _seed_v7_current_locator(
+        get_connection(tmp_db),
+        tenant_id=tenant_a,
+        job_url=job_url,
+        job_id=JobId("30000000-0000-4000-8000-000000000003"),
+        full_description="Tenant A canonical description",
+    )
+    _seed_v7_current_locator(
+        get_connection(tmp_db),
+        tenant_id=tenant_b,
+        job_url=job_url,
+        job_id=JobId("40000000-0000-4000-8000-000000000004"),
+        full_description="Tenant B canonical description",
+    )
+    captured: dict[str, object] = {}
+
+    class _UseCase:
+        def execute(self, *, job, tenant_id, force):
+            captured.update(job=job, tenant_id=tenant_id, force=force)
+            return SimpleNamespace(
+                analysis=SimpleNamespace(
+                    generation=2,
+                    cache_key="canonical-cache-key",
+                    legs_attempted=3,
+                    legs_succeeded=3,
+                    is_degraded=False,
+                ),
+                cached=False,
+            )
+
+    from jobctrl.scoring import tailor as tailor_mod
+
+    monkeypatch.setattr(tailor_mod, "_build_analyze_use_case", lambda **_kwargs: _UseCase())
+    response = _server().dispatch(
+        JsonRpcRequest(
+            method="analyze_job",
+            params={"tenantId": str(tenant_a), "jobId": str(job_id_a), "force": True},
+            id=1,
+        )
+    )
+
+    assert response is not None
+    assert response.to_dict()["result"] == {
+        "jobId": str(job_id_a),
+        "generation": 2,
+        "cacheKey": "canonical-cache-key",
+        "cached": False,
+        "legsAttempted": 3,
+        "legsSucceeded": 3,
+        "degraded": False,
+    }
+    assert captured["tenant_id"] == tenant_a
+    assert captured["force"] is True
+    assert captured["job"] == {
+        "tenant_id": str(tenant_a),
+        "job_id": str(job_id_a),
+        "url": job_url,
+        "title": "Test job",
+        "company": "Acme",
+        "salary": None,
+        "description": "Summary",
+        "location": "Remote",
+        "site": "example",
+        "strategy": "search",
+        "discovered_at": "2026-07-30T10:00:00+00:00",
+        "enrichment_status": "enriched",
+        "full_description": "Tenant A canonical description",
+        "application_url": None,
+        "detail_scraped_at": "2026-07-30T10:01:00+00:00",
+        "extraction_tier": "high",
+    }
+
+
 def test_retailor_job_duplicate_dispatch_uses_existing_workflow_without_duplicate_artifacts(
     tmp_db: Path,
 ) -> None:
     conn = get_connection(tmp_db)
     job_url = "https://example.com/job/retailor-idempotent"
-    _seed_job(tmp_db, job_url)
+    job_id = _seed_v7_current_locator(
+        conn,
+        tenant_id=TenantId("local"),
+        job_url=job_url,
+    )
     _seed_tailoring_policy(conn, version=3)
     _seed_tailored_artifact(conn, job_url, policy_version=3)
     before = conn.execute(
-        "SELECT COUNT(*), COUNT(DISTINCT artifact_id) FROM job_materials_artifacts WHERE job_url = ?",
-        (job_url,),
+        """
+        SELECT COUNT(*), COUNT(DISTINCT artifact_id)
+        FROM job_materials_artifacts
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (str(job_id),),
     ).fetchone()
     seen: list[WorkflowStartSpec] = []
 
@@ -1209,7 +1683,7 @@ def test_retailor_job_duplicate_dispatch_uses_existing_workflow_without_duplicat
             "tenantId": "local",
             "expectedAppDir": "/tmp/jobctrl",
             "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
-            "jobUrl": job_url,
+            "jobId": str(job_id),
             "dryRun": False,
         },
         id=1,
@@ -1227,8 +1701,12 @@ def test_retailor_job_duplicate_dispatch_uses_existing_workflow_without_duplicat
     assert seen[0].id_conflict_policy is WorkflowIDConflictPolicy.USE_EXISTING
     assert seen[1].id_conflict_policy is WorkflowIDConflictPolicy.USE_EXISTING
     after = conn.execute(
-        "SELECT COUNT(*), COUNT(DISTINCT artifact_id) FROM job_materials_artifacts WHERE job_url = ?",
-        (job_url,),
+        """
+        SELECT COUNT(*), COUNT(DISTINCT artifact_id)
+        FROM job_materials_artifacts
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (str(job_id),),
     ).fetchone()
     assert tuple(before) == (1, 1)
     assert tuple(after) == tuple(before)
@@ -1672,11 +2150,55 @@ def test_profile_import_requires_pdf_path(tmp_db: Path) -> None:
 
 
 def _seed_enriched_job(conn, url: str) -> None:
+    _seed_v7_current_locator(
+        conn,
+        tenant_id=TenantId("local"),
+        job_url=url,
+        job_id=JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, f"local:{url}"))),
+    )
+
+
+def _seed_v7_current_locator(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_url: str,
+    job_id: JobId | None = None,
+    full_description: str = "Full description",
+) -> JobId:
+    stable_job_id = job_id or JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, f"{tenant_id}:{job_url}")))
     conn.execute(
-        "INSERT INTO jobs (url, title, full_description, discovered_at) VALUES (?, ?, ?, ?)",
-        (url, "Test job", "Full description", "2026-05-26T10:00:00+00:00"),
+        """
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, company, salary, description,
+            location, site, strategy, discovered_at
+        ) VALUES (?, ?, ?, 'Test job', 'Acme', NULL, 'Summary', 'Remote',
+                  'example', 'search', '2026-07-30T10:00:00+00:00')
+        """,
+        (str(tenant_id), str(stable_job_id), job_url),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_locators (
+            tenant_id, job_id, locator_kind, locator_value, is_current,
+            first_seen_at, last_seen_at, retired_at
+        ) VALUES (?, ?, 'posting_url', ?, 1, '2026-07-30T10:00:00+00:00',
+                  '2026-07-30T10:00:00+00:00', NULL)
+        """,
+        (str(tenant_id), str(stable_job_id), job_url),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_enrichments (
+            tenant_id, job_id, current_status, full_description,
+            application_url, enriched_at, extraction_tier, updated_at
+        ) VALUES (?, ?, 'enriched', ?, NULL, '2026-07-30T10:01:00+00:00',
+                  'high', '2026-07-30T10:01:00+00:00')
+        """,
+        (str(tenant_id), str(stable_job_id), full_description),
     )
     conn.commit()
+    return stable_job_id
 
 
 def _seed_scoring_policy(conn, *, version: int) -> None:
@@ -1716,16 +2238,21 @@ def _seed_score(
     fit_score: int = 8,
     correction: dict[str, object] | None = None,
 ) -> None:
+    job = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+        (url,),
+    ).fetchone()
+    assert job is not None
     conn.execute(
         """
         INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+            tenant_id, job_id, version, fit_score, breakdown_json, keywords_json,
             scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, 1, 'local', ?, ?, '[]', '2026-05-26T10:00:00+00:00',
+        ) VALUES ('local', ?, 1, ?, ?, '[]', '2026-05-26T10:00:00+00:00',
             ?, '{}', ?)
         """,
         (
-            url,
+            str(job["job_id"]),
             fit_score,
             json.dumps({"reasoning": "ok", "eligibility": {"status": "eligible", "hard_blockers": []}}),
             json.dumps(correction) if correction is not None else None,
@@ -1736,25 +2263,31 @@ def _seed_score(
 
 
 def _seed_tailored_artifact(conn, url: str, *, policy_version: int) -> None:
+    job = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+        (url,),
+    ).fetchone()
+    assert job is not None
+    job_id = str(job["job_id"])
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-        ) VALUES (?, 1, 'local', 'resume_approved',
+            tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+        ) VALUES ('local', ?, 1, 'resume_approved',
             '2026-05-26T10:00:00+00:00', '2026-05-26T10:00:00+00:00', '{}')
         """,
-        (url,),
+        (job_id,),
     )
     conn.execute(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
-            render_format, size_bytes, metadata_json, created_at, superseded_at
-        ) VALUES (?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?,
+            tenant_id, job_id, generation, artifact_type, artifact_id, status,
+            path, render_format, size_bytes, metadata_json, created_at, superseded_at
+        ) VALUES ('local', ?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?,
             '2026-05-26T10:00:00+00:00', NULL)
         """,
         (
-            url,
+            job_id,
             f"artifact-{policy_version}-{url.rsplit('/', 1)[-1]}",
             f"/tmp/{url.rsplit('/', 1)[-1]}.txt",
             json.dumps({"tailoring_policy_version": policy_version}),
