@@ -1,0 +1,42 @@
+{
+  "entries": [
+    {
+      "templateId": "template-name-accent",
+      "templateName": "éclair",
+      "applied": 2
+    },
+    {
+      "templateId": "template-name-ascii",
+      "templateName": "Zebra",
+      "applied": 2
+    },
+    {
+      "templateId": "template-😀",
+      "templateName": "Shared",
+      "applied": 1
+    },
+    {
+      "templateId": "template-a",
+      "templateName": "Shared",
+      "applied": 1
+    },
+    {
+      "templateId": "template-",
+      "templateName": "Shared",
+      "applied": 1
+    },
+    {
+      "templateId": "template-Z",
+      "templateName": "Shared",
+      "applied": 1
+    }
+  ],
+  "expectedTemplateIds": [
+    "template-name-ascii",
+    "template-name-accent",
+    "template-Z",
+    "template-a",
+    "template-",
+    "template-😀"
+  ]
+}

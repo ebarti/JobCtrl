@@ -4395,6 +4395,54 @@ describe("dashboard outcome-conversion projection", () => {
     }
   });
 
+  it("breaks equal template-count and name ties by template id", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedConversionDb(dbPath);
+      const fixturePath = path.join(
+        fileURLToPath(new URL("../../..", import.meta.url)),
+        "packages/domain-types/test/fixtures/dashboard_template_order.json",
+      );
+      const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8")) as {
+        entries: Array<{
+          templateId: string;
+          templateName: string;
+          applied: number;
+        }>;
+        expectedTemplateIds: string[];
+      };
+      seedJobs(
+        dbPath,
+        fixture.entries.flatMap((entry, entryIndex) =>
+          Array.from({ length: entry.applied }, (_, applicationIndex) => ({
+            url: `https://example.com/template-order-${entryIndex}-${applicationIndex}`,
+            site: "greenhouse",
+            fitScore: 9,
+            applied: true,
+            template: { id: entry.templateId, name: entry.templateName },
+          })),
+        ),
+      );
+      const app = buildApp({
+        dbPath,
+        configPath: path.join(path.dirname(dbPath), "config.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/analytics/outcomes" });
+        expect(res.statusCode, res.body).toBe(200);
+        expect(
+          res.json().byTemplate.map(
+            (entry: { templateId: string }) => entry.templateId,
+          ),
+        ).toEqual(fixture.expectedTemplateIds);
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("returns an empty conversion with null rates when nothing is applied", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
