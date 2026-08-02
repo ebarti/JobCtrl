@@ -285,18 +285,18 @@ function writeEventRow(reply: FastifyReply, row: EventRow): void {
   if (eventType.length === 0) {
     return;
   }
-  const payload = canonicalSsePayload(row);
-  if (payload === null) {
+  const envelope = canonicalSseEnvelope(row);
+  if (envelope === null) {
     return;
   }
-  const dataLine = formatDataField(JSON.stringify(payload));
+  const dataLine = formatDataField(JSON.stringify(envelope));
   writeRaw(
     reply,
     `id: ${row.event_id}\nevent: ${eventType}\n${dataLine}\n\n`,
   );
 }
 
-function canonicalSsePayload(row: EventRow): Record<string, unknown> | null {
+function canonicalSseEnvelope(row: EventRow): Record<string, unknown> | null {
   let payload: unknown;
   try {
     payload = JSON.parse(row.payload_json ?? "{}");
@@ -310,6 +310,9 @@ function canonicalSsePayload(row: EventRow): Record<string, unknown> | null {
   if (legacyJobAliases.some((key) => Object.hasOwn(payload, key))) {
     return null;
   }
+  if (Object.hasOwn(payload, "occurred_at")) {
+    return null;
+  }
   if (payload.tenantId !== undefined && payload.tenantId !== row.tenant_id) {
     return null;
   }
@@ -317,12 +320,21 @@ function canonicalSsePayload(row: EventRow): Record<string, unknown> | null {
     if (Object.hasOwn(payload, "jobId")) {
       return null;
     }
-    return { ...payload, tenantId: row.tenant_id };
+    return {
+      tenantId: row.tenant_id,
+      occurredAt: row.occurred_at,
+      payload: { ...payload, tenantId: row.tenant_id },
+    };
   }
   if (payload.jobId !== undefined && payload.jobId !== row.job_id) {
     return null;
   }
-  return { ...payload, tenantId: row.tenant_id, jobId: row.job_id };
+  return {
+    tenantId: row.tenant_id,
+    jobId: row.job_id,
+    occurredAt: row.occurred_at,
+    payload: { ...payload, tenantId: row.tenant_id, jobId: row.job_id },
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

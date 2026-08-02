@@ -668,6 +668,35 @@ describe("local TypeScript API", () => {
       occurredAt,
       JSON.stringify({ tenantId: "local", jobKey: jobUrl }),
     );
+    insertEvent.run(
+      "local",
+      jobId,
+      "score",
+      "StageReset",
+      occurredAt,
+      JSON.stringify({
+        tenantId: "local",
+        occurred_at: "2026-04-29T10:29:00+00:00",
+        postingUrl: "https://example.com/jobs/legacy-timestamp",
+      }),
+    );
+    const outcomeOccurredAt = "2026-04-01T09:00:00+00:00";
+    insertEvent.run(
+      "local",
+      jobId,
+      "apply",
+      "ApplicationOutcomeRecorded",
+      occurredAt,
+      JSON.stringify({
+        tenantId: "local",
+        jobId,
+        outcomeId: "outcome-historical",
+        kind: "interview",
+        source: "manual",
+        occurredAt: outcomeOccurredAt,
+        notePresent: false,
+      }),
+    );
     const canonical = insertEvent.run(
       "local",
       jobId,
@@ -698,8 +727,13 @@ describe("local TypeScript API", () => {
     expect(streamed).toContain(`\"tenantId\":\"local\"`);
     expect(streamed).toContain(`\"jobId\":\"${jobId}\"`);
     expect(streamed).toContain(`\"postingUrl\":\"${jobUrl}\"`);
+    expect(streamed).toContain(`\"occurredAt\":\"${occurredAt}\"`);
+    expect(streamed).toContain("event: ApplicationOutcomeRecorded");
+    expect(streamed).toContain("outcome-historical");
+    expect(streamed).toContain(`\"occurredAt\":\"${outcomeOccurredAt}\"`);
     expect(streamed).not.toContain("event: ProfileUpdated");
     expect(streamed).not.toContain("\"jobKey\"");
+    expect(streamed).not.toContain("legacy-timestamp");
     await reader.cancel();
     db.close();
     await app.close();
