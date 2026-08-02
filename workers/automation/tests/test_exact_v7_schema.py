@@ -43,6 +43,7 @@ _CROSS_RUNTIME_DURABLE_TABLES = {
     "resume_review_drafts",
     "resume_review_edit_deltas",
     "tailoring_feedback_signals",
+    "tailoring_feedback_signal_contradictions",
     "tailoring_feedback_signal_reviews",
     "worker_runtime_heartbeats",
 }
@@ -537,6 +538,75 @@ def test_tailoring_feedback_reviews_are_structured_append_only_facts(
         """,
         ("2026-08-01T00:02:00Z",),
     )
+    conn.execute(
+        """
+        INSERT INTO tailoring_feedback_signals (
+            tenant_id, signal_id, job_id, draft_id, source_kind, source_id,
+            signal_kind, status, summary, created_at
+        ) VALUES (
+            'local', 'signal-2', ?, 'draft-1', 'comment_reply', 'reply-2',
+            'factual_correction', 'candidate', 'private contradiction text', ?
+        )
+        """,
+        (job_id, "2026-08-01T00:01:30Z"),
+    )
+    conn.execute(
+        """
+        INSERT INTO tailoring_feedback_signal_reviews (
+            tenant_id, review_id, signal_id, revision, decision, signal_kind,
+            rule_key, rule_value, allowlist_version, reviewed_at
+        ) VALUES (
+            'local', 'review-2', 'signal-2', 1, 'accepted',
+            'factual_correction', 'fact_handling', 'require_source_match', 1, ?
+        )
+        """,
+        ("2026-08-01T00:02:30Z",),
+    )
+    conn.execute(
+        """
+        INSERT INTO tailoring_feedback_signal_contradictions (
+            tenant_id, contradiction_id, signal_id, signal_revision,
+            signal_job_id, contradicting_signal_id,
+            contradicting_signal_revision, contradicting_signal_job_id,
+            recorded_at
+        ) VALUES (
+            'local', 'contradiction-1', 'signal-1', 1, ?,
+            'signal-2', 1, ?, '2026-08-01T00:03:00Z'
+        )
+        """,
+        (job_id, job_id),
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO tailoring_feedback_signal_contradictions (
+                tenant_id, contradiction_id, signal_id, signal_revision,
+                signal_job_id, contradicting_signal_id,
+                contradicting_signal_revision, contradicting_signal_job_id,
+                recorded_at
+            ) VALUES (
+                'local', 'contradiction-reversed', 'signal-2', 1, ?,
+                'signal-1', 1, ?, '2026-08-01T00:03:00Z'
+            )
+            """,
+            (job_id, job_id),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        conn.execute(
+            """
+            UPDATE tailoring_feedback_signal_contradictions
+            SET recorded_at = '2026-08-01T00:04:00Z'
+            WHERE contradiction_id = 'contradiction-1'
+            """
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        conn.execute(
+            """
+            DELETE FROM tailoring_feedback_signal_contradictions
+            WHERE contradiction_id = 'contradiction-1'
+            """
+        )
 
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
@@ -612,9 +682,16 @@ def test_tailoring_feedback_reviews_are_structured_append_only_facts(
     assert [
         tuple(row)
         for row in conn.execute(
-            "SELECT decision, rule_key, rule_value FROM tailoring_feedback_signal_reviews"
+            """
+            SELECT decision, rule_key, rule_value
+            FROM tailoring_feedback_signal_reviews
+            ORDER BY review_id
+            """
         ).fetchall()
-    ] == [("accepted", "fact_handling", "require_source_match")]
+    ] == [
+        ("accepted", "fact_handling", "require_source_match"),
+        ("accepted", "fact_handling", "require_source_match"),
+    ]
     assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
 
     indexes = {
@@ -625,6 +702,16 @@ def test_tailoring_feedback_reviews_are_structured_append_only_facts(
         "idx_tailoring_feedback_signal_reviews_signal",
         "idx_tailoring_feedback_signal_reviews_decision",
     } <= indexes
+    contradiction_indexes = {
+        str(index[1])
+        for index in conn.execute(
+            "PRAGMA index_list(tailoring_feedback_signal_contradictions)"
+        )
+    }
+    assert {
+        "idx_tailoring_feedback_signal_contradictions_signal",
+        "idx_tailoring_feedback_signal_contradictions_other",
+    } <= contradiction_indexes
     close_connection(db_path)
 
 
