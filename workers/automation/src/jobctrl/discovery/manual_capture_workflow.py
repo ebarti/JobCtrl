@@ -169,7 +169,7 @@ def _capture_row(
         SELECT tenant_id, item_id, originating_url, source_id, status,
                imported_at, capture_mode, captured_url, content_sha256,
                content_length, note, future_manual_action_required,
-               retry_context_json, job_key
+               retry_context_json, job_id
         FROM manual_capture_queue
         WHERE tenant_id = ? AND item_id = ?
         LIMIT 1
@@ -184,6 +184,8 @@ def _validated_imported_result(
     row: sqlite3.Row,
     content: str,
 ) -> ManualCaptureImportActivityOutput:
+    from jobctrl.domain.identifiers import canonical_job_id
+
     imported_at = _non_empty(row["imported_at"])
     originating_url = _non_empty(row["originating_url"])
     expected_url = payload.captured_url or originating_url
@@ -196,7 +198,6 @@ def _validated_imported_result(
     _compare(mismatches, "tenant_id", row["tenant_id"], payload.tenant_id)
     _compare(mismatches, "item_id", row["item_id"], payload.item_id)
     _compare(mismatches, "captured_url", row["captured_url"], expected_url)
-    _compare(mismatches, "job_key", row["job_key"], expected_url)
     _compare(mismatches, "content_sha256", row["content_sha256"], expected_hash)
     _compare(mismatches, "content_length", row["content_length"], len(content))
     _compare(mismatches, "capture_mode", row["capture_mode"], capture.capture_mode)
@@ -209,6 +210,11 @@ def _validated_imported_result(
     )
     if not imported_at:
         mismatches.append("imported_at")
+    job_id = _non_empty(row["job_id"])
+    try:
+        canonical_job_id(job_id)
+    except ValueError:
+        mismatches.append("job_id")
     if not isinstance(provenance, dict):
         mismatches.append("manual_capture_provenance")
     else:
@@ -234,7 +240,7 @@ def _validated_imported_result(
     return ManualCaptureImportActivityOutput(
         status="succeeded",
         item_id=_non_empty(row["item_id"]),
-        job_id=_non_empty(row["job_key"]),
+        job_id=job_id,
         imported_at=imported_at,
         retry_context=retry_context,
     )
