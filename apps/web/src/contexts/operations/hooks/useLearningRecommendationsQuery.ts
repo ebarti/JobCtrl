@@ -3,6 +3,8 @@ import type {
   LearningRecommendationEvidenceListResponse,
   LearningRecommendationListQuery,
   LearningRecommendationListResponse,
+  TailoringPolicyRevisionListQuery,
+  TailoringPolicyRevisionListResponse,
 } from "@jobctrl/contracts";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
@@ -34,5 +36,16 @@ export function useLearningRecommendationEvidenceQuery(
     queryKey: learningKeys.evidenceList(tenantId, recommendationId, input),
     queryFn: () => api.learningRecommendationEvidence(recommendationId, input),
     enabled,
+  });
+}
+
+export function useTailoringPolicyRevisionsQuery(
+  input: Partial<TailoringPolicyRevisionListQuery> = DEFAULT_PAGE,
+): UseQueryResult<TailoringPolicyRevisionListResponse> {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  return useQuery({
+    queryKey: learningKeys.policyRevisionList(tenantId, input),
+    queryFn: () => api.tailoringPolicyRevisions(input),
   });
 }

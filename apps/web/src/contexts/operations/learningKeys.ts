@@ -1,6 +1,7 @@
 import type {
   LearningRecommendationEvidenceListQuery,
   LearningRecommendationListQuery,
+  TailoringPolicyRevisionListQuery,
 } from "@jobctrl/contracts";
 import type { TenantId } from "@jobctrl/domain-types";
 
@@ -15,4 +16,10 @@ export const learningKeys = {
     recommendationId: string,
     input: Partial<LearningRecommendationEvidenceListQuery>,
   ) => [...learningKeys.evidence(tenantId), recommendationId, input] as const,
+  policyRevisions: (tenantId: TenantId) =>
+    [...learningKeys.all(tenantId), "policies", "materials"] as const,
+  policyRevisionList: (
+    tenantId: TenantId,
+    input: Partial<TailoringPolicyRevisionListQuery>,
+  ) => [...learningKeys.policyRevisions(tenantId), input] as const,
 };
