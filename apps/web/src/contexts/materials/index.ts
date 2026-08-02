@@ -7,6 +7,7 @@ export {
   useReviewLearningRecommendationMutation,
   type ReviewLearningRecommendationVariables,
 } from "./hooks/useReviewLearningRecommendationMutation.js";
+export { useRollbackTailoringPolicyMutation } from "./hooks/useRollbackTailoringPolicyMutation.js";
 export {
   useRetailorCurrentPolicyMutation,
   useRetailorJobMutation,

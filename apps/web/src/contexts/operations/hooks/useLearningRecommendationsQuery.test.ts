@@ -1,6 +1,7 @@
 import type {
   LearningRecommendationEvidenceListResponse,
   LearningRecommendationListResponse,
+  TailoringPolicyRevisionListResponse,
 } from "@jobctrl/contracts";
 import { waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -10,6 +11,7 @@ import { buildTestPorts } from "../../../test/testPorts.js";
 import {
   useLearningRecommendationEvidenceQuery,
   useLearningRecommendationsQuery,
+  useTailoringPolicyRevisionsQuery,
 } from "./useLearningRecommendationsQuery.js";
 
 const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
@@ -27,6 +29,15 @@ const evidenceList: LearningRecommendationEvidenceListResponse = {
   ok: true,
   recommendationId,
   evidence: [],
+  page: 1,
+  pageSize: 25,
+  total: 0,
+  totalPages: 0,
+};
+
+const policyHistory: TailoringPolicyRevisionListResponse = {
+  ok: true,
+  revisions: [],
   page: 1,
   pageSize: 25,
   total: 0,
@@ -79,5 +90,16 @@ describe("learning recommendation queries", () => {
     rerender({ enabled: true });
     await waitFor(() => expect(result.current.data).toBe(evidenceList));
     expect(learningRecommendationEvidence).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads tenant-scoped Materials policy history through the API port", async () => {
+    const tailoringPolicyRevisions = vi.fn(async () => policyHistory);
+    const { result } = renderHookWithProviders(
+      () => useTailoringPolicyRevisionsQuery({ page: 1, pageSize: 25 }),
+      { ports: buildTestPorts({ api: { tailoringPolicyRevisions } }) },
+    );
+
+    await waitFor(() => expect(result.current.data).toBe(policyHistory));
+    expect(tailoringPolicyRevisions).toHaveBeenCalledWith({ page: 1, pageSize: 25 });
   });
 });
