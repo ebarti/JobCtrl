@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from pathlib import Path
 
 import pytest
 
 from jobctrl.database import close_connection, ensure_projection_tables_in_db, init_db
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.events.watermark import SqliteEventWatermarkRepository
 from jobctrl.infrastructure.projections.projection_builder import (
     PROJECTION_NAME,
@@ -25,14 +28,28 @@ def conn(tmp_path: Path) -> sqlite3.Connection:
     close_connection(db_path)
 
 
-def _seed_job(conn: sqlite3.Connection, url: str, *, title: str = "Engineer", site: str = "ExampleCo") -> None:
+def _job_id_for(url: str) -> JobId:
+    return JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, f"job-list-projection:{url}")))
+
+
+def _seed_job(
+    conn: sqlite3.Connection,
+    url: str,
+    *,
+    title: str = "Engineer",
+    site: str = "ExampleCo",
+) -> JobId:
+    job_id = _job_id_for(url)
     conn.execute(
         """
-        INSERT INTO jobs (url, title, site, strategy, location, salary,
-                          discovered_at, application_url, description)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, site, strategy, location, salary,
+            discovered_at, application_url, description
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            str(LOCAL_TENANT),
+            str(job_id),
             url,
             title,
             site,
@@ -45,6 +62,7 @@ def _seed_job(conn: sqlite3.Connection, url: str, *, title: str = "Engineer", si
         ),
     )
     conn.commit()
+    return job_id
 
 
 def _row_value(row, key, default=None):
@@ -116,8 +134,8 @@ def _replace_score_evidence_projection_schema_with_legacy_shape(
 
 def test_discovered_job_appears_in_projection(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/1"
-    _seed_job(conn, url)
-    record_job_event(conn, url, "discover", "JobDiscovered", message="discovered")
+    job_id = _seed_job(conn, url)
+    record_job_event(conn, job_id, "discover", "JobDiscovered", message="discovered")
     conn.commit()
 
     builder = ProjectionBuilder(conn_factory=lambda: conn)
@@ -125,7 +143,7 @@ def test_discovered_job_appears_in_projection(conn: sqlite3.Connection) -> None:
 
     assert refreshed >= 1
     row = conn.execute(
-        "SELECT * FROM job_list_projections WHERE job_id = ?", (url,)
+        "SELECT * FROM job_list_projections WHERE job_id = ?", (str(job_id),)
     ).fetchone()
     assert row is not None
     assert _row_value(row, "title") == "Engineer"
@@ -137,22 +155,22 @@ def test_discovered_job_appears_in_projection(conn: sqlite3.Connection) -> None:
 
 def test_pipeline_progress_keeps_internal_preparation_inside_discover_list_stage(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/2"
-    _seed_job(conn, url, title="Platform Engineer")
+    job_id = _seed_job(conn, url, title="Platform Engineer")
     builder = ProjectionBuilder(conn_factory=lambda: conn)
 
-    set_stage_state(conn, url, "discover", "succeeded", finished_at=utc_now())
-    record_job_event(conn, url, "discover", "StageCompleted")
+    set_stage_state(conn, job_id, "discover", "succeeded", finished_at=utc_now())
+    record_job_event(conn, job_id, "discover", "StageCompleted")
     conn.commit()
     builder.refresh()
 
-    set_stage_state(conn, url, "enrich", "succeeded", finished_at=utc_now())
-    record_job_event(conn, url, "enrich", "StageCompleted")
+    set_stage_state(conn, job_id, "enrich", "succeeded", finished_at=utc_now())
+    record_job_event(conn, job_id, "enrich", "StageCompleted")
     conn.commit()
     builder.refresh()
 
     row = conn.execute(
         "SELECT current_stage, current_substage, current_state FROM job_list_projections WHERE job_id = ?",
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert _row_value(row, "current_stage") == "discover"
     assert _row_value(row, "current_substage") == "score"
@@ -160,7 +178,7 @@ def test_pipeline_progress_keeps_internal_preparation_inside_discover_list_stage
 
     detail = conn.execute(
         "SELECT stages_json FROM job_detail_projections WHERE job_id = ?",
-        (url,),
+        (str(job_id),),
     ).fetchone()
     stages = json.loads(_row_value(detail, "stages_json", "[]"))
     score_stage = next(stage for stage in stages if stage["stage"] == "score")
@@ -169,19 +187,31 @@ def test_pipeline_progress_keeps_internal_preparation_inside_discover_list_stage
 
 def test_workflow_scoped_stage_event_refreshes_stale_stage_projection(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/workflow-scoped-stage"
-    _seed_job(conn, url, title="Workflow Scoped Engineer")
+    job_id = _seed_job(conn, url, title="Workflow Scoped Engineer")
     builder = ProjectionBuilder(conn_factory=lambda: conn)
 
-    record_job_event(conn, url, "discover", "JobDiscovered", message="discovered")
+    record_job_event(conn, job_id, "discover", "JobDiscovered", message="discovered")
     conn.commit()
     builder.refresh()
     conn.execute(
         "UPDATE job_list_projections SET last_updated_at = ? WHERE job_id = ?",
-        ("2026-05-04T12:00:00+00:00", url),
+        ("2026-05-04T12:00:00+00:00", str(job_id)),
     )
 
-    set_stage_state(conn, url, "discover", "succeeded", finished_at="2026-05-04T13:00:00+00:00")
-    set_stage_state(conn, url, "enrich", "succeeded", finished_at="2026-05-04T13:05:00+00:00")
+    set_stage_state(
+        conn,
+        job_id,
+        "discover",
+        "succeeded",
+        finished_at="2026-05-04T13:00:00+00:00",
+    )
+    set_stage_state(
+        conn,
+        job_id,
+        "enrich",
+        "succeeded",
+        finished_at="2026-05-04T13:05:00+00:00",
+    )
     record_job_event(
         conn,
         None,
@@ -197,7 +227,7 @@ def test_workflow_scoped_stage_event_refreshes_stale_stage_projection(conn: sqli
     assert refreshed >= 1
     row = conn.execute(
         "SELECT current_stage, current_substage, current_state FROM job_list_projections WHERE job_id = ?",
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert _row_value(row, "current_stage") == "discover"
     assert _row_value(row, "current_substage") == "score"
@@ -205,7 +235,7 @@ def test_workflow_scoped_stage_event_refreshes_stale_stage_projection(conn: sqli
 
     detail = conn.execute(
         "SELECT stages_json FROM job_detail_projections WHERE job_id = ?",
-        (url,),
+        (str(job_id),),
     ).fetchone()
     stages = json.loads(_row_value(detail, "stages_json", "[]"))
     assert next(stage for stage in stages if stage["stage"] == "discover")["state"] == "succeeded"
@@ -215,21 +245,41 @@ def test_workflow_scoped_stage_event_refreshes_stale_stage_projection(conn: sqli
 
 def test_cover_progress_moves_product_stage_to_apply_when_resume_exists(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/cover-pending"
-    _seed_job(conn, url, title="Cover Pending Engineer")
+    job_id = _seed_job(conn, url, title="Cover Pending Engineer")
+    created_at = utc_now()
     conn.execute(
-        "UPDATE jobs SET tailored_resume_path = ?, tailored_at = ? WHERE url = ?",
-        ("/tmp/tailored-resume.txt", utc_now(), url),
+        """
+        INSERT INTO job_materials (
+            tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES (?, ?, 1, 'approved', ?, ?)
+        """,
+        (str(LOCAL_TENANT), str(job_id), created_at, created_at),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials_artifacts (
+            tenant_id, job_id, generation, artifact_type, artifact_id,
+            status, path, render_format, created_at
+        ) VALUES (?, ?, 1, 'tailored_resume', ?, 'approved', ?, 'text', ?)
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
+            f"{job_id}:tailored_resume",
+            "/tmp/tailored-resume.txt",
+            created_at,
+        ),
     )
     for stage in ("discover", "enrich", "score", "tailor"):
-        set_stage_state(conn, url, stage, "succeeded", finished_at=utc_now())
-    set_stage_state(conn, url, "cover", "pending", validate_transition=False)
+        set_stage_state(conn, job_id, stage, "succeeded", finished_at=utc_now())
+    set_stage_state(conn, job_id, "cover", "pending", validate_transition=False)
     conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
         "SELECT current_stage, current_substage, current_state FROM job_list_projections WHERE job_id = ?",
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert _row_value(row, "current_stage") == "apply"
     assert _row_value(row, "current_substage") == "cover"
@@ -238,12 +288,12 @@ def test_cover_progress_moves_product_stage_to_apply_when_resume_exists(conn: sq
 
 def test_stage_projection_preserves_non_retryable_failures(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/non-retryable"
-    _seed_job(conn, url, title="Closed Posting")
+    job_id = _seed_job(conn, url, title="Closed Posting")
 
-    set_stage_state(conn, url, "discover", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, job_id, "discover", "succeeded", finished_at=utc_now())
     set_stage_state(
         conn,
-        url,
+        job_id,
         "enrich",
         "failed",
         attempt_count=1,
@@ -258,7 +308,7 @@ def test_stage_projection_preserves_non_retryable_failures(conn: sqlite3.Connect
 
     detail = conn.execute(
         "SELECT stages_json FROM job_detail_projections WHERE job_id = ?",
-        (url,),
+        (str(job_id),),
     ).fetchone()
     stages = json.loads(_row_value(detail, "stages_json", "[]"))
     enrich_stage = next(stage for stage in stages if stage["stage"] == "enrich")
@@ -268,17 +318,17 @@ def test_stage_projection_preserves_non_retryable_failures(conn: sqlite3.Connect
 
 def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/3"
-    _seed_job(conn, url)
+    job_id = _seed_job(conn, url)
     conn.execute(
         """
-        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+        INSERT INTO job_scores (tenant_id, job_id, version, fit_score,
                                 breakdown_json, keywords_json, scored_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            url,
+            str(LOCAL_TENANT),
+            str(job_id),
             1,
-            "local",
             8,
             json.dumps(
                 {
@@ -292,7 +342,7 @@ def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:
             utc_now(),
         ),
     )
-    record_job_event(conn, url, "score", "JobScored")
+    record_job_event(conn, job_id, "score", "JobScored")
     conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
@@ -303,7 +353,7 @@ def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:
                score_reasoning, score_version, scored_at
         FROM job_list_projections WHERE job_id = ?
         """,
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert _row_value(row, "fit_score") == 8
     assert _row_value(row, "score_reasoning") == "Strong fit"
@@ -328,7 +378,7 @@ def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:
         SELECT score_breakdown_json, score_keywords_json, score_version, scored_at
         FROM job_detail_projections WHERE job_id = ?
         """,
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert json.loads(_row_value(detail, "score_breakdown_json"))["technicalFit"] == 9
     assert json.loads(_row_value(detail, "score_keywords_json")) == ["python", "fastapi"]
@@ -340,17 +390,17 @@ def test_score_evidence_schema_migration_backfills_existing_projection(
     conn: sqlite3.Connection,
 ) -> None:
     url = "https://example.com/jobs/scored-before-migration"
-    _seed_job(conn, url)
+    job_id = _seed_job(conn, url)
     conn.execute(
         """
-        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+        INSERT INTO job_scores (tenant_id, job_id, version, fit_score,
                                 breakdown_json, keywords_json, scored_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            url,
+            str(LOCAL_TENANT),
+            str(job_id),
             1,
-            "local",
             9,
             json.dumps(
                 {
@@ -374,7 +424,7 @@ def test_score_evidence_schema_migration_backfills_existing_projection(
             "2026-05-05T10:00:00+00:00",
         ),
     )
-    record_job_event(conn, url, "score", "JobScored")
+    record_job_event(conn, job_id, "score", "JobScored")
     latest_event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
     _replace_score_evidence_projection_schema_with_legacy_shape(conn)
     conn.execute(
@@ -383,7 +433,14 @@ def test_score_evidence_schema_migration_backfills_existing_projection(
             tenant_id, job_id, title, employer, fit_score, score_reasoning
         ) VALUES (?, ?, ?, ?, ?, ?)
         """,
-        ("local", url, "Engineer", "ExampleCo", 9, "Legacy reasoning"),
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
+            "Engineer",
+            "ExampleCo",
+            9,
+            "Legacy reasoning",
+        ),
     )
     conn.execute(
         """
@@ -391,7 +448,12 @@ def test_score_evidence_schema_migration_backfills_existing_projection(
             tenant_id, job_id, description_preview, score_reasoning
         ) VALUES (?, ?, ?, ?)
         """,
-        ("local", url, "Short job description", "Legacy reasoning"),
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
+            "Short job description",
+            "Legacy reasoning",
+        ),
     )
     conn.execute(
         "INSERT INTO dashboard_projections (tenant_id, generated_at) VALUES (?, ?)",
@@ -409,7 +471,7 @@ def test_score_evidence_schema_migration_backfills_existing_projection(
         SELECT score_breakdown_json, score_keywords_json, score_version, scored_at
         FROM job_list_projections WHERE job_id = ?
         """,
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert json.loads(_row_value(row, "score_breakdown_json")) == {
         "technicalFit": 8,
@@ -434,19 +496,19 @@ def test_score_evidence_schema_migration_backfills_existing_projection(
 
 def test_apply_run_succeeded_marks_applied(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/4"
-    _seed_job(conn, url)
+    job_id = _seed_job(conn, url)
     started = "2026-05-04T13:00:00+00:00"
     finished = "2026-05-04T13:05:00+00:00"
     record_job_event(
         conn,
-        url,
+        job_id,
         "apply",
         "ApplyRunStarted",
         payload={"run_id": "run-1", "started_at": started},
     )
     record_job_event(
         conn,
-        url,
+        job_id,
         "apply",
         "ApplicationSubmitted",
         payload={"run_id": "run-1", "finished_at": finished, "result": "applied"},
@@ -457,7 +519,7 @@ def test_apply_run_succeeded_marks_applied(conn: sqlite3.Connection) -> None:
 
     row = conn.execute(
         "SELECT apply_status, applied_at FROM job_list_projections WHERE job_id = ?",
-        (url,),
+        (str(job_id),),
     ).fetchone()
     assert _row_value(row, "apply_status") == "applied"
     assert _row_value(row, "applied_at") == finished
@@ -465,60 +527,54 @@ def test_apply_run_succeeded_marks_applied(conn: sqlite3.Connection) -> None:
 
 def test_soft_deleted_job_carries_deleted_at(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/5"
-    _seed_job(conn, url)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-            job_url     TEXT PRIMARY KEY,
-            deleted_at  TEXT NOT NULL,
-            reason      TEXT,
-            restored_at TEXT
-        )
-        """
-    )
+    job_id = _seed_job(conn, url)
     deleted_at = "2026-05-04T14:00:00+00:00"
     conn.execute(
-        "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at) "
-        "VALUES (?, ?, ?, NULL)",
-        (url, deleted_at, "test"),
+        """
+        INSERT INTO jobctrl_deleted_jobs (
+            tenant_id, job_id, deleted_at, reason, restored_at
+        ) VALUES (?, ?, ?, ?, NULL)
+        """,
+        (str(LOCAL_TENANT), str(job_id), deleted_at, "test"),
     )
-    record_job_event(conn, url, "discover", "JobDeleted")
+    record_job_event(conn, job_id, "discover", "JobDeleted")
     conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
-        "SELECT deleted_at FROM job_list_projections WHERE job_id = ?", (url,)
+        "SELECT deleted_at FROM job_list_projections WHERE job_id = ?",
+        (str(job_id),),
     ).fetchone()
     assert _row_value(row, "deleted_at") == deleted_at
 
 
 def test_stale_restore_before_delete_still_carries_deleted_at(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/stale-restore"
-    _seed_job(conn, url)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-            job_url     TEXT PRIMARY KEY,
-            deleted_at  TEXT NOT NULL,
-            reason      TEXT,
-            restored_at TEXT
-        )
-        """
-    )
+    job_id = _seed_job(conn, url)
     deleted_at = "2026-05-25T23:10:33.870522+00:00"
     conn.execute(
-        "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at) "
-        "VALUES (?, ?, ?, ?)",
-        (url, deleted_at, "discovery hygiene rejected source", "2026-05-25T21:35:55.879345+00:00"),
+        """
+        INSERT INTO jobctrl_deleted_jobs (
+            tenant_id, job_id, deleted_at, reason, restored_at
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
+            deleted_at,
+            "discovery hygiene rejected source",
+            "2026-05-25T21:35:55.879345+00:00",
+        ),
     )
-    record_job_event(conn, url, "discover", "JobDeleted")
+    record_job_event(conn, job_id, "discover", "JobDeleted")
     conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
-        "SELECT deleted_at FROM job_list_projections WHERE job_id = ?", (url,)
+        "SELECT deleted_at FROM job_list_projections WHERE job_id = ?",
+        (str(job_id),),
     ).fetchone()
     assert _row_value(row, "deleted_at") == deleted_at
 
@@ -531,21 +587,21 @@ def test_initial_backfill_picks_up_pre_event_history(conn: sqlite3.Connection) -
     isn't blank for legacy databases that pre-date event-driven writes.
     """
     url = "https://example.com/jobs/legacy"
-    _seed_job(conn, url, title="Legacy Engineer")
+    job_id = _seed_job(conn, url, title="Legacy Engineer")
     # No record_job_event call — pure backfill path.
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
-        "SELECT title FROM job_list_projections WHERE job_id = ?", (url,)
+        "SELECT title FROM job_list_projections WHERE job_id = ?", (str(job_id),)
     ).fetchone()
     assert _row_value(row, "title") == "Legacy Engineer"
 
 
 def test_refresh_is_idempotent(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/6"
-    _seed_job(conn, url)
-    record_job_event(conn, url, "discover", "JobDiscovered")
+    job_id = _seed_job(conn, url)
+    record_job_event(conn, job_id, "discover", "JobDiscovered")
     conn.commit()
 
     builder = ProjectionBuilder(conn_factory=lambda: conn)
@@ -554,6 +610,7 @@ def test_refresh_is_idempotent(conn: sqlite3.Connection) -> None:
     builder.refresh()
 
     rows = conn.execute(
-        "SELECT COUNT(*) FROM job_list_projections WHERE job_id = ?", (url,)
+        "SELECT COUNT(*) FROM job_list_projections WHERE job_id = ?",
+        (str(job_id),),
     ).fetchone()
     assert rows[0] == 1

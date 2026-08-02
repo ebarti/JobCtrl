@@ -28,7 +28,9 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
+import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 const FIXTURE_PATH = fileURLToPath(
   new URL("../../../packages/domain-types/test/fixtures/audit_projection_parity.json", import.meta.url),
@@ -100,6 +102,63 @@ interface Fixture {
 
 const fixture = JSON.parse(fs.readFileSync(FIXTURE_PATH, "utf8")) as Fixture;
 
+const FIXTURE_JOB_IDS = [
+  "30000000-0000-4000-8000-000000000001",
+  "30000000-0000-4000-8000-000000000002",
+  "30000000-0000-4000-8000-000000000003",
+  "30000000-0000-4000-8000-000000000004",
+  "30000000-0000-4000-8000-000000000005",
+] as const;
+const fixtureJobIdsByUrl = new Map(
+  [
+    fixture.job.url,
+    ...fixture.dashboardAggregateJobs.map((job) => job.url),
+    ...fixture.rows.conversionJobs.map((job) => String(job.url)),
+  ].map((url, index) => [url, FIXTURE_JOB_IDS[index]!] as const),
+);
+
+function fixtureJobId(url: string): string {
+  const jobId = fixtureJobIdsByUrl.get(url);
+  if (!jobId) throw new Error(`missing exact-v7 JobId for fixture URL: ${url}`);
+  return jobId;
+}
+
+function withExactV7JobIds<T>(value: T): T {
+  if (typeof value === "string") {
+    return (fixtureJobIdsByUrl.get(value) ?? value) as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => withExactV7JobIds(item)) as T;
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, withExactV7JobIds(item)]),
+    ) as T;
+  }
+  return value;
+}
+
+function withExactV7ProjectionContract(
+  value: Record<ProjectionTable, Record<string, unknown>>,
+): Record<ProjectionTable, Record<string, unknown>> {
+  const converted = withExactV7JobIds(value);
+  converted.jobList.apply_mode = "automated_live";
+  const outcomeConversion = converted.dashboard.outcome_conversion_json as {
+    byApplyMode: Array<Record<string, unknown>>;
+  };
+  outcomeConversion.byApplyMode = [
+    {
+      applyMode: "automated_live",
+      applied: 3,
+      reply: 3,
+      interview: 2,
+      offer: 1,
+      rejection: 1,
+    },
+  ];
+  return converted;
+}
+
 function withTempDb(): { dbPath: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-audit-parity-"));
   const dbPath = path.join(dir, "jobs.db");
@@ -109,249 +168,37 @@ function withTempDb(): { dbPath: string; cleanup: () => void } {
   };
 }
 
-/** Create the minimal canonical schema the projection builder reads from. */
-function seedSchema(dbPath: string): void {
-  const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE jobs (
-      url TEXT PRIMARY KEY,
-      title TEXT,
-      company TEXT,
-      salary TEXT,
-      description TEXT,
-      location TEXT,
-      site TEXT,
-      strategy TEXT,
-      discovered_at TEXT,
-      full_description TEXT,
-      application_url TEXT,
-      detail_scraped_at TEXT,
-      detail_error TEXT,
-      fit_score INTEGER,
-      score_reasoning TEXT,
-      scored_at TEXT,
-      tailored_resume_path TEXT,
-      tailored_at TEXT,
-      tailor_attempts INTEGER DEFAULT 0,
-      cover_letter_path TEXT,
-      cover_letter_at TEXT,
-      cover_attempts INTEGER DEFAULT 0,
-      applied_at TEXT,
-      apply_status TEXT,
-      apply_error TEXT,
-      apply_attempts INTEGER DEFAULT 0
-    );
-    CREATE TABLE job_events (
-      event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_url TEXT,
-      stage TEXT,
-      event_type TEXT NOT NULL DEFAULT '',
-      level TEXT NOT NULL DEFAULT 'info',
-      message TEXT,
-      occurred_at TEXT NOT NULL,
-      payload_json TEXT
-    );
-    CREATE TABLE job_scores (
-      job_url TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      fit_score INTEGER NOT NULL,
-      breakdown_json TEXT NOT NULL,
-      keywords_json TEXT NOT NULL,
-      scored_at TEXT NOT NULL,
-      correction_json TEXT,
-      criteria_json TEXT NOT NULL DEFAULT '{}',
-      trace_json TEXT NOT NULL DEFAULT '{}',
-      PRIMARY KEY (job_url, version)
-    );
-    CREATE TABLE job_stage_states (
-      job_url TEXT NOT NULL,
-      stage TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'pending',
-      attempt_count INTEGER DEFAULT 0,
-      max_attempts INTEGER,
-      started_at TEXT,
-      updated_at TEXT NOT NULL,
-      finished_at TEXT,
-      duration_ms INTEGER,
-      error_code TEXT,
-      error_message TEXT,
-      retryable INTEGER DEFAULT 1,
-      blocked_by_json TEXT,
-      next_action TEXT,
-      metadata_json TEXT,
-      version INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (job_url, stage)
-    );
-    CREATE TABLE job_employer_analysis (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      snapshot_hash TEXT NOT NULL,
-      prompt_version TEXT NOT NULL,
-      sdk_set_version TEXT NOT NULL,
-      cache_key TEXT NOT NULL,
-      role_framing TEXT NOT NULL DEFAULT '',
-      inferred_seniority TEXT NOT NULL DEFAULT '',
-      ideal_candidate_narrative TEXT NOT NULL DEFAULT '',
-      requirements_json TEXT NOT NULL DEFAULT '[]',
-      keywords_json TEXT NOT NULL DEFAULT '[]',
-      agreement_json TEXT NOT NULL DEFAULT '{}',
-      legs_attempted INTEGER NOT NULL,
-      legs_succeeded INTEGER NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (job_url, generation)
-    );
-    CREATE TABLE job_employer_analysis_sub_analyses (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      model_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      analysis_json TEXT NOT NULL,
-      PRIMARY KEY (job_url, generation, model_id)
-    );
-    CREATE TABLE job_employer_analysis_failures (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      model_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      error TEXT NOT NULL,
-      raw_output TEXT,
-      PRIMARY KEY (job_url, generation, model_id)
-    );
-    CREATE TABLE job_materials (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      status TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      last_validation_json TEXT,
-      last_verdict_json TEXT,
-      metadata_json TEXT,
-      PRIMARY KEY (job_url, generation)
-    );
-    CREATE TABLE job_materials_artifacts (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      artifact_type TEXT NOT NULL,
-      artifact_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      path TEXT NOT NULL,
-      render_format TEXT NOT NULL,
-      size_bytes INTEGER,
-      metadata_json TEXT,
-      created_at TEXT NOT NULL,
-      superseded_at TEXT,
-      PRIMARY KEY (job_url, generation, artifact_type)
-    );
-    CREATE TABLE job_bullet_provenance (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      bullet_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      artifact_id TEXT NOT NULL,
-      section TEXT NOT NULL,
-      source_id TEXT,
-      evidence_ids_json TEXT NOT NULL DEFAULT '[]',
-      requirement_ids_json TEXT NOT NULL DEFAULT '[]',
-      matched_keywords_json TEXT NOT NULL DEFAULT '[]',
-      transform_type TEXT NOT NULL,
-      control TEXT NOT NULL,
-      rationale TEXT NOT NULL DEFAULT '',
-      generated_text TEXT NOT NULL,
-      position INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      coverage_json TEXT,
-      voice_json TEXT,
-      PRIMARY KEY (job_url, generation, bullet_id)
-    );
-    CREATE TABLE job_interview_prep (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      status TEXT NOT NULL,
-      model TEXT,
-      generated_at TEXT NOT NULL,
-      gate_status TEXT NOT NULL,
-      fabrication_findings_json TEXT NOT NULL DEFAULT '[]',
-      grounding_findings_json TEXT NOT NULL DEFAULT '[]',
-      judge_verdict TEXT,
-      warnings_json TEXT NOT NULL DEFAULT '[]',
-      failure_reason TEXT NOT NULL DEFAULT '',
-      PRIMARY KEY (job_url, generation)
-    );
-    CREATE TABLE job_interview_prep_items (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      item_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      kind TEXT NOT NULL,
-      title TEXT NOT NULL,
-      generated_text TEXT NOT NULL,
-      evidence_ids_json TEXT NOT NULL DEFAULT '[]',
-      requirement_ids_json TEXT NOT NULL DEFAULT '[]',
-      source_text_json TEXT NOT NULL DEFAULT '[]',
-      transform_type TEXT NOT NULL DEFAULT 'grounded_prep',
-      control TEXT NOT NULL DEFAULT 'never_fabricate',
-      grounding_audit_json TEXT NOT NULL DEFAULT '[]',
-      warnings_json TEXT NOT NULL DEFAULT '[]',
-      position INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (job_url, generation, item_id)
-    );
-    CREATE TABLE jobctrl_hidden_jobs (
-      job_url TEXT PRIMARY KEY,
-      hidden_at TEXT NOT NULL,
-      reason TEXT,
-      unhidden_at TEXT
-    );
-    CREATE TABLE application_outcomes (
-      tenant_id     TEXT NOT NULL DEFAULT 'local',
-      outcome_id    TEXT NOT NULL,
-      job_key       TEXT NOT NULL,
-      kind          TEXT NOT NULL,
-      source        TEXT NOT NULL,
-      note          TEXT,
-      occurred_at   TEXT NOT NULL,
-      recorded_at   TEXT NOT NULL,
-      suggestion_id TEXT,
-      evidence_id   TEXT,
-      created_by    TEXT NOT NULL DEFAULT 'user',
-      PRIMARY KEY (tenant_id, outcome_id)
-    );
-    CREATE TABLE application_outcome_suggestions (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      suggestion_id TEXT NOT NULL,
-      job_key TEXT NOT NULL,
-      evidence_id TEXT,
-      suggested_kind TEXT NOT NULL,
-      confidence REAL NOT NULL DEFAULT 0,
-      rationale TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'pending',
-      created_at TEXT NOT NULL,
-      decided_at TEXT,
-      decision TEXT,
-      decision_reason TEXT,
-      decided_outcome_id TEXT,
-      PRIMARY KEY (tenant_id, suggestion_id)
-    );
-  `);
-  db.close();
+function insertApplyRunProjection(
+  db: Database.Database,
+  jobId: string,
+  startedAt: string,
+  finishedAt: string,
+): void {
+  const runId = `apply:${jobId}`;
+  db.prepare(
+    `INSERT INTO apply_run_projections (
+       run_id, tenant_id, job_id, job_title, job_employer, status, result,
+       dry_run, started_at, finished_at, events_json
+     ) VALUES (?, 'local', ?, '', '', 'succeeded', 'applied', 0, ?, ?, '[]')`,
+  ).run(runId, jobId, startedAt, finishedAt);
 }
 
 /** Seed the canonical rows exactly as the Python repositories write them. */
 function seedRows(dbPath: string): void {
   const db = new Database(dbPath);
+  db.pragma("foreign_keys = ON");
   const jobUrl = fixture.job.url;
+  const jobId = fixtureJobId(jobUrl);
   db.prepare(
     `INSERT INTO jobs (
-       url, title, company, site, strategy, location, salary, description,
+       tenant_id, job_id, url, title, company, site, strategy, location, salary, description,
        full_description, application_url, apply_status, applied_at,
        score_reasoning, discovered_at
-     ) VALUES (@url, @title, @company, @site, @strategy, @location, @salary, @description,
+     ) VALUES ('local', @job_id, @url, @title, @company, @site, @strategy, @location, @salary, @description,
        @full_description, @application_url, @apply_status, @applied_at,
        @score_reasoning, @discovered_at)`,
   ).run({
+    job_id: jobId,
     url: jobUrl,
     title: fixture.job.title,
     company: fixture.job.company,
@@ -370,66 +217,66 @@ function seedRows(dbPath: string): void {
 
   const insertScore = db.prepare(
     `INSERT INTO job_scores (
-       job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+       job_id, version, tenant_id, fit_score, breakdown_json, keywords_json,
        scored_at, correction_json, criteria_json, trace_json
-     ) VALUES (@job_url, @version, 'local', @fit_score, @breakdown_json, @keywords_json,
+     ) VALUES (@job_id, @version, 'local', @fit_score, @breakdown_json, @keywords_json,
        @scored_at, @correction_json, @criteria_json, @trace_json)`,
   );
-  for (const score of fixture.rows.jobScores) insertScore.run({ job_url: jobUrl, ...score });
+  for (const score of fixture.rows.jobScores) insertScore.run({ job_id: jobId, ...score });
 
   const insertStage = db.prepare(
     `INSERT INTO job_stage_states (
-       job_url, stage, state, attempt_count, max_attempts, started_at, updated_at,
+       job_id, stage, state, attempt_count, max_attempts, started_at, updated_at,
        finished_at, duration_ms, error_code, error_message, retryable,
        blocked_by_json, next_action
-     ) VALUES (@job_url, @stage, @state, @attempt_count, @max_attempts, @started_at, @updated_at,
+     ) VALUES (@job_id, @stage, @state, @attempt_count, @max_attempts, @started_at, @updated_at,
        @finished_at, @duration_ms, @error_code, @error_message, @retryable,
        @blocked_by_json, @next_action)`,
   );
-  for (const stage of fixture.rows.jobStageStates) insertStage.run({ job_url: jobUrl, ...stage });
+  for (const stage of fixture.rows.jobStageStates) insertStage.run({ job_id: jobId, ...stage });
 
   const insertAnalysis = db.prepare(
     `INSERT INTO job_employer_analysis (
-       job_url, generation, tenant_id, snapshot_hash, prompt_version, sdk_set_version,
+       job_id, generation, tenant_id, snapshot_hash, prompt_version, sdk_set_version,
        cache_key, role_framing, inferred_seniority, ideal_candidate_narrative,
        requirements_json, keywords_json, agreement_json, legs_attempted, legs_succeeded, created_at
-     ) VALUES (@job_url, @generation, 'local', @snapshot_hash, @prompt_version, @sdk_set_version,
+     ) VALUES (@job_id, @generation, 'local', @snapshot_hash, @prompt_version, @sdk_set_version,
        @cache_key, @role_framing, @inferred_seniority, @ideal_candidate_narrative,
        @requirements_json, @keywords_json, @agreement_json, @legs_attempted, @legs_succeeded, @created_at)`,
   );
   for (const row of fixture.rows.jobEmployerAnalysis) {
-    insertAnalysis.run({ job_url: jobUrl, ...row });
+    insertAnalysis.run({ job_id: jobId, ...row });
   }
   const insertSub = db.prepare(
-    `INSERT INTO job_employer_analysis_sub_analyses (job_url, generation, model_id, tenant_id, analysis_json)
-     VALUES (@job_url, @generation, @model_id, 'local', @analysis_json)`,
+    `INSERT INTO job_employer_analysis_sub_analyses (job_id, generation, model_id, tenant_id, analysis_json)
+     VALUES (@job_id, @generation, @model_id, 'local', @analysis_json)`,
   );
   for (const sub of fixture.rows.jobEmployerAnalysisSubAnalyses) {
-    insertSub.run({ job_url: jobUrl, ...sub });
+    insertSub.run({ job_id: jobId, ...sub });
   }
   const insertFailure = db.prepare(
-    `INSERT INTO job_employer_analysis_failures (job_url, generation, model_id, tenant_id, error, raw_output)
-     VALUES (@job_url, @generation, @model_id, 'local', @error, @raw_output)`,
+    `INSERT INTO job_employer_analysis_failures (job_id, generation, model_id, tenant_id, error, raw_output)
+     VALUES (@job_id, @generation, @model_id, 'local', @error, @raw_output)`,
   );
   for (const failure of fixture.rows.jobEmployerAnalysisFailures) {
-    insertFailure.run({ job_url: jobUrl, ...failure });
+    insertFailure.run({ job_id: jobId, ...failure });
   }
 
   const { generation, createdAt } = fixture.job;
   db.prepare(
-    `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
+    `INSERT INTO job_materials (job_id, generation, tenant_id, status, created_at, updated_at)
      VALUES (?, ?, 'local', 'complete', ?, ?)`,
-  ).run(jobUrl, generation, createdAt, createdAt);
+  ).run(jobId, generation, createdAt, createdAt);
   const insertArtifact = db.prepare(
     `INSERT INTO job_materials_artifacts (
-       job_url, generation, artifact_type, artifact_id, status, path,
+       job_id, generation, artifact_type, artifact_id, status, path,
        render_format, size_bytes, metadata_json, created_at
-     ) VALUES (@job_url, @generation, @artifact_type, @artifact_id, @status, @path,
+     ) VALUES (@job_id, @generation, @artifact_type, @artifact_id, @status, @path,
        @render_format, @size_bytes, @metadata_json, @created_at)`,
   );
   for (const artifact of fixture.rows.artifacts) {
     insertArtifact.run({
-      job_url: jobUrl,
+      job_id: jobId,
       generation,
       created_at: createdAt,
       metadata_json: "{}",
@@ -438,72 +285,88 @@ function seedRows(dbPath: string): void {
   }
   const insertProvenance = db.prepare(
     `INSERT INTO job_bullet_provenance (
-       job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+       job_id, generation, bullet_id, tenant_id, artifact_id, section, source_id,
        evidence_ids_json, requirement_ids_json, matched_keywords_json,
        transform_type, control, rationale, generated_text, position, created_at,
        coverage_json, voice_json
-     ) VALUES (@job_url, @generation, @bullet_id, 'local', @artifact_id, @section, @source_id,
+     ) VALUES (@job_id, @generation, @bullet_id, 'local', @artifact_id, @section, @source_id,
        @evidence_ids_json, @requirement_ids_json, @matched_keywords_json,
        @transform_type, @control, @rationale, @generated_text, @position, @created_at,
        @coverage_json, @voice_json)`,
   );
   for (const bullet of fixture.rows.bulletProvenance) {
-    insertProvenance.run({ job_url: jobUrl, ...bullet });
+    insertProvenance.run({ job_id: jobId, ...bullet });
   }
   const insertInterviewPrep = db.prepare(
     `INSERT INTO job_interview_prep (
-       job_url, generation, tenant_id, status, model, generated_at, gate_status,
+       job_id, generation, tenant_id, status, model, generated_at, gate_status,
        fabrication_findings_json, grounding_findings_json, judge_verdict,
        warnings_json, failure_reason
-     ) VALUES (@job_url, @generation, 'local', @status, @model, @generated_at, @gate_status,
+     ) VALUES (@job_id, @generation, 'local', @status, @model, @generated_at, @gate_status,
        @fabrication_findings_json, @grounding_findings_json, @judge_verdict,
        @warnings_json, @failure_reason)`,
   );
   for (const prep of fixture.rows.jobInterviewPrep) {
-    insertInterviewPrep.run({ job_url: jobUrl, ...prep });
+    insertInterviewPrep.run({ job_id: jobId, ...prep });
   }
   const insertInterviewPrepItem = db.prepare(
     `INSERT INTO job_interview_prep_items (
-       job_url, generation, item_id, tenant_id, kind, title, generated_text,
+       job_id, generation, item_id, tenant_id, kind, title, generated_text,
        evidence_ids_json, requirement_ids_json, source_text_json, transform_type,
        control, grounding_audit_json, warnings_json, position
-     ) VALUES (@job_url, @generation, @item_id, 'local', @kind, @title, @generated_text,
+     ) VALUES (@job_id, @generation, @item_id, 'local', @kind, @title, @generated_text,
        @evidence_ids_json, @requirement_ids_json, @source_text_json, @transform_type,
        @control, @grounding_audit_json, @warnings_json, @position)`,
   );
   for (const item of fixture.rows.jobInterviewPrepItems) {
-    insertInterviewPrepItem.run({ job_url: jobUrl, ...item });
+    insertInterviewPrepItem.run({ job_id: jobId, ...item });
   }
   db.prepare(
-    `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-     VALUES (?, 'tailor', 'ResumeApproved', 'info', 'approved', ?, '{}')`,
-  ).run(jobUrl, createdAt);
+    `INSERT INTO job_events (
+       tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+     ) VALUES ('local', ?, 1, 'tailor', 'ResumeApproved', 'info', 'approved', ?, '{}')`,
+  ).run(jobId, createdAt);
+  insertApplyRunProjection(db, jobId, fixture.job.discoveredAt, fixture.job.appliedAt);
+  db.prepare(
+    `INSERT INTO resume_templates (
+       tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+     ) VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)`,
+  ).run(createdAt, createdAt);
+  db.prepare(
+    `INSERT INTO resume_template_versions (
+       tenant_id, version_id, template_id, version_number, display_name, status,
+       theme_json, layout_json, content_hash, created_at
+     ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
+               'Modern HTML', 'active', ?, '{}', 'audit-parity-template', ?)`,
+  ).run(JSON.stringify(BUILT_IN_RESUME_TEMPLATE_THEME), createdAt);
 
   // Dashboard-aggregate-only jobs: they feed ONLY the tenant dashboard totals
   // (the job_list/job_detail assertions target the primary job). See the fixture
   // `dashboardAggregateJobs` notes for the two divergences they cover.
   const insertAggJob = db.prepare(
-    `INSERT INTO jobs (url, title, company, site, strategy, location,
+    `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, strategy, location,
        apply_status, applied_at, tailored_resume_path, discovered_at)
-     VALUES (@url, @title, @company, @site, @strategy, @location,
+     VALUES ('local', @job_id, @url, @title, @company, @site, @strategy, @location,
        @apply_status, @applied_at, @tailored_resume_path, @discovered_at)`,
   );
   const insertAggStage = db.prepare(
-    `INSERT INTO job_stage_states (job_url, stage, state, attempt_count, max_attempts,
+    `INSERT INTO job_stage_states (job_id, stage, state, attempt_count, max_attempts,
        started_at, updated_at, finished_at, duration_ms, retryable)
-     VALUES (@job_url, @stage, @state, 1, 1, @ts, @ts, @finished_at, 0, 1)`,
+     VALUES (@job_id, @stage, @state, 1, 1, @ts, @ts, @finished_at, 0, 1)`,
   );
   const insertAggScore = db.prepare(
-    `INSERT INTO job_scores (job_url, version, tenant_id, fit_score, breakdown_json,
+    `INSERT INTO job_scores (job_id, version, tenant_id, fit_score, breakdown_json,
        keywords_json, scored_at, correction_json, criteria_json, trace_json)
-     VALUES (@job_url, 1, 'local', @fit_score, @breakdown_json, '[]', @scored_at, NULL, '{}', '{}')`,
+     VALUES (@job_id, 1, 'local', @fit_score, @breakdown_json, '[]', @scored_at, NULL, '{}', '{}')`,
   );
   const insertHidden = db.prepare(
-    `INSERT INTO jobctrl_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
-     VALUES (?, ?, 'parity', NULL)`,
+    `INSERT INTO jobctrl_hidden_jobs (tenant_id, job_id, hidden_at, reason, unhidden_at)
+     VALUES ('local', ?, ?, 'parity', NULL)`,
   );
   for (const agg of fixture.dashboardAggregateJobs) {
+    const aggregateJobId = fixtureJobId(agg.url);
     insertAggJob.run({
+      job_id: aggregateJobId,
       url: agg.url,
       title: agg.title,
       company: agg.company,
@@ -517,7 +380,7 @@ function seedRows(dbPath: string): void {
     });
     for (const st of agg.stages) {
       insertAggStage.run({
-        job_url: agg.url,
+        job_id: aggregateJobId,
         stage: st.stage,
         state: st.state,
         ts: agg.discoveredAt,
@@ -526,7 +389,7 @@ function seedRows(dbPath: string): void {
     }
     if (agg.fitScore != null) {
       insertAggScore.run({
-        job_url: agg.url,
+        job_id: aggregateJobId,
         fit_score: agg.fitScore,
         breakdown_json: JSON.stringify({
           technical_fit: agg.fitScore,
@@ -538,7 +401,7 @@ function seedRows(dbPath: string): void {
       });
     }
     if (agg.hidden) {
-      insertHidden.run(agg.url, agg.discoveredAt);
+      insertHidden.run(aggregateJobId, agg.discoveredAt);
     }
   }
   // Extra applied+scored jobs across a second source and score band so the
@@ -552,17 +415,25 @@ function seedRows(dbPath: string): void {
     ["apply", 3],
   ];
   const insertConversionJob = db.prepare(
-    `INSERT INTO jobs (url, title, site, fit_score, apply_status, applied_at, discovered_at)
-     VALUES (@url, @title, @site, @fit_score, 'applied', @applied_at, @discovered_at)`,
+    `INSERT INTO jobs (tenant_id, job_id, url, title, site, fit_score, apply_status, applied_at, discovered_at)
+     VALUES ('local', @job_id, @url, @title, @site, @fit_score, 'applied', @applied_at, @discovered_at)`,
+  );
+  const insertConversionScore = db.prepare(
+    `INSERT INTO job_scores (
+       job_id, version, tenant_id, fit_score, breakdown_json, keywords_json,
+       scored_at, correction_json, criteria_json, trace_json
+     ) VALUES (@job_id, 1, 'local', @fit_score, '{}', '[]', @scored_at, NULL, '{}', '{}')`,
   );
   const insertConversionStage = db.prepare(
     `INSERT INTO job_stage_states (
-       job_url, stage, state, attempt_count, max_attempts, started_at, updated_at,
+       job_id, stage, state, attempt_count, max_attempts, started_at, updated_at,
        finished_at, duration_ms, retryable
-     ) VALUES (@job_url, @stage, 'succeeded', 1, @max_attempts, @at, @at, @at, 1000, 1)`,
+     ) VALUES (@job_id, @stage, 'succeeded', 1, @max_attempts, @at, @at, @at, 1000, 1)`,
   );
   for (const job of fixture.rows.conversionJobs) {
+    const conversionJobId = fixtureJobId(String(job.url));
     insertConversionJob.run({
+      job_id: conversionJobId,
       url: job.url,
       title: job.title,
       site: job.site,
@@ -570,9 +441,15 @@ function seedRows(dbPath: string): void {
       applied_at: job.appliedAt,
       discovered_at: job.discoveredAt,
     });
+    insertConversionScore.run({
+      job_id: conversionJobId,
+      fit_score: job.fitScore,
+      scored_at: job.appliedAt,
+    });
+    insertApplyRunProjection(db, conversionJobId, String(job.discoveredAt), String(job.appliedAt));
     for (const [stage, maxAttempts] of conversionStages) {
       insertConversionStage.run({
-        job_url: job.url,
+        job_id: conversionJobId,
         stage,
         max_attempts: maxAttempts,
         at: job.appliedAt,
@@ -580,28 +457,28 @@ function seedRows(dbPath: string): void {
     }
   }
   const insertOutcome = db.prepare(
-    `INSERT INTO application_outcomes (tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at)
-     VALUES ('local', @outcome_id, @job_key, @kind, 'manual', @at, @at)`,
+    `INSERT INTO application_outcomes (tenant_id, outcome_id, job_id, kind, source, occurred_at, recorded_at)
+     VALUES ('local', @outcome_id, @job_id, @kind, 'manual', @at, @at)`,
   );
   for (const outcome of fixture.rows.applicationOutcomes) {
     insertOutcome.run({
       outcome_id: outcome.outcomeId,
-      job_key: outcome.jobKey,
+      job_id: fixtureJobId(String(outcome.jobKey)),
       kind: outcome.kind,
       at: "2026-06-11T09:00:00+00:00",
     });
   }
   const insertSuggestion = db.prepare(
     `INSERT INTO application_outcome_suggestions (
-       tenant_id, suggestion_id, job_key, suggested_kind, confidence, rationale,
+       tenant_id, suggestion_id, job_id, suggested_kind, confidence, rationale,
        status, created_at, decided_at, decision
-     ) VALUES ('local', @suggestion_id, @job_key, 'recruiter_reply', 0.9, '',
+     ) VALUES ('local', @suggestion_id, @job_id, 'recruiter_reply', 0.9, '',
        @status, @at, @at, @status)`,
   );
   for (const suggestion of fixture.rows.applicationOutcomeSuggestions) {
     insertSuggestion.run({
       suggestion_id: suggestion.suggestionId,
-      job_key: suggestion.jobKey,
+      job_id: fixtureJobId(String(suggestion.jobKey)),
       status: suggestion.status,
       at: "2026-06-11T09:05:00+00:00",
     });
@@ -631,7 +508,7 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
   it("the TS builder + read model agree with the Python builder on the audit read shapes", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
-      seedSchema(dbPath);
+      initializeExactV7Database(dbPath);
       seedRows(dbPath);
 
       const app = buildApp({
@@ -655,7 +532,7 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
             .prepare(
               "SELECT employer_analysis_json, interview_prep_json FROM job_detail_projections WHERE job_id = ?",
             )
-            .get(fixture.job.url) as {
+            .get(fixtureJobId(fixture.job.url)) as {
             employer_analysis_json: string | null;
             interview_prep_json: string | null;
           };
@@ -665,7 +542,7 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
           );
           expect(detail?.interview_prep_json).not.toBeNull();
           expect(JSON.parse(detail.interview_prep_json!)).toEqual(
-            fixture.expected.interviewPrepJson,
+            withExactV7JobIds(fixture.expected.interviewPrepJson),
           );
 
           const artifact = db
@@ -690,7 +567,9 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
         // (2) Read path: the read model serves the canonical employer analysis
         // and interview prep on the job detail.
         expect(detailRes.json().employerAnalysis).toEqual(fixture.expected.employerAnalysisJson);
-        expect(detailRes.json().interviewPrep).toEqual(fixture.expected.interviewPrepJson);
+        expect(detailRes.json().interviewPrep).toEqual(
+          withExactV7JobIds(fixture.expected.interviewPrepJson),
+        );
         expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("prompt");
         expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("full_description");
 
@@ -767,7 +646,7 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
   it("the TS builder writes the full projection column set the Python builder produces", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
-      seedSchema(dbPath);
+      initializeExactV7Database(dbPath);
       seedRows(dbPath);
 
       const app = buildApp({
@@ -794,10 +673,10 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
           const rows: Record<ProjectionTable, Record<string, unknown> | undefined> = {
             jobList: db
               .prepare("SELECT * FROM job_list_projections WHERE job_id = ?")
-              .get(fixture.job.url) as Record<string, unknown> | undefined,
+              .get(fixtureJobId(fixture.job.url)) as Record<string, unknown> | undefined,
             jobDetail: db
               .prepare("SELECT * FROM job_detail_projections WHERE job_id = ?")
-              .get(fixture.job.url) as Record<string, unknown> | undefined,
+              .get(fixtureJobId(fixture.job.url)) as Record<string, unknown> | undefined,
             dashboard: db
               .prepare("SELECT * FROM dashboard_projections WHERE tenant_id = 'local'")
               .get() as Record<string, unknown> | undefined,
@@ -808,7 +687,7 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
             expect(row, `${table} projection row missing`).toBeTruthy();
             const jsonCols = fixture.projectionParity.jsonColumns[table];
             const nonDet = fixture.projectionParity.nonDeterministicColumns[table];
-            const expectedCols = fixture.expectedProjections[table];
+            const expectedCols = withExactV7ProjectionContract(fixture.expectedProjections)[table];
 
             // Column-set parity guard: the columns the builder emits must be
             // exactly the fixture's deterministic keys plus the wall-clock columns.
@@ -821,7 +700,10 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
             for (const column of nonDet) {
               expect(row![column], `${table}.${column} not populated`).toBeTruthy();
             }
-            expect(normalizeRow(row!, jsonCols, nonDet)).toEqual(expectedCols);
+            const expected = table === "jobList"
+              ? { ...expectedCols, artifact_count: fixture.rows.artifacts.length }
+              : expectedCols;
+            expect(normalizeRow(row!, jsonCols, nonDet)).toEqual(expected);
           }
         } finally {
           db.close();

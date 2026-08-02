@@ -243,7 +243,7 @@
     },
     {
       "outcomeId": "outcome-not-due-applied",
-      "jobKey": "https://example.com/jobs/post-watermark-ready",
+      "jobKey": "https://example.com/jobs/post-watermark-scored",
       "kind": "applied_confirmation",
       "occurredAt": "2026-07-03T09:00:00.000Z"
     },

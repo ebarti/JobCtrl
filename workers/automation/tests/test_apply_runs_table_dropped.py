@@ -1,18 +1,19 @@
-"""PR 4: ``init_db`` drops the legacy ``apply_runs`` + ``apply_run_events``
-tables and never re-creates them.
+"""Exact-v7 runtime admission never creates legacy Apply write tables.
 
 The Temporal workflow is the canonical record of an apply lifecycle from
 PR 4 onward; ``apply_run_projections`` (sourced from ``job_events``) is
-the read-side. Dropping the bespoke tables removes the second write path.
+the read-side. Existing pre-v7 databases must use the stopped-runtime
+migration instead of being changed opportunistically by ``init_db``.
 """
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
 
-from jobctrl.database import close_connection, init_db
+from jobctrl.database import SchemaMigrationRequiredError, close_connection, init_db
 
 
 def _table_exists(conn, name: str) -> bool:
@@ -40,11 +41,9 @@ def test_init_db_does_not_create_apply_run_events(fresh_db: Path) -> None:
     assert _table_exists(conn, "apply_run_events") is False
 
 
-def test_init_db_drops_existing_apply_runs_table(fresh_db: Path) -> None:
-    """If a legacy database already has ``apply_runs``, the migration
-    drops it idempotently."""
-    import sqlite3
-
+def test_init_db_rejects_legacy_apply_tables_without_mutating_them(
+    fresh_db: Path,
+) -> None:
     # Pre-create the legacy table to simulate an existing local DB.
     pre = sqlite3.connect(str(fresh_db))
     pre.execute(
@@ -71,6 +70,13 @@ def test_init_db_drops_existing_apply_runs_table(fresh_db: Path) -> None:
     pre.commit()
     pre.close()
 
-    conn = init_db(fresh_db)
-    assert _table_exists(conn, "apply_runs") is False
-    assert _table_exists(conn, "apply_run_events") is False
+    with pytest.raises(SchemaMigrationRequiredError, match="exact schema v7"):
+        init_db(fresh_db)
+
+    verified = sqlite3.connect(str(fresh_db))
+    try:
+        assert _table_exists(verified, "apply_runs") is True
+        assert _table_exists(verified, "apply_run_events") is True
+        assert verified.execute("PRAGMA user_version").fetchone()[0] == 0
+    finally:
+        verified.close()

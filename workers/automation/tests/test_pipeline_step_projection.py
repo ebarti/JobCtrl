@@ -35,12 +35,13 @@ def _seed_events(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_events (
-                event_id, job_url, stage, event_type, level, message,
-                occurred_at, payload_json
-            ) VALUES (?, NULL, 'workflow', ?, 'info', NULL, ?, ?)
+                event_id, tenant_id, job_id, identity_version, stage,
+                event_type, level, message, occurred_at, payload_json
+            ) VALUES (?, ?, NULL, 1, 'workflow', ?, 'info', NULL, ?, ?)
             """,
             (
                 event_id,
+                str(LOCAL_TENANT),
                 event["eventType"],
                 event["occurredAt"],
                 json.dumps(event["payload"], sort_keys=True),

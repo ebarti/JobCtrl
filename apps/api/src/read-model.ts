@@ -16,6 +16,8 @@
  */
 import fs from "node:fs";
 
+import type { JobId } from "@jobctrl/domain-types";
+
 import type {
   ActivityEventSummary,
   ActivityListQuery,
@@ -86,6 +88,7 @@ import { readJobCtrlSettings } from "./settings-config.js";
 
 const DEFAULT_TENANT = "local";
 const DEFAULT_PROFILE_ID = "default";
+const CANONICAL_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"] as const satisfies readonly ActiveState[];
 // Dashboard presentation policy: only old running rows are candidates for
 // "stuck", and only while the worker itself is unavailable. The threshold is
@@ -126,6 +129,7 @@ function sqlRankCase(column: string, ranks: Record<string, number>, fallback: nu
 interface JobListProjectionRow extends Record<string, unknown> {
   tenant_id: string;
   job_id: string;
+  url: string | null;
   title: string;
   employer: string;
   source: string;
@@ -423,26 +427,21 @@ function dashboardWorkSummary(db: SqliteDatabase): DashboardSummary["work"] {
     stuckAfterSeconds: DASHBOARD_STUCK_AFTER_SECONDS,
     stuckItems: [],
   };
-  if (!tableExists(db, "job_list_projections")) return empty;
-
-  const activeFilter = jobSqlFilter(db, digestBaseJobQuery());
-  const hasStageState = tableExists(db, "job_stage_states");
-  const stageColumns = hasStageState
-    ? "stage_state.started_at AS stage_started_at, stage_state.updated_at AS stage_updated_at"
-    : "NULL AS stage_started_at, NULL AS stage_updated_at";
-  const stageJoin = hasStageState
-    ? `LEFT JOIN job_stage_states AS stage_state
-         ON stage_state.job_url = job_list_projections.job_id
-        AND stage_state.stage = job_list_projections.current_substage`
-    : "";
+  const activeFilter = jobSqlFilter(digestBaseJobQuery());
   const rows = allRows<DashboardWorkRow>(
     db,
-    `SELECT job_id, title, employer, current_stage, current_substage, current_state,
-            ${stageColumns}
+    `SELECT job_list_projections.job_id, job_list_projections.title, job_list_projections.employer,
+            job_list_projections.current_stage, job_list_projections.current_substage,
+            job_list_projections.current_state,
+            stage_state.started_at AS stage_started_at,
+            stage_state.updated_at AS stage_updated_at
        FROM job_list_projections
-       ${stageJoin}
+       LEFT JOIN job_stage_states AS stage_state
+         ON stage_state.tenant_id = job_list_projections.tenant_id
+        AND stage_state.job_id = job_list_projections.job_id
+        AND stage_state.stage = job_list_projections.current_substage
        ${activeFilter.where}
-        AND current_state IN ('queued', 'running')`,
+        AND job_list_projections.current_state IN ('queued', 'running')`,
     activeFilter.params,
   );
 
@@ -454,7 +453,6 @@ function dashboardWorkSummary(db: SqliteDatabase): DashboardSummary["work"] {
   for (const row of rows) {
     if (
       row.current_state === "running" &&
-      hasStageState &&
       workerUnavailable &&
       dashboardWorkTimestampMs(row.stage_updated_at ?? row.stage_started_at) <= cutoffMs
     ) {
@@ -638,25 +636,20 @@ function recordDigestReviewedEvent(
     reviewedAt: string;
   },
 ): void {
-  if (!tableExists(db, "job_events")) return;
-  const columns = columnNames(db, "job_events");
-  const values: Record<string, SqliteValue> = {
-    job_url: null,
-    stage: null,
-    event_type: "DigestReviewed",
-    level: "info",
-    message: "Digest reviewed.",
-    occurred_at: payload.reviewedAt,
-    payload_json: JSON.stringify({
+  db.prepare(
+    `INSERT INTO job_events (
+       tenant_id, job_id, identity_version, stage, event_type, level,
+       message, occurred_at, payload_json, entity_kind, entity_ref, idempotency_key
+     ) VALUES (?, NULL, 1, NULL, 'DigestReviewed', 'info', ?, ?, ?, 'digest', 'daily', NULL)`,
+  ).run(
+    DEFAULT_TENANT,
+    "Digest reviewed.",
+    payload.reviewedAt,
+    JSON.stringify({
       tenantId: DEFAULT_TENANT,
       ...payload,
     }),
-  };
-  const entries = Object.entries(values).filter(([name]) => columns.has(name));
-  if (!entries.length) return;
-  db.prepare(
-    `INSERT INTO job_events (${entries.map(([name]) => name).join(", ")}) VALUES (${entries.map(() => "?").join(", ")})`,
-  ).run(...entries.map(([, value]) => value));
+  );
 }
 
 function normalizeDigestThreshold(value: number | null | undefined): number {
@@ -736,7 +729,7 @@ function countDigestNewMatches(
   since: string | null,
   highFitThreshold: number,
 ): DailyDigest["newMatches"] {
-  const activeFilter = jobSqlFilter(db, digestBaseJobQuery());
+  const activeFilter = jobSqlFilter(digestBaseJobQuery());
   const sinceClause = since ? " AND (discovered_at >= ? OR scored_at >= ?)" : "";
   const sinceParams: SqliteValue[] = since ? [since, since] : [];
   const where = `${activeFilter.where}${sinceClause}`;
@@ -778,24 +771,23 @@ const FOLLOW_UP_STOP_OUTCOMES = new Set([
 ]);
 
 function countFollowUpsDue(db: SqliteDatabase, now: Date): number {
-  if (!tableExists(db, "application_outcomes")) return 0;
   const cutoff = new Date(now.getTime() - DIGEST_FOLLOW_UP_THRESHOLD_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const rows = allRows<{
-    job_key: string;
+    job_id: string;
     kind: string;
     occurred_at: string;
     recorded_at: string | null;
   }>(
     db,
-    `SELECT job_key, kind, occurred_at, recorded_at
+    `SELECT job_id, kind, occurred_at, recorded_at
        FROM application_outcomes
       WHERE tenant_id = ?
-      ORDER BY job_key ASC, occurred_at ASC, recorded_at ASC`,
+      ORDER BY job_id ASC, occurred_at ASC, recorded_at ASC`,
     [DEFAULT_TENANT],
   );
   const byJob = new Map<string, { appliedAt: string | null; lastActivityAt: string | null; stopped: boolean }>();
   for (const row of rows) {
-    const jobKey = row.job_key;
+    const jobKey = row.job_id;
     const current = byJob.get(jobKey) ?? {
       appliedAt: null,
       lastActivityAt: null,
@@ -841,7 +833,7 @@ function localDateKey(value: Date | string | null | undefined): string | null {
 function dashboardTodayMetrics(
   db: SqliteDatabase,
 ): Pick<DashboardSummary["totals"], "jobsToday" | "appliedToday"> {
-  const activeFilter = jobSqlFilter(db, {
+  const activeFilter = jobSqlFilter({
     page: 1,
     pageSize: 1,
     q: "",
@@ -872,7 +864,7 @@ function buildPreparationSummary(db: SqliteDatabase, tenantId: string): Preparat
   return {
     currentScoringPolicyVersion,
     currentTailoringPolicyVersion,
-    outdatedScoreCount: countOutdatedScores(db, tenantId, currentScoringPolicyVersion),
+    outdatedScoreCount: countOutdatedScores(db, tenantId),
     outdatedTailoredArtifactCount: countOutdatedTailoredArtifacts(db, tenantId, currentTailoringPolicyVersion),
     workItems: countPreparationWorkItems(db, tenantId),
   };
@@ -883,7 +875,6 @@ function latestPolicyVersion(
   tableName: "scoring_policies" | "tailoring_policies",
   tenantId: string,
 ): number | null {
-  if (!tableExists(db, tableName)) return null;
   const row = getRow<{ version: number | null }>(
     db,
     `SELECT MAX(version) AS version FROM ${tableName} WHERE tenant_id = ?`,
@@ -895,63 +886,30 @@ function latestPolicyVersion(
 function countOutdatedScores(
   db: SqliteDatabase,
   tenantId: string,
-  currentPolicyVersion: number | null,
 ): number {
-  const activeJobs = activeJobUrlSet(db);
+  const activeJobs = activeJobIdSet(db);
   if (activeJobs.size === 0) return 0;
 
-  if (tableExists(db, "job_score_staleness")) {
-    const rows = tableExists(db, "job_scores")
-      ? allRows<{ job_url: string }>(
-          db,
-          `SELECT DISTINCT stale.job_url
-             FROM job_score_staleness stale
-             JOIN (
-               SELECT job_url, MAX(version) AS max_version
-               FROM job_scores
-               WHERE tenant_id = ?
-               GROUP BY job_url
-             ) latest ON latest.job_url = stale.job_url
-             JOIN job_scores s
-               ON s.tenant_id = stale.tenant_id
-              AND s.job_url = stale.job_url
-              AND s.version = latest.max_version
-            WHERE stale.tenant_id = ?
-              AND stale.resolved = 0
-              AND (s.correction_json IS NULL OR TRIM(s.correction_json) = '')`,
-          [tenantId, tenantId],
-        )
-      : allRows<{ job_url: string }>(
-          db,
-          "SELECT DISTINCT job_url FROM job_score_staleness WHERE tenant_id = ? AND resolved = 0",
-          [tenantId],
-        );
-    return rows.filter((row) => activeJobs.has(row.job_url)).length;
-  }
-
-  if (currentPolicyVersion === null || !tableExists(db, "job_scores")) return 0;
-  const rows = allRows<{ job_url: string; trace_json: string | null; correction_json: string | null }>(
+  const rows = allRows<{ job_id: string }>(
     db,
-    `SELECT s.job_url, s.trace_json, s.correction_json
-       FROM job_scores s
+    `SELECT DISTINCT stale.job_id
+       FROM job_score_staleness stale
        JOIN (
-         SELECT job_url, MAX(version) AS max_version
+         SELECT job_id, MAX(version) AS max_version
          FROM job_scores
          WHERE tenant_id = ?
-         GROUP BY job_url
-       ) latest ON latest.job_url = s.job_url AND latest.max_version = s.version
-      WHERE s.tenant_id = ?`,
+         GROUP BY job_id
+       ) latest ON latest.job_id = stale.job_id
+       JOIN job_scores s
+         ON s.tenant_id = stale.tenant_id
+        AND s.job_id = stale.job_id
+        AND s.version = latest.max_version
+      WHERE stale.tenant_id = ?
+        AND stale.resolved = 0
+        AND (s.correction_json IS NULL OR TRIM(s.correction_json) = '')`,
     [tenantId, tenantId],
   );
-  return rows.filter((row) => {
-    if (!activeJobs.has(row.job_url)) return false;
-    if (row.correction_json?.trim()) return false;
-    const policyVersion = policyVersionFromJson(row.trace_json, [
-      "scoring_policy_version",
-      "scoringPolicyVersion",
-    ]);
-    return policyVersion === null || policyVersion < currentPolicyVersion;
-  }).length;
+  return rows.filter((row) => activeJobs.has(row.job_id)).length;
 }
 
 function countOutdatedTailoredArtifacts(
@@ -959,33 +917,29 @@ function countOutdatedTailoredArtifacts(
   tenantId: string,
   currentPolicyVersion: number | null,
 ): number {
-  if (
-    currentPolicyVersion === null ||
-    !tableExists(db, "job_materials") ||
-    !tableExists(db, "job_materials_artifacts")
-  ) {
-    return 0;
-  }
-  const activeJobs = activeJobUrlSet(db);
+  if (currentPolicyVersion === null) return 0;
+  const activeJobs = activeJobIdSet(db);
   if (activeJobs.size === 0) return 0;
-  const rows = allRows<{ job_url: string; metadata_json: string | null }>(
+  const rows = allRows<{ job_id: string; metadata_json: string | null }>(
     db,
     `WITH latest AS (
-       SELECT job_url, MAX(generation) AS max_generation
+       SELECT job_id, MAX(generation) AS max_generation
        FROM job_materials_artifacts
-       WHERE status = 'approved'
+       WHERE tenant_id = ?
+         AND status = 'approved'
          AND artifact_type = 'tailored_resume'
-       GROUP BY job_url
+       GROUP BY job_id
      )
-     SELECT a.job_url, a.metadata_json
+     SELECT a.job_id, a.metadata_json
        FROM job_materials_artifacts a
-       JOIN latest ON latest.job_url = a.job_url AND latest.max_generation = a.generation
-      WHERE a.artifact_type = 'tailored_resume'
+       JOIN latest ON latest.job_id = a.job_id AND latest.max_generation = a.generation
+      WHERE a.tenant_id = ?
+        AND a.artifact_type = 'tailored_resume'
         AND a.status = 'approved'`,
-    [],
+    [tenantId, tenantId],
   );
   return rows.filter((row) => {
-    if (!activeJobs.has(row.job_url)) return false;
+    if (!activeJobs.has(row.job_id)) return false;
     const policyVersion = policyVersionFromJson(row.metadata_json, [
       "tailoring_policy_version",
       "tailoringPolicyVersion",
@@ -999,8 +953,7 @@ function countPreparationWorkItems(
   tenantId: string,
 ): PreparationSummary["workItems"] {
   const counts: PreparationSummary["workItems"] = { queued: 0, running: 0, failed: 0 };
-  if (!tableExists(db, "preparation_work_items")) return counts;
-  const activeJobs = activeJobUrlSet(db);
+  const activeJobs = activeJobIdSet(db);
   if (activeJobs.size === 0) return counts;
   const rows = allRows<{ job_id: string; state: string }>(
     db,
@@ -1019,9 +972,8 @@ function countPreparationWorkItems(
   return counts;
 }
 
-function activeJobUrlSet(db: SqliteDatabase): Set<string> {
-  if (!tableExists(db, "job_list_projections")) return new Set();
-  const filter = jobSqlFilter(db, {
+function activeJobIdSet(db: SqliteDatabase): Set<string> {
+  const filter = jobSqlFilter({
     page: 1,
     pageSize: 1,
     q: "",
@@ -1055,8 +1007,8 @@ function policyVersionFromJson(value: string | null, fields: readonly string[]):
 export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
   refreshProjections(db, DEFAULT_TENANT);
   const sortColumn = SQL_JOB_SORT_COLUMNS[query.sort] ?? "discovered_at";
-  const filter = jobSqlFilter(db, query);
-  const projectionSelect = jobProjectionSelect(db);
+  const filter = jobSqlFilter(query);
+  const projectionSelect = jobProjectionSelect();
 
   if (!query.q && !IN_MEMORY_JOB_SORT_FIELDS.has(query.sort)) {
     const total = countJobProjections(db, filter);
@@ -1092,10 +1044,10 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
 export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutationFilter> = {}): string[] {
   const query = normalizeMutationFilter(filter);
   refreshProjections(db, DEFAULT_TENANT);
-  const sqlFilter = jobSqlFilter(db, query);
+  const sqlFilter = jobSqlFilter(query);
   const rows = allRows<JobListProjectionRow>(
     db,
-    `SELECT ${jobProjectionSelect(db)} FROM job_list_projections${sqlFilter.where}`,
+    `SELECT ${jobProjectionSelect()} FROM job_list_projections${sqlFilter.where}`,
     sqlFilter.params,
   );
   const normalizedQuery = query.q.toLowerCase();
@@ -1142,17 +1094,19 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
   refreshProjections(db, DEFAULT_TENANT);
   const listRow = findJobListRow(db, jobKey);
   if (!listRow) return null;
+  const jobId = canonicalJobId(listRow.job_id);
+  if (!jobId) return null;
   const detailRow = getRow<JobDetailProjectionRow>(
     db,
     "SELECT * FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?",
-    [DEFAULT_TENANT, listRow.job_id],
+    [DEFAULT_TENANT, jobId],
   );
-  const stages = reconcileStageRetryability(db, listRow.job_id, parseStages(detailRow?.stages_json));
-  const artifacts = artifactsForJob(db, listRow.job_id);
-  const auditHistory = buildJobAuditHistory(db, listRow.job_id);
+  const stages = reconcileStageRetryability(db, jobId, parseStages(detailRow?.stages_json));
+  const artifacts = artifactsForJob(db, jobId);
+  const auditHistory = buildJobAuditHistory(db, jobId);
   const jobSummary = rowToJobSummary(listRow, db);
-  const latestApplyRun = latestApplyRunForJob(db, listRow.job_id);
-  const activeApplyRun = activeApplyRunForJob(db, listRow.job_id);
+  const latestApplyRun = latestApplyRunForJob(db, jobId);
+  const activeApplyRun = activeApplyRunForJob(db, jobId);
   return {
     ok: true,
     job: {
@@ -1178,7 +1132,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
           detailRow?.description_preview,
       ),
     }),
-    repeatApplication: evaluateRepeatApplication(db, listRow.job_id),
+    repeatApplication: evaluateRepeatApplication(db, jobId),
     activeApplyRun,
     stages,
     artifacts,
@@ -1191,9 +1145,6 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
 }
 
 function latestApplyRunForJob(db: SqliteDatabase, jobId: string): ApplyAuditLatestRun | null {
-  if (!tableExists(db, "apply_run_projections")) {
-    return null;
-  }
   const row = getRow<ApplyRunProjectionRow>(
     db,
     `SELECT * FROM apply_run_projections
@@ -1214,9 +1165,6 @@ function latestApplyRunForJob(db: SqliteDatabase, jobId: string): ApplyAuditLate
  * projection row for this one job and retain the newest non-terminal run.
  */
 function activeApplyRunForJob(db: SqliteDatabase, jobId: string): ApplyAuditLatestRun | null {
-  if (!tableExists(db, "apply_run_projections")) {
-    return null;
-  }
   const rows = allRows<ApplyRunProjectionRow>(
     db,
     `SELECT * FROM apply_run_projections
@@ -1243,7 +1191,7 @@ function applyRunProjectionToAuditRun(row: ApplyRunProjectionRow): ApplyAuditLat
 }
 
 function applyAuditApplicationUrl(row: JobListProjectionRow): string | null {
-  return nullableString(row.application_url) ?? nullableString(row.job_id);
+  return nullableString(row.application_url) ?? nullableString(row.url);
 }
 
 /**
@@ -1334,7 +1282,7 @@ function containsLegacyJobKey(value: unknown): boolean {
 interface JobAuditEventRow extends Record<string, unknown> {
   event_id: number | string;
   event_type: string | null;
-  job_url: string | null;
+  job_id: string | null;
   stage: string | null;
   level: string | null;
   message: string | null;
@@ -1377,32 +1325,19 @@ function buildJobAuditHistory(db: SqliteDatabase, jobId: string): JobAuditEntry[
   const entries: JobAuditEntry[] = [];
   const seenReferences = new Set<string>();
 
-  if (tableExists(db, "job_events")) {
-    const rows = allRows<JobAuditEventRow>(
-      db,
-      `SELECT event_id, event_type, job_url, stage, level, message, occurred_at, payload_json
-         FROM job_events
-        WHERE job_url = ?
-           OR (
-             payload_json IS NOT NULL
-             AND json_valid(payload_json)
-             AND (
-               JSON_EXTRACT(payload_json, '$.jobId') = ?
-               OR JSON_EXTRACT(payload_json, '$.job_id') = ?
-               OR JSON_EXTRACT(payload_json, '$.jobKey') = ?
-               OR JSON_EXTRACT(payload_json, '$.job_key') = ?
-               OR JSON_EXTRACT(payload_json, '$.surviving_job_id') = ?
-             )
-           )
-        ORDER BY occurred_at ASC, event_id ASC`,
-      [jobId, jobId, jobId, jobId, jobId, jobId],
-    );
-    for (const row of rows) {
-      const payload = parseJsonRecord(row.payload_json) ?? {};
-      rememberAuditReferences(seenReferences, payload);
-      const entry = jobEventToAuditEntry(row, payload);
-      if (entry) entries.push(entry);
-    }
+  const rows = allRows<JobAuditEventRow>(
+    db,
+    `SELECT event_id, event_type, job_id, stage, level, message, occurred_at, payload_json
+       FROM job_events
+      WHERE tenant_id = ? AND job_id = ?
+      ORDER BY occurred_at ASC, event_id ASC`,
+    [DEFAULT_TENANT, jobId],
+  );
+  for (const row of rows) {
+    const payload = parseJsonRecord(row.payload_json) ?? {};
+    rememberAuditReferences(seenReferences, payload);
+    const entry = jobEventToAuditEntry(row, payload);
+    if (entry) entries.push(entry);
   }
 
   appendReviewDecisionAuditEntries(db, jobId, entries, seenReferences);
@@ -1435,12 +1370,11 @@ function appendReviewDecisionAuditEntries(
   entries: JobAuditEntry[],
   seenReferences: Set<string>,
 ): void {
-  if (!tableExists(db, "application_review_decisions")) return;
   const rows = allRows<ApplicationReviewDecisionAuditRow>(
     db,
     `SELECT decision_id, decision, reason, decided_by, decided_at
        FROM application_review_decisions
-      WHERE tenant_id = ? AND job_key = ?
+      WHERE tenant_id = ? AND job_id = ?
       ORDER BY decided_at ASC, decision_id ASC`,
     [DEFAULT_TENANT, jobId],
   );
@@ -1470,12 +1404,11 @@ function appendApplicationOutcomeAuditEntries(
   entries: JobAuditEntry[],
   seenReferences: Set<string>,
 ): void {
-  if (!tableExists(db, "application_outcomes")) return;
   const rows = allRows<ApplicationOutcomeAuditRow>(
     db,
     `SELECT outcome_id, kind, source, note, occurred_at, recorded_at, suggestion_id, evidence_id
        FROM application_outcomes
-      WHERE tenant_id = ? AND job_key = ?
+      WHERE tenant_id = ? AND job_id = ?
       ORDER BY occurred_at ASC, recorded_at ASC, outcome_id ASC`,
     [DEFAULT_TENANT, jobId],
   );
@@ -1508,13 +1441,12 @@ function appendOutcomeSuggestionAuditEntries(
   entries: JobAuditEntry[],
   seenReferences: Set<string>,
 ): void {
-  if (!tableExists(db, "application_outcome_suggestions")) return;
   const rows = allRows<OutcomeSuggestionAuditRow>(
     db,
     `SELECT suggestion_id, suggested_kind, confidence, status, created_at, decided_at,
             decision, decision_reason, decided_outcome_id
        FROM application_outcome_suggestions
-      WHERE tenant_id = ? AND job_key = ?
+      WHERE tenant_id = ? AND job_id = ?
       ORDER BY created_at ASC, suggestion_id ASC`,
     [DEFAULT_TENANT, jobId],
   );
@@ -2390,16 +2322,34 @@ function yesNo(value: boolean | null): string {
 function findJobListRow(db: SqliteDatabase, jobKey: string): JobListProjectionRow | null {
   const direct = getRow<JobListProjectionRow>(
     db,
-    `SELECT ${jobProjectionSelect(db)} FROM job_list_projections WHERE tenant_id = ? AND job_id = ?`,
+    `SELECT ${jobProjectionSelect()} FROM job_list_projections WHERE tenant_id = ? AND job_id = ?`,
     [DEFAULT_TENANT, jobKey],
   );
   if (direct) return direct;
-  // Fall back to application_url match for the "open via apply URL" case.
+  // URLs remain locators; canonical job ids remain the relation key.
   return (
     getRow<JobListProjectionRow>(
       db,
-      `SELECT ${jobProjectionSelect(db)} FROM job_list_projections WHERE tenant_id = ? AND application_url = ? LIMIT 1`,
-      [DEFAULT_TENANT, jobKey],
+      `SELECT ${jobProjectionSelect()}
+         FROM job_list_projections
+        WHERE job_list_projections.tenant_id = ?
+          AND (
+            job_list_projections.application_url = ?
+            OR EXISTS (
+              SELECT 1 FROM jobs j
+               WHERE j.tenant_id = job_list_projections.tenant_id
+                 AND j.job_id = job_list_projections.job_id
+                 AND (j.url = ? OR j.application_url = ?)
+            )
+            OR EXISTS (
+              SELECT 1 FROM job_locators l
+               WHERE l.tenant_id = job_list_projections.tenant_id
+                 AND l.job_id = job_list_projections.job_id
+                 AND l.locator_value = ?
+            )
+          )
+        LIMIT 1`,
+      [DEFAULT_TENANT, jobKey, jobKey, jobKey, jobKey],
     ) ?? null
   );
 }
@@ -2407,18 +2357,21 @@ function findJobListRow(db: SqliteDatabase, jobKey: string): JobListProjectionRo
 export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): PaginatedResponse<ArtifactSummary> {
   refreshProjections(db, DEFAULT_TENANT);
   const normalizedQuery = query.q.toLowerCase();
-  const deletedJoin = tableExists(db, "jobctrl_deleted_jobs")
-    ? " LEFT JOIN jobctrl_deleted_jobs d ON d.job_url = ap.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
-    : "";
-  const hiddenJoin = tableExists(db, "jobctrl_hidden_jobs")
-    ? " LEFT JOIN jobctrl_hidden_jobs h ON h.job_url = ap.job_id AND h.unhidden_at IS NULL"
-    : "";
-  const deletedWhere = tableExists(db, "jobctrl_deleted_jobs") ? " AND d.job_url IS NULL" : "";
-  const hiddenWhere = tableExists(db, "jobctrl_hidden_jobs") ? " AND h.job_url IS NULL" : "";
   const rows = allRows<ArtifactProjectionRow>(
     db,
-    `SELECT ap.* FROM artifact_list_projections ap${deletedJoin}${hiddenJoin}
-     WHERE ap.tenant_id = ?${deletedWhere}${hiddenWhere}`,
+    `SELECT ap.*
+       FROM artifact_list_projections ap
+       LEFT JOIN jobctrl_deleted_jobs d
+         ON d.tenant_id = ap.tenant_id
+        AND d.job_id = ap.job_id
+        AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
+       LEFT JOIN jobctrl_hidden_jobs h
+         ON h.tenant_id = ap.tenant_id
+        AND h.job_id = ap.job_id
+        AND h.unhidden_at IS NULL
+      WHERE ap.tenant_id = ?
+        AND d.job_id IS NULL
+        AND h.job_id IS NULL`,
     [DEFAULT_TENANT],
   );
   const artifacts = rows.map((row) => rowToArtifactSummary(row, db)).filter((artifact) => {
@@ -2531,10 +2484,10 @@ export function readSettingsConfig(
 // ============================================================== mappings
 
 function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSummary {
-  const jobKey = row.job_id;
+  const jobKey = requireCanonicalJobId(row.job_id);
   return {
     jobKey,
-    url: jobKey,
+    url: nullableString(row.url) ?? "",
     title: row.title || "Untitled",
     company: row.employer || "Unknown company",
     source: row.source || "unknown",
@@ -2571,6 +2524,19 @@ function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSum
     hiddenAt: row.hidden_at,
     resumeTemplate: db ? resumeTemplateStateForJob(db, jobKey) : null,
   };
+}
+
+function canonicalJobId(value: string | null | undefined): JobId | null {
+  const jobId = value?.trim() ?? "";
+  return CANONICAL_JOB_ID.test(jobId) ? (jobId as JobId) : null;
+}
+
+function requireCanonicalJobId(value: string): JobId {
+  const jobId = canonicalJobId(value);
+  if (!jobId) {
+    throw new Error("Exact v7 read models require canonical lowercase JobIds.");
+  }
+  return jobId;
 }
 
 function isActiveState(value: unknown): value is ActiveState {
@@ -3961,6 +3927,7 @@ function scoreDimension(value: unknown): number {
 }
 
 function rowToArtifactSummary(row: ArtifactProjectionRow, db?: SqliteDatabase): ArtifactSummary {
+  const jobId = canonicalJobId(row.job_id);
   const localPath = row.local_path ?? "";
   let sizeBytes = row.size_bytes;
   if (sizeBytes === null || sizeBytes === undefined) {
@@ -3982,7 +3949,8 @@ function rowToArtifactSummary(row: ArtifactProjectionRow, db?: SqliteDatabase): 
     sizeBytes,
     size: formatSize(sizeBytes),
     resumeTemplate: db
-      ? resumeTemplateStateForArtifact(db, row.job_id, row.metadata_json)
+      && jobId
+      ? resumeTemplateStateForArtifact(db, jobId, row.metadata_json)
       : null,
   };
 }
@@ -4529,16 +4497,15 @@ function reconcileStageRetryability(
 }
 
 function latestStageRetryabilityByEvent(db: SqliteDatabase, jobId: string): Map<Stage, boolean> {
-  if (!tableExists(db, "job_events")) return new Map();
   const rows = allRows<{ stage: string | null; payload_json: string | null }>(
     db,
     `SELECT stage, payload_json
      FROM job_events
-     WHERE job_url = ?
+     WHERE tenant_id = ? AND job_id = ?
        AND stage IS NOT NULL
        AND payload_json IS NOT NULL
      ORDER BY event_id ASC`,
-    [jobId],
+    [DEFAULT_TENANT, jobId],
   );
   const retryability = new Map<Stage, boolean>();
   for (const row of rows) {
@@ -4609,64 +4576,46 @@ function normalizeMutationFilter(filter: Partial<BulkJobMutationFilter>): JobLis
   };
 }
 
-function jobSqlFilter(db: SqliteDatabase, query: JobListQuery): { where: string; params: SqliteValue[] } {
-  const clauses: string[] = ["tenant_id = ?"];
+function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue[] } {
+  const clauses: string[] = ["job_list_projections.tenant_id = ?"];
   const params: SqliteValue[] = [DEFAULT_TENANT];
-  const hasHiddenTable = tableExists(db, "jobctrl_hidden_jobs");
   const closedPredicate = closedActiveStatePredicate(
-    db,
     "job_list_projections.tenant_id",
     "job_list_projections.job_id",
   );
   if (query.deleted === "active") {
-    clauses.push("deleted_at IS NULL");
-    if (hasHiddenTable) {
-      clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.job_url = job_id AND h.unhidden_at IS NULL)");
-    }
-    if (closedPredicate) {
-      clauses.push(`NOT (${closedPredicate.sql})`);
-      params.push(...closedPredicate.params);
-    }
+    clauses.push("job_list_projections.deleted_at IS NULL");
+    clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(`NOT (${closedPredicate.sql})`);
+    params.push(...closedPredicate.params);
   } else if (query.deleted === "closed") {
-    clauses.push("deleted_at IS NULL");
-    if (hasHiddenTable) {
-      clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.job_url = job_id AND h.unhidden_at IS NULL)");
-    }
-    if (closedPredicate) {
-      clauses.push(closedPredicate.sql);
-      params.push(...closedPredicate.params);
-    } else {
-      clauses.push("1 = 0");
-    }
+    clauses.push("job_list_projections.deleted_at IS NULL");
+    clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(closedPredicate.sql);
+    params.push(...closedPredicate.params);
   } else if (query.deleted === "deleted") {
-    clauses.push("deleted_at IS NOT NULL");
-    if (hasHiddenTable) {
-      clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.job_url = job_id AND h.unhidden_at IS NULL)");
-    }
+    clauses.push("job_list_projections.deleted_at IS NOT NULL");
+    clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
   } else if (query.deleted === "hidden") {
-    clauses.push(
-      hasHiddenTable
-        ? "EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.job_url = job_id AND h.unhidden_at IS NULL)"
-        : "1 = 0",
-    );
+    clauses.push("EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
   }
   if (query.stage) {
-    clauses.push("current_stage = ?");
+    clauses.push("job_list_projections.current_stage = ?");
     params.push(query.stage);
   }
   if (query.state) {
-    clauses.push("current_state = ?");
+    clauses.push("job_list_projections.current_state = ?");
     params.push(query.state);
   }
   if (query.applyStatus === "applied") {
-    clauses.push("(applied_at IS NOT NULL OR LOWER(COALESCE(apply_status, '')) = 'applied')");
+    clauses.push("(job_list_projections.applied_at IS NOT NULL OR LOWER(COALESCE(job_list_projections.apply_status, '')) = 'applied')");
   }
   if (query.source) {
-    const postingSourceUrlSql = postingSourceUrlSqlExpression(db);
-    const postingSourceAtsKindSql = postingSourceAtsKindSqlExpression(db);
+    const postingSourceUrlSql = postingSourceUrlSqlExpression();
+    const postingSourceAtsKindSql = postingSourceAtsKindSqlExpression();
     clauses.push(
-      `(LOWER(source) LIKE ?
-        OR LOWER(${discoverySourceSqlExpression(db)}) LIKE ?
+      `(LOWER(job_list_projections.source) LIKE ?
+        OR LOWER(${discoverySourceSqlExpression()}) LIKE ?
         OR LOWER(COALESCE(${postingSourceUrlSql}, '')) LIKE ?
         OR LOWER(COALESCE(${postingSourceAtsKindSql}, '')) LIKE ?
         OR (
@@ -4687,105 +4636,98 @@ function jobSqlFilter(db: SqliteDatabase, query: JobListQuery): { where: string;
     );
   }
   if (query.company) {
-    clauses.push("LOWER(employer) LIKE ?");
+    clauses.push("LOWER(job_list_projections.employer) LIKE ?");
     params.push(`%${query.company.toLowerCase()}%`);
   }
   if (query.minFitScore !== undefined) {
-    clauses.push("COALESCE(fit_score, -1) >= ?");
+    clauses.push("COALESCE(job_list_projections.fit_score, -1) >= ?");
     params.push(query.minFitScore);
   }
   if (query.maxFitScore !== undefined) {
-    clauses.push("COALESCE(fit_score, 999) <= ?");
+    clauses.push("COALESCE(job_list_projections.fit_score, 999) <= ?");
     params.push(query.maxFitScore);
   }
   if (query.discoveredSince && query.scoredSince) {
     clauses.push(
-      "((discovered_at IS NOT NULL AND discovered_at >= ?) OR (scored_at IS NOT NULL AND scored_at >= ?))",
+      "((job_list_projections.discovered_at IS NOT NULL AND job_list_projections.discovered_at >= ?) OR (job_list_projections.scored_at IS NOT NULL AND job_list_projections.scored_at >= ?))",
     );
     params.push(query.discoveredSince, query.scoredSince);
   } else if (query.discoveredSince) {
-    clauses.push("discovered_at IS NOT NULL AND discovered_at >= ?");
+    clauses.push("job_list_projections.discovered_at IS NOT NULL AND job_list_projections.discovered_at >= ?");
     params.push(query.discoveredSince);
   } else if (query.scoredSince) {
-    clauses.push("scored_at IS NOT NULL AND scored_at >= ?");
+    clauses.push("job_list_projections.scored_at IS NOT NULL AND job_list_projections.scored_at >= ?");
     params.push(query.scoredSince);
   }
   return { where: ` WHERE ${clauses.join(" AND ")}`, params };
 }
 
 function closedActiveStatePredicate(
-  db: SqliteDatabase,
   tenantColumn: string,
   jobColumn: string,
-): { sql: string; params: SqliteValue[] } | null {
-  if (!tableExists(db, "posting_snapshot_sets")) {
-    return null;
-  }
+): { sql: string; params: SqliteValue[] } {
   const placeholders = CLOSED_ACTIVE_STATES.map(() => "?").join(", ");
   return {
     sql: `EXISTS (
       SELECT 1
       FROM posting_snapshot_sets pss
       WHERE pss.tenant_id = ${tenantColumn}
-        AND pss.job_url = ${jobColumn}
+        AND pss.job_id = ${jobColumn}
         AND pss.latest_active_state IN (${placeholders})
     )`,
     params: [...CLOSED_ACTIVE_STATES],
   };
 }
 
-function jobProjectionSelect(db: SqliteDatabase): string {
-  const hiddenSelect = tableExists(db, "jobctrl_hidden_jobs")
-    ? `(SELECT h.hidden_at
+function jobProjectionSelect(): string {
+  const hiddenSelect = `(SELECT h.hidden_at
           FROM jobctrl_hidden_jobs h
-         WHERE h.job_url = job_list_projections.job_id
+         WHERE h.tenant_id = job_list_projections.tenant_id
+           AND h.job_id = job_list_projections.job_id
            AND h.unhidden_at IS NULL
-         LIMIT 1) AS hidden_at`
-    : "NULL AS hidden_at";
-  const stalenessSelect = tableExists(db, "job_score_staleness")
-    ? `(SELECT s.stale_reason
+         LIMIT 1) AS hidden_at`;
+  const stalenessSelect = `(SELECT s.stale_reason
           FROM job_score_staleness s
          WHERE s.tenant_id = job_list_projections.tenant_id
-           AND s.job_url = job_list_projections.job_id
+           AND s.job_id = job_list_projections.job_id
            AND s.resolved = 0
          ORDER BY s.marked_at DESC
          LIMIT 1) AS score_stale_reason,
        (SELECT s.old_policy_version
-          FROM job_score_staleness s
+         FROM job_score_staleness s
          WHERE s.tenant_id = job_list_projections.tenant_id
-           AND s.job_url = job_list_projections.job_id
+           AND s.job_id = job_list_projections.job_id
            AND s.resolved = 0
          ORDER BY s.marked_at DESC
          LIMIT 1) AS score_stale_old_policy_version,
        (SELECT s.new_policy_version
-          FROM job_score_staleness s
+         FROM job_score_staleness s
          WHERE s.tenant_id = job_list_projections.tenant_id
-           AND s.job_url = job_list_projections.job_id
+           AND s.job_id = job_list_projections.job_id
            AND s.resolved = 0
          ORDER BY s.marked_at DESC
          LIMIT 1) AS score_stale_new_policy_version,
        (SELECT s.marked_at
-          FROM job_score_staleness s
+         FROM job_score_staleness s
          WHERE s.tenant_id = job_list_projections.tenant_id
-           AND s.job_url = job_list_projections.job_id
+           AND s.job_id = job_list_projections.job_id
            AND s.resolved = 0
          ORDER BY s.marked_at DESC
-         LIMIT 1) AS score_stale_marked_at`
-    : `NULL AS score_stale_reason,
-       NULL AS score_stale_old_policy_version,
-       NULL AS score_stale_new_policy_version,
-       NULL AS score_stale_marked_at`;
-  const activeStateSelect = tableExists(db, "posting_snapshot_sets")
-    ? `(SELECT pss.latest_active_state
+         LIMIT 1) AS score_stale_marked_at`;
+  const activeStateSelect = `(SELECT pss.latest_active_state
           FROM posting_snapshot_sets pss
          WHERE pss.tenant_id = job_list_projections.tenant_id
-           AND pss.job_url = job_list_projections.job_id
-         LIMIT 1) AS active_state`
-    : "'unknown' AS active_state";
+           AND pss.job_id = job_list_projections.job_id
+         LIMIT 1) AS active_state`;
   return `job_list_projections.*,
-          ${discoverySourceSqlExpression(db)} AS discovery_source,
-          ${postingSourceUrlSqlExpression(db)} AS posting_source_url,
-          ${postingSourceAtsKindSqlExpression(db)} AS posting_source_ats_kind,
+          (SELECT j.url
+             FROM jobs j
+            WHERE j.tenant_id = job_list_projections.tenant_id
+              AND j.job_id = job_list_projections.job_id
+            LIMIT 1) AS url,
+          ${discoverySourceSqlExpression()} AS discovery_source,
+          ${postingSourceUrlSqlExpression()} AS posting_source_url,
+          ${postingSourceAtsKindSqlExpression()} AS posting_source_ats_kind,
           ${activeStateSelect},
           ${hiddenSelect},
           ${stalenessSelect}`;
@@ -4816,8 +4758,8 @@ function discoverySourceFallbackSql(): string {
   return "CASE WHEN strategy = 'jobspy' AND source != '' THEN 'jobspy:' || LOWER(source) ELSE strategy END";
 }
 
-function discoverySourceSqlExpression(db: SqliteDatabase): string {
-  const observationSelect = tableExists(db, "job_source_observations") ? latestSourceObservationSql() : "NULL";
+function discoverySourceSqlExpression(): string {
+  const observationSelect = latestSourceObservationSql();
   return `CASE
             WHEN strategy = 'jobspy'
              AND COALESCE(${observationSelect}, '') != ''
@@ -4831,26 +4773,24 @@ function latestSourceObservationSql(): string {
   return `(SELECT o.source_id
              FROM job_source_observations o
             WHERE o.tenant_id = job_list_projections.tenant_id
-              AND o.job_url = job_list_projections.job_id
+              AND o.job_id = job_list_projections.job_id
             ORDER BY o.observed_at DESC, o.source_observation_id DESC
             LIMIT 1)`;
 }
 
-function postingSourceUrlSqlExpression(db: SqliteDatabase): string {
-  if (!tableExists(db, "job_canonical_identities")) return "NULL";
+function postingSourceUrlSqlExpression(): string {
   return `(SELECT c.canonical_url
              FROM job_canonical_identities c
             WHERE c.tenant_id = job_list_projections.tenant_id
-              AND c.job_url = job_list_projections.job_id
+              AND c.job_id = job_list_projections.job_id
             LIMIT 1)`;
 }
 
-function postingSourceAtsKindSqlExpression(db: SqliteDatabase): string {
-  if (!tableExists(db, "job_canonical_identities")) return "NULL";
+function postingSourceAtsKindSqlExpression(): string {
   return `(SELECT c.ats_kind
              FROM job_canonical_identities c
             WHERE c.tenant_id = job_list_projections.tenant_id
-              AND c.job_url = job_list_projections.job_id
+              AND c.job_id = job_list_projections.job_id
             LIMIT 1)`;
 }
 
@@ -5187,9 +5127,6 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
 }
 
 function listPipelineProgress(db: SqliteDatabase): DashboardSummary["progress"] {
-  if (!tableExists(db, "job_events")) {
-    return [];
-  }
   const workflowRunStatus = loadPipelineWorkflowRunStatus(db);
   const rows = allRows<{
     stage: string | null;
@@ -5201,7 +5138,8 @@ function listPipelineProgress(db: SqliteDatabase): DashboardSummary["progress"] 
     db,
     `SELECT stage, event_type, message, occurred_at, payload_json
        FROM job_events
-      WHERE COALESCE(job_url, '') IN ('', 'pipeline')
+      WHERE tenant_id = ?
+        AND job_id IS NULL
         AND (
           event_type IN ('StageStarted', 'StageCompleted', 'StageFailed')
           OR (
@@ -5223,6 +5161,7 @@ function listPipelineProgress(db: SqliteDatabase): DashboardSummary["progress"] 
         )
       ORDER BY event_id DESC
       LIMIT 100`,
+    [DEFAULT_TENANT],
   );
   const byStage = new Map<Stage, DashboardSummary["progress"][number]>();
   for (const row of rows) {
@@ -5250,9 +5189,6 @@ interface PipelineWorkflowRunStatus {
 }
 
 function loadPipelineWorkflowRunStatus(db: SqliteDatabase): Map<string, PipelineWorkflowRunStatus> {
-  if (!tableExists(db, "workflow_run_projections")) {
-    return new Map();
-  }
   const lifecycleFolds = loadWorkflowRunLifecycleFolds(db);
   const rows = allRows<{
     workflow_id: string;
@@ -5552,23 +5488,14 @@ function listActivityFromEvents(
   db: SqliteDatabase,
   query: ActivityListQuery,
 ): PaginatedResponse<ActivityEventSummary> {
-  if (!tableExists(db, "job_events")) {
-    return paginateWithTotal([], 0, 1, query.pageSize, query.sort, query.dir, activityFilterPayload(query));
-  }
-  const eventColumns = columnNames(db, "job_events");
-  const eventTypeSelect = eventColumns.has("event_type") ? "e.event_type" : "'Event' AS event_type";
-  const eventTypePredicate = eventColumns.has("event_type") ? "COALESCE(e.event_type, '')" : "'Event'";
-  const hideDeletedJoin = tableExists(db, "jobctrl_deleted_jobs")
-    ? " LEFT JOIN jobctrl_deleted_jobs d ON d.job_url = e.job_url AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
-    : "";
-  const hideHiddenJoin = tableExists(db, "jobctrl_hidden_jobs")
-    ? " LEFT JOIN jobctrl_hidden_jobs h ON h.job_url = e.job_url AND h.unhidden_at IS NULL"
-    : "";
+  const eventTypeSelect = "e.event_type";
+  const eventTypePredicate = "COALESCE(e.event_type, '')";
   const activityClauses = [
-    "(e.job_url IS NULL OR e.job_url = '' OR jp.job_id IS NOT NULL)",
-    tableExists(db, "jobctrl_deleted_jobs") ? "d.job_url IS NULL" : "",
-    tableExists(db, "jobctrl_hidden_jobs") ? "h.job_url IS NULL" : "",
-  ].filter(Boolean);
+    "e.tenant_id = ?",
+    "(e.job_id IS NULL OR jp.job_id IS NOT NULL)",
+    "d.job_id IS NULL",
+    "h.job_id IS NULL",
+  ];
   const params: SqliteValue[] = [DEFAULT_TENANT];
   if (query.level) {
     activityClauses.push("LOWER(COALESCE(e.level, '')) = LOWER(?)");
@@ -5592,7 +5519,7 @@ function listActivityFromEvents(
       OR LOWER(COALESCE(e.message, '')) LIKE ?
       OR LOWER(COALESCE(jp.title, '')) LIKE ?
       OR LOWER(COALESCE(jp.employer, '')) LIKE ?
-      OR LOWER(COALESCE(e.job_url, '')) LIKE ?
+      OR LOWER(COALESCE(e.job_id, '')) LIKE ?
       OR LOWER(CAST(e.event_id AS TEXT)) LIKE ?
       OR LOWER(COALESCE(e.occurred_at, '')) LIKE ?
     )`);
@@ -5601,9 +5528,16 @@ function listActivityFromEvents(
   const activityWhere = `WHERE ${activityClauses.join(" AND ")}`;
   const fromSql = `
     FROM job_events e
-    LEFT JOIN job_list_projections jp ON jp.tenant_id = ? AND jp.job_id = e.job_url
-    ${hideDeletedJoin}
-    ${hideHiddenJoin}
+    LEFT JOIN job_list_projections jp
+      ON jp.tenant_id = e.tenant_id AND jp.job_id = e.job_id
+    LEFT JOIN jobctrl_deleted_jobs d
+      ON d.tenant_id = e.tenant_id
+     AND d.job_id = e.job_id
+     AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
+    LEFT JOIN jobctrl_hidden_jobs h
+      ON h.tenant_id = e.tenant_id
+     AND h.job_id = e.job_id
+     AND h.unhidden_at IS NULL
     ${activityWhere}`;
   const total = countRows(db, `SELECT COUNT(*) AS count ${fromSql}`, params);
   const pages = Math.max(1, Math.ceil(total / query.pageSize));
@@ -5615,7 +5549,7 @@ function listActivityFromEvents(
     SELECT
       e.event_id,
       ${eventTypeSelect},
-      e.job_url,
+      e.job_id,
       e.stage,
       e.level,
       e.message,
@@ -5642,27 +5576,20 @@ function listActivityFromEvents(
 }
 
 function getActivityEventFromEvents(db: SqliteDatabase, eventId: string): ActivityEventSummary | null {
-  if (!tableExists(db, "job_events")) return null;
-  const eventColumns = columnNames(db, "job_events");
-  const eventTypeSelect = eventColumns.has("event_type") ? "e.event_type" : "'Event' AS event_type";
-  const hideDeletedJoin = tableExists(db, "jobctrl_deleted_jobs")
-    ? " LEFT JOIN jobctrl_deleted_jobs d ON d.job_url = e.job_url AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
-    : "";
-  const hideHiddenJoin = tableExists(db, "jobctrl_hidden_jobs")
-    ? " LEFT JOIN jobctrl_hidden_jobs h ON h.job_url = e.job_url AND h.unhidden_at IS NULL"
-    : "";
+  const eventTypeSelect = "e.event_type";
   const activityClauses = [
     "e.event_id = ?",
-    "(e.job_url IS NULL OR e.job_url = '' OR jp.job_id IS NOT NULL)",
-    tableExists(db, "jobctrl_deleted_jobs") ? "d.job_url IS NULL" : "",
-    tableExists(db, "jobctrl_hidden_jobs") ? "h.job_url IS NULL" : "",
-  ].filter(Boolean);
+    "e.tenant_id = ?",
+    "(e.job_id IS NULL OR jp.job_id IS NOT NULL)",
+    "d.job_id IS NULL",
+    "h.job_id IS NULL",
+  ];
   const row = getRow<Record<string, unknown>>(
     db,
     `SELECT
        e.event_id,
        ${eventTypeSelect},
-       e.job_url,
+       e.job_id,
        e.stage,
        e.level,
        e.message,
@@ -5670,12 +5597,19 @@ function getActivityEventFromEvents(db: SqliteDatabase, eventId: string): Activi
        jp.title    AS title,
        jp.employer AS employer
      FROM job_events e
-     LEFT JOIN job_list_projections jp ON jp.tenant_id = ? AND jp.job_id = e.job_url
-     ${hideDeletedJoin}
-     ${hideHiddenJoin}
+     LEFT JOIN job_list_projections jp
+       ON jp.tenant_id = e.tenant_id AND jp.job_id = e.job_id
+     LEFT JOIN jobctrl_deleted_jobs d
+       ON d.tenant_id = e.tenant_id
+      AND d.job_id = e.job_id
+      AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
+     LEFT JOIN jobctrl_hidden_jobs h
+       ON h.tenant_id = e.tenant_id
+      AND h.job_id = e.job_id
+      AND h.unhidden_at IS NULL
      WHERE ${activityClauses.join(" AND ")}
      LIMIT 1`,
-    [DEFAULT_TENANT, eventId],
+    [eventId, DEFAULT_TENANT],
   );
   return row ? activityRowToSummary(row) : null;
 }
@@ -5693,7 +5627,7 @@ function activityRowToSummary(row: Record<string, unknown>): ActivityEventSummar
   return {
     eventId: stringField(row.event_id),
     eventType: stringField(row.event_type) || "Event",
-    jobKey: nullableString(row.job_url),
+    jobKey: nullableString(row.job_id),
     title: nullableString(row.title),
     company: nullableString(row.employer),
     stage: stringField(row.stage) || "system",
@@ -5701,11 +5635,6 @@ function activityRowToSummary(row: Record<string, unknown>): ActivityEventSummar
     message: stringField(row.message) || "event",
     at: nullableString(row.occurred_at),
   };
-}
-
-function columnNames(db: SqliteDatabase, tableName: string): Set<string> {
-  if (!tableExists(db, tableName)) return new Set();
-  return new Set(allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name));
 }
 
 /**
@@ -5766,17 +5695,14 @@ interface WorkflowLifecycleEvent {
 
 function loadWorkflowRunLifecycleFolds(db: SqliteDatabase): Map<string, WorkflowLifecycleFold> {
   const folds = new Map<string, WorkflowLifecycleFold>();
-  if (!tableExists(db, "job_events")) {
-    return folds;
-  }
   const placeholders = WORKFLOW_LIFECYCLE_EVENT_TYPES.map(() => "?").join(", ");
   const rows = allRows<{ event_type: string; occurred_at: string | null; payload_json: string | null }>(
     db,
     `SELECT event_type, occurred_at, payload_json
        FROM job_events
-      WHERE event_type IN (${placeholders})
+      WHERE tenant_id = ? AND event_type IN (${placeholders})
       ORDER BY event_id ASC`,
-    [...WORKFLOW_LIFECYCLE_EVENT_TYPES],
+    [DEFAULT_TENANT, ...WORKFLOW_LIFECYCLE_EVENT_TYPES],
   );
   const byWorkflow = new Map<string, WorkflowLifecycleEvent[]>();
   for (const row of rows) {
@@ -5947,36 +5873,24 @@ export function listWorkflowRuns(
   query: WorkflowRunsListQuery,
 ): PaginatedResponse<WorkflowRunSummary> {
   refreshProjections(db, DEFAULT_TENANT);
-  if (!tableExists(db, "workflow_run_projections")) {
-    return paginate([], query.page, query.pageSize, query.sort, query.dir, workflowRunsFilterPayload(query));
-  }
-  const hasApply = tableExists(db, "apply_run_projections");
-  const applyJoin = hasApply
-    ? ` LEFT JOIN apply_run_projections arp ON arp.run_id = wrp.workflow_id`
-    : "";
-  const applySelect = hasApply
-    ? `, arp.job_id AS apply_job_id, arp.job_title AS job_title,
+  const applyJoin = ` LEFT JOIN apply_run_projections arp
+    ON arp.tenant_id = wrp.tenant_id AND arp.run_id = wrp.workflow_id`;
+  const applySelect = `, arp.job_id AS apply_job_id, arp.job_title AS job_title,
        arp.job_employer AS job_employer, arp.dry_run AS apply_dry_run,
-       arp.model AS apply_model, arp.result AS apply_result`
-    : "";
+       arp.model AS apply_model, arp.result AS apply_result`;
   // Deleted / hidden filters apply to the enriched apply job only; non-apply
   // rows have a NULL apply_job_id and pass through untouched.
-  const deletedJoin =
-    hasApply && tableExists(db, "jobctrl_deleted_jobs")
-      ? " LEFT JOIN jobctrl_deleted_jobs d ON d.job_url = arp.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
-      : "";
-  const hiddenJoin =
-    hasApply && tableExists(db, "jobctrl_hidden_jobs")
-      ? " LEFT JOIN jobctrl_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
-      : "";
+  const deletedJoin = ` LEFT JOIN jobctrl_deleted_jobs d
+    ON d.tenant_id = arp.tenant_id
+   AND d.job_id = arp.job_id
+   AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))`;
+  const hiddenJoin = ` LEFT JOIN jobctrl_hidden_jobs h
+    ON h.tenant_id = arp.tenant_id
+   AND h.job_id = arp.job_id
+   AND h.unhidden_at IS NULL`;
   const where: string[] = ["wrp.tenant_id = ?"];
   const params: SqliteValue[] = [DEFAULT_TENANT];
-  if (deletedJoin) {
-    where.push("d.job_url IS NULL");
-  }
-  if (hiddenJoin) {
-    where.push("h.job_url IS NULL");
-  }
+  where.push("d.job_id IS NULL", "h.job_id IS NULL");
   const whereSql = where.length ? ` WHERE ${where.join(" AND ")}` : "";
   const rows = allRows<WorkflowRunProjectionRow>(
     db,
@@ -6021,18 +5935,11 @@ export function getWorkflowRunDetail(
   runId: string,
 ): WorkflowRunDetail | null {
   refreshProjections(db, DEFAULT_TENANT);
-  if (!tableExists(db, "workflow_run_projections")) {
-    return null;
-  }
-  const hasApply = tableExists(db, "apply_run_projections");
-  const applyJoin = hasApply
-    ? ` LEFT JOIN apply_run_projections arp ON arp.run_id = wrp.workflow_id`
-    : "";
-  const applySelect = hasApply
-    ? `, arp.job_id AS apply_job_id, arp.job_title AS job_title,
+  const applyJoin = ` LEFT JOIN apply_run_projections arp
+    ON arp.tenant_id = wrp.tenant_id AND arp.run_id = wrp.workflow_id`;
+  const applySelect = `, arp.job_id AS apply_job_id, arp.job_title AS job_title,
        arp.job_employer AS job_employer, arp.dry_run AS apply_dry_run,
-       arp.model AS apply_model, arp.result AS apply_result`
-    : "";
+       arp.model AS apply_model, arp.result AS apply_result`;
   const rawRow = getRow<WorkflowRunProjectionRow>(
     db,
     `SELECT wrp.*${applySelect} FROM workflow_run_projections wrp${applyJoin}
@@ -6179,18 +6086,21 @@ function normalizeWorkflowRunStatus(value: unknown): WorkflowRunStatus {
 function recentApplyRuns(db: SqliteDatabase): DashboardSummary["applyRuns"] {
   // L3 (round-1 review): caller (``buildDashboardSummary``) already
   // refreshed projections; do not double-refresh here.
-  const deletedJoin = tableExists(db, "jobctrl_deleted_jobs")
-    ? " LEFT JOIN jobctrl_deleted_jobs d ON d.job_url = arp.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
-    : "";
-  const hiddenJoin = tableExists(db, "jobctrl_hidden_jobs")
-    ? " LEFT JOIN jobctrl_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
-    : "";
-  const deletedWhere = tableExists(db, "jobctrl_deleted_jobs") ? " AND d.job_url IS NULL" : "";
-  const hiddenWhere = tableExists(db, "jobctrl_hidden_jobs") ? " AND h.job_url IS NULL" : "";
   const rows = allRows<ApplyRunProjectionRow>(
     db,
-    `SELECT arp.* FROM apply_run_projections arp${deletedJoin}${hiddenJoin}
-     WHERE arp.tenant_id = ?${deletedWhere}${hiddenWhere}
+    `SELECT arp.*
+       FROM apply_run_projections arp
+       LEFT JOIN jobctrl_deleted_jobs d
+         ON d.tenant_id = arp.tenant_id
+        AND d.job_id = arp.job_id
+        AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
+       LEFT JOIN jobctrl_hidden_jobs h
+         ON h.tenant_id = arp.tenant_id
+        AND h.job_id = arp.job_id
+        AND h.unhidden_at IS NULL
+      WHERE arp.tenant_id = ?
+        AND d.job_id IS NULL
+        AND h.job_id IS NULL
      ORDER BY arp.started_at DESC LIMIT 12`,
     [DEFAULT_TENANT],
   );

@@ -12,8 +12,16 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
-import { ensureProjectionTables } from "../src/projections.js";
+import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
+import { initializeExactV7Database } from "./v7-schema.js";
+
+const EVENT_JOB_URL = "https://example.com/jobs/event-driven";
+const EVENT_JOB_ID = "00000000-0000-4000-8000-000000000001";
+
+function projectionFixtureJobId(index: number): string {
+  return `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+}
 
 function withTempDb(): { dbPath: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-projections-"));
@@ -25,132 +33,16 @@ function withTempDb(): { dbPath: string; cleanup: () => void } {
 }
 
 function seedSchema(dbPath: string): void {
+  initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE jobs (
-      url TEXT PRIMARY KEY,
-      title TEXT,
-      company TEXT,
-      site TEXT,
-      strategy TEXT,
-      location TEXT,
-      salary TEXT,
-      discovered_at TEXT,
-      application_url TEXT,
-      description TEXT,
-      full_description TEXT,
-      detail_scraped_at TEXT,
-      detail_error TEXT,
-      fit_score INTEGER,
-      score_reasoning TEXT,
-      scored_at TEXT,
-      tailored_resume_path TEXT,
-      tailored_at TEXT,
-      tailor_attempts INTEGER DEFAULT 0,
-      cover_letter_path TEXT,
-      cover_letter_at TEXT,
-      cover_attempts INTEGER DEFAULT 0,
-      applied_at TEXT,
-      apply_status TEXT,
-      apply_error TEXT,
-      apply_attempts INTEGER DEFAULT 0,
-      agent_id TEXT,
-      last_attempted_at TEXT,
-      apply_duration_ms INTEGER,
-      apply_task_id TEXT,
-      verification_confidence TEXT
-    );
-    CREATE TABLE job_stage_states (
-      job_url TEXT NOT NULL,
-      stage TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'pending',
-      attempt_count INTEGER DEFAULT 0,
-      max_attempts INTEGER,
-      started_at TEXT,
-      updated_at TEXT NOT NULL DEFAULT '',
-      finished_at TEXT,
-      duration_ms INTEGER,
-      error_code TEXT,
-      error_message TEXT,
-      retryable INTEGER DEFAULT 1,
-      blocked_by_json TEXT,
-      next_action TEXT,
-      metadata_json TEXT,
-      version INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (job_url, stage)
-    );
-    CREATE TABLE job_events (
-      event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_url TEXT,
-      stage TEXT,
-      event_type TEXT NOT NULL DEFAULT '',
-      level TEXT NOT NULL DEFAULT 'info',
-      message TEXT,
-      occurred_at TEXT NOT NULL,
-      payload_json TEXT
-    );
-    CREATE TABLE apply_run_projections (
-      run_id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_id TEXT NOT NULL,
-      job_title TEXT NOT NULL DEFAULT '',
-      job_employer TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT '',
-      result TEXT,
-      dry_run INTEGER NOT NULL DEFAULT 0,
-      worker_id INTEGER,
-      model TEXT,
-      started_at TEXT,
-      finished_at TEXT,
-      duration_ms INTEGER,
-      events_json TEXT NOT NULL DEFAULT '[]'
-    );
-    CREATE TABLE job_scores (
-      job_url TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      fit_score INTEGER NOT NULL,
-      breakdown_json TEXT NOT NULL,
-      keywords_json TEXT NOT NULL,
-      scored_at TEXT NOT NULL,
-      correction_json TEXT,
-      criteria_json TEXT NOT NULL DEFAULT '{}',
-      trace_json TEXT NOT NULL DEFAULT '{}',
-      PRIMARY KEY (job_url, version)
-    );
-    CREATE TABLE operational_attempt_metrics (
-      metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      occurred_at TEXT NOT NULL,
-      stage TEXT NOT NULL,
-      source_id TEXT,
-      source_kind TEXT,
-      source_priority TEXT,
-      source_role TEXT,
-      adapter TEXT,
-      attempt_kind TEXT NOT NULL,
-      outcome TEXT NOT NULL,
-      failure_category TEXT,
-      is_operational_failure INTEGER NOT NULL DEFAULT 0,
-      is_scrape_failure INTEGER NOT NULL DEFAULT 0,
-      is_retryable INTEGER NOT NULL DEFAULT 1,
-      run_id TEXT,
-      job_url TEXT,
-      duration_ms INTEGER,
-      total_count INTEGER,
-      new_count INTEGER,
-      existing_count INTEGER,
-      observed_count INTEGER,
-      duplicate_count INTEGER,
-      error_class TEXT,
-      error_message TEXT,
-      metadata_json TEXT NOT NULL DEFAULT '{}'
-    );
-  `);
+  seedBuiltInResumeTemplate(db);
   db.prepare(
-    "INSERT INTO jobs (url, title, site, fit_score, score_reasoning, application_url) VALUES (?, ?, ?, ?, ?, ?)",
+    `INSERT INTO jobs (
+       tenant_id, job_id, url, title, site, fit_score, score_reasoning, application_url
+     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    "https://example.com/jobs/event-driven",
+    EVENT_JOB_ID,
+    EVENT_JOB_URL,
     "Event-Driven Engineer",
     "ExampleCo",
     9,
@@ -158,11 +50,10 @@ function seedSchema(dbPath: string): void {
     "https://example.com/apply/event",
   );
   db.prepare(
-    "INSERT INTO job_scores (job_url, version, tenant_id, fit_score, breakdown_json, keywords_json, scored_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO job_scores (tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at) VALUES ('local', ?, ?, ?, ?, ?, ?)",
   ).run(
-    "https://example.com/jobs/event-driven",
+    EVENT_JOB_ID,
     1,
-    "local",
     7,
     JSON.stringify({
       technical_fit: 7,
@@ -175,13 +66,12 @@ function seedSchema(dbPath: string): void {
   );
   db.prepare(
     `INSERT INTO job_scores (
-      job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+      tenant_id, job_id, version, fit_score, breakdown_json, keywords_json,
       scored_at, criteria_json, trace_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    "https://example.com/jobs/event-driven",
+    EVENT_JOB_ID,
     2,
-    "local",
     8,
     JSON.stringify({
       technical_fit: 9,
@@ -215,10 +105,10 @@ function seedSchema(dbPath: string): void {
     }),
   );
   db.prepare(
-    "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO apply_run_projections (run_id, tenant_id, job_id, job_title, job_employer, status, result, dry_run, started_at, finished_at) VALUES (?, 'local', ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     "run-event-driven",
-    "https://example.com/jobs/event-driven",
+    EVENT_JOB_ID,
     "Event-Driven Engineer",
     "ExampleCo",
     "succeeded",
@@ -227,7 +117,27 @@ function seedSchema(dbPath: string): void {
     "2026-05-04T13:00:00+00:00",
     "2026-05-04T13:05:00+00:00",
   );
+  db.prepare(
+    `INSERT INTO job_stage_states (
+       tenant_id, job_id, stage, state, updated_at, finished_at
+     ) VALUES ('local', ?, 'discover', 'succeeded', ?, ?)`,
+  ).run(EVENT_JOB_ID, "2026-05-04T12:00:00+00:00", "2026-05-04T12:00:00+00:00");
   db.close();
+}
+
+function seedBuiltInResumeTemplate(db: Database.Database): void {
+  db.prepare(
+    `INSERT INTO resume_templates (
+       tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+     ) VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)`,
+  ).run("2026-05-04T12:00:00+00:00", "2026-05-04T12:00:00+00:00");
+  db.prepare(
+    `INSERT INTO resume_template_versions (
+       tenant_id, version_id, template_id, version_number, display_name, status,
+       theme_json, layout_json, content_hash, created_at
+     ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
+               'Modern HTML', 'active', ?, '{}', 'projection-fixture-template', ?)`,
+  ).run(JSON.stringify(BUILT_IN_RESUME_TEMPLATE_THEME), "2026-05-04T12:00:00+00:00");
 }
 
 function insertEvent(
@@ -238,8 +148,8 @@ function insertEvent(
 ): void {
   const db = new Database(dbPath);
   db.prepare(
-    "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).run(null, "discover", eventType, "info", eventType, occurredAt, JSON.stringify(payload));
+    "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) VALUES ('local', NULL, 1, ?, ?, 'info', ?, ?, ?)",
+  ).run("discover", eventType, eventType, occurredAt, JSON.stringify(payload));
   db.close();
 }
 
@@ -310,72 +220,13 @@ function insertOperationalMetric(
 
 function insertCompensationRows(dbPath: string): void {
   const db = new Database(dbPath);
-  const jobUrl = "https://example.com/jobs/event-driven";
-  db.prepare("UPDATE jobs SET salary = ? WHERE url = ?").run("USD 70000-90000/year", jobUrl);
-  db.exec(`
-    CREATE TABLE job_posted_compensation_facts (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      source_field TEXT NOT NULL DEFAULT 'jobs.salary',
-      source_text TEXT,
-      legacy_raw_salary TEXT,
-      parse_state TEXT NOT NULL,
-      currency TEXT,
-      period TEXT NOT NULL DEFAULT 'unknown',
-      component TEXT NOT NULL DEFAULT 'unknown',
-      minimum_amount INTEGER,
-      maximum_amount INTEGER,
-      annualized_minimum_amount INTEGER,
-      annualized_maximum_amount INTEGER,
-      annualization_assumption TEXT,
-      confidence TEXT NOT NULL DEFAULT 'none',
-      warnings_json TEXT NOT NULL DEFAULT '[]',
-      parser_version TEXT NOT NULL,
-      source_hash TEXT NOT NULL,
-      parsed_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, job_url)
-    );
-    CREATE TABLE job_market_compensation_estimates (
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
-      estimate_state TEXT NOT NULL,
-      currency TEXT,
-      period TEXT NOT NULL DEFAULT 'year',
-      component TEXT NOT NULL DEFAULT 'base_salary',
-      minimum_amount INTEGER,
-      maximum_amount INTEGER,
-      confidence_interval_minimum_amount INTEGER,
-      confidence_interval_maximum_amount INTEGER,
-      confidence_band TEXT NOT NULL DEFAULT 'none',
-      confidence_score REAL NOT NULL DEFAULT 0,
-      source_count INTEGER NOT NULL DEFAULT 0,
-      sample_count INTEGER,
-      aggregate_bucket TEXT,
-      geography_scope TEXT,
-      occupation_code TEXT,
-      occupation_label TEXT,
-      seniority_label TEXT,
-      source_snapshot_json TEXT NOT NULL DEFAULT '[]',
-      factor_reasons_json TEXT NOT NULL DEFAULT '[]',
-      selected_evidence_json TEXT NOT NULL DEFAULT '[]',
-      insufficient_reasons_json TEXT NOT NULL DEFAULT '[]',
-      unsupported_reasons_json TEXT NOT NULL DEFAULT '[]',
-      source_unavailable_reasons_json TEXT NOT NULL DEFAULT '[]',
-      warnings_json TEXT NOT NULL DEFAULT '[]',
-      estimator_version TEXT NOT NULL,
-      estimated_at TEXT NOT NULL,
-      company_name TEXT,
-      normalized_company TEXT,
-      role_title TEXT,
-      normalized_role TEXT,
-      company_tier TEXT NOT NULL DEFAULT 'unknown',
-      match_scope TEXT NOT NULL DEFAULT 'none',
-      PRIMARY KEY (tenant_id, job_url)
-    );
-  `);
+  db.prepare("UPDATE jobs SET salary = ? WHERE tenant_id = 'local' AND job_id = ?").run(
+    "USD 70000-90000/year",
+    EVENT_JOB_ID,
+  );
   db.prepare(
     `INSERT INTO job_posted_compensation_facts (
-      tenant_id, job_url, source_field, source_text, legacy_raw_salary,
+      tenant_id, job_id, source_field, source_text, legacy_raw_salary,
       parse_state, currency, period, component, minimum_amount, maximum_amount,
       annualized_minimum_amount, annualized_maximum_amount,
       annualization_assumption, confidence, warnings_json, parser_version,
@@ -383,7 +234,7 @@ function insertCompensationRows(dbPath: string): void {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
-    jobUrl,
+    EVENT_JOB_ID,
     "jobs.salary",
     "USD 70000-90000/year",
     "USD 70000-90000/year",
@@ -404,7 +255,7 @@ function insertCompensationRows(dbPath: string): void {
   );
   db.prepare(
     `INSERT INTO job_market_compensation_estimates (
-      tenant_id, job_url, estimate_state, currency, period, component,
+      tenant_id, job_id, estimate_state, currency, period, component,
       minimum_amount, maximum_amount, confidence_interval_minimum_amount,
       confidence_interval_maximum_amount, confidence_band, confidence_score,
       source_count, sample_count, aggregate_bucket, geography_scope,
@@ -415,7 +266,7 @@ function insertCompensationRows(dbPath: string): void {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
-    jobUrl,
+    EVENT_JOB_ID,
     "estimated_range",
     "EUR",
     "year",
@@ -502,244 +353,6 @@ function insertCompensationRows(dbPath: string): void {
   db.close();
 }
 
-// Source tables the career evidence map reads, plus the soft-delete/hidden
-// lifecycle tables owned by the TS write-model. Mirrors the inline schema of
-// the evidence-map projection test so the deleted/hidden regression fixture can
-// seed canonical rows.
-function createEvidenceMapSchema(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE candidate_profile_experience_entries (
-      tenant_id TEXT NOT NULL,
-      profile_id TEXT NOT NULL,
-      entry_id TEXT NOT NULL,
-      position_index INTEGER NOT NULL,
-      date_range TEXT NOT NULL DEFAULT '',
-      title TEXT NOT NULL DEFAULT '',
-      company TEXT NOT NULL DEFAULT '',
-      location TEXT NOT NULL DEFAULT '',
-      PRIMARY KEY (tenant_id, profile_id, entry_id)
-    );
-    CREATE TABLE candidate_profile_achievement_evidence (
-      tenant_id TEXT NOT NULL,
-      profile_id TEXT NOT NULL,
-      entry_id TEXT NOT NULL,
-      evidence_index INTEGER NOT NULL,
-      evidence_id TEXT NOT NULL DEFAULT '',
-      source_text TEXT NOT NULL DEFAULT '',
-      scope TEXT NOT NULL DEFAULT '',
-      action TEXT NOT NULL DEFAULT '',
-      tools_json TEXT NOT NULL DEFAULT '[]',
-      metrics_json TEXT NOT NULL DEFAULT '[]',
-      outcome TEXT NOT NULL DEFAULT '',
-      seniority_signal TEXT NOT NULL DEFAULT '',
-      evidence_strength TEXT NOT NULL DEFAULT 'supported',
-      claim_confidence REAL NOT NULL DEFAULT 0,
-      user_confirmed INTEGER NOT NULL DEFAULT 0,
-      tags_json TEXT NOT NULL DEFAULT '[]',
-      PRIMARY KEY (tenant_id, profile_id, entry_id, evidence_index)
-    );
-    CREATE TABLE candidate_profile_skill_categories (
-      tenant_id TEXT NOT NULL,
-      profile_id TEXT NOT NULL,
-      category_id TEXT NOT NULL,
-      position_index INTEGER NOT NULL,
-      label TEXT NOT NULL DEFAULT '',
-      PRIMARY KEY (tenant_id, profile_id, category_id)
-    );
-    CREATE TABLE candidate_profile_skill_items (
-      tenant_id TEXT NOT NULL,
-      profile_id TEXT NOT NULL,
-      category_id TEXT NOT NULL,
-      item_index INTEGER NOT NULL,
-      item_text TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, profile_id, category_id, item_index)
-    );
-    CREATE TABLE job_materials (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      status TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY (job_url, generation)
-    );
-    CREATE TABLE job_materials_artifacts (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      artifact_type TEXT NOT NULL,
-      artifact_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      path TEXT NOT NULL,
-      render_format TEXT NOT NULL,
-      size_bytes INTEGER,
-      metadata_json TEXT,
-      created_at TEXT NOT NULL,
-      superseded_at TEXT,
-      PRIMARY KEY (job_url, generation, artifact_type)
-    );
-    CREATE TABLE job_bullet_provenance (
-      job_url TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      bullet_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      artifact_id TEXT NOT NULL,
-      section TEXT NOT NULL,
-      source_id TEXT,
-      evidence_ids_json TEXT NOT NULL DEFAULT '[]',
-      requirement_ids_json TEXT NOT NULL DEFAULT '[]',
-      matched_keywords_json TEXT NOT NULL DEFAULT '[]',
-      transform_type TEXT NOT NULL,
-      control TEXT NOT NULL,
-      rationale TEXT NOT NULL DEFAULT '',
-      generated_text TEXT NOT NULL,
-      position INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      coverage_json TEXT,
-      voice_json TEXT,
-      PRIMARY KEY (job_url, generation, bullet_id)
-    );
-    CREATE TABLE job_requirement_fit_reports (
-      job_url TEXT NOT NULL,
-      score_version INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      employer_analysis_generation INTEGER NOT NULL,
-      profile_snapshot_version INTEGER NOT NULL,
-      scoring_policy_version INTEGER NOT NULL,
-      formula_version TEXT NOT NULL,
-      resolved_fit_score INTEGER,
-      fit_band TEXT NOT NULL,
-      confidence TEXT NOT NULL,
-      summary_json TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (job_url, score_version, tenant_id)
-    );
-    CREATE TABLE job_requirement_fit_items (
-      job_url TEXT NOT NULL,
-      score_version INTEGER NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'local',
-      requirement_id TEXT NOT NULL,
-      requirement_text TEXT NOT NULL,
-      tier TEXT NOT NULL,
-      weight REAL NOT NULL,
-      job_evidence_span TEXT NOT NULL,
-      fit_json TEXT NOT NULL,
-      contribution_json TEXT NOT NULL,
-      tailoring_json TEXT NOT NULL,
-      artifact_coverage_json TEXT,
-      position INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (job_url, score_version, tenant_id, requirement_id)
-    );
-    CREATE TABLE jobctrl_deleted_jobs (
-      job_url TEXT PRIMARY KEY,
-      deleted_at TEXT NOT NULL,
-      reason TEXT,
-      restored_at TEXT
-    );
-    CREATE TABLE jobctrl_hidden_jobs (
-      job_url TEXT PRIMARY KEY,
-      hidden_at TEXT NOT NULL,
-      reason TEXT,
-      unhidden_at TEXT
-    );
-  `);
-}
-
-describe("projection schema upgrades", () => {
-  it("adds workflow-run projection columns to existing legacy tables", () => {
-    const { dbPath, cleanup } = withTempDb();
-    try {
-      const db = new Database(dbPath);
-      try {
-        db.exec(`
-          CREATE TABLE workflow_run_projections (
-            workflow_id            TEXT PRIMARY KEY,
-            run_id                 TEXT NOT NULL DEFAULT '',
-            tenant_id              TEXT NOT NULL DEFAULT 'local',
-            workflow_type          TEXT NOT NULL DEFAULT 'pipeline',
-            job_id                 TEXT NOT NULL DEFAULT '',
-            title                  TEXT NOT NULL DEFAULT '',
-            company                TEXT NOT NULL DEFAULT '',
-            status                 TEXT NOT NULL DEFAULT 'starting',
-            result                 TEXT,
-            dry_run                INTEGER NOT NULL DEFAULT 0,
-            model                  TEXT,
-            started_at             TEXT,
-            finished_at            TEXT,
-            duration_ms            INTEGER,
-            stages_json            TEXT NOT NULL DEFAULT '[]',
-            events_json            TEXT NOT NULL DEFAULT '[]'
-          );
-        `);
-
-        expect(ensureProjectionTables(db)).toBe(true);
-
-        const columns = new Set(
-          (db.prepare("PRAGMA table_info(workflow_run_projections)").all() as Array<{ name: string }>).map(
-            (row) => row.name,
-          ),
-        );
-        expect([...columns]).toEqual(
-          expect.arrayContaining([
-            "input_summary_json",
-            "error_code",
-            "error_message",
-            "retryable",
-            "temporal_run_id",
-          ]),
-        );
-      } finally {
-        db.close();
-      }
-    } finally {
-      cleanup();
-    }
-  });
-
-  it("tolerates a concurrent process adding a column between check and ALTER", () => {
-    const { dbPath, cleanup } = withTempDb();
-    try {
-      const db = new Database(dbPath);
-      try {
-        ensureProjectionTables(db);
-
-        // Simulate the Python worker winning the check-then-ALTER race on the
-        // shared SQLite file: the pre-ALTER check sees the column as missing,
-        // but the ALTER hits a table that already has it.
-        const realPrepare = db.prepare.bind(db);
-        const realExec = db.exec.bind(db);
-        let staleCheckArmed = true;
-        let duplicateAlterAttempted = false;
-        Reflect.set(db, "prepare", (sql: string) => {
-          const statement = realPrepare(sql);
-          if (staleCheckArmed && sql.includes("table_info(workflow_run_projections)")) {
-            return {
-              all: () =>
-                (statement.all() as Array<{ name: string }>).filter(
-                  (row) => row.name !== "input_summary_json",
-                ),
-            };
-          }
-          return statement;
-        });
-        Reflect.set(db, "exec", (sql: string) => {
-          if (sql.includes("ADD COLUMN input_summary_json")) {
-            staleCheckArmed = false;
-            duplicateAlterAttempted = true;
-          }
-          return realExec(sql);
-        });
-
-        expect(() => ensureProjectionTables(db)).not.toThrow();
-        expect(duplicateAlterAttempted).toBe(true);
-      } finally {
-        db.close();
-      }
-    } finally {
-      cleanup();
-    }
-  });
-});
-
 describe("apply_run_projections without legacy apply_runs table", () => {
   it("dashboard summary surfaces the projection row when apply_runs is absent", async () => {
     const { dbPath, cleanup } = withTempDb();
@@ -781,7 +394,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(res.statusCode, res.body).toBe(200);
         const item = res
           .json()
-          .items.find((j: { jobKey: string }) => j.jobKey === "https://example.com/jobs/event-driven");
+          .items.find((j: { jobKey: string }) => j.jobKey === EVENT_JOB_ID);
         expect(item).toBeDefined();
         expect(item.applyStatus).toBe("applied");
         expect(item.appliedAt).toBe("2026-05-04T13:05:00+00:00");
@@ -817,7 +430,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
                FROM job_list_projections
               WHERE tenant_id = 'local' AND job_id = ?`,
           )
-          .get("https://example.com/jobs/event-driven") as
+          .get(EVENT_JOB_ID) as
           | { salary: string; compensation_summary_json: string }
           | undefined;
         expect(listProjection?.salary).toBe("USD 70000-90000/year");
@@ -871,7 +484,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
                FROM job_detail_projections
               WHERE tenant_id = 'local' AND job_id = ?`,
           )
-          .get("https://example.com/jobs/event-driven") as
+          .get(EVENT_JOB_ID) as
           | { compensation_audit_json: string }
           | undefined;
         const audit = JSON.parse(detailProjection?.compensation_audit_json ?? "{}");
@@ -938,7 +551,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
                   normalized_role = ?,
                   company_tier = ?,
                   match_scope = ?
-            WHERE tenant_id = 'local' AND job_url = ?`,
+            WHERE tenant_id = 'local' AND job_id = ?`,
         ).run(
           168000,
           190000,
@@ -1027,7 +640,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           "platform engineer",
           "tier_3_top_of_market",
           "tier_role_fallback",
-          "https://example.com/jobs/event-driven",
+          EVENT_JOB_ID,
         );
       } finally {
         db.close();
@@ -1054,7 +667,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
                  ON d.tenant_id = l.tenant_id AND d.job_id = l.job_id
               WHERE l.tenant_id = 'local' AND l.job_id = ?`,
           )
-          .get("https://example.com/jobs/event-driven") as
+          .get(EVENT_JOB_ID) as
           | { compensation_summary_json: string; compensation_audit_json: string }
           | undefined;
         const summary = JSON.parse(projections?.compensation_summary_json ?? "{}");
@@ -1158,29 +771,29 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       seedSchema(dbPath);
       const db = new Database(dbPath);
       const insertStage = db.prepare(
-        `INSERT INTO job_stage_states (job_url, stage, state, updated_at, finished_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(job_url, stage) DO UPDATE SET
+        `INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, finished_at)
+         VALUES ('local', ?, ?, ?, ?, ?)
+         ON CONFLICT(tenant_id, job_id, stage) DO UPDATE SET
            state = excluded.state,
            updated_at = excluded.updated_at,
            finished_at = excluded.finished_at`,
       );
       insertStage.run(
-        "https://example.com/jobs/event-driven",
+        EVENT_JOB_ID,
         "discover",
         "succeeded",
         "2026-05-04T13:00:00+00:00",
         "2026-05-04T13:00:00+00:00",
       );
       insertStage.run(
-        "https://example.com/jobs/event-driven",
+        EVENT_JOB_ID,
         "enrich",
         "succeeded",
         "2026-05-04T13:05:00+00:00",
         "2026-05-04T13:05:00+00:00",
       );
       insertStage.run(
-        "https://example.com/jobs/event-driven",
+        EVENT_JOB_ID,
         "score",
         "pending",
         "2026-05-04T13:10:00+00:00",
@@ -1197,7 +810,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(listRes.statusCode, listRes.body).toBe(200);
         const item = listRes
           .json()
-          .items.find((job: { jobKey: string }) => job.jobKey === "https://example.com/jobs/event-driven");
+          .items.find((job: { jobKey: string }) => job.jobKey === EVENT_JOB_ID);
         expect(item).toMatchObject({
           currentStage: "discover",
           currentState: "pending",
@@ -1231,7 +844,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       try {
         const baseline = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
         expect(baseline.statusCode, baseline.body).toBe(200);
-        const item = baseline.json().items.find((job: { jobKey: string }) => job.jobKey === jobUrl);
+        const item = baseline.json().items.find((job: { jobKey: string }) => job.jobKey === EVENT_JOB_ID);
         expect(item).toMatchObject({
           currentStage: "discover",
           currentSubstage: "enrich",
@@ -1243,25 +856,24 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const db = new Database(dbPath);
       const insertStage = db.prepare(
-        `INSERT INTO job_stage_states (job_url, stage, state, updated_at, finished_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(job_url, stage) DO UPDATE SET
+        `INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, finished_at)
+         VALUES ('local', ?, ?, ?, ?, ?)
+         ON CONFLICT(tenant_id, job_id, stage) DO UPDATE SET
            state = excluded.state,
            updated_at = excluded.updated_at,
            finished_at = excluded.finished_at`,
       );
-      insertStage.run(jobUrl, "discover", "succeeded", "2026-05-04T13:00:00+00:00", "2026-05-04T13:00:00+00:00");
-      insertStage.run(jobUrl, "enrich", "succeeded", "2026-05-04T13:05:00+00:00", "2026-05-04T13:05:00+00:00");
-      insertStage.run(jobUrl, "score", "pending", "2026-05-04T13:10:00+00:00", null);
+      insertStage.run(EVENT_JOB_ID, "discover", "succeeded", "2026-05-04T13:00:00+00:00", "2026-05-04T13:00:00+00:00");
+      insertStage.run(EVENT_JOB_ID, "enrich", "succeeded", "2026-05-04T13:05:00+00:00", "2026-05-04T13:05:00+00:00");
+      insertStage.run(EVENT_JOB_ID, "score", "pending", "2026-05-04T13:10:00+00:00", null);
       db.prepare("UPDATE job_list_projections SET last_updated_at = ? WHERE tenant_id = ? AND job_id = ?").run(
         "2026-05-04T12:00:00+00:00",
         "local",
-        jobUrl,
+        EVENT_JOB_ID,
       );
       db.prepare(
-        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) VALUES ('local', NULL, 1, ?, ?, ?, ?, ?, ?)",
       ).run(
-        null,
         "discover",
         "StageCompleted",
         "info",
@@ -1278,7 +890,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       try {
         const listRes = await refreshedApp.inject({ method: "GET", url: "/v1/jobs?q=event" });
         expect(listRes.statusCode, listRes.body).toBe(200);
-        const item = listRes.json().items.find((job: { jobKey: string }) => job.jobKey === jobUrl);
+        const item = listRes.json().items.find((job: { jobKey: string }) => job.jobKey === EVENT_JOB_ID);
         expect(item).toMatchObject({
           currentStage: "discover",
           currentSubstage: "score",
@@ -1310,17 +922,36 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
-      db.prepare("UPDATE jobs SET tailored_resume_path = ?, tailored_at = ? WHERE url = ?").run(
+      db.prepare(
+        `INSERT INTO job_materials (
+           tenant_id, job_id, generation, status, created_at, updated_at
+         ) VALUES ('local', ?, 1, 'complete', ?, ?)`,
+      ).run(
+        EVENT_JOB_ID,
+        "2026-05-04T13:12:00+00:00",
+        "2026-05-04T13:12:00+00:00",
+      );
+      db.prepare(
+        `INSERT INTO job_materials_artifacts (
+           tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
+           render_format, created_at
+         ) VALUES ('local', ?, 1, 'tailored_resume', 'resume-cover-ready', 'approved', ?, 'text', ?)`,
+      ).run(
+        EVENT_JOB_ID,
         "/tmp/tailored-resume.txt",
         "2026-05-04T13:12:00+00:00",
-        "https://example.com/jobs/event-driven",
       );
       const insertStage = db.prepare(
-        "INSERT INTO job_stage_states (job_url, stage, state, updated_at, finished_at) VALUES (?, ?, ?, ?, ?)",
+        `INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, finished_at)
+         VALUES ('local', ?, ?, ?, ?, ?)
+         ON CONFLICT(tenant_id, job_id, stage) DO UPDATE SET
+           state = excluded.state,
+           updated_at = excluded.updated_at,
+           finished_at = excluded.finished_at`,
       );
       for (const stage of ["discover", "enrich", "score", "tailor"]) {
         insertStage.run(
-          "https://example.com/jobs/event-driven",
+          EVENT_JOB_ID,
           stage,
           "succeeded",
           "2026-05-04T13:00:00+00:00",
@@ -1328,7 +959,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         );
       }
       insertStage.run(
-        "https://example.com/jobs/event-driven",
+        EVENT_JOB_ID,
         "cover",
         "pending",
         "2026-05-04T13:15:00+00:00",
@@ -1345,7 +976,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(listRes.statusCode, listRes.body).toBe(200);
         const item = listRes
           .json()
-          .items.find((job: { jobKey: string }) => job.jobKey === "https://example.com/jobs/event-driven");
+          .items.find((job: { jobKey: string }) => job.jobKey === EVENT_JOB_ID);
         expect(item).toMatchObject({
           currentStage: "apply",
           currentSubstage: "cover",
@@ -1364,56 +995,28 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
-      db.exec(`
-        CREATE TABLE job_materials (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          status TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          last_validation_json TEXT,
-          last_verdict_json TEXT,
-          metadata_json TEXT,
-          PRIMARY KEY (job_url, generation)
-        );
-        CREATE TABLE job_materials_artifacts (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          artifact_type TEXT NOT NULL,
-          artifact_id TEXT NOT NULL,
-          status TEXT NOT NULL,
-          path TEXT NOT NULL,
-          render_format TEXT NOT NULL,
-          size_bytes INTEGER,
-          metadata_json TEXT,
-          created_at TEXT NOT NULL,
-          superseded_at TEXT,
-          PRIMARY KEY (job_url, generation, artifact_type)
-        );
-      `);
-      const jobUrl = "https://example.com/jobs/event-driven";
+      const jobId = EVENT_JOB_ID;
       const insertMaterials = db.prepare(
         `INSERT INTO job_materials (
-          job_url, generation, tenant_id, status, created_at, updated_at
-        ) VALUES (?, ?, 'local', ?, ?, ?)`,
+          tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES ('local', ?, ?, ?, ?, ?)`,
       );
       insertMaterials.run(
-        jobUrl,
+        jobId,
         1,
         "complete",
         "2026-05-04T12:00:00+00:00",
         "2026-05-04T12:10:00+00:00",
       );
       insertMaterials.run(
-        jobUrl,
+        jobId,
         3,
         "complete",
         "2026-05-04T13:00:00+00:00",
         "2026-05-04T13:10:00+00:00",
       );
       insertMaterials.run(
-        jobUrl,
+        jobId,
         4,
         "resume_in_progress",
         "2026-05-04T14:00:00+00:00",
@@ -1421,12 +1024,12 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       );
       const insertArtifact = db.prepare(
         `INSERT INTO job_materials_artifacts (
-          job_url, generation, artifact_type, artifact_id, status, path,
+          tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
           render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       insertArtifact.run(
-        jobUrl,
+        jobId,
         1,
         "tailored_resume",
         "gen1-superseded-resume",
@@ -1438,7 +1041,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         "2026-05-04T12:05:00+00:00",
       );
       insertArtifact.run(
-        jobUrl,
+        jobId,
         3,
         "tailored_resume",
         "gen3-resume",
@@ -1450,7 +1053,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         "2026-05-04T13:05:00+00:00",
       );
       insertArtifact.run(
-        jobUrl,
+        jobId,
         3,
         "resume_pdf",
         "gen3-pdf",
@@ -1462,7 +1065,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         "2026-05-04T13:06:00+00:00",
       );
       insertArtifact.run(
-        jobUrl,
+        jobId,
         4,
         "tailored_resume",
         "gen4-rejected-resume",
@@ -1494,7 +1097,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
                FROM job_list_projections
               WHERE tenant_id = 'local' AND job_id = ?`,
           )
-          .get(jobUrl) as { has_resume: number; has_pdf: number } | undefined;
+          .get(jobId) as { has_resume: number; has_pdf: number } | undefined;
         expect(projection).toMatchObject({ has_resume: 1, has_pdf: 1 });
 
         const rejected = readDb
@@ -1505,10 +1108,10 @@ describe("apply_run_projections without legacy apply_runs table", () => {
                 AND job_id = ?
                 AND artifact_id = 'gen4-rejected-resume'`,
           )
-          .get(jobUrl) as { status: string } | undefined;
+          .get(jobId) as { status: string } | undefined;
         expect(rejected).toMatchObject({ status: "rejected" });
 
-        const syntheticPdf = readDb
+        const explicitPdf = readDb
           .prepare(
             `SELECT metadata_json
                FROM artifact_list_projections
@@ -1516,8 +1119,19 @@ describe("apply_run_projections without legacy apply_runs table", () => {
                 AND job_id = ?
                 AND artifact_type = 'tailored_resume_pdf'`,
           )
-          .get(jobUrl) as { metadata_json: string | null } | undefined;
-        expect(JSON.parse(syntheticPdf?.metadata_json ?? "{}")).toMatchObject({
+          .get(jobId) as { metadata_json: string | null } | undefined;
+        expect(JSON.parse(explicitPdf?.metadata_json ?? "{}")).toEqual({});
+
+        const approvedResume = readDb
+          .prepare(
+            `SELECT metadata_json
+               FROM artifact_list_projections
+              WHERE tenant_id = 'local'
+                AND job_id = ?
+                AND artifact_id = 'gen3-resume'`,
+          )
+          .get(jobId) as { metadata_json: string | null } | undefined;
+        expect(JSON.parse(approvedResume?.metadata_json ?? "{}")).toMatchObject({
           quality_plan: { target_seniority: "executive" },
         });
       } finally {
@@ -1533,71 +1147,25 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
-      db.exec(`
-        CREATE TABLE job_materials (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          status TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          last_validation_json TEXT,
-          last_verdict_json TEXT,
-          metadata_json TEXT,
-          PRIMARY KEY (job_url, generation)
-        );
-        CREATE TABLE job_materials_artifacts (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          artifact_type TEXT NOT NULL,
-          artifact_id TEXT NOT NULL,
-          status TEXT NOT NULL,
-          path TEXT NOT NULL,
-          render_format TEXT NOT NULL,
-          size_bytes INTEGER,
-          metadata_json TEXT,
-          created_at TEXT NOT NULL,
-          superseded_at TEXT,
-          PRIMARY KEY (job_url, generation, artifact_type)
-        );
-        CREATE TABLE job_material_layout_boxes (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          artifact_id TEXT NOT NULL,
-          box_index INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          semantic_id TEXT NOT NULL,
-          page_number INTEGER NOT NULL,
-          line_number INTEGER,
-          text_excerpt TEXT NOT NULL,
-          left_pct REAL NOT NULL,
-          top_pct REAL NOT NULL,
-          width_pct REAL NOT NULL,
-          height_pct REAL NOT NULL,
-          audit_target_json TEXT NOT NULL DEFAULT '{}',
-          created_at TEXT NOT NULL,
-          PRIMARY KEY (job_url, generation, artifact_id, box_index)
-        );
-      `);
-      const jobUrl = "https://example.com/jobs/event-driven";
+      const jobId = EVENT_JOB_ID;
       db.prepare(
         `INSERT INTO job_materials (
-          job_url, generation, tenant_id, status, created_at, updated_at
-        ) VALUES (?, 1, 'local', 'complete', ?, ?)`,
-      ).run(jobUrl, "2026-05-04T13:00:00+00:00", "2026-05-04T13:10:00+00:00");
+          tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES ('local', ?, 1, 'complete', ?, ?)`,
+      ).run(jobId, "2026-05-04T13:00:00+00:00", "2026-05-04T13:10:00+00:00");
       db.prepare(
         `INSERT INTO job_materials_artifacts (
-          job_url, generation, artifact_type, artifact_id, status, path,
+          tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
           render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'resume_pdf', 'html-resume-pdf', 'approved', ?, 'html_pdf', 20, '{}', ?)`,
-      ).run(jobUrl, "/tmp/html-resume.pdf", "2026-05-04T13:06:00+00:00");
+        ) VALUES ('local', ?, 1, 'resume_pdf', 'html-resume-pdf', 'approved', ?, 'html_pdf', 20, '{}', ?)`,
+      ).run(jobId, "/tmp/html-resume.pdf", "2026-05-04T13:06:00+00:00");
       db.prepare(
         `INSERT INTO job_material_layout_boxes (
-          job_url, generation, artifact_id, box_index, tenant_id,
+          tenant_id, job_id, generation, artifact_id, box_index,
           semantic_id, page_number, line_number, text_excerpt,
           left_pct, top_pct, width_pct, height_pct, audit_target_json, created_at
-        ) VALUES (?, 1, 'html-resume-pdf', 0, 'local', ?, 1, 6, ?, 12.5, 24.0, 62.0, 2.4, '{}', ?)`,
-      ).run(jobUrl, "experience:acme:bullet:1", "Cut latency.", "2026-05-04T13:06:00+00:00");
+        ) VALUES ('local', ?, 1, 'html-resume-pdf', 0, ?, 1, 6, ?, 12.5, 24.0, 62.0, 2.4, '{}', ?)`,
+      ).run(jobId, "experience:acme:bullet:1", "Cut latency.", "2026-05-04T13:06:00+00:00");
       db.close();
 
       const app = buildApp({
@@ -1621,7 +1189,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
                 AND job_id = ?
                 AND artifact_id = 'html-resume-pdf'`,
           )
-          .get(jobUrl) as { layout_boxes_json: string | null } | undefined;
+          .get(jobId) as { layout_boxes_json: string | null } | undefined;
         expect(JSON.parse(projection?.layout_boxes_json ?? "[]")).toEqual([
           {
             semanticId: "experience:acme:bullet:1",
@@ -1647,47 +1215,19 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
-      db.exec(`
-        CREATE TABLE job_materials (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          status TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          last_validation_json TEXT,
-          last_verdict_json TEXT,
-          metadata_json TEXT,
-          PRIMARY KEY (job_url, generation)
-        );
-        CREATE TABLE job_materials_artifacts (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          artifact_type TEXT NOT NULL,
-          artifact_id TEXT NOT NULL,
-          status TEXT NOT NULL,
-          path TEXT NOT NULL,
-          render_format TEXT NOT NULL,
-          size_bytes INTEGER,
-          metadata_json TEXT,
-          created_at TEXT NOT NULL,
-          superseded_at TEXT,
-          PRIMARY KEY (job_url, generation, artifact_type)
-        );
-      `);
-      const jobUrl = "https://example.com/jobs/event-driven";
+      const jobId = EVENT_JOB_ID;
       db.prepare(
         `INSERT INTO job_materials (
-          job_url, generation, tenant_id, status, created_at, updated_at
-        ) VALUES (?, 1, 'local', 'complete', ?, ?)`,
-      ).run(jobUrl, "2026-05-04T13:00:00+00:00", "2026-05-04T13:10:00+00:00");
+          tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES ('local', ?, 1, 'complete', ?, ?)`,
+      ).run(jobId, "2026-05-04T13:00:00+00:00", "2026-05-04T13:10:00+00:00");
       db.prepare(
         `INSERT INTO job_materials_artifacts (
-          job_url, generation, artifact_type, artifact_id, status, path,
+          tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
           render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'tailored_resume', 'stale-resume', 'approved', ?, 'text', 10, ?, ?)`,
+        ) VALUES ('local', ?, 1, 'tailored_resume', 'stale-resume', 'approved', ?, 'text', 10, ?, ?)`,
       ).run(
-        jobUrl,
+        jobId,
         "/tmp/stale-resume.txt",
         JSON.stringify({
           quality_plan: { target_seniority: "executive" },
@@ -1728,7 +1268,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
                 AND job_id = ?
                 AND artifact_type = 'tailored_resume'`,
           )
-          .run(jobUrl);
+          .run(jobId);
         corruptDb.close();
 
         const secondRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
@@ -1747,7 +1287,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
                 AND job_id = ?
                 AND artifact_type = 'tailored_resume'`,
           )
-          .get(jobUrl) as { metadata_json: string | null } | undefined;
+          .get(jobId) as { metadata_json: string | null } | undefined;
         expect(JSON.parse(projection?.metadata_json ?? "{}")).toMatchObject({
           quality_plan: { target_seniority: "executive" },
           selected_model: "generator-a",
@@ -1776,49 +1316,21 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
-      db.exec(`
-        CREATE TABLE job_materials (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          status TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          last_validation_json TEXT,
-          last_verdict_json TEXT,
-          metadata_json TEXT,
-          PRIMARY KEY (job_url, generation)
-        );
-        CREATE TABLE job_materials_artifacts (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          artifact_type TEXT NOT NULL,
-          artifact_id TEXT NOT NULL,
-          status TEXT NOT NULL,
-          path TEXT NOT NULL,
-          render_format TEXT NOT NULL,
-          size_bytes INTEGER,
-          metadata_json TEXT,
-          created_at TEXT NOT NULL,
-          superseded_at TEXT,
-          PRIMARY KEY (job_url, generation, artifact_type)
-        );
-      `);
-      const jobUrl = "https://example.com/jobs/event-driven";
+      const jobId = EVENT_JOB_ID;
       const insertMaterials = db.prepare(
         `INSERT INTO job_materials (
-          job_url, generation, tenant_id, status, created_at, updated_at
-        ) VALUES (?, ?, 'local', ?, ?, ?)`,
+          tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES ('local', ?, ?, ?, ?, ?)`,
       );
       insertMaterials.run(
-        jobUrl,
+        jobId,
         1,
         "complete",
         "2026-05-04T13:00:00+00:00",
         "2026-05-04T13:10:00+00:00",
       );
       insertMaterials.run(
-        jobUrl,
+        jobId,
         2,
         "complete",
         "2026-05-04T14:00:00+00:00",
@@ -1826,12 +1338,12 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       );
       const insertArtifact = db.prepare(
         `INSERT INTO job_materials_artifacts (
-          job_url, generation, artifact_type, artifact_id, status, path,
+          tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
           render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, ?, 'tailored_resume', ?, ?, ?, 'text', ?, ?, ?)`,
+        ) VALUES ('local', ?, ?, 'tailored_resume', ?, ?, ?, 'text', ?, ?, ?)`,
       );
       insertArtifact.run(
-        jobUrl,
+        jobId,
         1,
         "approved-resume",
         "approved",
@@ -1849,7 +1361,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         "2026-05-04T13:05:00+00:00",
       );
       insertArtifact.run(
-        jobUrl,
+        jobId,
         2,
         "rejected-resume",
         "rejected",
@@ -1877,7 +1389,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
                 AND job_id = ?
                 AND artifact_id = 'rejected-resume'`,
           )
-          .run(jobUrl);
+          .run(jobId);
         markerDb.close();
 
         const secondRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
@@ -1896,7 +1408,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
                 AND job_id = ?
                 AND artifact_id = 'rejected-resume'`,
           )
-          .get(jobUrl) as { status: string } | undefined;
+          .get(jobId) as { status: string } | undefined;
         expect(projection?.status).toBe("sentinel");
       } finally {
         readDb.close();
@@ -1906,7 +1418,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
-  it("backfills legacy jobs inserted after the first projection refresh", async () => {
+  it("projects canonical jobs inserted after the first projection refresh", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
       seedSchema(dbPath);
@@ -1920,8 +1432,9 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
         const db = new Database(dbPath);
         db.prepare(
-          "INSERT INTO jobs (url, title, site, strategy, location, discovered_at) VALUES (?, ?, ?, ?, ?, ?)",
+          "INSERT INTO jobs (tenant_id, job_id, url, title, site, strategy, location, discovered_at) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
         ).run(
+          projectionFixtureJobId(2),
           "https://example.com/jobs/late-legacy",
           "Late Legacy Engineer",
           "Workday",
@@ -1935,7 +1448,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(secondRes.statusCode, secondRes.body).toBe(200);
         const late = secondRes
           .json()
-          .items.find((j: { jobKey: string }) => j.jobKey === "https://example.com/jobs/late-legacy");
+          .items.find((j: { jobKey: string }) => j.jobKey === projectionFixtureJobId(2));
         expect(late).toMatchObject({
           title: "Late Legacy Engineer",
           source: "Workday",
@@ -1955,23 +1468,23 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       seedSchema(dbPath);
       const db = new Database(dbPath);
       const insert = db.prepare(
-        "INSERT INTO jobs (url, title, site, strategy, location, discovered_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, strategy, location, discovered_at) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)",
       );
       // seedSchema pre-seeds one ExampleCo job (count 1). Netflix leads on
       // count; Acme and Wayfair tie at 2, seeded reverse-alphabetically so a
       // count-only sort would leak insertion order. The tiebreak re-orders the
       // tie A->Z, byte-identical to the Python builder.
-      const seeded: Array<[string, string]> = [
-        ["https://example.com/jobs/w1", "Wayfair"],
-        ["https://example.com/jobs/w2", "Wayfair"],
-        ["https://example.com/jobs/n1", "Netflix"],
-        ["https://example.com/jobs/n2", "Netflix"],
-        ["https://example.com/jobs/n3", "Netflix"],
-        ["https://example.com/jobs/a1", "Acme"],
-        ["https://example.com/jobs/a2", "Acme"],
+      const seeded: Array<[string, string, string]> = [
+        [projectionFixtureJobId(3), "https://example.com/jobs/w1", "Wayfair"],
+        [projectionFixtureJobId(4), "https://example.com/jobs/w2", "Wayfair"],
+        [projectionFixtureJobId(5), "https://example.com/jobs/n1", "Netflix"],
+        [projectionFixtureJobId(6), "https://example.com/jobs/n2", "Netflix"],
+        [projectionFixtureJobId(7), "https://example.com/jobs/n3", "Netflix"],
+        [projectionFixtureJobId(8), "https://example.com/jobs/a1", "Acme"],
+        [projectionFixtureJobId(9), "https://example.com/jobs/a2", "Acme"],
       ];
-      for (const [url, site] of seeded) {
-        insert.run(url, "Engineer", site, "jobspy", "Remote", "2026-05-06T09:00:00+00:00");
+      for (const [jobId, url, site] of seeded) {
+        insert.run(jobId, url, "Engineer", site, "jobspy", "Remote", "2026-05-06T09:00:00+00:00");
       }
       db.close();
 
@@ -2011,8 +1524,9 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       seedSchema(dbPath);
       const db = new Database(dbPath);
       db.prepare(
-        "INSERT INTO jobs (url, title, company, site, strategy, location, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO jobs (tenant_id, job_id, url, title, company, site, strategy, location, discovered_at) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)",
       ).run(
+        projectionFixtureJobId(10),
         "https://www.linkedin.com/jobs/view/1",
         "Head of Engineering",
         "Keyrock",
@@ -2032,7 +1546,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(res.statusCode, res.body).toBe(200);
         const item = res
           .json()
-          .items.find((j: { jobKey: string }) => j.jobKey === "https://www.linkedin.com/jobs/view/1");
+          .items.find((j: { jobKey: string }) => j.jobKey === projectionFixtureJobId(10));
         expect(item).toMatchObject({
           title: "Head of Engineering",
           company: "Keyrock",
@@ -2051,40 +1565,19 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
-      db.exec(`
-        CREATE TABLE job_source_observations (
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          source_observation_id TEXT NOT NULL,
-          job_url TEXT NOT NULL,
-          source_id TEXT NOT NULL,
-          source_native_id TEXT NOT NULL,
-          observed_url TEXT NOT NULL,
-          normalized_observed_url TEXT NOT NULL,
-          run_id TEXT NOT NULL DEFAULT '',
-          observed_at TEXT NOT NULL,
-          PRIMARY KEY (tenant_id, source_observation_id)
-        );
-        CREATE TABLE job_canonical_identities (
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          job_url TEXT NOT NULL,
-          canonical_url TEXT NOT NULL,
-          ats_kind TEXT NOT NULL,
-          source_native_id TEXT NOT NULL,
-          confidence REAL NOT NULL,
-          resolved_at TEXT NOT NULL,
-          PRIMARY KEY (tenant_id, job_url)
-        );
-      `);
+      db.prepare(
+        "UPDATE jobs SET company = 'Acme', site = 'greenhouse' WHERE tenant_id = 'local' AND job_id = ?",
+      ).run(EVENT_JOB_ID);
       db.prepare(
         `INSERT INTO job_source_observations (
-          tenant_id, source_observation_id, job_url, source_id,
+          tenant_id, source_observation_id, job_id, source_id,
           source_native_id, observed_url, normalized_observed_url,
           run_id, observed_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         "local",
         "obs-linkedin",
-        "https://example.com/jobs/event-driven",
+        EVENT_JOB_ID,
         "jobspy:linkedin",
         "https://www.linkedin.com/jobs/view/1",
         "https://www.linkedin.com/jobs/view/1",
@@ -2094,12 +1587,12 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       );
       db.prepare(
         `INSERT INTO job_canonical_identities (
-          tenant_id, job_url, canonical_url, ats_kind, source_native_id,
+          tenant_id, job_id, canonical_url, ats_kind, source_native_id,
           confidence, resolved_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         "local",
-        "https://example.com/jobs/event-driven",
+        EVENT_JOB_ID,
         "https://boards.greenhouse.io/acme/jobs/123456",
         "greenhouse",
         "123456",
@@ -2117,26 +1610,62 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(listRes.statusCode, listRes.body).toBe(200);
         const item = listRes
           .json()
-          .items.find((j: { jobKey: string }) => j.jobKey === "https://example.com/jobs/event-driven");
+          .items.find((j: { jobKey: string }) => j.jobKey === EVENT_JOB_ID);
         expect(item).toMatchObject({
+          company: "Acme",
+          source: "greenhouse",
           discoverySource: "jobspy:linkedin",
           postingSource: "greenhouse:acme",
           postingSourceUrl: "https://boards.greenhouse.io/acme/jobs/123456",
         });
 
+        const companyFilteredRes = await app.inject({
+          method: "GET",
+          url: "/v1/jobs?company=Acme",
+        });
+        expect(companyFilteredRes.statusCode, companyFilteredRes.body).toBe(200);
+        expect(companyFilteredRes.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
+          EVENT_JOB_ID,
+        ]);
+
         const sourceFilteredRes = await app.inject({
+          method: "GET",
+          url: "/v1/jobs?source=greenhouse",
+        });
+        expect(sourceFilteredRes.statusCode, sourceFilteredRes.body).toBe(200);
+        expect(sourceFilteredRes.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
+          EVENT_JOB_ID,
+        ]);
+
+        const postingSourceFilteredRes = await app.inject({
           method: "GET",
           url: "/v1/jobs?source=greenhouse%3Aacme&q=event",
         });
-        expect(sourceFilteredRes.statusCode, sourceFilteredRes.body).toBe(200);
-        expect(sourceFilteredRes.json().items).toEqual(
+        expect(postingSourceFilteredRes.statusCode, postingSourceFilteredRes.body).toBe(200);
+        expect(postingSourceFilteredRes.json().items).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
-              jobKey: "https://example.com/jobs/event-driven",
+              jobKey: EVENT_JOB_ID,
               postingSource: "greenhouse:acme",
             }),
           ]),
         );
+
+        const combinedFilteredRes = await app.inject({
+          method: "GET",
+          url: "/v1/jobs?company=Acme&source=greenhouse",
+        });
+        expect(combinedFilteredRes.statusCode, combinedFilteredRes.body).toBe(200);
+        expect(combinedFilteredRes.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
+          EVENT_JOB_ID,
+        ]);
+
+        const crossedFilterRes = await app.inject({
+          method: "GET",
+          url: "/v1/jobs?company=greenhouse&source=Acme",
+        });
+        expect(crossedFilterRes.statusCode, crossedFilterRes.body).toBe(200);
+        expect(crossedFilterRes.json().items).toEqual([]);
 
         const detailRes = await app.inject({
           method: "GET",
@@ -2169,7 +1698,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(listRes.statusCode, listRes.body).toBe(200);
         const item = listRes
           .json()
-          .items.find((j: { jobKey: string }) => j.jobKey === "https://example.com/jobs/event-driven");
+          .items.find((j: { jobKey: string }) => j.jobKey === EVENT_JOB_ID);
         expect(item).toMatchObject({
           fitScore: 8,
           scoreBreakdown: {
@@ -2247,48 +1776,10 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     // them, then assert the TS projection builder + read model reconstruct the
     // same read shape the Python ``EmployerAnalysis.to_read_model()`` produces.
     const { dbPath, cleanup } = withTempDb();
-    const jobUrl = "https://example.com/jobs/event-driven";
+    const jobId = EVENT_JOB_ID;
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
-      db.exec(`
-        CREATE TABLE job_employer_analysis (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          snapshot_hash TEXT NOT NULL,
-          prompt_version TEXT NOT NULL,
-          sdk_set_version TEXT NOT NULL,
-          cache_key TEXT NOT NULL,
-          role_framing TEXT NOT NULL DEFAULT '',
-          inferred_seniority TEXT NOT NULL DEFAULT '',
-          ideal_candidate_narrative TEXT NOT NULL DEFAULT '',
-          requirements_json TEXT NOT NULL DEFAULT '[]',
-          keywords_json TEXT NOT NULL DEFAULT '[]',
-          agreement_json TEXT NOT NULL DEFAULT '{}',
-          legs_attempted INTEGER NOT NULL,
-          legs_succeeded INTEGER NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY (job_url, generation)
-        );
-        CREATE TABLE job_employer_analysis_sub_analyses (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          model_id TEXT NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          analysis_json TEXT NOT NULL,
-          PRIMARY KEY (job_url, generation, model_id)
-        );
-        CREATE TABLE job_employer_analysis_failures (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          model_id TEXT NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          error TEXT NOT NULL,
-          raw_output TEXT,
-          PRIMARY KEY (job_url, generation, model_id)
-        );
-      `);
       const requirements = [
         {
           id: "r1",
@@ -2310,29 +1801,29 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       // Two generations prove "load latest" + supersede-not-destroy (D-13).
       const insertAnalysis = db.prepare(
         `INSERT INTO job_employer_analysis (
-          job_url, generation, tenant_id, snapshot_hash, prompt_version, sdk_set_version,
+          tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
           cache_key, role_framing, inferred_seniority, ideal_candidate_narrative,
           requirements_json, keywords_json, agreement_json, legs_attempted, legs_succeeded, created_at
-        ) VALUES (?, ?, 'local', ?, 'employer-analysis-v1', 'claude+codex-v1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ('local', ?, ?, ?, 'employer-analysis-v1', 'claude+codex-v1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       insertAnalysis.run(
-        jobUrl, 1, "hash-old", "hash-old:employer-analysis-v1:claude+codex-v1",
+        jobId, 1, "hash-old", "hash-old:employer-analysis-v1:claude+codex-v1",
         "Old framing.", "mid", "Old narrative.",
         "[]", "[]", JSON.stringify({ score: 0.5, flagged_requirements: [], flagged_keywords: [] }),
         2, 2, "2026-05-04T12:00:00+00:00",
       );
       insertAnalysis.run(
-        jobUrl, 2, "hash-new", "hash-new:employer-analysis-v1:claude+codex-v1",
+        jobId, 2, "hash-new", "hash-new:employer-analysis-v1:claude+codex-v1",
         "Own the event platform.", "senior", "A hands-on platform owner.",
         JSON.stringify(requirements), JSON.stringify(keywords),
         JSON.stringify({ score: 0.8, flagged_requirements: [], flagged_keywords: ["kafka"] }),
         2, 1, "2026-05-04T13:00:00+00:00",
       );
       db.prepare(
-        `INSERT INTO job_employer_analysis_sub_analyses (job_url, generation, model_id, tenant_id, analysis_json)
-         VALUES (?, 2, 'claude-opus-4-8', 'local', ?)`,
+        `INSERT INTO job_employer_analysis_sub_analyses (tenant_id, job_id, generation, model_id, analysis_json)
+         VALUES ('local', ?, 2, 'claude-opus-4-8', ?)`,
       ).run(
-        jobUrl,
+        jobId,
         JSON.stringify({
           role_framing: "Own the event platform.",
           inferred_seniority: "senior",
@@ -2342,9 +1833,9 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         }),
       );
       db.prepare(
-        `INSERT INTO job_employer_analysis_failures (job_url, generation, model_id, tenant_id, error, raw_output)
-         VALUES (?, 2, 'gpt-5.4', 'local', 'codex app-server timeout', NULL)`,
-      ).run(jobUrl);
+        `INSERT INTO job_employer_analysis_failures (tenant_id, job_id, generation, model_id, error, raw_output)
+         VALUES ('local', ?, 2, 'gpt-5.4', 'codex app-server timeout', NULL)`,
+      ).run(jobId);
       db.close();
 
       const app = buildApp({
@@ -2354,7 +1845,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       try {
         const detailRes = await app.inject({
           method: "GET",
-          url: `/v1/jobs/${encodeURIComponent(jobUrl)}`,
+          url: `/v1/jobs/${encodeURIComponent(EVENT_JOB_URL)}`,
         });
         expect(detailRes.statusCode, detailRes.body).toBe(200);
         const analysis = detailRes.json().employerAnalysis;
@@ -2389,52 +1880,19 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
   it("serves the canonical requirement fit report from projection rows", async () => {
     const { dbPath, cleanup } = withTempDb();
-    const jobUrl = "https://example.com/jobs/event-driven";
+    const jobId = EVENT_JOB_ID;
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
-      db.exec(`
-        CREATE TABLE job_requirement_fit_reports (
-          job_url TEXT NOT NULL,
-          score_version INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          employer_analysis_generation INTEGER NOT NULL,
-          profile_snapshot_version INTEGER NOT NULL,
-          scoring_policy_version INTEGER NOT NULL,
-          formula_version TEXT NOT NULL,
-          resolved_fit_score INTEGER,
-          fit_band TEXT NOT NULL,
-          confidence TEXT NOT NULL,
-          summary_json TEXT NOT NULL DEFAULT '{}',
-          created_at TEXT NOT NULL,
-          PRIMARY KEY (job_url, score_version, tenant_id)
-        );
-        CREATE TABLE job_requirement_fit_items (
-          job_url TEXT NOT NULL,
-          score_version INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          requirement_id TEXT NOT NULL,
-          requirement_text TEXT NOT NULL,
-          tier TEXT NOT NULL,
-          weight REAL NOT NULL,
-          job_evidence_span TEXT NOT NULL DEFAULT '',
-          fit_json TEXT NOT NULL DEFAULT '{}',
-          contribution_json TEXT NOT NULL DEFAULT '{}',
-          tailoring_json TEXT NOT NULL DEFAULT '{}',
-          artifact_coverage_json TEXT,
-          position INTEGER NOT NULL DEFAULT 0,
-          PRIMARY KEY (job_url, score_version, tenant_id, requirement_id)
-        );
-      `);
       const insertReport = db.prepare(
         `INSERT INTO job_requirement_fit_reports (
-          job_url, score_version, tenant_id, employer_analysis_generation,
+          tenant_id, job_id, score_version, employer_analysis_generation,
           profile_snapshot_version, scoring_policy_version, formula_version,
           resolved_fit_score, fit_band, confidence, summary_json, created_at
-        ) VALUES (?, ?, 'local', ?, ?, ?, 'requirement-fit-v1', ?, ?, ?, ?, ?)`,
+        ) VALUES ('local', ?, ?, ?, ?, ?, 'requirement-fit-v1', ?, ?, ?, ?, ?)`,
       );
       insertReport.run(
-        jobUrl,
+        jobId,
         1,
         1,
         2,
@@ -2451,7 +1909,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         "2026-05-04T11:00:00+00:00",
       );
       insertReport.run(
-        jobUrl,
+        jobId,
         2,
         2,
         3,
@@ -2469,12 +1927,12 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       );
       db.prepare(
         `INSERT INTO job_requirement_fit_items (
-          job_url, score_version, tenant_id, requirement_id, requirement_text,
+          tenant_id, job_id, score_version, requirement_id, requirement_text,
           tier, weight, job_evidence_span, fit_json, contribution_json,
           tailoring_json, artifact_coverage_json, position
-        ) VALUES (?, 2, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ('local', ?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
-        jobUrl,
+        jobId,
         "r1",
         "5+ years Python",
         "must_have",
@@ -2516,12 +1974,12 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       try {
         const detailRes = await app.inject({
           method: "GET",
-          url: `/v1/jobs/${encodeURIComponent(jobUrl)}`,
+          url: `/v1/jobs/${encodeURIComponent(EVENT_JOB_URL)}`,
         });
         expect(detailRes.statusCode, detailRes.body).toBe(200);
         const report = detailRes.json().requirementFitReport;
         expect(report).toMatchObject({
-          jobId: jobUrl,
+          jobId,
           scoreVersion: 2,
           employerAnalysisGeneration: 2,
           profileSnapshotVersion: 3,
@@ -2575,133 +2033,10 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
   it("projects the career evidence map from profile evidence, provenance, and requirement fit", async () => {
     const { dbPath, cleanup } = withTempDb();
-    const jobUrl = "https://example.com/jobs/event-driven";
+    const jobId = EVENT_JOB_ID;
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
-      db.exec(`
-        CREATE TABLE candidate_profile_experience_entries (
-          tenant_id TEXT NOT NULL,
-          profile_id TEXT NOT NULL,
-          entry_id TEXT NOT NULL,
-          position_index INTEGER NOT NULL,
-          date_range TEXT NOT NULL DEFAULT '',
-          title TEXT NOT NULL DEFAULT '',
-          company TEXT NOT NULL DEFAULT '',
-          location TEXT NOT NULL DEFAULT '',
-          PRIMARY KEY (tenant_id, profile_id, entry_id)
-        );
-        CREATE TABLE candidate_profile_achievement_evidence (
-          tenant_id TEXT NOT NULL,
-          profile_id TEXT NOT NULL,
-          entry_id TEXT NOT NULL,
-          evidence_index INTEGER NOT NULL,
-          evidence_id TEXT NOT NULL DEFAULT '',
-          source_text TEXT NOT NULL DEFAULT '',
-          scope TEXT NOT NULL DEFAULT '',
-          action TEXT NOT NULL DEFAULT '',
-          tools_json TEXT NOT NULL DEFAULT '[]',
-          metrics_json TEXT NOT NULL DEFAULT '[]',
-          outcome TEXT NOT NULL DEFAULT '',
-          seniority_signal TEXT NOT NULL DEFAULT '',
-          evidence_strength TEXT NOT NULL DEFAULT 'supported',
-          claim_confidence REAL NOT NULL DEFAULT 0,
-          user_confirmed INTEGER NOT NULL DEFAULT 0,
-          tags_json TEXT NOT NULL DEFAULT '[]',
-          PRIMARY KEY (tenant_id, profile_id, entry_id, evidence_index)
-        );
-        CREATE TABLE candidate_profile_skill_categories (
-          tenant_id TEXT NOT NULL,
-          profile_id TEXT NOT NULL,
-          category_id TEXT NOT NULL,
-          position_index INTEGER NOT NULL,
-          label TEXT NOT NULL DEFAULT '',
-          PRIMARY KEY (tenant_id, profile_id, category_id)
-        );
-        CREATE TABLE candidate_profile_skill_items (
-          tenant_id TEXT NOT NULL,
-          profile_id TEXT NOT NULL,
-          category_id TEXT NOT NULL,
-          item_index INTEGER NOT NULL,
-          item_text TEXT NOT NULL,
-          PRIMARY KEY (tenant_id, profile_id, category_id, item_index)
-        );
-        CREATE TABLE job_materials (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          status TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          PRIMARY KEY (job_url, generation)
-        );
-        CREATE TABLE job_materials_artifacts (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          artifact_type TEXT NOT NULL,
-          artifact_id TEXT NOT NULL,
-          status TEXT NOT NULL,
-          path TEXT NOT NULL,
-          render_format TEXT NOT NULL,
-          size_bytes INTEGER,
-          metadata_json TEXT,
-          created_at TEXT NOT NULL,
-          superseded_at TEXT,
-          PRIMARY KEY (job_url, generation, artifact_type)
-        );
-        CREATE TABLE job_bullet_provenance (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          bullet_id TEXT NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          artifact_id TEXT NOT NULL,
-          section TEXT NOT NULL,
-          source_id TEXT,
-          evidence_ids_json TEXT NOT NULL DEFAULT '[]',
-          requirement_ids_json TEXT NOT NULL DEFAULT '[]',
-          matched_keywords_json TEXT NOT NULL DEFAULT '[]',
-          transform_type TEXT NOT NULL,
-          control TEXT NOT NULL,
-          rationale TEXT NOT NULL DEFAULT '',
-          generated_text TEXT NOT NULL,
-          position INTEGER NOT NULL DEFAULT 0,
-          created_at TEXT NOT NULL,
-          coverage_json TEXT,
-          voice_json TEXT,
-          PRIMARY KEY (job_url, generation, bullet_id)
-        );
-        CREATE TABLE job_requirement_fit_reports (
-          job_url TEXT NOT NULL,
-          score_version INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          employer_analysis_generation INTEGER NOT NULL,
-          profile_snapshot_version INTEGER NOT NULL,
-          scoring_policy_version INTEGER NOT NULL,
-          formula_version TEXT NOT NULL,
-          resolved_fit_score INTEGER,
-          fit_band TEXT NOT NULL,
-          confidence TEXT NOT NULL,
-          summary_json TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY (job_url, score_version, tenant_id)
-        );
-        CREATE TABLE job_requirement_fit_items (
-          job_url TEXT NOT NULL,
-          score_version INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          requirement_id TEXT NOT NULL,
-          requirement_text TEXT NOT NULL,
-          tier TEXT NOT NULL,
-          weight REAL NOT NULL,
-          job_evidence_span TEXT NOT NULL,
-          fit_json TEXT NOT NULL,
-          contribution_json TEXT NOT NULL,
-          tailoring_json TEXT NOT NULL,
-          artifact_coverage_json TEXT,
-          position INTEGER NOT NULL DEFAULT 0,
-          PRIMARY KEY (job_url, score_version, tenant_id, requirement_id)
-        );
-      `);
       db.prepare(
         `INSERT INTO candidate_profile_experience_entries
          (tenant_id, profile_id, entry_id, position_index, date_range, title, company, location)
@@ -2734,23 +2069,23 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       ).run();
       db.prepare(
         `INSERT INTO job_materials
-         (job_url, generation, tenant_id, status, created_at, updated_at)
-         VALUES (?, 1, 'local', 'complete', '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')`,
-      ).run(jobUrl);
+         (tenant_id, job_id, generation, status, created_at, updated_at)
+         VALUES ('local', ?, 1, 'complete', '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')`,
+      ).run(jobId);
       db.prepare(
         `INSERT INTO job_materials_artifacts (
-          job_url, generation, artifact_type, artifact_id, status, path,
+          tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
           render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'tailored_resume', 'artifact-resume-1', 'approved', '/tmp/resume.txt', 'text', 12, ?, '2026-07-05T12:05:00Z')`,
-      ).run(jobUrl, JSON.stringify({ validation_mode: "normal", attempts: 1, quality_checks: { passed: true } }));
+        ) VALUES ('local', ?, 1, 'tailored_resume', 'artifact-resume-1', 'approved', '/tmp/resume.txt', 'text', 12, ?, '2026-07-05T12:05:00Z')`,
+      ).run(jobId, JSON.stringify({ validation_mode: "normal", attempts: 1, quality_checks: { passed: true } }));
       db.prepare(
         `INSERT INTO job_bullet_provenance (
-          job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+          tenant_id, job_id, generation, bullet_id, artifact_id, section, source_id,
           evidence_ids_json, requirement_ids_json, matched_keywords_json, transform_type,
           control, rationale, generated_text, position, created_at, coverage_json
-        ) VALUES (?, 1, 'experience:exp-platform#0', 'local', 'artifact-resume-1', 'experience', 'exp-platform', ?, ?, ?, 'reframe', 'rephrase_allowed', 'Used profile evidence.', 'Led migration and reduced latency 40%.', 0, '2026-07-05T12:10:00Z', ?)`,
+        ) VALUES ('local', ?, 1, 'experience:exp-platform#0', 'artifact-resume-1', 'experience', 'exp-platform', ?, ?, ?, 'reframe', 'rephrase_allowed', 'Used profile evidence.', 'Led migration and reduced latency 40%.', 0, '2026-07-05T12:10:00Z', ?)`,
       ).run(
-        jobUrl,
+        jobId,
         JSON.stringify(["ev_platform"]),
         JSON.stringify(["req-platform"]),
         JSON.stringify(["latency"]),
@@ -2758,20 +2093,20 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       );
       db.prepare(
         `INSERT INTO job_requirement_fit_reports (
-          job_url, score_version, tenant_id, employer_analysis_generation,
+          tenant_id, job_id, score_version, employer_analysis_generation,
           profile_snapshot_version, scoring_policy_version, formula_version,
           resolved_fit_score, fit_band, confidence, summary_json, created_at
-        ) VALUES (?, 2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high', ?, '2026-07-05T12:20:00Z')`,
-      ).run(jobUrl, JSON.stringify({ weighted_fit: 0.8, must_have_coverage: 0.5, blocker_count: 0, missing_high_weight_count: 1 }));
+        ) VALUES ('local', ?, 2, 1, 1, 1, 'v1', 8, 'strong', 'high', ?, '2026-07-05T12:20:00Z')`,
+      ).run(jobId, JSON.stringify({ weighted_fit: 0.8, must_have_coverage: 0.5, blocker_count: 0, missing_high_weight_count: 1 }));
       const insertFitItem = db.prepare(
         `INSERT INTO job_requirement_fit_items (
-          job_url, score_version, tenant_id, requirement_id, requirement_text,
+          tenant_id, job_id, score_version, requirement_id, requirement_text,
           tier, weight, job_evidence_span, fit_json, contribution_json,
           tailoring_json, artifact_coverage_json, position
-        ) VALUES (?, 2, 'local', ?, ?, 'must_have', ?, ?, ?, '{}', '{}', ?, ?)`,
+        ) VALUES ('local', ?, 2, ?, ?, 'must_have', ?, ?, ?, '{}', '{}', ?, ?)`,
       );
       insertFitItem.run(
-        jobUrl,
+        jobId,
         "req-platform",
         "Own platform migrations",
         0.8,
@@ -2781,7 +2116,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         0,
       );
       insertFitItem.run(
-        jobUrl,
+        jobId,
         "req-kubernetes",
         "Run Kubernetes clusters",
         0.7,
@@ -2803,10 +2138,10 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         const evidenceEntry = body.entries.find((entry: { evidenceId: string }) => entry.evidenceId === "ev_platform");
         expect(evidenceEntry).toBeTruthy();
         expect(evidenceEntry.resumeUsages).toMatchObject([
-          { jobKey: jobUrl, artifactId: "artifact-resume-1", bulletId: "experience:exp-platform#0" },
+          { jobKey: jobId, artifactId: "artifact-resume-1", bulletId: "experience:exp-platform#0" },
         ]);
         expect(evidenceEntry.requirementUsages).toMatchObject([
-          { jobKey: jobUrl, scoreVersion: 2, requirementId: "req-platform", requirementFitKind: "matched" },
+          { jobKey: jobId, scoreVersion: 2, requirementId: "req-platform", requirementFitKind: "matched" },
         ]);
         expect(evidenceEntry.freshness).toMatchObject({
           evidenceDateRange: "2024-2025",
@@ -2819,12 +2154,12 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             expect.objectContaining({
               kind: "missing_requirement",
               requirementId: "req-kubernetes",
-              jobRefs: [expect.objectContaining({ jobKey: jobUrl, scoreVersion: 2 })],
+              jobRefs: [expect.objectContaining({ jobKey: jobId, scoreVersion: 2 })],
             }),
             expect.objectContaining({
               kind: "missing_skill",
               demandedSkill: "Kubernetes",
-              jobRefs: [expect.objectContaining({ jobKey: jobUrl, artifactId: "artifact-resume-1" })],
+              jobRefs: [expect.objectContaining({ jobKey: jobId, artifactId: "artifact-resume-1" })],
             }),
           ]),
         );
@@ -2846,10 +2181,12 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     const activeUrl = "https://example.com/jobs/active-role";
     const deletedUrl = "https://example.com/jobs/deleted-role";
     const hiddenUrl = "https://example.com/jobs/hidden-role";
+    const activeId = projectionFixtureJobId(11);
+    const deletedId = projectionFixtureJobId(12);
+    const hiddenId = projectionFixtureJobId(13);
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
-      createEvidenceMapSchema(db);
       // Shared profile evidence + skill that every job's tailoring references.
       db.prepare(
         `INSERT INTO candidate_profile_experience_entries
@@ -2882,53 +2219,62 @@ describe("apply_run_projections without legacy apply_runs table", () => {
          VALUES ('local', 'default', 'backend', 0, 'Python')`,
       ).run();
 
-      const insertJob = db.prepare("INSERT INTO jobs (url, title, company, site) VALUES (?, ?, ?, ?)");
+      const insertJob = db.prepare(
+        "INSERT INTO jobs (tenant_id, job_id, url, title, company, site) VALUES ('local', ?, ?, ?, ?, ?)",
+      );
+      const insertScore = db.prepare(
+        `INSERT INTO job_scores (
+           tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at
+         ) VALUES ('local', ?, 2, 8, '{}', '[]', '2026-07-05T11:00:00Z')`,
+      );
       const insertMaterials = db.prepare(
-        `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
-         VALUES (?, 1, 'local', 'complete', '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')`,
+        `INSERT INTO job_materials (tenant_id, job_id, generation, status, created_at, updated_at)
+         VALUES ('local', ?, 1, 'complete', '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')`,
       );
       const insertArtifact = db.prepare(
         `INSERT INTO job_materials_artifacts (
-          job_url, generation, artifact_type, artifact_id, status, path,
+          tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
           render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?, '2026-07-05T12:05:00Z')`,
+        ) VALUES ('local', ?, 1, 'tailored_resume', ?, 'approved', ?, 'text', 12, ?, '2026-07-05T12:05:00Z')`,
       );
       const insertProvenance = db.prepare(
         `INSERT INTO job_bullet_provenance (
-          job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+          tenant_id, job_id, generation, bullet_id, artifact_id, section, source_id,
           evidence_ids_json, requirement_ids_json, matched_keywords_json, transform_type,
           control, rationale, generated_text, position, created_at, coverage_json
-        ) VALUES (?, 1, 'experience:exp-platform#0', 'local', ?, 'experience', 'exp-platform', ?, ?, ?, 'reframe', 'rephrase_allowed', 'Used profile evidence.', ?, 0, ?, ?)`,
+        ) VALUES ('local', ?, 1, 'experience:exp-platform#0', ?, 'experience', 'exp-platform', ?, ?, ?, 'reframe', 'rephrase_allowed', 'Used profile evidence.', ?, 0, ?, ?)`,
       );
       const insertReport = db.prepare(
         `INSERT INTO job_requirement_fit_reports (
-          job_url, score_version, tenant_id, employer_analysis_generation,
+          tenant_id, job_id, score_version, employer_analysis_generation,
           profile_snapshot_version, scoring_policy_version, formula_version,
           resolved_fit_score, fit_band, confidence, summary_json, created_at
-        ) VALUES (?, 2, 'local', 1, 1, 1, 'v1', 8, 'strong', 'high', ?, '2026-07-05T12:20:00Z')`,
+        ) VALUES ('local', ?, 2, 1, 1, 1, 'v1', 8, 'strong', 'high', ?, '2026-07-05T12:20:00Z')`,
       );
       const insertFitItem = db.prepare(
         `INSERT INTO job_requirement_fit_items (
-          job_url, score_version, tenant_id, requirement_id, requirement_text,
+          tenant_id, job_id, score_version, requirement_id, requirement_text,
           tier, weight, job_evidence_span, fit_json, contribution_json,
           tailoring_json, artifact_coverage_json, position
-        ) VALUES (?, 2, 'local', ?, ?, 'must_have', ?, ?, ?, '{}', '{}', ?, ?)`,
+        ) VALUES ('local', ?, 2, ?, ?, 'must_have', ?, ?, ?, '{}', '{}', ?, ?)`,
       );
 
       const seedJobEvidence = (
+        jobId: string,
         jobUrl: string,
         opts: { title: string; company: string; artifactId: string; generatedText: string; createdAt: string },
       ): void => {
-        insertJob.run(jobUrl, opts.title, opts.company, "example.com");
-        insertMaterials.run(jobUrl);
+        insertJob.run(jobId, jobUrl, opts.title, opts.company, "example.com");
+        insertScore.run(jobId);
+        insertMaterials.run(jobId);
         insertArtifact.run(
-          jobUrl,
+          jobId,
           opts.artifactId,
           `/tmp/${opts.artifactId}.txt`,
           JSON.stringify({ validation_mode: "normal", attempts: 1, quality_checks: { passed: true } }),
         );
         insertProvenance.run(
-          jobUrl,
+          jobId,
           opts.artifactId,
           JSON.stringify(["ev_platform"]),
           JSON.stringify(["req-platform"]),
@@ -2938,11 +2284,11 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           JSON.stringify({ covered: ["Python"], declared: [], missing: ["Kubernetes"] }),
         );
         insertReport.run(
-          jobUrl,
+          jobId,
           JSON.stringify({ weighted_fit: 0.8, must_have_coverage: 0.5, blocker_count: 0, missing_high_weight_count: 1 }),
         );
         insertFitItem.run(
-          jobUrl,
+          jobId,
           "req-platform",
           "Own platform migrations",
           0.8,
@@ -2952,7 +2298,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           0,
         );
         insertFitItem.run(
-          jobUrl,
+          jobId,
           "req-kubernetes",
           "Run Kubernetes clusters",
           0.7,
@@ -2963,21 +2309,21 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         );
       };
 
-      seedJobEvidence(activeUrl, {
+      seedJobEvidence(activeId, activeUrl, {
         title: "Active Platform Role",
         company: "ActiveCorp",
         artifactId: "artifact-active",
         generatedText: "ACTIVE-bullet reduced latency 40%.",
         createdAt: "2026-07-05T12:10:00Z",
       });
-      seedJobEvidence(deletedUrl, {
+      seedJobEvidence(deletedId, deletedUrl, {
         title: "Deleted Platform Role",
         company: "DeletedCorp",
         artifactId: "artifact-deleted",
         generatedText: "DELETED-bullet should never surface.",
         createdAt: "2026-07-04T12:10:00Z",
       });
-      seedJobEvidence(hiddenUrl, {
+      seedJobEvidence(hiddenId, hiddenUrl, {
         title: "Hidden Platform Role",
         company: "HiddenCorp",
         artifactId: "artifact-hidden",
@@ -2986,13 +2332,13 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       });
 
       db.prepare(
-        `INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-         VALUES (?, '2026-07-05T13:00:00Z', 'user delete', NULL)`,
-      ).run(deletedUrl);
+        `INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at, reason, restored_at)
+         VALUES ('local', ?, '2026-07-05T13:00:00Z', 'user delete', NULL)`,
+      ).run(deletedId);
       db.prepare(
-        `INSERT INTO jobctrl_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
-         VALUES (?, '2026-07-05T13:00:00Z', 'user hide', NULL)`,
-      ).run(hiddenUrl);
+        `INSERT INTO jobctrl_hidden_jobs (tenant_id, job_id, hidden_at, reason, unhidden_at)
+         VALUES ('local', ?, '2026-07-05T13:00:00Z', 'user hide', NULL)`,
+      ).run(hiddenId);
       db.close();
 
       const app = buildApp({
@@ -3019,10 +2365,10 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         }
 
         // The live job still populates the map (positive control) ...
-        expect(referencedJobKeys.has(activeUrl)).toBe(true);
+        expect(referencedJobKeys.has(activeId)).toBe(true);
         // ... while the soft-deleted and hidden jobs are fully excluded.
-        expect(referencedJobKeys.has(deletedUrl)).toBe(false);
-        expect(referencedJobKeys.has(hiddenUrl)).toBe(false);
+        expect(referencedJobKeys.has(deletedId)).toBe(false);
+        expect(referencedJobKeys.has(hiddenId)).toBe(false);
 
         // No removed job's title, employer, or generated-text preview may leak
         // through any evidence field.
@@ -3056,57 +2402,10 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     const { dbPath, cleanup } = withTempDb();
     // Reuse the job ``seedSchema`` already inserts, so the artifact projection
     // builds (the builder drops projections for jobs with no ``jobs`` row).
-    const jobUrl = "https://example.com/jobs/event-driven";
+    const jobId = EVENT_JOB_ID;
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
-      db.exec(`
-        CREATE TABLE job_materials (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          status TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          last_validation_json TEXT,
-          last_verdict_json TEXT,
-          metadata_json TEXT,
-          PRIMARY KEY (job_url, generation)
-        );
-        CREATE TABLE job_materials_artifacts (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          artifact_type TEXT NOT NULL,
-          artifact_id TEXT NOT NULL,
-          status TEXT NOT NULL,
-          path TEXT NOT NULL,
-          render_format TEXT NOT NULL,
-          size_bytes INTEGER,
-          metadata_json TEXT,
-          created_at TEXT NOT NULL,
-          superseded_at TEXT,
-          PRIMARY KEY (job_url, generation, artifact_type)
-        );
-        CREATE TABLE job_bullet_provenance (
-          job_url TEXT NOT NULL,
-          generation INTEGER NOT NULL,
-          bullet_id TEXT NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          artifact_id TEXT NOT NULL,
-          section TEXT NOT NULL,
-          source_id TEXT,
-          evidence_ids_json TEXT NOT NULL DEFAULT '[]',
-          requirement_ids_json TEXT NOT NULL DEFAULT '[]',
-          matched_keywords_json TEXT NOT NULL DEFAULT '[]',
-          transform_type TEXT NOT NULL,
-          control TEXT NOT NULL,
-          rationale TEXT NOT NULL DEFAULT '',
-          generated_text TEXT NOT NULL,
-          position INTEGER NOT NULL DEFAULT 0,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY (job_url, generation, bullet_id)
-        );
-      `);
       // A complete metadata blob so the tailoring explanation has its audit fields
       // (the explanation must exist for bulletProvenance to attach to it).
       const completeMetadata = JSON.stringify({
@@ -3147,34 +2446,34 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         ],
       });
       db.prepare(
-        `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
-         VALUES (?, 1, 'local', 'complete', '2026-06-08T12:00:00+00:00', '2026-06-08T12:10:00+00:00')`,
-      ).run(jobUrl);
+        `INSERT INTO job_materials (tenant_id, job_id, generation, status, created_at, updated_at)
+         VALUES ('local', ?, 1, 'complete', '2026-06-08T12:00:00+00:00', '2026-06-08T12:10:00+00:00')`,
+      ).run(jobId);
       const insertArtifact = db.prepare(
         `INSERT INTO job_materials_artifacts (
-          job_url, generation, artifact_type, artifact_id, status, path,
+          tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
           render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, 1, ?, ?, 'approved', ?, ?, ?, ?, '2026-06-08T12:05:00+00:00')`,
+        ) VALUES ('local', ?, 1, ?, ?, 'approved', ?, ?, ?, ?, '2026-06-08T12:05:00+00:00')`,
       );
-      insertArtifact.run(jobUrl, "tailored_resume", "resume-1", "/tmp/resume.txt", "text", 10, completeMetadata);
-      insertArtifact.run(jobUrl, "resume_pdf", "resume-pdf-1", "/tmp/resume.pdf", "pdf", 20, "{}");
+      insertArtifact.run(jobId, "tailored_resume", "resume-1", "/tmp/resume.txt", "text", 10, completeMetadata);
+      insertArtifact.run(jobId, "resume_pdf", "resume-pdf-1", "/tmp/resume.pdf", "pdf", 20, "{}");
 
       // Provenance rows (as the Python repo writes them): bound to the text
       // resume artifact, ordered by position.
       const insertProvenance = db.prepare(
         `INSERT INTO job_bullet_provenance (
-          job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+          tenant_id, job_id, generation, bullet_id, artifact_id, section, source_id,
           evidence_ids_json, requirement_ids_json, matched_keywords_json,
           transform_type, control, rationale, generated_text, position, created_at
-        ) VALUES (?, 1, ?, 'local', 'resume-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-06-08T12:10:00+00:00')`,
+        ) VALUES ('local', ?, 1, ?, 'resume-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-06-08T12:10:00+00:00')`,
       );
       insertProvenance.run(
-        jobUrl, "executive_profile#0", "executive_profile", "executive_profile",
+        jobId, "executive_profile#0", "executive_profile", "executive_profile",
         "[]", "[]", "[]", "reframe", "rephrase_allowed", "Reframed summary.",
         "Senior backend engineer focused on Python.", 0,
       );
       insertProvenance.run(
-        jobUrl, "experience:acme_swe#0", "experience", "acme_swe",
+        jobId, "experience:acme_swe#0", "experience", "acme_swe",
         JSON.stringify(["ev_latency"]), JSON.stringify(["req_latency"]), JSON.stringify(["latency"]),
         "quantify_from_evidence", "never_fabricate_metrics", "Surfaced a recorded metric.",
         "Owned the API and cut latency 40%.", 1,
@@ -3233,37 +2532,10 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     // TS read model serves the SAME ``coverageAudit`` (GROUND-06) + ``voicePass``
     // (VOICE-02) shapes — for the text resume AND, via the sibling row, the PDF.
     const { dbPath, cleanup } = withTempDb();
-    const jobUrl = "https://example.com/jobs/event-driven";
+    const jobId = EVENT_JOB_ID;
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
-      db.exec(`
-        CREATE TABLE job_materials (
-          job_url TEXT NOT NULL, generation INTEGER NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local', status TEXT NOT NULL,
-          created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-          last_validation_json TEXT, last_verdict_json TEXT, metadata_json TEXT,
-          PRIMARY KEY (job_url, generation)
-        );
-        CREATE TABLE job_materials_artifacts (
-          job_url TEXT NOT NULL, generation INTEGER NOT NULL, artifact_type TEXT NOT NULL,
-          artifact_id TEXT NOT NULL, status TEXT NOT NULL, path TEXT NOT NULL,
-          render_format TEXT NOT NULL, size_bytes INTEGER, metadata_json TEXT,
-          created_at TEXT NOT NULL, superseded_at TEXT,
-          PRIMARY KEY (job_url, generation, artifact_type)
-        );
-        CREATE TABLE job_bullet_provenance (
-          job_url TEXT NOT NULL, generation INTEGER NOT NULL, bullet_id TEXT NOT NULL,
-          tenant_id TEXT NOT NULL DEFAULT 'local', artifact_id TEXT NOT NULL,
-          section TEXT NOT NULL, source_id TEXT,
-          evidence_ids_json TEXT NOT NULL DEFAULT '[]', requirement_ids_json TEXT NOT NULL DEFAULT '[]',
-          matched_keywords_json TEXT NOT NULL DEFAULT '[]', transform_type TEXT NOT NULL,
-          control TEXT NOT NULL, rationale TEXT NOT NULL DEFAULT '', generated_text TEXT NOT NULL,
-          position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
-          coverage_json TEXT, voice_json TEXT,
-          PRIMARY KEY (job_url, generation, bullet_id)
-        );
-      `);
       const completeMetadata = JSON.stringify({
         validation_mode: "normal",
         attempts: 1,
@@ -3288,21 +2560,21 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         change_annotations: [],
       });
       db.prepare(
-        `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
-         VALUES (?, 1, 'local', 'complete', '2026-06-08T12:00:00+00:00', '2026-06-08T12:10:00+00:00')`,
-      ).run(jobUrl);
+        `INSERT INTO job_materials (tenant_id, job_id, generation, status, created_at, updated_at)
+         VALUES ('local', ?, 1, 'complete', '2026-06-08T12:00:00+00:00', '2026-06-08T12:10:00+00:00')`,
+      ).run(jobId);
       db.prepare(
-        `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
-         VALUES (?, 2, 'local', 'complete', '2026-06-09T12:00:00+00:00', '2026-06-09T12:10:00+00:00')`,
-      ).run(jobUrl);
+        `INSERT INTO job_materials (tenant_id, job_id, generation, status, created_at, updated_at)
+         VALUES ('local', ?, 2, 'complete', '2026-06-09T12:00:00+00:00', '2026-06-09T12:10:00+00:00')`,
+      ).run(jobId);
       const insertArtifact = db.prepare(
         `INSERT INTO job_materials_artifacts (
-          job_url, generation, artifact_type, artifact_id, status, path,
+          tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
           render_format, size_bytes, metadata_json, created_at
-        ) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?)`,
+        ) VALUES ('local', ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?)`,
       );
       insertArtifact.run(
-        jobUrl,
+        jobId,
         1,
         "tailored_resume",
         "resume-1",
@@ -3313,7 +2585,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         "2026-06-08T12:05:00+00:00",
       );
       insertArtifact.run(
-        jobUrl,
+        jobId,
         1,
         "resume_pdf",
         "resume-pdf-1",
@@ -3324,7 +2596,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         "2026-06-08T12:05:00+00:00",
       );
       insertArtifact.run(
-        jobUrl,
+        jobId,
         2,
         "tailored_resume",
         "resume-2",
@@ -3370,20 +2642,20 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       });
       const insertProvenance = db.prepare(
         `INSERT INTO job_bullet_provenance (
-          job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+          tenant_id, job_id, generation, bullet_id, artifact_id, section, source_id,
           evidence_ids_json, requirement_ids_json, matched_keywords_json,
           transform_type, control, rationale, generated_text, position, created_at,
           coverage_json, voice_json
-        ) VALUES (?, ?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       insertProvenance.run(
-        jobUrl, 1, "experience:acme_swe#0", "resume-1", "experience", "acme_swe",
+        jobId, 1, "experience:acme_swe#0", "resume-1", "experience", "acme_swe",
         JSON.stringify(["ev_latency"]), JSON.stringify(["req_latency"]), JSON.stringify(["latency"]),
         "voice", "rephrase_allowed", "Voiced bullet.",
         "Owned the API and cut latency 40%.", 0, "2026-06-08T12:10:00+00:00", coverageJsonGen1, voiceJson,
       );
       insertProvenance.run(
-        jobUrl, 2, "experience:incident#0", "resume-2", "experience", "incident_response",
+        jobId, 2, "experience:incident#0", "resume-2", "experience", "incident_response",
         JSON.stringify(["ev_incident"]), JSON.stringify(["req_incident"]), JSON.stringify(["incident response"]),
         "voice", "rephrase_allowed", "Voiced bullet.",
         "Owned incident response drills.", 0, "2026-06-09T12:10:00+00:00", coverageJsonGen2, voiceJson,
@@ -3838,105 +3110,9 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
 describe("dashboard outcome-conversion projection", () => {
   function seedConversionDb(dbPath: string): void {
+    initializeExactV7Database(dbPath);
     const db = new Database(dbPath);
-    db.exec(`
-      CREATE TABLE jobs (
-        url TEXT PRIMARY KEY, title TEXT, company TEXT, site TEXT, strategy TEXT,
-        location TEXT, salary TEXT, discovered_at TEXT, application_url TEXT,
-        description TEXT, full_description TEXT, detail_scraped_at TEXT,
-        detail_error TEXT, fit_score INTEGER, score_reasoning TEXT, scored_at TEXT,
-        tailored_resume_path TEXT, tailored_at TEXT, tailor_attempts INTEGER DEFAULT 0,
-        cover_letter_path TEXT, cover_letter_at TEXT, cover_attempts INTEGER DEFAULT 0,
-        applied_at TEXT, apply_status TEXT, apply_error TEXT, apply_attempts INTEGER DEFAULT 0
-      );
-      CREATE TABLE job_events (
-        event_id INTEGER PRIMARY KEY AUTOINCREMENT, job_url TEXT, stage TEXT,
-        event_type TEXT NOT NULL DEFAULT '', level TEXT NOT NULL DEFAULT 'info',
-        message TEXT, occurred_at TEXT NOT NULL, payload_json TEXT
-      );
-      CREATE TABLE job_scores (
-        job_url TEXT NOT NULL, version INTEGER NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'local',
-        fit_score INTEGER NOT NULL, breakdown_json TEXT NOT NULL, keywords_json TEXT NOT NULL,
-        scored_at TEXT NOT NULL, correction_json TEXT, criteria_json TEXT NOT NULL DEFAULT '{}',
-        trace_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (job_url, version)
-      );
-      CREATE TABLE job_stage_states (
-        job_url TEXT NOT NULL, stage TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
-        attempt_count INTEGER DEFAULT 0, max_attempts INTEGER, started_at TEXT,
-        updated_at TEXT NOT NULL DEFAULT '', finished_at TEXT, duration_ms INTEGER,
-        error_code TEXT, error_message TEXT, retryable INTEGER DEFAULT 1,
-        blocked_by_json TEXT, next_action TEXT, metadata_json TEXT,
-        version INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (job_url, stage)
-      );
-      CREATE TABLE application_outcomes (
-        tenant_id TEXT NOT NULL DEFAULT 'local', outcome_id TEXT NOT NULL,
-        job_key TEXT NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, note TEXT,
-        occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, outcome_id)
-      );
-      CREATE TABLE application_outcome_suggestions (
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        suggestion_id TEXT NOT NULL,
-        job_key TEXT NOT NULL,
-        evidence_id TEXT,
-        suggested_kind TEXT NOT NULL,
-        confidence REAL NOT NULL DEFAULT 0,
-        rationale TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'pending',
-        created_at TEXT NOT NULL,
-        decided_at TEXT,
-        decision TEXT,
-        decision_reason TEXT,
-        decided_outcome_id TEXT,
-        PRIMARY KEY (tenant_id, suggestion_id)
-      );
-      CREATE TABLE job_materials (
-        job_url TEXT NOT NULL,
-        generation INTEGER NOT NULL,
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        last_validation_json TEXT,
-        last_verdict_json TEXT,
-        metadata_json TEXT,
-        PRIMARY KEY (job_url, generation)
-      );
-      CREATE TABLE job_materials_artifacts (
-        job_url TEXT NOT NULL,
-        generation INTEGER NOT NULL,
-        artifact_type TEXT NOT NULL,
-        artifact_id TEXT,
-        status TEXT NOT NULL,
-        path TEXT NOT NULL,
-        render_format TEXT NOT NULL DEFAULT 'text',
-        size_bytes INTEGER,
-        metadata_json TEXT,
-        created_at TEXT NOT NULL
-      );
-      CREATE TABLE job_requirement_fit_reports (
-        job_url TEXT NOT NULL, score_version INTEGER NOT NULL,
-        tenant_id TEXT NOT NULL DEFAULT 'local',
-        employer_analysis_generation INTEGER NOT NULL DEFAULT 1,
-        profile_snapshot_version INTEGER NOT NULL DEFAULT 1,
-        scoring_policy_version INTEGER NOT NULL DEFAULT 1,
-        formula_version TEXT NOT NULL DEFAULT 'test',
-        resolved_fit_score INTEGER,
-        fit_band TEXT NOT NULL,
-        confidence TEXT NOT NULL DEFAULT 'medium',
-        summary_json TEXT NOT NULL DEFAULT '{}',
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (job_url, score_version, tenant_id)
-      );
-      CREATE TABLE apply_run_projections (
-        run_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'local',
-        job_id TEXT NOT NULL, job_title TEXT NOT NULL DEFAULT '',
-        job_employer TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '',
-        result TEXT, dry_run INTEGER NOT NULL DEFAULT 0,
-        worker_id INTEGER, model TEXT, started_at TEXT, finished_at TEXT,
-        duration_ms INTEGER, events_json TEXT NOT NULL DEFAULT '[]'
-      );
-    `);
+    seedBuiltInResumeTemplate(db);
     db.close();
   }
 
@@ -3956,18 +3132,26 @@ describe("dashboard outcome-conversion projection", () => {
   function seedJobs(dbPath: string, jobs: SeedJob[]): void {
     const db = new Database(dbPath);
     const insertJob = db.prepare(
-      `INSERT INTO jobs (url, title, site, fit_score, apply_status, applied_at, discovered_at)
-       VALUES (@url, @title, @site, @fit_score, @apply_status, @applied_at, @discovered_at)`,
+      `INSERT INTO jobs (
+         tenant_id, job_id, url, title, site, fit_score, apply_status, applied_at, discovered_at
+       ) VALUES (
+         'local', @job_id, @url, @title, @site, @fit_score, @apply_status, @applied_at, @discovered_at
+       )`,
+    );
+    const insertScore = db.prepare(
+      `INSERT INTO job_scores (
+         tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at
+       ) VALUES ('local', @job_id, 1, @fit_score, '{}', '[]', @scored_at)`,
     );
     const insertOutcome = db.prepare(
-      `INSERT INTO application_outcomes (tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at)
-       VALUES ('local', @outcome_id, @job_key, @kind, 'manual', @at, @at)`,
+      `INSERT INTO application_outcomes (tenant_id, outcome_id, job_id, kind, source, occurred_at, recorded_at)
+       VALUES ('local', @outcome_id, @job_id, @kind, 'manual', @at, @at)`,
     );
     const insertFitReport = db.prepare(
       `INSERT INTO job_requirement_fit_reports (
-         job_url, score_version, tenant_id, employer_analysis_generation, profile_snapshot_version,
+         tenant_id, job_id, score_version, employer_analysis_generation, profile_snapshot_version,
          scoring_policy_version, formula_version, resolved_fit_score, fit_band, confidence, summary_json, created_at
-       ) VALUES (@job_url, 1, 'local', 1, 1, 1, 'test', @resolved_fit_score, @fit_band, 'medium', '{}', @at)`,
+       ) VALUES ('local', @job_id, 1, 1, 1, 1, 'test', @resolved_fit_score, @fit_band, 'medium', '{}', @at)`,
     );
     const insertApplyRun = db.prepare(
       `INSERT INTO apply_run_projections (
@@ -3975,25 +3159,28 @@ describe("dashboard outcome-conversion projection", () => {
        ) VALUES (@run_id, 'local', @job_id, 'Engineer', 'Example', @status, @result, @dry_run, @started_at, @finished_at, '[]')`,
     );
     const insertEvent = db.prepare(
-      `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-       VALUES (@job_url, 'apply', @event_type, 'info', @message, @at, '{}')`,
+      `INSERT INTO job_events (
+         tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES ('local', @job_id, 1, 'apply', @event_type, 'info', @message, @at, '{}')`,
     );
     const insertMaterial = db.prepare(
       `INSERT INTO job_materials (
-         job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-       ) VALUES (@job_url, @generation, 'local', 'resume_approved', @created_at, @created_at, @metadata_json)`,
+         tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+       ) VALUES ('local', @job_id, @generation, 'resume_approved', @created_at, @created_at, @metadata_json)`,
     );
     const insertMaterialArtifact = db.prepare(
       `INSERT INTO job_materials_artifacts (
-         job_url, generation, artifact_type, artifact_id, status, path,
+         tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
          render_format, size_bytes, metadata_json, created_at
        ) VALUES (
-         @job_url, 1, 'tailored_resume', @artifact_id, 'approved', @path,
+         'local', @job_id, 1, 'tailored_resume', @artifact_id, 'approved', @path,
          'text', 12, @metadata_json, @created_at
        )`,
     );
-    for (const job of jobs) {
+    jobs.forEach((job, index) => {
+      const jobId = projectionFixtureJobId(1000 + index);
       insertJob.run({
+        job_id: jobId,
         url: job.url,
         title: "Engineer",
         site: job.site,
@@ -4002,9 +3189,16 @@ describe("dashboard outcome-conversion projection", () => {
         applied_at: job.applied ? "2026-06-01T12:00:00+00:00" : null,
         discovered_at: "2026-05-20T12:00:00+00:00",
       });
+      if (job.fitScore !== null) {
+        insertScore.run({
+          job_id: jobId,
+          fit_score: job.fitScore,
+          scored_at: "2026-05-25T12:00:00+00:00",
+        });
+      }
       if (job.fitBand) {
         insertFitReport.run({
-          job_url: job.url,
+          job_id: jobId,
           resolved_fit_score: job.fitScore,
           fit_band: job.fitBand,
           at: "2026-05-25T12:00:00+00:00",
@@ -4012,8 +3206,8 @@ describe("dashboard outcome-conversion projection", () => {
       }
       if (job.applyRun) {
         insertApplyRun.run({
-          run_id: `${job.url}-run`,
-          job_id: job.url,
+          run_id: `${jobId}-run`,
+          job_id: jobId,
           status: job.applyRun.status,
           result: job.applyRun.status === "succeeded" ? "applied" : job.applyRun.status,
           dry_run: job.applyRun.dryRun ? 1 : 0,
@@ -4021,9 +3215,12 @@ describe("dashboard outcome-conversion projection", () => {
           finished_at: job.applyRun.status === "starting" ? null : "2026-06-01T12:00:00+00:00",
         });
       }
-      if (job.manualMarked) {
+      const seedsManualApplication =
+        job.manualMarked ||
+        (job.applied && !job.applyRun && !job.outcomes?.includes("applied_confirmation"));
+      if (seedsManualApplication) {
         insertEvent.run({
-          job_url: job.url,
+          job_id: jobId,
           event_type: "ApplicationManuallyMarked",
           message: "Job marked applied from test.",
           at: "2026-06-01T12:00:00+00:00",
@@ -4044,39 +3241,43 @@ describe("dashboard outcome-conversion projection", () => {
             : undefined,
         });
         insertMaterial.run({
-          job_url: job.url,
+          job_id: jobId,
           generation: 1,
           metadata_json: metadata,
           created_at: "2026-06-01T12:00:00+00:00",
         });
         insertMaterialArtifact.run({
-          job_url: job.url,
-          artifact_id: `${job.url}-resume`,
-          path: `/tmp/${encodeURIComponent(job.url)}.txt`,
+          job_id: jobId,
+          artifact_id: `${jobId}-resume`,
+          path: `/tmp/${jobId}.txt`,
           metadata_json: metadata,
           created_at: "2026-06-01T12:00:00+00:00",
         });
       }
       for (const kind of job.outcomes ?? []) {
         insertOutcome.run({
-          outcome_id: `${job.url}-${kind}`,
-          job_key: job.url,
+          outcome_id: `${jobId}-${kind}`,
+          job_id: jobId,
           kind,
           at: "2026-06-05T12:00:00+00:00",
         });
       }
-    }
+    });
     db.close();
   }
 
   function seedAcceptedReplacementResume(dbPath: string, jobUrl: string): void {
     const db = new Database(dbPath);
+    const row = db
+      .prepare("SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?")
+      .get(jobUrl) as { job_id: string } | undefined;
+    if (!row) throw new Error(`Missing exact-v7 job fixture for ${jobUrl}`);
     db.prepare(
       `INSERT INTO job_materials (
-         job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
-       ) VALUES (?, 2, 'local', 'resume_approved', ?, ?, ?)`,
+         tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
+       ) VALUES ('local', ?, 2, 'resume_approved', ?, ?, ?)`,
     ).run(
-      jobUrl,
+      row.job_id,
       "2026-06-02T12:00:00+00:00",
       "2026-06-02T12:00:00+00:00",
       JSON.stringify({
@@ -4086,17 +3287,17 @@ describe("dashboard outcome-conversion projection", () => {
     );
     db.prepare(
       `INSERT INTO job_materials_artifacts (
-         job_url, generation, artifact_type, artifact_id, status, path,
+         tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
          render_format, size_bytes, metadata_json, created_at
-       ) VALUES (?, 2, 'tailored_resume', ?, 'approved', ?, 'text', 14, ?, ?)`,
+       ) VALUES ('local', ?, 2, 'tailored_resume', ?, 'approved', ?, 'text', 14, ?, ?)`,
     ).run(
-      jobUrl,
-      `${jobUrl}-replacement-resume`,
-      `/tmp/${encodeURIComponent(jobUrl)}-replacement.txt`,
+      row.job_id,
+      `${row.job_id}-replacement-resume`,
+      `/tmp/${row.job_id}-replacement.txt`,
       JSON.stringify({
         source: "resume_review_draft",
         base_generation: 1,
-        base_resume_text_artifact_id: `${jobUrl}-resume`,
+        base_resume_text_artifact_id: `${row.job_id}-resume`,
       }),
       "2026-06-02T12:00:00+00:00",
     );
@@ -4105,17 +3306,21 @@ describe("dashboard outcome-conversion projection", () => {
 
   function seedSuggestions(dbPath: string, statuses: string[]): void {
     const db = new Database(dbPath);
+    const jobs = db
+      .prepare("SELECT job_id FROM jobs WHERE tenant_id = 'local' ORDER BY job_id")
+      .all() as Array<{ job_id: string }>;
+    if (jobs.length === 0) throw new Error("Outcome suggestion fixtures require an exact-v7 job");
     const insertSuggestion = db.prepare(
       `INSERT INTO application_outcome_suggestions (
-         tenant_id, suggestion_id, job_key, suggested_kind, confidence, rationale,
+         tenant_id, suggestion_id, job_id, suggested_kind, confidence, rationale,
          status, created_at, decided_at, decision
-       ) VALUES ('local', @suggestion_id, @job_key, 'recruiter_reply', 0.9, '',
+       ) VALUES ('local', @suggestion_id, @job_id, 'recruiter_reply', 0.9, '',
          @status, @created_at, @decided_at, @decision)`,
     );
     statuses.forEach((status, index) => {
       insertSuggestion.run({
         suggestion_id: `suggestion-${index}`,
-        job_key: `https://example.com/suggestion-${index}`,
+        job_id: jobs[index % jobs.length]!.job_id,
         status,
         created_at: "2026-06-02T12:00:00+00:00",
         decided_at: "2026-06-02T12:05:00+00:00",
