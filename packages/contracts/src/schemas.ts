@@ -2350,6 +2350,32 @@ export type TailoringPolicyRevisionListResponse = z.infer<
   typeof TailoringPolicyRevisionListResponseSchema
 >;
 
+export const TailoringPolicyRollbackRequestSchema = z
+  .object({ targetVersion: z.number().int().positive() })
+  .strict();
+export type TailoringPolicyRollbackRequest = z.infer<
+  typeof TailoringPolicyRollbackRequestSchema
+>;
+
+export const TailoringPolicyRollbackResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    context: z.literal("materials"),
+    policyKind: z.literal("tailoring_rule"),
+    version: z.number().int().positive(),
+    status: z.literal("current"),
+    learnedRules: z.array(TailoringPolicyLearnedRuleSchema).max(5),
+    sourceReviewId: z.null(),
+    sourceRecommendationId: z.null(),
+    rollbackOfVersion: z.number().int().positive(),
+    rollbackReasonCode: z.literal("user_requested"),
+    createdAt: IsoTimestampSchema,
+  })
+  .strict();
+export type TailoringPolicyRollbackResponse = z.infer<
+  typeof TailoringPolicyRollbackResponseSchema
+>;
+
 export const LearningRecommendationSummarySchema = z
   .object({
     recommendationId: LearningRecommendationIdSchema,

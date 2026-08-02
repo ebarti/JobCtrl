@@ -91,6 +91,8 @@ import type {
   LearningRecommendationReviewResponse,
   TailoringPolicyRevisionListQuery,
   TailoringPolicyRevisionListResponse,
+  TailoringPolicyRollbackRequest,
+  TailoringPolicyRollbackResponse,
   JobMutationResponse,
   JobSummary,
   MarkJobActionRequest,
@@ -167,6 +169,7 @@ import {
   LearningRecommendationListResponseSchema,
   LearningRecommendationReviewResponseSchema,
   TailoringPolicyRevisionListResponseSchema,
+  TailoringPolicyRollbackResponseSchema,
 } from "@jobctrl/contracts";
 
 type QueryValue = boolean | number | string | null | undefined;
@@ -296,6 +299,14 @@ export class JobCtrlApiClient {
   ): Promise<TailoringPolicyRevisionListResponse> {
     return TailoringPolicyRevisionListResponseSchema.parse(
       await this.get("/v1/learning/policies/materials", query),
+    );
+  }
+
+  async rollbackTailoringPolicy(
+    body: TailoringPolicyRollbackRequest,
+  ): Promise<TailoringPolicyRollbackResponse> {
+    return TailoringPolicyRollbackResponseSchema.parse(
+      await this.post("/v1/learning/policies/materials/rollbacks", body),
     );
   }
 
