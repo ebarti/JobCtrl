@@ -2263,6 +2263,93 @@ export type LearningRecommendationListQuery = z.infer<
   typeof LearningRecommendationListQuerySchema
 >;
 
+export const TailoringPolicyRevisionListQuerySchema = LearningRecommendationListQuerySchema;
+export type TailoringPolicyRevisionListQuery = z.infer<
+  typeof TailoringPolicyRevisionListQuerySchema
+>;
+
+export const TailoringPolicyLearnedRuleSchema = z.discriminatedUnion("ruleKey", [
+  z
+    .object({
+      ruleKey: z.literal("style_guidance"),
+      ruleValue: z.literal("preserve_user_edit_pattern"),
+    })
+    .strict(),
+  z
+    .object({
+      ruleKey: z.literal("fact_handling"),
+      ruleValue: z.literal("require_source_match"),
+    })
+    .strict(),
+  z
+    .object({
+      ruleKey: z.literal("claim_policy"),
+      ruleValue: z.literal("omit_unsupported_claims"),
+    })
+    .strict(),
+  z
+    .object({
+      ruleKey: z.literal("keyword_strategy"),
+      ruleValue: z.literal("use_supported_terms_only"),
+    })
+    .strict(),
+  z
+    .object({
+      ruleKey: z.literal("provenance_policy"),
+      ruleValue: z.literal("require_direct_evidence"),
+    })
+    .strict(),
+]);
+export type TailoringPolicyLearnedRule = z.infer<typeof TailoringPolicyLearnedRuleSchema>;
+
+export const TailoringPolicyRevisionSummarySchema = z
+  .object({
+    context: z.literal("materials"),
+    policyKind: z.literal("tailoring_rule"),
+    version: z.number().int().positive(),
+    status: z.enum(["current", "superseded"]),
+    learnedRules: z.array(TailoringPolicyLearnedRuleSchema).max(5),
+    sourceReviewId: LearningRecommendationReviewIdSchema.nullable(),
+    sourceRecommendationId: LearningRecommendationIdSchema.nullable(),
+    rollbackOfVersion: z.number().int().positive().nullable(),
+    rollbackReasonCode: z.enum(["user_requested", "historical_or_unspecified"]).nullable(),
+    createdAt: IsoTimestampSchema,
+  })
+  .strict()
+  .refine(
+    (value) => (value.sourceReviewId === null) === (value.sourceRecommendationId === null),
+    "Policy recommendation and review provenance must be present together.",
+  )
+  .refine(
+    (value) => (value.rollbackOfVersion === null) === (value.rollbackReasonCode === null),
+    "Policy rollback version and reason must be present together.",
+  );
+export type TailoringPolicyRevisionSummary = z.infer<
+  typeof TailoringPolicyRevisionSummarySchema
+>;
+
+export const TailoringPolicyRevisionListResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    revisions: z.array(TailoringPolicyRevisionSummarySchema).max(100),
+    page: z.number().int().min(1),
+    pageSize: z.number().int().min(1).max(100),
+    total: z.number().int().nonnegative(),
+    totalPages: z.number().int().nonnegative(),
+  })
+  .strict()
+  .refine(
+    (value) => value.revisions.length <= value.pageSize,
+    "Policy revision page exceeds its declared page size.",
+  )
+  .refine(
+    (value) => value.revisions.filter((revision) => revision.status === "current").length <= 1,
+    "Policy revision page contains multiple current revisions.",
+  );
+export type TailoringPolicyRevisionListResponse = z.infer<
+  typeof TailoringPolicyRevisionListResponseSchema
+>;
+
 export const LearningRecommendationSummarySchema = z
   .object({
     recommendationId: LearningRecommendationIdSchema,
