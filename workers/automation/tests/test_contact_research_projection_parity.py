@@ -1,12 +1,8 @@
-"""Cross-runtime parity for ``contact_research_task_projections`` (R6 Phase 2).
+"""Exact-v7 coverage for ``contact_research_task_projections`` (R6 Phase 2).
 
-The Python half of the TS<->Python drift guard. The TS half lives at
-``apps/api/test/contact-research-projection-parity.test.ts``. Both load the SAME
-shared fixture, seed the SAME canonical ``contact_research_tasks`` /
-``contact_candidates`` rows, run their OWN projection refresh, and assert the
-resulting projection rows equal the fixture's ``expected`` block (JSON columns
-compared parsed). It also asserts no candidate VALUE leaks into the projection
-(sensitivity rule, plan §6).
+The shared parity fixture remains on the legacy TypeScript projection contract.
+This test derives a local exact-v7 fixture using canonical JobIds, then asserts
+the projection rows and the sensitive-value boundary.
 """
 
 from __future__ import annotations
@@ -26,15 +22,40 @@ _FIXTURE = (
     Path(__file__).resolve().parents[3]
     / "packages/domain-types/test/fixtures/contact_research_projection_parity.json"
 )
+_V7_JOB_IDS = {
+    "https://job/1": "11111111-1111-4111-8111-111111111111",
+    "https://job/2": "22222222-2222-4222-8222-222222222222",
+}
+
+
+def _exact_v7_fixture() -> dict[str, Any]:
+    fixture = json.loads(_FIXTURE.read_text())
+    for task in fixture["tasks"]:
+        job_url = task.pop("jobUrl")
+        task["jobId"] = _V7_JOB_IDS[job_url] if job_url else None
+    for expected in fixture["expected"]:
+        job_url = expected.get("jobId")
+        expected["jobId"] = _V7_JOB_IDS[job_url] if job_url else None
+    return fixture
 
 
 def _seed_canonical(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     tenant = fixture["tenantId"]
     for task in fixture["tasks"]:
+        if task["jobId"] is None:
+            continue
+        conn.execute(
+            """
+            INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+            VALUES (?, ?, ?, 'Fixture job', '2026-07-31T12:00:00Z')
+            """,
+            (tenant, task["jobId"], f"https://fixtures.example/{task['taskId']}"),
+        )
+    for task in fixture["tasks"]:
         conn.execute(
             """
             INSERT INTO contact_research_tasks (
-                tenant_id, task_id, employer, job_url, status, source_attempts_json,
+                tenant_id, task_id, employer, job_id, status, source_attempts_json,
                 started_at, updated_at, needs_review_at, completed_at, failed_at, error_class
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -42,7 +63,7 @@ def _seed_canonical(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 tenant,
                 task["taskId"],
                 task["employer"],
-                task["jobUrl"],
+                task["jobId"],
                 task["status"],
                 json.dumps(task["sourceAttempts"]),
                 task["startedAt"],
@@ -101,8 +122,8 @@ def _normalize(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def test_contact_research_projection_parity(tmp_path: Path) -> None:
-    fixture = json.loads(_FIXTURE.read_text())
+def test_contact_research_projection_exact_v7_fixture(tmp_path: Path) -> None:
+    fixture = _exact_v7_fixture()
     conn = init_db(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
     _seed_canonical(conn, fixture)

@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from jobctrl.domain.identifiers import JobId, canonical_job_id
+
 
 class ContactRole(str, Enum):
     """The role a contact plays for a company/application."""
@@ -122,15 +124,18 @@ class ContactLink:
     """
 
     employer: str | None = None
-    job_id: str | None = None
+    job_id: JobId | None = None
 
     def __post_init__(self) -> None:
         employer = (self.employer or "").strip()
-        job_id = (self.job_id or "").strip()
+        raw_job_id = self.job_id
+        job_id = canonical_job_id(str(raw_job_id)) if raw_job_id else None
         if not employer and not job_id:
             raise ValueError(
                 "ContactLink must reference at least one of {employer, job_id}"
             )
+        if raw_job_id is not None:
+            object.__setattr__(self, "job_id", job_id)
 
 
 @dataclass(frozen=True)

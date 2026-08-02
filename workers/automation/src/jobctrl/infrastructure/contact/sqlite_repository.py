@@ -12,7 +12,7 @@ Event payloads written to ``job_events`` carry only identifiers, kinds,
 provenance metadata, and timestamps — never a value. Contact-only events (no
 application link) carry honest identity via ``entity_kind='contact'`` /
 ``entity_ref=<contact_id>`` (schema v2). Application-linked events additionally
-key on the job's ``job_url`` so they surface in the job's audit history.
+key on the canonical ``job_id`` so they surface in the job's audit history.
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ import json
 import logging
 import sqlite3
 
-from jobctrl.database import ensure_contact_tables
 from jobctrl.domain.contact.aggregate import Contact
 from jobctrl.domain.contact.value_objects import (
     ContactAttribute,
@@ -29,7 +28,7 @@ from jobctrl.domain.contact.value_objects import (
     ContactLink,
     ContactRole,
 )
-from jobctrl.domain.identifiers import ContactId
+from jobctrl.domain.identifiers import ContactId, JobId, canonical_job_id
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.tenant import TenantId
 from jobctrl.state import record_job_event, utc_now
@@ -43,7 +42,6 @@ class SqliteContactRepository:
     def __init__(self, conn: sqlite3.Connection, *, publisher: EventPublisher) -> None:
         self._conn = conn
         self._publisher = publisher
-        ensure_contact_tables(self._conn)
 
     # ------------------------------------------------------------------
     # Load
@@ -61,8 +59,9 @@ class SqliteContactRepository:
     def list_for_tenant(self, tenant_id: TenantId) -> list[Contact]:
         return self._list(tenant_id, "", ())
 
-    def list_for_job(self, tenant_id: TenantId, job_id: str) -> list[Contact]:
-        return self._list(tenant_id, "AND job_url = ?", (job_id,))
+    def list_for_job(self, tenant_id: TenantId, job_id: JobId) -> list[Contact]:
+        stable_job_id = canonical_job_id(str(job_id))
+        return self._list(tenant_id, "AND job_id = ?", (str(stable_job_id),))
 
     def list_for_employer(self, tenant_id: TenantId, employer: str) -> list[Contact]:
         return self._list(tenant_id, "AND employer = ?", (employer,))
@@ -84,7 +83,7 @@ class SqliteContactRepository:
         return Contact(
             tenant_id=tenant_id,
             contact_id=ContactId(str(row["contact_id"])),
-            link=ContactLink(employer=row["employer"], job_id=row["job_url"]),
+            link=ContactLink(employer=row["employer"], job_id=row["job_id"]),
             role=_role(row["role"]),
             attributes=self._load_attributes(tenant_id, str(row["contact_id"])),
             created_at=str(row["created_at"] or ""),
@@ -143,12 +142,12 @@ class SqliteContactRepository:
             self._conn.execute(
                 """
                 INSERT INTO contacts (
-                    tenant_id, contact_id, employer, job_url, role,
+                    tenant_id, contact_id, employer, job_id, role,
                     created_at, updated_at, deleted_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tenant_id, contact_id) DO UPDATE SET
                     employer = excluded.employer,
-                    job_url = excluded.job_url,
+                    job_id = excluded.job_id,
                     role = excluded.role,
                     updated_at = excluded.updated_at,
                     deleted_at = excluded.deleted_at
@@ -194,6 +193,9 @@ class SqliteContactRepository:
                 )
 
     def delete(self, tenant_id: TenantId, contact_id: ContactId, *, reason: str = "") -> bool:
+        contact = self.load(tenant_id, contact_id)
+        if contact is None:
+            return False
         deleted_at = utc_now()
         cursor = self._conn.execute(
             """
@@ -207,9 +209,10 @@ class SqliteContactRepository:
         try:
             record_job_event(
                 self._conn,
-                None,
+                contact.link.job_id,
                 None,
                 "ContactDeleted",
+                tenant_id=tenant_id,
                 message="Contact deleted.",
                 payload={
                     "tenantId": str(tenant_id),
@@ -235,11 +238,12 @@ class SqliteContactRepository:
     ) -> None:
         tenant = str(tenant_id)
         contact_id = str(contact.contact_id)
-        job_url = contact.link.job_id or None
+        job_id = contact.link.job_id
 
         if previous is None:
             self._record(
-                job_url,
+                tenant_id,
+                job_id,
                 "ContactCreated",
                 "Contact created.",
                 {
@@ -256,7 +260,8 @@ class SqliteContactRepository:
         else:
             changed = _changed_fields(previous, contact)
             self._record(
-                job_url,
+                tenant_id,
+                job_id,
                 "ContactUpdated",
                 "Contact updated.",
                 {
@@ -275,7 +280,8 @@ class SqliteContactRepository:
         for attribute in new_attributes:
             provenance = attribute.provenance
             self._record(
-                job_url,
+                tenant_id,
+                job_id,
                 "ContactAttributeRecorded",
                 "Contact fact recorded.",
                 {
@@ -295,7 +301,8 @@ class SqliteContactRepository:
 
     def _record(
         self,
-        job_url: str | None,
+        tenant_id: TenantId,
+        job_id: JobId | None,
         event_type: str,
         message: str,
         payload: dict[str, object],
@@ -303,9 +310,10 @@ class SqliteContactRepository:
     ) -> None:
         record_job_event(
             self._conn,
-            job_url,
+            job_id,
             None,
             event_type,
+            tenant_id=tenant_id,
             message=message,
             payload=payload,
             publisher=self._publisher,

@@ -14,6 +14,8 @@ from jobctrl.domain.contact.value_objects import (
 from jobctrl.domain.identifiers import ContactId
 from jobctrl.domain.tenant import LOCAL_TENANT
 
+_JOB_ID = "11111111-1111-4111-8111-111111111111"
+
 
 def _provenance() -> ContactFactProvenance:
     return ContactFactProvenance(
@@ -40,7 +42,9 @@ def test_contact_links_to_at_least_one_of_employer_or_job() -> None:
 
     # Either alone is valid.
     assert ContactLink(employer="Acme").employer == "Acme"
-    assert ContactLink(job_id="https://job/1").job_id == "https://job/1"
+    assert ContactLink(job_id=_JOB_ID).job_id == _JOB_ID
+    with pytest.raises(ValueError, match="canonical UUID"):
+        ContactLink(job_id="https://job/1")
 
 
 def test_contact_attribute_requires_provenance() -> None:
@@ -52,7 +56,7 @@ def test_contact_is_valid_with_link_and_provenanced_attributes() -> None:
     contact = Contact.create(
         tenant_id=LOCAL_TENANT,
         contact_id=ContactId("contact-1"),
-        link=ContactLink(employer="Acme", job_id="https://job/1"),
+        link=ContactLink(employer="Acme", job_id=_JOB_ID),
         role=ContactRole.RECRUITER,
         attributes=(_attribute("name", "Jane Recruiter"),),
         created_at="2026-07-01T00:00:00Z",
