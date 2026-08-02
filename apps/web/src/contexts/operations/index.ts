@@ -85,6 +85,7 @@ export { healthKeys } from "./healthKeys.js";
 export { settingsKeys } from "./settingsKeys.js";
 export { browserCapabilityKeys } from "./browserCapabilityKeys.js";
 export { jobsKeys } from "./jobsKeys.js";
+export { learningKeys } from "./learningKeys.js";
 export { outcomesKeys } from "./outcomesKeys.js";
 export { workflowRunsKeys } from "./workflowRunsKeys.js";
 
@@ -129,6 +130,10 @@ export {
 export { useJobApplicationOutcomesQuery } from "./hooks/useJobApplicationOutcomesQuery.js";
 export { useJobDetailQuery } from "./hooks/useJobDetailQuery.js";
 export { useJobsListQuery } from "./hooks/useJobsListQuery.js";
+export {
+  useLearningRecommendationEvidenceQuery,
+  useLearningRecommendationsQuery,
+} from "./hooks/useLearningRecommendationsQuery.js";
 export { usePipelineOperationsQuery } from "./hooks/usePipelineOperationsQuery.js";
 export { useWorkflowRunsListQuery } from "./hooks/useWorkflowRunsListQuery.js";
 
