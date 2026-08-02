@@ -1912,6 +1912,101 @@ BEFORE DELETE ON learning_recommendations
 BEGIN
   SELECT RAISE(ABORT, 'learning recommendations are append-only');
 END;
+CREATE TABLE learning_recommendation_reviews (
+      tenant_id         TEXT NOT NULL DEFAULT 'local',
+      review_id         TEXT NOT NULL,
+      recommendation_id TEXT NOT NULL,
+      revision          INTEGER NOT NULL CHECK(revision > 0),
+      decision          TEXT NOT NULL CHECK(decision IN ('accepted', 'rejected')),
+      context           TEXT NOT NULL CHECK(context = 'materials'),
+      policy_kind       TEXT NOT NULL CHECK(policy_kind = 'tailoring_rule'),
+      policy_version    INTEGER,
+      reviewed_at       TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, review_id),
+      UNIQUE (tenant_id, recommendation_id, revision),
+      UNIQUE (tenant_id, recommendation_id, decision),
+      UNIQUE (tenant_id, context, policy_kind, policy_version),
+      FOREIGN KEY (tenant_id, recommendation_id)
+        REFERENCES learning_recommendations(tenant_id, recommendation_id)
+        ON DELETE RESTRICT,
+      FOREIGN KEY (tenant_id, policy_version)
+        REFERENCES tailoring_policies(tenant_id, version)
+        ON DELETE RESTRICT,
+      CHECK(
+        (decision = 'accepted' AND policy_version IS NOT NULL AND policy_version > 0)
+        OR (decision = 'rejected' AND policy_version IS NULL)
+      )
+    );
+CREATE TRIGGER prevent_learning_recommendation_review_collision
+BEFORE INSERT ON learning_recommendation_reviews
+WHEN EXISTS (
+  SELECT 1
+  FROM learning_recommendation_reviews
+  WHERE tenant_id = NEW.tenant_id
+    AND (
+      review_id = NEW.review_id
+      OR (
+        recommendation_id = NEW.recommendation_id
+        AND (
+          revision = NEW.revision
+          OR decision = NEW.decision
+          OR decision = 'accepted'
+        )
+      )
+      OR (
+        NEW.policy_version IS NOT NULL
+        AND context = NEW.context
+        AND policy_kind = NEW.policy_kind
+        AND policy_version = NEW.policy_version
+      )
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation reviews are append-only');
+END;
+CREATE TRIGGER validate_learning_recommendation_review_revision
+BEFORE INSERT ON learning_recommendation_reviews
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM learning_recommendation_reviews
+  WHERE tenant_id = NEW.tenant_id
+    AND (
+      review_id = NEW.review_id
+      OR (
+        recommendation_id = NEW.recommendation_id
+        AND (
+          revision = NEW.revision
+          OR decision = NEW.decision
+          OR decision = 'accepted'
+        )
+      )
+      OR (
+        NEW.policy_version IS NOT NULL
+        AND context = NEW.context
+        AND policy_kind = NEW.policy_kind
+        AND policy_version = NEW.policy_version
+      )
+    )
+)
+AND NEW.revision != COALESCE((
+  SELECT MAX(revision) + 1
+  FROM learning_recommendation_reviews
+  WHERE tenant_id = NEW.tenant_id
+    AND recommendation_id = NEW.recommendation_id
+), 1)
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation review revision must be contiguous');
+END;
+CREATE TRIGGER prevent_learning_recommendation_review_update
+BEFORE UPDATE ON learning_recommendation_reviews
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation reviews are append-only');
+END;
+CREATE TRIGGER prevent_learning_recommendation_review_delete
+BEFORE DELETE ON learning_recommendation_reviews
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation reviews are append-only');
+END;
 CREATE TRIGGER validate_learning_recommendation_counts
 BEFORE INSERT ON learning_recommendations
 BEGIN
@@ -2536,6 +2631,12 @@ CREATE INDEX idx_tailoring_feedback_signal_contradictions_other
       );
 CREATE INDEX idx_learning_recommendations_tenant_derived
       ON learning_recommendations(tenant_id, derived_at DESC, recommendation_id);
+CREATE INDEX idx_learning_recommendation_reviews_tenant_reviewed
+      ON learning_recommendation_reviews(
+        tenant_id,
+        reviewed_at DESC,
+        review_id
+      );
 CREATE INDEX idx_learning_recommendation_evidence_signal
       ON learning_recommendation_evidence(tenant_id, signal_id, evidence_role);
 CREATE INDEX idx_learning_recommendation_evidence_jobs_job

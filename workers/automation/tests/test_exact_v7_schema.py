@@ -31,6 +31,7 @@ from jobctrl.infrastructure import runtime_identity
 _CROSS_RUNTIME_DURABLE_TABLES = {
     "discovery_execution_recoveries",
     "jobctrl_hidden_jobs",
+    "learning_recommendation_reviews",
     "learning_recommendation_evidence",
     "learning_recommendation_evidence_jobs",
     "learning_recommendation_jobs",
@@ -715,6 +716,71 @@ def test_tailoring_feedback_reviews_are_structured_append_only_facts(
     close_connection(db_path)
 
 
+def _insert_learning_recommendation_fixture(
+    conn: sqlite3.Connection,
+    recommendation_id: str,
+    fingerprint_character: str,
+) -> None:
+    job_ids = (
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    )
+    for index in range(1, 4):
+        signal_id = f"{recommendation_id}-signal-{index}"
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_evidence (
+                tenant_id, recommendation_id, signal_id, evidence_role,
+                source_kind, source_id, source_revision, recorded_at
+            ) VALUES (
+                'local', ?, ?, 'supporting',
+                'tailoring_feedback_signal', ?, ?, ?
+            )
+            """,
+            (
+                recommendation_id,
+                signal_id,
+                f"source-{signal_id}",
+                index,
+                f"2026-08-01T00:00:0{index}Z",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_evidence_jobs (
+                tenant_id, recommendation_id, signal_id, job_id
+            ) VALUES ('local', ?, ?, ?)
+            """,
+            (recommendation_id, signal_id, job_ids[min(index - 1, 1)]),
+        )
+    for job_id in job_ids:
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_jobs (
+                tenant_id, recommendation_id, job_id
+            ) VALUES ('local', ?, ?)
+            """,
+            (recommendation_id, job_id),
+        )
+    conn.execute(
+        """
+        INSERT INTO learning_recommendations (
+            tenant_id, recommendation_id, derivation_version,
+            evaluation_fixture_version, context, policy_kind, signal_kind,
+            rule_key, rule_value, allowlist_version, status,
+            observed_signal_count, observed_job_count, minimum_signal_count,
+            minimum_job_count, confidence_limit, input_fingerprint, derived_at
+        ) VALUES (
+            'local', ?, 1, 1, 'materials', 'tailoring_rule',
+            'factual_correction', 'fact_handling', 'require_source_match',
+            1, 'pending', 3, 2, 3, 2,
+            'sample_gated_no_population_inference', ?, '2026-08-01T01:00:00Z'
+        )
+        """,
+        (recommendation_id, fingerprint_character * 64),
+    )
+
+
 def test_learning_recommendation_storage_is_structured_append_only_and_private(
     tmp_path: Path,
 ) -> None:
@@ -1109,6 +1175,7 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
         "text",
     }
     for table in (
+        "learning_recommendation_reviews",
         "learning_recommendations",
         "learning_recommendation_evidence",
         "learning_recommendation_evidence_jobs",
@@ -1125,6 +1192,169 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
             if column in forbidden_fragments
             or any(column.endswith(f"_{fragment}") for fragment in forbidden_fragments)
         }
+
+    assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
+    close_connection(db_path)
+
+
+def test_learning_recommendation_reviews_are_append_only_and_policy_linked(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    for recommendation_id, fingerprint in (
+        ("recommendation-rejected", "d"),
+        ("recommendation-accepted", "e"),
+        ("recommendation-later-accepted", "f"),
+    ):
+        _insert_learning_recommendation_fixture(
+            conn,
+            recommendation_id,
+            fingerprint,
+        )
+    conn.execute(
+        """
+        INSERT INTO tailoring_policies (
+            tenant_id, version, prompt_version, schema_version,
+            judge_schema_version, prompt_fingerprint, config_fingerprint,
+            profile_policy_fingerprint, custom_prompt_fingerprint,
+            generator_settings_json, judge_settings_json,
+            runtime_settings_json, rollback_of_version, rollback_reason,
+            created_at, created_from_event_id
+        ) VALUES (
+            'local', 1, 'prompt-v1', 'schema-v1', 'judge-v1',
+            'prompt-fingerprint', 'config-fingerprint',
+            'profile-fingerprint', 'custom-fingerprint',
+            '{}', '{}', '{}', NULL, '', '2026-08-01T02:00:00Z', NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO tailoring_policies (
+            tenant_id, version, prompt_version, schema_version,
+            judge_schema_version, prompt_fingerprint, config_fingerprint,
+            profile_policy_fingerprint, custom_prompt_fingerprint,
+            generator_settings_json, judge_settings_json,
+            runtime_settings_json, rollback_of_version, rollback_reason,
+            created_at, created_from_event_id
+        ) VALUES (
+            'local', 2, 'prompt-v1', 'schema-v1', 'judge-v1',
+            'prompt-fingerprint', 'config-fingerprint-2',
+            'profile-fingerprint', 'custom-fingerprint',
+            '{}', '{}', '{}', NULL, '', '2026-08-01T02:00:01Z', NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO learning_recommendation_reviews (
+            tenant_id, review_id, recommendation_id, revision, decision,
+            context, policy_kind, policy_version, reviewed_at
+        ) VALUES (
+            'local', 'review-rejected', 'recommendation-rejected', 1,
+            'rejected', 'materials', 'tailoring_rule', NULL,
+            '2026-08-01T02:01:00Z'
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO learning_recommendation_reviews (
+            tenant_id, review_id, recommendation_id, revision, decision,
+            context, policy_kind, policy_version, reviewed_at
+        ) VALUES (
+            'local', 'review-accepted', 'recommendation-accepted', 1,
+            'accepted', 'materials', 'tailoring_rule', 1,
+            '2026-08-01T02:02:00Z'
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO learning_recommendation_reviews (
+            tenant_id, review_id, recommendation_id, revision, decision,
+            context, policy_kind, policy_version, reviewed_at
+        ) VALUES (
+            'local', 'review-later-rejected', 'recommendation-later-accepted', 1,
+            'rejected', 'materials', 'tailoring_rule', NULL,
+            '2026-08-01T02:03:00Z'
+        )
+        """
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO learning_recommendation_reviews (
+                tenant_id, review_id, recommendation_id, revision, decision,
+                context, policy_kind, policy_version, reviewed_at
+            ) VALUES (
+                'local', 'review-rejected', 'recommendation-rejected', 1,
+                'rejected', 'materials', 'tailoring_rule', NULL,
+                '2026-08-01T03:00:00Z'
+            )
+            """
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="contiguous"):
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_reviews (
+                tenant_id, review_id, recommendation_id, revision, decision,
+                context, policy_kind, policy_version, reviewed_at
+            ) VALUES (
+                'local', 'review-later-accepted-gap',
+                'recommendation-later-accepted', 3, 'accepted',
+                'materials', 'tailoring_rule', 2, '2026-08-01T03:01:00Z'
+            )
+            """
+        )
+    conn.execute(
+        """
+        INSERT INTO learning_recommendation_reviews (
+            tenant_id, review_id, recommendation_id, revision, decision,
+            context, policy_kind, policy_version, reviewed_at
+        ) VALUES (
+            'local', 'review-later-accepted',
+            'recommendation-later-accepted', 2, 'accepted',
+            'materials', 'tailoring_rule', 2, '2026-08-01T03:02:00Z'
+        )
+        """
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_reviews (
+                tenant_id, review_id, recommendation_id, revision, decision,
+                context, policy_kind, policy_version, reviewed_at
+            ) VALUES (
+                'local', 'review-after-accepted',
+                'recommendation-later-accepted', 3, 'rejected',
+                'materials', 'tailoring_rule', NULL, '2026-08-01T03:03:00Z'
+            )
+            """
+        )
+    for decision, policy_version in (("accepted", None), ("rejected", 1)):
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                INSERT INTO learning_recommendation_reviews (
+                    tenant_id, review_id, recommendation_id, revision, decision,
+                    context, policy_kind, policy_version, reviewed_at
+                ) VALUES (
+                    'local', ?, 'recommendation-rejected', 2, ?,
+                    'materials', 'tailoring_rule', ?, '2026-08-01T04:00:00Z'
+                )
+                """,
+                (f"review-invalid-{decision}", decision, policy_version),
+            )
+    for statement in (
+        "UPDATE learning_recommendation_reviews SET reviewed_at = reviewed_at WHERE review_id = 'review-rejected'",
+        "DELETE FROM learning_recommendation_reviews WHERE review_id = 'review-accepted'",
+    ):
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute(statement)
 
     assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
     close_connection(db_path)
