@@ -1206,7 +1206,7 @@ def test_learning_recommendation_reviews_are_append_only_and_policy_linked(
     for recommendation_id, fingerprint in (
         ("recommendation-rejected", "d"),
         ("recommendation-accepted", "e"),
-        ("recommendation-later-accepted", "f"),
+        ("recommendation-revision-gap", "f"),
     ):
         _insert_learning_recommendation_fixture(
             conn,
@@ -1271,19 +1271,6 @@ def test_learning_recommendation_reviews_are_append_only_and_policy_linked(
         )
         """
     )
-    conn.execute(
-        """
-        INSERT INTO learning_recommendation_reviews (
-            tenant_id, review_id, recommendation_id, revision, decision,
-            context, policy_kind, policy_version, reviewed_at
-        ) VALUES (
-            'local', 'review-later-rejected', 'recommendation-later-accepted', 1,
-            'rejected', 'materials', 'tailoring_rule', NULL,
-            '2026-08-01T02:03:00Z'
-        )
-        """
-    )
-
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         conn.execute(
             """
@@ -1305,23 +1292,24 @@ def test_learning_recommendation_reviews_are_append_only_and_policy_linked(
                 context, policy_kind, policy_version, reviewed_at
             ) VALUES (
                 'local', 'review-later-accepted-gap',
-                'recommendation-later-accepted', 3, 'accepted',
+                'recommendation-revision-gap', 3, 'accepted',
                 'materials', 'tailoring_rule', 2, '2026-08-01T03:01:00Z'
             )
             """
         )
-    conn.execute(
-        """
-        INSERT INTO learning_recommendation_reviews (
-            tenant_id, review_id, recommendation_id, revision, decision,
-            context, policy_kind, policy_version, reviewed_at
-        ) VALUES (
-            'local', 'review-later-accepted',
-            'recommendation-later-accepted', 2, 'accepted',
-            'materials', 'tailoring_rule', 2, '2026-08-01T03:02:00Z'
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_reviews (
+                tenant_id, review_id, recommendation_id, revision, decision,
+                context, policy_kind, policy_version, reviewed_at
+            ) VALUES (
+                'local', 'review-after-rejected',
+                'recommendation-rejected', 2, 'accepted',
+                'materials', 'tailoring_rule', 2, '2026-08-01T03:02:00Z'
+            )
+            """
         )
-        """
-    )
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         conn.execute(
             """
@@ -1330,7 +1318,7 @@ def test_learning_recommendation_reviews_are_append_only_and_policy_linked(
                 context, policy_kind, policy_version, reviewed_at
             ) VALUES (
                 'local', 'review-after-accepted',
-                'recommendation-later-accepted', 3, 'rejected',
+                'recommendation-accepted', 2, 'rejected',
                 'materials', 'tailoring_rule', NULL, '2026-08-01T03:03:00Z'
             )
             """
@@ -1343,7 +1331,7 @@ def test_learning_recommendation_reviews_are_append_only_and_policy_linked(
                     tenant_id, review_id, recommendation_id, revision, decision,
                     context, policy_kind, policy_version, reviewed_at
                 ) VALUES (
-                    'local', ?, 'recommendation-rejected', 2, ?,
+                    'local', ?, 'recommendation-revision-gap', 1, ?,
                     'materials', 'tailoring_rule', ?, '2026-08-01T04:00:00Z'
                 )
                 """,

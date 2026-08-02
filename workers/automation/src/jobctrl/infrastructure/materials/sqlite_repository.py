@@ -1015,24 +1015,14 @@ class SqliteLearningRecommendationReviewRepository:
                     (str(tenant_id), recommendation_id),
                 ).fetchall()
             )
-            accepted = next(
-                (review for review in prior_reviews if review.decision == "accepted"),
-                None,
-            )
-            if accepted is not None:
-                if decision == "accepted":
+            if prior_reviews:
+                terminal = prior_reviews[0]
+                if decision == terminal.decision:
                     self._conn.commit()
-                    return accepted
+                    return terminal
                 raise LearningRecommendationReviewError(
-                    "accepted learning recommendation is terminal"
+                    "learning recommendation decision is terminal"
                 )
-            replay = next(
-                (review for review in prior_reviews if review.decision == decision),
-                None,
-            )
-            if replay is not None:
-                self._conn.commit()
-                return replay
 
             tombstoned = self._conn.execute(
                 """

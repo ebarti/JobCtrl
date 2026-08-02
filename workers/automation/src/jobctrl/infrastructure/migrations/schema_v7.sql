@@ -1945,14 +1945,7 @@ WHEN EXISTS (
   WHERE tenant_id = NEW.tenant_id
     AND (
       review_id = NEW.review_id
-      OR (
-        recommendation_id = NEW.recommendation_id
-        AND (
-          revision = NEW.revision
-          OR decision = NEW.decision
-          OR decision = 'accepted'
-        )
-      )
+      OR recommendation_id = NEW.recommendation_id
       OR (
         NEW.policy_version IS NOT NULL
         AND context = NEW.context
@@ -1972,14 +1965,7 @@ WHEN NOT EXISTS (
   WHERE tenant_id = NEW.tenant_id
     AND (
       review_id = NEW.review_id
-      OR (
-        recommendation_id = NEW.recommendation_id
-        AND (
-          revision = NEW.revision
-          OR decision = NEW.decision
-          OR decision = 'accepted'
-        )
-      )
+      OR recommendation_id = NEW.recommendation_id
       OR (
         NEW.policy_version IS NOT NULL
         AND context = NEW.context

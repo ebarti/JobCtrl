@@ -171,6 +171,73 @@ def test_explicit_review_accepts_atomically_and_replays(
     close_connection(db_path)
 
 
+def test_explicit_review_rejection_is_terminal_and_replays(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    _seed_recommendation_sources(conn)
+    monkeypatch.setattr(handlers_mod, "get_connection", lambda: conn)
+    server = JsonRpcServer(workflow_starter=_stub_starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+    derived = server.dispatch(
+        JsonRpcRequest(
+            method="rederive_learning_recommendations",
+            params={"tenantId": "local"},
+            id=1,
+        )
+    )
+    assert derived is not None
+    recommendation_id = derived.to_dict()["result"]["recommendationIds"][0]
+    policy_repository = SqliteTailoringPolicyRepository(conn)
+    original_policy = _tailoring_policy()
+    policy_repository.save(original_policy)
+    params = {
+        "tenantId": "local",
+        "recommendationId": recommendation_id,
+        "decision": "rejected",
+    }
+
+    rejected = server.dispatch(
+        JsonRpcRequest(
+            method="review_learning_recommendation",
+            params=params,
+            id=2,
+        )
+    )
+    replay = server.dispatch(
+        JsonRpcRequest(
+            method="review_learning_recommendation",
+            params=params,
+            id=3,
+        )
+    )
+    accepted = server.dispatch(
+        JsonRpcRequest(
+            method="review_learning_recommendation",
+            params={**params, "decision": "accepted"},
+            id=4,
+        )
+    )
+
+    assert rejected is not None
+    assert replay is not None
+    assert accepted is not None
+    rejected_result = rejected.to_dict()["result"]
+    replay_result = replay.to_dict()["result"]
+    assert rejected_result["decision"] == "rejected"
+    assert rejected_result["policyVersion"] is None
+    assert replay_result["reviewId"] == rejected_result["reviewId"]
+    assert accepted.to_dict()["error"]["code"] == INVALID_PARAMS
+    assert conn.execute(
+        "SELECT COUNT(*) FROM learning_recommendation_reviews"
+    ).fetchone()[0] == 1
+    assert policy_repository.get_current(LOCAL_TENANT) == original_policy
+    assert conn.execute("SELECT COUNT(*) FROM tailoring_policies").fetchone()[0] == 1
+    close_connection(db_path)
+
+
 def test_explicit_policy_rollback_appends_once_and_replays(
     tmp_path: Path,
     monkeypatch,
