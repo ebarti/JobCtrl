@@ -45,6 +45,8 @@ import {
   EnsureCurrentResumeMaterialsRequestSchema,
   JobResumeTemplateAssignmentRequestSchema,
   JobListQuerySchema,
+  LearningRecommendationEvidenceListQuerySchema,
+  LearningRecommendationIdSchema,
   LearningRecommendationListQuerySchema,
   JsonRpcErrorCodes,
   JsonRpcRequestSchema,
@@ -240,7 +242,10 @@ import {
   readSettingsConfig,
 } from "./read-model.js";
 import { buildPipelineOperationsSnapshot } from "./pipeline-operations.js";
-import { listLearningRecommendations } from "./learning-recommendations.js";
+import {
+  listLearningRecommendationEvidence,
+  listLearningRecommendations,
+} from "./learning-recommendations.js";
 import { refreshProjections } from "./projections.js";
 import { createResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 import {
@@ -580,6 +585,31 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         LearningRecommendationListQuerySchema.parse(request.query),
       ),
     ),
+  );
+
+  app.get<{ Params: { recommendationId: string } }>(
+    "/v1/learning/recommendations/:recommendationId/evidence",
+    async (request, reply) => {
+      const parsedRecommendationId = LearningRecommendationIdSchema.safeParse(
+        decodeRouteParam(request.params.recommendationId),
+      );
+      if (!parsedRecommendationId.success) {
+        void reply.code(400);
+        return { ok: false, error: "invalid_learning_recommendation_id" };
+      }
+      return withDb(reply, options.dbPath, (db) => {
+        const response = listLearningRecommendationEvidence(
+          db,
+          parsedRecommendationId.data,
+          LearningRecommendationEvidenceListQuerySchema.parse(request.query),
+        );
+        if (!response) {
+          void reply.code(404);
+          return { ok: false, error: "learning_recommendation_not_found" };
+        }
+        return response;
+      });
+    },
   );
 
   app.get("/v1/digest", async (_request, reply) =>

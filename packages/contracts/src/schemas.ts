@@ -2183,9 +2183,21 @@ export const ScoringKeywordAggregationResponseSchema = z
   .strict();
 export type ScoringKeywordAggregationResponse = z.infer<typeof ScoringKeywordAggregationResponseSchema>;
 
-const LearningRecommendationIdSchema = z
+export const LearningRecommendationIdSchema = z
   .string()
   .regex(/^learning-recommendation:[a-f0-9]{64}$/);
+
+const LearningEvidenceIdentifierSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9_.:-]+$/);
+
+const LearningEvidenceJobIdSchema = z
+  .string()
+  .regex(
+    /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,
+  );
 
 export const LearningRecommendationListQuerySchema = z
   .object({
@@ -2251,6 +2263,45 @@ export const LearningRecommendationListResponseSchema = z
   );
 export type LearningRecommendationListResponse = z.infer<
   typeof LearningRecommendationListResponseSchema
+>;
+
+export const LearningRecommendationEvidenceListQuerySchema =
+  LearningRecommendationListQuerySchema;
+export type LearningRecommendationEvidenceListQuery = z.infer<
+  typeof LearningRecommendationEvidenceListQuerySchema
+>;
+
+export const LearningRecommendationEvidenceLinkSchema = z
+  .object({
+    signalId: LearningEvidenceIdentifierSchema,
+    evidenceRole: z.enum(["supporting", "contradicting"]),
+    sourceKind: z.literal("tailoring_feedback_signal"),
+    sourceRevision: z.number().int().positive(),
+    jobId: LearningEvidenceJobIdSchema,
+    recordedAt: IsoTimestampSchema,
+  })
+  .strict();
+export type LearningRecommendationEvidenceLink = z.infer<
+  typeof LearningRecommendationEvidenceLinkSchema
+>;
+
+export const LearningRecommendationEvidenceListResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    recommendationId: LearningRecommendationIdSchema,
+    evidence: z.array(LearningRecommendationEvidenceLinkSchema).max(100),
+    page: z.number().int().min(1),
+    pageSize: z.number().int().min(1).max(100),
+    total: z.number().int().nonnegative(),
+    totalPages: z.number().int().nonnegative(),
+  })
+  .strict()
+  .refine(
+    (value) => value.evidence.length <= value.pageSize,
+    "Recommendation evidence page exceeds its declared page size.",
+  );
+export type LearningRecommendationEvidenceListResponse = z.infer<
+  typeof LearningRecommendationEvidenceListResponseSchema
 >;
 
 export const ArtifactListQuerySchema = z

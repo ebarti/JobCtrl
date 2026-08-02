@@ -1,5 +1,8 @@
 import {
+  LearningRecommendationEvidenceListResponseSchema,
   LearningRecommendationListResponseSchema,
+  type LearningRecommendationEvidenceListQuery,
+  type LearningRecommendationEvidenceListResponse,
   type LearningRecommendationListQuery,
   type LearningRecommendationListResponse,
 } from "./contracts.js";
@@ -32,6 +35,15 @@ interface RecommendationSummaryRow extends Record<string, unknown> {
   supporting_evidence_count: number;
   contradicting_evidence_count: number;
   tombstone_count: number;
+}
+
+interface RecommendationEvidenceLinkRow extends Record<string, unknown> {
+  signal_id: string;
+  evidence_role: "supporting" | "contradicting";
+  source_kind: "tailoring_feedback_signal";
+  source_revision: number;
+  job_id: string;
+  recorded_at: string;
 }
 
 export function listLearningRecommendations(
@@ -131,4 +143,81 @@ function listLearningRecommendationsInSnapshot(
     total,
     totalPages: total === 0 ? 0 : Math.ceil(total / query.pageSize),
   });
+}
+
+export function listLearningRecommendationEvidence(
+  db: SqliteDatabase,
+  recommendationId: string,
+  query: LearningRecommendationEvidenceListQuery,
+): LearningRecommendationEvidenceListResponse | null {
+  return db.transaction(() => {
+    const recommendation = getRow<{ recommendation_id: string }>(
+      db,
+      `SELECT recommendation_id
+         FROM learning_recommendations
+        WHERE tenant_id = ?
+          AND recommendation_id = ?`,
+      [DEFAULT_TENANT, recommendationId],
+    );
+    if (!recommendation) {
+      return null;
+    }
+
+    const total = Number(
+      getRow<{ count: number }>(
+        db,
+        `SELECT COUNT(*) AS count
+           FROM learning_recommendation_evidence AS evidence
+           JOIN learning_recommendation_evidence_jobs AS evidence_job
+             ON evidence_job.tenant_id = evidence.tenant_id
+            AND evidence_job.recommendation_id = evidence.recommendation_id
+            AND evidence_job.signal_id = evidence.signal_id
+          WHERE evidence.tenant_id = ?
+            AND evidence.recommendation_id = ?`,
+        [DEFAULT_TENANT, recommendationId],
+      )?.count ?? 0,
+    );
+    const offset = (query.page - 1) * query.pageSize;
+    const rows = allRows<RecommendationEvidenceLinkRow>(
+      db,
+      `SELECT evidence.signal_id,
+              evidence.evidence_role,
+              evidence.source_kind,
+              evidence.source_revision,
+              evidence_job.job_id,
+              evidence.recorded_at
+         FROM learning_recommendation_evidence AS evidence
+         JOIN learning_recommendation_evidence_jobs AS evidence_job
+           ON evidence_job.tenant_id = evidence.tenant_id
+          AND evidence_job.recommendation_id = evidence.recommendation_id
+          AND evidence_job.signal_id = evidence.signal_id
+        WHERE evidence.tenant_id = ?
+          AND evidence.recommendation_id = ?
+        ORDER BY CASE evidence.evidence_role
+                   WHEN 'supporting' THEN 0
+                   ELSE 1
+                 END,
+                 evidence.recorded_at ASC,
+                 evidence.signal_id ASC,
+                 evidence_job.job_id ASC
+        LIMIT ? OFFSET ?`,
+      [DEFAULT_TENANT, recommendationId, query.pageSize, offset],
+    );
+    return LearningRecommendationEvidenceListResponseSchema.parse({
+      ok: true,
+      recommendationId,
+      evidence: rows.map((row) => ({
+        signalId: row.signal_id,
+        evidenceRole: row.evidence_role,
+        sourceKind: row.source_kind,
+        sourceRevision: Number(row.source_revision),
+        jobId: row.job_id,
+        recordedAt: row.recorded_at,
+      })),
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
+      totalPages: total === 0 ? 0 : Math.ceil(total / query.pageSize),
+    });
+  })();
 }
