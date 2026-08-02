@@ -2999,42 +2999,28 @@ def _backfill_one_observation_row(
 
 
 # ---------------------------------------------------------------------------
-# job_enrichments read fragments — used by every selector / stat that
-# previously read bare ``jobs.full_description`` / ``jobs.application_url``
-# / ``jobs.detail_scraped_at`` / ``jobs.detail_error``. After Phase 7 the
-# canonical enrichment fields live in ``job_enrichments``; the legacy
-# ``jobs.*`` columns stay as a read-only fallback for un-backfilled rows.
-# Use these COALESCE expressions everywhere the old code read bare columns
-# so the worker queue selectors see new repository writes immediately and
-# don't starve.
+# job_enrichments read fragments — selectors and status counts derive
+# enrichment only from the canonical aggregate. Retired wide ``jobs``
+# columns must not affect v7 eligibility.
 # ---------------------------------------------------------------------------
 
 _ENRICHMENT_JOIN: str = (
-    "LEFT JOIN job_enrichments je ON je.job_url = jobs.url "
+    "LEFT JOIN job_enrichments je "
+    "ON je.tenant_id = jobs.tenant_id AND je.job_id = jobs.job_id "
     "LEFT JOIN job_stage_states jss_enrich "
-    "ON jss_enrich.job_url = jobs.url AND jss_enrich.stage = 'enrich'"
+    "ON jss_enrich.tenant_id = jobs.tenant_id "
+    "AND jss_enrich.job_id = jobs.job_id "
+    "AND jss_enrich.stage = 'enrich'"
 )
 
-_EFFECTIVE_FULL_DESCRIPTION: str = "COALESCE(je.full_description, jobs.full_description)"
-_EFFECTIVE_APPLICATION_URL: str = "COALESCE(je.application_url, jobs.application_url)"
+_EFFECTIVE_FULL_DESCRIPTION: str = "je.full_description"
+_EFFECTIVE_APPLICATION_URL: str = "je.application_url"
 _EFFECTIVE_APPLY_TARGET_URL: str = (
     f"COALESCE(NULLIF({_EFFECTIVE_APPLICATION_URL}, ''), jobs.url)"
 )
-_EFFECTIVE_DETAIL_SCRAPED_AT: str = "COALESCE(je.enriched_at, jobs.detail_scraped_at)"
-# Per §7.1 the canonical "this job has been enriched" predicate is the
-# aggregate's terminal status; un-backfilled rows fall back to the legacy
-# detail_scraped_at column.
-_ENRICHMENT_DONE: str = "(je.current_status = 'enriched' OR jobs.detail_scraped_at IS NOT NULL)"
-# Phase 7 (S-26 round-1 review M3): the aggregate status is the primary
-# enrichment signal, but the live local DB can contain historical jobs with
-# legacy description columns and a canonical ``job_stage_states.enrich =
-# succeeded`` row before a ``job_enrichments`` aggregate exists. Those rows
-# must not be re-picked by runners, because the state machine correctly
-# rejects succeeded -> running. A reset clears the stage row back to pending,
-# so retries still work even when legacy detail columns remain populated.
 _ENRICHMENT_PENDING: str = (
-    "(je.job_url IS NULL OR je.current_status = 'pending') "
-    "AND COALESCE(jss_enrich.state, CASE WHEN jobs.detail_scraped_at IS NOT NULL THEN 'succeeded' ELSE 'pending' END) = 'pending'"
+    "(je.job_id IS NULL OR je.current_status = 'pending') "
+    "AND COALESCE(jss_enrich.state, 'pending') = 'pending'"
 )
 
 # Closed/removed posting states are Enrichment-owned facts, not user
@@ -3043,7 +3029,7 @@ _ENRICHMENT_PENDING: str = (
 _CLOSED_ACTIVE_STATES_SQL = "'closed', 'expired', 'removed', 'location_incompatible'"
 _ACTIVE_STATE_JOIN: str = (
     "LEFT JOIN posting_snapshot_sets pss "
-    "ON pss.tenant_id = 'local' AND pss.job_url = jobs.url"
+    "ON pss.tenant_id = jobs.tenant_id AND pss.job_id = jobs.job_id"
 )
 _NOT_CLOSED_ACTIVE_STATE: str = (
     f"(pss.latest_active_state IS NULL OR pss.latest_active_state NOT IN ({_CLOSED_ACTIVE_STATES_SQL}))"
@@ -3067,119 +3053,103 @@ _ENRICHMENT_NOT_QUARANTINED: str = (
 
 
 # ---------------------------------------------------------------------------
-# job_materials read fragments — used by the queue selectors that
-# previously read bare ``jobs.tailored_resume_path`` / ``cover_letter_path``.
-# After Phase 6 the canonical artifact paths live in ``job_materials_artifacts``
-# (latest generation per ``job_url``); the legacy ``jobs.*_path`` columns
-# stay as read-only fallback for historical rows that have no canonical
-# materials row. Once ``job_materials`` exists, approved artifacts are the
-# only active paths; suppressed artifacts must not fall through to legacy
-# columns left populated by the backfill.
+# job_materials read fragments — queue selectors derive material readiness
+# only from approved canonical artifacts.
 # ---------------------------------------------------------------------------
 
 # LEFT JOIN that surfaces the latest generation's tailored-resume and
 # cover-letter artifact paths under fixed aliases.
 _LATEST_MATERIALS_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT history.job_url AS jm_job_url, latest.max_generation AS jm_generation, "
+    "SELECT history.tenant_id AS jm_tenant_id, history.job_id AS jm_job_id, "
+    "latest.max_generation AS jm_generation, "
     "m.status AS jm_status, "
     "tr.path AS jm_tailored_path, tr.created_at AS jm_tailored_at, "
     "cl.path AS jm_cover_path, cl.created_at AS jm_cover_at, "
     "rpdf.path AS jm_resume_pdf_path, rpdf.artifact_id AS jm_resume_pdf_artifact_id, "
     "cpdf.path AS jm_cover_pdf_path "
-    "FROM (SELECT DISTINCT job_url FROM job_materials) history "
+    "FROM (SELECT DISTINCT tenant_id, job_id FROM job_materials) history "
     "LEFT JOIN ("
-    "SELECT job_url, MAX(generation) AS max_generation "
+    "SELECT tenant_id, job_id, MAX(generation) AS max_generation "
     "FROM job_materials_artifacts "
     "WHERE status = 'approved' "
     "AND artifact_type IN ('tailored_resume', 'cover_letter', 'resume_pdf', 'cover_letter_pdf') "
-    "GROUP BY job_url"
-    ") latest ON latest.job_url = history.job_url "
+    "GROUP BY tenant_id, job_id"
+    ") latest ON latest.tenant_id = history.tenant_id "
+    "AND latest.job_id = history.job_id "
     "LEFT JOIN job_materials m "
-    "ON m.job_url = history.job_url AND m.generation = latest.max_generation "
+    "ON m.tenant_id = history.tenant_id AND m.job_id = history.job_id "
+    "AND m.generation = latest.max_generation "
     "LEFT JOIN job_materials_artifacts tr "
-    "ON tr.job_url = history.job_url AND tr.generation = latest.max_generation "
+    "ON tr.tenant_id = history.tenant_id AND tr.job_id = history.job_id "
+    "AND tr.generation = latest.max_generation "
     "AND tr.artifact_type = 'tailored_resume' AND tr.status = 'approved' "
     "LEFT JOIN job_materials_artifacts cl "
-    "ON cl.job_url = history.job_url AND cl.generation = latest.max_generation "
+    "ON cl.tenant_id = history.tenant_id AND cl.job_id = history.job_id "
+    "AND cl.generation = latest.max_generation "
     "AND cl.artifact_type = 'cover_letter' AND cl.status = 'approved' "
     "LEFT JOIN job_materials_artifacts rpdf "
-    "ON rpdf.job_url = history.job_url AND rpdf.generation = latest.max_generation "
+    "ON rpdf.tenant_id = history.tenant_id AND rpdf.job_id = history.job_id "
+    "AND rpdf.generation = latest.max_generation "
     "AND rpdf.artifact_type = 'resume_pdf' AND rpdf.status = 'approved' "
     "LEFT JOIN job_materials_artifacts cpdf "
-    "ON cpdf.job_url = history.job_url AND cpdf.generation = latest.max_generation "
+    "ON cpdf.tenant_id = history.tenant_id AND cpdf.job_id = history.job_id "
+    "AND cpdf.generation = latest.max_generation "
     "AND cpdf.artifact_type = 'cover_letter_pdf' AND cpdf.status = 'approved'"
-    ") jm ON jm.jm_job_url = jobs.url"
+    ") jm ON jm.jm_tenant_id = jobs.tenant_id AND jm.jm_job_id = jobs.job_id"
 )
 
-_EFFECTIVE_TAILOR_PATH: str = (
-    "CASE WHEN jm.jm_job_url IS NOT NULL THEN jm.jm_tailored_path "
-    "ELSE jobs.tailored_resume_path END"
-)
-_EFFECTIVE_COVER_PATH: str = (
-    "CASE WHEN jm.jm_job_url IS NOT NULL THEN jm.jm_cover_path "
-    "ELSE jobs.cover_letter_path END"
-)
+_EFFECTIVE_TAILOR_PATH: str = "jm.jm_tailored_path"
+_EFFECTIVE_COVER_PATH: str = "jm.jm_cover_path"
 _READY_TAILORED_RESUME_WITH_PDF: str = (
-    "((jm.jm_job_url IS NOT NULL "
-    "AND jm.jm_tailored_path IS NOT NULL AND jm.jm_tailored_path != '' "
-    "AND jm.jm_resume_pdf_path IS NOT NULL AND jm.jm_resume_pdf_path != '') "
-    "OR (jm.jm_job_url IS NULL "
-    "AND jobs.tailored_resume_path IS NOT NULL AND jobs.tailored_resume_path != ''))"
+    "(jm.jm_tailored_path IS NOT NULL AND jm.jm_tailored_path != '' "
+    "AND jm.jm_resume_pdf_path IS NOT NULL AND jm.jm_resume_pdf_path != '')"
 )
 
 
 # ---------------------------------------------------------------------------
-# job_stage_states attempt-counter read fragments — round-2 review H1.
-# After Phase 6 the new tailor / cover use cases never bump
-# ``jobs.tailor_attempts`` / ``jobs.cover_attempts``; the canonical attempt
-# counter advances on ``job_stage_states.attempt_count``. The bare-column
-# ``< 5`` predicate the queue selectors used would let exhausted jobs back
-# in indefinitely. ``_LATEST_STAGE_ATTEMPTS_JOIN`` surfaces the per-stage
-# attempt count + state so selectors can:
-#   * exclude tailor/cover jobs whose stage state is ``exhausted``
-#   * fall back to the legacy ``jobs.tailor_attempts`` / ``cover_attempts``
-#     for un-migrated rows.
+# job_stage_states attempt-counter read fragments. Stage state is the only
+# authority for retry limits and exhaustion.
 # ---------------------------------------------------------------------------
 
 _LATEST_STAGE_ATTEMPTS_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT job_url AS jss_t_job_url, attempt_count AS jss_t_attempts, state AS jss_t_state "
+    "SELECT tenant_id AS jss_t_tenant_id, job_id AS jss_t_job_id, "
+    "attempt_count AS jss_t_attempts, state AS jss_t_state "
     "FROM job_stage_states WHERE stage = 'tailor'"
-    ") jss_t ON jss_t.jss_t_job_url = jobs.url "
+    ") jss_t ON jss_t.jss_t_tenant_id = jobs.tenant_id "
+    "AND jss_t.jss_t_job_id = jobs.job_id "
     "LEFT JOIN ("
-    "SELECT job_url AS jss_c_job_url, attempt_count AS jss_c_attempts, state AS jss_c_state "
+    "SELECT tenant_id AS jss_c_tenant_id, job_id AS jss_c_job_id, "
+    "attempt_count AS jss_c_attempts, state AS jss_c_state "
     "FROM job_stage_states WHERE stage = 'cover'"
-    ") jss_c ON jss_c.jss_c_job_url = jobs.url"
+    ") jss_c ON jss_c.jss_c_tenant_id = jobs.tenant_id "
+    "AND jss_c.jss_c_job_id = jobs.job_id"
 )
 
-# COALESCE picks the canonical (job_stage_states) counter first, falling
-# back to the legacy column for un-migrated rows. ``state = 'exhausted'``
-# is the new exhaustion signal — tested separately below.
-_EFFECTIVE_TAILOR_ATTEMPTS: str = "COALESCE(jss_t.jss_t_attempts, jobs.tailor_attempts, 0)"
-_EFFECTIVE_COVER_ATTEMPTS: str = "COALESCE(jss_c.jss_c_attempts, jobs.cover_attempts, 0)"
+_EFFECTIVE_TAILOR_ATTEMPTS: str = "COALESCE(jss_t.jss_t_attempts, 0)"
+_EFFECTIVE_COVER_ATTEMPTS: str = "COALESCE(jss_c.jss_c_attempts, 0)"
 _TAILOR_NOT_EXHAUSTED: str = "(jss_t.jss_t_state IS NULL OR jss_t.jss_t_state != 'exhausted')"
 _COVER_NOT_EXHAUSTED: str = "(jss_c.jss_c_state IS NULL OR jss_c.jss_c_state != 'exhausted')"
 
 
-# Stale-score guard for downstream stages. Legacy rows can have a pending
-# score-stage row while their usable score still lives only in
-# ``jobs.fit_score``; those remain eligible unless explicitly stale or
-# carrying an unresolved marker. Once the usable score comes from
-# ``job_scores``, downstream work requires a succeeded score-stage row.
+# Stale-score guard for downstream stages.
 _SCORE_DOWNSTREAM_STATE_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT job_url AS jss_s_job_url, state AS jss_s_state, "
+    "SELECT tenant_id AS jss_s_tenant_id, job_id AS jss_s_job_id, "
+    "state AS jss_s_state, "
     "attempt_count AS jss_s_attempts "
     "FROM job_stage_states WHERE stage = 'score'"
-    ") jss_s ON jss_s.jss_s_job_url = jobs.url "
+    ") jss_s ON jss_s.jss_s_tenant_id = jobs.tenant_id "
+    "AND jss_s.jss_s_job_id = jobs.job_id "
     "LEFT JOIN ("
-    "SELECT DISTINCT job_url AS jss_stale_job_url "
+    "SELECT DISTINCT tenant_id AS jss_stale_tenant_id, job_id AS jss_stale_job_id "
     "FROM job_score_staleness WHERE resolved = 0"
-    ") jss_stale ON jss_stale.jss_stale_job_url = jobs.url"
+    ") jss_stale ON jss_stale.jss_stale_tenant_id = jobs.tenant_id "
+    "AND jss_stale.jss_stale_job_id = jobs.job_id"
 )
 _SCORE_CURRENT_FOR_DOWNSTREAM: str = (
-    "(jss_stale.jss_stale_job_url IS NULL "
+    "(jss_stale.jss_stale_job_id IS NULL "
     "AND (jss_s.jss_s_state IS NULL "
     "OR jss_s.jss_s_state = 'succeeded' "
     "OR (js.js_fit_score IS NULL AND jss_s.jss_s_state != 'stale')))"
@@ -3193,20 +3163,14 @@ _EFFECTIVE_SCORE_ATTEMPTS: str = "COALESCE(jss_s.jss_s_attempts, 0)"
 
 
 # ---------------------------------------------------------------------------
-# job_scores read fragments — used by every selector / stat that previously
-# read bare ``jobs.fit_score``. After Phase 5 the canonical fit score lives
-# in ``job_scores`` (latest version per ``job_url``); the legacy
-# ``jobs.fit_score`` column stays as a read-only fallback for historical
-# rows that were never re-scored. ``_EFFECTIVE_FIT_SCORE`` is the COALESCE
-# expression every WHERE / ORDER BY / aggregate query should use instead of
-# bare ``fit_score`` so the worker queue selectors see new scores
-# immediately and don't re-pick already-scored jobs forever (round-1
-# review B1).
+# job_scores read fragments — selectors and status counts use the latest
+# canonical score aggregate.
 # ---------------------------------------------------------------------------
 
 _LATEST_SCORE_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT s.job_url AS js_job_url, s.fit_score AS js_fit_score, "
+    "SELECT s.tenant_id AS js_tenant_id, s.job_id AS js_job_id, "
+    "s.fit_score AS js_fit_score, "
     "CASE WHEN json_valid(s.breakdown_json) "
     "THEN LOWER(COALESCE(CAST(json_extract(s.breakdown_json, '$.eligibility.status') AS TEXT), '')) "
     "ELSE '' END AS js_eligibility_status, "
@@ -3218,52 +3182,47 @@ _LATEST_SCORE_JOIN: str = (
     "0) ELSE 0 END AS js_hard_blocker_count "
     "FROM job_scores s "
     "INNER JOIN ("
-    "SELECT job_url, MAX(version) AS max_version FROM job_scores GROUP BY job_url"
-    ") latest ON latest.job_url = s.job_url AND latest.max_version = s.version"
-    ") js ON js.js_job_url = jobs.url"
+    "SELECT tenant_id, job_id, MAX(version) AS max_version "
+    "FROM job_scores GROUP BY tenant_id, job_id"
+    ") latest ON latest.tenant_id = s.tenant_id AND latest.job_id = s.job_id "
+    "AND latest.max_version = s.version"
+    ") js ON js.js_tenant_id = jobs.tenant_id AND js.js_job_id = jobs.job_id"
 )
 
-_EFFECTIVE_FIT_SCORE: str = "COALESCE(js.js_fit_score, jobs.fit_score)"
+_EFFECTIVE_FIT_SCORE: str = "js.js_fit_score"
 _SCORE_ELIGIBLE_FOR_DOWNSTREAM: str = (
     "(COALESCE(js.js_eligibility_status, '') != 'blocked' AND COALESCE(js.js_hard_blocker_count, 0) = 0)"
 )
 
 
 # ---------------------------------------------------------------------------
-# Apply read-side (PR 4 of the Temporal stack). The bespoke
-# ``apply_runs`` table is gone; ``apply_run_projections`` (built from
-# ``job_events`` by the projection builder) is the canonical apply
-# lifecycle row. This LEFT JOIN promotes the latest projection row's
-# status / finished_at into the legacy column slots so queue selectors
-# (``pending_apply``, ``applied``) and ``get_stats`` see new writes
-# without re-deriving from events at every read site.
+# Apply read-side. ``apply_run_projections`` is the canonical apply
+# lifecycle row for selectors and status counts.
 # ---------------------------------------------------------------------------
 
 # Tie-break by run_id when two apply runs share the same ``started_at``.
 _LATEST_APPLY_RUN_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT ar.job_id AS ar_job_url, ar.status AS ar_status, "
+    "SELECT ar.tenant_id AS ar_tenant_id, ar.job_id AS ar_job_id, "
+    "ar.status AS ar_status, "
     "ar.result AS ar_result, ar.finished_at AS ar_finished_at, "
     "ar.started_at AS ar_started_at, ar.run_id AS ar_run_id "
     "FROM apply_run_projections ar "
     "WHERE ar.run_id = ("
     "SELECT run_id FROM apply_run_projections ar_inner "
-    "WHERE ar_inner.job_id = ar.job_id "
+    "WHERE ar_inner.tenant_id = ar.tenant_id "
+    "AND ar_inner.job_id = ar.job_id "
     "ORDER BY ar_inner.started_at DESC, ar_inner.run_id DESC "
     "LIMIT 1"
     ")"
-    ") ar ON ar.ar_job_url = jobs.url"
+    ") ar ON ar.ar_tenant_id = jobs.tenant_id AND ar.ar_job_id = jobs.job_id"
 )
 
-# Applied = any apply run with status='succeeded' for the job (we
-# COALESCE with the legacy column so historical rows stay visible).
-_EFFECTIVE_APPLIED_AT: str = "CASE WHEN ar.ar_status = 'succeeded' THEN ar.ar_finished_at ELSE jobs.applied_at END"
+# Applied = any latest apply run with status='succeeded' for the job.
+_EFFECTIVE_APPLIED_AT: str = "CASE WHEN ar.ar_status = 'succeeded' THEN ar.ar_finished_at END"
 
-# Apply status string suitable for read-model consumption — collapses
-# ``starting`` / ``in_progress`` into the historical ``in_progress``
-# label so callers needn't relearn the labels.
+# Apply status string suitable for read-model consumption.
 _EFFECTIVE_APPLY_STATUS: str = (
-    "COALESCE("
     "CASE ar.ar_status "
     "WHEN 'starting' THEN 'in_progress' "
     "WHEN 'in_progress' THEN 'in_progress' "
@@ -3274,8 +3233,7 @@ _EFFECTIVE_APPLY_STATUS: str = (
     "WHEN 'expired' THEN 'expired' "
     "WHEN 'manual' THEN 'manual' "
     "WHEN 'dry_run_complete' THEN 'dry_run' "
-    "ELSE NULL END, "
-    "jobs.apply_status)"
+    "ELSE NULL END"
 )
 
 
@@ -3317,10 +3275,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     rows = conn.execute("SELECT site, COUNT(*) as cnt FROM jobs GROUP BY site ORDER BY cnt DESC").fetchall()
     stats["by_site"] = [(row[0], row[1]) for row in rows]
 
-    # Enrichment stage — Phase 7 (S-26): read through the
-    # ``job_enrichments`` join so dashboard counts reflect new
-    # JobEnrichment writes (jobs.full_description / jobs.application_url
-    # are NULL on the new path).
+    # Enrichment stage — derive dashboard counts from JobEnrichment.
     stats["pending_detail"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_ENRICHMENT_JOIN} WHERE {_ENRICHMENT_PENDING}"
     ).fetchone()[0]
@@ -3331,13 +3286,10 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
 
     stats["detail_errors"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_ENRICHMENT_JOIN} "
-        f"WHERE je.current_status = 'failed' OR jobs.detail_error IS NOT NULL"
+        "WHERE je.current_status = 'failed'"
     ).fetchone()[0]
 
-    # Scoring stage — round-1 review B2: read through the same job_scores
-    # LEFT JOIN that the worker queue selectors use, so dashboard stats
-    # reflect new scores written through ScoreRepository (jobs.fit_score is
-    # now NULL on the new path).
+    # Scoring stage — use the same canonical score join as worker queues.
     stats["scored"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} WHERE {_EFFECTIVE_FIT_SCORE} IS NOT NULL"
     ).fetchone()[0]
@@ -3348,8 +3300,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         f"AND {_EFFECTIVE_FIT_SCORE} IS NULL"
     ).fetchone()[0]
 
-    # Score distribution — group by the effective score so legacy and new
-    # rows fold into the same buckets.
+    # Score distribution — group by the latest canonical score.
     dist_rows = conn.execute(
         f"SELECT {_EFFECTIVE_FIT_SCORE} AS effective_score, COUNT(*) AS cnt "
         f"FROM jobs {_LATEST_SCORE_JOIN} "
@@ -3358,12 +3309,8 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchall()
     stats["score_distribution"] = [(row[0], row[1]) for row in dist_rows]
 
-    # Tailoring + cover letter stages — round-2 review B2: read through the
-    # same materials + stage-attempts joins the worker queue selectors use,
-    # so dashboard counts reflect new MaterialsSet writes (jobs.*_path is
-    # NULL on the new path) AND honour the new attempt-counter / exhaustion
-    # signal that lives in ``job_stage_states``. Without these joins the
-    # dashboard would freeze at the backfill snapshot value.
+    # Tailoring + cover letter stages — material status and attempt limits
+    # come from canonical artifacts and job stage state.
     stats["tailored"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL"
     ).fetchone()[0]
@@ -3395,9 +3342,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         f"AND ({_EFFECTIVE_COVER_ATTEMPTS} >= 5 OR jss_c.jss_c_state = 'exhausted')"
     ).fetchone()[0]
 
-    # Application stage (PR 4) — read through the ``apply_run_projections``
-    # join so dashboard counts reflect lifecycle events (jobs.applied_at /
-    # apply_status / apply_error are NULL on the new write path).
+    # Application stage — status comes from apply-run projections.
     stats["applied"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_LATEST_APPLY_RUN_JOIN} {_ACTIVE_STATE_JOIN} "
         f"WHERE {_EFFECTIVE_APPLIED_AT} IS NOT NULL "
@@ -3406,8 +3351,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
 
     stats["apply_errors"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_LATEST_APPLY_RUN_JOIN} {_ACTIVE_STATE_JOIN} "
-        f"WHERE (ar.ar_status IN ('failed', 'captcha', 'login_issue', 'expired') "
-        f"OR jobs.apply_error IS NOT NULL) "
+        "WHERE ar.ar_status IN ('failed', 'captcha', 'login_issue', 'expired') "
         f"AND {_NOT_CLOSED_ACTIVE_STATE}"
     ).fetchone()[0]
 
@@ -3455,13 +3399,16 @@ def count_ready_to_apply(
         _ENRICHMENT_NOT_QUARANTINED,
         "NOT EXISTS ("
         "SELECT 1 FROM job_stage_states jss_active "
-        "WHERE jss_active.job_url = jobs.url "
+        "WHERE jss_active.tenant_id = jobs.tenant_id "
+        "AND jss_active.job_id = jobs.job_id "
         "AND jss_active.stage = 'apply' "
         "AND jss_active.state IN ('running', 'succeeded')"
         ")",
         "COALESCE(("
         "SELECT jss_a.attempt_count FROM job_stage_states jss_a "
-        "WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply' LIMIT 1"
+        "WHERE jss_a.tenant_id = jobs.tenant_id "
+        "AND jss_a.job_id = jobs.job_id "
+        "AND jss_a.stage = 'apply' LIMIT 1"
         "), 0) < ?",
         "(ar.ar_status IS NULL OR ar.ar_status NOT IN ('starting', 'in_progress'))",
     ]
@@ -3650,12 +3597,9 @@ def load_job_with_enrichment(
     je_at = record.pop("je_enriched_at", None)
     record.pop("je_current_status", None)
     record.pop("je_extraction_tier", None)
-    if je_full is not None:
-        record["full_description"] = je_full
-    if je_app is not None:
-        record["application_url"] = je_app
-    if je_at is not None:
-        record["detail_scraped_at"] = je_at
+    record["full_description"] = je_full
+    record["application_url"] = je_app
+    record["detail_scraped_at"] = je_at
     # PR 4 of the Temporal stack: promote ``apply_run_projections``
     # columns into the legacy column slots.
     record.pop("ar_status", None)
@@ -3663,12 +3607,9 @@ def load_job_with_enrichment(
     ar_applied = record.pop("effective_applied_at", None)
     ar_status = record.pop("effective_apply_status", None)
     ar_run_id = record.pop("ar_run_id", None)
-    if ar_applied is not None:
-        record["applied_at"] = ar_applied
-    if ar_status is not None:
-        record["apply_status"] = ar_status
-    if ar_run_id is not None:
-        record["apply_task_id"] = ar_run_id
+    record["applied_at"] = ar_applied
+    record["apply_status"] = ar_status
+    record["apply_task_id"] = ar_run_id
     return record
 
 
@@ -3699,37 +3640,8 @@ def get_jobs_by_stage(
     if stage in ("pending_tailor", "pending_cover"):
         min_score = effective_tailoring_min_score(min_score)
 
-    # Round-1 review B1: every predicate that historically read bare
-    # ``fit_score`` now reads through ``_EFFECTIVE_FIT_SCORE`` (COALESCE
-    # over the latest job_scores row + legacy column). New scores written
-    # via ``ScoreRepository.save`` leave ``jobs.fit_score`` NULL, so without
-    # this LEFT JOIN ``pending_score`` would loop forever and
-    # ``pending_tailor`` / ``pending_cover`` would starve.
-    #
-    # Phase 6 (S-20) extends the same pattern to the Materials Generation
-    # context: ``_EFFECTIVE_TAILOR_PATH`` / ``_EFFECTIVE_COVER_PATH`` read
-    # through the latest ``job_materials_artifacts`` generation, with the
-    # legacy ``jobs.tailored_resume_path`` / ``jobs.cover_letter_path``
-    # columns as a read-only fallback for un-backfilled rows. New tailor
-    # / cover writes go ONLY to ``job_materials`` (no-strangler) so this
-    # join is what keeps the pipeline observable.
-    # Round-2 review H1: drop the bare ``tailor_attempts < 5`` /
-    # ``cover_attempts < 5`` predicates. New code never bumps those columns;
-    # the canonical attempt + exhaustion signals live in
-    # ``job_stage_states`` (state='exhausted' when the runner gives up).
-    # We exclude exhausted jobs via ``_TAILOR_NOT_EXHAUSTED`` /
-    # ``_COVER_NOT_EXHAUSTED`` and fold the legacy ``tailor_attempts`` /
-    # ``cover_attempts`` columns through ``_EFFECTIVE_*_ATTEMPTS`` so
-    # un-migrated rows that never got a ``job_stage_states`` row still
-    # honour the legacy ≥ 5 cap.
-    # Phase 7 (S-26): every predicate that historically read bare
-    # ``full_description`` / ``application_url`` / ``detail_scraped_at``
-    # / ``detail_error`` now reads through the ``_EFFECTIVE_*`` COALESCE
-    # expressions backed by the ``job_enrichments`` table. New
-    # enrichment writes target ``job_enrichments`` only (no-strangler);
-    # without this join ``pending_score`` would loop forever (description
-    # column stays NULL on the new path) and ``pending_detail`` would
-    # double-pick already-enriched jobs.
+    # Queue predicates derive score, material, retry, enrichment, and apply
+    # state only from their canonical v7 aggregate or projection.
     pending_tailor_where = (
         f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
@@ -3826,7 +3738,7 @@ def get_jobs_by_stage(
     # round-trip through the repository.
     query = (
         f"SELECT jobs.*, js.js_fit_score AS js_fit_score, "
-        f"jm.jm_job_url AS jm_job_url, "
+        f"jm.jm_job_id AS jm_job_id, "
         f"jm.jm_tailored_path AS jm_tailored_path, "
         f"jm.jm_tailored_at AS jm_tailored_at, "
         f"jm.jm_cover_path AS jm_cover_path, "
@@ -3871,18 +3783,16 @@ def get_jobs_by_stage(
     for row in rows:
         record = dict(zip(columns, row))
         js_value = record.pop("js_fit_score", None)
-        if js_value is not None:
-            record["fit_score"] = js_value
-        jm_job_url = record.pop("jm_job_url", None)
+        record["fit_score"] = js_value
+        record.pop("jm_job_id", None)
         jm_tailored = record.pop("jm_tailored_path", None)
         jm_tailored_at = record.pop("jm_tailored_at", None)
         jm_cover = record.pop("jm_cover_path", None)
         jm_cover_at = record.pop("jm_cover_at", None)
-        if jm_job_url is not None:
-            record["tailored_resume_path"] = jm_tailored
-            record["tailored_at"] = jm_tailored_at
-            record["cover_letter_path"] = jm_cover
-            record["cover_letter_at"] = jm_cover_at
+        record["tailored_resume_path"] = jm_tailored
+        record["tailored_at"] = jm_tailored_at
+        record["cover_letter_path"] = jm_cover
+        record["cover_letter_at"] = jm_cover_at
         # Phase 7 (S-26): promote enrichment fields from job_enrichments
         # into the legacy column slots so downstream consumers (apply,
         # scoring, tailor) that still read ``full_description`` /
@@ -3893,12 +3803,9 @@ def get_jobs_by_stage(
         je_at = record.pop("je_enriched_at", None)
         record.pop("je_current_status", None)
         record.pop("je_extraction_tier", None)
-        if je_full is not None:
-            record["full_description"] = je_full
-        if je_app is not None:
-            record["application_url"] = je_app
-        if je_at is not None:
-            record["detail_scraped_at"] = je_at
+        record["full_description"] = je_full
+        record["application_url"] = je_app
+        record["detail_scraped_at"] = je_at
         # PR 4 of the Temporal stack: promote ``apply_run_projections``
         # columns into the legacy column slots so consumers (TS
         # read-model, Rich dashboard, legacy CLI) that still read
@@ -3909,11 +3816,8 @@ def get_jobs_by_stage(
         record.pop("ar_status", None)
         record.pop("ar_finished_at", None)
         ar_run_id = record.pop("ar_run_id", None)
-        if ar_applied is not None:
-            record["applied_at"] = ar_applied
-        if ar_status is not None:
-            record["apply_status"] = ar_status
-        if ar_run_id is not None:
-            record["apply_task_id"] = ar_run_id
+        record["applied_at"] = ar_applied
+        record["apply_status"] = ar_status
+        record["apply_task_id"] = ar_run_id
         out.append(record)
     return out
