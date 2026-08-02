@@ -9,6 +9,7 @@ import {
   CREDENTIAL_VALUE_MAX_LENGTH,
   CredentialKeys,
   JsonRpcErrorCodes,
+  LearningRecommendationListResponseSchema,
   PipelineOperationsSnapshotSchema,
   ProviderConfigurationKeys,
   ScoringKeywordAggregationResponseSchema,
@@ -2411,6 +2412,133 @@ describe("local TypeScript API", () => {
       expect.objectContaining({ method: "GET" }),
     );
     fetchMock.mockRestore();
+    await app.close();
+  });
+
+  it("serves tenant-scoped learning recommendations without source content", async () => {
+    const db = new Database(options.dbPath);
+    insertLearningRecommendationFixture(db, {
+      tenantId: "local",
+      recommendationId: `learning-recommendation:${"a".repeat(64)}`,
+      tombstoned: true,
+    });
+    insertLearningRecommendationFixture(db, {
+      tenantId: "local",
+      recommendationId: `learning-recommendation:${"d".repeat(64)}`,
+      tombstoned: false,
+    });
+    insertLearningRecommendationFixture(db, {
+      tenantId: "other",
+      recommendationId: `learning-recommendation:${"b".repeat(64)}`,
+      tombstoned: false,
+    });
+    db.prepare(
+      `INSERT INTO resume_review_drafts (
+         tenant_id, draft_id, job_id, base_generation, renderer_format,
+         state, latest_revision_number, created_at, updated_at
+       ) VALUES ('local', 'private-learning-draft', ?, 1, 'text',
+                 'active', 0, ?, ?)`,
+    ).run(
+      jobIdFor("https://example.com/jobs/ready"),
+      "2026-08-01T09:00:00Z",
+      "2026-08-01T09:00:00Z",
+    );
+    db.prepare(
+      `INSERT INTO tailoring_feedback_signals (
+         tenant_id, signal_id, job_id, draft_id, source_kind, source_id,
+         signal_kind, status, summary, created_at
+       ) VALUES ('local', 'private-learning-signal', ?,
+                 'private-learning-draft', 'edit_delta', 'private-delta',
+                 'factual_correction', 'candidate', ?, ?)`,
+    ).run(
+      jobIdFor("https://example.com/jobs/ready"),
+      "private resume, prompt, note, and job description",
+      "2026-08-01T09:00:00Z",
+    );
+    const auditBefore = learningAuditSnapshot(db);
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/learning/recommendations?page=1&pageSize=1",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const parsed = LearningRecommendationListResponseSchema.parse(response.json());
+    expect(parsed.recommendations).toHaveLength(1);
+    expect(parsed).toMatchObject({ page: 1, pageSize: 1, total: 2, totalPages: 2 });
+    expect(parsed.recommendations[0]).toMatchObject({
+      recommendationId: `learning-recommendation:${"a".repeat(64)}`,
+      context: "materials",
+      policyKind: "tailoring_rule",
+      signalKind: "factual_correction",
+      ruleKey: "fact_handling",
+      ruleValue: "require_source_match",
+      status: "pending",
+      active: false,
+      observedSignalCount: 3,
+      observedJobCount: 2,
+      minimumSignalCount: 3,
+      minimumJobCount: 2,
+      confidenceLimit: "sample_gated_no_population_inference",
+      supportingEvidenceCount: 3,
+      contradictingEvidenceCount: 1,
+      tombstoneCount: 1,
+    });
+    expect(response.body).not.toContain("private resume, prompt, note, and job description");
+    expect(response.body).not.toContain("source-contradiction-local");
+    expect(response.body).not.toContain(`learning-recommendation:${"b".repeat(64)}`);
+    expect(() =>
+      LearningRecommendationListResponseSchema.parse({
+        ...parsed,
+        recommendations: [
+          {
+            ...parsed.recommendations[0],
+            recommendationId: "https://jobs.example/not-a-recommendation-id",
+          },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      LearningRecommendationListResponseSchema.parse({
+        ...parsed,
+        recommendations: [
+          { ...parsed.recommendations[0], ruleKey: "private free text" },
+        ],
+      }),
+    ).toThrow();
+    const secondPage = LearningRecommendationListResponseSchema.parse(
+      (
+        await app.inject({
+          method: "GET",
+          url: "/v1/learning/recommendations?page=2&pageSize=1",
+        })
+      ).json(),
+    );
+    expect(secondPage).toMatchObject({ page: 2, pageSize: 1, total: 2, totalPages: 2 });
+    expect(secondPage.recommendations).toEqual([
+      expect.objectContaining({
+        recommendationId: `learning-recommendation:${"d".repeat(64)}`,
+        active: true,
+        tombstoneCount: 0,
+      }),
+    ]);
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(response.body, { status: 200, statusText: "OK" }),
+    );
+    await expect(
+      createJobCtrlApiClient().learningRecommendations({ page: 1, pageSize: 1 }),
+    ).resolves.toEqual(parsed);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:8766/v1/learning/recommendations?page=1&pageSize=1",
+      expect.objectContaining({ method: "GET" }),
+    );
+    fetchMock.mockRestore();
+    const unchanged = new Database(options.dbPath);
+    expect(learningAuditSnapshot(unchanged)).toBe(auditBefore);
+    unchanged.close();
     await app.close();
   });
 
@@ -10158,6 +10286,120 @@ function seedBuiltInResumeTemplate(db: Database.Database): void {
      ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
                'Modern HTML', 'active', ?, '{}', 'server-seed-hash', ?)`,
   ).run(JSON.stringify(BUILT_IN_RESUME_TEMPLATE_THEME), now);
+}
+
+function insertLearningRecommendationFixture(
+  db: Database.Database,
+  options: {
+    tenantId: string;
+    recommendationId: string;
+    tombstoned: boolean;
+  },
+): void {
+  const jobIds = [
+    "11111111-1111-4111-8111-111111111111",
+    "22222222-2222-4222-8222-222222222222",
+  ] as const;
+  db.transaction(() => {
+    for (const index of [1, 2, 3] as const) {
+      const signalId = `signal-${options.tenantId}-${index}`;
+      db.prepare(
+        `INSERT INTO learning_recommendation_evidence (
+           tenant_id, recommendation_id, signal_id, evidence_role,
+           source_kind, source_id, source_revision, recorded_at
+         ) VALUES (?, ?, ?, 'supporting', 'tailoring_feedback_signal', ?, ?, ?)`,
+      ).run(
+        options.tenantId,
+        options.recommendationId,
+        signalId,
+        `source-${options.tenantId}-${index}`,
+        index,
+        `2026-08-01T10:00:0${index}Z`,
+      );
+      db.prepare(
+        `INSERT INTO learning_recommendation_evidence_jobs (
+           tenant_id, recommendation_id, signal_id, job_id
+         ) VALUES (?, ?, ?, ?)`,
+      ).run(
+        options.tenantId,
+        options.recommendationId,
+        signalId,
+        index === 3 ? jobIds[1] : jobIds[0],
+      );
+    }
+    const contradictionId = `contradiction-${options.tenantId}`;
+    db.prepare(
+      `INSERT INTO learning_recommendation_evidence (
+         tenant_id, recommendation_id, signal_id, evidence_role,
+         source_kind, source_id, source_revision, recorded_at
+       ) VALUES (?, ?, ?, 'contradicting', 'tailoring_feedback_signal', ?, 4, ?)`,
+    ).run(
+      options.tenantId,
+      options.recommendationId,
+      contradictionId,
+      options.tenantId === "local"
+        ? "private resume, prompt, note, and job description"
+        : `source-${contradictionId}`,
+      "2026-08-01T10:00:04Z",
+    );
+    db.prepare(
+      `INSERT INTO learning_recommendation_evidence_jobs (
+         tenant_id, recommendation_id, signal_id, job_id
+       ) VALUES (?, ?, ?, '33333333-3333-4333-8333-333333333333')`,
+    ).run(options.tenantId, options.recommendationId, contradictionId);
+    for (const jobId of jobIds) {
+      db.prepare(
+        `INSERT INTO learning_recommendation_jobs (
+           tenant_id, recommendation_id, job_id
+         ) VALUES (?, ?, ?)`,
+      ).run(options.tenantId, options.recommendationId, jobId);
+    }
+    db.prepare(
+      `INSERT INTO learning_recommendations (
+         tenant_id, recommendation_id, derivation_version,
+         evaluation_fixture_version, context, policy_kind, signal_kind,
+         rule_key, rule_value, allowlist_version, status,
+         observed_signal_count, observed_job_count, minimum_signal_count,
+         minimum_job_count, confidence_limit, input_fingerprint, derived_at
+       ) VALUES (
+         ?, ?, 1, 1, 'materials', 'tailoring_rule', 'factual_correction',
+         'fact_handling', 'require_source_match', 1, 'pending', 3, 2, 3, 2,
+         'sample_gated_no_population_inference', ?, '2026-08-01T10:01:00Z'
+       )`,
+    ).run(
+      options.tenantId,
+      options.recommendationId,
+      options.recommendationId.replace("learning-recommendation:", ""),
+    );
+    if (options.tombstoned) {
+      db.prepare(
+        `INSERT INTO learning_recommendation_tombstones (
+           tenant_id, tombstone_id, recommendation_id, affected_signal_id,
+           affected_source_revision, reason_code, derivation_version,
+           tombstoned_at, rederived_at, replacement_recommendation_id
+         ) VALUES (?, ?, ?, ?, 1, 'source_deleted', 1, ?, ?, NULL)`,
+      ).run(
+        options.tenantId,
+        `learning-recommendation-tombstone:${"c".repeat(64)}`,
+        options.recommendationId,
+        `signal-${options.tenantId}-1`,
+        "2026-08-01T10:02:00Z",
+        "2026-08-01T10:02:01Z",
+      );
+    }
+  })();
+}
+
+function learningAuditSnapshot(db: Database.Database): string {
+  return JSON.stringify(
+    [
+      "learning_recommendations",
+      "learning_recommendation_evidence",
+      "learning_recommendation_evidence_jobs",
+      "learning_recommendation_jobs",
+      "learning_recommendation_tombstones",
+    ].map((table) => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]),
+  );
 }
 
 function seedDatabase(dbPath: string): void {
