@@ -12,6 +12,7 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 from temporalio.exceptions import ApplicationError
@@ -26,6 +27,8 @@ from jobctrl.discovery.activities import (
     _stage_failure_error,
 )
 from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.enrichment import detail
 from jobctrl.pipeline import runner
 
@@ -67,12 +70,28 @@ class _FakePlaywright:
         return None
 
 
-def _seed_pending(conn: sqlite3.Connection, url: str, site: str) -> None:
+def _seed_pending(conn: sqlite3.Connection, url: str, site: str) -> JobId:
+    job_id = JobId(str(uuid5(NAMESPACE_URL, url)))
+    discovered_at = "2026-01-01T00:00:00+00:00"
     conn.execute(
-        "INSERT INTO jobs (url, title, site, discovered_at) VALUES (?, ?, ?, ?)",
-        (url, "Engineer", site, "2026-01-01T00:00:00+00:00"),
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
+            url,
+            "Engineer",
+            site,
+            discovered_at,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO job_locators (tenant_id, job_id, locator_kind, locator_value, "
+        "is_current, first_seen_at, last_seen_at) VALUES (?, ?, 'posting_url', ?, 1, ?, ?)",
+        (str(LOCAL_TENANT), str(job_id), url, discovered_at, discovered_at),
     )
     conn.commit()
+    return job_id
 
 
 # ---------------------------------------------------------------------------
@@ -476,8 +495,8 @@ def test_scrape_site_batch_isolates_single_job_failure(
     bad_url = "https://remoteok.com/bad"
     good_url = "https://remoteok.com/good"
     try:
-        _seed_pending(conn, bad_url, "RemoteOK")
-        _seed_pending(conn, good_url, "RemoteOK")
+        bad_job_id = _seed_pending(conn, bad_url, "RemoteOK")
+        good_job_id = _seed_pending(conn, good_url, "RemoteOK")
 
         monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
 
@@ -501,7 +520,7 @@ def test_scrape_site_batch_isolates_single_job_failure(
         stats = detail.scrape_site_batch(
             conn,
             "RemoteOK",
-            [(bad_url, "Bad"), (good_url, "Good")],
+            [(bad_job_id, "Bad"), (good_job_id, "Good")],
             gateway=offline_gateway(),
         )
 
@@ -509,8 +528,9 @@ def test_scrape_site_batch_isolates_single_job_failure(
         assert stats["ok"] == 1
 
         bad_state = conn.execute(
-            "SELECT state, error_code FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-            (bad_url,),
+            "SELECT state, error_code FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            (str(LOCAL_TENANT), str(bad_job_id)),
         ).fetchone()
         assert bad_state["state"] == "failed"
         assert bad_state["error_code"] == "ENRICH_INTERNAL_ERROR"
@@ -519,9 +539,9 @@ def test_scrape_site_batch_isolates_single_job_failure(
             """
             SELECT current_status, attempts_json
             FROM job_enrichments
-            WHERE job_url = ?
+            WHERE tenant_id = ? AND job_id = ?
             """,
-            (bad_url,),
+            (str(LOCAL_TENANT), str(bad_job_id)),
         ).fetchone()
         assert bad_enrichment["current_status"] == "failed"
         attempts = json.loads(bad_enrichment["attempts_json"])
@@ -533,19 +553,20 @@ def test_scrape_site_batch_isolates_single_job_failure(
             """
             SELECT payload_json
             FROM job_events
-            WHERE job_url = ? AND event_type = 'StageFailed'
+            WHERE tenant_id = ? AND job_id = ? AND event_type = 'StageFailed'
             ORDER BY event_id DESC
             LIMIT 1
             """,
-            (bad_url,),
+            (str(LOCAL_TENANT), str(bad_job_id)),
         ).fetchone()
         payload = json.loads(bad_event["payload_json"])
         assert payload["errorCode"] == "ENRICH_INTERNAL_ERROR"
         assert payload["retryable"] is True
 
         good = conn.execute(
-            "SELECT current_status FROM job_enrichments WHERE job_url = ?",
-            (good_url,),
+            "SELECT current_status FROM job_enrichments "
+            "WHERE tenant_id = ? AND job_id = ?",
+            (str(LOCAL_TENANT), str(good_job_id)),
         ).fetchone()
         assert good["current_status"] == "enriched"
     finally:
@@ -566,9 +587,9 @@ def test_scrape_site_batch_hands_off_each_job_as_it_is_enriched(
     second = "https://remoteok.com/second"
     events: list[tuple[str, str]] = []
     try:
-        _seed_pending(conn, first, "RemoteOK")
-        _seed_pending(conn, bad, "RemoteOK")
-        _seed_pending(conn, second, "RemoteOK")
+        first_job_id = _seed_pending(conn, first, "RemoteOK")
+        bad_job_id = _seed_pending(conn, bad, "RemoteOK")
+        second_job_id = _seed_pending(conn, second, "RemoteOK")
 
         monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
 
@@ -599,13 +620,13 @@ def test_scrape_site_batch_hands_off_each_job_as_it_is_enriched(
 
         monkeypatch.setattr(detail, "scrape_detail_page", fake_scrape)
 
-        def on_job_enriched(url: str) -> None:
-            events.append(("handoff", url))
+        def on_job_enriched(job_id: JobId) -> None:
+            events.append(("handoff", str(job_id)))
 
         detail.scrape_site_batch(
             conn,
             "RemoteOK",
-            [(first, "First"), (bad, "Bad"), (second, "Second")],
+            [(first_job_id, "First"), (bad_job_id, "Bad"), (second_job_id, "Second")],
             gateway=offline_gateway(),
             on_job_enriched=on_job_enriched,
         )
@@ -614,10 +635,10 @@ def test_scrape_site_batch_hands_off_each_job_as_it_is_enriched(
         # the next job is scraped. The failed job produces no handoff.
         assert events == [
             ("scrape", first),
-            ("handoff", first),
+            ("handoff", str(first_job_id)),
             ("scrape", bad),
             ("scrape", second),
-            ("handoff", second),
+            ("handoff", str(second_job_id)),
         ]
     finally:
         close_connection(db_path)
@@ -632,7 +653,7 @@ def test_scrape_site_batch_handoff_error_does_not_break_enrichment(
     conn = init_db(db_path)
     url = "https://remoteok.com/job"
     try:
-        _seed_pending(conn, url, "RemoteOK")
+        job_id = _seed_pending(conn, url, "RemoteOK")
         monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
         monkeypatch.setattr(
             detail,
@@ -650,13 +671,13 @@ def test_scrape_site_batch_handoff_error_does_not_break_enrichment(
             },
         )
 
-        def exploding_handoff(_url: str) -> None:
+        def exploding_handoff(_job_id: JobId) -> None:
             raise RuntimeError("temporal unreachable")
 
         stats = detail.scrape_site_batch(
             conn,
             "RemoteOK",
-            [(url, "Job")],
+            [(job_id, "Job")],
             gateway=offline_gateway(),
             on_job_enriched=exploding_handoff,
         )
@@ -664,8 +685,9 @@ def test_scrape_site_batch_handoff_error_does_not_break_enrichment(
         assert stats["ok"] == 1
         assert stats["error"] == 0
         state = conn.execute(
-            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-            (url,),
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()
         assert state["state"] == "succeeded"
     finally:

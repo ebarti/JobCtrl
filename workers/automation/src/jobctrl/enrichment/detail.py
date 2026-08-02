@@ -63,10 +63,11 @@ from jobctrl.domain.enrichment.value_objects import (
     ApplicationUrl,
     FullDescription,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
+from jobctrl.infrastructure.discovery.sqlite_identity_resolver import SqliteJobIdentityResolver
 from jobctrl.infrastructure.enrichment.sqlite_repository import (
     SqlitePostingSnapshotSetRepository,
 )
@@ -593,16 +594,19 @@ def _detail_failure_retryable(cascade_result: dict) -> bool:
 
 
 def _discovery_description_fallback(
-    conn: sqlite3.Connection, url: str
+    conn: sqlite3.Connection,
+    job_id: JobId,
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
 ) -> tuple[str | None, str | None]:
     """Return discovery-owned content that is usable as enrichment fallback."""
     row = conn.execute(
         """
         SELECT full_description, description, application_url
         FROM jobs
-        WHERE url = ?
+        WHERE tenant_id = ? AND job_id = ?
         """,
-        (url,),
+        (str(tenant_id), str(job_id)),
     ).fetchone()
     if row is None:
         return None, None
@@ -623,7 +627,11 @@ def _discovery_description_fallback(
 
 
 def _apply_discovery_description_fallback(
-    conn: sqlite3.Connection, url: str, cascade_result: dict
+    conn: sqlite3.Connection,
+    job_id: JobId,
+    cascade_result: dict,
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
 ) -> dict:
     """Promote discovery content when a live detail scrape finds no description."""
     if str(cascade_result.get("full_description") or "").strip():
@@ -631,7 +639,11 @@ def _apply_discovery_description_fallback(
     if cascade_result.get("status") not in {"error", "partial"}:
         return cascade_result
 
-    description, application_url = _discovery_description_fallback(conn, url)
+    description, application_url = _discovery_description_fallback(
+        conn,
+        job_id,
+        tenant_id=tenant_id,
+    )
     if not description:
         return cascade_result
 
@@ -754,7 +766,12 @@ def _make_llm_extractor() -> LlmExtractor:
 
 
 def _record_enrich_robots_blocked(
-    conn: sqlite3.Connection, url: str, decision: PolitenessDecision
+    conn: sqlite3.Connection,
+    job_id: JobId,
+    url: str,
+    decision: PolitenessDecision,
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
 ) -> None:
     """Fold a robots-disallowed navigation into the enrichment lifecycle.
 
@@ -775,10 +792,10 @@ def _record_enrich_robots_blocked(
 
     finished_at = utc_now()
     message = decision.reason or "robots.txt disallows automated fetch of this URL"
-    ensure_job_stage_rows(conn, url)
+    ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
     set_stage_state(
         conn,
-        url,
+        job_id,
         "enrich",
         "blocked",
         error_code="ENRICH_ROBOTS_DISALLOWED",
@@ -788,10 +805,11 @@ def _record_enrich_robots_blocked(
         finished_at=finished_at,
         metadata={"reason": "robots_disallowed", "politenessOutcome": decision.outcome.value},
         validate_transition=False,
+        tenant_id=tenant_id,
     )
     record_job_event(
         conn,
-        url,
+        job_id,
         "enrich",
         "StageBlocked",
         level="warning",
@@ -802,11 +820,17 @@ def _record_enrich_robots_blocked(
             "politenessOutcome": decision.outcome.value,
             "retryable": True,
         },
+        tenant_id=tenant_id,
     )
     conn.commit()
 
 
-def _unblock_enrich_stage_if_blocked(conn: sqlite3.Connection, url: str) -> None:
+def _unblock_enrich_stage_if_blocked(
+    conn: sqlite3.Connection,
+    job_id: JobId,
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
+) -> None:
     """Unblock a previously robots-blocked enrich stage before re-enrichment.
 
     A robots-disallowed job folds into ``enrich = blocked`` (see
@@ -823,22 +847,26 @@ def _unblock_enrich_stage_if_blocked(conn: sqlite3.Connection, url: str) -> None
     from jobctrl.state import record_job_event, set_stage_state
 
     row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        (url,),
+        """
+        SELECT state FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'
+        """,
+        (str(tenant_id), str(job_id)),
     ).fetchone()
     if row is None:
         return
     current = row[0] if not isinstance(row, dict) else row["state"]
     if current != "blocked":
         return
-    set_stage_state(conn, url, "enrich", "pending")
+    set_stage_state(conn, job_id, "enrich", "pending", tenant_id=tenant_id)
     record_job_event(
         conn,
-        url,
+        job_id,
         "enrich",
         "StageReset",
         message="Re-evaluating robots for a previously robots-blocked job",
         payload={"reason": "robots_recheck", "previousState": "blocked"},
+        tenant_id=tenant_id,
     )
 
 
@@ -846,9 +874,12 @@ def _record_enrich_politeness_deferral(
     conn: sqlite3.Connection,
     repo: SqliteEnrichmentRepository,
     aggregate: JobEnrichment,
+    job_id: JobId,
     url: str,
     started_at: str,
     cascade_result: dict,
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
 ) -> None:
     """Fold a mid-flight budget block (peek allowed, guard denied) as a deferral.
 
@@ -867,7 +898,7 @@ def _record_enrich_politeness_deferral(
     repo.save(failed)
     set_stage_state(
         conn,
-        url,
+        job_id,
         "enrich",
         "failed",
         attempt_count=failed.attempt_count,
@@ -877,10 +908,11 @@ def _record_enrich_politeness_deferral(
         error_message=error.message,
         retryable=True,
         next_action=f"jobctrl retry enrich {url}",
+        tenant_id=tenant_id,
     )
     record_job_event(
         conn,
-        url,
+        job_id,
         "enrich",
         "StageFailed",
         level="warning",
@@ -890,10 +922,18 @@ def _record_enrich_politeness_deferral(
             "retryable": True,
             "politenessOutcome": cascade_result.get("politeness_outcome"),
         },
+        tenant_id=tenant_id,
     )
 
 
-def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exception) -> None:
+def _record_enrich_job_failure(
+    conn: sqlite3.Connection,
+    job_id: JobId,
+    url: str,
+    exc: Exception,
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
+) -> None:
     """Record a single job's unexpected enrichment failure without aborting the batch.
 
     ``validate_transition=False`` because the failure-recording path must never
@@ -905,10 +945,16 @@ def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exceptio
         from jobctrl.state import record_job_event, set_stage_state, utc_now
 
         finished_at = utc_now()
-        _record_enrich_aggregate_failure(conn, url, message, finished_at=finished_at)
+        _record_enrich_aggregate_failure(
+            conn,
+            job_id,
+            message,
+            finished_at=finished_at,
+            tenant_id=tenant_id,
+        )
         set_stage_state(
             conn,
-            url,
+            job_id,
             "enrich",
             "failed",
             error_code="ENRICH_INTERNAL_ERROR",
@@ -916,10 +962,11 @@ def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exceptio
             retryable=True,
             finished_at=finished_at,
             validate_transition=False,
+            tenant_id=tenant_id,
         )
         record_job_event(
             conn,
-            url,
+            job_id,
             "enrich",
             "StageFailed",
             level="error",
@@ -929,6 +976,7 @@ def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exceptio
                 "errorMessage": message,
                 "retryable": True,
             },
+            tenant_id=tenant_id,
         )
         conn.commit()
     except Exception:
@@ -937,14 +985,15 @@ def _record_enrich_job_failure(conn: sqlite3.Connection, url: str, exc: Exceptio
 
 def _record_enrich_aggregate_failure(
     conn: sqlite3.Connection,
-    url: str,
+    job_id: JobId,
     message: str,
     *,
     finished_at: str,
+    tenant_id: TenantId = LOCAL_TENANT,
 ) -> None:
     """Persist the canonical failed JobEnrichment attempt for an isolated crash."""
     repo = SqliteEnrichmentRepository(conn)
-    existing = repo.load(LOCAL_TENANT, JobId(url))
+    existing = repo.load(tenant_id, job_id)
     if existing is not None and existing.is_enriched:
         # Do not destroy an accepted enrichment artifact from a later audit-only
         # failure path. The stage event below still preserves the crash.
@@ -956,8 +1005,8 @@ def _record_enrich_aggregate_failure(
         retryable=True,
     )
     aggregate = existing or JobEnrichment.empty(
-        tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        tenant_id=tenant_id,
+        job_id=job_id,
         updated_at=finished_at,
     )
     running = (
@@ -974,13 +1023,14 @@ def _record_enrich_aggregate_failure(
 def scrape_site_batch(
     conn: sqlite3.Connection | None,
     site: str,
-    jobs: list[tuple],
+    jobs: list[tuple[JobId, str]],
     max_jobs: int | None = None,
     cancel_event: threading.Event | None = None,
     *,
+    tenant_id: TenantId = LOCAL_TENANT,
     gateway: PolitenessGateway | None = None,
     run_budget: RunBudgetCounter | None = None,
-    on_job_enriched: Callable[[str], None] | None = None,
+    on_job_enriched: Callable[[JobId], None] | None = None,
 ) -> dict:
     """Process all jobs for one site using a shared browser context.
 
@@ -1011,16 +1061,18 @@ def scrape_site_batch(
         "tiers": {1: 0, 2: 0, 3: 0},
     }
 
-    if max_jobs:
-        jobs = jobs[:max_jobs]
-
-    if not jobs:
-        return stats
-
     own_conn = conn is None
     if own_conn:
         conn = init_db()
     assert conn is not None
+
+    # Selected enrichment carries aggregate identities only. Resolve the URL
+    # immediately before the outbound fetch, after all persistence decisions.
+    targets = [(canonical_job_id(str(job_id)), title) for job_id, title in jobs]
+    if max_jobs:
+        targets = targets[:max_jobs]
+    if not targets:
+        return stats
 
     if run_budget is None:
         run_budget = _new_enrichment_budget()
@@ -1033,48 +1085,12 @@ def scrape_site_batch(
             resolver: LinkedInApplyUrlResolver | None = None
             authenticated_page = None
             anonymous_page = None
-            if linkedin_apply_resolver_enabled() and any(
-                _is_linkedin_job(site, job[0]) for job in jobs
-            ):
-                # Owner-scoped authenticated context: present the real logged-in
-                # browser identity (user_agent=None), never the bot UA, matching
-                # _default_linkedin_apply_resolver_factory (D1/D3, see module top).
-                resolver = LinkedInApplyUrlResolver(
-                    proxy=_PROXY_CONFIG,
-                    user_agent=None,
-                    playwright=p,
-                )
-                try:
-                    resolver.start()
-                    authenticated_page = resolver.new_page()
-                    log.info(
-                        "LinkedIn authenticated browser enabled for %d enrichment job(s)",
-                        sum(1 for job in jobs if _is_linkedin_job(site, job[0])),
-                    )
-                except Exception as exc:  # noqa: BLE001 - fallback to static browser
-                    log.warning(
-                        "LinkedIn authenticated browser unavailable; falling back to unauthenticated enrichment: %s",
-                        exc,
-                    )
-                    resolver.close()
-                    resolver = None
-
             # The authenticated LinkedIn context is the owner's logged-in
             # session, so robots.txt is an owner decision there (D1/D3) — pace +
             # budget it, but do not enforce an anonymous robots verdict on the
             # owner's own LinkedIn account. Anonymous rows keep the normal
             # gateway and never share the authenticated browser/profile.
             owner_authenticated_session: PolitenessSession | None = None
-            if resolver is not None and authenticated_page is not None:
-                owner_authenticated_session = _enrichment_session(
-                    PolitenessGateway(
-                        robots=_OwnerAuthenticatedRobots(),
-                        rate_limiter=get_shared_rate_limiter(),
-                    ),
-                    run_budget,
-                    conn,
-                    site=site,
-                )
             anonymous_gateway = gateway or PolitenessGateway()
             anonymous_session = _enrichment_session(
                 anonymous_gateway,
@@ -1096,6 +1112,36 @@ def scrape_site_batch(
                 return anonymous_page
 
             def _page_and_session_for(url: str) -> tuple[object, PolitenessSession, object | None]:
+                nonlocal resolver, authenticated_page, owner_authenticated_session
+                if (
+                    resolver is None
+                    and linkedin_apply_resolver_enabled()
+                    and _is_linkedin_job(site, url)
+                ):
+                    candidate = LinkedInApplyUrlResolver(
+                        proxy=_PROXY_CONFIG,
+                        user_agent=None,
+                        playwright=p,
+                    )
+                    try:
+                        candidate.start()
+                        resolver = candidate
+                        authenticated_page = candidate.new_page()
+                        owner_authenticated_session = _enrichment_session(
+                            PolitenessGateway(
+                                robots=_OwnerAuthenticatedRobots(),
+                                rate_limiter=get_shared_rate_limiter(),
+                            ),
+                            run_budget,
+                            conn,
+                            site=site,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - anonymous fallback
+                        log.warning(
+                            "LinkedIn authenticated browser unavailable; falling back to unauthenticated enrichment: %s",
+                            exc,
+                        )
+                        candidate.close()
                 if (
                     resolver is not None
                     and authenticated_page is not None
@@ -1105,14 +1151,14 @@ def scrape_site_batch(
                     return authenticated_page, owner_authenticated_session, resolver
                 return _ensure_anonymous_page(), anonymous_session, None
 
-            for i, (url, title) in enumerate(jobs):
+            for i, (job_id, title) in enumerate(targets):
                 if cancel_event is not None and cancel_event.is_set():
                     raise TransientNetworkError("enrichment canceled")
                 log.info(
                     "[%d/%d] %s",
                     i + 1,
-                    len(jobs),
-                    title[:50] if title else url[:50],
+                    len(targets),
+                    title[:50] if title else str(job_id),
                 )
 
                 from jobctrl.state import (
@@ -1124,23 +1170,29 @@ def scrape_site_batch(
 
                 # Already-enriched rows need no navigation — reaffirm and skip
                 # before the gate so a robots change can't relabel finished work.
-                aggregate = repo.load(LOCAL_TENANT, JobId(url))
+                aggregate = repo.load(tenant_id, job_id)
                 if aggregate is not None and aggregate.is_enriched:
                     stats["processed"] += 1
                     stats["ok"] += 1
-                    ensure_job_stage_rows(conn, url)
+                    ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
                     set_stage_state(
                         conn,
-                        url,
+                        job_id,
                         "enrich",
                         "succeeded",
                         attempt_count=aggregate.attempt_count,
                         finished_at=utc_now(),
                         validate_transition=False,
+                        tenant_id=tenant_id,
                     )
                     conn.commit()
                     continue
 
+                identity = SqliteJobIdentityResolver(conn).resolve_by_job_id(tenant_id, job_id)
+                if identity is None:
+                    log.warning("Skipping enrichment for unresolved job id %s", job_id)
+                    continue
+                url = identity.posting_url.value
                 page, session, active_resolver = _page_and_session_for(url)
 
                 # R10 pre-navigation gate (peek). A block folds into the lifecycle
@@ -1153,28 +1205,48 @@ def scrape_site_batch(
                     if gate.outcome is PolitenessOutcome.BUDGET_EXHAUSTED:
                         log.warning(
                             "Enrichment request budget exhausted; deferring %d remaining %s job(s) to a future run",
-                            len(jobs) - i,
+                            len(targets) - i,
                             site,
                         )
                         break
-                    _record_enrich_robots_blocked(conn, url, gate)
+                    _record_enrich_robots_blocked(
+                        conn,
+                        job_id,
+                        url,
+                        gate,
+                        tenant_id=tenant_id,
+                    )
                     stats["blocked"] += 1
                     continue
 
                 try:
                     started_at = utc_now()
-                    ensure_job_stage_rows(conn, url)
+                    ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
                     # A previously robots-blocked job re-enters here once robots
                     # allows again; Unblock (Blocked->Pending) before the running
                     # transition, which has no Blocked->Running edge and would
                     # otherwise strand the job as ENRICH_INTERNAL_ERROR.
-                    _unblock_enrich_stage_if_blocked(conn, url)
-                    set_stage_state(conn, url, "enrich", "running", started_at=started_at)
-                    record_job_event(conn, url, "enrich", "StageStarted", message="Enrichment started")
+                    _unblock_enrich_stage_if_blocked(conn, job_id, tenant_id=tenant_id)
+                    set_stage_state(
+                        conn,
+                        job_id,
+                        "enrich",
+                        "running",
+                        started_at=started_at,
+                        tenant_id=tenant_id,
+                    )
+                    record_job_event(
+                        conn,
+                        job_id,
+                        "enrich",
+                        "StageStarted",
+                        message="Enrichment started",
+                        tenant_id=tenant_id,
+                    )
 
                     aggregate = aggregate or JobEnrichment.empty(
-                        tenant_id=LOCAL_TENANT,
-                        job_id=JobId(url),
+                        tenant_id=tenant_id,
+                        job_id=job_id,
                         updated_at=started_at,
                     )
                     aggregate = aggregate.start_attempt(
@@ -1183,7 +1255,10 @@ def scrape_site_batch(
                     )
 
                     cascade_result = _apply_discovery_description_fallback(
-                        conn, url, scrape_detail_page(page, url, session=session)
+                        conn,
+                        job_id,
+                        scrape_detail_page(page, url, session=session),
+                        tenant_id=tenant_id,
                     )
                     if (
                         cascade_result.get("status") == "blocked"
@@ -1191,7 +1266,14 @@ def scrape_site_batch(
                     ):
                         # Rare parallel race: budget drained between peek + guard.
                         _record_enrich_politeness_deferral(
-                            conn, repo, aggregate, url, started_at, cascade_result
+                            conn,
+                            repo,
+                            aggregate,
+                            job_id,
+                            url,
+                            started_at,
+                            cascade_result,
+                            tenant_id=tenant_id,
                         )
                         conn.commit()
                         break
@@ -1267,21 +1349,24 @@ def scrape_site_batch(
                         repo.save(succeeded)
                         _record_posting_snapshot_from_cascade(
                             conn,
+                            job_id=job_id,
                             url=url,
                             source_id=site or "enrichment",
                             title=title or "",
                             cascade_result=cascade_result,
                             captured_at=finished_at,
+                            tenant_id=tenant_id,
                         )
                         set_stage_state(
                             conn,
-                            url,
+                            job_id,
                             "enrich",
                             "succeeded",
                             attempt_count=succeeded.attempt_count,
                             started_at=started_at,
                             finished_at=finished_at,
                             metadata=stage_metadata or None,
+                            tenant_id=tenant_id,
                         )
                         completed_payload = {
                             "tier": tier,
@@ -1309,21 +1394,24 @@ def scrape_site_batch(
                             )
                         record_job_event(
                             conn,
-                            url,
+                            job_id,
                             "enrich",
                             "StageCompleted",
                             message=f"Enrichment {status}: {desc_len} description chars",
                             payload=completed_payload,
+                            tenant_id=tenant_id,
                         )
                     elif status == "inactive":
                         stats["error"] += 1
                         _record_posting_snapshot_from_cascade(
                             conn,
+                            job_id=job_id,
                             url=url,
                             source_id=site or "enrichment",
                             title=title or "",
                             cascade_result=cascade_result,
                             captured_at=finished_at,
+                            tenant_id=tenant_id,
                         )
                         err = EnrichmentError(
                             code="POSTING_INACTIVE",
@@ -1336,7 +1424,7 @@ def scrape_site_batch(
                         repo.save(failed)
                         set_stage_state(
                             conn,
-                            url,
+                            job_id,
                             "enrich",
                             "failed",
                             attempt_count=failed.attempt_count,
@@ -1345,10 +1433,11 @@ def scrape_site_batch(
                             error_code="POSTING_INACTIVE",
                             error_message=err.message,
                             retryable=False,
+                            tenant_id=tenant_id,
                         )
                         record_job_event(
                             conn,
-                            url,
+                            job_id,
                             "enrich",
                             "StageFailed",
                             level="info",
@@ -1377,6 +1466,7 @@ def scrape_site_batch(
                                 "httpStatus": cascade_result.get("http_status"),
                                 "http_status": cascade_result.get("http_status"),
                             },
+                            tenant_id=tenant_id,
                         )
                     else:
                         stats["error"] += 1
@@ -1397,7 +1487,7 @@ def scrape_site_batch(
                         repo.save(failed)
                         set_stage_state(
                             conn,
-                            url,
+                            job_id,
                             "enrich",
                             "failed",
                             attempt_count=failed.attempt_count,
@@ -1407,10 +1497,11 @@ def scrape_site_batch(
                             error_message=err.message,
                             retryable=retryable,
                             next_action=f"jobctrl retry enrich {url}" if retryable else None,
+                            tenant_id=tenant_id,
                         )
                         record_job_event(
                             conn,
-                            url,
+                            job_id,
                             "enrich",
                             "StageFailed",
                             level="error",
@@ -1441,13 +1532,16 @@ def scrape_site_batch(
                                 "httpStatus": cascade_result.get("http_status"),
                                 "http_status": cascade_result.get("http_status"),
                             },
+                            tenant_id=tenant_id,
                         )
                         _record_posting_snapshot_failure_from_cascade(
                             conn,
+                            job_id=job_id,
                             url=url,
                             source_id=site or "enrichment",
                             cascade_result=cascade_result,
                             failed_at=finished_at,
+                            tenant_id=tenant_id,
                         )
 
                     conn.commit()
@@ -1462,7 +1556,7 @@ def scrape_site_batch(
                         and desc_len > 0
                     ):
                         try:
-                            on_job_enriched(url)
+                            on_job_enriched(job_id)
                         except Exception:  # noqa: BLE001 - handoff is best-effort
                             log.warning(
                                 "Per-job preparation handoff failed for %s", url, exc_info=True
@@ -1472,7 +1566,13 @@ def scrape_site_batch(
                 except Exception as exc:
                     log.exception("Enrichment job failed: %s", url)
                     stats["error"] += 1
-                    _record_enrich_job_failure(conn, url, exc)
+                    _record_enrich_job_failure(
+                        conn,
+                        job_id,
+                        url,
+                        exc,
+                        tenant_id=tenant_id,
+                    )
 
                 # No inter-job sleep: the shared host limiter (inside the gate)
                 # now paces each host by min-interval + concurrency across threads.
@@ -1500,22 +1600,30 @@ def _tier_from_legacy(tier_num: int | None) -> ExtractionTier:
 def _record_posting_snapshot_from_cascade(
     conn: sqlite3.Connection,
     *,
+    job_id: JobId,
     url: str,
     source_id: str,
     title: str,
     cascade_result: dict,
     captured_at: str,
+    tenant_id: TenantId = LOCAL_TENANT,
 ) -> None:
     """Persist ``PostingSnapshotSet`` history from the existing enrich path."""
     description = str(cascade_result.get("full_description") or "")
     if not description.strip():
         return
-    resolved_source_id = _source_id_for_enriched_job(conn, url, fallback=source_id)
+    stable_job_id = canonical_job_id(str(job_id))
+    resolved_source_id = _source_id_for_enriched_job(
+        conn,
+        stable_job_id,
+        fallback=source_id,
+        tenant_id=tenant_id,
+    )
     try:
         repo = SqlitePostingSnapshotSetRepository(conn)
-        snapshot_set = repo.load(LOCAL_TENANT, JobId(url)) or PostingSnapshotSet.empty(
-            tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+        snapshot_set = repo.load(tenant_id, stable_job_id) or PostingSnapshotSet.empty(
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
             updated_at=captured_at,
         )
         previous_active = snapshot_set.latest_active_state
@@ -1563,18 +1671,16 @@ def _record_posting_snapshot_from_cascade(
 
         record_job_event(
             conn,
-            url,
+            stable_job_id,
             "enrich",
             "PostingContentSnapshotCaptured",
             message="Posting content snapshot captured.",
             payload={
-                "tenantId": str(LOCAL_TENANT),
-                "job_id": url,
-                "jobId": url,
+                "tenantId": str(tenant_id),
                 "snapshot_version": snapshot.snapshot_version,
                 "snapshotVersion": snapshot.snapshot_version,
-                "snapshot_ref": f"{url}:{snapshot.snapshot_version}",
-                "snapshotRef": f"{url}:{snapshot.snapshot_version}",
+                "snapshot_ref": f"{stable_job_id}:{snapshot.snapshot_version}",
+                "snapshotRef": f"{stable_job_id}:{snapshot.snapshot_version}",
                 "source_id": resolved_source_id,
                 "sourceId": resolved_source_id,
                 "extraction_tier": tier.value,
@@ -1587,18 +1693,19 @@ def _record_posting_snapshot_from_cascade(
                 "capturedAt": captured_at,
             },
             occurred_at=captured_at,
+            entity_kind="posting_snapshot",
+            entity_ref=f"{stable_job_id}:{snapshot.snapshot_version}",
+            tenant_id=tenant_id,
         )
         if previous_active is not active_state:
             record_job_event(
                 conn,
-                url,
+                stable_job_id,
                 "enrich",
                 "JobActiveStateChanged",
                 message="Job active state changed.",
                 payload={
-                    "tenantId": str(LOCAL_TENANT),
-                    "job_id": url,
-                    "jobId": url,
+                    "tenantId": str(tenant_id),
                     "active_state": active_state.value,
                     "activeState": active_state.value,
                     "previous_state": previous_active.value,
@@ -1609,17 +1716,18 @@ def _record_posting_snapshot_from_cascade(
                     "verifiedAt": captured_at,
                 },
                 occurred_at=captured_at,
+                tenant_id=tenant_id,
             )
         if quarantine_reason is not QuarantineReason.NONE:
             ensure_discovery_control_tables(conn)
             conn.execute(
                 """
                 INSERT INTO discovery_quarantine_entries (
-                    tenant_id, job_id, job_key, title, company, source_id,
+                    tenant_id, job_id, title, company, source_id,
                     posting_url, reason, confidence, snapshot_version,
                     captured_at, notice_text, status
-                ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, 'pending')
-                ON CONFLICT(tenant_id, job_key) DO UPDATE SET
+                ) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, 'pending')
+                ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                     title = excluded.title,
                     source_id = excluded.source_id,
                     posting_url = excluded.posting_url,
@@ -1631,9 +1739,8 @@ def _record_posting_snapshot_from_cascade(
                     status = excluded.status
                 """,
                 (
-                    str(LOCAL_TENANT),
-                    url,
-                    url,
+                    str(tenant_id),
+                    str(stable_job_id),
                     title,
                     resolved_source_id,
                     url,
@@ -1652,22 +1759,30 @@ def _record_posting_snapshot_from_cascade(
 def _record_posting_snapshot_failure_from_cascade(
     conn: sqlite3.Connection,
     *,
+    job_id: JobId,
     url: str,
     source_id: str,
     cascade_result: dict,
     failed_at: str,
+    tenant_id: TenantId = LOCAL_TENANT,
 ) -> None:
     """Persist verified active-state failures from the existing enrich path."""
     active_state = ActiveState.from_optional(cascade_result.get("active_state"))
     verification_method = str(cascade_result.get("verification_method") or "")
     if active_state is None or verification_method == "unknown":
         return
-    resolved_source_id = _source_id_for_enriched_job(conn, url, fallback=source_id)
+    stable_job_id = canonical_job_id(str(job_id))
+    resolved_source_id = _source_id_for_enriched_job(
+        conn,
+        stable_job_id,
+        fallback=source_id,
+        tenant_id=tenant_id,
+    )
     try:
         repo = SqlitePostingSnapshotSetRepository(conn)
-        snapshot_set = repo.load(LOCAL_TENANT, JobId(url)) or PostingSnapshotSet.empty(
-            tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+        snapshot_set = repo.load(tenant_id, stable_job_id) or PostingSnapshotSet.empty(
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
             updated_at=failed_at,
         )
         error_class = str(cascade_result.get("error") or "DETAIL_ERROR")[:120]
@@ -1689,14 +1804,12 @@ def _record_posting_snapshot_failure_from_cascade(
 
         record_job_event(
             conn,
-            url,
+            stable_job_id,
             "enrich",
             "PostingContentSnapshotFailed",
             message="Posting content snapshot failed.",
             payload={
-                "tenantId": str(LOCAL_TENANT),
-                "job_id": url,
-                "jobId": url,
+                "tenantId": str(tenant_id),
                 "source_id": resolved_source_id,
                 "sourceId": resolved_source_id,
                 "error_class": error_class,
@@ -1724,18 +1837,17 @@ def _record_posting_snapshot_failure_from_cascade(
                 "failedAt": failed_at,
             },
             occurred_at=failed_at,
+            tenant_id=tenant_id,
         )
         if previous_active is not None:
             record_job_event(
                 conn,
-                url,
+                stable_job_id,
                 "enrich",
                 "JobActiveStateChanged",
                 message="Job active state changed.",
                 payload={
-                    "tenantId": str(LOCAL_TENANT),
-                    "job_id": url,
-                    "jobId": url,
+                    "tenantId": str(tenant_id),
                     "active_state": active_state.value,
                     "activeState": active_state.value,
                     "previous_state": previous_active.value,
@@ -1746,6 +1858,7 @@ def _record_posting_snapshot_failure_from_cascade(
                     "verifiedAt": failed_at,
                 },
                 occurred_at=failed_at,
+                tenant_id=tenant_id,
             )
     except Exception:
         log.exception("Failed to persist PostingSnapshotSet failure for %s", url)
@@ -1753,24 +1866,22 @@ def _record_posting_snapshot_failure_from_cascade(
 
 def _source_id_for_enriched_job(
     conn: sqlite3.Connection,
-    job_url: str,
+    job_id: JobId,
     *,
     fallback: str,
+    tenant_id: TenantId = LOCAL_TENANT,
 ) -> str:
     """Return the discovery source id for an enriched job when available."""
-    try:
-        row = conn.execute(
-            """
-            SELECT source_id
-            FROM job_source_observations
-            WHERE tenant_id = ? AND job_url = ?
-            ORDER BY observed_at DESC, source_observation_id DESC
-            LIMIT 1
-            """,
-            (str(LOCAL_TENANT), job_url),
-        ).fetchone()
-    except sqlite3.OperationalError:
-        return fallback
+    row = conn.execute(
+        """
+        SELECT source_id
+        FROM job_source_observations
+        WHERE tenant_id = ? AND job_id = ?
+        ORDER BY observed_at DESC, source_observation_id DESC
+        LIMIT 1
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
     if row is None:
         return fallback
     source_id = str(row[0] or "").strip()
@@ -1823,7 +1934,6 @@ def _default_linkedin_apply_resolver_factory() -> LinkedInApplyUrlResolver:
 def _reset_authenticated_linkedin_retry_candidates(
     conn: sqlite3.Connection,
     *,
-    job_urls: tuple[str, ...] = (),
     limit: int | None = None,
     resolver_factory: Callable[[], object] | None = None,
     run_budget: RunBudgetCounter | None = None,
@@ -1870,27 +1980,21 @@ def _reset_authenticated_linkedin_retry_candidates(
             site="linkedin",
         )
 
-    selected_urls = tuple(dict.fromkeys(url for url in job_urls if url))
     where = [
         "lower(COALESCE(j.site, '')) = 'linkedin'",
         "e.current_status IN ('failed', 'enriched')",
         "(e.current_status = 'failed' OR e.application_url IS NULL OR e.application_url = '')",
     ]
-    params: list[object] = []
-    if selected_urls:
-        placeholders = ", ".join("?" for _ in selected_urls)
-        where.append(f"j.url IN ({placeholders})")
-        params.extend(selected_urls)
-
     rows = conn.execute(
         f"""
-        SELECT j.url, e.current_status, e.application_url, e.attempts_json
+        SELECT j.tenant_id, j.job_id, j.url,
+               e.current_status, e.application_url, e.attempts_json
         FROM jobs j
-        JOIN job_enrichments e ON e.job_url = j.url
+        JOIN job_enrichments e
+          ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
         WHERE {' AND '.join(where)}
         ORDER BY e.updated_at DESC
         """,
-        params,
     ).fetchall()
 
     from jobctrl.state import (
@@ -1908,15 +2012,21 @@ def _reset_authenticated_linkedin_retry_candidates(
     try:
         for row in rows:
             try:
-                attempts_json = row["attempts_json"] if isinstance(row, sqlite3.Row) else row[3]
+                attempts_json = row["attempts_json"] if isinstance(row, sqlite3.Row) else row[5]
                 if _attempt_count_from_json(attempts_json) >= _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS:
                     continue
-                current_status = row["current_status"] if isinstance(row, sqlite3.Row) else row[1]
+                current_status = row["current_status"] if isinstance(row, sqlite3.Row) else row[3]
                 if str(current_status) == "failed" and not _last_failed_attempt_retryable(attempts_json):
                     continue
-                url = str(row["url"] if isinstance(row, sqlite3.Row) else row[0])
+                tenant_id = TenantId(
+                    str(row["tenant_id"] if isinstance(row, sqlite3.Row) else row[0])
+                )
+                job_id = canonical_job_id(
+                    str(row["job_id"] if isinstance(row, sqlite3.Row) else row[1])
+                )
+                url = str(row["url"] if isinstance(row, sqlite3.Row) else row[2])
                 now = utc_now()
-                aggregate = repo.load(LOCAL_TENANT, JobId(url))
+                aggregate = repo.load(tenant_id, job_id)
                 if aggregate is None:
                     continue
 
@@ -1973,9 +2083,10 @@ def _reset_authenticated_linkedin_retry_candidates(
                     )
                     record_job_event(
                         conn,
-                        url,
+                        job_id,
                         "enrich",
                         "StageProgress",
+                        tenant_id=tenant_id,
                         message=(
                             "LinkedIn authenticated apply URL recovered"
                             if recovered is not None
@@ -2001,23 +2112,21 @@ def _reset_authenticated_linkedin_retry_candidates(
                     continue
 
                 repo.save(aggregate.reset(reset_at=now))
-                conn.execute(
-                    "UPDATE jobs SET detail_error = NULL, detail_scraped_at = NULL WHERE url = ?",
-                    (url,),
-                )
-                ensure_job_stage_rows(conn, url)
+                ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
                 set_stage_state(
                     conn,
-                    url,
+                    job_id,
                     "enrich",
                     "pending",
+                    tenant_id=tenant_id,
                     validate_transition=False,
                 )
                 record_job_event(
                     conn,
-                    url,
+                    job_id,
                     "enrich",
                     "StageReset",
+                    tenant_id=tenant_id,
                     message="LinkedIn authenticated enrichment retry queued",
                     payload={
                         "reason": "linkedin_authenticated_apply_url",
@@ -2103,10 +2212,11 @@ def _run_detail_scraper(
     sites: list[str] | None = None,
     max_per_site: int | None = None,
     workers: int = 1,
-    job_urls: tuple[str, ...] = (),
+    job_ids: tuple[JobId, ...] = (),
+    tenant_id: str | TenantId = LOCAL_TENANT,
     cancel_event: threading.Event | None = None,
     reset_linkedin_candidates: bool = True,
-    on_job_enriched: Callable[[str], None] | None = None,
+    on_job_enriched: Callable[[JobId], None] | None = None,
 ) -> dict:
     """Group pending jobs by site and process each batch.
 
@@ -2122,30 +2232,34 @@ def _run_detail_scraper(
     # is the aggregate's status alone. The legacy
     # ``detail_scraped_at IS NULL`` gate was redundant AND blocked the
     # post-``reset_job_stage("enrich")`` re-pickup.
+    stable_tenant_id = TenantId(str(tenant_id))
     where_parts = [db_module._ENRICHMENT_PENDING, skip_filter]
-    params: list[str] = []
-    selected_urls = tuple(dict.fromkeys(url for url in job_urls if url))
-    if selected_urls:
-        placeholders = ", ".join("?" for _ in selected_urls)
-        where_parts.append(f"jobs.url IN ({placeholders})")
-        params.extend(selected_urls)
+    params: list[object] = []
+    selected_job_ids = tuple(
+        dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids)
+    )
+    if selected_job_ids:
+        placeholders = ", ".join("?" for _ in selected_job_ids)
+        where_parts.append("jobs.tenant_id = ?")
+        where_parts.append(f"jobs.job_id IN ({placeholders})")
+        params.append(str(stable_tenant_id))
+        params.extend(str(job_id) for job_id in selected_job_ids)
 
     # One run budget spans the whole enrichment run: the authenticated LinkedIn
     # recovery pre-pass below and every site batch share it, so the per-run
     # navigation budget bounds them all together.
     run_budget = _new_enrichment_budget()
 
-    if reset_linkedin_candidates:
+    if reset_linkedin_candidates and not selected_job_ids:
         _reset_authenticated_linkedin_retry_candidates(
             conn,
-            job_urls=selected_urls,
             limit=max_per_site,
             resolver_factory=_default_linkedin_apply_resolver_factory,
             run_budget=run_budget,
         )
 
     rows = conn.execute(
-        f"SELECT jobs.url, jobs.title, jobs.site FROM jobs {db_module._ENRICHMENT_JOIN} "
+        f"SELECT jobs.job_id, jobs.title, jobs.site FROM jobs {db_module._ENRICHMENT_JOIN} "
         f"WHERE {' AND '.join(where_parts)} "
         "ORDER BY jobs.site",
         params,
@@ -2157,10 +2271,10 @@ def _run_detail_scraper(
 
     site_jobs: dict[str, list[tuple]] = {}
     for row in rows:
-        url, title, site = row[0], row[1], row[2]
+        job_id, title, site = canonical_job_id(str(row[0])), row[1], row[2]
         if sites and site not in sites:
             continue
-        site_jobs.setdefault(site, []).append((url, title))
+        site_jobs.setdefault(site, []).append((job_id, title))
 
     log.info("Pending: %d jobs across %d sites (workers=%d)", len(rows), len(site_jobs), workers)
     for site, jobs in site_jobs.items():
@@ -2208,32 +2322,44 @@ def _run_detail_scraper(
     gateway = PolitenessGateway()
 
     if workers > 1 and len(order) > 1:
+        database_path = next(
+            str(row[2])
+            for row in conn.execute("PRAGMA database_list").fetchall()
+            if str(row[1]) == "main"
+        )
+
         def _scrape_site(site: str) -> dict:
             if cancel_event is not None and cancel_event.is_set():
                 raise TransientNetworkError("enrichment canceled")
             jobs = site_jobs[site]
             log.info("%s -- %d jobs", site, len(jobs))
-            if cancel_event is None:
-                stats = scrape_site_batch(
-                    None,
-                    site,
-                    jobs,
-                    max_jobs=max_per_site,
-                    gateway=gateway,
-                    run_budget=run_budget,
-                    on_job_enriched=on_job_enriched,
-                )
-            else:
-                stats = scrape_site_batch(
-                    None,
-                    site,
-                    jobs,
-                    max_jobs=max_per_site,
-                    cancel_event=cancel_event,
-                    gateway=gateway,
-                    run_budget=run_budget,
-                    on_job_enriched=on_job_enriched,
-                )
+            thread_conn = db_module.get_connection(database_path)
+            try:
+                if cancel_event is None:
+                    stats = scrape_site_batch(
+                        thread_conn,
+                        site,
+                        jobs,
+                        max_jobs=max_per_site,
+                        tenant_id=stable_tenant_id,
+                        gateway=gateway,
+                        run_budget=run_budget,
+                        on_job_enriched=on_job_enriched,
+                    )
+                else:
+                    stats = scrape_site_batch(
+                        thread_conn,
+                        site,
+                        jobs,
+                        max_jobs=max_per_site,
+                        cancel_event=cancel_event,
+                        tenant_id=stable_tenant_id,
+                        gateway=gateway,
+                        run_budget=run_budget,
+                        on_job_enriched=on_job_enriched,
+                    )
+            finally:
+                db_module.close_connection(database_path)
             log.info(
                 "%s summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
                 site,
@@ -2274,6 +2400,7 @@ def _run_detail_scraper(
                         site,
                         jobs,
                         max_jobs=max_per_site,
+                        tenant_id=stable_tenant_id,
                         gateway=gateway,
                         run_budget=run_budget,
                         on_job_enriched=on_job_enriched,
@@ -2285,6 +2412,7 @@ def _run_detail_scraper(
                         jobs,
                         max_jobs=max_per_site,
                         cancel_event=cancel_event,
+                        tenant_id=stable_tenant_id,
                         gateway=gateway,
                         run_budget=run_budget,
                         on_job_enriched=on_job_enriched,
@@ -2377,7 +2505,7 @@ def stream_detail(
             # ``_ENRICHMENT_PENDING`` so all three call sites use the
             # same signal.
             rows = conn.execute(
-                f"SELECT jobs.url, jobs.title, jobs.site FROM jobs {db_module._ENRICHMENT_JOIN} "
+                f"SELECT jobs.job_id, jobs.title, jobs.site FROM jobs {db_module._ENRICHMENT_JOIN} "
                 f"WHERE {db_module._ENRICHMENT_PENDING} "
                 f"AND {skip_filter} "
                 "ORDER BY jobs.site LIMIT 200"
@@ -2386,8 +2514,8 @@ def stream_detail(
             if rows:
                 site_jobs: dict[str, list[tuple]] = {}
                 for row in rows:
-                    url, title, site = row[0], row[1], row[2]
-                    site_jobs.setdefault(site, []).append((url, title))
+                    job_id, title, site = canonical_job_id(str(row[0])), row[1], row[2]
+                    site_jobs.setdefault(site, []).append((job_id, title))
 
                 # One shared gateway + per-cycle run budget across this poll's
                 # site batches (a poll cycle is the streaming "run").
@@ -2434,7 +2562,7 @@ def run_enrichment(
     workers: int = 1,
     cancel_event: threading.Event | None = None,
     reset_linkedin_candidates: bool = True,
-    on_job_enriched: Callable[[str], None] | None = None,
+    on_job_enriched: Callable[[JobId], None] | None = None,
 ) -> dict:
     """Main entry point for detail page enrichment.
 

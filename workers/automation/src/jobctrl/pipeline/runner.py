@@ -31,6 +31,7 @@ from jobctrl.domain.discovery.scheduler import (
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
 from jobctrl.domain.errors import LlmTransientError, SourceUnavailableError, TransientNetworkError
+from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.discovery.sqlite_run_repository import (
     SqliteDiscoveryRunRepository,
@@ -1666,7 +1667,7 @@ def run_discovery_enrichment_stage(
     cancel_event: threading.Event | None = None,
     progress_completed: int = 0,
     progress_total: int = 0,
-    on_job_enriched: Callable[[str], None] | None = None,
+    on_job_enriched: Callable[[JobId], None] | None = None,
 ) -> dict[str, Any]:
     emit_progress = progress_total > 0
     if emit_progress:
@@ -2306,7 +2307,7 @@ def _run_enrich(
     limit: int = 0,
     cancel_event: threading.Event | None = None,
     reset_linkedin_candidates: bool = True,
-    on_job_enriched: Callable[[str], None] | None = None,
+    on_job_enriched: Callable[[JobId], None] | None = None,
 ) -> dict:
     """Stage: Detail enrichment — scrape full descriptions and apply URLs."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2666,7 +2667,7 @@ def _run_discovery_enrichment_until_idle(
     workers: int,
     limit: int,
     cancel_event: threading.Event | None = None,
-    on_job_enriched: Callable[[str], None] | None = None,
+    on_job_enriched: Callable[[JobId], None] | None = None,
 ) -> None:
     """Drain the detail-enrichment queue while discovery is still producing jobs.
 
