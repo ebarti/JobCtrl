@@ -1570,6 +1570,19 @@ function rebuildEvidenceUsageProjection(db: SqliteDatabase, tenantId: string): v
   }
 }
 
+/**
+ * Rebuild the tenant-wide projections affected by a permanent Job deletion.
+ *
+ * The delete command removes the target's projections and cascades its events,
+ * so resetting the shared event watermark would replay unrelated tenants. The
+ * remaining local rows are already canonical; these two projections can be
+ * rebuilt directly and transactionally with the delete command instead.
+ */
+export function rebuildTenantDeleteProjections(db: SqliteDatabase, tenantId: string): void {
+  rebuildDashboardProjection(db, tenantId);
+  rebuildEvidenceUsageProjection(db, tenantId);
+}
+
 function loadProfileEvidenceEntries(
   db: SqliteDatabase,
   tenantId: string,

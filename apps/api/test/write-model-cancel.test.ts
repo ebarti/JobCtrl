@@ -5,12 +5,14 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { cancelJobAction, markJobApplied, markJobSkipped } from "../src/write-model.js";
+import type { Stage } from "../src/contracts.js";
+import { cancelJobAction, markJobApplied, markJobSkipped, resetJobStage } from "../src/write-model.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 
 const JOB_URL = "https://example.com/jobs/ready";
 const JOB_ID = "10000000-0000-4000-8000-000000000001";
 const TENANT_ID = "local";
+const RETIRED_AT = "2025-01-01T00:00:00Z";
 
 describe("cancelJobAction", () => {
   let directory: string;
@@ -22,8 +24,30 @@ describe("cancelJobAction", () => {
     initializeExactV7Database(dbPath);
     db = new Database(dbPath);
     db.prepare(
-      "INSERT INTO jobs (tenant_id, job_id, url, application_url) VALUES (?, ?, ?, ?)",
-    ).run(TENANT_ID, JOB_ID, JOB_URL, `${JOB_URL}/apply`);
+      `INSERT INTO jobs (
+         tenant_id, job_id, url, application_url,
+         detail_scraped_at, detail_error,
+         fit_score, score_reasoning, scored_at,
+         tailored_resume_path, tailored_at, tailor_attempts,
+         cover_letter_path, cover_letter_at, cover_attempts,
+         applied_at, apply_status, apply_error, apply_attempts,
+         agent_id, apply_task_id
+       ) VALUES (?, ?, ?, ?, ?, 'retired-detail-error', 10, 'retired-score', ?,
+                 '/tmp/retired-resume.txt', ?, 4,
+                 '/tmp/retired-cover.txt', ?, 3,
+                 ?, 'retired-status', 'retired-apply-error', 2,
+                 'retired-agent', 'retired-task')`,
+    ).run(
+      TENANT_ID,
+      JOB_ID,
+      JOB_URL,
+      `${JOB_URL}/apply`,
+      RETIRED_AT,
+      RETIRED_AT,
+      RETIRED_AT,
+      RETIRED_AT,
+      RETIRED_AT,
+    );
     db.prepare(
       `INSERT INTO job_locators (
          tenant_id, job_id, locator_kind, locator_value, is_current,
@@ -90,6 +114,7 @@ describe("cancelJobAction", () => {
     ["applied", markJobApplied, "succeeded", "ApplicationManuallyMarked"],
     ["skipped", markJobSkipped, "skipped", "StageSkipped"],
   ] as const)("persists a manually %s result only in the canonical aggregate", (_label, action, state, eventType) => {
+    const retiredBefore = retiredJobState();
     const result = action(db, JOB_URL, { reason: "confirmed by user" });
 
     expect(result.jobUrl).toBe(JOB_URL);
@@ -113,5 +138,79 @@ describe("cancelJobAction", () => {
       jobId: JOB_ID,
       reason: "confirmed by user",
     });
+    expect(retiredJobState()).toEqual(retiredBefore);
   });
+
+  it.each(["score", "tailor", "cover", "apply"] as const)(
+    "resets %s through canonical stage state without writing retired jobs columns",
+    (stage) => {
+      insertStage(stage, "failed", 3);
+      const retiredBefore = retiredJobState();
+
+      const result = resetJobStage(db, JOB_URL, stage, { resetAttempts: true });
+
+      expect(result.stage).toMatchObject({ state: "pending", attemptCount: 0 });
+      expect(retiredJobState()).toEqual(retiredBefore);
+      expect(eventCount("StageReset")).toBe(1);
+    },
+  );
+
+  it("resets enrichment only through the canonical aggregate", () => {
+    insertStage("enrich", "failed", 2);
+    db.prepare(
+      `INSERT INTO job_enrichments (
+         tenant_id, job_id, current_status, full_description,
+         application_url, enriched_at, extraction_tier, updated_at
+       ) VALUES (?, ?, 'enriched', 'canonical description', ?, ?, 'json_ld', ?)`,
+    ).run(TENANT_ID, JOB_ID, `${JOB_URL}/canonical-apply`, RETIRED_AT, RETIRED_AT);
+    const retiredBefore = retiredJobState();
+
+    const result = resetJobStage(db, JOB_URL, "enrich", { resetAttempts: true });
+    const enrichment = db.prepare(
+      `SELECT current_status, full_description, application_url,
+              enriched_at, extraction_tier
+         FROM job_enrichments
+        WHERE tenant_id = ? AND job_id = ?`,
+    ).get(TENANT_ID, JOB_ID);
+
+    expect(result.stage).toMatchObject({ state: "pending", attemptCount: 0 });
+    expect(enrichment).toEqual({
+      current_status: "pending",
+      full_description: null,
+      application_url: null,
+      enriched_at: null,
+      extraction_tier: null,
+    });
+    expect(retiredJobState()).toEqual(retiredBefore);
+    expect(eventCount("StageReset")).toBe(1);
+  });
+
+  function insertStage(stage: Stage, state: string, attemptCount: number): void {
+    db.prepare(
+      `INSERT INTO job_stage_states (
+         tenant_id, job_id, stage, state, attempt_count, updated_at, retryable
+       ) VALUES (?, ?, ?, ?, ?, ?, 1)`,
+    ).run(TENANT_ID, JOB_ID, stage, state, attemptCount, RETIRED_AT);
+  }
+
+  function eventCount(eventType: string): number {
+    const row = db.prepare(
+      `SELECT COUNT(*) AS count FROM job_events
+       WHERE tenant_id = ? AND job_id = ? AND event_type = ?`,
+    ).get(TENANT_ID, JOB_ID, eventType) as { count: number };
+    return row.count;
+  }
+
+  function retiredJobState(): Record<string, unknown> {
+    return db.prepare(
+      `SELECT detail_scraped_at, detail_error,
+              fit_score, score_reasoning, scored_at,
+              tailored_resume_path, tailored_at, tailor_attempts,
+              cover_letter_path, cover_letter_at, cover_attempts,
+              applied_at, apply_status, apply_error, apply_attempts,
+              agent_id, apply_task_id
+         FROM jobs
+        WHERE tenant_id = ? AND job_id = ?`,
+    ).get(TENANT_ID, JOB_ID) as Record<string, unknown>;
+  }
 });

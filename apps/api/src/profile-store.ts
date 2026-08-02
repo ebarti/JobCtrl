@@ -374,43 +374,6 @@ export function ensureProfileTables(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_candidate_profile_skill_order
       ON candidate_profile_skill_categories(tenant_id, profile_id, position_index);
   `);
-  ensureCandidateProfileColumns(db);
-}
-
-const CANDIDATE_PROFILE_COLUMN_MIGRATIONS: Record<string, string> = {
-  experience_target_track: "TEXT NOT NULL DEFAULT ''",
-  experience_target_seniority_floor: "TEXT NOT NULL DEFAULT ''",
-  experience_target_functions: "TEXT NOT NULL DEFAULT ''",
-  experience_target_specializations: "TEXT NOT NULL DEFAULT ''",
-  experience_target_locations: "TEXT NOT NULL DEFAULT ''",
-  experience_target_work_models: "TEXT NOT NULL DEFAULT ''",
-  tailoring_claim_mode: "TEXT NOT NULL DEFAULT 'evidence_reframing'",
-  tailoring_auto_approvable_claim_modes_json: "TEXT NOT NULL DEFAULT '[\"verified_only\",\"evidence_reframing\"]'",
-  tailoring_allow_adjacent_achievement_drafts: "INTEGER NOT NULL DEFAULT 0",
-  revision_min_fit_score: "INTEGER NOT NULL DEFAULT 8",
-  revision_must_have_coverage: "REAL NOT NULL DEFAULT 0.85",
-  revision_max_attempts: "INTEGER NOT NULL DEFAULT 1",
-  application_attestation_age_18_plus: "INTEGER DEFAULT NULL",
-  application_attestation_background_check_consent: "INTEGER DEFAULT NULL",
-  application_attestation_felony_conviction: "INTEGER DEFAULT NULL",
-  application_attestation_previously_worked_at_employer: "INTEGER DEFAULT NULL",
-  application_attestation_additional_json: "TEXT NOT NULL DEFAULT '{}'",
-  application_preference_how_heard: "TEXT NOT NULL DEFAULT ''",
-};
-
-function ensureCandidateProfileColumns(db: SqliteDatabase): void {
-  const existingColumns = new Set(
-    (db.prepare("PRAGMA table_info(candidate_profiles)").all() as Array<{ name: string }>).map(
-      (column) => column.name,
-    ),
-  );
-
-  for (const [column, definition] of Object.entries(CANDIDATE_PROFILE_COLUMN_MIGRATIONS)) {
-    if (!existingColumns.has(column)) {
-      db.exec(`ALTER TABLE candidate_profiles ADD COLUMN ${column} ${definition}`);
-    }
-  }
-
   backfillAchievementEvidenceFromBullets(db);
 }
 

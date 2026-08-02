@@ -14,6 +14,7 @@ import {
 } from "../src/read-model.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { EXACT_V7_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
+import { hideJob, restoreJob, softDeleteJob, unhideJob } from "../src/write-model.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000081";
@@ -221,5 +222,65 @@ describe("exact-v7 read model job ids", () => {
     );
     expect(activity.items.some((item) => item.jobKey === HIDDEN_JOB_ID || item.jobKey === DELETED_JOB_ID)).toBe(false);
     expect(getJobDetail(db, "not-a-canonical-job-id")).toBeNull();
+  });
+
+  it("resolves URL locators once and writes reversible lifecycle state with canonical job ids", () => {
+    const db = seededDatabase();
+
+    expect(softDeleteJob(db, JOB_URL, { reason: "not relevant" })).toMatchObject({
+      ok: true,
+      count: 1,
+      jobKeys: [JOB_ID],
+    });
+    expect(
+      db.prepare("SELECT tenant_id, job_id, reason, restored_at FROM jobctrl_deleted_jobs WHERE tenant_id = 'local' AND job_id = ?").get(JOB_ID),
+    ).toMatchObject({ tenant_id: "local", job_id: JOB_ID, reason: "not relevant", restored_at: null });
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM jobctrl_deleted_jobs WHERE tenant_id = ? AND job_id = ?").get(OTHER_TENANT, JOB_ID),
+    ).toMatchObject({ count: 0 });
+
+    expect(restoreJob(db, APPLICATION_URL)).toMatchObject({ ok: true, count: 1, jobKeys: [JOB_ID] });
+    expect(
+      db.prepare("SELECT restored_at FROM jobctrl_deleted_jobs WHERE tenant_id = 'local' AND job_id = ?").get(JOB_ID),
+    ).toMatchObject({ restored_at: expect.any(String) });
+
+    expect(hideJob(db, SOURCE_URL, { reason: "later" })).toMatchObject({
+      ok: true,
+      count: 1,
+      jobKeys: [JOB_ID],
+    });
+    expect(unhideJob(db, JOB_ID)).toMatchObject({ ok: true, count: 1, jobKeys: [JOB_ID] });
+    expect(
+      db.prepare("SELECT unhidden_at FROM jobctrl_hidden_jobs WHERE tenant_id = 'local' AND job_id = ?").get(JOB_ID),
+    ).toMatchObject({ unhidden_at: expect.any(String) });
+
+    const lifecycleEvents = db
+      .prepare(
+        `SELECT tenant_id, job_id, identity_version, event_type, payload_json
+           FROM job_events
+          WHERE tenant_id = 'local'
+            AND job_id = ?
+            AND event_type IN ('JobDeleted', 'JobRestored', 'JobHidden', 'JobUnhidden')
+          ORDER BY event_id`,
+      )
+      .all(JOB_ID) as Array<{
+        tenant_id: string;
+        job_id: string;
+        identity_version: number;
+        event_type: string;
+        payload_json: string;
+      }>;
+    expect(lifecycleEvents.map((event) => event.event_type)).toEqual([
+      "JobDeleted",
+      "JobRestored",
+      "JobHidden",
+      "JobUnhidden",
+    ]);
+    expect(lifecycleEvents.every((event) => event.tenant_id === "local" && event.job_id === JOB_ID)).toBe(true);
+    expect(lifecycleEvents.every((event) => event.identity_version === 1)).toBe(true);
+    expect(lifecycleEvents.map((event) => JSON.parse(event.payload_json))).toEqual(
+      expect.arrayContaining([expect.objectContaining({ tenantId: "local", jobId: JOB_ID })]),
+    );
+    expect(JSON.stringify(lifecycleEvents)).not.toContain("job_url");
   });
 });

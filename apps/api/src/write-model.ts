@@ -15,7 +15,7 @@ import type {
   StageState,
   StageSummary,
 } from "./contracts.js";
-import { PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
+import { STAGES } from "./contracts.js";
 import {
   isValidTransition,
   deserializeStageStateKind,
@@ -24,6 +24,7 @@ import {
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { matchingJobKeys, readSettingsConfig } from "./read-model.js";
 import { updateConfigObject } from "./config-file.js";
+import { rebuildTenantDeleteProjections } from "./projections.js";
 
 export class InputError extends Error {}
 
@@ -192,6 +193,9 @@ function resetResolvedJobStage(
   // so even though we _call_ isValidTransition (via validateStageTransition)
   // when the gate is opt-in, this entry-point bypasses §8.5 — the user is
   // explicitly forcing the stage back to pending.
+  if (stage === "enrich") {
+    resetEnrichmentAggregate(db, LOCAL_TENANT, job.jobId);
+  }
   const stageOptions: Parameters<typeof upsertStageStateById>[5] = {
     retryable: true,
     clearTiming: true,
@@ -567,23 +571,23 @@ export function softDeleteJob(db: SqliteDatabase, jobKey: string, request: Delet
 }
 
 export function softDeleteJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
-  ensureDeletedJobsTable(db);
   const deletedAt = new Date().toISOString();
-  const jobKeys = mutableJobKeys(db, request);
+  const jobs = mutableResolvedJobs(db, request);
   const statement = db.prepare(`
-    INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-    VALUES (?, ?, ?, NULL)
-    ON CONFLICT(job_url) DO UPDATE SET
+    INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at, reason, restored_at)
+    VALUES ('local', ?, ?, ?, NULL)
+    ON CONFLICT(tenant_id, job_id) DO UPDATE SET
       deleted_at = excluded.deleted_at,
       reason = excluded.reason,
       restored_at = NULL
   `);
-  const transaction = db.transaction((keys: string[]) => {
-    for (const jobUrl of keys) {
-      statement.run(jobUrl, deletedAt, request.reason ?? null);
-      recordActionEvent(db, {
-        jobUrl,
-        stage: currentMutableStage(db, jobUrl),
+  const transaction = db.transaction((resolvedJobs: readonly ResolvedJobIdentity[]) => {
+    for (const job of resolvedJobs) {
+      statement.run(job.jobId, deletedAt, request.reason ?? null);
+      recordActionEventById(db, {
+        tenantId: LOCAL_TENANT,
+        jobId: job.jobId,
+        stage: currentMutableStageById(db, LOCAL_TENANT, job.jobId),
         eventType: "JobDeleted",
         level: "info",
         message: "Job soft-deleted from the local API.",
@@ -591,8 +595,8 @@ export function softDeleteJobs(db: SqliteDatabase, request: BulkJobMutationReque
       });
     }
   });
-  transaction(jobKeys);
-  return { ok: true, count: jobKeys.length, jobKeys };
+  transaction(jobs);
+  return { ok: true, count: jobs.length, jobKeys: jobs.map((job) => job.jobId) };
 }
 
 export function restoreJob(db: SqliteDatabase, jobKey: string): JobMutationResponse {
@@ -600,18 +604,22 @@ export function restoreJob(db: SqliteDatabase, jobKey: string): JobMutationRespo
 }
 
 export function restoreJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
-  ensureDeletedJobsTable(db);
   const restoredAt = new Date().toISOString();
-  const jobKeys = mutableJobKeys(db, request);
+  const jobs = mutableResolvedJobs(db, request);
   const statement = db.prepare(
-    "UPDATE jobctrl_deleted_jobs SET restored_at = ? WHERE job_url = ? AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
+    `UPDATE jobctrl_deleted_jobs
+        SET restored_at = ?
+      WHERE tenant_id = 'local'
+        AND job_id = ?
+        AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))`,
   );
-  const transaction = db.transaction((keys: string[]) => {
-    for (const jobUrl of keys) {
-      statement.run(restoredAt, jobUrl);
-      recordActionEvent(db, {
-        jobUrl,
-        stage: currentMutableStage(db, jobUrl),
+  const transaction = db.transaction((resolvedJobs: readonly ResolvedJobIdentity[]) => {
+    for (const job of resolvedJobs) {
+      statement.run(restoredAt, job.jobId);
+      recordActionEventById(db, {
+        tenantId: LOCAL_TENANT,
+        jobId: job.jobId,
+        stage: currentMutableStageById(db, LOCAL_TENANT, job.jobId),
         eventType: "JobRestored",
         level: "info",
         message: "Job restored from deleted jobs.",
@@ -619,8 +627,8 @@ export function restoreJobs(db: SqliteDatabase, request: BulkJobMutationRequest)
       });
     }
   });
-  transaction(jobKeys);
-  return { ok: true, count: jobKeys.length, jobKeys };
+  transaction(jobs);
+  return { ok: true, count: jobs.length, jobKeys: jobs.map((job) => job.jobId) };
 }
 
 export function hideJob(db: SqliteDatabase, jobKey: string, request: DeleteJobRequest = {}): JobMutationResponse {
@@ -628,23 +636,23 @@ export function hideJob(db: SqliteDatabase, jobKey: string, request: DeleteJobRe
 }
 
 export function hideJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
-  ensureHiddenJobsTable(db);
   const hiddenAt = new Date().toISOString();
-  const jobKeys = mutableJobKeys(db, request);
+  const jobs = mutableResolvedJobs(db, request);
   const statement = db.prepare(`
-    INSERT INTO jobctrl_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
-    VALUES (?, ?, ?, NULL)
-    ON CONFLICT(job_url) DO UPDATE SET
+    INSERT INTO jobctrl_hidden_jobs (tenant_id, job_id, hidden_at, reason, unhidden_at)
+    VALUES ('local', ?, ?, ?, NULL)
+    ON CONFLICT(tenant_id, job_id) DO UPDATE SET
       hidden_at = excluded.hidden_at,
       reason = excluded.reason,
       unhidden_at = NULL
   `);
-  const transaction = db.transaction((keys: string[]) => {
-    for (const jobUrl of keys) {
-      statement.run(jobUrl, hiddenAt, request.reason ?? null);
-      recordActionEvent(db, {
-        jobUrl,
-        stage: currentMutableStage(db, jobUrl),
+  const transaction = db.transaction((resolvedJobs: readonly ResolvedJobIdentity[]) => {
+    for (const job of resolvedJobs) {
+      statement.run(job.jobId, hiddenAt, request.reason ?? null);
+      recordActionEventById(db, {
+        tenantId: LOCAL_TENANT,
+        jobId: job.jobId,
+        stage: currentMutableStageById(db, LOCAL_TENANT, job.jobId),
         eventType: "JobHidden",
         level: "info",
         message: "Job hidden from the local API.",
@@ -652,8 +660,8 @@ export function hideJobs(db: SqliteDatabase, request: BulkJobMutationRequest): J
       });
     }
   });
-  transaction(jobKeys);
-  return { ok: true, count: jobKeys.length, jobKeys };
+  transaction(jobs);
+  return { ok: true, count: jobs.length, jobKeys: jobs.map((job) => job.jobId) };
 }
 
 export function unhideJob(db: SqliteDatabase, jobKey: string): JobMutationResponse {
@@ -661,16 +669,18 @@ export function unhideJob(db: SqliteDatabase, jobKey: string): JobMutationRespon
 }
 
 export function unhideJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
-  ensureHiddenJobsTable(db);
   const unhiddenAt = new Date().toISOString();
-  const jobKeys = mutableJobKeys(db, request);
-  const statement = db.prepare("UPDATE jobctrl_hidden_jobs SET unhidden_at = ? WHERE job_url = ? AND unhidden_at IS NULL");
-  const transaction = db.transaction((keys: string[]) => {
-    for (const jobUrl of keys) {
-      statement.run(unhiddenAt, jobUrl);
-      recordActionEvent(db, {
-        jobUrl,
-        stage: currentMutableStage(db, jobUrl),
+  const jobs = mutableResolvedJobs(db, request);
+  const statement = db.prepare(
+    "UPDATE jobctrl_hidden_jobs SET unhidden_at = ? WHERE tenant_id = 'local' AND job_id = ? AND unhidden_at IS NULL",
+  );
+  const transaction = db.transaction((resolvedJobs: readonly ResolvedJobIdentity[]) => {
+    for (const job of resolvedJobs) {
+      statement.run(unhiddenAt, job.jobId);
+      recordActionEventById(db, {
+        tenantId: LOCAL_TENANT,
+        jobId: job.jobId,
+        stage: currentMutableStageById(db, LOCAL_TENANT, job.jobId),
         eventType: "JobUnhidden",
         level: "info",
         message: "Job unhidden from hidden jobs.",
@@ -678,8 +688,8 @@ export function unhideJobs(db: SqliteDatabase, request: BulkJobMutationRequest):
       });
     }
   });
-  transaction(jobKeys);
-  return { ok: true, count: jobKeys.length, jobKeys };
+  transaction(jobs);
+  return { ok: true, count: jobs.length, jobKeys: jobs.map((job) => job.jobId) };
 }
 
 export function permanentlyDeleteJob(db: SqliteDatabase, jobKey: string): JobMutationResponse {
@@ -687,15 +697,24 @@ export function permanentlyDeleteJob(db: SqliteDatabase, jobKey: string): JobMut
 }
 
 export function permanentlyDeleteJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
-  const jobKeys = mutableJobKeys(db, request);
-  const transaction = db.transaction((keys: string[]) => {
-    for (const jobUrl of keys) {
-      purgeJobRows(db, jobUrl);
+  const tenantId = LOCAL_TENANT;
+  const jobs = mutableResolvedJobs(db, request);
+  // The v7 schema deliberately delegates deletion of the job-owned graph to
+  // its foreign-key cascades. This command is also callable without the API
+  // connection wrapper, so enable the constraint engine at the command
+  // boundary before starting the transaction.
+  db.pragma("foreign_keys = ON");
+  if (db.pragma("foreign_keys", { simple: true }) !== 1) {
+    throw new Error("Permanent delete requires SQLite foreign-key enforcement.");
+  }
+  const transaction = db.transaction((resolvedJobs: readonly ResolvedJobIdentity[]) => {
+    for (const job of resolvedJobs) {
+      purgeJobRows(db, tenantId, job.jobId);
     }
-    invalidateOperationsProjections(db);
+    invalidateOperationsProjections(db, tenantId);
   });
-  transaction(jobKeys);
-  return { ok: true, count: jobKeys.length, jobKeys };
+  transaction(jobs);
+  return { ok: true, count: jobs.length, jobKeys: jobs.map((job) => job.jobId) };
 }
 
 export function writeSettingsConfig(
@@ -740,50 +759,6 @@ export function writeSettingsConfig(
   return readSettingsConfig(paths);
 }
 
-function updateLegacyJobColumnsForReset(
-  db: SqliteDatabase,
-  jobUrl: string,
-  stage: Stage,
-  resetAttempts: boolean,
-): void {
-  const updates: Record<string, SqliteValue> = {};
-  if (stage === "enrich") {
-    updates.detail_error = null;
-    updates.detail_scraped_at = null;
-    // Phase 7 (S-26 round-1 review B2): the new ``job_enrichments``
-    // table is the canonical source of "is this job enriched". Without
-    // resetting its row the worker's ``_ENRICHMENT_PENDING`` predicate
-    // permanently excludes the job and the API-driven retry-enrich
-    // silently no-ops. Mirror of Python's ``_reset_enrichment_aggregate``.
-    resetEnrichmentAggregate(db, jobUrl);
-  } else if (stage === "score") {
-    updates.fit_score = null;
-    updates.score_reasoning = null;
-    updates.scored_at = null;
-  } else if (stage === "tailor") {
-    updates.tailored_resume_path = null;
-    updates.tailored_at = null;
-    if (resetAttempts) {
-      updates.tailor_attempts = 0;
-    }
-  } else if (stage === "cover") {
-    updates.cover_letter_path = null;
-    updates.cover_letter_at = null;
-    if (resetAttempts) {
-      updates.cover_attempts = 0;
-    }
-  } else if (stage === "apply") {
-    updates.apply_status = null;
-    updates.apply_error = null;
-    updates.agent_id = null;
-    updates.apply_task_id = null;
-    if (resetAttempts) {
-      updates.apply_attempts = 0;
-    }
-  }
-  updateExistingJobColumns(db, jobUrl, updates);
-}
-
 /**
  * Phase 7 (S-26 round-1 review B2): reset the ``job_enrichments`` row
  * for one job back to the ``pending`` lifecycle state.
@@ -799,7 +774,7 @@ function updateLegacyJobColumnsForReset(
  * only clears the success-side fields plus rolls ``current_status``
  * back to ``pending``. Idempotent — safe to call when no row exists.
  */
-function resetEnrichmentAggregate(db: SqliteDatabase, jobUrl: string): void {
+function resetEnrichmentAggregate(db: SqliteDatabase, tenantId: string, jobId: string): void {
   if (!tableExists(db, "job_enrichments")) {
     return;
   }
@@ -812,32 +787,8 @@ function resetEnrichmentAggregate(db: SqliteDatabase, jobUrl: string): void {
            enriched_at = NULL,
            extraction_tier = NULL,
            updated_at = ?
-     WHERE job_url = ?`,
-  ).run(now, jobUrl);
-}
-
-function ensureDeletedJobsTable(db: SqliteDatabase): void {
-  db.prepare(
-    `CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-      job_url TEXT PRIMARY KEY,
-      deleted_at TEXT NOT NULL,
-      reason TEXT,
-      restored_at TEXT,
-      FOREIGN KEY(job_url) REFERENCES jobs(url)
-    )`,
-  ).run();
-}
-
-function ensureHiddenJobsTable(db: SqliteDatabase): void {
-  db.prepare(
-    `CREATE TABLE IF NOT EXISTS jobctrl_hidden_jobs (
-      job_url TEXT PRIMARY KEY,
-      hidden_at TEXT NOT NULL,
-      reason TEXT,
-      unhidden_at TEXT,
-      FOREIGN KEY(job_url) REFERENCES jobs(url)
-    )`,
-  ).run();
+     WHERE tenant_id = ? AND job_id = ?`,
+  ).run(now, tenantId, jobId);
 }
 
 function mutableJobKeys(db: SqliteDatabase, request: BulkJobMutationRequest): string[] {
@@ -860,49 +811,230 @@ function uniqueJobKeys(jobKeys: string[]): string[] {
   return Array.from(new Set(jobKeys.map((jobKey) => jobKey.trim()).filter(Boolean)));
 }
 
-function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
-  deleteWhere(db, "jobctrl_deleted_jobs", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "jobctrl_hidden_jobs", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_stage_states", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_events", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_artifacts", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_scores", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_score_staleness", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_materials_artifacts", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_materials", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_enrichments", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_source_observations", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_canonical_identities", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_duplicate_links", "surviving_job_id = ? OR superseded_job_or_observation_id = ?", [
-    jobUrl,
-    jobUrl,
-  ]);
-  deleteWhere(db, "apply_run_projections", "job_id = ?", [jobUrl]);
-  deleteWhere(db, "artifact_list_projections", "job_id = ?", [jobUrl]);
-  deleteWhere(db, "job_detail_projections", "job_id = ?", [jobUrl]);
-  deleteWhere(db, "job_list_projections", "job_id = ?", [jobUrl]);
-  deleteWhere(db, "discovery_quarantine_entries", "job_id = ? OR job_key = ? OR posting_url = ?", [
-    jobUrl,
-    jobUrl,
-    jobUrl,
-  ]);
-  deleteWhere(db, "discovery_feedback", "job_key = ?", [jobUrl]);
-  deleteWhere(db, "jobs", "url = ?", [jobUrl]);
-}
+function purgeJobRows(db: SqliteDatabase, tenantId: string, jobId: string): void {
+  const locatorValues = jobLocatorValues(db, tenantId, jobId);
+  const repeatOverrideIds = affectedRepeatOverrideIds(db, tenantId, jobId);
 
-function invalidateOperationsProjections(db: SqliteDatabase): void {
-  deleteWhere(db, "job_list_projections", "1 = 1", []);
-  deleteWhere(db, "job_detail_projections", "1 = 1", []);
-  deleteWhere(db, "artifact_list_projections", "1 = 1", []);
-  deleteWhere(db, "dashboard_projections", "1 = 1", []);
-  deleteWhere(db, "event_watermarks", "projection_name = ?", [PROJECTION_WATERMARK_NAME]);
-}
+  detachIndependentJobEvents(db, tenantId, jobId);
+  detachIndependentJobReferences(db, tenantId, jobId);
+  purgeRepeatApplicationEdges(db, tenantId, jobId, repeatOverrideIds);
 
-function deleteWhere(db: SqliteDatabase, tableName: string, whereSql: string, params: SqliteValue[]): void {
-  if (!tableExists(db, tableName)) {
-    return;
+  // These tables deliberately do not have job foreign keys because they are
+  // rebuildable projections. Apply/artifact projections are job-scoped and
+  // must disappear with the permanent-delete boundary.
+  for (const tableName of [
+    "apply_run_projections",
+    "artifact_list_projections",
+    "job_detail_projections",
+    "job_list_projections",
+  ]) {
+    deleteExactV7Rows(db, tableName, "tenant_id = ? AND job_id = ?", [tenantId, jobId]);
   }
+
+  // A link can retain the deleted aggregate as a non-FK superseded target.
+  // Remove both forms so a later observation is not suppressed as a duplicate.
+  deleteExactV7Rows(
+    db,
+    "job_duplicate_links",
+    "tenant_id = ? AND (surviving_job_id = ? OR superseded_job_or_observation_id = ?)",
+    [tenantId, jobId, jobId],
+  );
+  for (const locatorValue of locatorValues) {
+    deleteExactV7Rows(
+      db,
+      "job_rejected_duplicate_links",
+      "tenant_id = ? AND candidate_url = ?",
+      [tenantId, locatorValue],
+    );
+  }
+
+  // The root deletion clears locators, delete/hide tombstones, events, and
+  // every job-owned child through the exact-v7 ON DELETE CASCADE graph.
+  deleteExactV7Rows(db, "jobs", "tenant_id = ? AND job_id = ?", [tenantId, jobId]);
+}
+
+function jobLocatorValues(db: SqliteDatabase, tenantId: string, jobId: string): string[] {
+  const values = new Set<string>();
+  const job = getRow<{ url: string | null; application_url: string | null }>(
+    db,
+    "SELECT url, application_url FROM jobs WHERE tenant_id = ? AND job_id = ?",
+    [tenantId, jobId],
+  );
+  for (const value of [job?.url, job?.application_url]) {
+    if (value?.trim()) values.add(value);
+  }
+  for (const row of allRows<{ locator_value: string }>(
+    db,
+    "SELECT locator_value FROM job_locators WHERE tenant_id = ? AND job_id = ?",
+    [tenantId, jobId],
+  )) {
+    if (row.locator_value.trim()) values.add(row.locator_value);
+  }
+  for (const row of allRows<{ canonical_url: string }>(
+    db,
+    "SELECT canonical_url FROM job_canonical_identities WHERE tenant_id = ? AND job_id = ?",
+    [tenantId, jobId],
+  )) {
+    if (row.canonical_url.trim()) values.add(row.canonical_url);
+  }
+  for (const row of allRows<{ observed_url: string; normalized_observed_url: string }>(
+    db,
+    `SELECT observed_url, normalized_observed_url
+       FROM job_source_observations
+      WHERE tenant_id = ? AND job_id = ?`,
+    [tenantId, jobId],
+  )) {
+    if (row.observed_url.trim()) values.add(row.observed_url);
+    if (row.normalized_observed_url.trim()) values.add(row.normalized_observed_url);
+  }
+  return [...values];
+}
+
+function affectedRepeatOverrideIds(db: SqliteDatabase, tenantId: string, jobId: string): string[] {
+  return allRows<{ override_id: string }>(
+    db,
+    `SELECT override_id
+       FROM application_repeat_overrides
+      WHERE tenant_id = ? AND (target_job_id = ? OR prior_job_id = ?)`,
+    [tenantId, jobId, jobId],
+  ).map((row) => row.override_id);
+}
+
+function purgeRepeatApplicationEdges(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobId: string,
+  overrideIds: string[],
+): void {
+  // A repeat override is a cross-job decision. Its consumption table has no
+  // foreign key, so capture the affected override ids before the root's
+  // cascade removes the overrides themselves.
+  for (const overrideId of overrideIds) {
+    deleteExactV7Rows(
+      db,
+      "application_repeat_override_consumptions",
+      "tenant_id = ? AND override_id = ?",
+      [tenantId, overrideId],
+    );
+    deleteExactV7Rows(
+      db,
+      "application_repeat_audit",
+      "tenant_id = ? AND override_id = ?",
+      [tenantId, overrideId],
+    );
+  }
+  // Audit rows may reference the deleted Job as a prior match only in their
+  // evidence payload, while retaining a different target Job aggregate. Parse
+  // the JSON and match exact scalar values: substring search could erase an
+  // unrelated user note that merely happens to contain the same text.
+  for (const auditId of repeatAuditIdsReferencingJob(db, tenantId, jobId)) {
+    deleteExactV7Rows(db, "application_repeat_audit", "tenant_id = ? AND audit_id = ?", [tenantId, auditId]);
+  }
+}
+
+function repeatAuditIdsReferencingJob(db: SqliteDatabase, tenantId: string, jobId: string): string[] {
+  return allRows<{ audit_id: string; target_job_id: string; evidence_json: string }>(
+    db,
+    `SELECT audit_id, target_job_id, evidence_json
+       FROM application_repeat_audit
+      WHERE tenant_id = ?`,
+    [tenantId],
+  )
+    .filter((row) => row.target_job_id === jobId || repeatAuditEvidenceReferencesPriorJob(row.evidence_json, jobId))
+    .map((row) => row.audit_id);
+}
+
+function repeatAuditEvidenceReferencesPriorJob(json: string, expectedJobId: string): boolean {
+  try {
+    const matches = JSON.parse(json) as unknown;
+    return Array.isArray(matches) && matches.some((match) => priorApplicationJobId(match) === expectedJobId);
+  } catch {
+    return false;
+  }
+}
+
+function priorApplicationJobId(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const priorApplication = (value as Record<string, unknown>).priorApplication;
+  if (!priorApplication || typeof priorApplication !== "object" || Array.isArray(priorApplication)) return null;
+  const jobId = (priorApplication as Record<string, unknown>).jobId;
+  return typeof jobId === "string" ? jobId : null;
+}
+
+function detachIndependentJobEvents(db: SqliteDatabase, tenantId: string, jobId: string): void {
+  const events = allRows<{ event_id: number; payload_json: string | null }>(
+    db,
+    `SELECT event_id, payload_json
+       FROM job_events
+      WHERE tenant_id = ?
+        AND job_id = ?
+        AND entity_kind IN ('contact', 'contact_research', 'outreach')`,
+    [tenantId, jobId],
+  );
+  const update = db.prepare(
+    `UPDATE job_events
+        SET job_id = NULL, payload_json = ?
+      WHERE tenant_id = ?
+        AND event_id = ?
+        AND entity_kind IN ('contact', 'contact_research', 'outreach')`,
+  );
+  for (const event of events) {
+    update.run(scrubTopLevelEventJobId(event.payload_json, jobId), tenantId, event.event_id);
+  }
+}
+
+function scrubTopLevelEventJobId(payloadJson: string | null, jobId: string): string | null {
+  if (!payloadJson) return payloadJson;
+  try {
+    const payload = JSON.parse(payloadJson) as unknown;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payloadJson;
+    const values = payload as Record<string, unknown>;
+    if (values.jobId !== jobId) return payloadJson;
+    const { jobId: _jobId, ...withoutJobId } = values;
+    return JSON.stringify(withoutJobId);
+  } catch {
+    return payloadJson;
+  }
+}
+
+function detachIndependentJobReferences(db: SqliteDatabase, tenantId: string, jobId: string): void {
+  // Contact, research, outreach, and operational records own their own
+  // lifecycles. Their nullable job reference is deliberately RESTRICT rather
+  // than a job-owned cascade: permanent deletion removes the Job aggregate,
+  // not user-entered contact history or operational evidence.
+  for (const tableName of [
+    "contacts",
+    "contact_research_tasks",
+    "outreach_threads",
+    "operational_attempt_metrics",
+    "contact_projections",
+    "contact_research_task_projections",
+    "outreach_thread_projections",
+    "due_follow_up_projections",
+  ]) {
+    updateExactV7Rows(db, tableName, "job_id = NULL", "tenant_id = ? AND job_id = ?", [tenantId, jobId]);
+  }
+}
+
+function invalidateOperationsProjections(db: SqliteDatabase, tenantId: string): void {
+  // Target rows were removed before the root deletion. Rebuild the two
+  // tenant-wide projections synchronously instead of resetting the shared
+  // event watermark and replaying unrelated tenants' event histories.
+  rebuildTenantDeleteProjections(db, tenantId);
+}
+
+function deleteExactV7Rows(db: SqliteDatabase, tableName: string, whereSql: string, params: SqliteValue[]): void {
   db.prepare(`DELETE FROM ${tableName} WHERE ${whereSql}`).run(...params);
+}
+
+function updateExactV7Rows(
+  db: SqliteDatabase,
+  tableName: string,
+  setSql: string,
+  whereSql: string,
+  params: SqliteValue[],
+): void {
+  db.prepare(`UPDATE ${tableName} SET ${setSql} WHERE ${whereSql}`).run(...params);
 }
 
 function ensureJobScoresTable(db: SqliteDatabase): void {
@@ -1191,16 +1323,6 @@ function appendCorrectionHistory(
     ...trace,
     correction_history: [...history.filter(isRecord), correction],
   };
-}
-
-function updateExistingJobColumns(db: SqliteDatabase, jobUrl: string, updates: Record<string, SqliteValue>): void {
-  const names = columnNames(db, "jobs");
-  const entries = Object.entries(updates).filter(([name]) => names.has(name));
-  if (!entries.length) {
-    return;
-  }
-  const assignments = entries.map(([name]) => `${name} = ?`).join(", ");
-  db.prepare(`UPDATE jobs SET ${assignments} WHERE url = ?`).run(...entries.map(([, value]) => value), jobUrl);
 }
 
 function parseObjectOrDefault(text: string): Record<string, unknown> {

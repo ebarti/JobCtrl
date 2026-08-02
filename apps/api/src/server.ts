@@ -3671,16 +3671,15 @@ function preparationPickupEligibility(
   stage: Stage,
   minScore: number,
 ): PreparationPickupEligibility {
-  if (!tableExists(db, "job_list_projections")) {
-    return ineligiblePickup("projection_unavailable", "Preparation pickup is waiting for job projections.");
+  const jobId = resolveJobId(db, "local", jobUrl);
+  if (!jobId) {
+    return ineligiblePickup("job_not_found", "Job is no longer available for preparation pickup.");
   }
-  const staleScoreSelect = tableExists(db, "job_score_staleness")
-    ? `(SELECT COUNT(*)
+  const staleScoreSelect = `(SELECT COUNT(*)
         FROM job_score_staleness stale
         WHERE stale.tenant_id = 'local'
-          AND stale.job_url = jobs.url
-          AND stale.resolved = 0)`
-    : "0";
+          AND stale.job_id = jobs.job_id
+          AND stale.resolved = 0)`;
   const row = db
     .prepare(
       `SELECT
@@ -3698,15 +3697,19 @@ function preparationPickupEligibility(
          ${staleScoreSelect} AS unresolved_stale_scores
        FROM jobs
        LEFT JOIN job_list_projections projections
-         ON projections.tenant_id = 'local' AND projections.job_id = jobs.url
+         ON projections.tenant_id = jobs.tenant_id AND projections.job_id = jobs.job_id
        LEFT JOIN job_stage_states stage_state
-         ON stage_state.job_url = jobs.url AND stage_state.stage = ?
+         ON stage_state.tenant_id = jobs.tenant_id
+        AND stage_state.job_id = jobs.job_id
+        AND stage_state.stage = ?
        LEFT JOIN job_stage_states score_state
-         ON score_state.job_url = jobs.url AND score_state.stage = 'score'
-       WHERE jobs.url = ?
+         ON score_state.tenant_id = jobs.tenant_id
+        AND score_state.job_id = jobs.job_id
+        AND score_state.stage = 'score'
+       WHERE jobs.tenant_id = 'local' AND jobs.job_id = ?
        LIMIT 1`,
     )
-    .get(stage, jobUrl) as PreparationPickupRow | undefined;
+    .get(stage, jobId) as PreparationPickupRow | undefined;
   if (!row) {
     return ineligiblePickup("job_not_found", "Job is no longer available for preparation pickup.");
   }
