@@ -1143,6 +1143,7 @@ export interface TailoringFeedbackSignalReview {
   ruleKey: TailoringFeedbackRuleKey | null;
   ruleValue: TailoringFeedbackRuleValue | null;
   allowlistVersion: typeof TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION;
+  contradictsSignalIds: string[];
   reviewedAt: string;
 }
 
@@ -1316,12 +1317,23 @@ export interface ResumeReviewFeedbackListResponse {
   feedbackSignals: TailoringFeedbackSignal[];
 }
 
+const TailoringLearningSignalIdSchema = z
+  .string()
+  .min(1)
+  .max(240)
+  .regex(/^tailoring-feedback:[A-Za-z0-9_.:-]+:[1-9][0-9]*$/);
+
 export const TailoringFeedbackSignalReviewRequestSchema = z.discriminatedUnion("decision", [
   z
     .object({
       decision: z.literal("accepted"),
       ruleKey: z.enum(TAILORING_FEEDBACK_RULE_KEYS),
       ruleValue: z.enum(TAILORING_FEEDBACK_RULE_VALUES),
+      contradictsSignalIds: z
+        .array(TailoringLearningSignalIdSchema)
+        .max(100)
+        .default([])
+        .transform((values) => [...new Set(values)].sort()),
     })
     .strict(),
   z.object({ decision: z.literal("rejected") }).strict(),

@@ -393,9 +393,11 @@ describe("resume review draft API", () => {
       ruleKey: "fact_handling",
       ruleValue: "require_source_match",
       allowlistVersion: 1,
+      contradictsSignalIds: [],
     });
     expect(Object.keys(acceptedResponse.json().review).sort()).toEqual([
       "allowlistVersion",
+      "contradictsSignalIds",
       "decision",
       "reviewId",
       "reviewedAt",
@@ -431,8 +433,8 @@ describe("resume review draft API", () => {
       decision: "rejected",
       ruleKey: null,
       ruleValue: null,
+      contradictsSignalIds: [],
     });
-
     const db = new Database(options.dbPath);
     try {
       const reviews = db
@@ -464,6 +466,128 @@ describe("resume review draft API", () => {
       db.close();
     }
 
+    await app.close();
+  });
+
+  it("records only explicit structured contradiction links between accepted reviews", async () => {
+    const privateSource = "private contradiction rationale must not leave the source row";
+    const app = buildApp(options);
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+    const draftId = createResponse.json().draft.draftId as string;
+    const db = new Database(options.dbPath);
+    try {
+      for (const signalId of ["signal-one", "signal-two", "signal-three"]) {
+        db.prepare(
+          `INSERT INTO tailoring_feedback_signals (
+             tenant_id, signal_id, job_id, draft_id, source_kind, source_id,
+             signal_kind, status, summary, created_at
+           ) VALUES (
+             'local', ?, ?, ?, 'comment_reply', ?, 'factual_correction',
+             'candidate', ?, ?
+           )`,
+        ).run(signalId, JOB_ID, draftId, `source-${signalId}`, privateSource, NOW);
+      }
+    } finally {
+      db.close();
+    }
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/resume-review/feedback-signals/signal-one/reviews",
+      payload: {
+        decision: "accepted",
+        ruleKey: "fact_handling",
+        ruleValue: "require_source_match",
+      },
+    });
+    expect(first.statusCode, first.body).toBe(200);
+    expect(first.json().review.contradictsSignalIds).toEqual([]);
+
+    const firstLearningSignalId = "tailoring-feedback:signal-one:1";
+    const secondPayload = {
+      decision: "accepted",
+      ruleKey: "fact_handling",
+      ruleValue: "require_source_match",
+      contradictsSignalIds: [firstLearningSignalId],
+    } as const;
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/resume-review/feedback-signals/signal-two/reviews",
+      payload: secondPayload,
+    });
+    expect(second.statusCode, second.body).toBe(200);
+    expect(second.json().review.contradictsSignalIds).toEqual([
+      firstLearningSignalId,
+    ]);
+    expect(second.body).not.toContain(privateSource);
+
+    const replay = await app.inject({
+      method: "POST",
+      url: "/v1/resume-review/feedback-signals/signal-two/reviews",
+      payload: secondPayload,
+    });
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(replay.json().review).toEqual(second.json().review);
+
+    const invalidTarget = await app.inject({
+      method: "POST",
+      url: "/v1/resume-review/feedback-signals/signal-three/reviews",
+      payload: {
+        decision: "accepted",
+        ruleKey: "fact_handling",
+        ruleValue: "require_source_match",
+        contradictsSignalIds: ["tailoring-feedback:missing-signal:1"],
+      },
+    });
+    expect(invalidTarget.statusCode, invalidTarget.body).toBe(400);
+    expect(invalidTarget.json()).toMatchObject({
+      ok: false,
+      error: "invalid_tailoring_feedback_review",
+    });
+
+    const persisted = new Database(options.dbPath);
+    try {
+      expect(
+        persisted
+          .prepare(
+            `SELECT signal_id, signal_revision, contradicting_signal_id,
+                    contradicting_signal_revision
+               FROM tailoring_feedback_signal_contradictions`,
+          )
+          .all(),
+      ).toEqual([
+        {
+          signal_id: "signal-one",
+          signal_revision: 1,
+          contradicting_signal_id: "signal-two",
+          contradicting_signal_revision: 1,
+        },
+      ]);
+      expect(
+        persisted
+          .prepare(
+            `SELECT COUNT(*) AS count
+               FROM tailoring_feedback_signal_reviews
+              WHERE signal_id = 'signal-two'`,
+          )
+          .get(),
+      ).toEqual({ count: 1 });
+      expect(
+        persisted
+          .prepare(
+            `SELECT COUNT(*) AS count
+               FROM tailoring_feedback_signal_reviews
+              WHERE signal_id = 'signal-three'`,
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+    } finally {
+      persisted.close();
+    }
     await app.close();
   });
 
