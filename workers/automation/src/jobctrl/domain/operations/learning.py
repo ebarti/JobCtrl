@@ -66,6 +66,7 @@ class TailoringRecommendationScope:
 class RecommendationEvidenceRef:
     """Non-sensitive provenance copied from an accepted signal value."""
 
+    tenant_id: TenantId
     signal_id: str
     source_kind: Literal["tailoring_feedback_signal"]
     source_id: str
@@ -74,6 +75,8 @@ class RecommendationEvidenceRef:
     recorded_at: str
 
     def __post_init__(self) -> None:
+        if not str(self.tenant_id).strip():
+            raise ValueError("tenant_id must not be empty")
         for name, value in (
             ("signal_id", self.signal_id),
             ("source_id", self.source_id),
@@ -157,6 +160,10 @@ class LearningRecommendation:
             self.supporting_signal_ids
         ):
             raise ValueError("recommendation evidence must match supporting signal IDs")
+        if any(
+            evidence.tenant_id != self.scope.tenant_id for evidence in self.evidence
+        ):
+            raise ValueError("recommendation evidence must belong to its tenant")
         if len(set(self.job_ids)) != len(self.job_ids):
             raise ValueError("recommendation job IDs must be unique")
         if self.observed_job_count != len(self.job_ids):
@@ -238,6 +245,7 @@ def derive_tailoring_recommendations(
 
         evidence = tuple(
             RecommendationEvidenceRef(
+                tenant_id=signal.tenant_id,
                 signal_id=signal.signal_id,
                 source_kind=signal.source_kind,
                 source_id=signal.source_id,
