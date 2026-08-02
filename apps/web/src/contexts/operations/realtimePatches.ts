@@ -1,9 +1,29 @@
 import type {
+  WorkflowCanceled,
+  WorkflowCompleted,
+  WorkflowFailed,
+  WorkflowStarted,
+  WorkflowTerminated,
+  WorkflowTimedOut,
+} from "@jobctrl/domain-types";
+
+import type {
   ArtifactDetail,
   ArtifactSummary,
   JobDetail,
   JobSummary,
+  WorkflowRunDetail,
 } from "./types.js";
+
+export type WorkflowLifecycleEvent =
+  | WorkflowStarted
+  | WorkflowCompleted
+  | WorkflowFailed
+  | WorkflowCanceled
+  | WorkflowTimedOut
+  | WorkflowTerminated;
+
+const ACTIVE_WORKFLOW_STATUSES = new Set(["starting", "in_progress"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -72,4 +92,109 @@ export function patchResumeApproved(
     return changed ? { ...detail, artifacts } : current;
   }
   return current;
+}
+
+function workflowEventTimestamp(event: WorkflowLifecycleEvent): string | null {
+  if (typeof event.occurredAt === "string" && event.occurredAt.length > 0) {
+    return event.occurredAt;
+  }
+  return event.eventType === "WorkflowStarted"
+    ? event.payload.startedAt
+    : event.payload.finishedAt;
+}
+
+function workflowEventMessage(event: WorkflowLifecycleEvent): string | null {
+  if (event.eventType === "WorkflowCompleted" || event.eventType === "WorkflowStarted") {
+    return null;
+  }
+  return event.payload.errorMessage || null;
+}
+
+export function patchWorkflowRunDetail(
+  current: unknown,
+  event: WorkflowLifecycleEvent,
+): unknown {
+  if (!isRecord(current) || current.workflowId !== event.payload.workflowId) {
+    return current;
+  }
+  const detail = current as unknown as WorkflowRunDetail;
+  const occurredAt = workflowEventTimestamp(event);
+  const message = workflowEventMessage(event);
+  const timelineEvent = {
+    eventType: event.eventType,
+    occurredAt,
+    status: event.payload.status,
+    message,
+  };
+  const duplicate = detail.events.some(
+    (entry) =>
+      entry.eventType === timelineEvent.eventType
+      && entry.occurredAt === timelineEvent.occurredAt
+      && entry.status === timelineEvent.status
+      && entry.message === timelineEvent.message,
+  );
+  const base = {
+    ...detail,
+    workflowType: event.payload.workflowType,
+    status: event.payload.status,
+    temporalRunId: event.payload.temporalRunId,
+    events: duplicate ? detail.events : [...detail.events, timelineEvent],
+  };
+  if (!event.payload.temporalRunId) {
+    return { ...detail, events: base.events };
+  }
+  if (event.eventType === "WorkflowStarted") {
+    const recoveredMissingHistory =
+      detail.status === "terminated"
+      && detail.errorCode === "reconciled_not_found"
+      && event.payload.recoveredFromMissingHistory === true
+      && Boolean(event.payload.temporalRunId)
+      && event.payload.temporalRunId === detail.temporalRunId;
+    const startsNewExecution =
+      Boolean(event.payload.temporalRunId)
+      && Boolean(detail.temporalRunId)
+      && event.payload.temporalRunId !== detail.temporalRunId;
+    if (
+      !ACTIVE_WORKFLOW_STATUSES.has(detail.status)
+      && !recoveredMissingHistory
+      && !startsNewExecution
+    ) {
+      return { ...detail, events: base.events };
+    }
+    return {
+      ...base,
+      inputSummary: event.payload.inputSummary,
+      startedAt: event.payload.startedAt ?? occurredAt ?? detail.startedAt,
+      finishedAt: null,
+      durationMs: null,
+      errorCode: null,
+      errorMessage: null,
+      retryable: false,
+      result: null,
+    };
+  }
+  const executionMismatch =
+    !detail.temporalRunId
+    || event.payload.temporalRunId !== detail.temporalRunId;
+  if (!ACTIVE_WORKFLOW_STATUSES.has(detail.status) || executionMismatch) {
+    return { ...detail, events: base.events };
+  }
+  if (event.eventType === "WorkflowCompleted") {
+    return {
+      ...base,
+      finishedAt: event.payload.finishedAt ?? occurredAt ?? detail.finishedAt,
+      durationMs: event.payload.durationMs ?? detail.durationMs,
+      errorCode: null,
+      errorMessage: null,
+      retryable: false,
+    };
+  }
+  return {
+    ...base,
+    finishedAt: event.payload.finishedAt ?? occurredAt ?? detail.finishedAt,
+    durationMs: event.payload.durationMs ?? detail.durationMs,
+    errorCode: event.payload.errorCode || null,
+    errorMessage: event.payload.errorMessage || null,
+    retryable: event.eventType === "WorkflowFailed" ? event.payload.retryable : false,
+  };
 }

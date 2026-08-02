@@ -433,16 +433,19 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   WorkflowStarted: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
     pipelineKeys.operations(LOCAL_TENANT),
   ],
   WorkflowCompleted: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
     pipelineKeys.operations(LOCAL_TENANT),
   ],
   WorkflowFailed: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
     pipelineKeys.operations(LOCAL_TENANT),
   ],
   WorkflowCanceled: [
@@ -455,11 +458,13 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   WorkflowTimedOut: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
     pipelineKeys.operations(LOCAL_TENANT),
   ],
   WorkflowTerminated: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
     pipelineKeys.operations(LOCAL_TENANT),
   ],
   ContactCreated: [outreachKeys.contactLists(LOCAL_TENANT)],
