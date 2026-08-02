@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import threading
 
 import pytest
 
-from jobctrl.database import close_connection, init_db
+from jobctrl.database import close_connection, get_connection, init_db
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.domain.materials.policy import TailoringPolicy
 from jobctrl.domain.operations.feedback import TailoringFeedbackSignal
 from jobctrl.domain.operations.learning import (
     LearningSourceChange,
@@ -20,6 +23,11 @@ from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.learning.sqlite_repository import (
     LearningRecommendationConflict,
     SqliteLearningRecommendationRepository,
+)
+from jobctrl.infrastructure.materials import (
+    LearningRecommendationReviewError,
+    SqliteLearningRecommendationReviewRepository,
+    SqliteTailoringPolicyRepository,
 )
 
 
@@ -744,11 +752,273 @@ def test_multiple_source_changes_each_append_a_tombstone(tmp_path: Path) -> None
     close_connection(db_path)
 
 
+def test_review_rejects_without_policy_then_accepts_once(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    recommendation = _recommendation(_TENANT_A)
+    SqliteLearningRecommendationRepository(conn).append_pending(
+        recommendation,
+        derived_at="2026-08-01T10:01:00Z",
+    )
+    policy_repository = SqliteTailoringPolicyRepository(conn)
+    original_policy = _tailoring_policy(_TENANT_A)
+    policy_repository.save(original_policy)
+    reviewer = SqliteLearningRecommendationReviewRepository(conn)
+
+    rejected = reviewer.review(
+        _TENANT_A,
+        recommendation_id=recommendation.recommendation_id,
+        decision="rejected",
+        reviewed_at="2026-08-01T11:00:00Z",
+    )
+    rejected_replay = reviewer.review(
+        _TENANT_A,
+        recommendation_id=recommendation.recommendation_id,
+        decision="rejected",
+        reviewed_at="2026-08-01T11:01:00Z",
+    )
+
+    assert rejected == rejected_replay
+    assert rejected.revision == 1
+    assert rejected.policy_version is None
+    assert policy_repository.get_current(_TENANT_A) == original_policy
+
+    accepted = reviewer.review(
+        _TENANT_A,
+        recommendation_id=recommendation.recommendation_id,
+        decision="accepted",
+        reviewed_at="2026-08-01T11:02:00Z",
+    )
+    accepted_replay = reviewer.review(
+        _TENANT_A,
+        recommendation_id=recommendation.recommendation_id,
+        decision="accepted",
+        reviewed_at="2026-08-01T11:03:00Z",
+    )
+
+    assert accepted == accepted_replay
+    assert accepted.revision == 2
+    assert accepted.policy_version == 2
+    assert policy_repository.get_current(_TENANT_A).learned_tailoring_rules.to_dict() == {
+        "fact_handling": "require_source_match"
+    }
+    assert conn.execute(
+        "SELECT COUNT(*) FROM learning_recommendation_reviews"
+    ).fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM tailoring_policies").fetchone()[0] == 2
+    with pytest.raises(
+        LearningRecommendationReviewError,
+        match="terminal",
+    ):
+        reviewer.review(
+            _TENANT_A,
+            recommendation_id=recommendation.recommendation_id,
+            decision="rejected",
+            reviewed_at="2026-08-01T11:04:00Z",
+        )
+    close_connection(db_path)
+
+
+def test_review_fails_closed_without_current_policy_or_for_tombstone(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    recommendation = _recommendation(_TENANT_A)
+    SqliteLearningRecommendationRepository(conn).append_pending(
+        recommendation,
+        derived_at="2026-08-01T10:01:00Z",
+    )
+    reviewer = SqliteLearningRecommendationReviewRepository(conn)
+
+    with pytest.raises(
+        LearningRecommendationReviewError,
+        match="initialized tailoring policy",
+    ):
+        reviewer.review(
+            _TENANT_A,
+            recommendation_id=recommendation.recommendation_id,
+            decision="accepted",
+            reviewed_at="2026-08-01T11:00:00Z",
+        )
+    with pytest.raises(
+        LearningRecommendationReviewError,
+        match="does not exist for tenant",
+    ):
+        reviewer.review(
+            _TENANT_B,
+            recommendation_id=recommendation.recommendation_id,
+            decision="accepted",
+            reviewed_at="2026-08-01T11:00:00Z",
+        )
+    assert conn.execute(
+        "SELECT COUNT(*) FROM learning_recommendation_reviews"
+    ).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM tailoring_policies").fetchone()[0] == 0
+
+    SqliteTailoringPolicyRepository(conn).save(_tailoring_policy(_TENANT_A))
+    evidence = recommendation.evidence[0]
+    conn.execute(
+        """
+        INSERT INTO learning_recommendation_tombstones (
+            tenant_id, tombstone_id, recommendation_id, affected_signal_id,
+            affected_source_revision, reason_code, derivation_version,
+            tombstoned_at, rederived_at, replacement_recommendation_id
+        ) VALUES (?, ?, ?, ?, ?, 'source_deleted', 1, ?, ?, NULL)
+        """,
+        (
+            str(_TENANT_A),
+            "tombstone-review-fixture",
+            recommendation.recommendation_id,
+            evidence.signal_id,
+            evidence.source_revision,
+            "2026-08-01T11:01:00Z",
+            "2026-08-01T11:01:00Z",
+        ),
+    )
+    conn.commit()
+
+    with pytest.raises(LearningRecommendationReviewError, match="tombstoned"):
+        reviewer.review(
+            _TENANT_A,
+            recommendation_id=recommendation.recommendation_id,
+            decision="accepted",
+            reviewed_at="2026-08-01T11:02:00Z",
+        )
+    assert conn.execute(
+        "SELECT COUNT(*) FROM learning_recommendation_reviews"
+    ).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM tailoring_policies").fetchone()[0] == 1
+    close_connection(db_path)
+
+
+def test_concurrent_accepts_serialize_and_preserve_both_rules(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    setup_conn = init_db(db_path)
+    recommendations = (
+        _recommendation(_TENANT_A),
+        _recommendation_for_effect(
+            _TENANT_A,
+            signal_kind="style_preference",
+            rule_key="style_guidance",
+            rule_value="preserve_user_edit_pattern",
+        ),
+    )
+    recommendation_repository = SqliteLearningRecommendationRepository(setup_conn)
+    for recommendation in recommendations:
+        recommendation_repository.append_pending(
+            recommendation,
+            derived_at="2026-08-01T10:01:00Z",
+        )
+    SqliteTailoringPolicyRepository(setup_conn).save(_tailoring_policy(_TENANT_A))
+    close_connection(db_path)
+    start = threading.Event()
+
+    def accept(recommendation_id: str):
+        conn = get_connection(db_path)
+        try:
+            start.wait(timeout=5)
+            return SqliteLearningRecommendationReviewRepository(conn).review(
+                _TENANT_A,
+                recommendation_id=recommendation_id,
+                decision="accepted",
+                reviewed_at="2026-08-01T11:00:00Z",
+            )
+        finally:
+            close_connection(db_path)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(accept, recommendation.recommendation_id)
+            for recommendation in recommendations
+        ]
+        start.set()
+        reviews = [future.result(timeout=10) for future in futures]
+
+    assert sorted(review.policy_version for review in reviews) == [2, 3]
+    check_conn = get_connection(db_path)
+    try:
+        current = SqliteTailoringPolicyRepository(check_conn).get_current(_TENANT_A)
+        assert current is not None
+        assert current.learned_tailoring_rules.to_dict() == {
+            "fact_handling": "require_source_match",
+            "style_guidance": "preserve_user_edit_pattern",
+        }
+        assert check_conn.execute(
+            "SELECT COUNT(*) FROM learning_recommendation_reviews"
+        ).fetchone()[0] == 2
+        assert check_conn.execute(
+            "SELECT COUNT(*) FROM tailoring_policies"
+        ).fetchone()[0] == 3
+    finally:
+        close_connection(db_path)
+
+
 def _recommendation(tenant_id: TenantId):
     return derive_tailoring_recommendations(
         _signals(tenant_id),
         contradictions={},
     )[0]
+
+
+def _recommendation_for_effect(
+    tenant_id: TenantId,
+    *,
+    signal_kind: str,
+    rule_key: str,
+    rule_value: str,
+):
+    scope = TailoringRecommendationScope(
+        tenant_id=tenant_id,
+        proposed_effect=TailoringRuleEffect(
+            signal_kind=signal_kind,
+            rule_key=rule_key,
+            rule_value=rule_value,
+            allowlist_version=1,
+        ),
+    )
+    signals = tuple(
+        TailoringFeedbackSignal(
+            signal_id=f"{signal_kind}-signal-{index}",
+            tenant_id=tenant_id,
+            job_id=job_id,
+            source_id=f"{signal_kind}-source-{index}",
+            source_revision=index,
+            recorded_at=f"2026-08-01T10:00:0{index}Z",
+            signal_kind=signal_kind,
+            rule_key=rule_key,
+            rule_value=rule_value,
+            allowlist_version=1,
+        )
+        for index, job_id in enumerate((_JOB_A, _JOB_A, _JOB_B), start=1)
+    )
+    return derive_tailoring_recommendations(
+        signals,
+        contradictions={
+            scope: TailoringContradictionEvidence(
+                signal_ids=(),
+                unresolved_signal_ids=(),
+            )
+        },
+    )[0]
+
+
+def _tailoring_policy(tenant_id: TenantId) -> TailoringPolicy:
+    return TailoringPolicy(
+        tenant_id=tenant_id,
+        version=1,
+        prompt_version="tailor.v2.quality-gated",
+        schema_version="tailored-resume.v1",
+        judge_schema_version="tailor-judge.v1",
+        prompt_fingerprint="sha256:prompt",
+        config_fingerprint="sha256:config",
+        profile_policy_fingerprint="sha256:profile",
+        custom_prompt_fingerprint="sha256:custom",
+        generator_settings={"candidate_models": ["local:draft"]},
+        judge_settings={"judge_model": "local:judge", "min_score": 0.82},
+        runtime_settings={"validation_mode": "normal"},
+        created_at="2026-08-01T10:00:00Z",
+    )
 
 
 def _signals(tenant_id: TenantId) -> tuple[TailoringFeedbackSignal, ...]:

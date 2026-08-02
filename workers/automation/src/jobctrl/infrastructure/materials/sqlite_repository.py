@@ -17,6 +17,7 @@ See ddd-target.md §7.1 / §7.2 (per-aggregate repository, schema decoupling).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import sqlite3
@@ -28,6 +29,11 @@ from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.aggregate import MaterialsSet
 from jobctrl.domain.materials.entities import Artifact
 from jobctrl.domain.materials.policy import TailoringPolicy, TailoringPolicyChangedError
+from jobctrl.domain.operations.learning import (
+    LearningRecommendationDecision,
+    LearningRecommendationReview,
+    TailoringRuleEffect,
+)
 from jobctrl.domain.materials.value_objects import (
     ArtifactStatus,
     ArtifactType,
@@ -62,6 +68,10 @@ class MaterialsGenerationConflict(ValueError):
             f"MaterialsSet generation conflict for job_id={job_id!r}: "
             f"got generation={attempted}, expected existing generation or next generation={expected}"
         )
+
+
+class LearningRecommendationReviewError(ValueError):
+    """Raised when an explicit recommendation decision cannot be applied."""
 
 
 # ---------------------------------------------------------------------------
@@ -936,6 +946,175 @@ def _bounded_float(value: Any) -> float | None:
     return min(100.0, parsed)
 
 
+class SqliteLearningRecommendationReviewRepository:
+    """Atomically link explicit decisions to Materials policy revisions."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+        ensure_tailoring_policy_tables(conn)
+
+    def review(
+        self,
+        tenant_id: TenantId,
+        *,
+        recommendation_id: str,
+        decision: LearningRecommendationDecision,
+        reviewed_at: str,
+    ) -> LearningRecommendationReview:
+        recommendation_id = str(recommendation_id or "").strip()
+        reviewed_at = str(reviewed_at or "").strip()
+        if not recommendation_id:
+            raise LearningRecommendationReviewError(
+                "recommendation_id must not be empty"
+            )
+        if decision not in {"accepted", "rejected"}:
+            raise LearningRecommendationReviewError(
+                "decision must be accepted or rejected"
+            )
+        if not reviewed_at:
+            raise LearningRecommendationReviewError("reviewed_at must not be empty")
+
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            recommendation = self._conn.execute(
+                """
+                SELECT signal_kind, rule_key, rule_value, allowlist_version
+                FROM learning_recommendations
+                WHERE tenant_id = ? AND recommendation_id = ?
+                """,
+                (str(tenant_id), recommendation_id),
+            ).fetchone()
+            if recommendation is None:
+                raise LearningRecommendationReviewError(
+                    "learning recommendation does not exist for tenant"
+                )
+
+            prior_reviews = tuple(
+                self._review_from_row(row)
+                for row in self._conn.execute(
+                    """
+                    SELECT tenant_id, review_id, recommendation_id, revision,
+                           decision, policy_version, reviewed_at
+                    FROM learning_recommendation_reviews
+                    WHERE tenant_id = ? AND recommendation_id = ?
+                    ORDER BY revision
+                    """,
+                    (str(tenant_id), recommendation_id),
+                ).fetchall()
+            )
+            accepted = next(
+                (review for review in prior_reviews if review.decision == "accepted"),
+                None,
+            )
+            if accepted is not None:
+                if decision == "accepted":
+                    self._conn.commit()
+                    return accepted
+                raise LearningRecommendationReviewError(
+                    "accepted learning recommendation is terminal"
+                )
+            replay = next(
+                (review for review in prior_reviews if review.decision == decision),
+                None,
+            )
+            if replay is not None:
+                self._conn.commit()
+                return replay
+
+            tombstoned = self._conn.execute(
+                """
+                SELECT 1
+                FROM learning_recommendation_tombstones
+                WHERE tenant_id = ? AND recommendation_id = ?
+                LIMIT 1
+                """,
+                (str(tenant_id), recommendation_id),
+            ).fetchone()
+            if tombstoned is not None:
+                raise LearningRecommendationReviewError(
+                    "tombstoned learning recommendation cannot be reviewed"
+                )
+
+            revision = len(prior_reviews) + 1
+            policy_version: int | None = None
+            if decision == "accepted":
+                effect = TailoringRuleEffect(
+                    signal_kind=str(_row_value(recommendation, "signal_kind", 0)),
+                    rule_key=str(_row_value(recommendation, "rule_key", 1)),
+                    rule_value=str(_row_value(recommendation, "rule_value", 2)),
+                    allowlist_version=int(
+                        _row_value(recommendation, "allowlist_version", 3)
+                    ),
+                )
+                policy_repository = SqliteTailoringPolicyRepository(self._conn)
+                current = policy_repository.get_current(tenant_id)
+                if current is None:
+                    raise LearningRecommendationReviewError(
+                        "acceptance requires an initialized tailoring policy"
+                    )
+                policy = current.with_learned_tailoring_rule(
+                    rule_key=effect.rule_key,
+                    rule_value=effect.rule_value,
+                    version=current.version + 1,
+                    created_at=reviewed_at,
+                )
+                policy_repository._insert(policy)
+                policy_version = policy.version
+
+            review = LearningRecommendationReview(
+                tenant_id=tenant_id,
+                review_id=_learning_recommendation_review_id(
+                    tenant_id=tenant_id,
+                    recommendation_id=recommendation_id,
+                    decision=decision,
+                ),
+                recommendation_id=recommendation_id,
+                revision=revision,
+                decision=decision,
+                policy_version=policy_version,
+                reviewed_at=reviewed_at,
+            )
+            self._conn.execute(
+                """
+                INSERT INTO learning_recommendation_reviews (
+                    tenant_id, review_id, recommendation_id, revision,
+                    decision, context, policy_kind, policy_version, reviewed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(review.tenant_id),
+                    review.review_id,
+                    review.recommendation_id,
+                    review.revision,
+                    review.decision,
+                    review.context,
+                    review.policy_kind,
+                    review.policy_version,
+                    review.reviewed_at,
+                ),
+            )
+            self._conn.commit()
+            return review
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    @staticmethod
+    def _review_from_row(row: Any) -> LearningRecommendationReview:
+        raw_policy_version = _row_value(row, "policy_version", 5)
+        return LearningRecommendationReview(
+            tenant_id=TenantId(str(_row_value(row, "tenant_id", 0))),
+            review_id=str(_row_value(row, "review_id", 1)),
+            recommendation_id=str(_row_value(row, "recommendation_id", 2)),
+            revision=int(_row_value(row, "revision", 3)),
+            decision=str(_row_value(row, "decision", 4)),
+            policy_version=(
+                None if raw_policy_version is None else int(raw_policy_version)
+            ),
+            reviewed_at=str(_row_value(row, "reviewed_at", 6)),
+        )
+
+
 class SqliteTailoringPolicyRepository:
     """SQLite-backed current policy adapter for the Materials context."""
 
@@ -1077,6 +1256,16 @@ def _row_value(row: Any, name: str, index: int) -> Any:
     if isinstance(row, sqlite3.Row):
         return row[name]
     return row[index]
+
+
+def _learning_recommendation_review_id(
+    *,
+    tenant_id: TenantId,
+    recommendation_id: str,
+    decision: LearningRecommendationDecision,
+) -> str:
+    payload = f"{tenant_id}\0{recommendation_id}\0{decision}".encode()
+    return f"learning-recommendation-review:{hashlib.sha256(payload).hexdigest()}"
 
 
 def _utc_now() -> str:

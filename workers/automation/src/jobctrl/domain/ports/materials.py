@@ -33,6 +33,10 @@ from jobctrl.domain.materials.value_objects import (
     RenderFormat,
 )
 from jobctrl.domain.materials.voice import VoiceRequest, VoiceResult
+from jobctrl.domain.operations.learning import (
+    LearningRecommendationDecision,
+    LearningRecommendationReview,
+)
 from jobctrl.domain.tenant import TenantId
 
 
@@ -206,6 +210,21 @@ class TailoringPolicyRepository(Protocol):
         expected_current_version: int | None = None,
     ) -> TailoringPolicy:
         """Resolve the candidate only if the pre-generation snapshot is current."""
+        ...
+
+
+class LearningRecommendationReviewer(Protocol):
+    """Materials-owned boundary for explicit recommendation decisions."""
+
+    def review(
+        self,
+        tenant_id: TenantId,
+        *,
+        recommendation_id: str,
+        decision: LearningRecommendationDecision,
+        reviewed_at: str,
+    ) -> LearningRecommendationReview:
+        """Append a decision and its policy revision atomically."""
         ...
 
 
