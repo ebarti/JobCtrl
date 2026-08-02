@@ -149,6 +149,16 @@ def test_identity_locator_and_sequence_roles_are_not_inferred_from_names() -> No
     )
     assert table_plan("job_locators").disposition is TableDisposition.STRUCTURED_REWRITE
     assert (
+        table_plan("job_score_keywords").disposition
+        is TableDisposition.STRUCTURED_REWRITE
+    )
+    assert not table_plan("job_score_keywords").source_exists
+    assert classify_column("job_score_keywords", "job_id", "source") is None
+    assert (
+        classify_column("job_score_keywords", "job_id", "target")
+        is ColumnRole.JOB_ID
+    )
+    assert (
         table_plan("dashboard_projections").disposition
         is TableDisposition.STRUCTURED_REWRITE
     )

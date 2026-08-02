@@ -49,6 +49,9 @@ from jobctrl.infrastructure.migrations.v6_to_v7_population_steps import (
     CandidatePopulationArgumentProfile,
 )
 from jobctrl.infrastructure.migrations.v6_to_v7_root import copy_root_jobs
+from jobctrl.infrastructure.migrations.v6_to_v7_score_keywords import (
+    copy_score_keywords,
+)
 from jobctrl.infrastructure.migrations.v6_to_v7_work_items import (
     copy_structured_work_items,
 )
@@ -94,7 +97,7 @@ def test_direct_scalar_and_structured_ownership_match_the_migration_plan() -> No
         if step.step_id != "direct_scalar"
         for table in step.owned_tables
     } == structured_tables
-    assert len(structured_tables) == 18
+    assert len(structured_tables) == 19
 
 
 def test_population_step_ids_and_owners_are_exact() -> None:
@@ -111,6 +114,7 @@ def test_population_step_ids_and_owners_are_exact() -> None:
     assert tuple(step.step_id for step in CANDIDATE_POPULATION_STEPS) == (
         "root",
         "direct_scalar",
+        "score_keywords",
         "duplicate_links",
         "events",
         "work_items",
@@ -127,6 +131,7 @@ def test_population_step_ids_and_owners_are_exact() -> None:
     assert {step.step_id: step.owned_tables for step in CANDIDATE_POPULATION_STEPS} == {
         "root": {"jobs", "job_locators"},
         "direct_scalar": direct_scalar_tables,
+        "score_keywords": {"job_score_keywords"},
         "duplicate_links": {"job_duplicate_links"},
         "events": {"job_events"},
         "work_items": {"discovery_quarantine_entries", "preparation_work_items"},
@@ -177,6 +182,7 @@ def test_population_writers_and_argument_profiles_match_exact_signatures() -> No
     expected_writers = (
         copy_root_jobs,
         copy_direct_and_scalar_tables,
+        copy_score_keywords,
         copy_duplicate_links,
         copy_job_events,
         copy_structured_work_items,

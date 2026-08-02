@@ -1160,6 +1160,24 @@ CREATE TABLE "job_resume_template_assignments" (
             FOREIGN KEY (tenant_id, job_id)
                 REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
         );
+CREATE TABLE "job_score_keywords" (
+            tenant_id          TEXT NOT NULL DEFAULT 'local',
+            job_id             TEXT NOT NULL,
+            score_version      INTEGER NOT NULL CHECK(score_version > 0),
+            normalized_keyword TEXT NOT NULL
+                CHECK(length(trim(normalized_keyword)) > 0),
+            display_keyword    TEXT NOT NULL
+                CHECK(length(trim(display_keyword)) > 0),
+            position           INTEGER NOT NULL CHECK(position >= 0),
+            PRIMARY KEY (
+                tenant_id, job_id, score_version, normalized_keyword
+            ),
+            UNIQUE (tenant_id, job_id, score_version, position),
+            FOREIGN KEY (tenant_id, job_id, score_version)
+                REFERENCES "job_scores"(
+                    tenant_id, job_id, version
+                ) ON DELETE CASCADE
+        );
 CREATE TABLE "job_score_staleness" (
             tenant_id                 TEXT NOT NULL DEFAULT 'local',
             job_id                   TEXT NOT NULL,
@@ -1979,6 +1997,11 @@ CREATE INDEX idx_job_posted_compensation_parse_state
 CREATE INDEX idx_job_resume_template_assignments_template
         ON job_resume_template_assignments(
             tenant_id, template_id, version_id
+        )
+        ;
+CREATE INDEX idx_job_score_keywords_tenant_normalized
+        ON job_score_keywords(
+            tenant_id, normalized_keyword, job_id, score_version
         )
         ;
 CREATE INDEX idx_job_score_staleness_job

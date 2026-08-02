@@ -48,6 +48,9 @@ from jobctrl.infrastructure.migrations.v6_to_v7_plan import (
     TableDisposition,
 )
 from jobctrl.infrastructure.migrations.v6_to_v7_root import copy_root_jobs
+from jobctrl.infrastructure.migrations.v6_to_v7_score_keywords import (
+    copy_score_keywords,
+)
 from jobctrl.infrastructure.migrations.v6_to_v7_work_items import (
     copy_structured_work_items,
 )
@@ -104,6 +107,13 @@ CANDIDATE_POPULATION_STEPS: Final[tuple[CandidatePopulationStep, ...]] = (
         depends_on=("root",),
         writer=copy_direct_and_scalar_tables,
         argument_profile=CandidatePopulationArgumentProfile.PLAIN,
+    ),
+    CandidatePopulationStep(
+        step_id="score_keywords",
+        owned_tables=frozenset({"job_score_keywords"}),
+        depends_on=("direct_scalar",),
+        writer=copy_score_keywords,
+        argument_profile=CandidatePopulationArgumentProfile.JOB_IDS,
     ),
     CandidatePopulationStep(
         step_id="duplicate_links",

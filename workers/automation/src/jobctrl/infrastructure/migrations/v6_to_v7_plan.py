@@ -226,6 +226,14 @@ def _table_plans() -> dict[str, TablePlan]:
         source_exists=False,
         source_required=False,
     )
+    # Scoring keywords are derived solely from each migrated job_scores row.
+    # They had no v6 relation to copy, so one dedicated owner prevents
+    # duplicate or unnormalized rows from a broad scalar copy.
+    plans["job_score_keywords"] = TablePlan(
+        TableDisposition.STRUCTURED_REWRITE,
+        source_exists=False,
+        source_required=False,
+    )
     plans["discovery_run_projections"] = TablePlan(
         TableDisposition.RETIRED,
         target_exists=False,
@@ -382,6 +390,7 @@ _TARGET_JOB_ID_COLUMNS: Final = frozenset(
         ("job_duplicate_links", "surviving_job_id"),
         ("job_events", "job_id"),
         ("job_locators", "job_id"),
+        ("job_score_keywords", "job_id"),
         ("jobs", "job_id"),
     }
 )
@@ -481,6 +490,7 @@ _DECLARED_COLUMNS: Final[Mapping[str, frozenset[str]]] = _column_manifest(
         "job_requirement_fit_items": "job_url tenant_id job_id score_version requirement_id requirement_text tier weight job_evidence_span fit_json contribution_json tailoring_json artifact_coverage_json position",
         "job_requirement_fit_reports": "job_url tenant_id job_id score_version employer_analysis_generation profile_snapshot_version scoring_policy_version formula_version resolved_fit_score fit_band confidence summary_json created_at",
         "job_resume_template_assignments": "tenant_id job_url job_id template_id version_id updated_at",
+        "job_score_keywords": "tenant_id job_id score_version normalized_keyword display_keyword position",
         "job_score_staleness": "tenant_id job_url job_id stale_reason old_policy_id old_policy_version new_policy_id new_policy_version marked_at resolved resolved_at resolved_by_score_version",
         "job_scores": "job_url tenant_id job_id version fit_score breakdown_json keywords_json scored_at correction_json criteria_json trace_json",
         "job_source_observations": "tenant_id source_observation_id job_url job_id source_id source_native_id observed_url normalized_observed_url run_id observed_at",
@@ -606,6 +616,7 @@ _TARGET_ONLY_COLUMNS: Final[Mapping[str, frozenset[str]]] = _column_manifest(
         "job_requirement_fit_items": "job_id",
         "job_requirement_fit_reports": "job_id",
         "job_resume_template_assignments": "job_id",
+        "job_score_keywords": "job_id",
         "job_score_staleness": "job_id",
         "job_scores": "job_id",
         "job_source_observations": "job_id",
