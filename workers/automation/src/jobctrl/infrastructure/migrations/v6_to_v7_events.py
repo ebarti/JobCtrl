@@ -19,6 +19,9 @@ from jobctrl.infrastructure.migrations.v6_to_v7_copy import (
     JobIdMap,
     build_job_id_map,
 )
+from jobctrl.infrastructure.migrations.v6_to_v7_duplicate_links import (
+    DuplicateLinkIdentityResolver,
+)
 from jobctrl.infrastructure.migrations.v6_to_v7_preflight import (
     assert_v6_migration_preflight,
 )
@@ -96,7 +99,12 @@ def copy_job_events(
         ).fetchall()
     )
     source_sequence = _sequence_value(source, "job_events")
-    candidate_rows = _candidate_rows(source_rows, job_ids)
+    duplicate_links = DuplicateLinkIdentityResolver(
+        source,
+        candidate,
+        job_ids=job_ids,
+    )
+    candidate_rows = _candidate_rows(source_rows, job_ids, duplicate_links)
     _validate_source_sequence(source_rows, source_sequence)
 
     candidate.execute("SAVEPOINT v6_job_events_candidate_copy")
@@ -144,6 +152,7 @@ def _assert_candidate_job_ids(
 def _candidate_rows(
     source_rows: tuple[tuple[object, ...], ...],
     job_ids: JobIdMap,
+    duplicate_links: DuplicateLinkIdentityResolver,
 ) -> tuple[tuple[object, ...], ...]:
     copied: list[tuple[object, ...]] = []
     for row in source_rows:
@@ -151,6 +160,7 @@ def _candidate_rows(
         try:
             identity = upcast_v6_event_identity(
                 job_ids=job_ids,
+                duplicate_links=duplicate_links,
                 event_type=values["event_type"],
                 event_job_locator=values["job_url"],
                 payload_json=values["payload_json"],

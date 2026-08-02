@@ -10,6 +10,10 @@ from jobctrl.infrastructure.migrations.v6_to_v7_copy import (
     CandidateCopyError,
     JobIdMap,
 )
+from jobctrl.infrastructure.migrations.v6_to_v7_duplicate_links import (
+    DuplicateLinkIdentityResolver,
+    DuplicateLinkResolutionError,
+)
 
 EVENT_IDENTITY_VERSION = 1
 
@@ -70,6 +74,7 @@ class UpcastedEventIdentity:
 def upcast_v6_event_identity(
     *,
     job_ids: JobIdMap,
+    duplicate_links: DuplicateLinkIdentityResolver | None = None,
     event_type: object,
     event_job_locator: object,
     payload_json: object,
@@ -80,6 +85,7 @@ def upcast_v6_event_identity(
     column_job_id = _resolve_optional(job_ids, event_job_locator)
     rewritten_payload, payload_primary, payload_references = _upcast_payload(
         job_ids=job_ids,
+        duplicate_links=duplicate_links,
         event_type=event_type,
         payload_json=payload_json,
     )
@@ -120,6 +126,7 @@ def upcast_v6_event_identity(
 def _upcast_payload(
     *,
     job_ids: JobIdMap,
+    duplicate_links: DuplicateLinkIdentityResolver | None,
     event_type: object,
     payload_json: object,
 ) -> tuple[str | None, tuple[str, ...], frozenset[str]]:
@@ -134,6 +141,15 @@ def _upcast_payload(
         return str(payload_json), (), frozenset()
 
     normalized = _normalize_duplicate_link_payload(event_type, decoded)
+    if event_type == "DuplicateJobLinked":
+        if duplicate_links is None:
+            raise EventIdentityUpcastError("duplicate_link_event_resolver_required")
+        try:
+            normalized = duplicate_links.rewrite_duplicate_linked_event_payload(
+                normalized
+            )
+        except DuplicateLinkResolutionError as error:
+            raise EventIdentityUpcastError(str(error)) from error
     transformed: dict[str, Any] = {}
     primary: set[str] = set()
     references: set[str] = set()
