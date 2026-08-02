@@ -8,6 +8,7 @@ through the ``ScoreRepository`` adapter — never to the legacy
 from __future__ import annotations
 
 import sqlite3
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -147,11 +148,42 @@ def _stub_default_analyzer(monkeypatch) -> None:
     )
 
 
+def _job_id(url: str) -> JobId:
+    return JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, url)))
+
+
+def _stage_row(conn: sqlite3.Connection, url: str, stage: str) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT states.*
+        FROM job_stage_states states
+        JOIN jobs
+          ON jobs.tenant_id = states.tenant_id
+         AND jobs.job_id = states.job_id
+        WHERE jobs.tenant_id = ? AND jobs.url = ? AND states.stage = ?
+        """,
+        (LOCAL_TENANT, url, stage),
+    ).fetchone()
+
+
 def _seed_pending_job(conn: sqlite3.Connection, url: str) -> None:
+    job_id = _job_id(url)
     conn.execute(
-        "INSERT INTO jobs (url, title, site, full_description, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (url, "Engineer", "Acme", "Need Python.", "2024-01-01T00:00:00+00:00"),
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (LOCAL_TENANT, job_id, url, "Engineer", "Acme", "2024-01-01T00:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO job_enrichments "
+        "(tenant_id, job_id, current_status, full_description, updated_at) "
+        "VALUES (?, ?, 'enriched', 'Need Python.', ?)",
+        (LOCAL_TENANT, job_id, "2024-01-01T00:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO job_locators "
+        "(tenant_id, job_id, locator_kind, locator_value, is_current, first_seen_at, last_seen_at) "
+        "VALUES (?, ?, 'posting_url', ?, 1, ?, ?)",
+        (LOCAL_TENANT, job_id, url, "2024-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00"),
     )
     conn.commit()
 
@@ -180,7 +212,7 @@ def _employer_analysis(job_url: str) -> EmployerAnalysis:
     )
     return EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(job_url),
+        job_id=_job_id(job_url),
         generation=1,
         snapshot_hash=compute_snapshot_hash("Need Python."),
         canonical=canonical,
@@ -202,10 +234,23 @@ def _seed_pending_job_with_description(
     location: str = "Remote",
     application_url: str | None = None,
 ) -> None:
+    job_id = _job_id(url)
     conn.execute(
-        "INSERT INTO jobs (url, title, company, site, location, full_description, discovered_at, application_url) "
+        "INSERT INTO jobs (tenant_id, job_id, url, title, company, site, location, discovered_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (url, title, company, "linkedin", location, description, discovered_at, application_url),
+        (LOCAL_TENANT, job_id, url, title, company, "linkedin", location, discovered_at),
+    )
+    conn.execute(
+        "INSERT INTO job_enrichments "
+        "(tenant_id, job_id, current_status, full_description, application_url, updated_at) "
+        "VALUES (?, ?, 'enriched', ?, ?, ?)",
+        (LOCAL_TENANT, job_id, description, application_url, discovered_at),
+    )
+    conn.execute(
+        "INSERT INTO job_locators "
+        "(tenant_id, job_id, locator_kind, locator_value, is_current, first_seen_at, last_seen_at) "
+        "VALUES (?, ?, 'posting_url', ?, 1, ?, ?)",
+        (LOCAL_TENANT, job_id, url, discovered_at, discovered_at),
     )
     conn.commit()
 
@@ -252,7 +297,9 @@ def test_score_job_writes_only_to_job_scores(
         }
     )
 
-    job_dict = dict(conn.execute("SELECT * FROM jobs WHERE url=?", (url,)).fetchone())
+    job_dict = dict(
+        conn.execute("SELECT * FROM jobs WHERE tenant_id = ? AND url = ?", (LOCAL_TENANT, url)).fetchone()
+    )
     outcome = scorer_module.score_job(
         profile_snapshot,
         job_dict,
@@ -262,14 +309,14 @@ def test_score_job_writes_only_to_job_scores(
     assert outcome.ok is True
 
     # New path persisted into job_scores.
-    persisted = repo.load(LOCAL_TENANT, JobId(url))
+    persisted = repo.load(LOCAL_TENANT, _job_id(url))
     assert persisted is not None
     assert persisted.fit_score.value == 8
 
     # Legacy ``jobs.fit_score`` was NOT written by the new path.
     legacy_row = conn.execute(
-        "SELECT fit_score, score_reasoning, scored_at FROM jobs WHERE url=?",
-        (url,),
+        "SELECT fit_score, score_reasoning, scored_at FROM jobs WHERE tenant_id = ? AND url = ?",
+        (LOCAL_TENANT, url),
     ).fetchone()
     assert legacy_row["fit_score"] is None
     assert legacy_row["score_reasoning"] is None
@@ -303,7 +350,9 @@ def test_score_job_with_explicit_sqlite_repository_uses_persisted_policy(
         }
     )
 
-    job_dict = dict(conn.execute("SELECT * FROM jobs WHERE url=?", (url,)).fetchone())
+    job_dict = dict(
+        conn.execute("SELECT * FROM jobs WHERE tenant_id = ? AND url = ?", (LOCAL_TENANT, url)).fetchone()
+    )
     outcome = scorer_module.score_job(
         profile_snapshot,
         job_dict,
@@ -312,7 +361,7 @@ def test_score_job_with_explicit_sqlite_repository_uses_persisted_policy(
     )
 
     assert outcome.ok is True
-    persisted = repo.load(LOCAL_TENANT, JobId(url))
+    persisted = repo.load(LOCAL_TENANT, _job_id(url))
     assert persisted is not None
     assert persisted.fit_score.value == 1
     assert persisted.trace.scoring_policy_id == "local:scoring-policy-v2"
@@ -333,7 +382,7 @@ def test_score_job_by_url_repairs_existing_score_stage_state(
     repo = SqliteScoreRepository(conn)
     existing = JobScore.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=_job_id(url),
         fit_score=FitScore.create(8),
         breakdown=ScoreBreakdown(reasoning="persisted before stage repair"),
         matched_keywords=MatchedKeywords.from_iterable(["python"]),
@@ -342,7 +391,7 @@ def test_score_job_by_url_repairs_existing_score_stage_state(
     repo.save(existing)
     set_stage_state(
         conn,
-        url,
+        _job_id(url),
         "score",
         "failed",
         error_code="SCORE_FAILED",
@@ -374,16 +423,21 @@ def test_score_job_by_url_repairs_existing_score_stage_state(
     assert outcome.score is not None
     assert outcome.score.fit_score.value == 8
     assert llm.calls == 0
-    stage_row = conn.execute(
-        "SELECT state, error_code, error_message "
-        "FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-        (url,),
-    ).fetchone()
+    stage_row = _stage_row(conn, url, "score")
     assert stage_row["state"] == "succeeded"
     assert stage_row["error_code"] is None
     assert stage_row["error_message"] is None
     events = conn.execute(
-        "SELECT event_type FROM job_events WHERE job_url = ? AND stage = 'score'",
+        """
+        SELECT event_type
+        FROM job_events
+        WHERE tenant_id = 'local'
+          AND job_id = (
+            SELECT job_id FROM jobs
+            WHERE tenant_id = 'local' AND url = ?
+          )
+          AND stage = 'score'
+        """,
         (url,),
     ).fetchall()
     assert [row["event_type"] for row in events] == ["StageCompleted"]
@@ -400,7 +454,7 @@ def test_score_job_by_url_syncs_existing_blocked_score_to_downstream_stages(
     repo.save(
         JobScore.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+            job_id=_job_id(url),
             fit_score=FitScore.create(9),
             breakdown=ScoreBreakdown(
                 reasoning="persisted blocked score",
@@ -428,9 +482,14 @@ def test_score_job_by_url_syncs_existing_blocked_score_to_downstream_stages(
     rows = conn.execute(
         """
         SELECT stage, state, error_code, error_message
-        FROM job_stage_states
-        WHERE job_url = ? AND stage IN ('tailor', 'cover', 'apply')
-        ORDER BY stage
+        FROM job_stage_states states
+        JOIN jobs
+          ON jobs.tenant_id = states.tenant_id
+         AND jobs.job_id = states.job_id
+        WHERE jobs.tenant_id = 'local'
+          AND jobs.url = ?
+          AND states.stage IN ('tailor', 'cover', 'apply')
+        ORDER BY states.stage
         """,
         (url,),
     ).fetchall()
@@ -473,8 +532,16 @@ def test_score_job_by_url_reuses_direct_score_for_reference_repost(
     conn.execute(
         """
         INSERT INTO job_canonical_identities (
-            tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at
-        ) VALUES ('local', ?, ?, 'workday', 'AI-Security-Director_R53680', 0.82, ?)
+            tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at
+        ) VALUES (
+            'local',
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            ?,
+            'workday',
+            'AI-Security-Director_R53680',
+            0.82,
+            ?
+        )
         """,
         (
             direct_url,
@@ -486,7 +553,7 @@ def test_score_job_by_url_reuses_direct_score_for_reference_repost(
     repo.save(
         JobScore.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(direct_url),
+            job_id=_job_id(direct_url),
             fit_score=FitScore.create(9),
             breakdown=ScoreBreakdown(reasoning="Direct canonical score."),
             matched_keywords=MatchedKeywords.from_iterable(["AI Security"]),
@@ -521,14 +588,19 @@ def test_score_job_by_url_reuses_direct_score_for_reference_repost(
 
     assert outcome.ok is True
     assert llm.calls == 0
-    repost_score = repo.load(LOCAL_TENANT, JobId(repost_url))
+    repost_score = repo.load(LOCAL_TENANT, _job_id(repost_url))
     assert repost_score is not None
     assert repost_score.fit_score.value == 9
     event = conn.execute(
         """
         SELECT event_type, message
         FROM job_events
-        WHERE job_url = ? AND stage = 'score'
+        WHERE tenant_id = 'local'
+          AND job_id = (
+            SELECT job_id FROM jobs
+            WHERE tenant_id = 'local' AND url = ?
+          )
+          AND stage = 'score'
         ORDER BY event_id DESC
         LIMIT 1
         """,
@@ -543,19 +615,14 @@ def test_score_job_prompt_uses_company_not_source(
     profile_snapshot,
 ) -> None:
     url = "https://example.com/job/company"
-    conn.execute(
-        "INSERT INTO jobs (url, title, company, site, full_description, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (
-            url,
-            "Director, Security Engineering",
-            "Auctane",
-            "linkedin",
-            "Lead security engineering teams.",
-            "2024-01-01T00:00:00+00:00",
-        ),
+    _seed_pending_job_with_description(
+        conn,
+        url=url,
+        title="Director, Security Engineering",
+        company="Auctane",
+        description="Lead security engineering teams.",
+        discovered_at="2024-01-01T00:00:00+00:00",
     )
-    conn.commit()
     repo = SqliteScoreRepository(conn)
     llm = _ScriptedLlm(
         {
@@ -568,7 +635,18 @@ def test_score_job_prompt_uses_company_not_source(
         }
     )
 
-    job_dict = dict(conn.execute("SELECT * FROM jobs WHERE url=?", (url,)).fetchone())
+    job_dict = dict(
+        conn.execute(
+            """
+            SELECT jobs.*, je.full_description
+            FROM jobs
+            JOIN job_enrichments je
+              ON je.tenant_id = jobs.tenant_id AND je.job_id = jobs.job_id
+            WHERE jobs.tenant_id = ? AND jobs.url = ?
+            """,
+            (LOCAL_TENANT, url),
+        ).fetchone()
+    )
     outcome = scorer_module.score_job(
         profile_snapshot,
         job_dict,
@@ -620,21 +698,18 @@ def test_run_scoring_persists_via_repository_only(
     assert summary["distribution"] == [(7, 1)]
 
     # New aggregate persisted.
-    loaded = repo.load(LOCAL_TENANT, JobId(url))
+    loaded = repo.load(LOCAL_TENANT, _job_id(url))
     assert loaded is not None and loaded.fit_score.value == 7
 
     # Legacy ``jobs`` columns untouched.
     legacy = conn.execute(
-        "SELECT fit_score, scored_at FROM jobs WHERE url=?", (url,)
+        "SELECT fit_score, scored_at FROM jobs WHERE tenant_id = ? AND url = ?", (LOCAL_TENANT, url)
     ).fetchone()
     assert legacy["fit_score"] is None
     assert legacy["scored_at"] is None
 
     # Stage state row reflects success.
-    stage_row = conn.execute(
-        "SELECT state FROM job_stage_states WHERE job_url=? AND stage='score'",
-        (url,),
-    ).fetchone()
+    stage_row = _stage_row(conn, url, "score")
     assert stage_row["state"] == "succeeded"
 
 
@@ -679,7 +754,7 @@ def test_run_scoring_loads_and_persists_local_scoring_criteria(
 
     assert summary["scored"] == 1
     assert provider.loaded is True
-    loaded = repo.load(LOCAL_TENANT, JobId(url))
+    loaded = repo.load(LOCAL_TENANT, _job_id(url))
     assert loaded is not None
     assert loaded.criteria.criteria_text == "Favor platform reliability leadership."
     assert loaded.criteria.target_criteria == "Remote infrastructure roles."
@@ -735,7 +810,7 @@ def test_run_scoring_loads_persisted_employer_analysis_into_prompt(
     assert "REQUIREMENT FIT INPUTS" in prompt_payload
     assert '"id": "req-python-platform"' in prompt_payload
     assert '"employer_analysis_generation": 1' in prompt_payload
-    report = SqliteRequirementFitReportRepository(conn).load(LOCAL_TENANT, JobId(url))
+    report = SqliteRequirementFitReportRepository(conn).load(LOCAL_TENANT, _job_id(url))
     assert report is not None
     assert report.score_version == 1
     assert report.employer_analysis_generation == 1
@@ -792,7 +867,7 @@ def test_run_scoring_generates_employer_analysis_before_prompt(
     prompt_payload = llm.messages[0][1].content
     assert "REQUIREMENT FIT INPUTS" in prompt_payload
     assert '"id": "req-python-platform"' in prompt_payload
-    report = SqliteRequirementFitReportRepository(conn).load(LOCAL_TENANT, JobId(url))
+    report = SqliteRequirementFitReportRepository(conn).load(LOCAL_TENANT, _job_id(url))
     assert report is not None
     assert report.employer_analysis_generation == 1
 
@@ -830,11 +905,7 @@ def test_run_scoring_fails_before_llm_when_employer_analysis_fails(
     assert summary["errors"] == 1
     assert analyze.calls == 1
     assert llm.calls == 0
-    stage_row = conn.execute(
-        "SELECT state, error_code, error_message "
-        "FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
-        (url,),
-    ).fetchone()
+    stage_row = _stage_row(conn, url, "score")
     assert stage_row["state"] == "failed"
     assert stage_row["error_code"] == "SCORE_FAILED"
     assert "analysis unavailable" in stage_row["error_message"]
@@ -895,8 +966,8 @@ def test_run_scoring_reuses_same_content_score_for_duplicate_jobs(
     assert summary["scored"] == 2
     assert summary["errors"] == 0
     assert llm.calls == 1
-    first_score = repo.load(LOCAL_TENANT, JobId(first_url))
-    duplicate_score = repo.load(LOCAL_TENANT, JobId(duplicate_url))
+    first_score = repo.load(LOCAL_TENANT, _job_id(first_url))
+    duplicate_score = repo.load(LOCAL_TENANT, _job_id(duplicate_url))
     assert first_score is not None and first_score.fit_score.value == 9
     assert duplicate_score is not None and duplicate_score.fit_score.value == 9
 
@@ -963,7 +1034,7 @@ def test_run_scoring_reuses_existing_same_content_score_without_llm(
     assert summary["scored"] == 1
     assert summary["errors"] == 0
     assert second_llm.calls == 0
-    pending_score = repo.load(LOCAL_TENANT, JobId(pending_url))
+    pending_score = repo.load(LOCAL_TENANT, _job_id(pending_url))
     assert pending_score is not None and pending_score.fit_score.value == 9
 
 
@@ -995,8 +1066,16 @@ def test_run_scoring_reuses_direct_score_for_reference_repost_without_llm(
     conn.execute(
         """
         INSERT INTO job_canonical_identities (
-            tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at
-        ) VALUES ('local', ?, ?, 'workday', 'AI-Security-Director_R53680', 0.82, ?)
+            tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at
+        ) VALUES (
+            'local',
+            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
+            ?,
+            'workday',
+            'AI-Security-Director_R53680',
+            0.82,
+            ?
+        )
         """,
         (
             direct_url,
@@ -1008,7 +1087,7 @@ def test_run_scoring_reuses_direct_score_for_reference_repost_without_llm(
     repo.save(
         JobScore.initial(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(direct_url),
+            job_id=_job_id(direct_url),
             fit_score=FitScore.create(9),
             breakdown=ScoreBreakdown(reasoning="Direct canonical score."),
             matched_keywords=MatchedKeywords.from_iterable(["AI Security"]),
@@ -1043,7 +1122,7 @@ def test_run_scoring_reuses_direct_score_for_reference_repost_without_llm(
     assert summary["scored"] == 1
     assert summary["errors"] == 0
     assert llm.calls == 0
-    repost_score = repo.load(LOCAL_TENANT, JobId(repost_url))
+    repost_score = repo.load(LOCAL_TENANT, _job_id(repost_url))
     assert repost_score is not None
     assert repost_score.fit_score.value == 9
 
@@ -1074,12 +1153,9 @@ def test_run_scoring_records_failure_state_when_llm_returns_garbage(
     )
     assert summary["scored"] == 0
     assert summary["errors"] == 1
-    assert repo.load(LOCAL_TENANT, JobId(url)) is None
+    assert repo.load(LOCAL_TENANT, _job_id(url)) is None
 
-    stage_row = conn.execute(
-        "SELECT state, error_message FROM job_stage_states WHERE job_url=? AND stage='score'",
-        (url,),
-    ).fetchone()
+    stage_row = _stage_row(conn, url, "score")
     assert stage_row["state"] == "failed"
     assert "outside" in (stage_row["error_message"] or "").lower()
 
@@ -1126,8 +1202,8 @@ def test_run_scoring_preselects_retrieval_top_k_before_llm(
 
     assert summary["scored"] == 1
     assert summary["errors"] == 0
-    assert repo.load(LOCAL_TENANT, JobId(relevant_url)) is not None
-    assert repo.load(LOCAL_TENANT, JobId(stale_irrelevant_url)) is None
+    assert repo.load(LOCAL_TENANT, _job_id(relevant_url)) is not None
+    assert repo.load(LOCAL_TENANT, _job_id(stale_irrelevant_url)) is None
 
 
 # ---------------------------------------------------------------------------
@@ -1138,10 +1214,7 @@ def test_run_scoring_preselects_retrieval_top_k_before_llm(
 
 
 def _score_attempt_count(conn: sqlite3.Connection, url: str) -> int:
-    row = conn.execute(
-        "SELECT attempt_count FROM job_stage_states WHERE job_url=? AND stage='score'",
-        (url,),
-    ).fetchone()
+    row = _stage_row(conn, url, "score")
     return int(row["attempt_count"]) if row is not None else 0
 
 

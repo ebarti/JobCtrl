@@ -274,7 +274,7 @@ def _raise_on_failure(stage: str, result: dict[str, Any], error_type: type[JobCt
 
 @activity.defn(name="score_job")
 async def score_job_activity(payload: ScoreJobActivityInput) -> ScoreJobActivityOutput:
-    """Score one job by URL for ``JobPreparationWorkflow``."""
+    """Score one canonical JobId for ``JobPreparationWorkflow``."""
     from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
 
     try:
@@ -301,9 +301,9 @@ async def score_job_activity(payload: ScoreJobActivityInput) -> ScoreJobActivity
 def _score_one_job(payload: ScoreJobActivityInput) -> dict[str, Any]:
     from jobctrl.domain.errors import MissingInputError
     from jobctrl.domain.tenant import TenantId
-    from jobctrl.scoring.scorer import score_job_by_url
+    from jobctrl.scoring.scorer import score_job_by_id
 
-    outcome = score_job_by_url(
+    outcome = score_job_by_id(
         payload.job_id,
         tenant_id=TenantId(payload.tenant_id),
         rescore=payload.rescore,
