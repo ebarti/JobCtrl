@@ -26,28 +26,97 @@ Two layers of assertion:
 
 from __future__ import annotations
 
+import copy
 import json
 import sqlite3
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from jobctrl.database import (
-    close_connection,
-    ensure_bullet_provenance_tables,
-    ensure_employer_analysis_tables,
-    ensure_interview_prep_tables,
-    ensure_materials_tables,
-    init_db,
-)
+from jobctrl.database import close_connection, init_db
+from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 
 REPO = Path(__file__).resolve().parents[3]
 FIXTURE_PATH = (
     REPO / "packages" / "domain-types" / "test" / "fixtures" / "audit_projection_parity.json"
 )
+
+
+def _job_id(locator: str) -> JobId:
+    return JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, f"{LOCAL_TENANT}:{locator}")))
+
+
+def _with_exact_v7_job_ids(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: (
+                str(_job_id(item))
+                if key in {"job_id", "jobId"}
+                and isinstance(item, str)
+                and item.startswith("https://")
+                else _with_exact_v7_job_ids(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_with_exact_v7_job_ids(item) for item in value]
+    return value
+
+
+def _with_exact_v7_projection_contract(value: Any) -> Any:
+    converted = _with_exact_v7_job_ids(copy.deepcopy(value))
+    assert isinstance(converted, dict)
+    converted["jobList"]["artifact_count"] = 2
+    converted["jobList"]["apply_mode"] = "automated_live"
+    converted["dashboard"]["outcome_conversion_json"]["byApplyMode"] = [
+        {
+            "applyMode": "automated_live",
+            "applied": 3,
+            "reply": 3,
+            "interview": 2,
+            "offer": 1,
+            "rejection": 1,
+        }
+    ]
+    return converted
+
+
+def _insert_apply_events(
+    conn: sqlite3.Connection,
+    job_id: JobId,
+    *,
+    started_at: str,
+    finished_at: str,
+) -> None:
+    run_id = f"apply:{job_id}"
+    conn.executemany(
+        """
+        INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type, occurred_at, payload_json
+        ) VALUES (?, ?, 1, 'apply', ?, ?, ?)
+        """,
+        (
+            (
+                LOCAL_TENANT,
+                job_id,
+                "ApplyRunStarted",
+                started_at,
+                json.dumps({"run_id": run_id, "started_at": started_at}),
+            ),
+            (
+                LOCAL_TENANT,
+                job_id,
+                "ApplicationSubmitted",
+                finished_at,
+                json.dumps({"run_id": run_id, "finished_at": finished_at}),
+            ),
+        ),
+    )
 
 
 @pytest.fixture(scope="module")
@@ -59,20 +128,18 @@ def fixture() -> dict[str, Any]:
 def conn(fixture: dict[str, Any], tmp_path: Path) -> Iterator[sqlite3.Connection]:
     db_path = tmp_path / "jobs.db"
     connection = init_db(db_path)
-    ensure_employer_analysis_tables(connection)
-    ensure_materials_tables(connection)
-    ensure_bullet_provenance_tables(connection)
-    ensure_interview_prep_tables(connection)
     job = fixture["job"]
+    job_id = _job_id(job["url"])
     connection.execute(
         """
         INSERT INTO jobs (
-            url, title, company, site, strategy, location, salary, description,
-            full_description, application_url, apply_status, applied_at,
-            score_reasoning, discovered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            tenant_id, job_id, url, title, company, site, strategy, location, salary,
+            description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            LOCAL_TENANT,
+            job_id,
             job["url"],
             job["title"],
             job["company"],
@@ -81,11 +148,20 @@ def conn(fixture: dict[str, Any], tmp_path: Path) -> Iterator[sqlite3.Connection
             job["location"],
             job["salary"],
             job["description"],
+            job["discoveredAt"],
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO job_enrichments (
+            tenant_id, job_id, current_status, full_description, application_url, updated_at
+        ) VALUES (?, ?, 'enriched', ?, ?, ?)
+        """,
+        (
+            LOCAL_TENANT,
+            job_id,
             job["fullDescription"],
             job["applicationUrl"],
-            job["applyStatus"],
-            job["appliedAt"],
-            job["scoreReasoning"],
             job["discoveredAt"],
         ),
     )
@@ -96,19 +172,20 @@ def conn(fixture: dict[str, Any], tmp_path: Path) -> Iterator[sqlite3.Connection
 
 def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     """Seed the canonical rows exactly as the Python repositories write them."""
-    job_url = fixture["job"]["url"]
+    job_id = _job_id(fixture["job"]["url"])
     rows = fixture["rows"]
 
     for score in rows["jobScores"]:
         conn.execute(
             """
             INSERT INTO job_scores (
-                job_url, version, tenant_id, fit_score, breakdown_json,
+                tenant_id, job_id, version, fit_score, breakdown_json,
                 keywords_json, scored_at, correction_json, criteria_json, trace_json
-            ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                job_url,
+                LOCAL_TENANT,
+                job_id,
                 score["version"],
                 score["fit_score"],
                 score["breakdown_json"],
@@ -123,13 +200,14 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_stage_states (
-                job_url, stage, state, attempt_count, max_attempts, started_at,
+                tenant_id, job_id, stage, state, attempt_count, max_attempts, started_at,
                 updated_at, finished_at, duration_ms, error_code, error_message,
                 retryable, blocked_by_json, next_action
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                job_url,
+                LOCAL_TENANT,
+                job_id,
                 stage["stage"],
                 stage["state"],
                 stage["attempt_count"],
@@ -150,14 +228,15 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_employer_analysis (
-                job_url, generation, tenant_id, snapshot_hash, prompt_version,
+                tenant_id, job_id, generation, snapshot_hash, prompt_version,
                 sdk_set_version, cache_key, role_framing, inferred_seniority,
                 ideal_candidate_narrative, requirements_json, keywords_json,
                 agreement_json, legs_attempted, legs_succeeded, created_at
-            ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                job_url,
+                LOCAL_TENANT,
+                job_id,
                 row["generation"],
                 row["snapshot_hash"],
                 row["prompt_version"],
@@ -178,20 +257,21 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_employer_analysis_sub_analyses (
-                job_url, generation, model_id, tenant_id, analysis_json
-            ) VALUES (?, ?, ?, 'local', ?)
+                tenant_id, job_id, generation, model_id, analysis_json
+            ) VALUES (?, ?, ?, ?, ?)
             """,
-            (job_url, sub["generation"], sub["model_id"], sub["analysis_json"]),
+            (LOCAL_TENANT, job_id, sub["generation"], sub["model_id"], sub["analysis_json"]),
         )
     for failure in rows["jobEmployerAnalysisFailures"]:
         conn.execute(
             """
             INSERT INTO job_employer_analysis_failures (
-                job_url, generation, model_id, tenant_id, error, raw_output
-            ) VALUES (?, ?, ?, 'local', ?, ?)
+                tenant_id, job_id, generation, model_id, error, raw_output
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
-                job_url,
+                LOCAL_TENANT,
+                job_id,
                 failure["generation"],
                 failure["model_id"],
                 failure["error"],
@@ -203,21 +283,22 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     created_at = fixture["job"]["createdAt"]
     conn.execute(
         """
-        INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
-        VALUES (?, ?, 'local', 'complete', ?, ?)
+        INSERT INTO job_materials (tenant_id, job_id, generation, status, created_at, updated_at)
+        VALUES (?, ?, ?, 'complete', ?, ?)
         """,
-        (job_url, generation, created_at, created_at),
+        (LOCAL_TENANT, job_id, generation, created_at, created_at),
     )
     for artifact in rows["artifacts"]:
         conn.execute(
             """
             INSERT INTO job_materials_artifacts (
-                job_url, generation, artifact_type, artifact_id, status, path,
+                tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
                 render_format, size_bytes, metadata_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                job_url,
+                LOCAL_TENANT,
+                job_id,
                 generation,
                 artifact["artifact_type"],
                 artifact["artifact_id"],
@@ -233,14 +314,15 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_bullet_provenance (
-                job_url, generation, bullet_id, tenant_id, artifact_id, section,
+                tenant_id, job_id, generation, bullet_id, artifact_id, section,
                 source_id, evidence_ids_json, requirement_ids_json,
                 matched_keywords_json, transform_type, control, rationale,
                 generated_text, position, created_at, coverage_json, voice_json
-            ) VALUES (?, ?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                job_url,
+                LOCAL_TENANT,
+                job_id,
                 bullet["generation"],
                 bullet["bullet_id"],
                 bullet["artifact_id"],
@@ -263,13 +345,14 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_interview_prep (
-                job_url, generation, tenant_id, status, model, generated_at,
+                tenant_id, job_id, generation, status, model, generated_at,
                 gate_status, fabrication_findings_json, grounding_findings_json,
                 judge_verdict, warnings_json, failure_reason
-            ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                job_url,
+                LOCAL_TENANT,
+                job_id,
                 prep["generation"],
                 prep["status"],
                 prep["model"],
@@ -286,14 +369,15 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO job_interview_prep_items (
-                job_url, generation, item_id, tenant_id, kind, title,
+                tenant_id, job_id, generation, item_id, kind, title,
                 generated_text, evidence_ids_json, requirement_ids_json,
                 source_text_json, transform_type, control, grounding_audit_json,
                 warnings_json, position
-            ) VALUES (?, ?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                job_url,
+                LOCAL_TENANT,
+                job_id,
                 item["generation"],
                 item["item_id"],
                 item["kind"],
@@ -312,34 +396,35 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     # A job_events row marks the job dirty so the builder rebuilds its projection.
     conn.execute(
         """
-        INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-        VALUES (?, 'tailor', 'ResumeApproved', 'info', 'approved', ?, '{}')
+        INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at,
+            payload_json
+        ) VALUES (?, ?, 1, 'tailor', 'ResumeApproved', 'info', 'approved', ?, '{}')
         """,
-        (job_url, created_at),
+        (LOCAL_TENANT, job_id, created_at),
+    )
+    _insert_apply_events(
+        conn,
+        job_id,
+        started_at=fixture["job"]["discoveredAt"],
+        finished_at=fixture["job"]["appliedAt"],
     )
 
     # Dashboard-aggregate-only jobs: they feed ONLY the tenant dashboard totals
     # (the job_list/job_detail assertions target the primary job). See the fixture
     # dashboardAggregateJobs notes for the two divergences they cover.
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_hidden_jobs (
-            job_url TEXT PRIMARY KEY,
-            hidden_at TEXT NOT NULL,
-            reason TEXT,
-            unhidden_at TEXT
-        )
-        """
-    )
     for agg in fixture["dashboardAggregateJobs"]:
+        job_id = _job_id(agg["url"])
         conn.execute(
             """
             INSERT INTO jobs (
-                url, title, company, site, strategy, location,
-                apply_status, applied_at, tailored_resume_path, discovered_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                tenant_id, job_id, url, title, company, site, strategy, location,
+                apply_status, applied_at, discovered_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                LOCAL_TENANT,
+                job_id,
                 agg["url"],
                 agg["title"],
                 agg["company"],
@@ -348,7 +433,6 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 agg["location"],
                 agg["applyStatus"],
                 agg["appliedAt"],
-                agg["tailoredResumePath"],
                 agg["discoveredAt"],
             ),
         )
@@ -357,12 +441,13 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
             conn.execute(
                 """
                 INSERT INTO job_stage_states (
-                    job_url, stage, state, attempt_count, max_attempts,
+                    tenant_id, job_id, stage, state, attempt_count, max_attempts,
                     started_at, updated_at, finished_at, duration_ms, retryable
-                ) VALUES (?, ?, ?, 1, 1, ?, ?, ?, 0, 1)
+                ) VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?, 0, 1)
                 """,
                 (
-                    agg["url"],
+                    LOCAL_TENANT,
+                    job_id,
                     st["stage"],
                     st["state"],
                     agg["discoveredAt"],
@@ -374,12 +459,13 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
             conn.execute(
                 """
                 INSERT INTO job_scores (
-                    job_url, version, tenant_id, fit_score, breakdown_json,
+                    tenant_id, job_id, version, fit_score, breakdown_json,
                     keywords_json, scored_at, correction_json, criteria_json, trace_json
-                ) VALUES (?, 1, 'local', ?, ?, '[]', ?, NULL, '{}', '{}')
+                ) VALUES (?, ?, 1, ?, ?, '[]', ?, NULL, '{}', '{}')
                 """,
                 (
-                    agg["url"],
+                    LOCAL_TENANT,
+                    job_id,
                     agg["fitScore"],
                     json.dumps(
                         {
@@ -395,10 +481,10 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
         if agg["hidden"]:
             conn.execute(
                 """
-                INSERT INTO jobctrl_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
-                VALUES (?, ?, 'parity', NULL)
+                INSERT INTO jobctrl_hidden_jobs (tenant_id, job_id, hidden_at, reason, unhidden_at)
+                VALUES (?, ?, ?, 'parity', NULL)
                 """,
-                (agg["url"], agg["discoveredAt"]),
+                (LOCAL_TENANT, job_id, agg["discoveredAt"]),
             )
     # Extra applied+scored jobs across a second source and score band so the
     # shared cross-runtime funnel is non-trivial (multi-entry bySource/byBand).
@@ -418,69 +504,67 @@ _CONVERSION_STAGES: tuple[tuple[str, int], ...] = (
 
 def _seed_conversion_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
     rows = fixture["rows"]
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS application_outcomes (
-          tenant_id     TEXT NOT NULL DEFAULT 'local',
-          outcome_id    TEXT NOT NULL,
-          job_key       TEXT NOT NULL,
-          kind          TEXT NOT NULL,
-          source        TEXT NOT NULL,
-          note          TEXT,
-          occurred_at   TEXT NOT NULL,
-          recorded_at   TEXT NOT NULL,
-          suggestion_id TEXT,
-          evidence_id   TEXT,
-          created_by    TEXT NOT NULL DEFAULT 'user',
-          PRIMARY KEY (tenant_id, outcome_id)
-        );
-        CREATE TABLE IF NOT EXISTS application_outcome_suggestions (
-          tenant_id TEXT NOT NULL DEFAULT 'local',
-          suggestion_id TEXT NOT NULL,
-          job_key TEXT NOT NULL,
-          evidence_id TEXT,
-          suggested_kind TEXT NOT NULL,
-          confidence REAL NOT NULL DEFAULT 0,
-          rationale TEXT NOT NULL DEFAULT '',
-          status TEXT NOT NULL DEFAULT 'pending',
-          created_at TEXT NOT NULL,
-          decided_at TEXT,
-          decision TEXT,
-          decision_reason TEXT,
-          decided_outcome_id TEXT,
-          PRIMARY KEY (tenant_id, suggestion_id)
-        );
-        """
-    )
     for job in rows["conversionJobs"]:
+        job_id = _job_id(job["url"])
         conn.execute(
             """
-            INSERT INTO jobs (url, title, site, fit_score, apply_status, applied_at, discovered_at)
-            VALUES (?, ?, ?, ?, 'applied', ?, ?)
+            INSERT INTO jobs (
+                tenant_id, job_id, url, title, site, discovered_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (job["url"], job["title"], job["site"], job["fitScore"], job["appliedAt"], job["discoveredAt"]),
+            (
+                LOCAL_TENANT,
+                job_id,
+                job["url"],
+                job["title"],
+                job["site"],
+                job["discoveredAt"],
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_scores (
+                tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at
+            ) VALUES (?, ?, 1, ?, '{}', '[]', ?)
+            """,
+            (LOCAL_TENANT, job_id, job["fitScore"], job["appliedAt"]),
+        )
+        _insert_apply_events(
+            conn,
+            job_id,
+            started_at=job["discoveredAt"],
+            finished_at=job["appliedAt"],
         )
         for stage, max_attempts in _CONVERSION_STAGES:
             conn.execute(
                 """
                 INSERT INTO job_stage_states (
-                    job_url, stage, state, attempt_count, max_attempts, started_at,
+                    tenant_id, job_id, stage, state, attempt_count, max_attempts, started_at,
                     updated_at, finished_at, duration_ms, error_code, error_message,
                     retryable, blocked_by_json, next_action
-                ) VALUES (?, ?, 'succeeded', 1, ?, ?, ?, ?, 1000, NULL, NULL, 1, NULL, NULL)
+                ) VALUES (?, ?, ?, 'succeeded', 1, ?, ?, ?, ?, 1000, NULL, NULL, 1, NULL, NULL)
                 """,
-                (job["url"], stage, max_attempts, job["appliedAt"], job["appliedAt"], job["appliedAt"]),
+                (
+                    LOCAL_TENANT,
+                    job_id,
+                    stage,
+                    max_attempts,
+                    job["appliedAt"],
+                    job["appliedAt"],
+                    job["appliedAt"],
+                ),
             )
     for outcome in rows["applicationOutcomes"]:
         conn.execute(
             """
             INSERT INTO application_outcomes (
-                tenant_id, outcome_id, job_key, kind, source, occurred_at, recorded_at
-            ) VALUES ('local', ?, ?, ?, 'manual', ?, ?)
+                tenant_id, outcome_id, job_id, kind, source, occurred_at, recorded_at
+            ) VALUES (?, ?, ?, ?, 'manual', ?, ?)
             """,
             (
+                LOCAL_TENANT,
                 outcome["outcomeId"],
-                outcome["jobKey"],
+                _job_id(outcome["jobKey"]),
                 outcome["kind"],
                 "2026-06-11T09:00:00+00:00",
                 "2026-06-11T09:00:00+00:00",
@@ -490,13 +574,14 @@ def _seed_conversion_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> 
         conn.execute(
             """
             INSERT INTO application_outcome_suggestions (
-                tenant_id, suggestion_id, job_key, suggested_kind, confidence, rationale,
+                tenant_id, suggestion_id, job_id, suggested_kind, confidence, rationale,
                 status, created_at, decided_at, decision
-            ) VALUES ('local', ?, ?, 'recruiter_reply', 0.9, '', ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, 'recruiter_reply', 0.9, '', ?, ?, ?, ?)
             """,
             (
+                LOCAL_TENANT,
                 suggestion["suggestionId"],
-                suggestion["jobKey"],
+                _job_id(suggestion["jobKey"]),
                 suggestion["status"],
                 "2026-06-11T09:05:00+00:00",
                 "2026-06-11T09:05:00+00:00",
@@ -531,8 +616,8 @@ def test_python_builder_projects_audit_rows_matching_shared_fixture(
     _seed_rows(conn, fixture)
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
-    job_url = fixture["job"]["url"]
-    expected = fixture["expected"]
+    job_id = _job_id(fixture["job"]["url"])
+    expected = _with_exact_v7_job_ids(copy.deepcopy(fixture["expected"]))
 
     detail = conn.execute(
         """
@@ -540,7 +625,7 @@ def test_python_builder_projects_audit_rows_matching_shared_fixture(
         FROM job_detail_projections
         WHERE job_id = ?
         """,
-        (job_url,),
+        (job_id,),
     ).fetchone()
     assert detail is not None
     assert json.loads(detail["employer_analysis_json"]) == expected["employerAnalysisJson"]
@@ -566,25 +651,24 @@ def test_python_builder_projects_audit_rows_matching_shared_fixture(
 def test_python_builder_projects_historical_artifact_generation_coverage_rows(
     conn: sqlite3.Connection,
 ) -> None:
-    job_url = "https://example.com/jobs/historical-artifacts"
+    locator = "https://example.com/jobs/historical-artifacts"
+    job_id = _job_id(locator)
     created_1 = "2026-06-08T12:00:00+00:00"
     created_2 = "2026-06-09T12:00:00+00:00"
-    ensure_materials_tables(conn)
-    ensure_bullet_provenance_tables(conn)
     conn.execute(
         """
-        INSERT INTO jobs (url, title, company, site, discovered_at)
-        VALUES (?, 'Historical artifact job', 'Acme', 'greenhouse', ?)
+        INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+        VALUES (?, ?, ?, 'Historical artifact job', 'Acme', 'greenhouse', ?)
         """,
-        (job_url, created_1),
+        (LOCAL_TENANT, job_id, locator, created_1),
     )
     for generation, created_at in ((1, created_1), (2, created_2)):
         conn.execute(
             """
-            INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
-            VALUES (?, ?, 'local', 'complete', ?, ?)
+            INSERT INTO job_materials (tenant_id, job_id, generation, status, created_at, updated_at)
+            VALUES (?, ?, ?, 'complete', ?, ?)
             """,
-            (job_url, generation, created_at, created_at),
+            (LOCAL_TENANT, job_id, generation, created_at, created_at),
         )
     artifacts = [
         (1, "tailored_resume", "resume-v1", "/tmp/historical-resume-v1.txt", "text", created_1),
@@ -595,11 +679,20 @@ def test_python_builder_projects_historical_artifact_generation_coverage_rows(
         conn.execute(
             """
             INSERT INTO job_materials_artifacts (
-                job_url, generation, artifact_type, artifact_id, status, path,
+                tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
                 render_format, size_bytes, metadata_json, created_at
-            ) VALUES (?, ?, ?, ?, 'approved', ?, ?, 10, '{}', ?)
+            ) VALUES (?, ?, ?, ?, ?, 'approved', ?, ?, 10, '{}', ?)
             """,
-            (job_url, generation, artifact_type, artifact_id, path, render_format, created_at),
+            (
+                LOCAL_TENANT,
+                job_id,
+                generation,
+                artifact_type,
+                artifact_id,
+                path,
+                render_format,
+                created_at,
+            ),
         )
     coverage_v1 = {
         "computed_against": "rendered_text",
@@ -640,15 +733,16 @@ def test_python_builder_projects_historical_artifact_generation_coverage_rows(
         conn.execute(
             """
             INSERT INTO job_bullet_provenance (
-                job_url, generation, bullet_id, tenant_id, artifact_id, section,
+                tenant_id, job_id, generation, bullet_id, artifact_id, section,
                 source_id, evidence_ids_json, requirement_ids_json,
                 matched_keywords_json, transform_type, control, rationale,
                 generated_text, position, created_at, coverage_json, voice_json
-            ) VALUES (?, ?, ?, 'local', ?, 'experience', ?, '[]', '[]', ?, 'voice',
+            ) VALUES (?, ?, ?, ?, ?, 'experience', ?, '[]', '[]', ?, 'voice',
                 'rephrase_allowed', 'Voiced bullet.', 'Generated text.', 0, ?, ?, ?)
             """,
             (
-                job_url,
+                LOCAL_TENANT,
+                job_id,
                 generation,
                 bullet_id,
                 artifact_id,
@@ -661,10 +755,12 @@ def test_python_builder_projects_historical_artifact_generation_coverage_rows(
         )
     conn.execute(
         """
-        INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-        VALUES (?, 'tailor', 'ResumeApproved', 'info', 'approved', ?, '{}')
+        INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at,
+            payload_json
+        ) VALUES (?, ?, 1, 'tailor', 'ResumeApproved', 'info', 'approved', ?, '{}')
         """,
-        (job_url, created_2),
+        (LOCAL_TENANT, job_id, created_2),
     )
     conn.commit()
 
@@ -678,7 +774,7 @@ def test_python_builder_projects_historical_artifact_generation_coverage_rows(
             FROM artifact_list_projections
             WHERE job_id = ? AND artifact_id IN ('resume-v1', 'resume-v2')
             """,
-            (job_url,),
+            (job_id,),
         )
         if row["coverage_audit_json"] is not None
     }
@@ -694,8 +790,8 @@ def test_python_builder_projects_full_projection_columns_matching_shared_fixture
     _seed_rows(conn, fixture)
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
-    job_url = fixture["job"]["url"]
-    expected = fixture["expectedProjections"]
+    job_id = _job_id(fixture["job"]["url"])
+    expected = _with_exact_v7_projection_contract(fixture["expectedProjections"])
     json_cols = fixture["projectionParity"]["jsonColumns"]
     non_det = fixture["projectionParity"]["nonDeterministicColumns"]
 
@@ -707,10 +803,10 @@ def test_python_builder_projects_full_projection_columns_matching_shared_fixture
 
     actual_rows = {
         "jobList": conn.execute(
-            "SELECT * FROM job_list_projections WHERE job_id = ?", (job_url,)
+            "SELECT * FROM job_list_projections WHERE job_id = ?", (job_id,)
         ).fetchone(),
         "jobDetail": conn.execute(
-            "SELECT * FROM job_detail_projections WHERE job_id = ?", (job_url,)
+            "SELECT * FROM job_detail_projections WHERE job_id = ?", (job_id,)
         ).fetchone(),
         "dashboard": conn.execute(
             "SELECT * FROM dashboard_projections WHERE tenant_id = 'local'"

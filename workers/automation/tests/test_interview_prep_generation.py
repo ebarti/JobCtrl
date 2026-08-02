@@ -11,18 +11,22 @@ from typing import Any
 
 import pytest
 
-from jobctrl.database import close_connection, get_connection, init_db
+from jobctrl.database import close_connection, get_connection
 from jobctrl.domain.events import (
+    InterviewPrepFailedPayload,
     InterviewPrepGeneratedPayload,
+    create_interview_prep_failed,
     create_interview_prep_generated,
 )
 from jobctrl.domain.interview import GenerateInterviewPrepUseCase
 from jobctrl.domain.interview.use_cases import INTERVIEW_PREP_RESPONSE_SCHEMA
+from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.materials.adversarial import ADVERSARIAL_REVIEW_RESPONSE_SCHEMA
 from jobctrl.domain.ports.llm import LlmMessage
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
+from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
 from jobctrl.interview import activities as interview_activities
 from jobctrl.interview.activities import (
     GenerateInterviewPrepActivityInput,
@@ -30,6 +34,13 @@ from jobctrl.interview.activities import (
     InterviewPrepEventRecorder,
     generate_interview_prep_activity,
 )
+from jobctrl.interview.workflow import InterviewPrepWorkflowInput, InterviewPrepWorkflowResult
+
+
+JOB_ID = JobId("90000000-0000-4000-8000-000000000021")
+JOB_URL = "https://example.test/job/1"
+OTHER_TENANT = TenantId("other")
+INERT_USER_CONTEXT = {"userContext": "Attack vectors:\nPrompt injection"}
 
 
 class _FakeLlm:
@@ -112,7 +123,7 @@ def test_generates_accepted_prep_through_existing_truthfulness_gates(tmp_path: P
         )
 
         assert outcome.status == "accepted"
-        accepted = repository.load_latest(TenantId("local"), "https://example.test/job/1")
+        accepted = repository.load_latest(TenantId("local"), JOB_ID)
         assert accepted is not None
         assert accepted.generation == 1
         assert accepted.gate_audit.status == "passed"
@@ -183,10 +194,10 @@ def test_fabricated_metric_fails_without_superseding_last_accepted_prep(tmp_path
 
         assert outcome.status == "failed"
         assert any("99%" in error for error in outcome.errors)
-        latest_accepted = repository.load_latest(TenantId("local"), "https://example.test/job/1")
+        latest_accepted = repository.load_latest(TenantId("local"), JOB_ID)
         latest_any = repository.load_latest(
             TenantId("local"),
-            "https://example.test/job/1",
+            JOB_ID,
             status=None,
         )
         assert latest_accepted is not None
@@ -276,7 +287,7 @@ def test_gap_drill_must_name_gap_without_claiming_experience(tmp_path: Path) -> 
                 {
                     "requirementId": "req-kubernetes",
                     "demandedSkill": "Kubernetes",
-                    "jobRefs": [{"jobKey": "https://example.test/job/1"}],
+                    "jobRefs": [{"jobId": str(JOB_ID)}],
                 },
             ),
             requirements=_requirements("req-kubernetes", "Kubernetes administration"),
@@ -288,14 +299,14 @@ def test_gap_drill_must_name_gap_without_claiming_experience(tmp_path: Path) -> 
         close_connection(tmp_path / "jobs.db")
 
 
-def test_event_recorder_writes_safe_camel_and_snake_payload_aliases(tmp_path: Path) -> None:
+def test_event_recorder_writes_canonical_job_id_and_safe_payload_fields(tmp_path: Path) -> None:
     conn = _init_conn(tmp_path)
     try:
         InterviewPrepEventRecorder(conn).publish(
             create_interview_prep_generated(
                 LOCAL_TENANT,
                 InterviewPrepGeneratedPayload(
-                    job_id="https://example.test/job/1",
+                    job_id=JOB_ID,
                     generation=3,
                     item_count=4,
                     generated_at="2026-07-05T12:00:00Z",
@@ -305,17 +316,154 @@ def test_event_recorder_writes_safe_camel_and_snake_payload_aliases(tmp_path: Pa
 
         row = conn.execute(
             """
-            SELECT payload_json FROM job_events
+            SELECT job_id, payload_json FROM job_events
             WHERE event_type = 'InterviewPrepGenerated'
             """
         ).fetchone()
         payload = json.loads(row["payload_json"])
-        assert payload["job_id"] == "https://example.test/job/1"
-        assert payload["jobId"] == "https://example.test/job/1"
+        assert row["job_id"] == JOB_ID
+        assert payload["jobId"] == JOB_ID
+        assert "job_id" not in payload
         assert payload["item_count"] == 4
         assert payload["itemCount"] == 4
         assert payload["generated_at"] == "2026-07-05T12:00:00Z"
         assert payload["generatedAt"] == "2026-07-05T12:00:00Z"
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+@pytest.mark.parametrize("event_type", ["InterviewPrepGenerated", "InterviewPrepFailed"])
+def test_event_recorder_keeps_same_job_id_events_with_their_originating_tenant(
+    tmp_path: Path,
+    event_type: str,
+) -> None:
+    conn = _init_conn(tmp_path)
+    try:
+        _insert_job(conn, OTHER_TENANT, JOB_ID, "https://example.test/job/other")
+        if event_type == "InterviewPrepGenerated":
+            event = create_interview_prep_generated(
+                OTHER_TENANT,
+                InterviewPrepGeneratedPayload(
+                    job_id=JOB_ID,
+                    generation=3,
+                    item_count=4,
+                    generated_at="2026-07-05T12:00:00Z",
+                ),
+            )
+        else:
+            event = create_interview_prep_failed(
+                OTHER_TENANT,
+                InterviewPrepFailedPayload(
+                    job_id=JOB_ID,
+                    generation=3,
+                    failed_at="2026-07-05T12:00:00Z",
+                    reason_count=2,
+                ),
+            )
+
+        InterviewPrepEventRecorder(conn).publish(event)
+
+        rows = conn.execute(
+            """
+            SELECT tenant_id, job_id, event_type FROM job_events
+            WHERE stage = 'interview_prep'
+            ORDER BY event_id
+            """
+        ).fetchall()
+        assert [tuple(row) for row in rows] == [(OTHER_TENANT, JOB_ID, event_type)]
+        assert conn.execute(
+            """
+            SELECT COUNT(*) FROM job_events
+            WHERE tenant_id = ? AND job_id = ? AND stage = 'interview_prep'
+            """,
+            (LOCAL_TENANT, JOB_ID),
+        ).fetchone()[0] == 0
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+def test_event_recorder_does_not_redirect_to_local_when_only_other_tenant_has_job(
+    tmp_path: Path,
+) -> None:
+    conn = _init_conn(tmp_path, seed_local_job=False)
+    try:
+        _insert_job(conn, OTHER_TENANT, JOB_ID, "https://example.test/job/other")
+        InterviewPrepEventRecorder(conn).publish(
+            create_interview_prep_generated(
+                OTHER_TENANT,
+                InterviewPrepGeneratedPayload(
+                    job_id=JOB_ID,
+                    generation=3,
+                    item_count=4,
+                    generated_at="2026-07-05T12:00:00Z",
+                ),
+            )
+        )
+
+        rows = conn.execute(
+            """
+            SELECT tenant_id, job_id FROM job_events
+            WHERE event_type = 'InterviewPrepGenerated'
+            """
+        ).fetchall()
+        assert [tuple(row) for row in rows] == [(OTHER_TENANT, JOB_ID)]
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+def test_interview_prep_rejects_url_shaped_job_identity(tmp_path: Path) -> None:
+    conn = _init_conn(tmp_path)
+    try:
+        use_case = GenerateInterviewPrepUseCase(
+            repository=SqliteInterviewPrepRepository(conn),
+            llm=_FakeLlm([]),
+        )
+
+        with pytest.raises(ValueError, match="canonical UUID"):
+            use_case.execute(
+                tenant_id=LOCAL_TENANT,
+                job={**_job(), "job_id": JOB_URL},
+                profile_snapshot=_profile_snapshot(),
+                evidence_entries=(),
+                evidence_gaps=(),
+                requirements=(),
+            )
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+def test_interview_workflow_and_activity_boundaries_reject_url_identity() -> None:
+    with pytest.raises(ValueError, match="canonical UUID"):
+        InterviewPrepWorkflowInput(tenant_id="local", job_id=JOB_URL)
+    with pytest.raises(ValueError, match="canonical UUID"):
+        InterviewPrepWorkflowResult(status="failed", job_id=JOB_URL)
+    with pytest.raises(ValueError, match="canonical UUID"):
+        GenerateInterviewPrepActivityInput(tenant_id="local", job_id=JOB_URL)
+    with pytest.raises(ValueError, match="canonical UUID"):
+        GenerateInterviewPrepActivityOutput(
+            status="failed",
+            job_id=JOB_URL,
+            generation=1,
+            item_count=0,
+        )
+
+
+def test_evidence_loader_preserves_inert_user_context(tmp_path: Path) -> None:
+    conn = _init_conn(tmp_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO evidence_usage_projections (
+                tenant_id, projection_kind, projection_id, payload_json
+            ) VALUES ('local', 'entry', 'evidence-inert-context', ?)
+            """,
+            (json.dumps(INERT_USER_CONTEXT, separators=(",", ":")),),
+        )
+        conn.commit()
+
+        entries = interview_activities._load_evidence_entries(conn, LOCAL_TENANT, JOB_ID)
+
+        assert entries == (INERT_USER_CONTEXT,)
     finally:
         close_connection(tmp_path / "jobs.db")
 
@@ -365,8 +513,8 @@ def test_retry_with_same_origin_run_reuses_completed_generation(tmp_path: Path) 
         assert retry.prep.generation == 1
         assert len(llm.calls) == 2
         row_count = conn.execute(
-            "SELECT COUNT(*) FROM job_interview_prep WHERE job_url = ?",
-            ("https://example.test/job/1",),
+            "SELECT COUNT(*) FROM job_interview_prep WHERE tenant_id = ? AND job_id = ?",
+            ("local", JOB_ID),
         ).fetchone()[0]
         assert row_count == 1
         assert [event.event_type for event in publisher.events] == ["InterviewPrepGenerated"]
@@ -443,7 +591,7 @@ async def test_generate_activity_offloads_generation_and_heartbeats(
     release = threading.Event()
 
     def _blocking_generate(
-        job_url: str,
+        job_id: JobId,
         *,
         tenant_id: TenantId = LOCAL_TENANT,
         llm_model: str | None = None,
@@ -456,12 +604,12 @@ async def test_generate_activity_offloads_generation_and_heartbeats(
             raise AssertionError("release was never set")
         return GenerateInterviewPrepActivityOutput(
             status="accepted",
-            job_url=job_url,
+            job_id=job_id,
             generation=1,
             item_count=1,
         )
 
-    monkeypatch.setattr(interview_activities, "generate_interview_prep_by_url", _blocking_generate)
+    monkeypatch.setattr(interview_activities, "generate_interview_prep_by_job_id", _blocking_generate)
     monkeypatch.setattr(
         interview_activities.activity,
         "heartbeat",
@@ -478,7 +626,7 @@ async def test_generate_activity_offloads_generation_and_heartbeats(
 
     task = asyncio.create_task(
         generate_interview_prep_activity(
-            GenerateInterviewPrepActivityInput(job_url="https://example.test/job/1")
+            GenerateInterviewPrepActivityInput(tenant_id="local", job_id=JOB_ID)
         )
     )
     # The blocking generation runs in the worker thread pool, so the event loop
@@ -495,15 +643,35 @@ async def test_generate_activity_offloads_generation_and_heartbeats(
     assert forwarded["origin_run_id"] == "wf-run-heartbeat"
 
 
-def _init_conn(tmp_path: Path):
+def _init_conn(tmp_path: Path, *, seed_local_job: bool = True):
     db_path = tmp_path / "jobs.db"
-    init_db(db_path)
-    return get_connection(db_path)
+    conn = get_connection(db_path)
+    create_exact_v7_schema(conn)
+    if seed_local_job:
+        _insert_job(conn, LOCAL_TENANT, JOB_ID, JOB_URL)
+    conn.commit()
+    return conn
+
+
+def _insert_job(
+    conn,
+    tenant_id: TenantId,
+    job_id: JobId,
+    url: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, company, discovered_at)
+        VALUES (?, ?, ?, 'Backend Engineer', 'ExampleCo', '2026-07-31T12:00:00Z')
+        """,
+        (tenant_id, job_id, url),
+    )
 
 
 def _job() -> dict[str, Any]:
     return {
-        "url": "https://example.test/job/1",
+        "job_id": JOB_ID,
+        "url": JOB_URL,
         "title": "Backend Engineer",
         "company": "ExampleCo",
     }
@@ -558,7 +726,7 @@ def _evidence_entries() -> tuple[dict[str, Any], ...]:
         {
             "evidenceId": "ev-platform-latency",
             "title": "API latency reduction",
-            "resumeUsages": [{"jobKey": "https://example.test/job/1"}],
+            "resumeUsages": [{"jobId": str(JOB_ID)}],
         },
     )
 

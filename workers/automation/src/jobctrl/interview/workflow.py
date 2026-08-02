@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from temporalio import workflow
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
+from jobctrl.domain.identifiers import JobId, canonical_job_id
+
 with workflow.unsafe.imports_passed_through():
     from jobctrl.infrastructure.temporal.finalize import (
         emit_workflow_outcome,
@@ -29,21 +31,27 @@ with workflow.unsafe.imports_passed_through():
 @dataclass(frozen=True)
 class InterviewPrepWorkflowInput:
     tenant_id: str
-    job_url: str
+    job_id: JobId
     expected_app_dir: str | None = None
     expected_db_path: str | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
 @dataclass(frozen=True)
 class InterviewPrepWorkflowResult:
     status: str
-    job_url: str
+    job_id: JobId
     generation: int = 0
     item_count: int = 0
     errors: list[str] = field(default_factory=list)
     failure: str | None = None
     error_code: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
 
 
 @workflow.defn(name="InterviewPrepWorkflow")
@@ -56,7 +64,7 @@ class InterviewPrepWorkflow:
         await emit_workflow_started(
             tenant_id=payload.tenant_id,
             workflow_type="InterviewPrepWorkflow",
-            input_summary={"jobUrl": payload.job_url},
+            input_summary={"jobId": str(payload.job_id)},
             started_at=started_at,
             expected_app_dir=payload.expected_app_dir,
             expected_db_path=payload.expected_db_path,
@@ -73,7 +81,7 @@ class InterviewPrepWorkflow:
                 generate_interview_prep_activity,
                 GenerateInterviewPrepActivityInput(
                     tenant_id=payload.tenant_id,
-                    job_url=payload.job_url,
+                    job_id=payload.job_id,
                     llm_model=payload.llm_model,
                 ),
                 start_to_close_timeout=_DEFAULT_TIMEOUT,
@@ -95,7 +103,7 @@ class InterviewPrepWorkflow:
         except ActivityError as exc:
             result = InterviewPrepWorkflowResult(
                 status="failed",
-                job_url=payload.job_url,
+                job_id=payload.job_id,
                 failure=str(exc.cause if exc.cause else exc),
                 error_code=_activity_error_code(exc) or "interview_prep_activity_failed",
             )
@@ -113,7 +121,7 @@ class InterviewPrepWorkflow:
         except Exception as exc:  # noqa: BLE001
             result = InterviewPrepWorkflowResult(
                 status="failed",
-                job_url=payload.job_url,
+                job_id=payload.job_id,
                 failure=str(exc),
                 error_code=_exception_error_code(exc) or "interview_prep_workflow_failed",
             )
@@ -146,7 +154,7 @@ class InterviewPrepWorkflow:
 def _output_to_result(output: GenerateInterviewPrepActivityOutput) -> InterviewPrepWorkflowResult:
     return InterviewPrepWorkflowResult(
         status=output.status,
-        job_url=output.job_url,
+        job_id=output.job_id,
         generation=output.generation,
         item_count=output.item_count,
         errors=list(output.errors),

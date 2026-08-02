@@ -92,9 +92,19 @@ def _test_job_id(url: str) -> JobId:
 
 def _seed_job(db_path: Path, url: str = "https://example.com/job/1") -> None:
     conn = get_connection(db_path)
+    job_id = _test_job_id(url)
     conn.execute(
         "INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at) VALUES (?, ?, ?, ?, datetime('now'))",
-        ("local", _test_job_id(url), url, "Test job"),
+        ("local", job_id, url, "Test job"),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_locators (
+            tenant_id, job_id, locator_kind, locator_value, is_current,
+            first_seen_at, last_seen_at
+        ) VALUES ('local', ?, 'posting_url', ?, 1, datetime('now'), datetime('now'))
+        """,
+        (job_id, url),
     )
     conn.commit()
 
@@ -272,15 +282,25 @@ def test_generate_interview_prep_starts_user_triggered_workflow(tmp_db: Path) ->
     }
     assert len(seen) == 1
     assert seen[0].workflow is InterviewPrepWorkflow
-    assert seen[0].workflow_id == f"interview-prep-local-{job_url}"
+    assert seen[0].workflow_id == f"interview-prep-local-{job_id}"
     (payload,) = seen[0].args
     assert payload == InterviewPrepWorkflowInput(
         tenant_id="local",
         expected_app_dir="/tmp/jobctrl",
         expected_db_path="/tmp/jobctrl/jobctrl.db",
-        job_url=job_url,
+        job_id=job_id,
         llm_model="gpt-test",
     )
+    second = server.dispatch(
+        JsonRpcRequest(
+            method="generate_interview_prep",
+            params={"tenantId": "local", "jobId": str(job_id)},
+            id=2,
+        )
+    )
+    assert second is not None
+    assert len(seen) == 2
+    assert seen[1].workflow_id == seen[0].workflow_id
 
 
 def test_interview_prep_has_no_live_assistance_surface() -> None:
