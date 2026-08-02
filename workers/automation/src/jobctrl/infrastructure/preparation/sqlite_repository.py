@@ -6,8 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from jobctrl.database import ensure_preparation_work_item_tables
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.preparation import (
     PreparationWorkItem,
     PreparationWorkItemKind,
@@ -22,7 +21,6 @@ class SqlitePreparationWorkItemRepository:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        ensure_preparation_work_item_tables(conn)
 
     def enqueue(
         self,
@@ -35,22 +33,24 @@ class SqlitePreparationWorkItemRepository:
         available_at: str | None = None,
         now: str | None = None,
     ) -> PreparationWorkItem:
+        stable_job_id = canonical_job_id(str(job_id))
+        normalized_source_event_id = str(source_event_id or "").strip()
         created_at = now or _utc_now()
         available = available_at or created_at
         item = PreparationWorkItem.queued(
             tenant_id=tenant_id,
-            job_id=job_id,
+            job_id=stable_job_id,
             kind=kind,
             target_version=target_version,
-            source_event_id=source_event_id,
+            source_event_id=normalized_source_event_id,
             created_at=created_at,
             available_at=available,
             idempotency_key=make_preparation_idempotency_key(
                 tenant_id=tenant_id,
-                job_id=job_id,
+                job_id=stable_job_id,
                 kind=kind,
                 target_version=target_version,
-                source_event_id=source_event_id,
+                source_event_id=normalized_source_event_id,
             ),
         )
         self._conn.execute(
@@ -121,7 +121,7 @@ def _row_to_item(row: Any) -> PreparationWorkItem:
     return PreparationWorkItem(
         item_id=str(_row_value(row, "item_id", 0)),
         tenant_id=TenantId(str(_row_value(row, "tenant_id", 1))),
-        job_id=JobId(str(_row_value(row, "job_id", 2))),
+        job_id=canonical_job_id(str(_row_value(row, "job_id", 2))),
         kind=PreparationWorkItemKind(str(_row_value(row, "kind", 3))),
         target_version=int(_row_value(row, "target_version", 4)),
         source_event_id=str(_row_value(row, "source_event_id", 5) or ""),
