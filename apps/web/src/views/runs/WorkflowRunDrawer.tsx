@@ -15,6 +15,7 @@ import type {
   WorkflowRunDetail,
   WorkflowRunTimelineEvent,
 } from "../../contexts/operations/types.js";
+import { CancelWorkflowRunButton } from "../../contexts/pipeline/components/CancelWorkflowRunButton.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
@@ -164,16 +165,12 @@ function RunActions({ run }: { readonly run: WorkflowRunDetail }) {
         </Link>
       ) : null}
       {ACTIVE_RUN_STATUSES.has(run.status) ? (
-        <Link
-          className={buttonVariants({
-            className: "workflow-run-actions__primary",
-            size: "sm",
-          })}
-          data-typography="control"
-          to="/pipelines"
-        >
-          Open pipeline controls
-        </Link>
+        <CancelWorkflowRunButton
+          ariaLabel={`Stop workflow run ${run.workflowId}`}
+          className="workflow-run-actions__primary"
+          label="Stop run"
+          runId={run.runId}
+        />
       ) : null}
       <a
         aria-label={`Open workflow ${run.workflowId} in Temporal Web UI`}
@@ -271,6 +268,12 @@ function RunMetadata({ run }: { readonly run: WorkflowRunDetail }) {
           <dt data-typography="label">Duration</dt>
           <dd data-typography="body">{formatDuration(run.durationMs)}</dd>
         </div>
+        {run.result ? (
+          <div>
+            <dt data-typography="label">Result</dt>
+            <dd data-typography="body">{run.result}</dd>
+          </div>
+        ) : null}
       </dl>
     </RunSection>
   );

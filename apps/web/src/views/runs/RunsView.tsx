@@ -13,10 +13,6 @@ import { PageHead } from "../../shared/ui/page-head.js";
 import { RunsFilterBar } from "./RunsFilterBar.js";
 import { RunsTable } from "./RunsTable.js";
 
-// TODO(temporal): the JSON-RPC `cancel_run` handler + `CancelRunParamsSchema`
-// already exist (PR 3 fixer). Wiring an in-row "Cancel running workflow"
-// button is out of scope for PR 5 and lands in a follow-up.
-
 function workflowRunsInput(search: RunsSearch): WorkflowRunsListInput {
   return {
     page: search.page,

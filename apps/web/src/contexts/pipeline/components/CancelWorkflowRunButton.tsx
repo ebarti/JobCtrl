@@ -18,21 +18,41 @@ export function CancelWorkflowRunButton({
 }: CancelWorkflowRunButtonProps): JSX.Element {
   const cancelRun = useCancelWorkflowRunMutation();
   const isPending = cancelRun.isPending;
+  const cancellationAccepted = cancelRun.data?.status === "canceling";
+  const alreadyTerminal = cancelRun.data?.status === "already_terminal";
+  const responseError =
+    cancelRun.isSuccess && !cancellationAccepted && !alreadyTerminal
+      ? cancelRun.data.message || `Cancellation failed (${cancelRun.data.status}).`
+      : null;
+  const buttonLabel = isPending
+    ? "Stopping"
+    : cancellationAccepted
+      ? "Cancellation requested"
+      : alreadyTerminal
+        ? "Already finished"
+        : label;
   return (
-    <Button
-      type="button"
-      {...(className ? { className } : {})}
-      variant="destructive"
-      size="sm"
-      disabled={isPending}
-      aria-label={ariaLabel ?? `Stop workflow run ${runId}`}
-      title="Stop workflow run"
-      onClick={(event) => {
-        event.stopPropagation();
-        cancelRun.mutate({ runId });
-      }}
-    >
-      {isPending ? "Stopping" : label}
-    </Button>
+    <span className="workflow-cancel-action">
+      <Button
+        type="button"
+        {...(className ? { className } : {})}
+        variant="destructive"
+        size="sm"
+        disabled={isPending || cancellationAccepted || alreadyTerminal}
+        aria-label={ariaLabel ?? `Stop workflow run ${runId}`}
+        title="Stop workflow run"
+        onClick={(event) => {
+          event.stopPropagation();
+          cancelRun.mutate({ runId });
+        }}
+      >
+        {buttonLabel}
+      </Button>
+      {cancelRun.isError || responseError ? (
+        <small data-typography="metadata" role="alert">
+          {cancelRun.isError ? cancelRun.error.message : responseError}
+        </small>
+      ) : null}
+    </span>
   );
 }

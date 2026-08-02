@@ -17,7 +17,7 @@ describe("useCancelWorkflowRunMutation", () => {
       runId,
       actionId: runId,
       action: "cancel" as const,
-      status: "cancel_requested",
+      status: "canceling",
       jobKey: "pipeline",
       command: { action: "cancel" as const, jobKey: "pipeline", runId },
     }));
@@ -34,6 +34,9 @@ describe("useCancelWorkflowRunMutation", () => {
     expect(cancelWorkflowRun).toHaveBeenCalledWith("workflow-run-1");
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: workflowRunsKeys.lists(LOCAL_TENANT),
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: workflowRunsKeys.details(LOCAL_TENANT),
     });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: dashboardKeys.summary(LOCAL_TENANT),
