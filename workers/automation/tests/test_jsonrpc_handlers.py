@@ -307,7 +307,7 @@ def test_generate_interview_prep_starts_user_triggered_workflow(tmp_db: Path) ->
     assert seen[1].workflow_id == seen[0].workflow_id
 
 
-def test_contact_research_resolves_job_url_only_at_rpc_boundary(tmp_db: Path) -> None:
+def test_contact_research_accepts_only_job_id_at_rpc_boundary(tmp_db: Path) -> None:
     seen: list[WorkflowStartSpec] = []
     job_url = "https://example.com/job/contact-research"
     source_url = "https://example.com/people"
@@ -328,7 +328,7 @@ def test_contact_research_resolves_job_url_only_at_rpc_boundary(tmp_db: Path) ->
                 "tenantId": "local",
                 "taskId": "contact-task-1",
                 "employer": "Example",
-                "jobUrl": job_url,
+                "jobId": str(job_id),
                 "sources": [
                     {
                         "category": "public_web_page",
@@ -369,7 +369,7 @@ def test_contact_research_resolves_job_url_only_at_rpc_boundary(tmp_db: Path) ->
                 "tenantId": "local",
                 "taskId": "contact-task-1",
                 "employer": "Example",
-                "jobUrl": job_url,
+                "jobId": str(job_id),
             },
             id=2,
         )
@@ -383,14 +383,14 @@ def test_contact_research_resolves_job_url_only_at_rpc_boundary(tmp_db: Path) ->
             params={
                 "tenantId": "local",
                 "taskId": "contact-task-2",
-                "jobId": str(job_id),
+                "jobUrl": job_url,
             },
             id=3,
         )
     )
     assert rejected is not None
     assert rejected.to_dict()["error"]["code"] == INVALID_PARAMS
-    assert "jobUrl only at the RPC boundary" in rejected.to_dict()["error"]["message"]
+    assert "jobUrl is not supported" in rejected.to_dict()["error"]["message"]
 
     with pytest.raises(ValueError, match="canonical UUID"):
         build_contact_research_workflow_spec(
@@ -1719,7 +1719,7 @@ def test_v7_apply_preserves_global_and_explicit_job_semantics(
 
 @pytest.mark.parametrize(
     "method",
-    ("tailor_job", "analyze_job", "generate_interview_prep"),
+    ("tailor_job", "analyze_job", "generate_interview_prep", "run_contact_research"),
 )
 def test_v7_canonical_job_ids_reject_unknown_and_deleted_jobs(
     tmp_db: Path,

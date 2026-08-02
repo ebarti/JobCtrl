@@ -2712,12 +2712,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       label: source.label,
     }));
     return withWritableDb(reply, options.dbPath, async (db) => {
-      const jobUrl = jobId
+      const storedJobId = jobId
         ? (db
-            .prepare("SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ?")
-            .get("local", jobId) as { url: string } | undefined)?.url ?? null
+            .prepare("SELECT job_id FROM jobs WHERE tenant_id = ? AND job_id = ?")
+            .get("local", jobId) as { job_id: string } | undefined)?.job_id ?? null
         : null;
-      if (jobId && !jobUrl) {
+      if (jobId && !storedJobId) {
         void reply.code(404);
         return { ok: false, error: "contact_research_job_not_found" };
       }
@@ -2726,7 +2726,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         {
           taskId,
           employer,
-          jobUrl,
+          jobId,
           sources,
           ...(body.llmModel ? { llmModel: body.llmModel } : {}),
         },
