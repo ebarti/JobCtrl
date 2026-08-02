@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import Database from "better-sqlite3";
 
+import { EXACT_V7_SCHEMA_MANIFEST, hasExactV7SchemaManifest } from "./schema-manifest.js";
+
 export type SqliteDatabase = Database.Database;
 export type SqliteValue = string | number | bigint | null;
 
@@ -9,7 +11,7 @@ export type SqliteValue = string | number | bigint | null;
 // writer that stamps ``PRAGMA user_version``; the API only admits the exact
 // migrated schema shape. Bump both constants together whenever the schema
 // shape changes.
-export const SUPPORTED_SCHEMA_VERSION = 7;
+export const SUPPORTED_SCHEMA_VERSION = EXACT_V7_SCHEMA_MANIFEST.version;
 
 export class IncompatibleSchemaVersionError extends Error {
   constructor(current: number) {
@@ -23,6 +25,16 @@ export class IncompatibleSchemaVersionError extends Error {
   }
 }
 
+export class IncompatibleSchemaManifestError extends Error {
+  constructor() {
+    super(
+      "JobCtrl database schema does not match the exact v7 manifest; restore "
+        + "a compatible backup or complete the documented stopped-runtime migration.",
+    );
+    this.name = "IncompatibleSchemaManifestError";
+  }
+}
+
 function assertExactSchemaVersion(db: SqliteDatabase): void {
   // The API never writes ``user_version`` — the Python worker owns stamping so
   // the schema marker has a single writer. The v6-to-v7 migration is the only
@@ -31,6 +43,10 @@ function assertExactSchemaVersion(db: SqliteDatabase): void {
   if (current !== SUPPORTED_SCHEMA_VERSION) {
     db.close();
     throw new IncompatibleSchemaVersionError(current);
+  }
+  if (!hasExactV7SchemaManifest(db)) {
+    db.close();
+    throw new IncompatibleSchemaManifestError();
   }
 }
 
