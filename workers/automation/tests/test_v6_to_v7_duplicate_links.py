@@ -11,7 +11,9 @@ import pytest
 
 from jobctrl.domain.discovery.identity import normalize_observed_url
 from jobctrl.infrastructure.migrations import v6_to_v7_duplicate_links as duplicate_links
-from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
+from jobctrl.infrastructure.migrations.schema_v7 import (
+    create_unstamped_exact_v7_candidate,
+)
 from jobctrl.infrastructure.migrations.v6_to_v7_copy import copy_direct_and_scalar_tables
 from jobctrl.infrastructure.migrations.v6_to_v7_duplicate_links import (
     CandidateDuplicateLinkCopyError,
@@ -39,7 +41,7 @@ def _connections(tmp_path: Path) -> tuple[sqlite3.Connection, sqlite3.Connection
     source.execute("PRAGMA foreign_keys = ON")
     candidate = sqlite3.connect(tmp_path / "candidate.db")
     candidate.execute("PRAGMA foreign_keys = ON")
-    create_exact_v7_schema(candidate)
+    create_unstamped_exact_v7_candidate(candidate)
     return source, candidate, source_path
 
 

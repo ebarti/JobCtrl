@@ -300,7 +300,7 @@ class _TemplateRepository(_FakeRepository):
         super().__init__()
         self.resume_template = resume_template
 
-    def resolve_effective_resume_template(self, job_id) -> dict:
+    def resolve_effective_resume_template(self, tenant_id, job_id) -> dict:
         return self.resume_template
 
 
