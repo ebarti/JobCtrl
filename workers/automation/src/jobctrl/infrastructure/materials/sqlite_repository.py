@@ -1,16 +1,16 @@
-"""SqliteMaterialsRepository — local-mode adapter for the Materials context.
+"""SQLite adapters for the Materials context.
 
-Persists :class:`MaterialsSet` aggregates to the ``job_materials`` +
-``job_materials_artifacts`` tables created by
-:func:`database.ensure_materials_tables`. Generation invariants are
-enforced at save time: a fresh aggregate must carry
-``generation = current_max + 1`` (or ``1`` when none exists). Saving the
-*same* generation again is allowed and overwrites the row — that's how
-use cases append cover letters / PDFs to an existing generation.
+``SqliteMaterialsRepository`` persists :class:`MaterialsSet` aggregates to the
+exact-v7 tenant-scoped ``job_materials`` and ``job_materials_artifacts`` tables.
+Generation invariants are enforced atomically at save time: a fresh aggregate
+must carry ``generation = current_max + 1`` (or ``1`` when none exists).
+Saving the *same* generation again is allowed only when its collision-resistant
+lineage token matches the persisted aggregate — that's how use cases append
+cover letters / PDFs without letting a stale concurrent creator replace the
+winning generation.
 
-Local-mode treats ``job_id`` as the legacy ``jobs.url`` primary key. When
-the cloud cutover (Phase 9) introduces stable system-generated ``JobId``
-values, the adapter swaps the column without touching the port.
+Internal aggregate identity is the stable tenant-scoped ``JobId``. URLs are
+external locators and are not accepted by the aggregate persistence methods.
 
 See ddd-target.md §7.1 / §7.2 (per-aggregate repository, schema decoupling).
 """
@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from jobctrl.database import effective_tailoring_min_score, ensure_tailoring_policy_tables
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.aggregate import MaterialsSet
 from jobctrl.domain.materials.entities import Artifact
 from jobctrl.domain.materials.policy import TailoringPolicy
@@ -37,6 +37,8 @@ from jobctrl.domain.materials.value_objects import (
 )
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.materials.unit_of_work import SqliteUnitOfWork
+
+_LINEAGE_KEY = "__jobctrl_materials_lineage_id"
 
 
 # ---------------------------------------------------------------------------
@@ -99,27 +101,28 @@ class SqliteMaterialsRepository:
         *,
         generation: int | None = None,
     ) -> MaterialsSet | None:
+        stable_job_id = canonical_job_id(str(job_id))
         if generation is None:
             row = self._conn.execute(
                 """
-                SELECT job_url, generation, status, created_at, updated_at,
+                SELECT job_id, generation, status, created_at, updated_at,
                        last_validation_json, last_verdict_json, metadata_json
                 FROM job_materials
-                WHERE job_url = ? AND tenant_id = ?
+                WHERE tenant_id = ? AND job_id = ?
                 ORDER BY generation DESC
                 LIMIT 1
                 """,
-                (str(job_id), str(tenant_id)),
+                (str(tenant_id), str(stable_job_id)),
             ).fetchone()
         else:
             row = self._conn.execute(
                 """
-                SELECT job_url, generation, status, created_at, updated_at,
+                SELECT job_id, generation, status, created_at, updated_at,
                        last_validation_json, last_verdict_json, metadata_json
                 FROM job_materials
-                WHERE job_url = ? AND tenant_id = ? AND generation = ?
+                WHERE tenant_id = ? AND job_id = ? AND generation = ?
                 """,
-                (str(job_id), str(tenant_id), int(generation)),
+                (str(tenant_id), str(stable_job_id), int(generation)),
             ).fetchone()
         if row is None:
             return None
@@ -137,24 +140,32 @@ class SqliteMaterialsRepository:
         such as cover/PDF generation need this approved-material view instead of
         the raw latest generation.
         """
+        stable_job_id = canonical_job_id(str(job_id))
         row = self._conn.execute(
             """
-            SELECT m.job_url, m.generation, m.status, m.created_at, m.updated_at,
+            SELECT m.job_id, m.generation, m.status, m.created_at, m.updated_at,
                    m.last_validation_json, m.last_verdict_json, m.metadata_json
             FROM job_materials m
             INNER JOIN (
-                SELECT job_url, MAX(generation) AS generation
+                SELECT tenant_id, job_id, MAX(generation) AS generation
                 FROM job_materials_artifacts
-                WHERE job_url = ?
+                WHERE tenant_id = ?
+                  AND job_id = ?
                   AND artifact_type = 'tailored_resume'
                   AND status = 'approved'
-                GROUP BY job_url
+                GROUP BY tenant_id, job_id
             ) current
-              ON current.job_url = m.job_url
+              ON current.tenant_id = m.tenant_id
+             AND current.job_id = m.job_id
              AND current.generation = m.generation
-            WHERE m.job_url = ? AND m.tenant_id = ?
+            WHERE m.tenant_id = ? AND m.job_id = ?
             """,
-            (str(job_id), str(job_id), str(tenant_id)),
+            (
+                str(tenant_id),
+                str(stable_job_id),
+                str(tenant_id),
+                str(stable_job_id),
+            ),
         ).fetchone()
         if row is None:
             return None
@@ -408,9 +419,7 @@ class SqliteMaterialsRepository:
         """Return latest-generation aggregates whose tailored resume
         artifact carries the requested status."""
         if not isinstance(status, ArtifactStatus):
-            raise TypeError(
-                f"list_by_status requires ArtifactStatus, got {type(status).__name__}"
-            )
+            raise TypeError(f"list_by_status requires ArtifactStatus, got {type(status).__name__}")
         params: list[Any] = [str(tenant_id), status.value]
         sql = (
             "SELECT m.job_url, m.generation, m.status, m.created_at, m.updated_at, "
@@ -438,70 +447,119 @@ class SqliteMaterialsRepository:
     # ------------------------------------------------------------------
 
     def save(self, materials: MaterialsSet) -> None:
-        latest = self._conn.execute(
-            "SELECT COALESCE(MAX(generation), 0) AS g FROM job_materials "
-            "WHERE job_url = ? AND tenant_id = ?",
-            (str(materials.job_id), str(materials.tenant_id)),
-        ).fetchone()
-        current_max = int(latest[0] if latest else 0)
-        existing = self._conn.execute(
-            "SELECT 1 FROM job_materials WHERE job_url = ? AND tenant_id = ? AND generation = ?",
-            (str(materials.job_id), str(materials.tenant_id), materials.generation),
-        ).fetchone()
-        # Allow either: update an existing generation or mint exactly the next one.
-        # Failed re-tailors can leave newer rejected generations while the last
-        # approved generation remains the current downstream material for cover/PDF.
-        if existing is None and materials.generation != current_max + 1:
-            raise MaterialsGenerationConflict(
-                job_id=materials.job_id,
-                attempted=materials.generation,
-                expected=current_max + 1,
-            )
+        stable_job_id = canonical_job_id(str(materials.job_id))
+        savepoint = "materials_aggregate_save"
+        self._conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            self._save_rows(materials, stable_job_id)
+        except BaseException:
+            self._conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
+        else:
+            self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
 
-        # Upsert the parent row.
-        self._conn.execute(
+    def _save_rows(
+        self,
+        materials: MaterialsSet,
+        job_id: JobId,
+    ) -> None:
+        # Insert the next generation or enrich an existing generation whose
+        # collision-resistant lineage token matches. Keeping allocation and the
+        # optimistic lineage check in one SQLite statement closes the stale
+        # writer window between a separate SELECT and UPSERT.
+        metadata_json = _dumps(
+            {
+                **dict(materials.metadata),
+                _LINEAGE_KEY: materials.lineage_id,
+            }
+        )
+        parent = self._conn.execute(
             """
             INSERT INTO job_materials (
-                job_url, generation, tenant_id, status,
+                tenant_id, job_id, generation, status,
                 created_at, updated_at,
                 last_validation_json, last_verdict_json, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(job_url, generation) DO UPDATE SET
+            )
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE
+                ? = (
+                    SELECT COALESCE(MAX(generation), 0) + 1
+                    FROM job_materials
+                    WHERE tenant_id = ? AND job_id = ?
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM job_materials
+                    WHERE tenant_id = ?
+                      AND job_id = ?
+                      AND generation = ?
+                      AND COALESCE(
+                          json_extract(metadata_json, '$.__jobctrl_materials_lineage_id'),
+                          ?
+                      ) = ?
+                )
+            ON CONFLICT(tenant_id, job_id, generation) DO UPDATE SET
                 status = excluded.status,
                 updated_at = excluded.updated_at,
                 last_validation_json = excluded.last_validation_json,
                 last_verdict_json = excluded.last_verdict_json,
                 metadata_json = excluded.metadata_json
+            WHERE COALESCE(
+                      json_extract(
+                          job_materials.metadata_json,
+                          '$.__jobctrl_materials_lineage_id'
+                      ),
+                      json_extract(
+                          excluded.metadata_json,
+                          '$.__jobctrl_materials_lineage_id'
+                      )
+                  ) = json_extract(
+                      excluded.metadata_json,
+                      '$.__jobctrl_materials_lineage_id'
+                  )
             """,
             (
-                str(materials.job_id),
-                materials.generation,
                 str(materials.tenant_id),
+                str(job_id),
+                materials.generation,
                 materials.status,
                 materials.created_at,
                 materials.updated_at,
-                _dumps(
-                    materials.last_validation.to_dict() if materials.last_validation else None
-                ),
-                _dumps(
-                    materials.last_verdict.to_dict() if materials.last_verdict else None
-                ),
-                _dumps(materials.metadata) if materials.metadata else None,
+                _dumps(materials.last_validation.to_dict() if materials.last_validation else None),
+                _dumps(materials.last_verdict.to_dict() if materials.last_verdict else None),
+                metadata_json,
+                materials.generation,
+                str(materials.tenant_id),
+                str(job_id),
+                str(materials.tenant_id),
+                str(job_id),
+                materials.generation,
+                materials.lineage_id,
+                materials.lineage_id,
             ),
         )
+        if parent.rowcount == 0:
+            latest = self._conn.execute(
+                """
+                SELECT COALESCE(MAX(generation), 0)
+                FROM job_materials
+                WHERE tenant_id = ? AND job_id = ?
+                """,
+                (str(materials.tenant_id), str(job_id)),
+            ).fetchone()
+            current_max = int(latest[0] if latest else 0)
+            raise MaterialsGenerationConflict(
+                job_id=job_id,
+                attempted=materials.generation,
+                expected=current_max + 1,
+            )
 
         # Persist every present artifact slot. Slots that were dropped
         # between two saves of the same generation are left untouched —
         # use cases append, never delete.
         for artifact in materials.artifacts:
-            self._upsert_artifact(materials, artifact)
-
-        self._commit()
-
-    def _commit(self) -> None:
-        """Commit now, unless an active unit of work owns the transaction."""
-        if self._unit_of_work is None or not self._unit_of_work.active:
-            self._conn.commit()
+            self._upsert_artifact(materials, job_id, artifact)
 
     def suppress_active_artifacts(
         self,
@@ -522,16 +580,36 @@ class SqliteMaterialsRepository:
     # Internals
     # ------------------------------------------------------------------
 
-    def _upsert_artifact(self, materials: MaterialsSet, artifact: Artifact) -> None:
+    def _upsert_artifact(
+        self,
+        materials: MaterialsSet,
+        job_id: JobId,
+        artifact: Artifact,
+    ) -> None:
         metadata, layout_boxes = _metadata_and_layout_boxes(artifact.metadata)
+        previous = self._conn.execute(
+            """
+            SELECT artifact_id
+            FROM job_materials_artifacts
+            WHERE tenant_id = ? AND job_id = ?
+              AND generation = ? AND artifact_type = ?
+            """,
+            (
+                str(materials.tenant_id),
+                str(job_id),
+                materials.generation,
+                artifact.type.value,
+            ),
+        ).fetchone()
+        previous_artifact_id = str(previous["artifact_id"]) if previous is not None else None
         self._conn.execute(
             """
             INSERT INTO job_materials_artifacts (
-                job_url, generation, artifact_type, artifact_id,
+                tenant_id, job_id, generation, artifact_type, artifact_id,
                 status, path, render_format, size_bytes,
                 metadata_json, created_at, superseded_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(job_url, generation, artifact_type) DO UPDATE SET
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_id, job_id, generation, artifact_type) DO UPDATE SET
                 artifact_id = excluded.artifact_id,
                 status = excluded.status,
                 path = excluded.path,
@@ -542,7 +620,8 @@ class SqliteMaterialsRepository:
                 superseded_at = excluded.superseded_at
             """,
             (
-                str(materials.job_id),
+                str(materials.tenant_id),
+                str(job_id),
                 materials.generation,
                 artifact.type.value,
                 artifact.artifact_id,
@@ -555,33 +634,49 @@ class SqliteMaterialsRepository:
                 artifact.superseded_at,
             ),
         )
-        self._replace_layout_boxes(materials, artifact, layout_boxes)
+        self._replace_layout_boxes(
+            materials,
+            job_id,
+            artifact,
+            layout_boxes,
+            previous_artifact_id=previous_artifact_id,
+        )
 
     def _replace_layout_boxes(
         self,
         materials: MaterialsSet,
+        job_id: JobId,
         artifact: Artifact,
         layout_boxes: list[dict[str, Any]],
+        *,
+        previous_artifact_id: str | None,
     ) -> None:
-        try:
-            self._conn.execute(
-                """
-                DELETE FROM job_material_layout_boxes
-                WHERE job_url = ? AND generation = ? AND artifact_id = ?
-                """,
-                (str(materials.job_id), materials.generation, artifact.artifact_id),
-            )
-        except sqlite3.OperationalError:
-            return
+        artifact_ids = {artifact.artifact_id}
+        if previous_artifact_id is not None:
+            artifact_ids.add(previous_artifact_id)
+        placeholders = ", ".join("?" for _ in artifact_ids)
+        self._conn.execute(
+            f"""
+            DELETE FROM job_material_layout_boxes
+            WHERE tenant_id = ? AND job_id = ?
+              AND generation = ? AND artifact_id IN ({placeholders})
+            """,
+            (
+                str(materials.tenant_id),
+                str(job_id),
+                materials.generation,
+                *sorted(artifact_ids),
+            ),
+        )
         if not layout_boxes:
             return
         rows = [
             (
-                str(materials.job_id),
+                str(materials.tenant_id),
+                str(job_id),
                 materials.generation,
                 artifact.artifact_id,
                 index,
-                str(materials.tenant_id),
                 box["semantic_id"],
                 box["page_number"],
                 box.get("line_number"),
@@ -598,7 +693,7 @@ class SqliteMaterialsRepository:
         self._conn.executemany(
             """
             INSERT INTO job_material_layout_boxes (
-                job_url, generation, artifact_id, box_index, tenant_id,
+                tenant_id, job_id, generation, artifact_id, box_index,
                 semantic_id, page_number, line_number, text_excerpt,
                 left_pct, top_pct, width_pct, height_pct, audit_target_json,
                 created_at
@@ -647,7 +742,7 @@ class SqliteMaterialsRepository:
 
     def _row_to_materials(self, row: Any, tenant_id: TenantId) -> MaterialsSet:
         if isinstance(row, sqlite3.Row):
-            job_url = row["job_url"]
+            job_id = canonical_job_id(str(row["job_id"]))
             generation = row["generation"]
             status = row["status"]
             created_at = row["created_at"]
@@ -657,7 +752,7 @@ class SqliteMaterialsRepository:
             metadata_json = row["metadata_json"]
         else:
             (
-                job_url,
+                raw_job_id,
                 generation,
                 status,
                 created_at,
@@ -666,15 +761,16 @@ class SqliteMaterialsRepository:
                 verdict_json,
                 metadata_json,
             ) = row
+            job_id = canonical_job_id(str(raw_job_id))
 
         artifact_rows = self._conn.execute(
             """
             SELECT artifact_type, artifact_id, status, path, render_format,
                    size_bytes, metadata_json, created_at, superseded_at
             FROM job_materials_artifacts
-            WHERE job_url = ? AND generation = ?
+            WHERE tenant_id = ? AND job_id = ? AND generation = ?
             """,
-            (str(job_url), int(generation)),
+            (str(tenant_id), str(job_id), int(generation)),
         ).fetchall()
 
         slot_kwargs: dict[str, Artifact | None] = {
@@ -697,24 +793,20 @@ class SqliteMaterialsRepository:
                 path=str(art_row["path"]),
                 render_format=RenderFormat(art_row["render_format"]),
                 created_at=str(art_row["created_at"]),
-                size_bytes=(
-                    int(art_row["size_bytes"])
-                    if art_row["size_bytes"] is not None
-                    else None
-                ),
+                size_bytes=(int(art_row["size_bytes"]) if art_row["size_bytes"] is not None else None),
                 metadata=_loads(art_row["metadata_json"]) or {},
-                superseded_at=(
-                    str(art_row["superseded_at"]) if art_row["superseded_at"] else None
-                ),
+                superseded_at=(str(art_row["superseded_at"]) if art_row["superseded_at"] else None),
             )
             slot_kwargs[slot_for_type[artifact.type]] = artifact
 
         validation = ValidationResult.from_dict(_loads(validation_json)) if validation_json else None
         verdict = JudgeVerdict.from_dict(_loads(verdict_json))
 
+        metadata = _loads(metadata_json) or {}
+        lineage_id = str(metadata.pop(_LINEAGE_KEY, "")) or None
         return MaterialsSet(
             tenant_id=tenant_id or LOCAL_TENANT,
-            job_id=JobId(str(job_url)),
+            job_id=job_id,
             generation=int(generation),
             status=str(status),
             created_at=str(created_at),
@@ -725,7 +817,8 @@ class SqliteMaterialsRepository:
             cover_letter_pdf=slot_kwargs["cover_letter_pdf"],
             last_validation=validation,
             last_verdict=verdict,
-            metadata=_loads(metadata_json) or {},
+            metadata=metadata,
+            **({"lineage_id": lineage_id} if lineage_id is not None else {}),
         )
 
 

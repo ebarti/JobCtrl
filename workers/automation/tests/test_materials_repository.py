@@ -1,17 +1,11 @@
-"""Phase 6 / S-20: SqliteMaterialsRepository round-trip + backfill + generation invariants.
-
-Each test runs against a tmp SQLite database via the public ``init_db``
-helper so the schema (including ``ensure_materials_tables`` + backfill)
-is exercised end-to-end. The legacy ``jobs.tailored_resume_path`` /
-``jobs.cover_letter_path`` columns are written directly by these tests
-to seed the backfill path.
-"""
+"""Exact-v7 ``SqliteMaterialsRepository`` round-trip and generation invariants."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -19,7 +13,6 @@ import pytest
 
 from jobctrl.database import (
     close_connection,
-    ensure_materials_tables,
     get_connection,
     get_jobs_by_stage,
     get_stats,
@@ -56,14 +49,20 @@ def conn(tmp_path: Path) -> sqlite3.Connection:
     return init_db(db_path)
 
 
-def _seed_job(conn: sqlite3.Connection, url: str = "https://example.com/job/1") -> str:
+def _seed_job(conn: sqlite3.Connection, url: str = "https://example.com/job/1") -> JobId:
+    job_id = JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, url)))
     conn.execute(
-        "INSERT INTO jobs (url, title, site, full_description, fit_score, discovered_at) "
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        (url, "Engineer", "Acme", "Description", 9, "2024-01-01T00:00:00+00:00"),
+        (LOCAL_TENANT, job_id, url, "Engineer", "Acme", "2024-01-01T00:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO job_enrichments (tenant_id, job_id, current_status, full_description, "
+        "updated_at) VALUES (?, ?, ?, ?, ?)",
+        (LOCAL_TENANT, job_id, "enriched", "Description", "2024-01-01T00:00:00+00:00"),
     )
     conn.commit()
-    return url
+    return job_id
 
 
 def _make_artifact(
@@ -83,38 +82,38 @@ def _make_artifact(
     )
 
 
-def _initial(url: str) -> MaterialsSet:
+def _initial(job_id: JobId) -> MaterialsSet:
     return MaterialsSet.initial(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=job_id,
         created_at="2024-01-01T00:00:00+00:00",
     )
 
 
-def _approved(url: str) -> MaterialsSet:
-    return _initial(url).with_resume_attempt(
-        _make_artifact(ArtifactType.TAILORED_RESUME, path=f"/tmp/{url[-3:]}.txt"),
+def _approved(job_id: JobId) -> MaterialsSet:
+    return _initial(job_id).with_resume_attempt(
+        _make_artifact(ArtifactType.TAILORED_RESUME, path=f"/tmp/{job_id[-3:]}.txt"),
         validation=ValidationResult.success(),
         verdict=JudgeVerdict.passed(),
         updated_at="2024-01-02T00:00:00+00:00",
     )
 
 
-def _approved_with_pdf(url: str) -> MaterialsSet:
-    return _approved(url).with_resume_pdf(
+def _approved_with_pdf(job_id: JobId) -> MaterialsSet:
+    return _approved(job_id).with_resume_pdf(
         _make_artifact(
             ArtifactType.RESUME_PDF,
-            path=f"/tmp/{url[-3:]}.pdf",
+            path=f"/tmp/{job_id[-3:]}.pdf",
             render_format=RenderFormat.LATEX_PDF,
         ),
         updated_at="2024-01-02T01:00:00+00:00",
     )
 
 
-def _rejected(url: str, *, generation: int = 2) -> MaterialsSet:
+def _rejected(job_id: JobId, *, generation: int = 2) -> MaterialsSet:
     return MaterialsSet(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=job_id,
         generation=generation,
         created_at="2024-01-03T00:00:00+00:00",
         updated_at="2024-01-03T00:00:00+00:00",
@@ -279,7 +278,7 @@ def test_approved_cover_refresh_supersedes_stale_pdf_and_projects_pending_pdf(
     assert loaded.status == "cover_letter_ready"
     assert repo.list_pending_pdf(LOCAL_TENANT) == [JobId(url)]
     pending_pdf = get_jobs_by_stage(conn, stage="pending_pdf", limit=0)
-    assert [row["url"] for row in pending_pdf] == [url]
+    assert [row["job_id"] for row in pending_pdf] == [url]
     assert pending_pdf[0]["cover_letter_path"] == str(new_cover_path)
 
 
@@ -398,9 +397,9 @@ def test_save_persists_resume_layout_boxes_outside_artifact_metadata(
         """
         SELECT metadata_json
         FROM job_materials_artifacts
-        WHERE job_url = ? AND artifact_id = ?
+        WHERE tenant_id = ? AND job_id = ? AND artifact_id = ?
         """,
-        (url, pdf.artifact_id),
+        (LOCAL_TENANT, url, pdf.artifact_id),
     ).fetchone()
     assert artifact_row is not None
     assert json.loads(artifact_row["metadata_json"]) == {"layout_source": "html_resume_dom"}
@@ -410,9 +409,9 @@ def test_save_persists_resume_layout_boxes_outside_artifact_metadata(
         SELECT semantic_id, page_number, line_number, text_excerpt,
                left_pct, top_pct, width_pct, height_pct, audit_target_json
         FROM job_material_layout_boxes
-        WHERE job_url = ? AND artifact_id = ?
+        WHERE tenant_id = ? AND job_id = ? AND artifact_id = ?
         """,
-        (url, pdf.artifact_id),
+        (LOCAL_TENANT, url, pdf.artifact_id),
     ).fetchall()
     assert len(rows) == 1
     row = rows[0]
@@ -450,18 +449,18 @@ def test_loads_resume_review_promoted_generation_without_deleting_prior_material
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at,
+            tenant_id, job_id, generation, status, created_at, updated_at,
             last_validation_json, last_verdict_json, metadata_json
-        ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}', '{}', '{}')
+        ) VALUES ('local', ?, 1, 'resume_approved', ?, ?, '{}', '{}', '{}')
         """,
         (url, now, now),
     )
     conn.execute(
         """
         INSERT INTO job_materials (
-            job_url, generation, tenant_id, status, created_at, updated_at,
+            tenant_id, job_id, generation, status, created_at, updated_at,
             last_validation_json, last_verdict_json, metadata_json
-        ) VALUES (?, 2, 'local', 'resume_approved', ?, ?, ?, ?, ?)
+        ) VALUES ('local', ?, 2, 'resume_approved', ?, ?, ?, ?, ?)
         """,
         (
             url,
@@ -482,9 +481,9 @@ def test_loads_resume_review_promoted_generation_without_deleting_prior_material
     conn.executemany(
         """
         INSERT INTO job_materials_artifacts (
-            job_url, generation, artifact_type, artifact_id, status, path,
+            tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
             render_format, size_bytes, metadata_json, created_at, superseded_at
-        ) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)
+        ) VALUES ('local', ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)
         """,
         [
             (
@@ -542,10 +541,10 @@ def test_loads_resume_review_promoted_generation_without_deleting_prior_material
     conn.execute(
         """
         INSERT INTO job_material_layout_boxes (
-            job_url, generation, artifact_id, box_index, tenant_id,
+            tenant_id, job_id, generation, artifact_id, box_index,
             semantic_id, page_number, line_number, text_excerpt,
             left_pct, top_pct, width_pct, height_pct, audit_target_json, created_at
-        ) VALUES (?, 2, 'edited-pdf', 0, 'local',
+        ) VALUES ('local', ?, 2, 'edited-pdf', 0,
                   'edited:line:1', 1, 1, 'edited resume',
                   10, 8, 80, 1.7, '{}', ?)
         """,
@@ -567,19 +566,19 @@ def test_loads_resume_review_promoted_generation_without_deleting_prior_material
         """
         SELECT status
         FROM job_materials_artifacts
-        WHERE job_url = ? AND generation = 1
+        WHERE tenant_id = ? AND job_id = ? AND generation = 1
         ORDER BY artifact_type
         """,
-        (url,),
+        (LOCAL_TENANT, url),
     ).fetchall()
     assert [row["status"] for row in prior_statuses] == ["approved", "approved"]
     box = conn.execute(
         """
         SELECT semantic_id, line_number, text_excerpt
         FROM job_material_layout_boxes
-        WHERE job_url = ? AND generation = 2 AND artifact_id = 'edited-pdf'
+        WHERE tenant_id = ? AND job_id = ? AND generation = 2 AND artifact_id = 'edited-pdf'
         """,
-        (url,),
+        (LOCAL_TENANT, url),
     ).fetchone()
     assert dict(box) == {
         "semantic_id": "edited:line:1",
@@ -593,26 +592,27 @@ def test_loads_resume_review_promoted_generation_without_deleting_prior_material
 # ---------------------------------------------------------------------------
 
 
-def _seed_with_score(conn: sqlite3.Connection, url: str, fit_score: int = 9) -> str:
+def _seed_with_score(conn: sqlite3.Connection, url: str, fit_score: int = 9) -> JobId:
+    job_id = _seed_job(conn, url)
     conn.execute(
-        "INSERT INTO jobs (url, title, site, full_description, fit_score, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (url, "Engineer", "Acme", "desc", fit_score, "2024-01-01T00:00:00+00:00"),
+        "INSERT INTO job_scores (tenant_id, job_id, version, fit_score, breakdown_json, "
+        "keywords_json, scored_at) VALUES (?, ?, 1, ?, '{}', '[]', ?)",
+        (LOCAL_TENANT, job_id, fit_score, "2024-01-01T00:00:00+00:00"),
     )
     conn.commit()
-    return url
+    return job_id
 
 
-def _seed_blocked_latest_score(conn: sqlite3.Connection, url: str, fit_score: int = 9) -> None:
+def _seed_blocked_latest_score(conn: sqlite3.Connection, job_id: JobId, fit_score: int = 9) -> None:
     conn.execute(
         """
         INSERT INTO job_scores (
-            job_url, version, tenant_id, fit_score, breakdown_json,
+            tenant_id, job_id, version, fit_score, breakdown_json,
             keywords_json, scored_at, correction_json, criteria_json, trace_json
-        ) VALUES (?, 1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}')
+        ) VALUES ('local', ?, 2, ?, ?, '["python"]', ?, NULL, '{}', '{}')
         """,
         (
-            url,
+            job_id,
             fit_score,
             json.dumps(
                 {
@@ -783,48 +783,29 @@ def test_suppress_active_artifacts_hides_without_deleting_history(conn: sqlite3.
     assert suppressed.tailored_resume.status is ArtifactStatus.SUPPRESSED
     assert suppressed.tailored_resume.metadata["suppression"]["reason"] == "threshold_raised"
     row_count = conn.execute(
-        "SELECT COUNT(*) FROM job_materials_artifacts WHERE job_url = ?",
-        (url,),
+        "SELECT COUNT(*) FROM job_materials_artifacts WHERE tenant_id = ? AND job_id = ?",
+        (LOCAL_TENANT, url),
     ).fetchone()[0]
     assert row_count == 2
     assert repo.list_pending_tailor(LOCAL_TENANT, min_score=7) == [JobId(url)]
 
 
-def test_suppress_backfilled_legacy_job_makes_selectors_treat_paths_inactive(
-    tmp_path: Path,
+def test_suppress_active_artifacts_removes_canonical_paths_from_selectors(
+    conn: sqlite3.Connection,
 ) -> None:
-    db_path = tmp_path / "legacy.db"
-    conn = init_db(db_path)
-    url = "https://example.com/backfilled-suppress"
-    resume_path = str(tmp_path / "tailored.txt")
-    cover_path = str(tmp_path / "cover.txt")
-    (tmp_path / "tailored.txt").write_text("tailored", encoding="utf-8")
-    (tmp_path / "cover.txt").write_text("cover", encoding="utf-8")
-    conn.execute(
-        "INSERT INTO jobs (url, title, full_description, fit_score, tailored_resume_path, "
-        "tailored_at, cover_letter_path, cover_letter_at, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            url,
-            "Engineer",
-            "Description",
-            9,
-            resume_path,
-            "2024-01-01T00:00:00+00:00",
-            cover_path,
-            "2024-01-01T01:00:00+00:00",
-            "2024-01-01T00:00:00+00:00",
-        ),
-    )
-    conn.execute("DROP TABLE job_materials_artifacts")
-    conn.execute("DROP TABLE job_materials")
-    conn.commit()
-    ensure_materials_tables(conn)
+    locator = "https://example.com/canonical-suppress"
+    job_id = _seed_with_score(conn, locator)
     repo = SqliteMaterialsRepository(conn)
+    materials = _approved_with_pdf(job_id).with_cover_letter(
+        _make_artifact(ArtifactType.COVER_LETTER, path="/tmp/cover.txt"),
+        validation=ValidationResult.success(),
+        updated_at="2024-01-03T00:00:00+00:00",
+    )
+    repo.save(materials)
 
     repo.suppress_active_artifacts(
         LOCAL_TENANT,
-        JobId(url),
+        job_id,
         reason="threshold_raised",
         suppressed_at="2026-05-26T00:00:00+00:00",
     )
@@ -834,11 +815,11 @@ def test_suppress_backfilled_legacy_job_makes_selectors_treat_paths_inactive(
     assert stats["with_cover_letter"] == 0
     assert stats["untailored_eligible"] == 1
     pending_tailor = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7, limit=0)
-    assert [row["url"] for row in pending_tailor] == [url]
+    assert [row["url"] for row in pending_tailor] == [locator]
     assert pending_tailor[0]["tailored_resume_path"] is None
     assert pending_tailor[0]["cover_letter_path"] is None
     tailored = get_jobs_by_stage(conn=conn, stage="tailored")
-    assert url not in {row["url"] for row in tailored}
+    assert locator not in {row["url"] for row in tailored}
 
 
 # ---------------------------------------------------------------------------
@@ -931,83 +912,3 @@ def test_tailoring_policy_repository_resolves_current_concurrently(
         assert count == expected_count
     finally:
         close_connection(db_path)
-
-
-# ---------------------------------------------------------------------------
-# Backfill
-# ---------------------------------------------------------------------------
-
-
-def test_backfill_copies_legacy_columns_into_job_materials(tmp_path: Path) -> None:
-    db_path = tmp_path / "legacy.db"
-    conn = init_db(db_path)
-    conn.execute(
-        "INSERT INTO jobs (url, title, fit_score, tailored_resume_path, tailored_at, "
-        "cover_letter_path, cover_letter_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            "https://example.com/legacy",
-            "Engineer",
-            9,
-            str(tmp_path / "tailored.txt"),
-            "2023-12-01T00:00:00+00:00",
-            str(tmp_path / "cover.txt"),
-            "2023-12-02T00:00:00+00:00",
-        ),
-    )
-    # Touch the files so size_bytes is captured.
-    (tmp_path / "tailored.txt").write_text("tailored", encoding="utf-8")
-    (tmp_path / "cover.txt").write_text("dear hiring manager", encoding="utf-8")
-    # Drop and re-create so the backfill fires against the seeded row.
-    conn.execute("DROP TABLE job_materials_artifacts")
-    conn.execute("DROP TABLE job_materials")
-    conn.commit()
-    ensure_materials_tables(conn)
-
-    repo = SqliteMaterialsRepository(conn)
-    loaded = repo.load(LOCAL_TENANT, JobId("https://example.com/legacy"))
-    assert loaded is not None
-    assert loaded.generation == 1
-    assert loaded.tailored_resume is not None
-    assert loaded.tailored_resume.status is ArtifactStatus.APPROVED
-    assert loaded.cover_letter is not None
-    assert loaded.cover_letter.status is ArtifactStatus.APPROVED
-    assert loaded.tailored_resume.size_bytes is not None and loaded.tailored_resume.size_bytes > 0
-
-
-def test_backfill_is_idempotent(tmp_path: Path) -> None:
-    db_path = tmp_path / "legacy.db"
-    conn = init_db(db_path)
-    conn.execute(
-        "INSERT INTO jobs (url, fit_score, tailored_resume_path, tailored_at) "
-        "VALUES (?, ?, ?, ?)",
-        ("https://example.com/legacy", 9, str(tmp_path / "x.txt"), "2024-01-01T00:00:00+00:00"),
-    )
-    (tmp_path / "x.txt").write_text("ok", encoding="utf-8")
-    conn.execute("DROP TABLE job_materials_artifacts")
-    conn.execute("DROP TABLE job_materials")
-    conn.commit()
-    ensure_materials_tables(conn)
-    ensure_materials_tables(conn)  # second call is a no-op
-
-    count = conn.execute(
-        "SELECT COUNT(*) FROM job_materials WHERE job_url = ?",
-        ("https://example.com/legacy",),
-    ).fetchone()[0]
-    assert count == 1
-
-
-def test_backfill_skips_rows_without_legacy_path(tmp_path: Path) -> None:
-    db_path = tmp_path / "legacy.db"
-    conn = init_db(db_path)
-    conn.execute(
-        "INSERT INTO jobs (url, fit_score) VALUES (?, ?)",
-        ("https://example.com/none", 9),
-    )
-    conn.execute("DROP TABLE job_materials_artifacts")
-    conn.execute("DROP TABLE job_materials")
-    conn.commit()
-    ensure_materials_tables(conn)
-
-    count = conn.execute("SELECT COUNT(*) FROM job_materials").fetchone()[0]
-    assert count == 0
