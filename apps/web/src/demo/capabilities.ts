@@ -14,6 +14,15 @@ export const DEMO_CAPABILITY_MANIFEST = {
   dashboardSummary: local("Reads the synthetic dashboard projection."),
   pipelineOperations: unavailable("Pipeline operations telemetry is unavailable in the public demo."),
   outcomeAnalytics: local("Reads synthetic conversion analytics."),
+  learningRecommendations: unavailable(
+    "Learning recommendations require the local audited database.",
+  ),
+  learningRecommendationEvidence: unavailable(
+    "Learning evidence requires the local audited database.",
+  ),
+  reviewLearningRecommendation: unavailable(
+    "Learning recommendation review requires the local audited database.",
+  ),
   digest: local("Reads the synthetic daily digest."),
   acknowledgeDigest: local("Acknowledges a digest only in browser-local state."),
   activity: local("Reads synthetic activity history."),

@@ -30,6 +30,21 @@ export class FetchApiClientAdapter implements ApiClientPort {
   outcomeAnalytics() {
     return this.client.outcomeAnalytics();
   }
+  learningRecommendations(query: Parameters<JobCtrlApiClient["learningRecommendations"]>[0] = {}) {
+    return this.client.learningRecommendations(query);
+  }
+  learningRecommendationEvidence(
+    recommendationId: string,
+    query: Parameters<JobCtrlApiClient["learningRecommendationEvidence"]>[1] = {},
+  ) {
+    return this.client.learningRecommendationEvidence(recommendationId, query);
+  }
+  reviewLearningRecommendation(
+    recommendationId: string,
+    body: Parameters<JobCtrlApiClient["reviewLearningRecommendation"]>[1],
+  ) {
+    return this.client.reviewLearningRecommendation(recommendationId, body);
+  }
   digest() {
     return this.client.digest();
   }
