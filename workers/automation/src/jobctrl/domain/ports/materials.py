@@ -25,7 +25,7 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysisDraft,
 )
 from jobctrl.domain.materials.entities import Artifact
-from jobctrl.domain.materials.policy import TailoringPolicy
+from jobctrl.domain.materials.policy import TailoringPolicy, TailoringPolicyRollbackReason
 from jobctrl.domain.materials.provenance import BulletProvenanceSet
 from jobctrl.domain.materials.value_objects import (
     ArtifactStatus,
@@ -199,6 +199,19 @@ class TailoringPolicyRepository(Protocol):
         """Return the latest persisted tailoring policy, or ``None``."""
         ...
 
+    def get_version(self, tenant_id: TenantId, version: int) -> TailoringPolicy | None:
+        """Return one tenant-owned historical policy revision, or ``None``."""
+        ...
+
+    def list_history(
+        self,
+        tenant_id: TenantId,
+        *,
+        limit: int = 100,
+    ) -> list[TailoringPolicy]:
+        """Return the bounded append-only policy history, newest first."""
+        ...
+
     def save(self, policy: TailoringPolicy) -> None:
         """Persist a tailoring policy version."""
         ...
@@ -210,6 +223,17 @@ class TailoringPolicyRepository(Protocol):
         expected_current_version: int | None = None,
     ) -> TailoringPolicy:
         """Resolve the candidate only if the pre-generation snapshot is current."""
+        ...
+
+    def rollback_to(
+        self,
+        tenant_id: TenantId,
+        *,
+        target_version: int,
+        reason: TailoringPolicyRollbackReason,
+        rolled_back_at: str,
+    ) -> TailoringPolicy:
+        """Append a current revision that restores a prior effective policy."""
         ...
 
 
