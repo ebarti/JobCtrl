@@ -1776,6 +1776,67 @@ BEFORE DELETE ON tailoring_feedback_signal_reviews
 BEGIN
   SELECT RAISE(ABORT, 'tailoring feedback reviews are append-only');
 END;
+CREATE TABLE tailoring_feedback_signal_contradictions (
+      tenant_id                    TEXT NOT NULL DEFAULT 'local',
+      contradiction_id            TEXT NOT NULL,
+      signal_id                    TEXT NOT NULL,
+      signal_revision              INTEGER NOT NULL CHECK(signal_revision > 0),
+      signal_job_id                TEXT NOT NULL CHECK(
+        length(signal_job_id) = 36
+        AND substr(signal_job_id, 9, 1) = '-'
+        AND substr(signal_job_id, 14, 1) = '-'
+        AND substr(signal_job_id, 19, 1) = '-'
+        AND substr(signal_job_id, 24, 1) = '-'
+        AND replace(signal_job_id, '-', '') NOT GLOB '*[^a-f0-9]*'
+      ),
+      contradicting_signal_id      TEXT NOT NULL,
+      contradicting_signal_revision INTEGER NOT NULL CHECK(
+        contradicting_signal_revision > 0
+      ),
+      contradicting_signal_job_id  TEXT NOT NULL CHECK(
+        length(contradicting_signal_job_id) = 36
+        AND substr(contradicting_signal_job_id, 9, 1) = '-'
+        AND substr(contradicting_signal_job_id, 14, 1) = '-'
+        AND substr(contradicting_signal_job_id, 19, 1) = '-'
+        AND substr(contradicting_signal_job_id, 24, 1) = '-'
+        AND replace(contradicting_signal_job_id, '-', '') NOT GLOB '*[^a-f0-9]*'
+      ),
+      recorded_at                  TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, contradiction_id),
+      UNIQUE (
+        tenant_id,
+        signal_id,
+        signal_revision,
+        contradicting_signal_id,
+        contradicting_signal_revision
+      ),
+      FOREIGN KEY (tenant_id, signal_id, signal_revision)
+        REFERENCES tailoring_feedback_signal_reviews(tenant_id, signal_id, revision)
+        ON DELETE RESTRICT,
+      FOREIGN KEY (
+        tenant_id,
+        contradicting_signal_id,
+        contradicting_signal_revision
+      ) REFERENCES tailoring_feedback_signal_reviews(tenant_id, signal_id, revision)
+        ON DELETE RESTRICT,
+      CHECK (
+        signal_id < contradicting_signal_id
+        OR (
+          signal_id = contradicting_signal_id
+          AND signal_revision < contradicting_signal_revision
+        )
+      )
+    );
+CREATE TRIGGER prevent_tailoring_feedback_signal_contradiction_update
+BEFORE UPDATE ON tailoring_feedback_signal_contradictions
+BEGIN
+  SELECT RAISE(ABORT, 'tailoring feedback contradictions are append-only');
+END;
+CREATE TRIGGER prevent_tailoring_feedback_signal_contradiction_delete
+BEFORE DELETE ON tailoring_feedback_signal_contradictions
+BEGIN
+  SELECT RAISE(ABORT, 'tailoring feedback contradictions are append-only');
+END;
 CREATE TABLE tailoring_feedback_signals (
       tenant_id         TEXT NOT NULL DEFAULT 'local',
       signal_id         TEXT NOT NULL,
@@ -2461,6 +2522,18 @@ CREATE INDEX idx_tailoring_feedback_signal_reviews_signal
       ON tailoring_feedback_signal_reviews(tenant_id, signal_id, revision DESC);
 CREATE INDEX idx_tailoring_feedback_signal_reviews_decision
       ON tailoring_feedback_signal_reviews(tenant_id, decision, reviewed_at DESC);
+CREATE INDEX idx_tailoring_feedback_signal_contradictions_signal
+      ON tailoring_feedback_signal_contradictions(
+        tenant_id,
+        signal_id,
+        signal_revision
+      );
+CREATE INDEX idx_tailoring_feedback_signal_contradictions_other
+      ON tailoring_feedback_signal_contradictions(
+        tenant_id,
+        contradicting_signal_id,
+        contradicting_signal_revision
+      );
 CREATE INDEX idx_learning_recommendations_tenant_derived
       ON learning_recommendations(tenant_id, derived_at DESC, recommendation_id);
 CREATE INDEX idx_learning_recommendation_evidence_signal
