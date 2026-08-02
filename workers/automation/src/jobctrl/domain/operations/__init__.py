@@ -28,6 +28,14 @@ from jobctrl.domain.operations.evidence_map import (
     EvidenceReusableStory,
     EvidenceUsageRef,
 )
+from jobctrl.domain.operations.feedback import (
+    DiscoveryFeedbackKind,
+    DiscoveryFeedbackSignal,
+    FeedbackSignal,
+    RoleMatchApprovalFeedbackSignal,
+    ScoreCorrectionDirection,
+    ScoreCorrectionFeedbackSignal,
+)
 
 __all__ = [
     "ApplyRunProjection",
@@ -39,7 +47,13 @@ __all__ = [
     "EvidenceMapEntry",
     "EvidenceReusableStory",
     "EvidenceUsageRef",
+    "DiscoveryFeedbackKind",
+    "DiscoveryFeedbackSignal",
+    "FeedbackSignal",
     "JobDetailProjection",
     "JobListProjection",
+    "RoleMatchApprovalFeedbackSignal",
+    "ScoreCorrectionDirection",
+    "ScoreCorrectionFeedbackSignal",
     "StageProjection",
 ]

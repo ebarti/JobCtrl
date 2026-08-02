@@ -545,6 +545,48 @@ describe("local TypeScript API", () => {
       decisionReason: "Confirmed low-signal test-management title.",
     });
 
+    const approvedSnapshot = decision.json().suggestion;
+    const refreshedDb = new Database(options.dbPath);
+    const secondJobKey = "https://example.com/jobs/test-engineering-second";
+    insertJob(refreshedDb, {
+      url: secondJobKey,
+      title: "Manager, Test Engineering",
+      site: "Example Systems",
+      fitScore: 1,
+    });
+    insertScore(refreshedDb, secondJobKey, 1, 1);
+    refreshedDb.close();
+
+    const refreshed = await app.inject({
+      method: "GET",
+      url: "/v1/discovery/role-match-feedback",
+    });
+    expect(refreshed.statusCode, refreshed.body).toBe(200);
+    expect(refreshed.json().suggestions).toContainEqual(approvedSnapshot);
+
+    const repeatedApproval = await app.inject({
+      method: "POST",
+      url: `/v1/discovery/role-match-feedback/${encodeURIComponent(suggestionId)}/decision`,
+      payload: {
+        decision: "approve",
+        reason: "A repeated request must not rewrite reviewed history.",
+      },
+      headers: { origin: "http://localhost:5173" },
+    });
+    expect(repeatedApproval.statusCode, repeatedApproval.body).toBe(200);
+    expect(repeatedApproval.json().suggestion).toEqual(approvedSnapshot);
+
+    const conflictingDecision = await app.inject({
+      method: "POST",
+      url: `/v1/discovery/role-match-feedback/${encodeURIComponent(suggestionId)}/decision`,
+      payload: { decision: "decline" },
+      headers: { origin: "http://localhost:5173" },
+    });
+    expect(conflictingDecision.statusCode, conflictingDecision.body).toBe(409);
+    expect(conflictingDecision.json()).toMatchObject({
+      error: "role_match_feedback_decision_conflict",
+    });
+
     await app.close();
   });
 

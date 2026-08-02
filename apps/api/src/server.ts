@@ -169,6 +169,7 @@ import {
   promoteSourceLocatorCandidate,
   recordDiscoveryFeedback,
   rejectSourceLocatorCandidate,
+  RoleMatchFeedbackDecisionConflictError,
   seedExtensionManualCapture,
   upsertSourceRegistryEntry,
   writeDiscoverySettings,
@@ -3958,6 +3959,14 @@ async function withWritableDb<T>(
     if (error instanceof ResumeTemplateInputError) {
       void reply.code(400);
       return { ok: false, error: "invalid_resume_template", message: error.message };
+    }
+    if (error instanceof RoleMatchFeedbackDecisionConflictError) {
+      void reply.code(409);
+      return {
+        ok: false,
+        error: "role_match_feedback_decision_conflict",
+        message: error.message,
+      };
     }
     if (error instanceof InputError) {
       if (APPLY_REVIEW_PRECONDITION_ERRORS.has(error.message)) {
