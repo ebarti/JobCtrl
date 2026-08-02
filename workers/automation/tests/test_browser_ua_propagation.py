@@ -22,6 +22,8 @@ import pytest
 
 from jobctrl.database import close_connection, init_db
 from jobctrl.discovery import smartextract
+from jobctrl.domain.identifiers import generate_job_id
+from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.domain.discovery.source_registry import (
     ENRICHMENT_CRAWL_POLICY,
     SMART_EXTRACT_EXPERIMENTAL_POLICY,
@@ -278,12 +280,35 @@ def test_enrichment_batch_context_uses_owner_overridden_ua(
     url = "https://example.test/jobs/1"
     try:
         conn.execute(
-            "INSERT INTO jobs (url, title, site, discovered_at) VALUES (?, ?, ?, ?)",
-            (url, "Engineer", "RemoteOK", "2026-01-01T00:00:00+00:00"),
+            """
+            INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(LOCAL_TENANT),
+                str(generate_job_id()),
+                url,
+                "Engineer",
+                "RemoteOK",
+                "2026-01-01T00:00:00+00:00",
+            ),
+        )
+        job_id = conn.execute(
+            "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+            (str(LOCAL_TENANT), url),
+        ).fetchone()[0]
+        conn.execute(
+            """
+            INSERT INTO job_locators (
+                tenant_id, job_id, locator_kind, locator_value, is_current,
+                first_seen_at, last_seen_at, retired_at
+            ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?, NULL)
+            """,
+            (str(LOCAL_TENANT), job_id, url, "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
         )
         conn.commit()
 
-        detail.scrape_site_batch(conn, "RemoteOK", [(url, "Role")], gateway=gateway)
+        detail.scrape_site_batch(conn, "RemoteOK", [(job_id, "Role")], gateway=gateway)
 
         expected = _expected_ua()
         assert gateway.user_agent == expected

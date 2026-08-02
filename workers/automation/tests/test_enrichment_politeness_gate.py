@@ -23,6 +23,8 @@ from typing import Iterator
 import pytest
 
 from jobctrl.database import close_connection, init_db
+from jobctrl.domain.identifiers import JobId, generate_job_id
+from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.enrichment import detail
 from jobctrl.enrichment.detail import scrape_detail_page, scrape_site_batch
 from jobctrl.infrastructure.network import (
@@ -51,33 +53,65 @@ def _allow_test_url_safety(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _seed_pending(conn: sqlite3.Connection, url: str, site: str = "RemoteOK") -> None:
+    job_id = generate_job_id()
     conn.execute(
-        "INSERT INTO jobs (url, title, site, discovered_at) VALUES (?, ?, ?, ?)",
-        (url, "Engineer", site, "2026-01-01T00:00:00+00:00"),
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (str(LOCAL_TENANT), str(job_id), url, "Engineer", site, "2026-01-01T00:00:00+00:00"),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_locators (
+            tenant_id, job_id, locator_kind, locator_value, is_current,
+            first_seen_at, last_seen_at, retired_at
+        ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?, NULL)
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
+            url,
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-01T00:00:00+00:00",
+        ),
     )
     conn.commit()
+
+
+def _job_id(conn: sqlite3.Connection, url: str) -> JobId:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+        (str(LOCAL_TENANT), url),
+    ).fetchone()
+    assert row is not None
+    return JobId(str(row["job_id"]))
 
 
 def _enrich_stage(conn: sqlite3.Connection, url: str) -> sqlite3.Row:
     conn.row_factory = sqlite3.Row
     return conn.execute(
-        "SELECT state, error_code, next_action FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
-        (url,),
+        "SELECT state, error_code, next_action FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'",
+        (_job_id(conn, url),),
     ).fetchone()
 
 
 def _blocked_metric(conn: sqlite3.Connection, url: str) -> sqlite3.Row | None:
     conn.row_factory = sqlite3.Row
+    source = conn.execute("SELECT site FROM jobs WHERE url = ?", (url,)).fetchone()
+    assert source is not None
     return conn.execute(
         "SELECT outcome, failure_category, is_scrape_failure, is_operational_failure, stage, source_id "
-        "FROM operational_attempt_metrics WHERE job_url = ? AND outcome = 'blocked'",
-        (url,),
+        "FROM operational_attempt_metrics "
+        "WHERE stage = 'enrich' AND source_id = ? AND outcome = 'blocked' "
+        "ORDER BY metric_id DESC LIMIT 1",
+        (source[0],),
     ).fetchone()
 
 
 def _enrichment_status(conn: sqlite3.Connection, url: str) -> str | None:
     row = conn.execute(
-        "SELECT current_status FROM job_enrichments WHERE job_url = ?", (url,)
+        "SELECT current_status FROM job_enrichments WHERE job_id = ?", (_job_id(conn, url),)
     ).fetchone()
     return None if row is None else row[0]
 
@@ -256,7 +290,7 @@ def test_robots_disallowed_job_never_navigates_and_folds_blocked(
                 robots=RobotsCache(opener=public_loopback_opener()),
                 rate_limiter=no_sleep_limiter(),
             )
-            stats = scrape_site_batch(conn, "RemoteOK", [(url, "Role")], gateway=gateway)
+            stats = scrape_site_batch(conn, "RemoteOK", [(_job_id(conn, url), "Role")], gateway=gateway)
 
             # The invariant: a disallowed page is NEVER navigated.
             assert spy.goto_calls == []
@@ -277,8 +311,8 @@ def test_robots_disallowed_job_never_navigates_and_folds_blocked(
             assert metric["stage"] == "enrich"
 
             event = conn.execute(
-                "SELECT event_type, level FROM job_events WHERE job_url = ? AND event_type = 'StageBlocked'",
-                (url,),
+                "SELECT event_type, level FROM job_events WHERE job_id = ? AND event_type = 'StageBlocked'",
+                (_job_id(conn, url),),
             ).fetchone()
             assert event is not None
 
@@ -310,7 +344,7 @@ def test_budget_exhausted_defers_job_without_navigation(
         assert exhausted.try_consume(1) is True  # drain to zero
 
         stats = scrape_site_batch(
-            conn, "RemoteOK", [(url, "Role")], gateway=offline_gateway(), run_budget=exhausted
+            conn, "RemoteOK", [(_job_id(conn, url), "Role")], gateway=offline_gateway(), run_budget=exhausted
         )
 
         assert spy.goto_calls == []
@@ -341,7 +375,7 @@ def test_run_budget_decrements_per_navigation_and_stops_batch(
         stats = scrape_site_batch(
             conn,
             "RemoteOK",
-            [(u, "Role") for u in urls],
+            [(_job_id(conn, u), "Role") for u in urls],
             gateway=offline_gateway(),
             run_budget=budget,
         )
@@ -424,7 +458,7 @@ def test_authenticated_linkedin_session_skips_robots_but_keeps_budget(
         stats = scrape_site_batch(
             conn,
             "linkedin",
-            [(url, "Role")],
+            [(_job_id(conn, url), "Role")],
             gateway=offline_gateway(robots=DenyAllRobots()),
         )
 
@@ -458,7 +492,7 @@ def test_non_linkedin_url_with_linkedin_substring_uses_anonymous_context(
         monkeypatch.setattr(detail, "LinkedInApplyUrlResolver", _resolver_factory)
         monkeypatch.setattr(detail, "sync_playwright", lambda: anonymous_playwright)
 
-        stats = scrape_site_batch(conn, "linkedin", [(url, "Role")], gateway=offline_gateway())
+        stats = scrape_site_batch(conn, "linkedin", [(_job_id(conn, url), "Role")], gateway=offline_gateway())
 
         assert authenticated_constructed == []
         assert anonymous_playwright.goto_calls == [url]
@@ -493,7 +527,10 @@ def test_mixed_linkedin_batch_does_not_reuse_authenticated_page_for_other_hosts(
         stats = scrape_site_batch(
             conn,
             "linkedin",
-            [(linkedin_url, "LinkedIn role"), (non_linkedin_url, "Spoofed role")],
+            [
+                (_job_id(conn, linkedin_url), "LinkedIn role"),
+                (_job_id(conn, non_linkedin_url), "Spoofed role"),
+            ],
             gateway=offline_gateway(),
         )
 
@@ -628,7 +665,7 @@ def test_robots_blocked_job_re_enriches_after_robots_allows(
 
         # Run 1 — robots disallows: folded blocked, zero navigation, je pending.
         blocked = scrape_site_batch(
-            conn, "RemoteOK", [(url, "Role")], gateway=offline_gateway(robots=DenyAllRobots())
+            conn, "RemoteOK", [(_job_id(conn, url), "Role")], gateway=offline_gateway(robots=DenyAllRobots())
         )
         assert blocked["blocked"] == 1
         assert spy.goto_calls == []
@@ -638,7 +675,7 @@ def test_robots_blocked_job_re_enriches_after_robots_allows(
         # ``error == 0`` is the direct proof the Blocked->Running ValueError path
         # (which would have recorded ENRICH_INTERNAL_ERROR) never fired.
         allowed = scrape_site_batch(
-            conn, "RemoteOK", [(url, "Role")], gateway=offline_gateway(robots=AllowAllRobots())
+            conn, "RemoteOK", [(_job_id(conn, url), "Role")], gateway=offline_gateway(robots=AllowAllRobots())
         )
         assert allowed["processed"] == 1
         assert allowed["error"] == 0
@@ -652,9 +689,9 @@ def test_robots_blocked_job_re_enriches_after_robots_allows(
         # The unblock is auditable — exactly one StageReset event marks the
         # robots re-evaluation of the previously blocked job.
         reset_events = conn.execute(
-            "SELECT COUNT(*) FROM job_events WHERE job_url = ? AND stage = 'enrich' "
+            "SELECT COUNT(*) FROM job_events WHERE job_id = ? AND stage = 'enrich' "
             "AND event_type = 'StageReset'",
-            (url,),
+            (_job_id(conn, url),),
         ).fetchone()[0]
         assert reset_events == 1
     finally:
@@ -684,7 +721,7 @@ def test_repeatedly_robots_blocked_job_stays_blocked_never_failed(
             stats = scrape_site_batch(
                 conn,
                 "RemoteOK",
-                [(url, "Role")],
+                [(_job_id(conn, url), "Role")],
                 gateway=offline_gateway(robots=DenyAllRobots()),
             )
             assert stats["blocked"] == 1

@@ -19,7 +19,7 @@ from jobctrl.domain.enrichment import (
     FullDescription,
     JobEnrichment,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, generate_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.discovery.activities import (
     DiscoveryEnrichmentActivityInput,
@@ -50,12 +50,42 @@ def _execution(run_id: str, *, workflow_id: str = "discover-local") -> Discovery
 
 def _insert_job(conn: sqlite3.Connection, suffix: str) -> str:
     job_url = f"https://example.com/jobs/{suffix}"
+    job_id = generate_job_id()
     conn.execute(
-        "INSERT INTO jobs (url, title, discovered_at) VALUES (?, ?, ?)",
-        (job_url, f"Job {suffix}", "2026-07-14T08:00:00+00:00"),
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (str(LOCAL_TENANT), str(job_id), job_url, f"Job {suffix}", "2026-07-14T08:00:00+00:00"),
     )
     conn.commit()
     return job_url
+
+
+def _job_id(conn: sqlite3.Connection, job_url: str) -> JobId:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+        (str(LOCAL_TENANT), job_url),
+    ).fetchone()
+    assert row is not None
+    return JobId(str(row["job_id"]))
+
+
+def _set_score(conn: sqlite3.Connection, job_url: str, score: int) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_scores (
+            tenant_id, job_id, version, fit_score, breakdown_json, keywords_json,
+            scored_at, criteria_json, trace_json
+        ) VALUES (?, ?, 1, ?, '{}', '[]', ?, '{}', '{}')
+        """,
+        (
+            str(LOCAL_TENANT),
+            _job_id(conn, job_url),
+            score,
+            "2026-07-14T08:00:00+00:00",
+        ),
+    )
 
 
 def _mark_enriched(conn: sqlite3.Connection, job_url: str) -> None:
@@ -63,7 +93,7 @@ def _mark_enriched(conn: sqlite3.Connection, job_url: str) -> None:
     enrichment = (
         JobEnrichment.empty(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(job_url),
+            job_id=_job_id(conn, job_url),
             updated_at=timestamp,
         )
         .start_attempt(
@@ -98,7 +128,7 @@ def test_execution_ref_is_serializable_across_every_discovery_handoff() -> None:
     )
     preparation = JobPreparationInput(
         tenant_id=str(LOCAL_TENANT),
-        job_url="https://example.com/jobs/serialized",
+        job_id=generate_job_id(),
         steps=["score"],
         target_version="1",
         idempotency_key="preparation:serialized",
@@ -136,7 +166,7 @@ def test_source_observation_retry_links_once_without_rewriting_first_link(
 
     repository.attach_source_observation(
         LOCAL_TENANT,
-        JobId(job_url),
+        _job_id(conn, job_url),
         JobSourceObservation(
             source_observation_id="observation-1",
             source_id="jobspy:indeed",
@@ -148,7 +178,7 @@ def test_source_observation_retry_links_once_without_rewriting_first_link(
     )
     repository.attach_source_observation(
         LOCAL_TENANT,
-        JobId(job_url),
+        _job_id(conn, job_url),
         JobSourceObservation(
             source_observation_id="observation-2",
             source_id="jobspy:indeed",
@@ -159,7 +189,7 @@ def test_source_observation_retry_links_once_without_rewriting_first_link(
         ),
     )
 
-    lineage = SqliteDiscoveryExecutionRepository(conn).get(execution, job_url)
+    lineage = SqliteDiscoveryExecutionRepository(conn).get(execution, _job_id(conn, job_url))
     assert lineage is not None
     assert lineage.source_run_id == "source-run-original"
     assert lineage.linked_at == "2026-07-14T09:00:00+00:00"
@@ -168,8 +198,8 @@ def test_source_observation_retry_links_once_without_rewriting_first_link(
     # The source observation remains mutable metadata and is intentionally not
     # the authority for the immutable execution link above.
     source_row = conn.execute(
-        "SELECT run_id, observed_at FROM job_source_observations WHERE job_url = ?",
-        (job_url,),
+        "SELECT run_id, observed_at FROM job_source_observations WHERE job_id = ?",
+        (_job_id(conn, job_url),),
     ).fetchone()
     assert tuple(source_row) == ("source-run-retry", "2026-07-14T09:05:00+00:00")
 
@@ -184,7 +214,7 @@ def test_later_temporal_run_inserts_history_instead_of_reusing_membership(
 
     repository.link_job(
         first,
-        job_url,
+        _job_id(conn, job_url),
         cohort_kind="observed_this_run",
         source_family="workday",
         source_run_id="source-old",
@@ -192,15 +222,15 @@ def test_later_temporal_run_inserts_history_instead_of_reusing_membership(
     )
     repository.link_job(
         second,
-        job_url,
+        _job_id(conn, job_url),
         cohort_kind="observed_this_run",
         source_family="ats_api",
         source_run_id="source-new",
         linked_at="2026-07-14T09:00:00+00:00",
     )
 
-    first_membership = repository.get(first, job_url)
-    second_membership = repository.get(second, job_url)
+    first_membership = repository.get(first, _job_id(conn, job_url))
+    second_membership = repository.get(second, _job_id(conn, job_url))
     assert first_membership is not None
     assert second_membership is not None
     assert first_membership.source_run_id == "source-old"
@@ -217,20 +247,20 @@ def test_observed_promotion_wins_transactionally_without_double_count(
 
     repository.link_job(
         execution,
-        job_url,
+        _job_id(conn, job_url),
         cohort_kind="existing_backlog",
         linked_at="2026-07-14T08:55:00+00:00",
     )
     repository.set_work_plan(
         execution,
-        job_url,
+        _job_id(conn, job_url),
         state="planned",
         required_steps=["tailor", "cover", "pdf"],
         preparation_workflow_id="prep-backlog-job",
     )
     promoted = repository.link_job(
         execution,
-        job_url,
+        _job_id(conn, job_url),
         cohort_kind="observed_this_run",
         source_family="jobspy",
         source_run_id="source-current",
@@ -238,7 +268,7 @@ def test_observed_promotion_wins_transactionally_without_double_count(
     )
     attempted_reverse = repository.link_job(
         execution,
-        job_url,
+        _job_id(conn, job_url),
         cohort_kind="existing_backlog",
         linked_at="2026-07-14T09:10:00+00:00",
     )
@@ -260,23 +290,24 @@ def test_promoted_job_keeps_existing_plan_instead_of_starting_parallel_work(
     job_url = _insert_job(conn, "promoted-plan")
     execution = _execution("temporal-run-promoted-plan")
     repository = SqliteDiscoveryExecutionRepository(conn)
-    repository.link_job(execution, job_url, cohort_kind="existing_backlog")
+    repository.link_job(execution, _job_id(conn, job_url), cohort_kind="existing_backlog")
     repository.set_work_plan(
         execution,
-        job_url,
+        _job_id(conn, job_url),
         state="planned",
         required_steps=["tailor", "cover", "pdf"],
         preparation_workflow_id="prep-existing-plan",
     )
     repository.link_job(
         execution,
-        job_url,
+        _job_id(conn, job_url),
         cohort_kind="observed_this_run",
         source_family="jobspy",
         source_run_id="source-current",
     )
     replacement = preparation_pipeline.PreparationTarget(
-        job_url=job_url,
+        tenant_id=LOCAL_TENANT,
+        job_id=_job_id(conn, job_url),
         idempotency_key="replacement-plan",
         target_version="4",
         steps=["score", "tailor", "cover", "pdf"],
@@ -300,7 +331,7 @@ def test_promoted_job_keeps_existing_plan_instead_of_starting_parallel_work(
         discovery_execution=execution,
     )
 
-    membership = repository.get(execution, job_url)
+    membership = repository.get(execution, _job_id(conn, job_url))
     assert membership is not None
     assert membership.cohort_kind == "observed_this_run"
     assert membership.preparation_workflow_id == "prep-existing-plan"
@@ -318,11 +349,11 @@ def test_pre_run_selection_can_form_an_existing_backlog_only_cohort(
     second_url = _insert_job(conn, "backlog-b")
 
     for job_url in (first_url, second_url):
-        repository.link_job(execution, job_url, cohort_kind="existing_backlog")
+        repository.link_job(execution, _job_id(conn, job_url), cohort_kind="existing_backlog")
 
     memberships = repository.list_for_execution(execution)
-    assert [membership.job_url for membership in memberships] == sorted(
-        [first_url, second_url]
+    assert [str(membership.job_id) for membership in memberships] == sorted(
+        [str(_job_id(conn, first_url)), str(_job_id(conn, second_url))]
     )
     assert {membership.cohort_kind for membership in memberships} == {"existing_backlog"}
 
@@ -334,7 +365,8 @@ def test_pre_run_fanout_links_selected_target_and_propagates_lineage(
     execution = _execution("temporal-run-pre-run-sweep")
     job_url = _insert_job(conn, "selected-backlog")
     target = preparation_pipeline.PreparationTarget(
-        job_url=job_url,
+        tenant_id=LOCAL_TENANT,
+        job_id=_job_id(conn, job_url),
         idempotency_key="preparation:selected-backlog",
         target_version="3",
         steps=["tailor", "cover", "pdf"],
@@ -359,7 +391,7 @@ def test_pre_run_fanout_links_selected_target_and_propagates_lineage(
         discovery_cohort_kind="existing_backlog",
     )
 
-    membership = SqliteDiscoveryExecutionRepository(conn).get(execution, job_url)
+    membership = SqliteDiscoveryExecutionRepository(conn).get(execution, _job_id(conn, job_url))
     assert membership is not None
     assert membership.cohort_kind == "existing_backlog"
     assert membership.work_plan_state == "planned"
@@ -377,12 +409,12 @@ def test_terminal_fanout_decides_every_unselected_observed_membership(
     repository = SqliteDiscoveryExecutionRepository(conn)
     below_threshold_url = _insert_job(conn, "below-threshold")
     unresolved_url = _insert_job(conn, "unresolved")
-    conn.execute("UPDATE jobs SET fit_score = 4 WHERE url = ?", (below_threshold_url,))
+    _set_score(conn, below_threshold_url, 4)
     conn.commit()
     for job_url in (below_threshold_url, unresolved_url):
         repository.link_job(
             execution,
-            job_url,
+            _job_id(conn, job_url),
             cohort_kind="observed_this_run",
             source_family="jobspy",
             source_run_id="source-terminal",
@@ -402,8 +434,8 @@ def test_terminal_fanout_decides_every_unselected_observed_membership(
         finalize_observed_work_plans=True,
     )
 
-    below_threshold = repository.get(execution, below_threshold_url)
-    unresolved = repository.get(execution, unresolved_url)
+    below_threshold = repository.get(execution, _job_id(conn, below_threshold_url))
+    unresolved = repository.get(execution, _job_id(conn, unresolved_url))
     assert below_threshold is not None
     assert below_threshold.work_plan_state == "not_eligible"
     assert below_threshold.work_plan_reason == "score_below_threshold"
@@ -425,23 +457,13 @@ def test_terminal_fanout_honors_deleted_job_tombstone_when_table_exists(
     repository = SqliteDiscoveryExecutionRepository(conn)
     job_url = _insert_job(conn, "deleted")
     conn.execute(
-        """
-        CREATE TABLE jobctrl_deleted_jobs (
-            job_url TEXT PRIMARY KEY,
-            deleted_at TEXT NOT NULL,
-            reason TEXT,
-            restored_at TEXT
-        )
-        """
-    )
-    conn.execute(
-        "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at) VALUES (?, ?)",
-        (job_url, "2026-07-14T09:00:00+00:00"),
+        "INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at) VALUES (?, ?, ?)",
+        (str(LOCAL_TENANT), _job_id(conn, job_url), "2026-07-14T09:00:00+00:00"),
     )
     conn.commit()
     repository.link_job(
         execution,
-        job_url,
+        _job_id(conn, job_url),
         cohort_kind="observed_this_run",
         source_family="jobspy",
         source_run_id="source-terminal",
@@ -460,7 +482,7 @@ def test_terminal_fanout_honors_deleted_job_tombstone_when_table_exists(
         finalize_observed_work_plans=True,
     )
 
-    membership = repository.get(execution, job_url)
+    membership = repository.get(execution, _job_id(conn, job_url))
     assert membership is not None
     assert membership.work_plan_state == "not_eligible"
     assert membership.work_plan_reason == "job_not_actionable"
@@ -478,13 +500,13 @@ def test_terminal_fanout_keeps_unobserved_pending_score_in_existing_backlog(
     ineligible_url = _insert_job(conn, "observed-ineligible")
     _mark_enriched(conn, observed_url)
     _mark_enriched(conn, backlog_url)
-    conn.execute("UPDATE jobs SET fit_score = 4 WHERE url = ?", (ineligible_url,))
+    _set_score(conn, ineligible_url, 4)
     conn.commit()
 
     for job_url in (observed_url, ineligible_url):
         repository.link_job(
             execution,
-            job_url,
+            _job_id(conn, job_url),
             cohort_kind="observed_this_run",
             source_family="jobspy",
             source_run_id="source-current",
@@ -506,23 +528,23 @@ def test_terminal_fanout_keeps_unobserved_pending_score_in_existing_backlog(
     )
 
     memberships = {
-        membership.job_url: membership
+        str(membership.job_id): membership
         for membership in repository.list_for_execution(execution)
     }
     assert result["started"] == {"job_preparation": 2}
-    assert memberships[observed_url].cohort_kind == "observed_this_run"
-    assert memberships[observed_url].work_plan_state == "planned"
-    assert memberships[backlog_url].cohort_kind == "existing_backlog"
-    assert memberships[backlog_url].source_family is None
-    assert memberships[backlog_url].source_run_id is None
-    assert memberships[backlog_url].work_plan_state == "planned"
-    assert memberships[ineligible_url].work_plan_state == "not_eligible"
-    assert memberships[ineligible_url].work_plan_reason == "score_below_threshold"
+    assert memberships[str(_job_id(conn, observed_url))].cohort_kind == "observed_this_run"
+    assert memberships[str(_job_id(conn, observed_url))].work_plan_state == "planned"
+    assert memberships[str(_job_id(conn, backlog_url))].cohort_kind == "existing_backlog"
+    assert memberships[str(_job_id(conn, backlog_url))].source_family is None
+    assert memberships[str(_job_id(conn, backlog_url))].source_run_id is None
+    assert memberships[str(_job_id(conn, backlog_url))].work_plan_state == "planned"
+    assert memberships[str(_job_id(conn, ineligible_url))].work_plan_state == "not_eligible"
+    assert memberships[str(_job_id(conn, ineligible_url))].work_plan_reason == "score_below_threshold"
     assert {
-        payload.job_url: payload.discovery_cohort_kind for payload in started_inputs
+        str(payload.job_id): payload.discovery_cohort_kind for payload in started_inputs
     } == {
-        observed_url: "observed_this_run",
-        backlog_url: "existing_backlog",
+        str(_job_id(conn, observed_url)): "observed_this_run",
+        str(_job_id(conn, backlog_url)): "existing_backlog",
     }
     assert all(
         membership.work_plan_state != "failed"
@@ -539,7 +561,7 @@ def test_derivation_failure_marks_pending_observed_membership_failed(
     repository = SqliteDiscoveryExecutionRepository(conn)
     repository.link_job(
         execution,
-        job_url,
+        _job_id(conn, job_url),
         cohort_kind="observed_this_run",
         source_family="ats_api",
         source_run_id="source-failure",
@@ -561,7 +583,7 @@ def test_derivation_failure_marks_pending_observed_membership_failed(
             discovery_execution=execution,
         )
 
-    membership = repository.get(execution, job_url)
+    membership = repository.get(execution, _job_id(conn, job_url))
     assert membership is not None
     assert membership.work_plan_state == "failed"
     assert membership.work_plan_reason == "target_derivation_failed"
@@ -577,13 +599,14 @@ def test_planning_failure_marks_pending_observed_membership_failed(
     repository = SqliteDiscoveryExecutionRepository(conn)
     repository.link_job(
         execution,
-        job_url,
+        _job_id(conn, job_url),
         cohort_kind="observed_this_run",
         source_family="workday",
         source_run_id="source-planning-failure",
     )
     target = preparation_pipeline.PreparationTarget(
-        job_url=job_url,
+        tenant_id=LOCAL_TENANT,
+        job_id=_job_id(conn, job_url),
         idempotency_key="preparation:planning-failure",
         target_version="2",
         steps=["score", "tailor", "cover", "pdf"],
@@ -610,7 +633,7 @@ def test_planning_failure_marks_pending_observed_membership_failed(
             discovery_execution=execution,
         )
 
-    membership = repository.get(execution, job_url)
+    membership = repository.get(execution, _job_id(conn, job_url))
     assert membership is not None
     assert membership.work_plan_state == "failed"
     assert membership.work_plan_reason == "work_plan_persistence_failed"
@@ -627,7 +650,7 @@ def test_pending_and_failed_work_plans_are_never_reported_as_no_work(
 
     pending = repository.link_job(
         execution,
-        failed_url,
+        _job_id(conn, failed_url),
         cohort_kind="observed_this_run",
         source_family="ats_api",
         source_run_id="source-plan",
@@ -638,7 +661,7 @@ def test_pending_and_failed_work_plans_are_never_reported_as_no_work(
 
     failed = repository.set_work_plan(
         execution,
-        failed_url,
+        _job_id(conn, failed_url),
         state="failed",
         reason="target_derivation_failed",
     )
@@ -648,14 +671,14 @@ def test_pending_and_failed_work_plans_are_never_reported_as_no_work(
 
     planned = repository.set_work_plan(
         execution,
-        failed_url,
+        _job_id(conn, failed_url),
         state="planned",
         required_steps=["pdf", "score", "tailor", "cover", "score"],
         preparation_workflow_id="prep-recovered-plan",
     )
     retried = repository.set_work_plan(
         execution,
-        failed_url,
+        _job_id(conn, failed_url),
         state="planned",
         required_steps=["score", "tailor", "cover", "pdf"],
         preparation_workflow_id="prep-recovered-plan",
@@ -666,14 +689,14 @@ def test_pending_and_failed_work_plans_are_never_reported_as_no_work(
 
     repository.link_job(
         execution,
-        excluded_url,
+        _job_id(conn, excluded_url),
         cohort_kind="observed_this_run",
         source_family="workday",
         source_run_id="source-plan",
     )
     excluded = repository.set_work_plan(
         execution,
-        excluded_url,
+        _job_id(conn, excluded_url),
         state="not_eligible",
         reason="no_preparation_required",
     )

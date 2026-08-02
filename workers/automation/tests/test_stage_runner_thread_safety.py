@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from jobctrl.database import get_connection, init_db
+from jobctrl.domain.identifiers import generate_job_id
 from jobctrl.infrastructure.materials import SqliteMaterialsRepository
 from jobctrl.infrastructure.profile import factory as profile_factory
 from jobctrl.state import set_stage_state, ensure_job_stage_rows
@@ -110,26 +111,26 @@ def test_failed_to_running_transition_skips_validation(
     bypass so a reverted runner doesn't silently start crashing in
     production."""
 
-    url = "https://example.com/job/1"
-    ensure_job_stage_rows(db, url, discovered_at="2026-01-01T00:00:00+00:00")
+    job_id = generate_job_id()
+    ensure_job_stage_rows(db, job_id, discovered_at="2026-01-01T00:00:00+00:00")
     # Seed the row in 'failed' state via the validation bypass — the
     # canonical state machine doesn't permit pending -> failed directly,
     # but for this test we just need the row to BE in failed state to
     # exercise the fix.
     set_stage_state(
-        db, url, "tailor", "failed",
+        db, job_id, "tailor", "failed",
         error_message="prior run died",
         validate_transition=False,
     )
 
     # Strict path: Failed -> Running must be rejected by the canonical table.
     with pytest.raises(ValueError, match="Invalid state transition"):
-        set_stage_state(db, url, "tailor", "running")
+        set_stage_state(db, job_id, "tailor", "running")
 
     # Bypass path: runners pass validate_transition=False and survive.
-    set_stage_state(db, url, "tailor", "running", validate_transition=False)
+    set_stage_state(db, job_id, "tailor", "running", validate_transition=False)
     row = db.execute(
-        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
-        (url, "tailor"),
+        "SELECT state FROM job_stage_states WHERE job_id = ? AND stage = ?",
+        (job_id, "tailor"),
     ).fetchone()
     assert row["state"] == "running"

@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 from jobstreaming import CheckpointConflictError, SearchCheckpoint, build_search_request
 
-from jobctrl.database import SCHEMA_VERSION, close_connection, init_db
+from jobctrl.database import SchemaMigrationRequiredError, close_connection, init_db
 from jobctrl.domain.discovery import (
     AtsKind,
     CanonicalJobIdentity,
@@ -19,7 +19,7 @@ from jobctrl.domain.discovery import (
 )
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.search_units import DiscoverySearchSpec
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, generate_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.discovery.jobspy import store_jobspy_results
 from jobctrl.infrastructure.compensation import SqlitePostedCompensationRepository
@@ -38,6 +38,15 @@ def _execution() -> DiscoveryExecutionRef:
         workflow_id="discover-local",
         temporal_run_id="temporal-run-1",
     )
+
+
+def _job_id_for_url(conn, job_url: str) -> JobId:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+        (str(LOCAL_TENANT), job_url),
+    ).fetchone()
+    assert row is not None
+    return JobId(str(row["job_id"]))
 
 
 def _spec(*, query: str = "Director of Engineering") -> DiscoverySearchSpec:
@@ -250,7 +259,7 @@ def test_unacknowledged_cursor_reset_intent_does_not_clear_on_reclaim(
     assert repository.checkpoint_store(next_attempt).load() is None
 
 
-def test_v4_search_unit_tables_migrate_consumption_ordering(
+def test_v4_search_unit_tables_require_an_explicit_v7_upgrade(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "v4-jobctrl.db"
@@ -266,29 +275,8 @@ def test_v4_search_unit_tables_migrate_consumption_ordering(
     conn.commit()
     close_connection(db_path)
 
-    migrated = init_db(db_path)
-    try:
-        columns = {
-            str(row[1])
-            for row in migrated.execute(
-                "PRAGMA table_info(discovery_search_units)"
-            ).fetchall()
-        }
-        assert "reset_checkpoint_after_revision" in columns
-        assert migrated.execute(
-            """
-            SELECT COUNT(*)
-              FROM sqlite_master
-             WHERE type = 'table'
-               AND name = 'discovery_search_unit_filtered_events'
-            """
-        ).fetchone()[0] == 1
-        # ``user_version`` guards the complete database shape, so reopening a
-        # v4 fixture must advance to the current schema rather than pinning
-        # this search-unit migration to its historical v5 release.
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-    finally:
-        close_connection(db_path)
+    with pytest.raises(SchemaMigrationRequiredError, match="exact schema v7"):
+        init_db(db_path)
 
 
 def test_execution_attempt_watermark_fences_old_owner_from_pending_unit(
@@ -400,7 +388,7 @@ def test_job_write_and_new_receipt_share_the_fenced_repository_path(search_db) -
     discovered_at = "2026-07-17T10:00:00+00:00"
     job = Job.discover(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId("https://example.test/jobs/1"),
+        job_id=generate_job_id(),
         posting_url=PostingUrl(value="https://example.test/jobs/1"),
         source=Source(board="indeed"),
         employer=Employer.unknown(),
@@ -437,7 +425,7 @@ def test_job_write_and_new_receipt_share_the_fenced_repository_path(search_db) -
     )
     stale_job = Job.discover(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId("https://example.test/jobs/stale"),
+        job_id=generate_job_id(),
         posting_url=PostingUrl(value="https://example.test/jobs/stale"),
         source=Source(board="indeed"),
         employer=Employer.unknown(),
@@ -514,10 +502,10 @@ def test_jobspy_storage_records_new_receipt_once_across_replay(search_db) -> Non
             """
             SELECT event_type, COUNT(*)
               FROM job_events
-             WHERE job_url = ?
+             WHERE job_id = ?
              GROUP BY event_type
             """,
-            ("https://example.test/jobs/jobstreaming-1",),
+            (_job_id_for_url(search_db, "https://example.test/jobs/jobstreaming-1"),),
         ).fetchall()
     }
     replay = store_jobspy_results(
@@ -538,10 +526,10 @@ def test_jobspy_storage_records_new_receipt_once_across_replay(search_db) -> Non
             """
             SELECT event_type, COUNT(*)
               FROM job_events
-             WHERE job_url = ?
+             WHERE job_id = ?
              GROUP BY event_type
             """,
-            ("https://example.test/jobs/jobstreaming-1",),
+            (_job_id_for_url(search_db, "https://example.test/jobs/jobstreaming-1"),),
         ).fetchall()
     }
     assert replay_events == first_events
@@ -550,10 +538,10 @@ def test_jobspy_storage_records_new_receipt_once_across_replay(search_db) -> Non
         """
         SELECT COUNT(*)
           FROM job_events
-         WHERE job_url = ?
+         WHERE job_id = ?
            AND idempotency_key LIKE 'jobstreaming:%'
         """,
-        ("https://example.test/jobs/jobstreaming-1",),
+        (_job_id_for_url(search_db, "https://example.test/jobs/jobstreaming-1"),),
     ).fetchone()[0] == sum(first_events.values())
     assert search_units.execution_counts(execution) == {
         "accepted": 1,
@@ -630,8 +618,11 @@ def test_mid_event_supersession_is_fenced_and_retry_repairs_audit_rows(
     )
     assert (
         search_db.execute(
-            "SELECT COUNT(*) FROM job_canonical_identities WHERE job_url = ?",
-            ("https://example.test/jobs/mid-event",),
+            """
+            SELECT COUNT(*) FROM job_canonical_identities
+            WHERE job_id = (SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?)
+            """,
+            (str(LOCAL_TENANT), "https://example.test/jobs/mid-event"),
         ).fetchone()[0]
         == 1
     )
@@ -670,22 +661,31 @@ def test_mid_event_supersession_is_fenced_and_retry_repairs_audit_rows(
     assert resumed == (0, 1)
     assert (
         search_db.execute(
-            "SELECT COUNT(*) FROM job_canonical_identities WHERE job_url = ?",
-            ("https://example.test/jobs/mid-event",),
+            """
+            SELECT COUNT(*) FROM job_canonical_identities
+            WHERE job_id = (SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?)
+            """,
+            (str(LOCAL_TENANT), "https://example.test/jobs/mid-event"),
         ).fetchone()[0]
         == 1
     )
     assert (
         search_db.execute(
-            "SELECT COUNT(*) FROM job_source_observations WHERE job_url = ?",
-            ("https://example.test/jobs/mid-event",),
+            """
+            SELECT COUNT(*) FROM job_source_observations
+            WHERE job_id = (SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?)
+            """,
+            (str(LOCAL_TENANT), "https://example.test/jobs/mid-event"),
         ).fetchone()[0]
         == 1
     )
     assert (
         search_db.execute(
-            "SELECT COUNT(*) FROM job_events WHERE job_url = ?",
-            ("https://example.test/jobs/mid-event",),
+            """
+            SELECT COUNT(*) FROM job_events
+            WHERE job_id = (SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?)
+            """,
+            (str(LOCAL_TENANT), "https://example.test/jobs/mid-event"),
         ).fetchone()[0]
         == 4
     )
@@ -698,13 +698,14 @@ def test_mid_event_supersession_is_fenced_and_retry_repairs_audit_rows(
 
 def test_compensation_event_rechecks_fence_after_fact_commit(search_db) -> None:
     job_url = "https://example.test/jobs/compensation-fence"
+    job_id = generate_job_id()
     search_db.execute(
         """
-        INSERT INTO jobs (url, title, salary, description, location, site, strategy)
-        VALUES (?, 'Director of Engineering', 'EUR 150000/year',
+        INSERT INTO jobs (tenant_id, job_id, url, title, salary, description, location, site, strategy)
+        VALUES (?, ?, ?, 'Director of Engineering', 'EUR 150000/year',
                 'Lead engineering.', 'Barcelona, Spain', 'indeed', 'jobspy')
         """,
-        (job_url,),
+        (str(LOCAL_TENANT), str(job_id), job_url),
     )
     search_db.commit()
     search_units = SqliteDiscoverySearchUnitRepository(search_db)
@@ -723,7 +724,7 @@ def test_compensation_event_rechecks_fence_after_fact_commit(search_db) -> None:
 
     with pytest.raises(StaleDiscoverySearchUnitLease):
         compensation.parse_and_save_job_salary(
-            job_url,
+            job_id,
             "EUR 150000/year",
             parsed_at="2026-07-17T10:00:00+00:00",
             event_idempotency_key="jobstreaming:test:CompensationFactsUpdated",
@@ -732,22 +733,22 @@ def test_compensation_event_rechecks_fence_after_fact_commit(search_db) -> None:
 
     assert (
         search_db.execute(
-            "SELECT COUNT(*) FROM job_posted_compensation_facts WHERE job_url = ?",
-            (job_url,),
+            "SELECT COUNT(*) FROM job_posted_compensation_facts WHERE tenant_id = ? AND job_id = ?",
+            (str(LOCAL_TENANT), job_id),
         ).fetchone()[0]
         == 1
     )
     assert (
         search_db.execute(
-            "SELECT COUNT(*) FROM job_events WHERE job_url = ?",
-            (job_url,),
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ?",
+            (str(LOCAL_TENANT), job_id),
         ).fetchone()[0]
         == 0
     )
     assert reclaimed
 
     compensation.parse_and_save_job_salary(
-        job_url,
+        job_id,
         "EUR 150000/year",
         parsed_at="2026-07-17T10:01:00+00:00",
         event_idempotency_key="jobstreaming:test:CompensationFactsUpdated",
@@ -755,8 +756,8 @@ def test_compensation_event_rechecks_fence_after_fact_commit(search_db) -> None:
     )
     assert (
         search_db.execute(
-            "SELECT COUNT(*) FROM job_events WHERE job_url = ?",
-            (job_url,),
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ?",
+            (str(LOCAL_TENANT), job_id),
         ).fetchone()[0]
         == 1
     )
