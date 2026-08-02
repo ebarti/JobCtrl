@@ -75,7 +75,7 @@ def _thread() -> OutreachThread:
         tenant_id=LOCAL_TENANT,
         thread_id="thread-1",
         contact_id="contact-1",
-        job_id="https://job/1",
+        job_id="00000000-0000-4000-8000-000000000001",
         created_at="2026-07-06T00:00:00Z",
     )
 
