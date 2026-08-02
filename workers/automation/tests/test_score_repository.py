@@ -34,6 +34,7 @@ from jobctrl.infrastructure.scoring import (
     SqliteScoreStalenessRepository,
     SqliteScoringPolicyRepository,
 )
+from jobctrl.infrastructure.scoring.keyword_normalization import canonicalize_keywords
 from jobctrl.infrastructure.scoring.sqlite_repository import ScoreVersionConflict
 
 
@@ -102,6 +103,7 @@ def _build_score(
     tenant_id: TenantId = LOCAL_TENANT,
     version: int = 1,
     fit: int = 7,
+    keywords: tuple[str, ...] = ("python", "fastapi"),
     trace: ScoreTrace | None = None,
     correction: ScoreCorrection | None = None,
 ) -> JobScore:
@@ -111,11 +113,25 @@ def _build_score(
         version=version,
         fit_score=FitScore.create(fit),
         breakdown=ScoreBreakdown(technical_fit=8, experience_fit=6, role_fit=7, reasoning="ok"),
-        matched_keywords=MatchedKeywords.from_iterable(["python", "fastapi"]),
+        matched_keywords=MatchedKeywords(values=keywords),
         scored_at=datetime.now(timezone.utc).isoformat(),
         trace=trace or ScoreTrace(),
         correction=correction,
     )
+
+
+def _score_keyword_rows(conn: sqlite3.Connection) -> list[tuple[object, ...]]:
+    return [
+        tuple(row)
+        for row in conn.execute(
+            """
+            SELECT tenant_id, job_id, score_version, normalized_keyword,
+                   display_keyword, position
+            FROM job_score_keywords
+            ORDER BY tenant_id, job_id, score_version, position
+            """
+        ).fetchall()
+    ]
 
 
 def _requirement_assessment(
@@ -243,6 +259,53 @@ def test_score_round_trip_uses_canonical_job_id_distinct_from_posting_url(
     assert tuple(row) == (str(LOCAL_TENANT), str(job_id))
 
 
+def test_canonicalize_score_keywords_preserves_first_display_and_positions() -> None:
+    assert canonicalize_keywords(
+        (
+            "  Python  ",
+            "\u3000Ｐｙｔｈｏｎ\t",
+            "Data   Science",
+            " data science ",
+            "\u00a0",
+            "\t",
+            "Straße",
+            "STRASSE",
+        )
+    ) == (
+        ("python", "Python", 0),
+        ("data science", "Data Science", 1),
+        ("strasse", "Straße", 2),
+    )
+
+
+def test_save_writes_complete_normalized_keyword_rows(conn: sqlite3.Connection) -> None:
+    job_id = _seed_job(
+        conn,
+        job_id=_job_id(20),
+        url="https://example.com/jobs/keyword-rows",
+    )
+
+    SqliteScoreRepository(conn).save(
+        _build_score(
+            job_id,
+            keywords=(
+                "  Python  ",
+                "\u3000Ｐｙｔｈｏｎ\t",
+                "Data   Science",
+                "data science",
+                "Straße",
+                "STRASSE",
+            ),
+        )
+    )
+
+    assert _score_keyword_rows(conn) == [
+        (str(LOCAL_TENANT), str(job_id), 1, "python", "Python", 0),
+        (str(LOCAL_TENANT), str(job_id), 1, "data science", "Data Science", 1),
+        (str(LOCAL_TENANT), str(job_id), 1, "strasse", "Straße", 2),
+    ]
+
+
 def test_score_round_trip_preserves_criteria_and_trace(conn: sqlite3.Connection) -> None:
     job_id = _seed_job(
         conn,
@@ -367,6 +430,12 @@ def test_score_repository_scopes_same_job_id_by_tenant(conn: sqlite3.Connection)
     assert other_score.fit_score.value == 9
     assert [(score.tenant_id, score.job_id) for score in local_range] == [
         (LOCAL_TENANT, job_id)
+    ]
+    assert _score_keyword_rows(conn) == [
+        (str(LOCAL_TENANT), str(job_id), 1, "python", "python", 0),
+        (str(LOCAL_TENANT), str(job_id), 1, "fastapi", "fastapi", 1),
+        (str(other_tenant), str(job_id), 1, "python", "python", 0),
+        (str(other_tenant), str(job_id), 1, "fastapi", "fastapi", 1),
     ]
 
 
@@ -521,14 +590,18 @@ def test_save_increments_version(conn: sqlite3.Connection) -> None:
         url="https://example.com/jobs/versioning",
     )
     repo = SqliteScoreRepository(conn)
-    repo.save(_build_score(job_id, version=1, fit=7))
-    repo.save(_build_score(job_id, version=2, fit=9))
+    repo.save(_build_score(job_id, version=1, fit=7, keywords=("Python",)))
+    repo.save(_build_score(job_id, version=2, fit=9, keywords=("FastAPI",)))
 
     latest = repo.load(LOCAL_TENANT, job_id)
 
     assert latest is not None
     assert latest.version == 2
     assert latest.fit_score.value == 9
+    assert _score_keyword_rows(conn) == [
+        (str(LOCAL_TENANT), str(job_id), 1, "python", "Python", 0),
+        (str(LOCAL_TENANT), str(job_id), 2, "fastapi", "FastAPI", 0),
+    ]
 
 
 def test_save_rejects_version_skip_and_replay(conn: sqlite3.Connection) -> None:
@@ -539,6 +612,10 @@ def test_save_rejects_version_skip_and_replay(conn: sqlite3.Connection) -> None:
     )
     repo = SqliteScoreRepository(conn)
     repo.save(_build_score(job_id, version=1, fit=7))
+    before_scores = conn.execute(
+        "SELECT tenant_id, job_id, version, fit_score FROM job_scores"
+    ).fetchall()
+    before_keywords = _score_keyword_rows(conn)
 
     with pytest.raises(ScoreVersionConflict) as excinfo:
         repo.save(_build_score(job_id, version=3, fit=8))
@@ -546,6 +623,33 @@ def test_save_rejects_version_skip_and_replay(conn: sqlite3.Connection) -> None:
         repo.save(_build_score(job_id, version=1, fit=8))
 
     assert excinfo.value.expected == 2
+    assert conn.execute(
+        "SELECT tenant_id, job_id, version, fit_score FROM job_scores"
+    ).fetchall() == before_scores
+    assert _score_keyword_rows(conn) == before_keywords
+
+
+def test_save_rolls_back_score_and_keyword_rows_after_downstream_failure(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = _seed_job(
+        conn,
+        job_id=_job_id(21),
+        url="https://example.com/jobs/keyword-rollback",
+    )
+    repo = SqliteScoreRepository(conn)
+
+    def fail_after_score_write(_: JobScore, *, commit: bool) -> int:
+        raise RuntimeError("forced score downstream failure")
+
+    monkeypatch.setattr(repo._staleness, "resolve_for_score", fail_after_score_write)
+
+    with pytest.raises(RuntimeError, match="forced score downstream failure"):
+        repo.save(_build_score(job_id))
+
+    assert conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0] == 0
+    assert _score_keyword_rows(conn) == []
 
 
 def test_list_pending_reads_canonical_enrichment_content_with_tenant_isolation(

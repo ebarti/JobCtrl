@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Final
 
 from jobctrl.database import ensure_scoring_policy_tables
 from jobctrl.domain.identifiers import JobId, canonical_job_id
@@ -38,7 +38,11 @@ from jobctrl.domain.scoring.value_objects import (
     ScoringCriteria,
 )
 from jobctrl.domain.tenant import TenantId
+from jobctrl.infrastructure.scoring.keyword_normalization import canonicalize_keywords
 from jobctrl.state import record_job_event, set_stage_state
+
+
+_SCORE_SAVEPOINT: Final = "score_with_keywords"
 
 
 class ScoreVersionConflict(ValueError):
@@ -141,7 +145,7 @@ class SqliteScoreStalenessRepository:
         self._conn.commit()
         return marked
 
-    def resolve_for_score(self, score: JobScore) -> int:
+    def resolve_for_score(self, score: JobScore, *, commit: bool = True) -> int:
         """Resolve markers satisfied by a fresh, non-corrected score version."""
         if score.correction is not None or score.trace.scoring_policy_version <= 0:
             return 0
@@ -179,7 +183,8 @@ class SqliteScoreStalenessRepository:
                     "scoringPolicyVersion": score.trace.scoring_policy_version,
                 },
             )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
         return int(result.rowcount)
 
     def reset_for_rescore(
@@ -619,45 +624,73 @@ class SqliteScoreRepository:
 
     def save(self, score: JobScore) -> None:
         job_id = canonical_job_id(str(score.job_id))
-        latest = self._conn.execute(
-            "SELECT COALESCE(MAX(version), 0) AS v FROM job_scores "
-            "WHERE tenant_id = ? AND job_id = ?",
-            (str(score.tenant_id), str(job_id)),
-        ).fetchone()
-        current_max = int(latest[0] if latest else 0)
-        expected = current_max + 1
-        if score.version != expected:
-            raise ScoreVersionConflict(
-                job_id=score.job_id,
-                attempted=score.version,
-                expected=expected,
-            )
+        self._conn.execute(f"SAVEPOINT {_SCORE_SAVEPOINT}")
+        try:
+            latest = self._conn.execute(
+                "SELECT COALESCE(MAX(version), 0) AS v FROM job_scores "
+                "WHERE tenant_id = ? AND job_id = ?",
+                (str(score.tenant_id), str(job_id)),
+            ).fetchone()
+            current_max = int(latest[0] if latest else 0)
+            expected = current_max + 1
+            if score.version != expected:
+                raise ScoreVersionConflict(
+                    job_id=score.job_id,
+                    attempted=score.version,
+                    expected=expected,
+                )
 
-        self._conn.execute(
-            """
-            INSERT INTO job_scores (
-                tenant_id, job_id, version, fit_score, breakdown_json,
-                keywords_json, scored_at, correction_json, criteria_json, trace_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(score.tenant_id),
-                str(job_id),
-                score.version,
-                score.fit_score.value,
-                json.dumps(score.breakdown.to_dict(), sort_keys=True),
-                json.dumps(score.matched_keywords.to_list()),
-                score.scored_at,
+            self._conn.execute(
+                """
+                INSERT INTO job_scores (
+                    tenant_id, job_id, version, fit_score, breakdown_json,
+                    keywords_json, scored_at, correction_json, criteria_json, trace_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
-                    json.dumps(score.correction.to_dict(), sort_keys=True)
-                    if score.correction
-                    else None
+                    str(score.tenant_id),
+                    str(job_id),
+                    score.version,
+                    score.fit_score.value,
+                    json.dumps(score.breakdown.to_dict(), sort_keys=True),
+                    json.dumps(score.matched_keywords.to_list()),
+                    score.scored_at,
+                    (
+                        json.dumps(score.correction.to_dict(), sort_keys=True)
+                        if score.correction
+                        else None
+                    ),
+                    json.dumps(score.criteria.to_dict(), sort_keys=True),
+                    json.dumps(score.trace.to_dict(), sort_keys=True),
                 ),
-                json.dumps(score.criteria.to_dict(), sort_keys=True),
-                json.dumps(score.trace.to_dict(), sort_keys=True),
-            ),
-        )
-        self._staleness.resolve_for_score(score)
+            )
+            self._conn.executemany(
+                """
+                INSERT INTO job_score_keywords (
+                    tenant_id, job_id, score_version, normalized_keyword,
+                    display_keyword, position
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        str(score.tenant_id),
+                        str(job_id),
+                        score.version,
+                        normalized_keyword,
+                        display_keyword,
+                        position,
+                    )
+                    for normalized_keyword, display_keyword, position in canonicalize_keywords(
+                        score.matched_keywords.values
+                    )
+                ),
+            )
+            self._staleness.resolve_for_score(score, commit=False)
+        except BaseException:
+            self._conn.execute(f"ROLLBACK TO SAVEPOINT {_SCORE_SAVEPOINT}")
+            self._conn.execute(f"RELEASE SAVEPOINT {_SCORE_SAVEPOINT}")
+            raise
+        self._conn.execute(f"RELEASE SAVEPOINT {_SCORE_SAVEPOINT}")
         self._conn.commit()
 
     # ------------------------------------------------------------------
