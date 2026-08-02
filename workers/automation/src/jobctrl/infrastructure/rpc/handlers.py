@@ -19,6 +19,7 @@ target §6.5).
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 import logging
 from typing import Any
 
@@ -28,8 +29,12 @@ from jobctrl.domain.rpc.messages import WorkflowStartSpec
 from jobctrl.domain.preparation import PreparationWorkItemKind
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
+from jobctrl.infrastructure.learning.sqlite_repository import (
+    SqliteLearningRecommendationRepository,
+)
 from jobctrl.infrastructure.rpc.server import JsonRpcServer, invalid_params
 from jobctrl.infrastructure.rpc.workflow_starter import WorkflowCanceler
+from jobctrl.infrastructure.runtime_identity import assert_expected_runtime
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.pipeline.preparation import (
     build_preparation_workflow_spec,
@@ -792,6 +797,30 @@ def make_cancel_run(canceler: WorkflowCanceler):
     return cancel_run
 
 
+def rederive_learning_recommendations(params: dict[str, Any]) -> dict[str, Any]:
+    """Refresh pending Materials proposals after an explicit signal review."""
+
+    tenant_id = TenantId(_tenant_id(params))
+    assert_expected_runtime(
+        expected_app_dir=params.get("expectedAppDir"),
+        expected_db_path=params.get("expectedDbPath"),
+    )
+    recommendations = SqliteLearningRecommendationRepository(
+        get_connection()
+    ).rederive_tailoring(
+        tenant_id,
+        source_changes=None,
+        rederived_at=datetime.now(UTC).isoformat(),
+    )
+    return {
+        "status": "succeeded",
+        "recommendationCount": len(recommendations),
+        "recommendationIds": [
+            recommendation.recommendation_id for recommendation in recommendations
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -822,6 +851,11 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("browser_capability_enable", browser_capability_enable, mode="sync")
     server.register("browser_capability_disable", browser_capability_disable, mode="sync")
     server.register("browser_profile_copy", browser_profile_copy, mode="sync")
+    server.register(
+        "rederive_learning_recommendations",
+        rederive_learning_recommendations,
+        mode="sync",
+    )
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
     server.register("generate_interview_prep", generate_interview_prep, mode="workflow")
     server.register("run_contact_research", run_contact_research, mode="workflow")

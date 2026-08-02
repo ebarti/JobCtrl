@@ -1107,9 +1107,39 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) {
         return undefined;
       }
-      return withWritableDb(reply, options.dbPath, (db) =>
+      const reviewResponse = await withWritableDb(reply, options.dbPath, (db) =>
         reviewResumeFeedbackSignal(db, decodeRouteParam(request.params.signalId), body),
       );
+      if (!reviewResponse || reviewResponse.ok !== true) {
+        return reviewResponse;
+      }
+      try {
+        const derivation = await actionDispatcher(
+          {
+            action: "rederive_learning_recommendations",
+            jobKey: "learning",
+          },
+          actionContext,
+        );
+        if (derivation.status !== "succeeded") {
+          void reply.code(503);
+          return {
+            ok: false,
+            error: "learning_rederivation_failed",
+            message:
+              "The feedback review was saved, but pending learning recommendations could not be refreshed. Retry the same review.",
+          };
+        }
+      } catch {
+        void reply.code(503);
+        return {
+          ok: false,
+          error: "learning_rederivation_failed",
+          message:
+            "The feedback review was saved, but pending learning recommendations could not be refreshed. Retry the same review.",
+        };
+      }
+      return reviewResponse;
     },
   );
 
