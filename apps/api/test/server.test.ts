@@ -617,6 +617,94 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("streams only column-scoped tenant events with a canonical JobId envelope", async () => {
+    vi.stubEnv("JOBCTRL_API_SSE_POLL_MS", "5");
+    const app = buildApp(options);
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected local test server address");
+    }
+
+    const db = new Database(options.dbPath);
+    const cursor = Number(
+      (db.prepare("SELECT COALESCE(MAX(event_id), 0) AS event_id FROM job_events").get() as {
+        event_id: number;
+      }).event_id,
+    );
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/v1/events/stream?tenantId=local&since=${cursor}`,
+    );
+    const insertEvent = db.prepare(
+      `INSERT INTO job_events (
+         tenant_id, job_id, identity_version, stage, event_type, level,
+         message, occurred_at, payload_json
+       ) VALUES (?, ?, 1, ?, ?, 'info', NULL, ?, ?)`,
+    );
+    const occurredAt = "2026-04-29T10:30:00+00:00";
+    insertEvent.run(
+      "other",
+      null,
+      null,
+      "ProfileUpdated",
+      occurredAt,
+      JSON.stringify({ tenantId: "local" }),
+    );
+    const jobUrl = "https://example.com/jobs/ready";
+    const jobId = jobIdFor(jobUrl);
+    insertEvent.run(
+      "local",
+      jobId,
+      "score",
+      "StageReset",
+      occurredAt,
+      JSON.stringify({ tenantId: "other", jobId }),
+    );
+    insertEvent.run(
+      "local",
+      jobId,
+      "score",
+      "StageReset",
+      occurredAt,
+      JSON.stringify({ tenantId: "local", jobKey: jobUrl }),
+    );
+    const canonical = insertEvent.run(
+      "local",
+      jobId,
+      "score",
+      "StageReset",
+      occurredAt,
+      JSON.stringify({ tenantId: "local", postingUrl: jobUrl }),
+    );
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("Expected event stream body");
+    const decoder = new TextDecoder();
+    let streamed = "";
+    const expectedId = `id: ${String(canonical.lastInsertRowid)}`;
+    while (!streamed.includes(expectedId)) {
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error("Timed out waiting for canonical SSE event")), 1_000);
+        }),
+      ]);
+      if (next.done) break;
+      streamed += decoder.decode(next.value, { stream: true });
+    }
+
+    expect(streamed).toContain(expectedId);
+    expect(streamed).toContain("event: StageReset");
+    expect(streamed).toContain(`\"tenantId\":\"local\"`);
+    expect(streamed).toContain(`\"jobId\":\"${jobId}\"`);
+    expect(streamed).toContain(`\"postingUrl\":\"${jobUrl}\"`);
+    expect(streamed).not.toContain("event: ProfileUpdated");
+    expect(streamed).not.toContain("\"jobKey\"");
+    await reader.cancel();
+    db.close();
+    await app.close();
+  });
+
   it("allows loopback browser preflight for local profile saves", async () => {
     const app = buildApp(options);
     const response = await app.inject({

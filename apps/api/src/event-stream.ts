@@ -20,6 +20,8 @@ export interface EventStreamOptions {
 
 interface EventRow {
   readonly event_id: number;
+  readonly tenant_id: string;
+  readonly job_id: string | null;
   readonly event_type: string | null;
   readonly payload_json: string | null;
   readonly occurred_at: string | null;
@@ -43,7 +45,6 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
 
   const subscribers = new Map<symbol, Subscriber>();
   let db: SqliteDatabase | null = null;
-  let indexEnsured = false;
   let pollHandle: NodeJS.Timeout | null = null;
 
   function getDb(): SqliteDatabase | null {
@@ -57,33 +58,12 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
     return db;
   }
 
-  function ensureIndex(connection: SqliteDatabase): void {
-    if (indexEnsured) {
-      return;
-    }
-    try {
-      // The `job_events` table is created by the Python worker
-      // (`workers/automation/src/jobctrl/database.py`); the API may
-      // start before any worker run materialises it.  The CREATE INDEX
-      // requires the base table — we swallow the error and retry on
-      // the next subscriber connect so the SSE route still serves
-      // keepalive/heartbeat traffic until the worker bootstraps.
-      connection.exec(
-        "CREATE INDEX IF NOT EXISTS idx_job_events_tenant_eid "
-          + "ON job_events(COALESCE(JSON_EXTRACT(payload_json, '$.tenantId'), 'local'), event_id)",
-      );
-      indexEnsured = true;
-    } catch {
-      indexEnsured = false;
-    }
-  }
-
   function maxEventId(connection: SqliteDatabase, tenantId: string): number {
     try {
       const row = connection
         .prepare(
           "SELECT COALESCE(MAX(event_id), 0) AS max_id FROM job_events "
-            + "WHERE COALESCE(JSON_EXTRACT(payload_json, '$.tenantId'), 'local') = ?",
+            + "WHERE tenant_id = ?",
         )
         .get(tenantId) as { max_id: number | bigint | string } | undefined;
       return row ? Number(row.max_id) : 0;
@@ -96,10 +76,10 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
     try {
       return connection
         .prepare(
-          "SELECT event_id, event_type, payload_json, occurred_at "
+          "SELECT event_id, tenant_id, job_id, event_type, payload_json, occurred_at "
             + "FROM job_events "
             + "WHERE event_id > ? "
-            + "  AND COALESCE(JSON_EXTRACT(payload_json, '$.tenantId'), 'local') = ? "
+            + "  AND tenant_id = ? "
             + "ORDER BY event_id ASC LIMIT ?",
         )
         .all(after, tenantId, EVENT_BATCH_LIMIT) as EventRow[];
@@ -116,8 +96,6 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
     if (!connection) {
       return;
     }
-    ensureIndex(connection);
-
     const minCursorByTenant = new Map<string, number>();
     for (const sub of subscribers.values()) {
       const previous = minCursorByTenant.get(sub.tenantId);
@@ -174,7 +152,6 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
       // best-effort
     }
     db = null;
-    indexEnsured = false;
   }
 
   function detach(sub: Subscriber): void {
@@ -226,7 +203,6 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
     const connection = getDb();
     let cursor = requestedResume;
     if (cursor === null && connection) {
-      ensureIndex(connection);
       cursor = maxEventId(connection, tenantId);
     } else if (cursor === null) {
       cursor = 0;
@@ -309,11 +285,48 @@ function writeEventRow(reply: FastifyReply, row: EventRow): void {
   if (eventType.length === 0) {
     return;
   }
-  const dataLine = formatDataField(row.payload_json ?? "{}");
+  const payload = canonicalSsePayload(row);
+  if (payload === null) {
+    return;
+  }
+  const dataLine = formatDataField(JSON.stringify(payload));
   writeRaw(
     reply,
     `id: ${row.event_id}\nevent: ${eventType}\n${dataLine}\n\n`,
   );
+}
+
+function canonicalSsePayload(row: EventRow): Record<string, unknown> | null {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(row.payload_json ?? "{}");
+  } catch {
+    return null;
+  }
+  if (!isRecord(payload)) {
+    return null;
+  }
+  const legacyJobAliases = ["jobKey", "job_key", "jobUrl", "job_url", "job_id"];
+  if (legacyJobAliases.some((key) => Object.hasOwn(payload, key))) {
+    return null;
+  }
+  if (payload.tenantId !== undefined && payload.tenantId !== row.tenant_id) {
+    return null;
+  }
+  if (row.job_id === null) {
+    if (Object.hasOwn(payload, "jobId")) {
+      return null;
+    }
+    return { ...payload, tenantId: row.tenant_id };
+  }
+  if (payload.jobId !== undefined && payload.jobId !== row.job_id) {
+    return null;
+  }
+  return { ...payload, tenantId: row.tenant_id, jobId: row.job_id };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function writeHeartbeat(reply: FastifyReply, watermark: number): void {
