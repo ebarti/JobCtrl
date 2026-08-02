@@ -1058,34 +1058,6 @@ def _posting_url_for_job_id(
     return str(row[0] or "") or None
 
 
-def _has_apply_event_for_job_id(
-    conn,
-    *,
-    tenant_id: TenantId,
-    job_id: JobId,
-    run_id: str,
-    event_types: set[str],
-) -> bool:
-    placeholders = ",".join("?" for _ in event_types)
-    rows = conn.execute(
-        f"""
-        SELECT payload_json FROM job_events
-        WHERE tenant_id = ? AND job_id = ?
-          AND stage = 'apply' AND event_type IN ({placeholders})
-        """,
-        (str(tenant_id), str(job_id), *event_types),
-    ).fetchall()
-    for row in rows:
-        payload_json = row["payload_json"] if hasattr(row, "keys") else row[0]
-        try:
-            payload = json.loads(payload_json or "{}")
-        except (TypeError, ValueError):
-            continue
-        if isinstance(payload, dict) and str(payload.get("run_id") or "") == run_id:
-            return True
-    return False
-
-
 def _record_apply_terminal_event_once(
     conn,
     *,
@@ -1097,7 +1069,7 @@ def _record_apply_terminal_event_once(
     message: str,
     payload: dict[str, Any],
 ) -> None:
-    if _has_apply_event_for_job_id(
+    if _has_apply_event(
         conn,
         tenant_id=tenant_id,
         job_id=job_id,
@@ -1142,7 +1114,66 @@ def mark_result(
     conn = get_connection()
     now = _utc_now()
     stable_job_id = canonical_job_id(str(job_id))
-    stable_tenant_id = TenantId(str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT))
+    stable_tenant_id = TenantId(
+        str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
+    )
+    run_id = (
+        task_id
+        or (run_ctx.get("run_id") if run_ctx else None)
+        or new_apply_run_id()
+    )
+    current_state = conn.execute(
+        """
+        SELECT state
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'
+        """,
+        (str(stable_tenant_id), str(stable_job_id)),
+    ).fetchone()
+    immutable_states = {
+        "succeeded",
+        "failed",
+        "skipped",
+        "exhausted",
+        "needs_verification",
+        "canceled",
+    }
+    state_value = (
+        str(current_state["state"])
+        if current_state is not None and hasattr(current_state, "keys")
+        else str(current_state[0])
+        if current_state is not None
+        else ""
+    )
+    requested_terminal_event = (
+        "ApplicationSubmitted"
+        if status == "applied"
+        else "DryRunCompleted"
+        if status == "dry_run"
+        else "ApplicationFailed"
+    )
+    terminal_event_types = {
+        event_type
+        for event_type in {
+            "ApplicationSubmitted",
+            "ApplicationFailed",
+            "DryRunCompleted",
+            "ApplyManualSkip",
+            "StageCanceled",
+        }
+        if _has_apply_event(
+            conn,
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+            run_id=str(run_id),
+            event_types={event_type},
+        )
+    }
+    if state_value in immutable_states or (
+        terminal_event_types
+        and terminal_event_types != {requested_terminal_event}
+    ):
+        return
     posting_url = _posting_url_for_job_id(
         conn,
         tenant_id=stable_tenant_id,
@@ -1154,23 +1185,23 @@ def mark_result(
         tenant_id=stable_tenant_id,
     )
 
-    run_id = task_id or (run_ctx.get("run_id") if run_ctx else None) or new_apply_run_id()
     worker_id = run_ctx.get("worker_id") if run_ctx else None
     model = run_ctx.get("model") if run_ctx else None
     dry_run = bool(run_ctx.get("dry_run")) if run_ctx else False
-    submit_intent_recorded = status not in {"applied", "dry_run"} and _has_apply_event_for_job_id(
-        conn,
-        tenant_id=stable_tenant_id,
-        job_id=stable_job_id,
-        run_id=str(run_id),
-        event_types={"ApplySubmitIntended"},
+    submit_intent_recorded = (
+        status not in {"applied", "dry_run"}
+        and _has_apply_submit_intent(
+            conn,
+            tenant_id=stable_tenant_id,
+            job_id=stable_job_id,
+            run_id=str(run_id),
+        )
     )
 
     if status == "applied":
-        # Launcher owns lock-release policy: if a competing process raced
-        # the row out of `running` (orphan rescue, mark-skipped, etc.) we
-        # still want to record this completion. Skip canonical validation;
-        # the launcher is the writer.
+        # The terminal guard above protects results written by cancellation,
+        # recovery, or manual action. The launcher still owns the normal
+        # Running -> Succeeded write for this active run.
         set_stage_state(
             conn,
             stable_job_id,
@@ -1218,7 +1249,9 @@ def mark_result(
             error_code="DRY_RUN",
             error_message="Dry run completed without submitting.",
             retryable=True,
-            next_action=f"jobctrl apply --url {posting_url}" if posting_url else None,
+            next_action=(
+                f"jobctrl apply --url {posting_url}" if posting_url else None
+            ),
             validate_transition=False,
         )
         _record_apply_terminal_event_once(
@@ -1330,8 +1363,13 @@ def mark_result(
     conn.commit()
 
 
-def _latest_apply_run_started_run_id(conn, url: str) -> str | None:
-    """Look up the run_id of the most recent ``ApplyRunStarted`` event for ``url``.
+def _latest_apply_run_started_run_id(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> str | None:
+    """Look up the latest ``ApplyRunStarted`` run id for one aggregate.
 
     Used by orphan rescue (and any caller without a ``run_ctx``) to
     close the SAME run row instead of minting a phantom new uuid that
@@ -1339,9 +1377,10 @@ def _latest_apply_run_started_run_id(conn, url: str) -> str | None:
     """
     row = conn.execute(
         "SELECT payload_json FROM job_events "
-        "WHERE job_url = ? AND stage = 'apply' AND event_type = 'ApplyRunStarted' "
+        "WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'apply' AND event_type = 'ApplyRunStarted' "
         "ORDER BY event_id DESC LIMIT 1",
-        (url,),
+        (str(tenant_id), str(canonical_job_id(str(job_id)))),
     ).fetchone()
     if row is None:
         return None
@@ -1367,11 +1406,13 @@ def release_lock(
     """Record that launcher cleanup ran without making retry decisions."""
     conn = get_connection()
     stable_job_id = canonical_job_id(str(job_id))
-    stable_tenant_id = TenantId(str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT))
+    stable_tenant_id = TenantId(
+        str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
+    )
     ctx_run_id = run_ctx.get("run_id") if run_ctx else None
     run_id = (
         ctx_run_id
-        or _latest_apply_run_started_run_id_for_job_id(
+        or _latest_apply_run_started_run_id(
             conn,
             tenant_id=stable_tenant_id,
             job_id=stable_job_id,
@@ -1390,43 +1431,22 @@ def release_lock(
     conn.commit()
 
 
-def _latest_apply_run_started_run_id_for_job_id(
-    conn,
-    *,
-    tenant_id: TenantId,
-    job_id: JobId,
-) -> str | None:
-    row = conn.execute(
-        "SELECT payload_json FROM job_events "
-        "WHERE tenant_id = ? AND job_id = ? "
-        "AND stage = 'apply' AND event_type = 'ApplyRunStarted' "
-        "ORDER BY event_id DESC LIMIT 1",
-        (str(tenant_id), str(job_id)),
-    ).fetchone()
-    if row is None:
-        return None
-    payload_json = row["payload_json"] if not isinstance(row, tuple) else row[0]
-    try:
-        payload = json.loads(payload_json)
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    run_id = payload.get("run_id")
-    return str(run_id) if run_id else None
-
-
 def recover_ambiguous_running_apply(console: Console | None = None) -> int:
     """Recover apply rows inherited from a prior dead workflow/activity."""
     try:
         conn = get_connection()
         rows = conn.execute(
-            "SELECT tenant_id, job_id FROM job_stage_states WHERE stage = 'apply' AND state = 'running'"
+            "SELECT tenant_id, job_id FROM job_stage_states "
+            "WHERE stage = 'apply' AND state = 'running'"
         ).fetchall()
         recovered = 0
         for row in rows:
-            tenant_id = TenantId(str(row["tenant_id"] if hasattr(row, "keys") else row[0]))
-            job_id = canonical_job_id(str(row["job_id"] if hasattr(row, "keys") else row[1]))
+            tenant_id = TenantId(
+                str(row["tenant_id"] if hasattr(row, "keys") else row[0])
+            )
+            job_id = canonical_job_id(
+                str(row["job_id"] if hasattr(row, "keys") else row[1])
+            )
             posting_url = _posting_url_for_job_id(
                 conn,
                 tenant_id=tenant_id,
@@ -1477,7 +1497,11 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
                         "apply",
                         "pending",
                         tenant_id=tenant_id,
-                        next_action=(f"jobctrl apply --url {posting_url}" if posting_url else None),
+                        next_action=(
+                            f"jobctrl apply --url {posting_url}"
+                            if posting_url
+                            else None
+                        ),
                         validate_transition=False,
                     )
                 recovered += 1
@@ -1535,7 +1559,8 @@ def _workflow_terminal_or_gone(
         return True
     try:
         row = conn.execute(
-            "SELECT status FROM workflow_run_projections WHERE tenant_id = ? AND workflow_id = ? LIMIT 1",
+            "SELECT status FROM workflow_run_projections "
+            "WHERE tenant_id = ? AND workflow_id = ? LIMIT 1",
             (str(tenant_id), workflow_id),
         ).fetchone()
     except Exception:  # noqa: BLE001
@@ -1693,8 +1718,12 @@ def reset_failed() -> int:
     ).fetchall()
     count = 0
     for row in rows:
-        tenant_id = TenantId(str(row["tenant_id"] if hasattr(row, "keys") else row[0]))
-        job_id = canonical_job_id(str(row["job_id"] if hasattr(row, "keys") else row[1]))
+        tenant_id = TenantId(
+            str(row["tenant_id"] if hasattr(row, "keys") else row[0])
+        )
+        job_id = canonical_job_id(
+            str(row["job_id"] if hasattr(row, "keys") else row[1])
+        )
         posting_url = _posting_url_for_job_id(
             conn,
             tenant_id=tenant_id,
@@ -1729,7 +1758,11 @@ def reset_failed() -> int:
                 attempt_count=0,
                 error_code=None,
                 error_message=None,
-                next_action=(f"jobctrl apply --url {posting_url}" if posting_url else None),
+                next_action=(
+                    f"jobctrl apply --url {posting_url}"
+                    if posting_url
+                    else None
+                ),
                 validate_transition=False,
             )
             count += 1
@@ -1783,7 +1816,11 @@ def _load_job_for_prompt(
           AND {_NOT_CLOSED_ACTIVE_STATE}
         LIMIT 1
         """,
-        (str(tenant_id), str(canonical_job_id(str(job_id))), min_score),
+        (
+            str(tenant_id),
+            str(canonical_job_id(str(job_id))),
+            min_score,
+        ),
     ).fetchone()
     return _row_to_job_dict(row) if row is not None else None
 

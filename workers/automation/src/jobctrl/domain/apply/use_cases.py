@@ -53,7 +53,7 @@ from jobctrl.domain.events import (
     create_apply_run_event_recorded,
     create_apply_run_started,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.ports.apply import (
     ApplyRunRepository,
     AutonomousAgentPort,
@@ -172,6 +172,8 @@ class SubmitApplicationUseCase:
         launcher loads once per process. ``worker_id`` / ``cdp_port``
         identify the browser slot.
         """
+        job_id = canonical_job_id(str(job.get("job_id") or ""))
+
         # 1. Eligibility check — pure data inspection, never raises
         attempt_count = int(job.get("apply_attempts") or 0)
         eligibility = self._eligibility.check(job=job, attempts=attempt_count)
@@ -184,7 +186,7 @@ class SubmitApplicationUseCase:
             return SubmitApplicationOutcome(
                 apply_run=_skipped_aggregate(
                     tenant_id=tenant_id,
-                    job_id=JobId(str(job.get("url") or "")),
+                    job_id=job_id,
                     run_id=run_id or new_apply_run_id(),
                     reason=eligibility.reason,
                     started_at=_utc_now(),
@@ -218,7 +220,7 @@ class SubmitApplicationUseCase:
             started_at = _utc_now()
             apply_run = _blocked_aggregate(
                 tenant_id=tenant_id,
-                job_id=JobId(str(job.get("url") or "")),
+                job_id=job_id,
                 run_id=run_id,
                 reason=reason,
                 blocked_url=apply_target_url,
@@ -241,7 +243,6 @@ class SubmitApplicationUseCase:
 
         # 3. Construct the aggregate in the starting state
         run_id = run_id or new_apply_run_id()
-        job_id = JobId(str(job.get("url") or ""))
         apply_run = ApplyRun.start(
             tenant_id=tenant_id,
             run_id=run_id,

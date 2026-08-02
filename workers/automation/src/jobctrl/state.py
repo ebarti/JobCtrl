@@ -824,30 +824,34 @@ def record_job_event(
 
 def record_job_artifact(
     conn,
-    job_url: str,
+    job_id: JobId,
     stage: str,
     artifact_type: str,
     path: str | Path,
     *,
+    tenant_id: TenantId = LOCAL_TENANT,
     status: str = "active",
     created_at: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
     """Record or update one artifact with provenance."""
+    stable_job_id = canonical_job_id(str(job_id))
     path_str = str(path)
     conn.execute(
         """
         INSERT INTO job_artifacts (
-            job_url, stage, artifact_type, status, path, created_at, size_bytes, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(job_url, stage, artifact_type, path) DO UPDATE SET
+            tenant_id, job_id, stage, artifact_type, status, path,
+            created_at, size_bytes, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(tenant_id, job_id, stage, artifact_type, path) DO UPDATE SET
             status = excluded.status,
             created_at = excluded.created_at,
             size_bytes = excluded.size_bytes,
             metadata_json = excluded.metadata_json
         """,
         (
-            job_url,
+            str(tenant_id),
+            str(stable_job_id),
             stage,
             artifact_type,
             status,
