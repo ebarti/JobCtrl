@@ -1586,7 +1586,7 @@ function jobEventToAuditEntry(
         actor: "system",
         details: auditDetails(
           ["Reason", humanizeToken(payloadText(payload, "reason"))],
-          ["Candidate", payloadText(payload, "candidateJobId", "candidate_job_id")],
+          ["Candidate", payloadText(payload, "candidatePostingUrl", "candidate_posting_url")],
         ),
       });
     case "DiscoveryFeedbackRecorded":

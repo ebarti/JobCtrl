@@ -275,13 +275,13 @@ class DuplicateJobLinkRejectedPayload:
     Attributed to the surviving ``job_id`` (the accepted owner the duplicate
     matched) so the rejected link shows in that job's audit history — ``job_id``
     is the standard attribution key both the durable event publisher and the API
-    audit read model key on. ``candidate_job_id`` is the distinct posting that
-    was declined.
+    audit read model key on. ``candidate_posting_url`` is the distinct posting
+    locator that was declined; it is not a Job identity.
     """
 
     duplicate_link_id: str
     job_id: str
-    candidate_job_id: str
+    candidate_posting_url: str
     reason: str
     rejected_at: str
 

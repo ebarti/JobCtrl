@@ -5,8 +5,11 @@ new table is introduced this phase per the migration plan §8 deferred
 scope). The adapter touches only the discovery-owned columns of the
 table:
 
-  ``url``           — ``Job.posting_url`` (still the legacy PRIMARY KEY).
+  ``tenant_id``     — tenant boundary for the aggregate.
+  ``job_id``        — stable, system-generated aggregate identifier.
+  ``url``           — current posting locator, unique but never identity.
   ``title``,
+  ``company``        — ``Job.employer.name`` when known.
   ``salary``,
   ``description``,
   ``location``      — ``Job.metadata`` value object fields.
@@ -14,20 +17,17 @@ table:
   ``strategy``      — ``Job.search_strategy.value``.
   ``discovered_at`` — ``Job.discovered_at``.
 
+Employer and source are independent canonical facts: ``company`` never falls
+back to ``site`` (or to a URL), and an empty ``company`` hydrates as
+``Employer.unknown()``.
+
 Soft-delete state lives in the existing ``jobctrl_deleted_jobs``
 tombstone table (mirror of the API's
 ``apps/api/src/write-model.ts:softDeleteJobs``); the adapter
-reads/writes that table through ``ensure_deleted_jobs_table`` so a
+reads/writes that exact-v7 table directly so a
 worker-side delete and an API-side delete share the same tombstone row
 shape.
 
-The legacy ``Job.employer`` is **not** persisted here this phase: the
-``jobs`` table has no dedicated employer column (the legacy code
-conflates employer with ``site``). The adapter writes ``employer.name``
-into ``site`` only when ``source.board`` is empty — but since the
-``Source.board`` invariant is non-empty, ``site`` always carries the
-board. ``employer`` round-trips on the in-memory aggregate; persisting
-it natively is deferred to the table-narrowing PR called out by §8.
 """
 
 from __future__ import annotations
@@ -53,15 +53,26 @@ from jobctrl.domain.discovery.value_objects import (
     SearchStrategy,
     Source,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import (
+    JobId,
+    canonical_job_id,
+)
 from jobctrl.domain.job_content_identity import (
     content_match_basis,
     is_genuine_employer_identity,
     job_content_fingerprint,
     normalize_identity_text,
 )
-from jobctrl.domain.ports.discovery import ContentOwnerMatch
-from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctrl.domain.ports.discovery import (
+    CanonicalOwnerMatch,
+    ContentOwnerMatch,
+    JobIdentityResolver,
+    ResolvedJobIdentity,
+)
+from jobctrl.domain.tenant import TenantId
+from jobctrl.infrastructure.discovery.sqlite_identity_resolver import (
+    SqliteJobIdentityResolver,
+)
 
 
 class JobUrlConflict(ValueError):
@@ -95,6 +106,7 @@ class SqliteJobRepository:
         discovery_execution: DiscoveryExecutionRef | None = None,
         source_family: str | None = None,
         search_unit_lease: DiscoverySearchUnitLease | None = None,
+        identity_resolver: JobIdentityResolver | None = None,
     ) -> None:
         if search_unit_lease is not None:
             if discovery_execution is None:
@@ -105,9 +117,9 @@ class SqliteJobRepository:
         self._discovery_execution = discovery_execution
         self._source_family = source_family.strip() if source_family else None
         self._search_unit_lease = search_unit_lease
+        self._identity_resolver = identity_resolver or SqliteJobIdentityResolver(conn)
         if discovery_execution is not None and self._source_family is None:
             raise ValueError("source_family is required with discovery_execution")
-        self._ensure_deleted_jobs_table()
         if discovery_execution is not None:
             # Imported lazily to keep the aggregate repository's ordinary path
             # independent from the execution-lineage adapter.
@@ -131,97 +143,32 @@ class SqliteJobRepository:
     # Schema bootstrapping
     # ------------------------------------------------------------------
 
-    def _ensure_deleted_jobs_table(self) -> None:
-        """Mirror of ``apps/api/src/write-model.ts:ensureDeletedJobsTable``.
-
-        Created on demand so the worker-side delete path matches the
-        API-side delete path on row shape.
-        """
-        self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-                job_url TEXT PRIMARY KEY,
-                deleted_at TEXT NOT NULL,
-                reason TEXT,
-                restored_at TEXT,
-                FOREIGN KEY(job_url) REFERENCES jobs(url)
-            )
-            """
-        )
-        self._conn.commit()
-
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
 
+    def resolve_by_job_id(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> ResolvedJobIdentity | None:
+        return self._identity_resolver.resolve_by_job_id(tenant_id, job_id)
+
+    def resolve_by_posting_url(
+        self,
+        tenant_id: TenantId,
+        posting_url: PostingUrl,
+    ) -> ResolvedJobIdentity | None:
+        return self._identity_resolver.resolve_by_posting_url(
+            tenant_id,
+            posting_url,
+        )
+
     def load(self, tenant_id: TenantId, job_id: JobId) -> Job | None:
-        """Return a Job by aggregate id.
-
-        Local mode collapses ``JobId`` and ``PostingUrl`` onto the same
-        ``jobs.url`` column (per migration plan §8: stable ``JobId``
-        narrowing is deferred), so ``load`` and ``load_by_url`` use the
-        same lookup. The cloud cutover swaps in a system-generated UUID
-        column without touching the port.
-        """
-        return self.load_by_url(tenant_id, PostingUrl(value=str(job_id)))
-
-    def load_by_url(self, tenant_id: TenantId, posting_url: PostingUrl) -> Job | None:
-        """Resolve a posting URL to its canonical Job aggregate.
-
-        Per the RFC §"Deduplication Boundary", ``load_by_url`` MUST keep
-        resolving both the canonical ``jobs.url`` and the additional
-        observation URLs during the compatibility window so existing
-        callers and local databases continue to work. Resolution order:
-
-          1. Direct match on ``jobs.url`` (the legacy primary key and
-             the canonical posting URL during the migration).
-          2. Match on a normalised observation URL — when a broad-board
-             callsite passes the URL it scraped from Indeed/LinkedIn,
-             we still want to find the canonical Job that owns it.
-        """
-
-        row = self._conn.execute(
-            """
-            SELECT j.url, j.title, j.salary, j.description, j.location,
-                   j.site, j.strategy, j.discovered_at,
-                   d.deleted_at, d.reason
-            FROM jobs j
-            LEFT JOIN jobctrl_deleted_jobs d
-              ON d.job_url = j.url
-             AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
-            WHERE j.url = ?
-            LIMIT 1
-            """,
-            (posting_url.value,),
-        ).fetchone()
-        if row is not None:
-            return self._row_to_job(row, tenant_id)
-
-        # Fall back to the observation index — this is the
-        # compatibility seam that lets a broad-board URL resolve to
-        # the canonical Job after PR 2's identity migration lands.
-        normalized = normalize_observed_url(posting_url.value)
-        if not normalized:
-            return None
-        row = self._conn.execute(
-            """
-            SELECT j.url, j.title, j.salary, j.description, j.location,
-                   j.site, j.strategy, j.discovered_at,
-                   d.deleted_at, d.reason
-            FROM jobs j
-            JOIN job_source_observations o
-              ON o.job_url = j.url AND o.tenant_id = ?
-            LEFT JOIN jobctrl_deleted_jobs d
-              ON d.job_url = j.url
-             AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
-            WHERE o.normalized_observed_url = ?
-            LIMIT 1
-            """,
-            (str(tenant_id), normalized),
-        ).fetchone()
-        if row is None:
-            return None
-        return self._row_to_job(row, tenant_id)
+        """Return a Job by its canonical stable id."""
+        stable_job_id = canonical_job_id(str(job_id))
+        identity = self.resolve_by_job_id(tenant_id, stable_job_id)
+        return self._load_resolved(identity) if identity is not None else None
 
     def list_recent(
         self,
@@ -232,33 +179,48 @@ class SqliteJobRepository:
     ) -> list[Job]:
         if not include_deleted:
             sql = (
-                "SELECT j.url, j.title, j.salary, j.description, j.location, "
+                "SELECT j.tenant_id, j.job_id, j.url, "
+                "j.title, j.company, j.salary, j.description, j.location, "
                 "j.site, j.strategy, j.discovered_at, "
                 "d.deleted_at, d.reason "
                 "FROM jobs j "
                 "LEFT JOIN jobctrl_deleted_jobs d "
-                "  ON d.job_url = j.url "
+                "  ON d.tenant_id = j.tenant_id AND d.job_id = j.job_id "
                 " AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at)) "
-                "WHERE d.job_url IS NULL "
+                "WHERE j.tenant_id = ? AND d.job_id IS NULL "
                 "ORDER BY j.discovered_at DESC NULLS LAST"
             )
         else:
             sql = (
-                "SELECT j.url, j.title, j.salary, j.description, j.location, "
+                "SELECT j.tenant_id, j.job_id, j.url, "
+                "j.title, j.company, j.salary, j.description, j.location, "
                 "j.site, j.strategy, j.discovered_at, "
                 "d.deleted_at, d.reason "
                 "FROM jobs j "
                 "LEFT JOIN jobctrl_deleted_jobs d "
-                "  ON d.job_url = j.url "
+                "  ON d.tenant_id = j.tenant_id AND d.job_id = j.job_id "
                 " AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at)) "
+                "WHERE j.tenant_id = ? "
                 "ORDER BY j.discovered_at DESC NULLS LAST"
             )
-        params: list[Any] = []
+        params: list[Any] = [str(tenant_id)]
         if limit > 0:
             sql += " LIMIT ?"
             params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
-        return [self._row_to_job(row, tenant_id) for row in rows]
+        jobs: list[Job] = []
+        for row in rows:
+            row_job_id = JobId(str(row["job_id"])) if isinstance(row, sqlite3.Row) else JobId(str(row[1]))
+            identity = self.resolve_by_job_id(tenant_id, row_job_id)
+            if identity is None:
+                continue
+            jobs.append(
+                self._row_to_job(
+                    row,
+                    posting_url=identity.posting_url,
+                )
+            )
+        return jobs
 
     # ------------------------------------------------------------------
     # Write
@@ -270,69 +232,218 @@ class SqliteJobRepository:
         assert self._search_unit_lease is not None
         self._search_unit_repository.fence_write(self._search_unit_lease)
 
-    def save(self, job: Job) -> None:
-        """Insert / upsert a Job into the wide ``jobs`` table.
+    def save(self, job: Job) -> JobId:
+        """Persist ``job`` and leave no partial write on failure."""
 
-        Enforces the §4.1 dedup invariant in two ways:
+        try:
+            return self._save(job)
+        except BaseException:
+            self._conn.rollback()
+            raise
 
-          * If the URL already exists, the row's ``job_id`` (the URL
-            itself in local mode) MUST match — otherwise the call is
-            illegal.
-          * The upsert preserves ``discovered_at`` for already-known
-            URLs so a re-discovery doesn't reset the discovery
-            timestamp.
+    def _save(self, job: Job) -> JobId:
+        """Atomically insert or upsert a Job and return its stable owner id.
+
+        ``jobs.url`` and the one active ``job_locators`` row always describe
+        the same current posting locator. ``Job.job_id`` is always a canonical
+        UUID; URL locators are resolved only before aggregate construction.
+
+        If another writer wins a first insert for the same posting URL after
+        this call's initial read, the unique constraints arbitrate ownership.
+        The losing call returns the winner's stable id instead of leaking a raw
+        ``sqlite3.IntegrityError``.
         """
-        existing = self._conn.execute(
-            "SELECT url, discovered_at FROM jobs WHERE url = ?",
-            (job.posting_url.value,),
-        ).fetchone()
-        was_new = existing is None
+        supplied_job_id = canonical_job_id(str(job.job_id))
+        stable_owner = self.resolve_by_job_id(job.tenant_id, supplied_job_id)
+        url_owner = self.resolve_by_posting_url(
+            job.tenant_id,
+            job.posting_url,
+        )
+        # Identity discovery is read-only. Fence immediately before the first
+        # possible mutation so parallel search units can both reach the atomic
+        # URL claim and the unique constraint can select one stable owner.
         self._fence_search_unit_write()
 
-        if existing is not None:
-            existing_url = existing["url"] if isinstance(existing, sqlite3.Row) else existing[0]
-            if existing_url != str(job.job_id):
+        if stable_owner is not None:
+            if url_owner is not None and url_owner.job_id != stable_owner.job_id:
                 raise JobUrlConflict(
                     posting_url=job.posting_url,
-                    owner=JobId(str(existing_url)),
-                    attempted=job.job_id,
+                    owner=url_owner.job_id,
+                    attempted=stable_owner.job_id,
                 )
-            existing_discovered_at = existing["discovered_at"] if isinstance(existing, sqlite3.Row) else existing[1]
-            preserved_discovered_at = existing_discovered_at or job.discovered_at
-            self._conn.execute(
-                """
-                UPDATE jobs SET
-                    title = ?,
-                    company = COALESCE(NULLIF(company, ''), ?),
-                    salary = ?,
-                    description = ?,
-                    location = ?,
-                    site = ?,
-                    strategy = ?,
-                    discovered_at = ?
-                WHERE url = ?
-                """,
-                (
-                    job.metadata.title,
-                    None if job.employer.is_unknown() else job.employer.name,
-                    job.metadata.salary,
-                    job.metadata.description,
-                    job.metadata.location,
-                    job.source.board,
-                    job.search_strategy.value,
-                    preserved_discovered_at,
-                    job.posting_url.value,
-                ),
+            persisted_identity = self._set_current_posting_url(
+                stable_owner,
+                job.posting_url,
+            )
+            self._update_existing_job(job, persisted_identity)
+            was_new = False
+        elif url_owner is not None:
+            raise JobUrlConflict(
+                posting_url=job.posting_url,
+                owner=url_owner.job_id,
+                attempted=supplied_job_id,
             )
         else:
+            persisted_identity, was_new = self._insert_or_resolve_winner(
+                job,
+                supplied_job_id,
+            )
+            if not was_new:
+                # No candidate state belongs on a concurrently-created owner.
+                # The application use case re-enters its existing-owner flow.
+                self._conn.commit()
+                return persisted_identity.job_id
+
+        self._sync_tombstone(job, persisted_identity)
+        if self._search_unit_repository is not None:
+            assert self._search_unit_lease is not None
+            self._search_unit_repository.record_accepted_job(
+                self._search_unit_lease,
+                str(persisted_identity.job_id),
+                was_new=was_new,
+                accepted_at=job.discovered_at,
+            )
+        self._conn.commit()
+        return persisted_identity.job_id
+
+    def _set_current_posting_url(
+        self,
+        identity: ResolvedJobIdentity,
+        posting_url: PostingUrl,
+    ) -> ResolvedJobIdentity:
+        """Move the current posting locator while preserving its history."""
+
+        if posting_url == identity.posting_url:
+            return identity
+        changed_at = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            UPDATE job_locators
+            SET is_current = 0,
+                last_seen_at = ?,
+                retired_at = ?
+            WHERE tenant_id = ?
+              AND locator_kind = 'posting_url'
+              AND job_id = ?
+              AND is_current = 1
+            """,
+            (
+                changed_at,
+                changed_at,
+                str(identity.tenant_id),
+                str(identity.job_id),
+            ),
+        )
+        claimed = self._conn.execute(
+            """
+            INSERT INTO job_locators (
+                tenant_id, job_id, locator_kind, locator_value,
+                is_current, first_seen_at, last_seen_at, retired_at
+            ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?, NULL)
+            ON CONFLICT (tenant_id, locator_kind, locator_value) DO UPDATE SET
+                is_current = 1,
+                last_seen_at = excluded.last_seen_at,
+                retired_at = NULL
+            WHERE job_locators.job_id = excluded.job_id
+            """,
+            (
+                str(identity.tenant_id),
+                str(identity.job_id),
+                posting_url.value,
+                changed_at,
+                changed_at,
+            ),
+        )
+        if claimed.rowcount != 1:
+            owner = self.resolve_by_posting_url(identity.tenant_id, posting_url)
+            if owner is not None:
+                raise JobUrlConflict(
+                    posting_url=posting_url,
+                    owner=owner.job_id,
+                    attempted=identity.job_id,
+                )
+            raise RuntimeError("Posting URL alias claim failed without a resolvable owner")
+        self._conn.execute(
+            """
+            UPDATE jobs
+            SET url = ?
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (
+                posting_url.value,
+                str(identity.tenant_id),
+                str(identity.job_id),
+            ),
+        )
+        return ResolvedJobIdentity(
+            tenant_id=identity.tenant_id,
+            job_id=identity.job_id,
+            posting_url=posting_url,
+        )
+
+    def _update_existing_job(
+        self,
+        job: Job,
+        identity: ResolvedJobIdentity,
+    ) -> None:
+        existing = self._conn.execute(
+            """
+            SELECT discovered_at
+            FROM jobs
+            WHERE tenant_id = ? AND job_id = ?
+            LIMIT 1
+            """,
+            (str(identity.tenant_id), str(identity.job_id)),
+        ).fetchone()
+        if existing is None:
+            raise LookupError("Stable Job owner disappeared before repository upsert")
+        existing_discovered_at = existing["discovered_at"] if isinstance(existing, sqlite3.Row) else existing[0]
+        preserved_discovered_at = existing_discovered_at or job.discovered_at
+        self._conn.execute(
+            """
+            UPDATE jobs SET
+                title = ?,
+                company = COALESCE(NULLIF(company, ''), ?),
+                salary = ?,
+                description = ?,
+                location = ?,
+                site = ?,
+                strategy = ?,
+                discovered_at = ?
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (
+                job.metadata.title,
+                None if job.employer.is_unknown() else job.employer.name,
+                job.metadata.salary,
+                job.metadata.description,
+                job.metadata.location,
+                job.source.board,
+                job.search_strategy.value,
+                preserved_discovered_at,
+                str(identity.tenant_id),
+                str(identity.job_id),
+            ),
+        )
+
+    def _insert_or_resolve_winner(
+        self,
+        job: Job,
+        candidate_job_id: JobId,
+    ) -> tuple[ResolvedJobIdentity, bool]:
+        """Claim a first URL, returning a concurrent winner when one exists."""
+
+        try:
             self._conn.execute(
                 """
                 INSERT INTO jobs (
-                    url, title, company, salary, description, location,
-                    site, strategy, discovered_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    tenant_id, job_id, url, title, company, salary,
+                    description, location, site, strategy, discovered_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    str(job.tenant_id),
+                    str(candidate_job_id),
                     job.posting_url.value,
                     job.metadata.title,
                     None if job.employer.is_unknown() else job.employer.name,
@@ -344,16 +455,69 @@ class SqliteJobRepository:
                     job.discovered_at,
                 ),
             )
-        self._sync_tombstone(job)
-        if self._search_unit_repository is not None:
-            assert self._search_unit_lease is not None
-            self._search_unit_repository.record_accepted_job(
-                self._search_unit_lease,
-                job.posting_url.value,
-                was_new=was_new,
-                accepted_at=job.discovered_at,
+            created_at = datetime.now(timezone.utc).isoformat()
+            self._conn.execute(
+                """
+                INSERT INTO job_locators (
+                    tenant_id, job_id, locator_kind, locator_value,
+                    is_current, first_seen_at, last_seen_at, retired_at
+                ) VALUES (?, ?, 'posting_url', ?, 1, ?, ?, NULL)
+                """,
+                (
+                    str(job.tenant_id),
+                    str(candidate_job_id),
+                    job.posting_url.value,
+                    created_at,
+                    created_at,
+                ),
             )
-        self._conn.commit()
+        except sqlite3.IntegrityError:
+            winner = self.resolve_by_posting_url(
+                job.tenant_id,
+                job.posting_url,
+            )
+            if winner is not None:
+                return winner, False
+
+            stable_winner = self.resolve_by_job_id(
+                job.tenant_id,
+                candidate_job_id,
+            )
+            if stable_winner is not None:
+                url_owner = self.resolve_by_posting_url(
+                    job.tenant_id,
+                    job.posting_url,
+                )
+                if url_owner is not None and url_owner.job_id != candidate_job_id:
+                    raise JobUrlConflict(
+                        posting_url=job.posting_url,
+                        owner=url_owner.job_id,
+                        attempted=candidate_job_id,
+                    )
+                stable_winner = self._set_current_posting_url(
+                    stable_winner,
+                    job.posting_url,
+                )
+                self._update_existing_job(job, stable_winner)
+                return stable_winner, False
+
+            global_owner = self._conn.execute(
+                "SELECT job_id FROM jobs WHERE url = ? LIMIT 1",
+                (job.posting_url.value,),
+            ).fetchone()
+            if global_owner is not None:
+                owner_job_id = global_owner["job_id"] if isinstance(global_owner, sqlite3.Row) else global_owner[0]
+                raise JobUrlConflict(
+                    posting_url=job.posting_url,
+                    owner=JobId(str(owner_job_id)),
+                    attempted=candidate_job_id,
+                )
+            raise
+
+        identity = self.resolve_by_job_id(job.tenant_id, candidate_job_id)
+        if identity is None:
+            raise RuntimeError("Inserted Job is missing its stable identity alias")
+        return identity, True
 
     def soft_delete(
         self,
@@ -366,18 +530,26 @@ class SqliteJobRepository:
         existing = self.load(tenant_id, job_id)
         if existing is None:
             return None
+        identity = self._require_identity(tenant_id, existing.job_id)
         self._fence_search_unit_write()
         deleted = existing.soft_delete(reason=reason, deleted_at=deleted_at)
         self._conn.execute(
             """
-            INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-            VALUES (?, ?, ?, NULL)
-            ON CONFLICT(job_url) DO UPDATE SET
+            INSERT INTO jobctrl_deleted_jobs (
+                tenant_id, job_id, deleted_at, reason, restored_at
+            )
+            VALUES (?, ?, ?, ?, NULL)
+            ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 deleted_at = excluded.deleted_at,
                 reason = excluded.reason,
                 restored_at = NULL
             """,
-            (str(deleted.job_id), deleted.deleted_at, deleted.delete_reason),
+            (
+                str(tenant_id),
+                str(identity.job_id),
+                deleted.deleted_at,
+                deleted.delete_reason,
+            ),
         )
         self._conn.commit()
         return deleted
@@ -392,6 +564,7 @@ class SqliteJobRepository:
         existing = self.load(tenant_id, job_id)
         if existing is None:
             return None
+        identity = self._require_identity(tenant_id, existing.job_id)
         self._fence_search_unit_write()
         restored = existing.restore()
         restore_timestamp = _restore_timestamp(restored_at, deleted_at=existing.deleted_at)
@@ -400,12 +573,97 @@ class SqliteJobRepository:
         # preserved.
         self._conn.execute(
             "UPDATE jobctrl_deleted_jobs SET restored_at = ? "
-            "WHERE job_url = ? "
+            "WHERE tenant_id = ? AND job_id = ? "
             "AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
-            (restore_timestamp, str(restored.job_id)),
+            (restore_timestamp, str(tenant_id), str(identity.job_id)),
         )
         self._conn.commit()
         return restored
+
+    def claim_new_job(
+        self,
+        job: Job,
+        identity: CanonicalJobIdentity,
+        observation: JobSourceObservation,
+    ) -> CanonicalOwnerMatch | None:
+        """Atomically create ``job`` with its exact identity evidence.
+
+        A posting URL alone is not enough to establish a Job owner: source-native
+        and normalised-observation claims are also unique.  Serialising the
+        complete claim under ``BEGIN IMMEDIATE`` means a competing intake returns
+        the existing owner before any candidate row becomes visible.
+        """
+
+        owns_transaction = not self._conn.in_transaction
+        savepoint = "claim_new_job"
+        if owns_transaction:
+            self._conn.execute("BEGIN IMMEDIATE")
+        else:
+            self._conn.execute(f"SAVEPOINT {savepoint}")
+
+        try:
+            self._fence_search_unit_write()
+            owner_match = self.find_canonical_owner(
+                job.tenant_id,
+                source_id=observation.source_id,
+                source_native_id=observation.source_native_id,
+                canonical_url=identity.canonical_url,
+            )
+            if owner_match is not None:
+                if owns_transaction:
+                    self._conn.commit()
+                else:
+                    self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                return owner_match
+
+            candidate_job_id = canonical_job_id(str(job.job_id))
+            persisted_identity, was_new = self._insert_or_resolve_winner(
+                job,
+                candidate_job_id,
+            )
+            if not was_new:
+                if owns_transaction:
+                    self._conn.commit()
+                else:
+                    self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                return CanonicalOwnerMatch(
+                    job_id=persisted_identity.job_id,
+                    basis="canonical_url_match",
+                )
+
+            self._sync_tombstone(job, persisted_identity)
+            self._set_canonical_identity(persisted_identity, identity)
+            owner_match = self._attach_source_observation(
+                job.tenant_id,
+                persisted_identity,
+                observation,
+            )
+            if owner_match is not None:
+                if owns_transaction:
+                    self._conn.rollback()
+                else:
+                    self._conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                return owner_match
+            if owns_transaction:
+                self._conn.commit()
+            else:
+                self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        except BaseException:
+            if owns_transaction:
+                self._conn.rollback()
+            else:
+                self._conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
+
+        self._record_observation_side_effects(
+            tenant_id=job.tenant_id,
+            job_id=persisted_identity.job_id,
+            observation=observation,
+            was_new=True,
+        )
+        return None
 
     # ------------------------------------------------------------------
     # PR 2: canonical identity, source observations, duplicate links
@@ -418,7 +676,7 @@ class SqliteJobRepository:
         source_id: str,
         source_native_id: str,
         canonical_url: str,
-    ) -> JobId | None:
+    ) -> CanonicalOwnerMatch | None:
         """Look up the canonical Job for an incoming posting identity.
 
         Resolution order matches the RFC §"Recommended identity checks":
@@ -429,58 +687,79 @@ class SqliteJobRepository:
         if source_id and source_native_id:
             row = self._conn.execute(
                 """
-                SELECT job_url FROM job_source_observations
-                WHERE tenant_id = ? AND source_id = ? AND source_native_id = ?
+                SELECT j.job_id
+                FROM job_source_observations o
+                JOIN jobs j
+                  ON j.tenant_id = o.tenant_id
+                 AND j.job_id = o.job_id
+                WHERE o.tenant_id = ?
+                  AND o.source_id = ?
+                  AND o.source_native_id = ?
                 LIMIT 1
                 """,
                 (str(tenant_id), source_id, source_native_id),
             ).fetchone()
             if row is not None:
-                job_url = row["job_url"] if isinstance(row, sqlite3.Row) else row[0]
-                if job_url:
-                    return JobId(str(job_url))
+                job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[0]
+                if job_id:
+                    return CanonicalOwnerMatch(
+                        job_id=JobId(str(job_id)),
+                        basis="source_native_id_match",
+                    )
 
         if canonical_url:
-            row = self._conn.execute(
-                """
-                SELECT url FROM jobs
-                WHERE url = ?
-                LIMIT 1
-                """,
-                (canonical_url,),
-            ).fetchone()
-            if row is not None:
-                job_url = row["url"] if isinstance(row, sqlite3.Row) else row[0]
-                if job_url:
-                    return JobId(str(job_url))
+            direct = self._identity_resolver.resolve_by_posting_url(
+                tenant_id,
+                PostingUrl(value=canonical_url),
+            )
+            if direct is not None:
+                return CanonicalOwnerMatch(
+                    job_id=direct.job_id,
+                    basis="canonical_url_match",
+                )
 
             row = self._conn.execute(
                 """
-                SELECT job_url FROM job_canonical_identities
-                WHERE tenant_id = ? AND canonical_url = ?
+                SELECT j.job_id
+                FROM job_canonical_identities c
+                JOIN jobs j
+                  ON j.tenant_id = c.tenant_id
+                 AND j.job_id = c.job_id
+                WHERE c.tenant_id = ? AND c.canonical_url = ?
                 LIMIT 1
                 """,
                 (str(tenant_id), canonical_url),
             ).fetchone()
             if row is not None:
-                job_url = row["job_url"] if isinstance(row, sqlite3.Row) else row[0]
-                if job_url:
-                    return JobId(str(job_url))
+                job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[0]
+                if job_id:
+                    return CanonicalOwnerMatch(
+                        job_id=JobId(str(job_id)),
+                        basis="canonical_url_match",
+                    )
 
             normalized = normalize_observed_url(canonical_url)
             if normalized:
                 row = self._conn.execute(
                     """
-                    SELECT job_url FROM job_source_observations
-                    WHERE tenant_id = ? AND normalized_observed_url = ?
+                    SELECT j.job_id
+                    FROM job_source_observations o
+                    JOIN jobs j
+                      ON j.tenant_id = o.tenant_id
+                     AND j.job_id = o.job_id
+                    WHERE o.tenant_id = ?
+                      AND o.normalized_observed_url = ?
                     LIMIT 1
                     """,
                     (str(tenant_id), normalized),
                 ).fetchone()
                 if row is not None:
-                    job_url = row["job_url"] if isinstance(row, sqlite3.Row) else row[0]
-                    if job_url:
-                        return JobId(str(job_url))
+                    job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[0]
+                    if job_id:
+                        return CanonicalOwnerMatch(
+                            job_id=JobId(str(job_id)),
+                            basis="normalized_observation_match",
+                        )
 
         return None
 
@@ -500,16 +779,12 @@ class SqliteJobRepository:
         The returned :class:`ContentOwnerMatch` records which of the two paths
         matched so the write boundary logs an honest duplicate-link reason.
 
-        Content merges MUST key on a genuine employer on BOTH sides, otherwise
-        two DISTINCT employers' postings would collapse into one Job (silent
-        data loss). ``jobs.company`` is empty for use-case-created rows, so the
-        stored employer coalesces to ``jobs.site`` (the board, which is the real
-        employer for ATS-owned rows) — but a platform/sentinel board
-        ("User-mediated capture", the "Workday" fallback, a JobSpy board, or the
-        ``Unknown`` sentinel) is shared across employers and must not be treated
-        as an employer key. When either side lacks a genuine employer this falls
-        through to ``None`` (a safe under-merge). Returns ``None`` when the
-        posting cannot be fingerprinted or no existing Job matches.
+        Content merges MUST key on a genuine canonical employer on BOTH sides,
+        otherwise two DISTINCT employers' postings would collapse into one Job
+        (silent data loss). ``jobs.site`` is only the source board and is never an
+        employer fallback. When either side lacks a genuine employer this falls
+        through to ``None`` (a safe under-merge). Returns ``None`` when the posting
+        cannot be fingerprinted or no existing Job matches.
 
         The incoming posting is a raw LISTING, so the match compares it against
         BOTH the stored listing (``jobs.description``) and the stored enriched
@@ -530,25 +805,32 @@ class SqliteJobRepository:
         self._conn.create_function("jh_normalize_identity", 1, normalize_identity_text, deterministic=True)
         rows = self._conn.execute(
             """
-            SELECT j.url, j.title, j.company, j.site,
+            SELECT j.job_id, j.url, j.title, j.company,
                    j.description AS listing_description,
                    COALESCE(je.full_description, j.full_description)
                        AS enriched_description,
-                   CASE WHEN d.job_url IS NULL THEN 0 ELSE 1 END AS is_deleted
+                   CASE WHEN d.job_id IS NULL THEN 0 ELSE 1 END AS is_deleted
             FROM jobs j
-            LEFT JOIN job_enrichments je ON je.job_url = j.url
+            LEFT JOIN job_enrichments je
+              ON je.tenant_id = j.tenant_id
+             AND je.job_id = j.job_id
             LEFT JOIN jobctrl_deleted_jobs d
-              ON d.job_url = j.url
+              ON d.tenant_id = j.tenant_id
+             AND d.job_id = j.job_id
              AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
-            WHERE jh_normalize_identity(COALESCE(j.title, '')) = ?
-              AND jh_normalize_identity(COALESCE(NULLIF(j.company, ''), j.site, '')) = ?
+            WHERE j.tenant_id = ?
+              AND jh_normalize_identity(COALESCE(j.title, '')) = ?
+              AND jh_normalize_identity(COALESCE(j.company, '')) = ?
             ORDER BY is_deleted ASC, j.discovered_at ASC NULLS LAST, j.url ASC
             """,
-            (normalize_identity_text(title), normalize_identity_text(company)),
+            (
+                str(tenant_id),
+                normalize_identity_text(title),
+                normalize_identity_text(company),
+            ),
         ).fetchall()
         for existing in rows:
-            stored_company = existing["company"]
-            stored_employer = stored_company if stored_company else existing["site"]
+            stored_employer = existing["company"]
             if not is_genuine_employer_identity(stored_employer):
                 continue
             basis = content_match_basis(
@@ -562,7 +844,7 @@ class SqliteJobRepository:
                 ),
             )
             if basis is not None:
-                return ContentOwnerMatch(job_id=JobId(str(existing["url"])), basis=basis)
+                return ContentOwnerMatch(job_id=JobId(str(existing["job_id"])), basis=basis)
         return None
 
     def attach_source_observation(
@@ -570,7 +852,7 @@ class SqliteJobRepository:
         tenant_id: TenantId,
         job_id: JobId,
         observation: JobSourceObservation,
-    ) -> None:
+    ) -> CanonicalOwnerMatch | None:
         """Persist or replace an observation row.
 
         Idempotent on ``(tenant_id, source_id, source_native_id)``: if
@@ -580,13 +862,53 @@ class SqliteJobRepository:
         also collapses cosmetic URL variants.
         """
 
-        self._fence_search_unit_write()
+        identity = self._require_identity(tenant_id, job_id)
+        try:
+            self._fence_search_unit_write()
+            owner_match = self._attach_source_observation(
+                tenant_id,
+                identity,
+                observation,
+            )
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+
+        if owner_match is not None:
+            return owner_match
+        self._record_observation_side_effects(
+            tenant_id=tenant_id,
+            job_id=identity.job_id,
+            observation=observation,
+            was_new=False,
+        )
+        return None
+
+    def _attach_source_observation(
+        self,
+        tenant_id: TenantId,
+        identity: ResolvedJobIdentity,
+        observation: JobSourceObservation,
+    ) -> CanonicalOwnerMatch | None:
+        """Write an observation only when this Job already owns its claims."""
+
+        owner_match = self._find_observation_owner(
+            tenant_id,
+            source_id=observation.source_id,
+            source_native_id=observation.source_native_id,
+            observed_url=observation.observed_url,
+        )
+        if owner_match is not None and owner_match.job_id != identity.job_id:
+            return owner_match
+
+        stable_job_id = str(identity.job_id)
         normalized = normalize_observed_url(observation.observed_url)
         updated = self._conn.execute(
             """
             UPDATE job_source_observations SET
                 source_observation_id = ?,
-                job_url = ?,
+                job_id = ?,
                 observed_url = ?,
                 normalized_observed_url = ?,
                 run_id = ?,
@@ -595,7 +917,7 @@ class SqliteJobRepository:
             """,
             (
                 observation.source_observation_id,
-                str(job_id),
+                stable_job_id,
                 observation.observed_url,
                 normalized,
                 observation.run_id,
@@ -610,20 +932,22 @@ class SqliteJobRepository:
                 """
                 UPDATE job_source_observations SET
                     source_observation_id = ?,
-                    job_url = ?,
+                    job_id = ?,
                     source_id = ?,
                     source_native_id = ?,
                     observed_url = ?,
+                    normalized_observed_url = ?,
                     run_id = ?,
                     observed_at = ?
                 WHERE tenant_id = ? AND normalized_observed_url = ?
                 """,
                 (
                     observation.source_observation_id,
-                    str(job_id),
+                    stable_job_id,
                     observation.source_id,
                     observation.source_native_id,
                     observation.observed_url,
+                    normalized,
                     observation.run_id,
                     observation.observed_at,
                     str(tenant_id),
@@ -634,7 +958,7 @@ class SqliteJobRepository:
             self._conn.execute(
                 """
                 INSERT INTO job_source_observations (
-                    tenant_id, source_observation_id, job_url, source_id,
+                    tenant_id, source_observation_id, job_id, source_id,
                     source_native_id, observed_url, normalized_observed_url,
                     run_id, observed_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -642,7 +966,7 @@ class SqliteJobRepository:
                 (
                     str(tenant_id),
                     observation.source_observation_id,
-                    str(job_id),
+                    stable_job_id,
                     observation.source_id,
                     observation.source_native_id,
                     observation.observed_url,
@@ -651,12 +975,22 @@ class SqliteJobRepository:
                     observation.observed_at,
                 ),
             )
+        return None
+
+    def _record_observation_side_effects(
+        self,
+        *,
+        tenant_id: TenantId,
+        job_id: JobId,
+        observation: JobSourceObservation,
+        was_new: bool,
+    ) -> None:
         if self._search_unit_repository is not None:
             assert self._search_unit_lease is not None
             self._search_unit_repository.record_accepted_job(
                 self._search_unit_lease,
                 str(job_id),
-                was_new=False,
+                was_new=was_new,
                 accepted_at=observation.observed_at,
             )
         if self._execution_repository is not None:
@@ -675,7 +1009,6 @@ class SqliteJobRepository:
                 source_run_id=observation.run_id,
                 linked_at=observation.observed_at,
             )
-        self._conn.commit()
 
     def set_canonical_identity(
         self,
@@ -685,14 +1018,23 @@ class SqliteJobRepository:
     ) -> None:
         """Persist (or replace) the canonical identity decision for a Job."""
 
+        resolved = self._require_identity(tenant_id, job_id)
         self._fence_search_unit_write()
+        self._set_canonical_identity(resolved, identity)
+        self._conn.commit()
+
+    def _set_canonical_identity(
+        self,
+        resolved: ResolvedJobIdentity,
+        identity: CanonicalJobIdentity,
+    ) -> None:
         self._conn.execute(
             """
             INSERT INTO job_canonical_identities (
-                tenant_id, job_url, canonical_url, ats_kind,
+                tenant_id, job_id, canonical_url, ats_kind,
                 source_native_id, confidence, resolved_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (tenant_id, job_url) DO UPDATE SET
+            ON CONFLICT (tenant_id, job_id) DO UPDATE SET
                 canonical_url = excluded.canonical_url,
                 ats_kind = excluded.ats_kind,
                 source_native_id = excluded.source_native_id,
@@ -700,8 +1042,8 @@ class SqliteJobRepository:
                 resolved_at = excluded.resolved_at
             """,
             (
-                str(tenant_id),
-                str(job_id),
+                str(resolved.tenant_id),
+                str(resolved.job_id),
                 identity.canonical_url,
                 identity.ats_kind.value,
                 identity.source_native_id,
@@ -709,7 +1051,53 @@ class SqliteJobRepository:
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
-        self._conn.commit()
+
+    def _find_observation_owner(
+        self,
+        tenant_id: TenantId,
+        *,
+        source_id: str,
+        source_native_id: str,
+        observed_url: str,
+    ) -> CanonicalOwnerMatch | None:
+        """Resolve the unique observation claims in the same priority as intake."""
+
+        if source_id and source_native_id:
+            row = self._conn.execute(
+                """
+                SELECT job_id
+                FROM job_source_observations
+                WHERE tenant_id = ? AND source_id = ? AND source_native_id = ?
+                LIMIT 1
+                """,
+                (str(tenant_id), source_id, source_native_id),
+            ).fetchone()
+            if row is not None:
+                job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[0]
+                return CanonicalOwnerMatch(
+                    job_id=JobId(str(job_id)),
+                    basis="source_native_id_match",
+                )
+
+        normalized = normalize_observed_url(observed_url)
+        if not normalized:
+            return None
+        row = self._conn.execute(
+            """
+            SELECT job_id
+            FROM job_source_observations
+            WHERE tenant_id = ? AND normalized_observed_url = ?
+            LIMIT 1
+            """,
+            (str(tenant_id), normalized),
+        ).fetchone()
+        if row is None:
+            return None
+        job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[0]
+        return CanonicalOwnerMatch(
+            job_id=JobId(str(job_id)),
+            basis="normalized_observation_match",
+        )
 
     def record_duplicate_link(
         self,
@@ -718,6 +1106,10 @@ class SqliteJobRepository:
     ) -> None:
         """Persist a confirmed duplicate-link audit record."""
 
+        owner = self._require_identity(
+            tenant_id,
+            JobId(link.surviving_job_id),
+        )
         self._fence_search_unit_write()
         self._conn.execute(
             """
@@ -737,7 +1129,7 @@ class SqliteJobRepository:
             (
                 str(tenant_id),
                 link.duplicate_link_id,
-                link.surviving_job_id,
+                str(owner.job_id),
                 link.superseded_job_or_observation_id,
                 link.reason,
                 float(link.confidence),
@@ -764,16 +1156,23 @@ class SqliteJobRepository:
         mint a fresh event row (audit noise).
         """
 
+        owner = self._require_identity(tenant_id, owner_job_id)
         self._fence_search_unit_write()
         before = self._conn.total_changes
         self._conn.execute(
             """
             INSERT INTO job_rejected_duplicate_links (
-                tenant_id, owner_job_url, candidate_url, reason, rejected_at
+                tenant_id, owner_job_id, candidate_url, reason, rejected_at
             ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT (tenant_id, owner_job_url, candidate_url) DO NOTHING
+            ON CONFLICT (tenant_id, owner_job_id, candidate_url) DO NOTHING
             """,
-            (str(tenant_id), str(owner_job_id), str(candidate_url), reason, rejected_at),
+            (
+                str(tenant_id),
+                str(owner.job_id),
+                str(candidate_url),
+                reason,
+                rejected_at,
+            ),
         )
         self._conn.commit()
         return self._conn.total_changes > before
@@ -785,15 +1184,18 @@ class SqliteJobRepository:
     ) -> list[JobSourceObservation]:
         """Read-side helper used by tests and the future Operations projection."""
 
+        identity = self.resolve_by_job_id(tenant_id, job_id)
+        if identity is None:
+            return []
         rows = self._conn.execute(
             """
             SELECT source_observation_id, source_id, source_native_id,
                    observed_url, run_id, observed_at
             FROM job_source_observations
-            WHERE tenant_id = ? AND job_url = ?
+            WHERE tenant_id = ? AND job_id = ?
             ORDER BY observed_at ASC
             """,
-            (str(tenant_id), str(job_id)),
+            (str(tenant_id), str(identity.job_id)),
         ).fetchall()
         return [
             JobSourceObservation(
@@ -814,14 +1216,17 @@ class SqliteJobRepository:
     ) -> CanonicalJobIdentity | None:
         """Read-side helper used by tests and the future Operations projection."""
 
+        identity = self.resolve_by_job_id(tenant_id, job_id)
+        if identity is None:
+            return None
         row = self._conn.execute(
             """
             SELECT canonical_url, ats_kind, source_native_id, confidence
             FROM job_canonical_identities
-            WHERE tenant_id = ? AND job_url = ?
+            WHERE tenant_id = ? AND job_id = ?
             LIMIT 1
             """,
-            (str(tenant_id), str(job_id)),
+            (str(tenant_id), str(identity.job_id)),
         ).fetchone()
         if row is None:
             return None
@@ -836,7 +1241,45 @@ class SqliteJobRepository:
     # Internals
     # ------------------------------------------------------------------
 
-    def _sync_tombstone(self, job: Job) -> None:
+    def _load_resolved(self, identity: ResolvedJobIdentity) -> Job | None:
+        row = self._conn.execute(
+            """
+            SELECT j.tenant_id, j.job_id, j.url,
+                   j.title, j.company, j.salary, j.description, j.location,
+                   j.site, j.strategy, j.discovered_at,
+                   d.deleted_at, d.reason
+            FROM jobs j
+            LEFT JOIN jobctrl_deleted_jobs d
+              ON d.tenant_id = j.tenant_id
+             AND d.job_id = j.job_id
+             AND (
+                    d.restored_at IS NULL
+                 OR julianday(d.restored_at) <= julianday(d.deleted_at)
+             )
+            WHERE j.tenant_id = ? AND j.job_id = ?
+            LIMIT 1
+            """,
+            (str(identity.tenant_id), str(identity.job_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_job(row, posting_url=identity.posting_url)
+
+    def _require_identity(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> ResolvedJobIdentity:
+        identity = self._identity_resolver.resolve_by_job_id(tenant_id, job_id)
+        if identity is None:
+            raise LookupError(f"Unknown Job identity for tenant={tenant_id!r} job_id={job_id!r}")
+        return identity
+
+    def _sync_tombstone(
+        self,
+        job: Job,
+        identity: ResolvedJobIdentity,
+    ) -> None:
         """Reflect the aggregate's ``deleted_at`` field in the tombstone table.
 
         Called from ``save``. If the aggregate carries a deleted_at,
@@ -847,31 +1290,42 @@ class SqliteJobRepository:
         if job.deleted_at is not None:
             self._conn.execute(
                 """
-                INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at, reason, restored_at)
-                VALUES (?, ?, ?, NULL)
-                ON CONFLICT(job_url) DO UPDATE SET
+                INSERT INTO jobctrl_deleted_jobs (
+                    tenant_id, job_id, deleted_at, reason, restored_at
+                )
+                VALUES (?, ?, ?, ?, NULL)
+                ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                     deleted_at = excluded.deleted_at,
                     reason = excluded.reason,
                     restored_at = NULL
                 """,
-                (str(job.job_id), job.deleted_at, job.delete_reason),
+                (
+                    str(job.tenant_id),
+                    str(identity.job_id),
+                    job.deleted_at,
+                    job.delete_reason,
+                ),
             )
         else:
-            # Keep legacy active-save behaviour, but timestamp-aware
-            # readers only treat this as restored when the active row
-            # is newer than the tombstone.
             self._conn.execute(
                 "UPDATE jobctrl_deleted_jobs SET restored_at = ? "
-                "WHERE job_url = ? "
+                "WHERE tenant_id = ? AND job_id = ? "
                 "AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
-                (job.discovered_at, str(job.job_id)),
+                (job.discovered_at, str(job.tenant_id), str(identity.job_id)),
             )
 
     @staticmethod
-    def _row_to_job(row: Any, tenant_id: TenantId | None = None) -> Job:
+    def _row_to_job(
+        row: Any,
+        *,
+        posting_url: PostingUrl | None = None,
+    ) -> Job:
         if isinstance(row, sqlite3.Row):
+            tenant_id = row["tenant_id"]
+            job_id = row["job_id"]
             url = row["url"]
             title = row["title"]
+            company = row["company"]
             salary = row["salary"]
             description = row["description"]
             location = row["location"]
@@ -882,8 +1336,11 @@ class SqliteJobRepository:
             delete_reason = row["reason"] if "reason" in row.keys() else None
         else:
             (
+                tenant_id,
+                job_id,
                 url,
                 title,
+                company,
                 salary,
                 description,
                 location,
@@ -900,12 +1357,13 @@ class SqliteJobRepository:
         # fall back to the sentinel "unknown" so the value object
         # invariant holds.
         board = (site or "unknown").strip() or "unknown"
+        employer_name = str(company or "").strip()
         return Job(
-            tenant_id=tenant_id or LOCAL_TENANT,
-            job_id=JobId(str(url)),
-            posting_url=PostingUrl(value=str(url)),
+            tenant_id=TenantId(str(tenant_id)),
+            job_id=JobId(str(job_id)),
+            posting_url=posting_url or PostingUrl(value=str(url)),
             source=Source(board=board),
-            employer=Employer.unknown(),
+            employer=(Employer(name=employer_name) if employer_name else Employer.unknown()),
             search_strategy=strategy,
             metadata=JobMetadata(
                 title=str(title or ""),

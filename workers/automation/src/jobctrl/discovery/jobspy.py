@@ -16,8 +16,8 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from jobctrl import config
-from jobctrl.database import get_connection, init_db, resurface_deleted_job
-from jobctrl.domain.discovery import JobMetadata, PostingUrl, SearchStrategy, Source
+from jobctrl.database import get_connection, init_db
+from jobctrl.domain.discovery import Employer, JobMetadata, PostingUrl, SearchStrategy, Source
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.search_units import (
     DiscoverySearchSpec,
@@ -34,8 +34,7 @@ from jobctrl.domain.job_content_identity import (
     job_content_fingerprint,
     normalize_identity_text,
 )
-from jobctrl.domain.identifiers import JobId
-
+from jobctrl.domain.identifiers import canonical_job_id
 # Phase 7 (S-27 round-1 review M1): ``parse_proxy`` lives under
 # ``jobctrl.infrastructure.network`` so the Enrichment context's
 # Playwright fetcher can import it without depending on this Discovery
@@ -237,6 +236,7 @@ def store_jobspy_results(
             source_id=source_id,
             source_native_id=_jobspy_source_native_id(row, url),
             site_label=site_label,
+            company=company,
             title=title,
             salary=salary,
             description=description,
@@ -320,7 +320,7 @@ def store_jobspy_results(
                 ),
             )
             _apply_write_fence(write_fence)
-            resurface_deleted_job(conn, duplicate_url, resurfaced_at=now)
+            _restore_job_by_url(conn, duplicate_url, restored_at=now)
             existing += 1
             continue
 
@@ -392,7 +392,7 @@ def store_jobspy_results(
                 ),
             )
             _apply_write_fence(write_fence)
-            resurface_deleted_job(conn, stored_duplicate_url, resurfaced_at=now)
+            _restore_job_by_url(conn, stored_duplicate_url, restored_at=now)
             existing += 1
             continue
 
@@ -463,7 +463,7 @@ def store_jobspy_results(
             new += 1
         elif summary.observed > 0 or summary.duplicates_linked > 0:
             _apply_write_fence(write_fence)
-            resurface_deleted_job(conn, url, resurfaced_at=now)
+            _restore_job_by_url(conn, url, restored_at=now)
             existing += 1
 
     conn.commit()
@@ -476,6 +476,7 @@ def _jobspy_posting_from_row(
     source_id: str,
     source_native_id: str,
     site_label: str,
+    company: str | None,
     title: str | None,
     salary: str | None,
     description: str | None,
@@ -484,6 +485,7 @@ def _jobspy_posting_from_row(
     return ScrapedJobPosting(
         posting_url=PostingUrl(value=url),
         source=Source(board=site_label),
+        employer=Employer(name=company) if company else Employer.unknown(),
         metadata=JobMetadata(
             title=title or "",
             salary=salary or "",
@@ -576,6 +578,12 @@ def _refresh_existing_jobspy_job(
     idempotency_key: str | None = None,
 ) -> None:
     _apply_write_fence(write_fence)
+    identity = SqliteJobRepository(conn).resolve_by_posting_url(
+        LOCAL_TENANT,
+        PostingUrl(value=job_url),
+    )
+    if identity is None:
+        raise LookupError(f"JobSpy metadata refresh references an unknown posting URL: {job_url!r}")
     cursor = conn.execute(
         """
         UPDATE jobs SET
@@ -592,7 +600,7 @@ def _refresh_existing_jobspy_job(
             full_description = COALESCE(NULLIF(?, ''), full_description),
             application_url = COALESCE(NULLIF(?, ''), application_url),
             detail_scraped_at = COALESCE(?, detail_scraped_at)
-        WHERE url = ?
+        WHERE tenant_id = ? AND job_id = ?
         """,
         (
             title,
@@ -605,7 +613,8 @@ def _refresh_existing_jobspy_job(
             full_description,
             application_url,
             detail_scraped_at,
-            job_url,
+            str(LOCAL_TENANT),
+            str(identity.job_id),
         ),
     )
     if cursor.rowcount:
@@ -613,7 +622,7 @@ def _refresh_existing_jobspy_job(
 
         record_job_event(
             conn,
-            job_url,
+            identity.job_id,
             "discover",
             "JobMetadataUpdated",
             message="Job metadata refreshed from broad-board discovery",
@@ -626,6 +635,19 @@ def _refresh_existing_jobspy_job(
             occurred_at=updated_at,
             idempotency_key=idempotency_key,
         )
+
+
+def _restore_job_by_url(
+    conn: sqlite3.Connection,
+    job_url: str,
+    *,
+    restored_at: str,
+) -> None:
+    repository = SqliteJobRepository(conn)
+    identity = repository.resolve_by_posting_url(LOCAL_TENANT, PostingUrl(value=job_url))
+    if identity is None:
+        raise LookupError(f"JobSpy restore references an unknown posting URL: {job_url!r}")
+    repository.restore(LOCAL_TENANT, identity.job_id, restored_at=restored_at)
 
 
 def _nullable_str(value: object) -> str | None:
@@ -690,14 +712,21 @@ def _record_jobspy_source_observation(
     normalized = normalize_observed_url(observed_url)
     source_native_id = normalized or observed_url
     observation_id = "jobspy:" + hashlib.sha256(f"{source_id}:{source_native_id}".encode("utf-8")).hexdigest()[:24]
-    SqliteJobRepository(
+    repository = SqliteJobRepository(
         conn,
         discovery_execution=discovery_execution,
         source_family=("jobspy" if discovery_execution is not None or search_unit_lease is not None else None),
         search_unit_lease=search_unit_lease,
-    ).attach_source_observation(
+    )
+    identity = repository.resolve_by_posting_url(
         LOCAL_TENANT,
-        JobId(job_url),
+        PostingUrl(value=job_url),
+    )
+    if identity is None:
+        raise LookupError(f"JobSpy observation references an unknown posting URL: {job_url!r}")
+    repository.attach_source_observation(
+        LOCAL_TENANT,
+        identity.job_id,
         JobSourceObservation(
             source_observation_id=observation_id,
             source_id=source_id,
@@ -712,14 +741,14 @@ def _record_jobspy_source_observation(
     _apply_write_fence(write_fence)
     record_job_event(
         conn,
-        job_url,
+        identity.job_id,
         "discover",
         "JobSourceObserved",
         message="Job source observed.",
         payload={
             "tenantId": "local",
-            "job_id": job_url,
-            "jobId": job_url,
+            "job_id": str(identity.job_id),
+            "jobId": str(identity.job_id),
             "source_observation_id": observation_id,
             "sourceObservationId": observation_id,
             "source_id": source_id,
@@ -786,22 +815,23 @@ def _find_existing_content_duplicate(
 def _find_stored_content_duplicate_survivor(conn: sqlite3.Connection, *, url: str) -> str | None:
     row = conn.execute(
         """
-        SELECT j.title, j.company, j.site,
+        SELECT j.title, j.company,
                COALESCE(je.full_description, j.full_description, j.description) AS description
         FROM jobs j
-        LEFT JOIN job_enrichments je ON je.job_url = j.url
-        WHERE j.url = ?
+        LEFT JOIN job_enrichments je
+          ON je.tenant_id = j.tenant_id
+         AND je.job_id = j.job_id
+        WHERE j.tenant_id = ? AND j.url = ?
         """,
-        (url,),
+        (str(LOCAL_TENANT), url),
     ).fetchone()
     if row is None:
         return None
-    stored_company = row["company"]
     return _find_content_duplicate_survivor(
         conn,
         url=url,
         title=row["title"],
-        company=stored_company if stored_company else row["site"],
+        company=row["company"],
         description=row["description"],
         include_self=True,
     )
@@ -825,7 +855,6 @@ def _find_content_duplicate_survivor(
     )
     if incoming_key is None:
         return None
-    _ensure_deleted_jobs_table(conn)
     conn.create_function("jh_normalize_identity", 1, normalize_identity_text, deterministic=True)
     self_filter = "" if include_self else "AND j.url != ?"
     params: tuple[object, ...] = (
@@ -836,26 +865,28 @@ def _find_content_duplicate_survivor(
         params = (url, *params)
     rows = conn.execute(
         f"""
-        SELECT j.url, j.title, j.company, j.site,
+        SELECT j.url, j.title, j.company,
                j.description AS listing_description,
                COALESCE(je.full_description, j.full_description) AS enriched_description,
-               CASE WHEN d.job_url IS NULL THEN 0 ELSE 1 END AS is_deleted
+               CASE WHEN d.job_id IS NULL THEN 0 ELSE 1 END AS is_deleted
         FROM jobs j
-        LEFT JOIN job_enrichments je ON je.job_url = j.url
+        LEFT JOIN job_enrichments je
+          ON je.tenant_id = j.tenant_id
+         AND je.job_id = j.job_id
         LEFT JOIN jobctrl_deleted_jobs d
-          ON d.job_url = j.url
+          ON d.tenant_id = j.tenant_id
+         AND d.job_id = j.job_id
          AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
-        WHERE 1 = 1
+        WHERE j.tenant_id = ?
           {self_filter}
           AND jh_normalize_identity(COALESCE(j.title, '')) = ?
-          AND jh_normalize_identity(COALESCE(NULLIF(j.company, ''), j.site, '')) = ?
+          AND jh_normalize_identity(COALESCE(j.company, '')) = ?
         ORDER BY is_deleted ASC, j.discovered_at ASC NULLS LAST, j.url ASC
         """,
-        params,
+        (str(LOCAL_TENANT), *params),
     ).fetchall()
     for existing in rows:
-        stored_company = existing["company"]
-        stored_employer = stored_company if stored_company else existing["site"]
+        stored_employer = existing["company"]
         if not is_genuine_employer_identity(stored_employer):
             continue
         if (
@@ -873,20 +904,6 @@ def _find_content_duplicate_survivor(
         ):
             return str(existing["url"])
     return None
-
-
-def _ensure_deleted_jobs_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobctrl_deleted_jobs (
-            job_url TEXT PRIMARY KEY,
-            deleted_at TEXT NOT NULL,
-            reason TEXT,
-            restored_at TEXT,
-            FOREIGN KEY(job_url) REFERENCES jobs(url)
-        )
-        """
-    )
 
 
 def _record_content_duplicate_link(
@@ -908,6 +925,13 @@ def _record_content_duplicate_link(
     _apply_write_fence(write_fence)
     duplicate_link_id = "content:" + link_key[:32]
     normalized_url = normalize_observed_url(duplicate_url)
+    owner = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+        (str(LOCAL_TENANT), surviving_url),
+    ).fetchone()
+    if owner is None:
+        raise LookupError(f"Content duplicate owner is unknown: {surviving_url!r}")
+    owner_job_id = canonical_job_id(str(owner["job_id"] if isinstance(owner, sqlite3.Row) else owner[0]))
     conn.execute(
         """
         INSERT OR IGNORE INTO job_duplicate_links (
@@ -915,19 +939,19 @@ def _record_content_duplicate_link(
             superseded_job_or_observation_id, reason, confidence, linked_at
         ) VALUES ('local', ?, ?, ?, 'content_fingerprint_match', 0.95, ?)
         """,
-        (duplicate_link_id, surviving_url, duplicate_url, observed_at),
+        (duplicate_link_id, str(owner_job_id), duplicate_url, observed_at),
     )
     conn.execute(
         """
         INSERT OR IGNORE INTO job_source_observations (
-            tenant_id, source_observation_id, job_url, source_id,
+            tenant_id, source_observation_id, job_id, source_id,
             source_native_id, observed_url, normalized_observed_url,
             run_id, observed_at
         ) VALUES ('local', ?, ?, ?, ?, ?, ?, 'jobspy', ?)
         """,
         (
             f"content-duplicate:{duplicate_link_id}",
-            surviving_url,
+            str(owner_job_id),
             source,
             duplicate_url,
             duplicate_url,

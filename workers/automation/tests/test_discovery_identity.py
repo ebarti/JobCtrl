@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import set_tracer_provider
 
-from jobctrl.database import ensure_source_observation_tables, init_db
+from jobctrl.database import init_db
 from jobctrl.domain.discovery import (
     AtsKind,
     CanonicalJobIdentity,
@@ -24,9 +31,10 @@ from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.job_content_identity import is_genuine_employer_identity
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.ports.events import EventHandler, Subscription
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctrl.discovery.jobspy import _record_jobspy_source_observation
 from jobctrl.infrastructure.discovery import SqliteJobRepository
-from jobctrl.infrastructure.compensation import SqlitePostedCompensationRepository
+from jobctrl.infrastructure.discovery import production_wiring
 
 
 @pytest.fixture
@@ -46,10 +54,14 @@ class RecordingPublisher:
         return Subscription(lambda: None)
 
 
+def _job_id(url: str) -> JobId:
+    return JobId(str(uuid.uuid5(uuid.NAMESPACE_URL, url)))
+
+
 def _job(url: str = "https://boards.greenhouse.io/acme/jobs/123") -> Job:
     return Job.discover(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=_job_id(url),
         posting_url=PostingUrl(value=url),
         source=Source(board="greenhouse"),
         employer=Employer.unknown(),
@@ -66,11 +78,17 @@ def _posting(
     source_id: str = "greenhouse:acme",
     ats_kind: AtsKind = AtsKind.GREENHOUSE,
     board: str = "greenhouse",
+    employer_name: str | None = "Acme",
     metadata: JobMetadata | None = None,
 ) -> ScrapedJobPosting:
     return ScrapedJobPosting(
         posting_url=PostingUrl(value=canonical_url),
         source=Source(board=board),
+        employer=(
+            Employer(name=employer_name)
+            if employer_name is not None
+            else Employer.unknown()
+        ),
         metadata=metadata or JobMetadata(title="Platform Engineer", location="Remote"),
         strategy=SearchStrategy.WORKDAY_API,
         source_id=source_id,
@@ -95,14 +113,22 @@ def _seed_jobspy_job(
     """Seed a job the way JobSpy persists it: company column set, board in ``site``."""
 
     conn.execute(
-        "INSERT INTO jobs (url, title, company, salary, description, location, site, strategy, discovered_at) "
-        "VALUES (?, ?, ?, '', ?, 'Remote', ?, 'jobspy', ?)",
-        (url, title, company, description, site, discovered_at),
+        "INSERT INTO jobs (tenant_id, job_id, url, title, company, salary, description, location, site, strategy, discovered_at) "
+        "VALUES ('local', ?, ?, ?, ?, '', ?, 'Remote', ?, 'jobspy', ?)",
+        (
+            str(_job_id(url)),
+            url,
+            title,
+            company,
+            description,
+            site,
+            discovered_at,
+        ),
     )
     conn.commit()
     SqliteJobRepository(conn).attach_source_observation(
         LOCAL_TENANT,
-        JobId(url),
+        _job_id(url),
         JobSourceObservation(
             source_observation_id="obs-jobspy-1",
             source_id=source_id,
@@ -118,32 +144,7 @@ def _long_description(marker: str, tokens: int = 90) -> str:
     return " ".join(f"{marker}{index}" for index in range(tokens))
 
 
-def test_source_observation_backfill_seeds_legacy_jobs(conn: sqlite3.Connection) -> None:
-    repo = SqliteJobRepository(conn)
-    repo.save(_job())
-
-    ensure_source_observation_tables(conn)
-
-    row = conn.execute(
-        """
-        SELECT source_observation_id, job_url, source_id, source_native_id,
-               observed_url, normalized_observed_url, run_id, observed_at
-        FROM job_source_observations
-        WHERE job_url = ?
-        """,
-        ("https://boards.greenhouse.io/acme/jobs/123",),
-    ).fetchone()
-    assert row is not None
-    assert row["source_observation_id"] == "backfill:https://boards.greenhouse.io/acme/jobs/123"
-    assert row["source_id"] == "greenhouse"
-    assert row["source_native_id"] == "https://boards.greenhouse.io/acme/jobs/123"
-    assert row["observed_url"] == "https://boards.greenhouse.io/acme/jobs/123"
-    assert row["normalized_observed_url"] == "https://boards.greenhouse.io/acme/jobs/123"
-    assert row["run_id"] == "backfill"
-    assert row["observed_at"] == "2026-05-12T00:00:00Z"
-
-
-def test_load_by_url_resolves_observation_url_to_canonical_job(conn: sqlite3.Connection) -> None:
+def test_locator_resolution_does_not_treat_observation_urls_as_job_ids(conn: sqlite3.Connection) -> None:
     repo = SqliteJobRepository(conn)
     job = _job()
     repo.save(job)
@@ -160,13 +161,115 @@ def test_load_by_url_resolves_observation_url_to_canonical_job(conn: sqlite3.Con
         ),
     )
 
-    found = repo.load_by_url(
+    found = repo.resolve_by_posting_url(
         LOCAL_TENANT,
         PostingUrl(value="https://linkedin.example/jobs/123?utm_campaign=ignored"),
     )
+    assert found is None
+    canonical = repo.load(LOCAL_TENANT, job.job_id)
+    assert canonical is not None
 
-    assert found is not None
-    assert found.job_id == job.job_id
+
+def test_jobspy_source_observation_resolves_canonical_job_id_at_url_boundary(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _job("https://www.linkedin.com/jobs/view/123")
+    SqliteJobRepository(conn).save(job)
+    recorded_events: list[tuple[JobId, str, str, dict[str, object]]] = []
+
+    def record_event(
+        _conn: sqlite3.Connection,
+        job_id: JobId,
+        stage: str,
+        event_type: str,
+        **kwargs: object,
+    ) -> None:
+        payload = kwargs.get("payload")
+        assert isinstance(payload, dict)
+        recorded_events.append((job_id, stage, event_type, payload))
+
+    monkeypatch.setattr("jobctrl.state.record_job_event", record_event)
+
+    _record_jobspy_source_observation(
+        conn,
+        job_url=job.posting_url.value,
+        observed_url="https://www.linkedin.com/jobs/view/123?tracking=feed",
+        source_id="jobspy:linkedin",
+        run_id="jobspy:run-1",
+        observed_at="2026-05-12T01:00:00Z",
+    )
+
+    observation = conn.execute(
+        """
+        SELECT job_id
+        FROM job_source_observations
+        WHERE tenant_id = ? AND source_id = ?
+        """,
+        (
+            str(LOCAL_TENANT),
+            "jobspy:linkedin",
+        ),
+    ).fetchone()
+    assert observation is not None
+    assert observation["job_id"] == str(job.job_id)
+    assert len(recorded_events) == 1
+    assert recorded_events[0][:3] == (
+        job.job_id,
+        "discover",
+        "JobSourceObserved",
+    )
+    assert recorded_events[0][3]["job_id"] == str(job.job_id)
+    assert recorded_events[0][3]["jobId"] == str(job.job_id)
+
+
+def test_source_learning_resolves_canonical_job_id_at_url_boundary(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _job("https://www.linkedin.com/jobs/view/456")
+    SqliteJobRepository(conn).save(job)
+    resolved_events: list[JobId] = []
+
+    monkeypatch.setattr(production_wiring, "ensure_worker_discovery_tables", lambda _conn: None)
+    monkeypatch.setattr(
+        production_wiring,
+        "_record_canonical_identity_resolved_event",
+        lambda _conn, *, job_id, **_kwargs: resolved_events.append(job_id),
+    )
+    monkeypatch.setattr(
+        production_wiring,
+        "_source_id_from_locator_candidate",
+        lambda _conn, _candidate: "greenhouse:acme",
+    )
+    monkeypatch.setattr(
+        production_wiring,
+        "_promote_locator_candidate",
+        lambda _conn, _candidate, **_kwargs: True,
+    )
+
+    learned = production_wiring.learn_posting_source_from_url(
+        conn,
+        job_url=job.posting_url.value,
+        posting_url="https://boards.greenhouse.io/acme/jobs/456",
+        discovered_via_source_id="jobspy:linkedin",
+        observed_at="2026-05-12T01:00:00Z",
+    )
+
+    stored = conn.execute(
+        "SELECT job_id FROM job_canonical_identities WHERE tenant_id = ?",
+        (str(LOCAL_TENANT),),
+    ).fetchone()
+    assert stored is not None
+    assert stored["job_id"] == str(job.job_id)
+    assert resolved_events == [job.job_id]
+    assert learned.action == "promoted"
+
+
+def _job_id_for_url(repo: SqliteJobRepository, url: str) -> JobId:
+    identity = repo.resolve_by_posting_url(LOCAL_TENANT, PostingUrl(value=url))
+    assert identity is not None
+    return identity.job_id
 
 
 def test_attach_source_observation_replaces_repeated_native_identity(
@@ -292,46 +395,272 @@ def test_find_canonical_owner_resolves_native_identity_then_canonical_and_observ
             observed_at="2026-05-12T00:00:00Z",
         ),
     )
+    persisted = repo.load(LOCAL_TENANT, job.job_id)
+    assert persisted is not None
 
-    assert (
-        repo.find_canonical_owner(
-            LOCAL_TENANT,
-            source_id="greenhouse:acme",
-            source_native_id="123",
-            canonical_url="",
-        )
-        == job.job_id
+    native_match = repo.find_canonical_owner(
+        LOCAL_TENANT,
+        source_id="greenhouse:acme",
+        source_native_id="123",
+        canonical_url="",
     )
-    assert (
-        repo.find_canonical_owner(
-            LOCAL_TENANT,
-            source_id="ashby:acme",
-            source_native_id="different",
-            canonical_url="https://boards.greenhouse.io/acme/jobs/123",
-        )
-        == job.job_id
+    assert native_match is not None
+    assert native_match.job_id == persisted.job_id
+    assert native_match.basis == "source_native_id_match"
+
+    canonical_match = repo.find_canonical_owner(
+        LOCAL_TENANT,
+        source_id="ashby:acme",
+        source_native_id="different",
+        canonical_url="https://boards.greenhouse.io/acme/jobs/123",
     )
-    assert (
-        repo.find_canonical_owner(
-            LOCAL_TENANT,
-            source_id="ashby:acme",
-            source_native_id="different",
-            canonical_url="https://boards.greenhouse.io/acme/jobs/123?gh_jid=123",
-        )
-        == job.job_id
+    assert canonical_match is not None
+    assert canonical_match.job_id == persisted.job_id
+    assert canonical_match.basis == "canonical_url_match"
+
+    observation_match = repo.find_canonical_owner(
+        LOCAL_TENANT,
+        source_id="ashby:acme",
+        source_native_id="different",
+        canonical_url="https://boards.greenhouse.io/acme/jobs/123?gh_jid=123",
     )
+    assert observation_match is not None
+    assert observation_match.job_id == persisted.job_id
+    assert observation_match.basis == "normalized_observation_match"
+
+
+def _concurrent_discovery_claims(
+    tmp_path: Path,
+    postings: tuple[ScrapedJobPosting, ScrapedJobPosting],
+) -> tuple[list[sqlite3.Row], list[sqlite3.Row], list[list[DomainEvent]]]:
+    """Run two independent intake connections past the initial read together."""
+
+    db_path = tmp_path / "concurrent-discovery.db"
+    initialized = init_db(db_path)
+    initialized.close()
+    barrier = threading.Barrier(2)
+
+    class BarrierRepository(SqliteJobRepository):
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            super().__init__(connection)
+            self._waited = False
+
+        def find_canonical_owner(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            result = super().find_canonical_owner(*args, **kwargs)
+            if result is None and not self._waited:
+                self._waited = True
+                barrier.wait(timeout=5)
+            return result
+
+    connections = [
+        sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+        for _ in range(2)
+    ]
+    for connection in connections:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 10000")
+    repositories = [BarrierRepository(connection) for connection in connections]
+    publishers = [RecordingPublisher(), RecordingPublisher()]
+    job_ids = (
+        JobId("3cce0d51-37a9-4b2d-a73d-7843ff268d28"),
+        JobId("1afb2b31-1b6b-4b09-94d4-0bf5702e88de"),
+    )
+    use_cases = [
+        DiscoverJobsUseCase(
+            repository=repositories[index],
+            publisher=publishers[index],
+            clock=lambda: "2026-05-12T00:00:00Z",
+            job_id_factory=lambda index=index: job_ids[index],
+        )
+        for index in range(2)
+    ]
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            list(
+                executor.map(
+                    lambda index: use_cases[index].execute(
+                        tenant_id=LOCAL_TENANT,
+                        postings=[postings[index]],
+                        run_id=f"run-{index}",
+                    ),
+                    range(2),
+                )
+            )
+        check = sqlite3.connect(db_path)
+        check.row_factory = sqlite3.Row
+        try:
+            jobs = check.execute("SELECT job_id, url FROM jobs ORDER BY job_id").fetchall()
+            observations = check.execute(
+                """
+                SELECT job_id, source_id, source_native_id, observed_url
+                FROM job_source_observations
+                ORDER BY source_id, source_native_id
+                """
+            ).fetchall()
+        finally:
+            check.close()
+    finally:
+        for connection in connections:
+            connection.close()
+
+    return jobs, observations, [publisher.events for publisher in publishers]
+
+
+def test_concurrent_source_native_claim_preserves_one_owner_and_native_audit(
+    tmp_path: Path,
+) -> None:
+    jobs, observations, event_batches = _concurrent_discovery_claims(
+        tmp_path,
+        (
+            _posting(
+                canonical_url="https://boards.greenhouse.io/acme/jobs/platform-a",
+                source_id="greenhouse:acme",
+                source_native_id="platform-123",
+            ),
+            _posting(
+                canonical_url="https://boards.greenhouse.io/acme/jobs/platform-b",
+                source_id="greenhouse:acme",
+                source_native_id="platform-123",
+            ),
+        ),
+    )
+
+    assert len(jobs) == 1
+    assert len(observations) == 1
+    assert observations[0]["job_id"] == jobs[0]["job_id"]
+    assert observations[0]["source_native_id"] == "platform-123"
+    events = [event for batch in event_batches for event in batch]
+    assert sum(event.event_type == "JobSourceObserved" for event in events) == 2
+    links = [event for event in events if event.event_type == "DuplicateJobLinked"]
+    assert len(links) == 1
+    assert links[0].payload["surviving_job_id"] == jobs[0]["job_id"]
+    assert links[0].payload["reason"] == "source_native_id_match"
+
+
+def test_concurrent_normalized_observation_claim_preserves_one_owner_without_rehoming(
+    tmp_path: Path,
+) -> None:
+    jobs, observations, event_batches = _concurrent_discovery_claims(
+        tmp_path,
+        (
+            _posting(
+                canonical_url="https://boards.greenhouse.io/acme/jobs/platform?utm_source=one",
+                source_id="broad-board:one",
+                source_native_id="platform-one",
+            ),
+            _posting(
+                canonical_url="https://boards.greenhouse.io/acme/jobs/platform?gh_src=two",
+                source_id="broad-board:two",
+                source_native_id="platform-two",
+            ),
+        ),
+    )
+
+    assert len(jobs) == 1
+    assert len(observations) == 1
+    assert observations[0]["job_id"] == jobs[0]["job_id"]
+    events = [event for batch in event_batches for event in batch]
+    assert sum(event.event_type == "JobSourceObserved" for event in events) == 2
+    # These URLs normalise to the owner's current posting URL, so the second
+    # source is a refresh rather than a distinct duplicate-link audit.
+    assert [event for event in events if event.event_type == "DuplicateJobLinked"] == []
+
+
+def test_duplicate_audit_uses_the_exact_canonical_owner_basis(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        clock=lambda: "2026-05-12T00:00:00Z",
+    )
+    primary_url = "https://boards.greenhouse.io/acme/jobs/platform"
+    canonical_alias = "https://careers.acme.example/jobs/platform"
+    observation_alias = "https://jobs.acme.example/openings/platform"
+
+    use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url=primary_url,
+                source_id="greenhouse:acme",
+                source_native_id="platform-primary",
+            )
+        ],
+        run_id="run-primary",
+    )
+    owner = repo.resolve_by_posting_url(LOCAL_TENANT, PostingUrl(value=primary_url))
+    assert owner is not None
+    repo.set_canonical_identity(
+        LOCAL_TENANT,
+        owner.job_id,
+        CanonicalJobIdentity(
+            canonical_url=canonical_alias,
+            ats_kind=AtsKind.GREENHOUSE,
+            source_native_id="platform-primary",
+            confidence=0.9,
+        ),
+    )
+    use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url=canonical_alias,
+                source_id="ashby:acme",
+                source_native_id="platform-canonical",
+                ats_kind=AtsKind.ASHBY,
+            )
+        ],
+        run_id="run-canonical",
+    )
+    repo.attach_source_observation(
+        LOCAL_TENANT,
+        owner.job_id,
+        JobSourceObservation(
+            source_observation_id="observation-alias",
+            source_id="broad-board:acme",
+            source_native_id="platform-observation",
+            observed_url=observation_alias,
+            run_id="run-observation-seed",
+            observed_at="2026-05-12T00:00:00Z",
+        ),
+    )
+    use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url=f"{observation_alias}?utm_source=feed",
+                source_id="lever:acme",
+                source_native_id="platform-normalized",
+                ats_kind=AtsKind.LEVER,
+            )
+        ],
+        run_id="run-observation",
+    )
+
+    reasons = [
+        row["reason"]
+        for row in conn.execute(
+            "SELECT reason FROM job_duplicate_links ORDER BY linked_at, duplicate_link_id"
+        ).fetchall()
+    ]
+    assert set(reasons) == {"canonical_url_match", "normalized_observation_match"}
 
 
 def test_duplicate_links_are_persisted(conn: sqlite3.Connection) -> None:
     repo = SqliteJobRepository(conn)
     job = _job()
-    repo.save(job)
+    stable_job_id = repo.save(job)
 
     repo.record_duplicate_link(
         LOCAL_TENANT,
         DuplicateJobLink(
             duplicate_link_id="dup-1",
-            surviving_job_id=str(job.job_id),
+            surviving_job_id=str(stable_job_id),
             superseded_job_or_observation_id="obs-2",
             reason="canonical_url_match",
             confidence=0.91,
@@ -347,7 +676,7 @@ def test_duplicate_links_are_persisted(conn: sqlite3.Connection) -> None:
         """
     ).fetchone()
     assert row is not None
-    assert row["surviving_job_id"] == str(job.job_id)
+    assert row["surviving_job_id"] == str(stable_job_id)
     assert row["superseded_job_or_observation_id"] == "obs-2"
     assert row["reason"] == "canonical_url_match"
     assert row["confidence"] == 0.91
@@ -360,10 +689,12 @@ def test_discover_jobs_use_case_creates_job_identity_and_first_observation(
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
     current_time = "2026-05-12T00:00:00Z"
+    stable_job_id = JobId("d7c34823-22ac-42ac-b1a0-64fe00eb1014")
     use_case = DiscoverJobsUseCase(
         repository=repo,
         publisher=publisher,
         clock=lambda: current_time,
+        job_id_factory=lambda: stable_job_id,
     )
 
     summary = use_case.execute(
@@ -372,15 +703,24 @@ def test_discover_jobs_use_case_creates_job_identity_and_first_observation(
         run_id="run-1",
     )
 
-    job_id = JobId("https://boards.greenhouse.io/acme/jobs/123")
     assert summary.total == 1
     assert summary.new_jobs == 1
     assert summary.observed == 0
-    assert repo.load(LOCAL_TENANT, job_id) is not None
-    identity = repo.load_canonical_identity(LOCAL_TENANT, job_id)
+    persisted = repo.load(LOCAL_TENANT, stable_job_id)
+    assert persisted is not None
+    assert uuid.UUID(str(persisted.job_id)).version == 4
+    assert persisted.job_id == stable_job_id
+    assert persisted.employer.name == "Acme"
+    assert persisted.source.board == "greenhouse"
+    stored = conn.execute(
+        "SELECT company, site FROM jobs WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), str(stable_job_id)),
+    ).fetchone()
+    assert tuple(stored) == ("Acme", "greenhouse")
+    identity = repo.load_canonical_identity(LOCAL_TENANT, persisted.job_id)
     assert identity is not None
     assert identity.ats_kind is AtsKind.GREENHOUSE
-    observations = repo.list_observations(LOCAL_TENANT, job_id)
+    observations = repo.list_observations(LOCAL_TENANT, persisted.job_id)
     assert len(observations) == 1
     assert observations[0].source_id == "greenhouse:acme"
     assert [event.event_type for event in publisher.events] == [
@@ -388,11 +728,136 @@ def test_discover_jobs_use_case_creates_job_identity_and_first_observation(
         "CanonicalJobIdentityResolved",
         "JobSourceObserved",
     ]
+    assert {event.payload["job_id"] for event in publisher.events} == {str(stable_job_id)}
+    assert publisher.events[0].payload["employer"] == "Acme"
+    assert publisher.events[0].payload["source"] == "greenhouse"
     assert publisher.events[-1].payload["run_id"] == "run-1"
+
+
+def test_discovery_canonicalize_span_omits_new_job_id_and_records_owner_id(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from opentelemetry import trace as trace_api
+    from opentelemetry.util._once import Once
+
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER_SET_ONCE", Once())
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER", None)
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    set_tracer_provider(provider)
+
+    job_id = JobId("d7c34823-22ac-42ac-b1a0-64fe00eb1014")
+    use_case = DiscoverJobsUseCase(
+        repository=SqliteJobRepository(conn),
+        publisher=RecordingPublisher(),
+        clock=lambda: "2026-05-12T00:00:00Z",
+        job_id_factory=lambda: job_id,
+    )
+
+    use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-new")
+    use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-owner")
+
+    canonicalize_spans = [span for span in exporter.get_finished_spans() if span.name == "discovery.canonicalize"]
+    assert len(canonicalize_spans) == 2
+    assert "job.id" not in canonicalize_spans[0].attributes
+    assert canonicalize_spans[1].attributes["job.id"] == str(job_id)
+
+
+def test_discover_jobs_use_case_rejects_url_shaped_job_id_factory(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        clock=lambda: "2026-05-12T00:00:00Z",
+        job_id_factory=lambda: JobId("https://boards.greenhouse.io/acme/jobs/123"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="job_id_factory must return a canonical UUID JobId",
+    ):
+        use_case.execute(
+            tenant_id=LOCAL_TENANT,
+            postings=[_posting()],
+            run_id="run-invalid-job-id",
+        )
+
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+    assert publisher.events == []
+
+
+def test_discover_jobs_use_case_observes_concurrent_insert_winner(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    winner_job_id = JobId("6cc41ec6-8cb8-45ae-b563-bf3173c62f50")
+    candidate_job_id = JobId("b0216ed3-2b22-48db-a58d-262c31ae1c3d")
+    posting = _posting()
+    winner = Job.discover(
+        tenant_id=LOCAL_TENANT,
+        job_id=winner_job_id,
+        posting_url=posting.posting_url,
+        source=posting.source,
+        employer=Employer.unknown(),
+        search_strategy=posting.strategy,
+        metadata=posting.metadata,
+        discovered_at="2026-05-12T00:00:00Z",
+    )
+    assert repo.save(winner) == winner_job_id
+    repository_save = repo.save
+    first_save = True
+
+    def lose_first_insert(job: Job) -> JobId:
+        nonlocal first_save
+        if first_save:
+            first_save = False
+            return winner_job_id
+        return repository_save(job)
+
+    monkeypatch.setattr(
+        repo,
+        "find_canonical_owner",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        repo,
+        "find_content_owner",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(repo, "save", lose_first_insert)
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        clock=lambda: "2026-05-12T00:00:01Z",
+        observation_id_factory=lambda: "obs-race-loser",
+        job_id_factory=lambda: candidate_job_id,
+    )
+
+    summary = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[posting],
+        run_id="run-race-loser",
+    )
+
+    assert summary.new_jobs == 0
+    assert summary.observed == 1
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+    observations = repo.list_observations(LOCAL_TENANT, winner_job_id)
+    assert [observation.source_observation_id for observation in observations] == ["obs-race-loser"]
+    assert [event.event_type for event in publisher.events] == ["JobSourceObserved"]
+    assert publisher.events[0].payload["job_id"] == str(winner_job_id)
 
 
 def test_discover_jobs_use_case_observes_existing_job_and_links_duplicate(
     conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
@@ -403,6 +868,22 @@ def test_discover_jobs_use_case_observes_existing_job_and_links_duplicate(
         clock=lambda: current_time,
     )
     use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-1")
+    owner = repo.resolve_by_posting_url(
+        LOCAL_TENANT,
+        PostingUrl(value="https://boards.greenhouse.io/acme/jobs/123"),
+    )
+    assert owner is not None
+    domain_links: list[DuplicateJobLink] = []
+    record_duplicate_link = repo.record_duplicate_link
+
+    def capture_duplicate_link(
+        tenant_id: TenantId,
+        link: DuplicateJobLink,
+    ) -> None:
+        domain_links.append(link)
+        record_duplicate_link(tenant_id, link)
+
+    monkeypatch.setattr(repo, "record_duplicate_link", capture_duplicate_link)
     publisher.events.clear()
 
     summary = use_case.execute(
@@ -426,11 +907,13 @@ def test_discover_jobs_use_case_observes_existing_job_and_links_duplicate(
         "DuplicateJobLinked",
     ]
     duplicate = publisher.events[-1]
-    assert duplicate.payload["surviving_job_id"] == "https://boards.greenhouse.io/acme/jobs/123"
-    assert duplicate.payload["reason"] == "canonical_url_match"
+    assert len(domain_links) == 1
+    assert domain_links[0].surviving_job_id == str(owner.job_id)
+    assert duplicate.payload["surviving_job_id"] == str(owner.job_id)
+    assert duplicate.payload["reason"] == "source_native_id_match"
     duplicate_row = conn.execute("SELECT reason FROM job_duplicate_links").fetchone()
     assert duplicate_row is not None
-    assert duplicate_row["reason"] == "canonical_url_match"
+    assert duplicate_row["reason"] == "source_native_id_match"
 
 
 def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
@@ -445,9 +928,10 @@ def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
         clock=lambda: current_time,
     )
     use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-1")
+    job_id = _job_id_for_url(repo, "https://boards.greenhouse.io/acme/jobs/123")
     repo.soft_delete(
         LOCAL_TENANT,
-        JobId("https://boards.greenhouse.io/acme/jobs/123"),
+        job_id,
         reason="not relevant right now",
         deleted_at="2026-05-13T00:00:00Z",
     )
@@ -471,14 +955,24 @@ def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
     assert summary.total == 1
     assert summary.new_jobs == 0
     assert summary.observed == 1
-    resurfaced = repo.load(LOCAL_TENANT, JobId("https://boards.greenhouse.io/acme/jobs/123"))
+    resurfaced = repo.load(
+        LOCAL_TENANT,
+        job_id,
+    )
     assert resurfaced is not None
     assert resurfaced.is_deleted is False
     assert resurfaced.metadata.title == "Platform Engineering Manager"
     assert resurfaced.metadata.description == "Lead platform engineering teams in Spain."
     assert resurfaced.metadata.location == "Barcelona, Spain"
     tombstone = conn.execute(
-        "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
+        """
+        SELECT deleted.restored_at
+        FROM jobctrl_deleted_jobs AS deleted
+        JOIN jobs
+          ON jobs.tenant_id = deleted.tenant_id
+         AND jobs.job_id = deleted.job_id
+        WHERE jobs.url = ?
+        """,
         ("https://boards.greenhouse.io/acme/jobs/123",),
     ).fetchone()
     assert tombstone is not None
@@ -526,7 +1020,10 @@ def test_discover_jobs_use_case_rejects_new_policy_mismatches_without_creating_j
     assert summary.new_jobs == 0
     assert summary.observed == 0
     assert summary.duplicates_rejected == 0
-    assert repo.load(LOCAL_TENANT, JobId("https://jobs.ashbyhq.com/acai/india")) is None
+    assert repo.resolve_by_posting_url(
+        LOCAL_TENANT,
+        PostingUrl(value="https://jobs.ashbyhq.com/acai/india"),
+    ) is None
     assert publisher.events == []
 
 
@@ -541,6 +1038,11 @@ def test_discover_jobs_use_case_soft_deletes_active_job_rejected_by_current_poli
         clock=lambda: "2026-05-12T00:00:00Z",
     )
     use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-1")
+    owner = repo.resolve_by_posting_url(
+        LOCAL_TENANT,
+        PostingUrl(value="https://boards.greenhouse.io/acme/jobs/123"),
+    )
+    assert owner is not None
     publisher.events.clear()
     policy_use_case = DiscoverJobsUseCase(
         repository=repo,
@@ -570,14 +1072,14 @@ def test_discover_jobs_use_case_soft_deletes_active_job_rejected_by_current_poli
     assert summary.new_jobs == 0
     assert summary.observed == 0
     assert summary.duplicates_rejected == 0
-    job = repo.load(LOCAL_TENANT, JobId("https://boards.greenhouse.io/acme/jobs/123"))
+    job = repo.load(LOCAL_TENANT, owner.job_id)
     assert job is not None
     assert job.is_deleted is True
     assert "location_mismatch" in (job.delete_reason or "")
     assert job.metadata.title == "Platform Engineer"
     observations = repo.list_observations(
         LOCAL_TENANT,
-        JobId("https://boards.greenhouse.io/acme/jobs/123"),
+        owner.job_id,
     )
     assert [observation.run_id for observation in observations] == ["run-2"]
     assert [event.event_type for event in publisher.events] == [
@@ -596,8 +1098,8 @@ def test_discover_jobs_use_case_keeps_policy_rejected_deleted_job_hidden(
         publisher=publisher,
         clock=lambda: "2026-05-12T00:00:00Z",
     )
-    job_id = JobId("https://boards.greenhouse.io/acme/jobs/123")
     use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-1")
+    job_id = _job_id_for_url(repo, "https://boards.greenhouse.io/acme/jobs/123")
     repo.soft_delete(
         LOCAL_TENANT,
         job_id,
@@ -638,8 +1140,15 @@ def test_discover_jobs_use_case_keeps_policy_rejected_deleted_job_hidden(
     assert hidden.is_deleted is True
     assert hidden.metadata.title == "Platform Engineer"
     tombstone = conn.execute(
-        "SELECT restored_at FROM jobctrl_deleted_jobs WHERE job_url = ?",
-        (str(job_id),),
+        """
+        SELECT deleted.restored_at
+        FROM jobctrl_deleted_jobs AS deleted
+        JOIN jobs
+          ON jobs.tenant_id = deleted.tenant_id
+         AND jobs.job_id = deleted.job_id
+        WHERE jobs.url = ?
+        """,
+        ("https://boards.greenhouse.io/acme/jobs/123",),
     ).fetchone()
     assert tombstone is not None
     assert tombstone["restored_at"] is None
@@ -689,18 +1198,13 @@ def test_discover_jobs_use_case_preserves_existing_salary_when_rediscovery_is_bl
     )
 
     assert summary.observed == 1
-    rediscovered = repo.load(LOCAL_TENANT, JobId("https://boards.greenhouse.io/acme/jobs/123"))
+    rediscovered = repo.load(
+        LOCAL_TENANT,
+        _job_id_for_url(repo, "https://boards.greenhouse.io/acme/jobs/123"),
+    )
     assert rediscovered is not None
     assert rediscovered.metadata.salary == "$180,000"
     assert rediscovered.metadata.description == "Lead engineering teams in Spain."
-
-    compensation_repo = SqlitePostedCompensationRepository(conn)
-    compensation_repo.backfill_from_legacy_jobs(parsed_at="2026-06-19T10:00:00Z")
-    fact = compensation_repo.get_fact(str(LOCAL_TENANT), str(rediscovered.job_id))
-    assert fact is not None
-    assert fact.legacy_raw_salary == "$180,000"
-    assert fact.minimum_amount == 180_000
-
 
 def test_discover_jobs_use_case_rejects_low_confidence_duplicate(
     conn: sqlite3.Connection,
@@ -726,6 +1230,11 @@ def test_discover_jobs_use_case_rejects_low_confidence_duplicate(
         clock=lambda: "2026-05-12T00:00:00Z",
     )
     use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-1")
+    owner = repo.resolve_by_posting_url(
+        LOCAL_TENANT,
+        PostingUrl(value="https://boards.greenhouse.io/acme/jobs/123"),
+    )
+    assert owner is not None
     publisher.events.clear()
 
     summary = use_case.execute(
@@ -746,13 +1255,16 @@ def test_discover_jobs_use_case_rejects_low_confidence_duplicate(
     assert summary.duplicates_rejected == 1
     assert [event.event_type for event in publisher.events] == ["DuplicateJobLinkRejected"]
     rejected = publisher.events[0]
-    assert rejected.payload["job_id"] == "https://boards.greenhouse.io/acme/jobs/123"
-    assert rejected.payload["candidate_job_id"] == "https://boards.greenhouse.io/acme/jobs/low-confidence"
+    assert rejected.payload["job_id"] == str(owner.job_id)
+    assert (
+        rejected.payload["candidate_posting_url"]
+        == "https://boards.greenhouse.io/acme/jobs/low-confidence"
+    )
     assert rejected.payload["reason"] == "confidence_below_threshold"
     assert (
         repo.list_observations(
             LOCAL_TENANT,
-            JobId("https://boards.greenhouse.io/acme/jobs/123"),
+            _job_id_for_url(repo, "https://boards.greenhouse.io/acme/jobs/123"),
         )[0].run_id
         == "run-1"
     )
@@ -802,15 +1314,15 @@ def test_discover_jobs_use_case_collapses_jobspy_job_rediscovered_by_canonical_s
     assert summary.observed == 1
     assert summary.duplicates_linked == 1
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
-    observations = repo.list_observations(LOCAL_TENANT, JobId(survivor))
+    observations = repo.list_observations(LOCAL_TENANT, _job_id(survivor))
     assert sorted(observation.source_id for observation in observations) == [
         "jobspy:linkedin",
         "workday:acme",
     ]
-    link = conn.execute(
-        "SELECT surviving_job_id, reason, confidence FROM job_duplicate_links"
-    ).fetchone()
-    assert link["surviving_job_id"] == survivor
+    link = conn.execute("SELECT surviving_job_id, reason, confidence FROM job_duplicate_links").fetchone()
+    surviving_job = repo.load(LOCAL_TENANT, _job_id(survivor))
+    assert surviving_job is not None
+    assert link["surviving_job_id"] == str(surviving_job.job_id)
     assert link["reason"] == "content_fingerprint_match"
     assert link["confidence"] == 0.95
     assert [event.event_type for event in publisher.events] == [
@@ -876,17 +1388,16 @@ def test_discover_jobs_use_case_collapses_reworded_cross_source_description(
     assert summary.observed == 1
     assert summary.duplicates_linked == 1
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
-    assert (
-        repo.load(
-            LOCAL_TENANT,
-            JobId("https://jobs.lever.co/acme/staff-platform-engineer"),
-        ).job_id
-        == JobId(survivor)
+    surviving_job = repo.load(LOCAL_TENANT, _job_id_for_url(repo, survivor))
+    duplicate_lookup = repo.load(
+        LOCAL_TENANT,
+        surviving_job.job_id if surviving_job is not None else _job_id(survivor),
     )
-    link = conn.execute(
-        "SELECT surviving_job_id, reason, confidence FROM job_duplicate_links"
-    ).fetchone()
-    assert link["surviving_job_id"] == survivor
+    assert surviving_job is not None
+    assert duplicate_lookup is not None
+    assert duplicate_lookup.job_id == surviving_job.job_id
+    link = conn.execute("SELECT surviving_job_id, reason, confidence FROM job_duplicate_links").fetchone()
+    assert link["surviving_job_id"] == str(surviving_job.job_id)
     assert link["reason"] == "content_shingle_match"
     assert link["confidence"] == 0.85
 
@@ -934,14 +1445,23 @@ def test_discover_jobs_use_case_matches_fresh_listing_against_enriched_owner(
         ],
         run_id="run-greenhouse",
     )
+    survivor_job_id = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+        (survivor,),
+    ).fetchone()[0]
     conn.execute(
         """
         INSERT INTO job_enrichments (
-            job_url, tenant_id, current_status, full_description,
+            job_id, tenant_id, current_status, full_description,
             enriched_at, updated_at
         ) VALUES (?, 'local', 'enriched', ?, ?, ?)
         """,
-        (survivor, enriched, "2026-05-12T01:00:00Z", "2026-05-12T01:00:00Z"),
+        (
+            survivor_job_id,
+            enriched,
+            "2026-05-12T01:00:00Z",
+            "2026-05-12T01:00:00Z",
+        ),
     )
     conn.commit()
     publisher.events.clear()
@@ -969,10 +1489,10 @@ def test_discover_jobs_use_case_matches_fresh_listing_against_enriched_owner(
     assert summary.observed == 1
     assert summary.duplicates_linked == 1
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
-    link = conn.execute(
-        "SELECT surviving_job_id, reason, confidence FROM job_duplicate_links"
-    ).fetchone()
-    assert link["surviving_job_id"] == survivor
+    surviving_job = repo.load(LOCAL_TENANT, _job_id_for_url(repo, survivor))
+    assert surviving_job is not None
+    link = conn.execute("SELECT surviving_job_id, reason, confidence FROM job_duplicate_links").fetchone()
+    assert link["surviving_job_id"] == str(surviving_job.job_id)
     assert link["reason"] == "content_shingle_match"
     assert link["confidence"] == 0.85
 
@@ -1036,17 +1556,14 @@ def test_discover_jobs_use_case_keeps_accepted_owner_when_content_duplicate_reje
         ),
     )
 
-    created = use_case.execute(
-        tenant_id=LOCAL_TENANT, postings=[accepted], run_id="run-owner"
-    )
+    created = use_case.execute(tenant_id=LOCAL_TENANT, postings=[accepted], run_id="run-owner")
     assert created.new_jobs == 1
-    owner = repo.load(LOCAL_TENANT, JobId(owner_url))
+    owner_id = _job_id_for_url(repo, owner_url)
+    owner = repo.load(LOCAL_TENANT, owner_id)
     assert owner is not None and owner.is_deleted is False
     publisher.events.clear()
 
-    summary = use_case.execute(
-        tenant_id=LOCAL_TENANT, postings=[india_duplicate], run_id="run-duplicate"
-    )
+    summary = use_case.execute(tenant_id=LOCAL_TENANT, postings=[india_duplicate], run_id="run-duplicate")
 
     assert summary.total == 1
     assert summary.new_jobs == 0
@@ -1054,11 +1571,11 @@ def test_discover_jobs_use_case_keeps_accepted_owner_when_content_duplicate_reje
     assert summary.duplicates_linked == 0
     assert summary.duplicates_rejected == 0
 
-    owner = repo.load(LOCAL_TENANT, JobId(owner_url))
+    owner = repo.load(LOCAL_TENANT, owner_id)
     assert owner is not None
     assert owner.is_deleted is False
     assert owner.metadata.location == "Remote - US"
-    assert JobId(owner_url) in [job.job_id for job in repo.list_recent(LOCAL_TENANT)]
+    assert owner.job_id in [job.job_id for job in repo.list_recent(LOCAL_TENANT)]
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
 
     # The rejected distinct posting is recorded as declined-duplicate audit
@@ -1066,25 +1583,24 @@ def test_discover_jobs_use_case_keeps_accepted_owner_when_content_duplicate_reje
     # NOT attached as an owner observation (which would re-trigger the delete later).
     assert [event.event_type for event in publisher.events] == ["DuplicateJobLinkRejected"]
     rejected = publisher.events[-1]
-    assert rejected.payload["job_id"] == owner_url
-    assert rejected.payload["candidate_job_id"] == "https://jobs.lever.co/acme/staff-platform-engineer-india"
+    assert rejected.payload["job_id"] == str(owner.job_id)
+    assert (
+        rejected.payload["candidate_posting_url"]
+        == "https://jobs.lever.co/acme/staff-platform-engineer-india"
+    )
     assert "location_mismatch" in rejected.payload["reason"]
-    assert [obs.source_id for obs in repo.list_observations(LOCAL_TENANT, JobId(owner_url))] == [
-        "greenhouse:acme"
-    ]
+    assert [obs.source_id for obs in repo.list_observations(LOCAL_TENANT, owner_id)] == ["greenhouse:acme"]
 
     # Re-running the rejected duplicate must be stable: the owner stays active and
     # visible, proving the rejection left no re-observation trail to delete it. The
     # already-recorded (owner, candidate) rejection is idempotent, so no duplicate
     # audit event is appended on the repeat observation.
     publisher.events.clear()
-    resummary = use_case.execute(
-        tenant_id=LOCAL_TENANT, postings=[india_duplicate], run_id="run-duplicate-2"
-    )
+    resummary = use_case.execute(tenant_id=LOCAL_TENANT, postings=[india_duplicate], run_id="run-duplicate-2")
     assert resummary.observed == 0
-    owner = repo.load(LOCAL_TENANT, JobId(owner_url))
+    owner = repo.load(LOCAL_TENANT, owner_id)
     assert owner is not None and owner.is_deleted is False
-    assert JobId(owner_url) in [job.job_id for job in repo.list_recent(LOCAL_TENANT)]
+    assert owner.job_id in [job.job_id for job in repo.list_recent(LOCAL_TENANT)]
     assert "JobDeleted" not in [event.event_type for event in publisher.events]
     assert "DuplicateJobLinkRejected" not in [event.event_type for event in publisher.events]
 
@@ -1255,7 +1771,7 @@ def test_discover_jobs_use_case_prefers_native_identity_over_content_match(
     assert summary.duplicates_linked == 1
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
     link = conn.execute("SELECT reason, confidence FROM job_duplicate_links").fetchone()
-    assert link["reason"] == "canonical_url_match"
+    assert link["reason"] == "source_native_id_match"
     assert link["confidence"] == 0.9
 
 
@@ -1289,9 +1805,8 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_manual_
     )
     boilerplate = _long_description("boiler", tokens=90)
 
-    # Two DISTINCT employers, both captured with only the shared platform-sentinel
-    # board ("User-mediated capture") and near-identical boilerplate text. The
-    # employer discriminator is absent, so these MUST NOT content-merge.
+    # Two DISTINCT employers share the same platform board and near-identical
+    # boilerplate text. The explicit employer discriminator prevents a merge.
     use_case.execute(
         tenant_id=LOCAL_TENANT,
         postings=[
@@ -1301,6 +1816,7 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_manual_
                 source_id="manual_capture:acme",
                 ats_kind=AtsKind.OTHER,
                 board="User-mediated capture",
+                employer_name="Acme",
                 metadata=JobMetadata(
                     title="Head of Engineering",
                     description=boilerplate + " acme alpha beta",
@@ -1320,6 +1836,7 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_manual_
                 source_id="manual_capture:globex",
                 ats_kind=AtsKind.OTHER,
                 board="User-mediated capture",
+                employer_name="Globex",
                 metadata=JobMetadata(
                     title="Head of Engineering",
                     description=boilerplate + " globex gamma delta",
@@ -1349,7 +1866,7 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_workday
     )
     boilerplate = _long_description("boiler", tokens=90)
 
-    # Employer-less Workday postings fall back to the constant board "Workday".
+    # Distinct employers can share the same Workday source board.
     use_case.execute(
         tenant_id=LOCAL_TENANT,
         postings=[
@@ -1359,6 +1876,7 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_workday
                 source_id="workday:one",
                 ats_kind=AtsKind.WORKDAY,
                 board="Workday",
+                employer_name="One Corp",
                 metadata=JobMetadata(
                     title="Head of Data",
                     description=boilerplate + " one alpha beta",
@@ -1378,6 +1896,7 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_workday
                 source_id="workday:two",
                 ats_kind=AtsKind.WORKDAY,
                 board="Workday",
+                employer_name="Two Corp",
                 metadata=JobMetadata(
                     title="Head of Data",
                     description=boilerplate + " two gamma delta",

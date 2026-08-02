@@ -328,13 +328,13 @@ describe("Discovery events", () => {
     const event = createDuplicateJobLinkRejected(LOCAL_TENANT, {
       duplicateLinkId: "duplicate-link-rejected-1",
       jobId: "owner-1",
-      candidateJobId: "candidate-1",
+      candidatePostingUrl: "https://jobs.example/candidate-1",
       reason: "low_confidence",
       rejectedAt: "2026-05-12T00:00:00Z",
     });
     expect(event.eventType).toBe("DuplicateJobLinkRejected");
     expect(event.payload.jobId).toBe("owner-1");
-    expect(event.payload.candidateJobId).toBe("candidate-1");
+    expect(event.payload.candidatePostingUrl).toBe("https://jobs.example/candidate-1");
   });
 
   it("DiscoveryFeedbackRecorded carries the feedback kind without raw text", () => {
@@ -994,7 +994,7 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
       createDuplicateJobLinkRejected(LOCAL_TENANT, {
         duplicateLinkId: "duplicate-link-rejected-1",
         jobId: "j",
-        candidateJobId: "j2",
+        candidatePostingUrl: "https://jobs.example/j2",
         reason: "low_confidence",
         rejectedAt: "t",
       }).eventType,

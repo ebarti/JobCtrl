@@ -11,8 +11,8 @@ PR 2 ATS adapters (``WorkdayBoardAdapter``, ``GreenhouseBoardAdapter``,
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable, Protocol
+from dataclasses import dataclass, field
+from typing import Iterable, Literal, Protocol
 
 from jobctrl.domain.discovery.aggregate import Job
 from jobctrl.domain.discovery.identity import (
@@ -23,6 +23,7 @@ from jobctrl.domain.discovery.identity import (
 )
 from jobctrl.domain.discovery.scheduler import DiscoveryRun
 from jobctrl.domain.discovery.value_objects import (
+    Employer,
     JobMetadata,
     PostingUrl,
     SearchStrategy,
@@ -50,6 +51,11 @@ class ScrapedJobPosting:
     URL the source advertises (typically the ATS detail URL), the ATS
     kind detected by the adapter, and the source registry id the
     posting was scraped from.
+
+    ``employer`` is the hiring company reported by the scraper, independent of
+    ``source.board``. Scrapers use ``Employer.unknown()`` only when their payload
+    has no explicit company fact; callers never derive it from a site label or
+    URL.
     """
 
     posting_url: PostingUrl
@@ -60,6 +66,7 @@ class ScrapedJobPosting:
     source_native_id: str
     canonical_url: str
     ats_kind: AtsKind = AtsKind.OTHER
+    employer: Employer = field(default_factory=Employer.unknown)
 
 
 @dataclass(frozen=True)
@@ -73,6 +80,60 @@ class ContentOwnerMatch:
 
     job_id: JobId
     basis: ContentMatchBasis
+
+
+CanonicalOwnerMatchBasis = Literal[
+    "source_native_id_match",
+    "canonical_url_match",
+    "normalized_observation_match",
+]
+
+
+@dataclass(frozen=True)
+class CanonicalOwnerMatch:
+    """An existing Job resolved by an exact discovery identity claim.
+
+    The basis is persisted with duplicate-link audit evidence.  Keeping it at
+    the repository boundary prevents the application layer from guessing which
+    of the exact identity claims won.
+    """
+
+    job_id: JobId
+    basis: CanonicalOwnerMatchBasis
+
+
+@dataclass(frozen=True)
+class ResolvedJobIdentity:
+    """Stable identity and current external locator for one Job.
+
+    ``job_id`` is the canonical aggregate identifier and ``posting_url`` is
+    the mutable current external locator. Runtime callers never receive or
+    infer a second storage identity.
+    """
+
+    tenant_id: TenantId
+    job_id: JobId
+    posting_url: PostingUrl
+
+
+class JobIdentityResolver(Protocol):
+    """Resolve stable Job identities without exposing persistence details."""
+
+    def resolve_by_job_id(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> ResolvedJobIdentity | None:
+        """Resolve a canonical aggregate identifier."""
+        ...
+
+    def resolve_by_posting_url(
+        self,
+        tenant_id: TenantId,
+        posting_url: PostingUrl,
+    ) -> ResolvedJobIdentity | None:
+        """Resolve a current or historical posting-URL alias."""
+        ...
 
 
 class JobBoardScraperPort(Protocol):
@@ -111,40 +172,37 @@ class JobBoardScraperPort(Protocol):
         ...
 
 
-class JobRepository(Protocol):
+class JobRepository(JobIdentityResolver, Protocol):
     """Persistence port for the ``Job`` aggregate.
 
-    All methods are tenant-scoped. Local adapters accept ``tenant_id``
-    and ignore the value (single-tenant); hosted adapters use it for row
-    isolation.
+    All methods are tenant-scoped. The local adapter persists and enforces
+    the tenant alongside stable identity even though local mode normally uses
+    one tenant.
 
     Dedup contract:
 
-      * ``save`` enforces the §4.1 invariant — duplicate
-        ``(tenant_id, posting_url)`` is rejected. Callers should
-        ``load_by_url`` first if they want to update an existing job
-        rather than insert a new one.
-      * ``load_by_url`` returns the canonical ``Job`` for a posting URL,
-        regardless of tombstone state, so the URL-resolution flow in
-        enrichment can find the row even after a soft-delete.
+      * ``save`` atomically claims a new posting URL or upserts the Job that
+        already owns the stable id. When a concurrent writer wins the same URL,
+        it returns that winner's stable ``JobId`` so the caller can re-enter
+        the existing-owner flow.
+      * URL locators are resolved through the explicit ``JobIdentityResolver``
+        boundary before calling ``load``.
     """
 
     def load(self, tenant_id: TenantId, job_id: JobId) -> Job | None:
         """Return the Job by aggregate id, or ``None``."""
         ...
 
-    def load_by_url(self, tenant_id: TenantId, posting_url: PostingUrl) -> Job | None:
-        """Return the Job whose ``posting_url`` matches, or ``None``."""
-        ...
-
-    def save(self, job: Job) -> None:
+    def save(self, job: Job) -> JobId:
         """Persist the aggregate.
 
         Inserts on first save; subsequent saves with the same
         ``(tenant_id, job_id)`` perform an upsert that preserves
         ``discovered_at``. The repository is responsible for refusing
         a save whose ``(tenant_id, posting_url)`` collides with a
-        DIFFERENT ``job_id``.
+        DIFFERENT ``job_id``. Returns the persisted stable id, which can differ
+        from ``job.job_id`` only when another concurrent writer won the same
+        posting URL.
         """
         ...
 
@@ -205,7 +263,7 @@ class JobRepository(Protocol):
         source_id: str,
         source_native_id: str,
         canonical_url: str,
-    ) -> JobId | None:
+    ) -> CanonicalOwnerMatch | None:
         """Look up the canonical Job that already owns a posting identity.
 
         Resolution order matches the RFC §"Recommended identity checks"
@@ -221,8 +279,23 @@ class JobRepository(Protocol):
              where one source-native id is missing but the observed URL
              matches an existing observation.
 
-        Returns the surviving ``JobId`` for the first match, or ``None``
-        when the posting is genuinely new.
+        Returns the surviving ``JobId`` and the exact winning claim basis, or
+        ``None`` when the posting is genuinely new.
+        """
+        ...
+
+    def claim_new_job(
+        self,
+        job: Job,
+        identity: CanonicalJobIdentity,
+        observation: JobSourceObservation,
+    ) -> CanonicalOwnerMatch | None:
+        """Atomically create a Job or return the exact owner that won.
+
+        The identity lookup, new Job row, canonical identity, and source
+        observation are one SQLite write transaction.  A competing posting
+        therefore observes the stable owner rather than re-homing evidence to a
+        newly committed candidate Job.
         """
         ...
 
@@ -261,12 +334,14 @@ class JobRepository(Protocol):
         tenant_id: TenantId,
         job_id: JobId,
         observation: JobSourceObservation,
-    ) -> None:
+    ) -> CanonicalOwnerMatch | None:
         """Persist an observation under an existing canonical Job.
 
         Idempotent on ``(tenant_id, source_id, source_native_id)`` — the
         same source emitting the same posting in a later run REPLACES
-        the previous observation row rather than appending a duplicate.
+        the previous observation row rather than appending a duplicate.  If an
+        exact observation claim belongs to another Job, leaves that evidence in
+        place and returns its stable owner and basis instead of re-homing it.
         """
         ...
 

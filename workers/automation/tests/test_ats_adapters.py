@@ -62,7 +62,8 @@ def test_workday_adapter_maps_cxs_payload_to_scraped_posting() -> None:
     posting = postings[0]
     assert posting.metadata.title == "Senior Platform Engineer"
     assert posting.metadata.location == "Remote, United States"
-    assert posting.source.board == "Acme Corp"
+    assert posting.source.board == "workday"
+    assert posting.employer.name == "Acme Corp"
     assert posting.source_id == "workday:acme"
     assert posting.source_native_id == "Senior-Platform-Engineer_JR-123"
     assert posting.canonical_url == (
@@ -164,7 +165,7 @@ def test_greenhouse_adapter_maps_job_board_payload_to_scraped_posting() -> None:
                     "title": "Staff Backend Engineer",
                     "absolute_url": "https://boards.greenhouse.io/acme/jobs/123456",
                     "location": {"name": "Remote"},
-                    "company_name": "Acme Corp",
+                    "company_name": "Acme",
                     "content": "&lt;p&gt;Build backend systems for the platform team.&lt;/p&gt;",
                 }
             ]
@@ -183,7 +184,8 @@ def test_greenhouse_adapter_maps_job_board_payload_to_scraped_posting() -> None:
     assert posting.metadata.title == "Staff Backend Engineer"
     assert posting.metadata.location == "Remote"
     assert posting.metadata.description == "Build backend systems for the platform team."
-    assert posting.source.board == "Acme Corp"
+    assert posting.source.board == "greenhouse"
+    assert posting.employer.name == "Acme"
     assert posting.source_id == "greenhouse:acme"
     assert posting.source_native_id == "123456"
     assert posting.canonical_url == "https://boards.greenhouse.io/acme/jobs/123456"
@@ -245,7 +247,8 @@ def test_lever_adapter_maps_postings_payload_to_scraped_posting() -> None:
     assert posting.metadata.title == "Product Platform Engineer"
     assert posting.metadata.location == "Remote"
     assert posting.metadata.description == "Own the product platform roadmap. Lead cross-functional delivery."
-    assert posting.source.board == "Acme Corp"
+    assert posting.source.board == "lever"
+    assert posting.employer.name == "Acme Corp"
     assert posting.source_id == "lever:acme"
     assert posting.source_native_id == "lever-posting-1"
     assert posting.canonical_url == "https://jobs.lever.co/acme/lever-posting-1"
@@ -306,7 +309,8 @@ def test_ashby_adapter_maps_public_board_payload_to_scraped_posting() -> None:
     assert posting.metadata.title == "Infrastructure Engineer"
     assert posting.metadata.location == "Remote"
     assert posting.metadata.description == "Operate infrastructure systems."
-    assert posting.source.board == "Acme Corp"
+    assert posting.source.board == "ashby"
+    assert posting.employer.name == "Acme Corp"
     assert posting.source_id == "ashby:acme"
     assert posting.source_native_id == "ashby-posting-1"
     assert posting.canonical_url == "https://jobs.ashbyhq.com/acme/ashby-posting-1"
