@@ -13,6 +13,7 @@ import {
   LearningRecommendationListResponseSchema,
   LearningRecommendationReviewResponseSchema,
   TailoringPolicyRevisionListResponseSchema,
+  TailoringPolicyRollbackResponseSchema,
   PipelineOperationsSnapshotSchema,
   ProviderConfigurationKeys,
   RpcMethods,
@@ -2683,6 +2684,111 @@ describe("local TypeScript API", () => {
     ).toBe(before);
     unchanged.close();
     await app.close();
+  });
+
+  it("rolls back tailoring policy through the runtime-scoped RPC boundary", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
+      jsonrpc: "2.0" as const,
+      id: 1,
+      result: {
+        status: "succeeded",
+        context: "materials",
+        policyKind: "tailoring_rule",
+        policyVersion: 3,
+        rollbackOfVersion: 1,
+        rollbackReasonCode: "user_requested",
+        learnedRules: [],
+        rolledBackAt: "2026-08-01T12:34:56+00:00",
+      },
+    }));
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call, close: vi.fn(async () => undefined) },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/learning/policies/materials/rollbacks",
+      payload: { targetVersion: 1 },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const parsed = TailoringPolicyRollbackResponseSchema.parse(response.json());
+    expect(parsed).toEqual({
+      ok: true,
+      context: "materials",
+      policyKind: "tailoring_rule",
+      version: 3,
+      status: "current",
+      learnedRules: [],
+      sourceReviewId: null,
+      sourceRecommendationId: null,
+      rollbackOfVersion: 1,
+      rollbackReasonCode: "user_requested",
+      createdAt: "2026-08-01T12:34:56.000Z",
+    });
+    expect(call).toHaveBeenCalledWith(RpcMethods.RollbackTailoringPolicy, {
+      tenantId: "local",
+      targetVersion: 1,
+      expectedAppDir: tempDir,
+      expectedDbPath: options.dbPath,
+    });
+
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/v1/learning/policies/materials/rollbacks",
+      payload: { targetVersion: 0 },
+    });
+    expect(invalid.statusCode, invalid.body).toBe(400);
+    expect(call).toHaveBeenCalledTimes(1);
+    await app.close();
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(response.body, { status: 200, statusText: "OK" }),
+    );
+    await expect(
+      createJobCtrlApiClient().rollbackTailoringPolicy({ targetVersion: 1 }),
+    ).resolves.toEqual(parsed);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:8766/v1/learning/policies/materials/rollbacks",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ targetVersion: 1 }),
+      }),
+    );
+    fetchMock.mockRestore();
+
+    const badCall = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
+      jsonrpc: "2.0" as const,
+      id: 1,
+      result: {
+        status: "succeeded",
+        context: "materials",
+        policyKind: "tailoring_rule",
+        policyVersion: 3,
+        rollbackOfVersion: 1,
+        rollbackReasonCode: "private rollback narrative",
+        learnedRules: [],
+        rolledBackAt: "2026-08-01T12:34:56Z",
+      },
+    }));
+    const badApp = buildApp({
+      ...options,
+      providerDispatcher: { call: badCall, close: vi.fn(async () => undefined) },
+    });
+    const badResponse = await badApp.inject({
+      method: "POST",
+      url: "/v1/learning/policies/materials/rollbacks",
+      payload: { targetVersion: 1 },
+    });
+    expect(badResponse.statusCode, badResponse.body).toBe(502);
+    expect(badResponse.json()).toEqual({
+      ok: false,
+      error: "tailoring_policy_rollback_failed",
+      message: "The tailoring policy rollback could not be completed.",
+    });
+    expect(badResponse.body).not.toContain("private rollback narrative");
+    await badApp.close();
   });
 
   it("serves paginated recommendation evidence links without source content", async () => {

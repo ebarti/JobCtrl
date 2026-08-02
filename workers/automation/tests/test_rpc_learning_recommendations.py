@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from jobctrl.database import close_connection, init_db
@@ -167,6 +168,85 @@ def test_explicit_review_accepts_atomically_and_replays(
     assert conn.execute(
         "SELECT COUNT(*) FROM learning_recommendation_reviews"
     ).fetchone()[0] == 1
+    close_connection(db_path)
+
+
+def test_explicit_policy_rollback_appends_once_and_replays(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    policy_repository = SqliteTailoringPolicyRepository(conn)
+    original = _tailoring_policy()
+    policy_repository.save(original)
+    policy_repository.save(
+        original.with_learned_tailoring_rule(
+            rule_key="fact_handling",
+            rule_value="require_source_match",
+            version=2,
+            created_at="2026-08-01T11:00:00Z",
+        )
+    )
+    policy_repository.save(
+        replace(
+            original,
+            version=3,
+            rollback_of_version=1,
+            rollback_reason="private historical rollback narrative",
+            created_at="2026-08-01T11:30:00Z",
+        )
+    )
+    monkeypatch.setattr(handlers_mod, "get_connection", lambda: conn)
+    runtime_expectations: list[dict[str, str | None]] = []
+    monkeypatch.setattr(
+        handlers_mod,
+        "assert_expected_runtime",
+        lambda **kwargs: runtime_expectations.append(kwargs),
+    )
+    server = JsonRpcServer(workflow_starter=_stub_starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+    params = {
+        "tenantId": "local",
+        "targetVersion": 1,
+        "expectedAppDir": "/tmp/jobctrl",
+        "expectedDbPath": "/tmp/jobctrl/jobctrl.db",
+    }
+
+    first = server.dispatch(
+        JsonRpcRequest(method="rollback_tailoring_policy", params=params, id=1)
+    )
+    replay = server.dispatch(
+        JsonRpcRequest(method="rollback_tailoring_policy", params=params, id=2)
+    )
+
+    assert first is not None
+    assert replay is not None
+    first_result = first.to_dict()["result"]
+    replay_result = replay.to_dict()["result"]
+    assert first_result["policyVersion"] == 4
+    assert first_result["rollbackOfVersion"] == 1
+    assert first_result["rollbackReasonCode"] == "user_requested"
+    assert first_result["learnedRules"] == []
+    assert replay_result == first_result
+    assert runtime_expectations == [
+        {
+            "expected_app_dir": "/tmp/jobctrl",
+            "expected_db_path": "/tmp/jobctrl/jobctrl.db",
+        },
+        {
+            "expected_app_dir": "/tmp/jobctrl",
+            "expected_db_path": "/tmp/jobctrl/jobctrl.db",
+        },
+    ]
+    assert [
+        policy.version for policy in policy_repository.list_history(LOCAL_TENANT)
+    ] == [4, 3, 2, 1]
+    accepted_policy = policy_repository.get_version(LOCAL_TENANT, 2)
+    assert accepted_policy is not None
+    assert accepted_policy.learned_tailoring_rules.to_dict() == {
+        "fact_handling": "require_source_match"
+    }
     close_connection(db_path)
 
 
