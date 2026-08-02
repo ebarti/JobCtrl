@@ -1038,11 +1038,11 @@ def test_single_job_starts_temporal_workflow_spec(tmp_path, monkeypatch):
     monkeypatch.setattr("jobctrl.workflow_specs.start_workflow_spec_and_wait_sync", fake_start)
     monkeypatch.setattr(runner_module, "get_connection", lambda: conn)
 
-    result = runner_module.run_single_job(url, do_tailor=True, do_apply=False)
+    result = runner_module.run_single_job(url, do_tailor=True, do_apply=True)
 
     payload = specs[0].args[0]
-    assert payload.job_url == job_id
-    assert payload.stages == ["enrich", "score", "tailor", "cover"]
+    assert str(payload.job_id) == job_id
+    assert payload.stages == ["enrich", "score", "tailor", "cover", "apply"]
     assert payload.expected_app_dir == str(app_dir)
     assert payload.expected_db_path == str(db_path)
     assert result["url"] == url

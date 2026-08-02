@@ -15,6 +15,7 @@ from jobctrl.domain.identifiers import JobId, canonical_job_id
 with workflow.unsafe.imports_passed_through():
     from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
     from jobctrl.discovery.workflow import DiscoverWorkflow, DiscoverWorkflowInput
+    from jobctrl.domain.identifiers import JobId, canonical_job_id
     from jobctrl.infrastructure.temporal.finalize import (
         emit_workflow_outcome,
         emit_workflow_started,
@@ -42,8 +43,8 @@ class JobPipelineWorkflowInput:
     """Input for ``JobPipelineWorkflow``.
 
     Drives the requested stage list in batch mode against eligible jobs in the
-    local DB. Preparation stages can also be constrained to ``job_url`` /
-    ``job_urls`` for retry-continuation flows, while discovery remains a
+    local DB. Preparation stages can also be constrained to ``job_id`` /
+    ``job_ids`` for retry-continuation flows, while discovery remains a
     batch/source-oriented stage.
 
     The apply step is delegated to ``ApplyWorkflow`` as a child workflow so
@@ -65,9 +66,8 @@ class JobPipelineWorkflowInput:
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
-    job_url: str | None = None
-    job_urls: tuple[str, ...] = ()
-    apply_job_id: JobId | None = None
+    job_id: JobId | None = None
+    job_ids: tuple[JobId, ...] = ()
     apply_selector_keys: tuple[str, ...] = ()
     source_ids: tuple[str, ...] = ()
     score_current_policy_only: bool = False
@@ -80,12 +80,9 @@ class JobPipelineWorkflowInput:
     continuous: bool = False
 
     def __post_init__(self) -> None:
-        if self.apply_job_id is not None:
-            object.__setattr__(
-                self,
-                "apply_job_id",
-                canonical_job_id(str(self.apply_job_id)),
-            )
+        if self.job_id is not None:
+            object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
+        object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
 
 
 @dataclass(frozen=True)
@@ -215,16 +212,16 @@ class JobPipelineWorkflow:
         failed: list[str] = []
         failure: str | None = None
         error_code: str | None = None
-        derived_cover_job_urls: tuple[str, ...] | None = None
+        derived_cover_job_ids: tuple[JobId, ...] | None = None
 
         for stage in payload.stages:
             stage_payload = payload
-            if stage == "cover" and derived_cover_job_urls is not None and not _has_selected_job_scope(payload):
-                if not derived_cover_job_urls:
+            if stage == "cover" and derived_cover_job_ids is not None and not _has_selected_job_scope(payload):
+                if not derived_cover_job_ids:
                     completed.append(stage)
-                    derived_cover_job_urls = None
+                    derived_cover_job_ids = None
                     continue
-                stage_payload = replace(payload, job_urls=derived_cover_job_urls, limit=0)
+                stage_payload = replace(payload, job_ids=derived_cover_job_ids, limit=0)
 
             try:
                 result = await _execute_stage(stage, stage_payload)
@@ -245,9 +242,9 @@ class JobPipelineWorkflow:
 
             completed.append(stage)
             if stage == "tailor" and not _has_selected_job_scope(payload):
-                derived_cover_job_urls = _approved_tailor_job_urls(result)
+                derived_cover_job_ids = _approved_tailor_job_ids(result)
             elif stage != "cover":
-                derived_cover_job_urls = None
+                derived_cover_job_ids = None
 
         return JobPipelineWorkflowResult(
             stages_completed=completed,
@@ -289,7 +286,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 workers=payload.workers,
                 limit=payload.limit,
                 dry_run=payload.dry_run,
-                job_urls=_selected_job_urls(payload),
+                job_ids=_selected_job_ids(payload),
                 workflow_id=workflow_id,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
@@ -307,7 +304,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 limit=payload.limit,
                 dry_run=payload.dry_run,
                 rescore=payload.rescore,
-                job_urls=_selected_job_urls(payload),
+                job_ids=_selected_job_ids(payload),
                 current_policy_only=payload.score_current_policy_only,
                 llm_model=payload.llm_model,
                 workflow_id=workflow_id,
@@ -329,7 +326,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 validation_mode=payload.validation_mode,
                 dry_run=payload.dry_run,
                 retailor=payload.retailor,
-                job_urls=_selected_job_urls(payload),
+                job_ids=_selected_job_ids(payload),
                 current_policy_only=payload.tailor_current_policy_only,
                 suppress_existing_artifacts=payload.suppress_existing_artifacts,
                 allow_low_fit_override=payload.allow_low_fit_override,
@@ -354,7 +351,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 limit=payload.limit,
                 validation_mode=payload.validation_mode,
                 dry_run=payload.dry_run,
-                job_urls=_selected_job_urls(payload),
+                job_ids=_selected_job_ids(payload),
                 llm_model=payload.llm_model,
                 workflow_id=workflow_id,
             ),
@@ -406,7 +403,8 @@ def _pipeline_input_summary(payload: JobPipelineWorkflowInput) -> dict[str, Any]
         "stages": list(payload.stages),
         "dryRun": payload.dry_run,
         "limit": payload.limit,
-        "jobUrl": payload.job_url,
+        "jobId": str(payload.job_id) if payload.job_id is not None else None,
+        "jobIds": [str(job_id) for job_id in payload.job_ids],
     }
 
 
@@ -437,29 +435,28 @@ def _activity_error_was_cancelled(exc: ActivityError) -> bool:
     return False
 
 
-def _selected_job_urls(payload: JobPipelineWorkflowInput) -> tuple[str, ...]:
-    if payload.job_urls:
-        return payload.job_urls
-    if payload.job_url:
-        return (payload.job_url,)
+def _selected_job_ids(payload: JobPipelineWorkflowInput) -> tuple[JobId, ...]:
+    if payload.job_ids:
+        return payload.job_ids
+    if payload.job_id is not None:
+        return (payload.job_id,)
     return ()
 
 
 def _has_selected_job_scope(payload: JobPipelineWorkflowInput) -> bool:
-    return bool(payload.job_url or payload.job_urls)
+    return payload.job_id is not None or bool(payload.job_ids)
 
 
 def _apply_child_job_id(payload: JobPipelineWorkflowInput) -> JobId | None:
     """Validate the preserved selector shape before starting an Apply child."""
 
     selector_keys = tuple(payload.apply_selector_keys)
-    legacy_scope_present = payload.job_url is not None or bool(payload.job_urls)
     if not selector_keys:
-        if payload.apply_job_id is None and not legacy_scope_present:
+        if payload.job_id is None and not payload.job_ids:
             return None
     elif selector_keys == ("jobId",):
-        if payload.apply_job_id is not None and not legacy_scope_present:
-            return canonical_job_id(str(payload.apply_job_id))
+        if payload.job_id is not None and not payload.job_ids:
+            return canonical_job_id(str(payload.job_id))
 
     raise ApplicationError(
         "apply accepts only a canonical jobId; omit all selector keys for batch apply",
@@ -467,7 +464,7 @@ def _apply_child_job_id(payload: JobPipelineWorkflowInput) -> JobId | None:
     )
 
 
-def _approved_tailor_job_urls(result: Any) -> tuple[str, ...] | None:
+def _approved_tailor_job_ids(result: Any) -> tuple[JobId, ...] | None:
     stages = _result_value(result, "stages")
     if not isinstance(stages, list):
         return None
@@ -476,13 +473,17 @@ def _approved_tailor_job_urls(result: Any) -> tuple[str, ...] | None:
             continue
         if stage_result.get("stage") != "tailor":
             continue
-        if "approvedJobUrls" not in stage_result:
+        if "approvedJobIds" not in stage_result:
             return None
-        raw_urls = stage_result.get("approvedJobUrls")
-        if not isinstance(raw_urls, list):
+        raw_job_ids = stage_result.get("approvedJobIds")
+        if not isinstance(raw_job_ids, list):
             return ()
-        return tuple(dict.fromkeys(str(url) for url in raw_urls if str(url)))
+        return _canonical_job_ids(tuple(canonical_job_id(str(job_id)) for job_id in raw_job_ids))
     return None
+
+
+def _canonical_job_ids(job_ids: tuple[JobId, ...]) -> tuple[JobId, ...]:
+    return tuple(dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids))
 
 
 _SUCCESS_STAGE_STATUSES = frozenset({"ok", "partial", "skipped"})

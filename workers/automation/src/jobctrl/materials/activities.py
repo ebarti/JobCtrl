@@ -38,7 +38,7 @@ class TailorActivityInput:
     validation_mode: str = "normal"
     dry_run: bool = False
     retailor: bool = False
-    job_urls: tuple[str, ...] = ()
+    job_ids: tuple[JobId, ...] = ()
     current_policy_only: bool = False
     suppress_existing_artifacts: bool = False
     allow_low_fit_override: bool = False
@@ -47,6 +47,9 @@ class TailorActivityInput:
     tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
 
 
 @dataclass(frozen=True)
@@ -116,7 +119,7 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
                 stages=list(result["stages"]),
             )
 
-        if payload.job_urls:
+        if payload.job_ids:
             result = await run_blocking_with_heartbeat(
                 lambda: _run_selected_tailoring(payload, cancel_event=cancel_event),
                 starting_message="selected tailor starting",
@@ -143,8 +146,8 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
                         "status": "ok",
                         "elapsed": 0.0,
                         "dry_run": True,
-                        "selectedJobUrls": [],
-                        "approvedJobUrls": [],
+                        "selectedJobIds": [],
+                        "approvedJobIds": [],
                     }
                 ],
             )
@@ -203,16 +206,16 @@ def _run_current_policy_tailoring(
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     from jobctrl.database import get_connection
-    from jobctrl.pipeline.current_policy_selectors import tailoring_current_policy_job_urls
+    from jobctrl.pipeline.current_policy_selectors import tailoring_current_policy_job_ids
 
-    urls = tailoring_current_policy_job_urls(
+    job_ids = tailoring_current_policy_job_ids(
         get_connection(),
         tenant_id=payload.tenant_id,
         min_score=payload.min_score,
         limit=payload.limit,
-        job_urls=payload.job_urls,
+        job_ids=payload.job_ids,
     )
-    return _run_selected_tailoring(replace(payload, job_urls=urls, limit=0), cancel_event=cancel_event)
+    return _run_selected_tailoring(replace(payload, job_ids=job_ids, limit=0), cancel_event=cancel_event)
 
 
 def _run_selected_tailoring(
@@ -221,9 +224,9 @@ def _run_selected_tailoring(
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
-    from jobctrl.scoring.tailor import tailor_job_by_url
+    from jobctrl.scoring.tailor import tailor_job_by_id
 
-    urls = _limited_job_urls(payload.job_urls, payload.limit)
+    job_ids = _limited_job_ids(payload.job_ids, payload.limit)
     if payload.dry_run:
         return {
             "status": "ok",
@@ -234,25 +237,25 @@ def _run_selected_tailoring(
                     "stage": "tailor",
                     "status": "ok",
                     "elapsed": 0.0,
-                    "selected": len(urls),
+                    "selected": len(job_ids),
                     "dry_run": True,
-                    "selectedJobUrls": list(urls),
-                    "approvedJobUrls": [],
+                    "selectedJobIds": list(job_ids),
+                    "approvedJobIds": [],
                 }
             ],
         }
 
     t0 = time.time()
     approved = 0
-    approved_urls: list[str] = []
+    approved_job_ids: list[JobId] = []
     skipped = 0
     failed = 0
     errors: dict[str, str] = {}
-    for url in urls:
+    for job_id in job_ids:
         if cancel_event is not None and cancel_event.is_set():
             raise LlmTransientError("tailor activity canceled")
-        result = tailor_job_by_url(
-            url,
+        result = tailor_job_by_id(
+            job_id,
             min_score=payload.min_score,
             validation_mode=payload.validation_mode,
             workers=payload.workers,
@@ -268,12 +271,12 @@ def _run_selected_tailoring(
         status = str(result.get("status") or "error")
         if status == "approved":
             approved += 1
-            approved_urls.append(url)
+            approved_job_ids.append(job_id)
         elif status in {"skipped", "not_eligible"}:
             skipped += 1
         else:
             failed += 1
-            errors[url] = str(result.get("error") or f"Tailoring ended with status {status}")
+            errors[str(job_id)] = str(result.get("error") or f"Tailoring ended with status {status}")
 
     elapsed = time.time() - t0
     status = "failed" if errors else "ok"
@@ -286,10 +289,10 @@ def _run_selected_tailoring(
                 "stage": "tailor",
                 "status": status,
                 "elapsed": elapsed,
-                "selected": len(urls),
+                "selected": len(job_ids),
                 "approved": approved,
-                "selectedJobUrls": list(urls),
-                "approvedJobUrls": approved_urls,
+                "selectedJobIds": list(job_ids),
+                "approvedJobIds": approved_job_ids,
                 "skipped": skipped,
                 "failed": failed,
             }
@@ -297,11 +300,15 @@ def _run_selected_tailoring(
     }
 
 
-def _limited_job_urls(job_urls: tuple[str, ...], limit: int) -> tuple[str, ...]:
-    unique = tuple(dict.fromkeys(url for url in job_urls if url))
+def _limited_job_ids(job_ids: tuple[JobId, ...], limit: int) -> tuple[JobId, ...]:
+    unique = tuple(dict.fromkeys(job_ids))
     if limit > 0:
         return unique[:limit]
     return unique
+
+
+def _canonical_job_ids(job_ids: tuple[JobId, ...]) -> tuple[JobId, ...]:
+    return tuple(dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids))
 
 
 @activity.defn(name="tailor_job")
@@ -369,9 +376,12 @@ class CoverActivityInput:
     limit: int = 0
     validation_mode: str = "normal"
     dry_run: bool = False
-    job_urls: tuple[str, ...] = ()
+    job_ids: tuple[JobId, ...] = ()
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
 
 
 @dataclass(frozen=True)
@@ -444,7 +454,7 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
 
     cancel_event = threading.Event()
     try:
-        if payload.job_urls:
+        if payload.job_ids:
             result = await run_blocking_with_heartbeat(
                 lambda: _run_selected_cover(payload, cancel_event=cancel_event),
                 starting_message="selected cover starting",
@@ -524,9 +534,9 @@ def _run_selected_cover(
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
-    from jobctrl.scoring.cover_letter import cover_letter_by_url
+    from jobctrl.scoring.cover_letter import cover_letter_by_id
 
-    urls = _limited_job_urls(payload.job_urls, payload.limit)
+    job_ids = _limited_job_ids(payload.job_ids, payload.limit)
     if payload.dry_run:
         return {
             "status": "ok",
@@ -537,7 +547,7 @@ def _run_selected_cover(
                     "stage": "cover",
                     "status": "ok",
                     "elapsed": 0.0,
-                    "selected": len(urls),
+                    "selected": len(job_ids),
                     "dry_run": True,
                 }
             ],
@@ -549,11 +559,11 @@ def _run_selected_cover(
     failed = 0
     errors: dict[str, str] = {}
     results: list[dict[str, Any]] = []
-    for url in urls:
+    for job_id in job_ids:
         if cancel_event is not None and cancel_event.is_set():
             raise LlmTransientError("cover activity canceled")
-        result = cover_letter_by_url(
-            url,
+        result = cover_letter_by_id(
+            job_id,
             min_score=payload.min_score,
             validation_mode=payload.validation_mode,
             llm_model=payload.llm_model,
@@ -567,7 +577,7 @@ def _run_selected_cover(
             skipped += 1
         else:
             failed += 1
-            errors[url] = str(result.get("error") or f"Cover ended with status {result_status}")
+            errors[str(job_id)] = str(result.get("error") or f"Cover ended with status {result_status}")
     elapsed = time.time() - t0
     status = "failed" if errors else "ok"
     return {
@@ -579,7 +589,7 @@ def _run_selected_cover(
                 "stage": "cover",
                 "status": status,
                 "elapsed": elapsed,
-                "selected": len(urls),
+                "selected": len(job_ids),
                 "generated": generated,
                 "skipped": skipped,
                 "failed": failed,

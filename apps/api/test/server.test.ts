@@ -7263,7 +7263,8 @@ describe("local TypeScript API", () => {
       1,
       expect.objectContaining({
         action: "rescore_job",
-        jobKey: "https://example.com/jobs/ready",
+        jobKey: jobIdFor("https://example.com/jobs/ready"),
+        jobId: jobIdFor("https://example.com/jobs/ready"),
         dryRun: true,
         reason: "policy refresh",
       }),
@@ -7294,7 +7295,8 @@ describe("local TypeScript API", () => {
       4,
       expect.objectContaining({
         action: "retailor_job",
-        jobKey: "https://example.com/jobs/ready",
+        jobKey: jobIdFor("https://example.com/jobs/ready"),
+        jobId: jobIdFor("https://example.com/jobs/ready"),
         dryRun: true,
         suppressExistingArtifacts: false,
         tailorModels: ["gemini:test"],

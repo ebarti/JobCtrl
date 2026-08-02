@@ -20,7 +20,7 @@ from jobctrl.discovery.workflow import (
     discover_workflow_id,
 )
 from jobctrl.domain.discovery.source_registry import ManualCaptureMode
-from jobctrl.domain.identifiers import canonical_job_id
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.rpc.messages import WorkflowStartSpec
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.interview.workflow import InterviewPrepWorkflow, InterviewPrepWorkflowInput
@@ -77,6 +77,7 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
             args=(payload,),
             workflow_id=discover_workflow_id(tenant_id),
         )
+    _reject_legacy_pipeline_job_urls(params)
     payload = JobPipelineWorkflowInput(
         tenant_id=tenant_id,
         expected_app_dir=params.get("expectedAppDir"),
@@ -91,10 +92,15 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
         retailor=bool(params.get("retailor", False)),
         tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
         tailor_judge_model=str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None,
-        tailor_judge_min_score=(float(raw_judge_min_score) if raw_judge_min_score is not None else None),
-        job_url=params.get("jobUrl") if params.get("jobUrl") else None,
-        job_urls=_job_urls(params),
-        apply_job_id=apply_selector.job_id if apply_selector else None,
+        tailor_judge_min_score=(
+            float(raw_judge_min_score) if raw_judge_min_score is not None else None
+        ),
+        job_id=(
+            apply_selector.job_id
+            if apply_selector is not None
+            else _optional_job_id(params, "jobId")
+        ),
+        job_ids=() if apply_selector is not None else _job_ids(params),
         apply_selector_keys=apply_selector.keys if apply_selector else (),
         source_ids=_source_ids(params),
         headless=bool(params.get("headless", False)),
@@ -112,16 +118,21 @@ def build_pipeline_workflow_spec(
     limit: int,
     rescore: bool = False,
     retailor: bool = False,
-    job_url: str | None = None,
-    job_urls: tuple[str, ...] = (),
+    job_id: JobId | None = None,
+    job_ids: tuple[JobId, ...] = (),
     score_current_policy_only: bool = False,
     tailor_current_policy_only: bool = False,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
-    apply_selector = _apply_selector(params, job_url=job_url, job_urls=job_urls) if "apply" in stages else None
+    apply_selector = (
+        _apply_selector(params, job_id=job_id, job_ids=job_ids)
+        if "apply" in stages
+        else None
+    )
     if "apply" in stages:
         _require_auto_apply_browser_capability()
+    _reject_legacy_pipeline_job_urls(params)
     tenant_id = _tenant_id(params)
     raw_judge_min_score = params.get("tailorJudgeMinScore")
     payload = JobPipelineWorkflowInput(
@@ -138,10 +149,11 @@ def build_pipeline_workflow_spec(
         retailor=retailor,
         tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
         tailor_judge_model=str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None,
-        tailor_judge_min_score=(float(raw_judge_min_score) if raw_judge_min_score is not None else None),
-        job_url=job_url,
-        job_urls=job_urls,
-        apply_job_id=apply_selector.job_id if apply_selector else None,
+        tailor_judge_min_score=(
+            float(raw_judge_min_score) if raw_judge_min_score is not None else None
+        ),
+        job_id=apply_selector.job_id if apply_selector is not None else job_id,
+        job_ids=() if apply_selector is not None else job_ids,
         apply_selector_keys=apply_selector.keys if apply_selector else (),
         score_current_policy_only=score_current_policy_only,
         tailor_current_policy_only=tailor_current_policy_only,
@@ -170,7 +182,11 @@ def build_apply_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
         continuous=bool(params.get("continuous", False)),
         approval_required=bool(params.get("applyApprovalRequired", True)),
     )
-    workflow_id = apply_workflow_id(tenant_id, str(selector.job_id)) if selector.job_id is not None else None
+    workflow_id = (
+        apply_workflow_id(tenant_id, str(selector.job_id))
+        if selector.job_id is not None
+        else None
+    )
     return WorkflowStartSpec(workflow=ApplyWorkflow, args=(payload,), workflow_id=workflow_id)
 
 
@@ -179,14 +195,14 @@ class _ApplySelector:
     """The only selector shape permitted to start an Apply workflow."""
 
     keys: tuple[str, ...] = ()
-    job_id: str | None = None
+    job_id: JobId | None = None
 
 
 def _apply_selector(
     params: dict[str, Any],
     *,
-    job_url: str | None = None,
-    job_urls: tuple[str, ...] = (),
+    job_id: JobId | None = None,
+    job_ids: tuple[JobId, ...] = (),
 ) -> _ApplySelector:
     """Preserve selector key presence so invalid scopes cannot become batch Apply.
 
@@ -196,20 +212,29 @@ def _apply_selector(
     """
 
     keys = tuple(key for key in _APPLY_SELECTOR_KEYS if key in params)
-    if job_url is not None and "jobUrl" not in keys:
-        keys += ("jobUrl",)
-    if job_urls and "jobUrls" not in keys:
-        keys += ("jobUrls",)
+    if job_id is not None and "jobId" not in keys:
+        keys += ("jobId",)
+    if job_ids and "jobIds" not in keys:
+        keys += ("jobIds",)
 
     if not keys:
         return _ApplySelector()
     if keys != ("jobId",):
-        raise ValueError("apply accepts only a canonical jobId; omit all selector keys for batch apply")
+        raise ValueError(
+            "apply accepts only a canonical jobId; omit all selector keys for batch apply"
+        )
 
-    raw_job_id = params["jobId"]
+    raw_job_id = job_id if job_id is not None else params["jobId"]
     if not isinstance(raw_job_id, str) or not raw_job_id.strip():
         raise ValueError("apply jobId must be a non-empty canonical UUID")
-    return _ApplySelector(keys=keys, job_id=canonical_job_id(raw_job_id))
+    selected_job_id = canonical_job_id(raw_job_id)
+    if job_id is not None and "jobId" in params:
+        supplied_job_id = params["jobId"]
+        if not isinstance(supplied_job_id, str) or not supplied_job_id.strip():
+            raise ValueError("apply jobId must be a non-empty canonical UUID")
+        if canonical_job_id(supplied_job_id) != selected_job_id:
+            raise ValueError("conflicting apply jobId selectors")
+    return _ApplySelector(keys=keys, job_id=selected_job_id)
 
 
 def _require_auto_apply_browser_capability() -> None:
@@ -280,7 +305,7 @@ def build_contact_research_workflow_spec(params: dict[str, Any]) -> WorkflowStar
 
 
 def build_single_job_workflow_spec(
-    url: str,
+    job_id: str,
     *,
     do_tailor: bool = True,
     do_apply: bool = True,
@@ -304,7 +329,7 @@ def build_single_job_workflow_spec(
             "expectedAppDir": expected_app_dir,
             "expectedDbPath": expected_db_path,
             "stages": stages,
-            "jobUrl": url,
+            "jobId": job_id,
             "validationMode": validation_mode,
             "model": model,
             "headless": headless,
@@ -477,13 +502,25 @@ def _stage_list(params: dict[str, Any]) -> list[str]:
     return [stage for stage in _WORKFLOW_STAGE_ORDER if stage in unique]
 
 
-def _job_urls(params: dict[str, Any]) -> tuple[str, ...]:
-    raw = params.get("jobUrls") or ()
+def _job_ids(params: dict[str, Any]) -> tuple[JobId, ...]:
+    raw = params.get("jobIds") or ()
     if not raw:
         return ()
     if not isinstance(raw, list):
-        raise ValueError("jobUrls must be an array")
-    return tuple(str(item).strip() for item in raw if str(item).strip())
+        raise ValueError("jobIds must be an array")
+    return tuple(dict.fromkeys(canonical_job_id(str(item)) for item in raw))
+
+
+def _optional_job_id(params: dict[str, Any], name: str) -> JobId | None:
+    value = params.get(name)
+    if value is None or value == "":
+        return None
+    return canonical_job_id(str(value))
+
+
+def _reject_legacy_pipeline_job_urls(params: dict[str, Any]) -> None:
+    if "jobUrl" in params or "jobUrls" in params:
+        raise ValueError("pipeline job selection requires jobId or jobIds")
 
 
 def _source_ids(params: dict[str, Any]) -> tuple[str, ...]:

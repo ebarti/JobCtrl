@@ -239,7 +239,8 @@ def _stage_list(params: dict[str, Any]) -> list[str]:
 
 def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
     try:
-        return build_run_stage_workflow_spec(_legacy_workflow_locator_params(params))
+        _reject_job_url_params(params)
+        return build_run_stage_workflow_spec(params)
     except ValueError as exc:
         raise invalid_params(str(exc)) from exc
 
@@ -565,27 +566,22 @@ def _pipeline_workflow_spec(
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
-    tenant_id = TenantId(_tenant_id(params))
-    conn = get_connection()
-    selected_job_ids = (job_id,) if job_id is not None else job_ids
-    job_urls = _load_current_job_urls_by_id(
-        conn,
-        tenant_id=tenant_id,
-        job_ids=selected_job_ids,
-    )
-    return build_pipeline_workflow_spec(
-        params,
-        stages=stages,
-        limit=limit,
-        rescore=rescore,
-        retailor=retailor,
-        job_url=job_urls[0] if job_id is not None else None,
-        job_urls=job_urls if job_id is None else (),
-        score_current_policy_only=score_current_policy_only,
-        tailor_current_policy_only=tailor_current_policy_only,
-        suppress_existing_artifacts=suppress_existing_artifacts,
-        allow_low_fit_override=allow_low_fit_override,
-    )
+    try:
+        return build_pipeline_workflow_spec(
+            params,
+            stages=stages,
+            limit=limit,
+            rescore=rescore,
+            retailor=retailor,
+            job_id=job_id,
+            job_ids=job_ids,
+            score_current_policy_only=score_current_policy_only,
+            tailor_current_policy_only=tailor_current_policy_only,
+            suppress_existing_artifacts=suppress_existing_artifacts,
+            allow_low_fit_override=allow_low_fit_override,
+        )
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
 
 
 def profile_import(params: dict[str, Any]) -> WorkflowStartSpec:
