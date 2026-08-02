@@ -64,7 +64,14 @@ function listLearningRecommendationsInSnapshot(
       db,
       `SELECT COUNT(*) AS count
          FROM learning_recommendations
-        WHERE tenant_id = ?`,
+        WHERE tenant_id = ?
+          AND NOT EXISTS (
+            SELECT 1
+              FROM learning_recommendation_reviews AS review
+             WHERE review.tenant_id = learning_recommendations.tenant_id
+               AND review.recommendation_id = learning_recommendations.recommendation_id
+               AND review.decision IN ('accepted', 'rejected')
+          )`,
       [DEFAULT_TENANT],
     )?.count ?? 0,
   );
@@ -109,6 +116,13 @@ function listLearningRecommendationsInSnapshot(
             ) AS tombstone_count
        FROM learning_recommendations AS recommendation
       WHERE recommendation.tenant_id = ?
+        AND NOT EXISTS (
+          SELECT 1
+            FROM learning_recommendation_reviews AS review
+           WHERE review.tenant_id = recommendation.tenant_id
+             AND review.recommendation_id = recommendation.recommendation_id
+             AND review.decision IN ('accepted', 'rejected')
+        )
       ORDER BY recommendation.derived_at DESC,
                recommendation.recommendation_id ASC
       LIMIT ? OFFSET ?`,
