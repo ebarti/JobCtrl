@@ -4,6 +4,10 @@ export { useGenerateMaterialsMutation } from "./hooks/useGenerateMaterialsMutati
 export { useGenerateInterviewPrepMutation } from "./hooks/useGenerateInterviewPrepMutation.js";
 export { useOpenArtifactMutation } from "./hooks/useOpenArtifactMutation.js";
 export {
+  useReviewLearningRecommendationMutation,
+  type ReviewLearningRecommendationVariables,
+} from "./hooks/useReviewLearningRecommendationMutation.js";
+export {
   useRetailorCurrentPolicyMutation,
   useRetailorJobMutation,
   useTailorJobMutation,

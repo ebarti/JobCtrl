@@ -139,6 +139,10 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return this.read((model) => model.analytics.summary);
   }
 
+  learningRecommendations = this.unsupported("learningRecommendations");
+  learningRecommendationEvidence = this.unsupported("learningRecommendationEvidence");
+  reviewLearningRecommendation = this.unsupported("reviewLearningRecommendation");
+
   digest() {
     return this.read((model) => model.dashboard.digest);
   }
