@@ -93,6 +93,11 @@ and explain any intentional stacked deferral in the PR body.
 - **Subagent spawning:** Use subagents only for genuinely independent work or
   for the review/QA gates required by the validation tiers below. Do not add
   coordination overhead to work that is faster to complete directly.
+  Within one task, create at most one agent of each required type/role and
+  reuse that agent via follow-up turns for related work, fixes, and reruns.
+  Replace an agent only when it is unavailable/terminated or the new work is
+  genuinely a different task; never use a replacement to obtain another
+  opinion or avoid continuity.
 
 ### Root-Cause And Auditability Discipline
 
@@ -179,9 +184,9 @@ gate across the whole stack. A phase that changes an active high-risk path or is
 released independently follows its normal tier immediately.
 
 Run independent gates once after implementation and focused verification. Rerun
-a failed gate after addressing its Blocker/High findings; do not repeat passing
-gates for cosmetic edits or unresolved Medium/Low observations unless the edit
-could affect the verified behavior.
+a failed gate with the same reviewer/QA agent after addressing its Blocker/High
+findings; do not repeat passing gates for cosmetic edits or unresolved Medium/
+Low observations unless the edit could affect the verified behavior.
 
 Before calling work done:
 
