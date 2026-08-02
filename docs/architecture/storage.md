@@ -55,8 +55,11 @@ flowchart LR
     MATERIALS -->|writes| FILES
 ```
 
-Within the job-owned families, one `jobs` row (keyed by posting URL) is the hub:
-stage state, events, scores, analysis, materials, and apply records hang off it.
+Within the job-owned families, one `jobs` row keyed by `(tenant_id, job_id)` is
+the hub: stage state, events, scores, analysis, materials, and Apply records
+hang off the stable tenant-scoped `JobId`. A posting URL is an external locator
+with a tenant-scoped uniqueness constraint, not an internal primary or foreign
+key. Employer and Source observations are stored as independent facts.
 
 The remaining tables group by owner:
 
@@ -65,10 +68,12 @@ The remaining tables group by owner:
 | Candidate Profile | `candidate_profiles` plus 12 `candidate_profile_*` child tables (experience, bullets, skills, education, achievement evidence, required-content sets, resume constraint metrics) |
 | Resume templates | `resume_templates`, `resume_template_versions`, `resume_template_defaults`, `resume_template_refresh_attempts`, `job_resume_template_assignments` |
 | Compensation | `job_posted_compensation_facts`, `job_market_compensation_estimates` |
+| Scoring | `job_scores`, versioned/indexed `job_score_keywords`, `scoring_policies`, `job_score_staleness` |
 | Read-model projections | `job_list_projections`, `job_detail_projections`, `dashboard_projections`, `apply_run_projections`, `workflow_run_projections`, `pipeline_step_projections`, `artifact_list_projections`, `event_watermarks`, `digest_state` |
 | Discovery & preparation | `discovery_runs`, `discovery_execution_jobs`, `discovery_search_units`, `discovery_search_unit_jobs`, `discovery_search_unit_filtered_events`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, `job_canonical_identities`, `job_source_observations`, `job_duplicate_links`, legacy `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
 | Apply review, repeat protection, and outcomes | `application_review_decisions`, `application_repeat_overrides`, `application_repeat_override_consumptions`, `application_repeat_audit`, `application_outcomes`, `application_email_evidence`, `application_outcome_suggestions` |
-| Policies & operations | `tailoring_policies`, `llm_spend`, `job_score_staleness`, `worker_runtime_heartbeats`, `jobctrl_deleted_jobs` |
+| Explicit-feedback learning | `tailoring_feedback_signals`, `tailoring_feedback_signal_reviews`, `tailoring_feedback_signal_contradictions`, `learning_recommendations`, `learning_recommendation_evidence`, `learning_recommendation_evidence_jobs`, `learning_recommendation_jobs`, `learning_recommendation_reviews`, `learning_recommendation_tombstones` |
+| Policies & operations | `tailoring_policies`, `llm_spend`, `worker_runtime_heartbeats`, `jobctrl_deleted_jobs` |
 
 SQLite in `~/.jobctrl/jobctrl.db` is the local source of truth for jobs,
 stage states, events, artifacts, normalized Candidate Profile data, profile
@@ -82,11 +87,30 @@ licensed-feed coverage policy. Public Levels.fyi Markdown needs no credential.
 Credentials, feed paths/URLs, feed contents, and provider payloads do not belong
 in the settings file.
 
-### Repeat-application authority and migration
+### Exact v7 identity cutover
+
+Schema v7 is an exact runtime contract. The native lifecycle upgrades an
+admitted v6 installation only while the application is stopped: it quiesces
+the local runtime, creates a paired backup of `jobctrl.db` and Temporal state,
+builds an isolated candidate, and runs the v6-to-v7 rewrite in one SQLite
+transaction. URL-rooted job rows and foreign references are mapped to stable
+tenant-scoped JobIds; immutable historical events are upcast only as part of
+that migration.
+
+Activation happens only after schema, row/reference, projection, and paired
+state verification succeeds. The verified candidate replaces the live pair
+atomically. Any failed build, verification, or activation restores the paired
+backup and leaves the previous version runnable. There is no mixed-version
+runtime, rolling deployment, dual-write path, or permanent compatibility
+layer: the TypeScript API and Python worker accept exact v7 and reject direct
+v6 operation. Runtime projections read registered persisted artifacts only and
+do not reconstruct legacy URL-shaped fallback rows.
+
+### Repeat-application authority retained in v7
 
 Historical application facts remain owned by the existing job events, reviewed
-outcomes, and compatible applied status. Schema version 6 adds only three
-decision/audit tables; it does not backfill, reinterpret, or update those facts:
+outcomes, and compatible applied status. The three repeat-decision/audit tables
+introduced in schema v6 are retained in v7 without reinterpreting those facts:
 
 - `application_repeat_overrides` stores the target, selected prior job,
   relationship, immutable evidence snapshot and SHA-256 fingerprint, reason,
@@ -101,10 +125,9 @@ decision/audit tables; it does not backfill, reinterpret, or update those facts:
 The evaluator reads canonical job/source identity and accepted
 `job_duplicate_links`, then joins only confirmed application facts. Pending
 suggestions, notes, dry runs, failed attempts, and intent checkpoints are not
-promoted into history. Existing databases advance additively from version 5 to
-6 while their prior application rows and events remain byte-for-byte unchanged.
-Both the TypeScript API and Python worker can create the new tables
-idempotently, and both reject a database created by a newer schema version.
+promoted into history. The v6-to-v7 migration copies these exact application
+facts into the JobId-keyed schema and verifies their references before
+activation.
 
 For a live run, the Python launcher opens `BEGIN IMMEDIATE`, recomputes the
 current evidence, performs the existing active-run and approval checks, and
@@ -159,8 +182,8 @@ those projection columns only; it does not parse raw salary text on read.
 ### Discovery lineage and operations state
 
 `discovery_execution_jobs` is the durable execution-membership authority. Its
-primary identity is tenant + Discover workflow ID + Temporal run ID + canonical
-job URL. It stores `observed_this_run` or `existing_backlog`, the first safe
+primary identity is tenant + Discover workflow ID + Temporal run ID + stable
+JobId. It stores `observed_this_run` or `existing_backlog`, the first safe
 source metadata, explicit work-plan state, immutable required steps when
 planned, a bounded reason for not-eligible/failed plans, and the preparation
 workflow ID. Link writes are idempotent; a swept job can be promoted when this
@@ -176,7 +199,7 @@ that must be reached by acknowledging the provider error; reclaim cannot clear
 the cursor before that revision is durable.
 
 `discovery_search_unit_jobs` is the idempotent acceptance-receipt set keyed by
-execution, unit, and canonical job URL. The job/source/event writes and receipt
+execution, unit, and stable JobId. The job/source/event writes and receipt
 commit before provider acknowledgement. Durable new/existing counts and the
 run-wide result limit are derived from these receipts, so replay cannot count a
 posting twice. A newer activity attempt reclaims only `running`/`pending` units

@@ -99,6 +99,18 @@ applies the same score bands.
   reviewed score version and a calibration anchor. An explicit re-score runs
   the current policy again against the current canonical inputs.
 
+### Indexed Scoring Keywords
+
+Each score version stores its keywords in a normalized, indexed relation keyed
+by tenant, job, and score version. Historical versions remain auditable, but
+Jobs filtering and `GET /v1/scoring/keywords` use only the score version that
+the current projection renders. The aggregation returns both the canonical
+normalized key and a display spelling with its score version and job count.
+
+`GET /v1/jobs?normalizedScoreKeyword=...` accepts the exact canonical key from
+that aggregation. Normalization is owned by persistence, including Unicode
+case-folding; clients do not guess or re-normalize display text.
+
 ## What You Can See And Control
 
 Scoring runs inside Discover preparation. Review it on the current product
@@ -152,6 +164,10 @@ reason to correct or investigate it.
   newer policy.
 - **Operations owns display projections.** Jobs reads expose persisted analysis
   and score evidence. They do not call a model or recompute a score on request.
+- **Explicit feedback remains history until an owning policy says otherwise.**
+  Score corrections and their anchors are auditable inputs, but Apply candidate
+  acquisition does not apply a second feedback-based rank adjustment or let an
+  unaccepted learning recommendation reorder jobs.
 
 The model may extract structured evidence and propose fit. The final persisted
 decision is resolved through the versioned scoring policy, so a raw model
@@ -183,7 +199,7 @@ not for an employer ranking people.
 | Layer | Pointer |
 | --- | --- |
 | User workflow | [Daily Workflow → Review Jobs](normal-flows.md) and [Discovery → Employer Analysis Perspectives](discovery.md#employer-analysis-perspectives). |
-| HTTP contract | Jobs list/detail reads, `POST /v1/jobs/:key/score-correction`, per-job current-policy re-score, and bulk/stale-score actions; see [Jobs & Materials API](../api/jobs-and-materials.md#jobs-and-evidence) and the [complete lifecycle contract](../api/complete-contract.md#jobs-read-model-and-lifecycle). |
+| HTTP contract | Jobs list/detail reads, `GET /v1/scoring/keywords`, `POST /v1/jobs/:key/score-correction`, per-job current-policy re-score, and bulk/stale-score actions; see [Jobs & Materials API](../api/jobs-and-materials.md#jobs-and-evidence) and the [complete lifecycle contract](../api/complete-contract.md#jobs-read-model-and-lifecycle). |
 | Worker implementation | `workers/automation/src/jobctrl/scoring/` (`employer_analysis.py`, `scorer.py`) and `workers/automation/src/jobctrl/domain/scoring/`; canonical analysis gates and persistence live under `workers/automation/src/jobctrl/domain/materials/analysis*` and `workers/automation/src/jobctrl/infrastructure/materials/employer_analysis_repository.py`. |
 | Product components | `apps/web/src/contexts/scoring/`, `apps/web/src/contexts/materials/components/EmployerAnalysisPanel.tsx`, and the Jobs detail/triage views. |
 | Deep architecture | [Scoring](../architecture/scoring.md), [Materials → Canonical Employer Analysis](../architecture/materials.md#canonical-employer-analysis), and [Stage Walkthrough → Score](../architecture/pipeline/stages.md#score). |

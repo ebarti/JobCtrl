@@ -527,7 +527,8 @@ is on the [Security](security.md) page.
 
 Useful web app views:
 
-- Dashboard for high-level counts and source health.
+- Dashboard for high-level counts, source health, pending learning
+  recommendations, and the versioned Materials policy history.
 - Pipelines for the selected execution, execution sweep, unrelated global
   backlog, source-family intake, reconciliation, stage outcomes, capacity,
   approximate task-queue pressure, ETA, freshness, and active work.
@@ -536,7 +537,9 @@ Useful web app views:
   application outcome rows and projections only; groups below the minimum
   sample count stay count-only.
 - Jobs for triage and the bookmarkable Job Detail workspace.
-- Runs for workflow history and route-level run timelines.
+- Runs for the shared Discover, preparation, and Apply history, using one status
+  vocabulary, terminal-state contract, cancellation control, and route-level
+  timeline.
 - Evidence for profile-evidence reuse, generated-material usage, and gaps.
 - Artifacts for generated files and same-job artifact comparisons.
 - Apply Review for approval and resume edits.
@@ -566,8 +569,16 @@ you pass `--acknowledge`, which marks the displayed digest as reviewed.
 
 </WorkflowSurfacePanel>
 
+A cancel request is cooperative and asynchronous. Repeating it is harmless;
+the projected run remains inspectable and an already completed, failed,
+canceled, timed-out, or terminated result is never overwritten by a synthetic
+canceled state. The same contract applies whether cancellation starts in
+Pipelines or Runs.
+
 [Outcomes & Feedback](outcomes-and-feedback.md) explains which application and
-interview facts become canonical outcomes and how analytics read them.
+interview facts become canonical outcomes, how analytics read them, and how
+explicit reviewed feedback can produce a pending recommendation without
+changing behavior automatically.
 
 ## 11. Keep Contacts (Optional)
 
