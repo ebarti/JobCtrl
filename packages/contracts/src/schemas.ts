@@ -4182,6 +4182,7 @@ export interface ActionCommandPayload {
     | "generate_interview_prep"
     | "apply"
     | "cancel"
+    | "rederive_learning_recommendations"
     | "mark_applied"
     | "mark_skipped"
     | "profile_import";
