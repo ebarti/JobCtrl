@@ -21,9 +21,11 @@ For field-level schemas and every route variant, use the
 List and detail endpoints read projection rows. They do not recompute scores,
 parse salary text, or replay events during a request.
 
-`jobKey` is the tenant-scoped stable `JobId`, not a posting URL. User/import
-boundaries may resolve a URL to that ID explicitly, but internal job routes and
-foreign references remain ID-shaped. `GET /v1/jobs` accepts
+`jobKey` resolves at the browser API boundary to the tenant-scoped stable
+`JobId`. Canonical clients send that ID; the explicit API/import boundary may
+also accept a posting or application URL as an external locator and resolve it
+to the same ID. Internal command payloads and foreign references remain
+ID-shaped. `GET /v1/jobs` accepts
 `normalizedScoreKeyword` using the exact key returned by
 `GET /v1/scoring/keywords`; current filtering never mixes historical score
 versions into the result.

@@ -298,8 +298,9 @@ ID returns `400`; an unknown tenant-scoped recommendation returns `404`.
 `{ decision: "accepted" | "rejected" }`. Acceptance creates a new versioned
 Materials tailoring-policy revision and returns its positive `policyVersion`.
 Rejection records the review and returns `policyVersion: null`; it changes no
-policy. Replayed/conflicting/stale review attempts return a bounded error rather
-than applying behavior twice.
+policy. An identical structured replay returns the same idempotent success;
+conflicting or stale review attempts return a bounded error rather than
+applying behavior twice.
 
 `GET /v1/learning/policies/materials?page=<n>&pageSize=<1..100>` returns
 allowlisted current/superseded revision summaries: version, learned rules,
