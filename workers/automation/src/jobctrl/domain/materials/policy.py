@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from jobctrl.domain.operations.feedback import TAILORING_FEEDBACK_RULE_ALLOWLIST
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
@@ -31,6 +31,9 @@ _LEARNED_TAILORING_RULE_PROMPTS = {
 
 class TailoringPolicyChangedError(RuntimeError):
     """Raised before artifact persistence when the policy snapshot advanced."""
+
+
+TailoringPolicyRollbackReason = Literal["user_requested"]
 
 
 @dataclass(frozen=True)
@@ -695,6 +698,7 @@ __all__ = [
     "RevisionGatePolicy",
     "TailoringPolicy",
     "TailoringPolicyChangedError",
+    "TailoringPolicyRollbackReason",
     "WritingStylePolicy",
     "adapt_requirement_led_controls",
     "fingerprint_value",
