@@ -44,6 +44,7 @@ from jobctrl.domain.operations.feedback import (
 )
 from jobctrl.domain.operations.learning import (
     LearningRecommendation,
+    LearningSourceChange,
     RecommendationEvidenceRef,
     TAILORING_RECOMMENDATION_DERIVATION_VERSION,
     TAILORING_RECOMMENDATION_EVALUATION_FIXTURE_VERSION,
@@ -71,6 +72,7 @@ __all__ = [
     "JobDetailProjection",
     "JobListProjection",
     "LearningRecommendation",
+    "LearningSourceChange",
     "RecommendationEvidenceRef",
     "RoleMatchApprovalFeedbackSignal",
     "ScoreCorrectionDirection",
