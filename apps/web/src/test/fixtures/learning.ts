@@ -2,6 +2,8 @@ import type {
   LearningRecommendationEvidenceListResponse,
   LearningRecommendationListResponse,
   LearningRecommendationSummary,
+  TailoringPolicyRevisionListResponse,
+  TailoringPolicyRollbackResponse,
 } from "@jobctrl/contracts";
 
 export const sampleLearningRecommendation: LearningRecommendationSummary = {
@@ -71,4 +73,76 @@ export const sampleLearningRecommendationEvidence: LearningRecommendationEvidenc
   pageSize: 100,
   total: 2,
   totalPages: 1,
+};
+
+export const sampleTailoringPolicyRevisionList: TailoringPolicyRevisionListResponse = {
+  ok: true,
+  revisions: [
+    {
+      context: "materials",
+      policyKind: "tailoring_rule",
+      version: 4,
+      status: "current",
+      learnedRules: [],
+      sourceReviewId: null,
+      sourceRecommendationId: null,
+      rollbackOfVersion: 1,
+      rollbackReasonCode: "user_requested",
+      createdAt: "2026-08-01T12:15:00.000Z",
+    },
+    {
+      context: "materials",
+      policyKind: "tailoring_rule",
+      version: 3,
+      status: "superseded",
+      learnedRules: [{ ruleKey: "fact_handling", ruleValue: "require_source_match" }],
+      sourceReviewId: `learning-recommendation-review:${"c".repeat(64)}`,
+      sourceRecommendationId: sampleLearningRecommendation.recommendationId,
+      rollbackOfVersion: null,
+      rollbackReasonCode: null,
+      createdAt: "2026-08-01T12:05:00.000Z",
+    },
+    {
+      context: "materials",
+      policyKind: "tailoring_rule",
+      version: 2,
+      status: "superseded",
+      learnedRules: [],
+      sourceReviewId: null,
+      sourceRecommendationId: null,
+      rollbackOfVersion: null,
+      rollbackReasonCode: null,
+      createdAt: "2026-08-01T11:00:00.000Z",
+    },
+    {
+      context: "materials",
+      policyKind: "tailoring_rule",
+      version: 1,
+      status: "superseded",
+      learnedRules: [],
+      sourceReviewId: null,
+      sourceRecommendationId: null,
+      rollbackOfVersion: null,
+      rollbackReasonCode: null,
+      createdAt: "2026-08-01T10:00:00.000Z",
+    },
+  ],
+  page: 1,
+  pageSize: 100,
+  total: 4,
+  totalPages: 1,
+};
+
+export const sampleTailoringPolicyRollback: TailoringPolicyRollbackResponse = {
+  ok: true,
+  context: "materials",
+  policyKind: "tailoring_rule",
+  version: 5,
+  status: "current",
+  learnedRules: [],
+  sourceReviewId: null,
+  sourceRecommendationId: null,
+  rollbackOfVersion: 1,
+  rollbackReasonCode: "user_requested",
+  createdAt: "2026-08-01T12:30:00.000Z",
 };
