@@ -2071,6 +2071,7 @@ export const JobListQuerySchema = z
     applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).default("all").catch("all"),
     source: optionalText,
     company: optionalText,
+    normalizedScoreKeyword: z.string().min(1).optional(),
     minFitScore: optionalNumber,
     maxFitScore: optionalNumber,
     discoveredSince: IsoTimestampSchema.optional().catch(undefined),
@@ -2086,6 +2087,24 @@ export const JobListQuerySchema = z
   }));
 
 export type JobListQuery = z.infer<typeof JobListQuerySchema>;
+
+export const ScoringKeywordAggregationItemSchema = z
+  .object({
+    normalizedKeyword: z.string().min(1),
+    displayKeyword: z.string().min(1),
+    scoreVersion: z.number().int().positive(),
+    jobCount: z.number().int().positive(),
+  })
+  .strict();
+export type ScoringKeywordAggregationItem = z.infer<typeof ScoringKeywordAggregationItemSchema>;
+
+export const ScoringKeywordAggregationResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    keywords: z.array(ScoringKeywordAggregationItemSchema),
+  })
+  .strict();
+export type ScoringKeywordAggregationResponse = z.infer<typeof ScoringKeywordAggregationResponseSchema>;
 
 export const ArtifactListQuerySchema = z
   .object({

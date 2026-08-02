@@ -11,6 +11,7 @@ import {
   JsonRpcErrorCodes,
   PipelineOperationsSnapshotSchema,
   ProviderConfigurationKeys,
+  ScoringKeywordAggregationResponseSchema,
   SecretCredentialKeys,
   type ActionCommandPayload,
   type CredentialBatchOperation,
@@ -2153,6 +2154,99 @@ describe("local TypeScript API", () => {
       },
     });
 
+    await app.close();
+  });
+
+  it("serves projection-visible normalized scoring keyword filters and rollups", async () => {
+    const longNormalizedKeyword = "x".repeat(241);
+    const formatBoundaryKeyword = "\uFEFFkeyword";
+    const db = new Database(options.dbPath);
+    insertScoreKeyword(db, "https://example.com/jobs/ready", 1, "legacy-only", "Legacy only", 0);
+    insertScore(db, "https://example.com/jobs/ready", 2, 9, { keywords: ["ignored JSON keyword"] });
+    insertScoreKeyword(db, "https://example.com/jobs/ready", 2, "strasse", "Straße", 0);
+    insertScoreKeyword(
+      db,
+      "https://example.com/jobs/ready",
+      2,
+      longNormalizedKeyword,
+      longNormalizedKeyword,
+      1,
+    );
+    insertScoreKeyword(
+      db,
+      "https://example.com/jobs/ready",
+      2,
+      formatBoundaryKeyword,
+      formatBoundaryKeyword,
+      2,
+    );
+    insertScoreKeyword(db, "https://example.com/jobs/failed-score", 1, "cloud", "Cloud", 0);
+    db.prepare(
+      `INSERT INTO job_score_staleness (
+         tenant_id, job_id, stale_reason, old_policy_version, new_policy_version, marked_at
+       ) VALUES ('local', ?, 'scoring_policy_changed', 1, 2, ?)`,
+    ).run(jobIdFor("https://example.com/jobs/ready"), "2026-04-29T10:03:00+00:00");
+    db.close();
+
+    const app = buildApp(options);
+    const filtered = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?normalizedScoreKeyword=strasse",
+    });
+    const aggregated = await app.inject({ method: "GET", url: "/v1/scoring/keywords" });
+    const longKeywordFiltered = await app.inject({
+      method: "GET",
+      url: `/v1/jobs?normalizedScoreKeyword=${encodeURIComponent(longNormalizedKeyword)}`,
+    });
+    const formatBoundaryFiltered = await app.inject({
+      method: "GET",
+      url: `/v1/jobs?normalizedScoreKeyword=${encodeURIComponent(formatBoundaryKeyword)}`,
+    });
+
+    expect(filtered.statusCode, filtered.body).toBe(200);
+    expect(filtered.json().items).toEqual([
+      expect.objectContaining({
+        jobKey: jobIdFor("https://example.com/jobs/ready"),
+        scoreVersion: 2,
+        scoreStaleness: expect.objectContaining({ isStale: true, staleReason: "scoring_policy_changed" }),
+      }),
+    ]);
+    expect(longKeywordFiltered.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
+      jobIdFor("https://example.com/jobs/ready"),
+    ]);
+    expect(formatBoundaryFiltered.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
+      jobIdFor("https://example.com/jobs/ready"),
+    ]);
+    expect(ScoringKeywordAggregationResponseSchema.parse(aggregated.json())).toEqual({
+      ok: true,
+      keywords: [
+        { normalizedKeyword: "cloud", displayKeyword: "Cloud", scoreVersion: 1, jobCount: 1 },
+        { normalizedKeyword: "strasse", displayKeyword: "Straße", scoreVersion: 2, jobCount: 1 },
+        {
+          normalizedKeyword: longNormalizedKeyword,
+          displayKeyword: longNormalizedKeyword,
+          scoreVersion: 2,
+          jobCount: 1,
+        },
+        {
+          normalizedKeyword: formatBoundaryKeyword,
+          displayKeyword: formatBoundaryKeyword,
+          scoreVersion: 2,
+          jobCount: 1,
+        },
+      ],
+    });
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(aggregated.body, { status: 200, statusText: "OK" }),
+    );
+    const clientKeywords = await createJobCtrlApiClient().scoringKeywords();
+    expect(clientKeywords).toEqual(ScoringKeywordAggregationResponseSchema.parse(aggregated.json()));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:8766/v1/scoring/keywords",
+      expect.objectContaining({ method: "GET" }),
+    );
+    fetchMock.mockRestore();
     await app.close();
   });
 
@@ -10111,6 +10205,21 @@ function insertScore(
       correction_history: [],
     }),
   );
+}
+
+function insertScoreKeyword(
+  db: Database.Database,
+  jobUrl: string,
+  scoreVersion: number,
+  normalizedKeyword: string,
+  displayKeyword: string,
+  position: number,
+): void {
+  db.prepare(
+    `INSERT INTO job_score_keywords (
+       tenant_id, job_id, score_version, normalized_keyword, display_keyword, position
+     ) VALUES ('local', ?, ?, ?, ?, ?)`,
+  ).run(jobIdFor(jobUrl), scoreVersion, normalizedKeyword, displayKeyword, position);
 }
 
 function createScoreStalenessTable(db: Database.Database): void {

@@ -11,6 +11,7 @@ import {
   getJobDetail,
   listActivity,
   listJobs,
+  listScoringKeywords,
 } from "../src/read-model.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { EXACT_V7_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
@@ -20,6 +21,7 @@ import { initializeExactV7Database } from "./v7-schema.js";
 const JOB_ID = "00000000-0000-4000-8000-000000000081";
 const HIDDEN_JOB_ID = "00000000-0000-4000-8000-000000000082";
 const DELETED_JOB_ID = "00000000-0000-4000-8000-000000000083";
+const KEYWORD_JOB_ID = "00000000-0000-4000-8000-000000000084";
 const OTHER_TENANT = "other";
 const JOB_URL = "https://jobs.example.test/read-model";
 const APPLICATION_URL = "https://apply.example.test/read-model";
@@ -135,6 +137,28 @@ function insertJob(
   ).run(tenantId, jobId, NOW);
 }
 
+function insertScoreWithKeywords(
+  db: Database.Database,
+  tenantId: string,
+  jobId: string,
+  version: number,
+  keywords: Array<{ normalized: string; display: string }>,
+): void {
+  db.prepare(
+    `INSERT INTO job_scores (
+       tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at
+     ) VALUES (?, ?, ?, 8, '{}', '[]', ?)`,
+  ).run(tenantId, jobId, version, NOW);
+  const insertKeyword = db.prepare(
+    `INSERT INTO job_score_keywords (
+       tenant_id, job_id, score_version, normalized_keyword, display_keyword, position
+     ) VALUES (?, ?, ?, ?, ?, ?)`,
+  );
+  keywords.forEach((keyword, position) => {
+    insertKeyword.run(tenantId, jobId, version, keyword.normalized, keyword.display, position);
+  });
+}
+
 function seedBuiltInTemplate(db: Database.Database): void {
   db.prepare(
     `INSERT INTO resume_templates (
@@ -222,6 +246,111 @@ describe("exact-v7 read model job ids", () => {
     );
     expect(activity.items.some((item) => item.jobKey === HIDDEN_JOB_ID || item.jobKey === DELETED_JOB_ID)).toBe(false);
     expect(getJobDetail(db, "not-a-canonical-job-id")).toBeNull();
+  });
+
+  it("filters and aggregates only projection-visible normalized score keywords", () => {
+    const db = seededDatabase();
+    insertJob(
+      db,
+      "local",
+      KEYWORD_JOB_ID,
+      "https://jobs.example.test/keyword-second",
+      "Second keyword job",
+      "https://apply.example.test/keyword-second",
+    );
+    insertScoreWithKeywords(db, "local", JOB_ID, 1, [
+      { normalized: "legacy-only", display: "Legacy only" },
+    ]);
+    insertScoreWithKeywords(db, "local", JOB_ID, 2, [
+      { normalized: "strasse", display: "Straße" },
+      { normalized: "react", display: "React" },
+      { normalized: "ι\u0308\u0301", display: "ΐ" },
+    ]);
+    insertScoreWithKeywords(db, "local", KEYWORD_JOB_ID, 2, [
+      { normalized: "cloud", display: "Cloud" },
+      { normalized: "react", display: "react" },
+    ]);
+    insertScoreWithKeywords(db, OTHER_TENANT, JOB_ID, 1, [
+      { normalized: "strasse", display: "Other tenant Straße" },
+    ]);
+    db.prepare(
+      `INSERT INTO job_score_staleness (
+         tenant_id, job_id, stale_reason, old_policy_version, new_policy_version, marked_at
+       ) VALUES ('local', ?, 'scoring_policy_changed', 1, 2, ?)`,
+    ).run(JOB_ID, NOW);
+
+    const strasseMatches = listJobs(db, { ...activeJobQuery, normalizedScoreKeyword: "strasse" });
+    const displayTextMatches = listJobs(db, { ...activeJobQuery, normalizedScoreKeyword: "Straße" });
+    const canonicalGreekMatches = listJobs(db, {
+      ...activeJobQuery,
+      normalizedScoreKeyword: "ι\u0308\u0301",
+    });
+    const displayGreekMatches = listJobs(db, { ...activeJobQuery, normalizedScoreKeyword: "ΐ" });
+    const legacyMatches = listJobs(db, { ...activeJobQuery, normalizedScoreKeyword: "legacy-only" });
+    const aggregated = listScoringKeywords(db);
+    const queryPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT job_list_projections.job_id
+           FROM job_list_projections
+          WHERE job_list_projections.tenant_id = ?
+            AND EXISTS (
+              SELECT 1
+                FROM job_score_keywords AS keywords INDEXED BY idx_job_score_keywords_tenant_normalized
+               WHERE keywords.tenant_id = job_list_projections.tenant_id
+                 AND keywords.job_id = job_list_projections.job_id
+                 AND keywords.score_version = job_list_projections.score_version
+                 AND keywords.normalized_keyword = ?
+            )`,
+      )
+      .all("local", "strasse") as Array<{ detail: string }>;
+    const aggregationPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT keywords.normalized_keyword,
+                MIN(keywords.display_keyword) AS display_keyword,
+                keywords.score_version,
+                COUNT(DISTINCT projections.job_id) AS job_count
+           FROM job_score_keywords AS keywords
+           INNER JOIN job_list_projections AS projections
+             ON projections.tenant_id = keywords.tenant_id
+            AND projections.job_id = keywords.job_id
+            AND projections.score_version = keywords.score_version
+          WHERE keywords.tenant_id = ?
+          GROUP BY keywords.normalized_keyword, keywords.score_version`,
+      )
+      .all("local") as Array<{ detail: string }>;
+
+    expect(strasseMatches.items).toEqual([
+      expect.objectContaining({
+        jobKey: JOB_ID,
+        scoreVersion: 2,
+        scoreStaleness: expect.objectContaining({ isStale: true, staleReason: "scoring_policy_changed" }),
+      }),
+    ]);
+    expect(displayTextMatches.items).toEqual([]);
+    expect(canonicalGreekMatches.items.map((job) => job.jobKey)).toEqual([JOB_ID]);
+    expect(displayGreekMatches.items).toEqual([]);
+    expect(legacyMatches.items).toEqual([]);
+    expect(queryPlan.map((row) => row.detail)).toContainEqual(
+      expect.stringContaining("idx_job_score_keywords_tenant_normalized"),
+    );
+    expect(aggregationPlan.map((row) => row.detail)).toContainEqual(
+      expect.stringContaining("idx_job_score_keywords_tenant_normalized"),
+    );
+    expect(aggregated).toEqual({
+      ok: true,
+      keywords: [
+        { normalizedKeyword: "cloud", displayKeyword: "Cloud", scoreVersion: 2, jobCount: 1 },
+        { normalizedKeyword: "react", displayKeyword: "React", scoreVersion: 2, jobCount: 2 },
+        { normalizedKeyword: "strasse", displayKeyword: "Straße", scoreVersion: 2, jobCount: 1 },
+        { normalizedKeyword: "ι\u0308\u0301", displayKeyword: "ΐ", scoreVersion: 2, jobCount: 1 },
+      ],
+    });
+  });
+
+  it("returns an empty keyword aggregation when no visible score has keywords", () => {
+    expect(listScoringKeywords(seededDatabase())).toEqual({ ok: true, keywords: [] });
   });
 
   it("resolves URL locators once and writes reversible lifecycle state with canonical job ids", () => {

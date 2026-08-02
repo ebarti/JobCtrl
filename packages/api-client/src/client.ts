@@ -115,6 +115,7 @@ import type {
   RoleMatchFeedbackListResponse,
   RescoreJobRequest,
   RetailorJobRequest,
+  ScoringKeywordAggregationResponse,
   ResumeTemplateDefaultSelectionRequest,
   ResumeTemplateDefaultSelectionResponse,
   ResumeTemplateDetailResponse,
@@ -236,6 +237,10 @@ export class JobCtrlApiClient {
 
   outcomeAnalytics(): Promise<OutcomeAnalyticsSummary> {
     return this.get("/v1/analytics/outcomes");
+  }
+
+  scoringKeywords(): Promise<ScoringKeywordAggregationResponse> {
+    return this.get("/v1/scoring/keywords");
   }
 
   digest(): Promise<DailyDigest> {

@@ -230,6 +230,7 @@ import {
   listArtifacts,
   listEvidenceMap,
   listJobs,
+  listScoringKeywords,
   matchingJobKeys,
   listWorkflowRuns,
   getWorkflowRunDetail,
@@ -560,6 +561,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/analytics/outcomes", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => buildOutcomeAnalyticsSummary(db)),
+  );
+
+  app.get("/v1/scoring/keywords", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => listScoringKeywords(db)),
   );
 
   app.get("/v1/digest", async (_request, reply) =>

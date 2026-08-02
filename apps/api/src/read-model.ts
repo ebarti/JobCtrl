@@ -53,6 +53,7 @@ import type {
   ProfileShape,
   RequirementFitReport,
   ScoreBreakdown,
+  ScoringKeywordAggregationResponse,
   SettingsResponse,
   Stage,
   StageState,
@@ -1039,6 +1040,45 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
     .filter((job) => !query.q || filterJob(job, query, normalizedQuery));
   filtered.sort((left, right) => compareJobs(left, right, query.sort, query.dir));
   return paginate(filtered, query.page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+}
+
+/**
+ * Aggregate only keywords belonging to the score version rendered by the
+ * current job-list projection. Historical score versions stay auditable but
+ * must not affect current filtering or rollups.
+ */
+export function listScoringKeywords(db: SqliteDatabase): ScoringKeywordAggregationResponse {
+  refreshProjections(db, DEFAULT_TENANT);
+  const rows = allRows<{
+    normalized_keyword: string;
+    display_keyword: string;
+    score_version: number;
+    job_count: number;
+  }>(
+    db,
+    `SELECT keywords.normalized_keyword,
+            MIN(keywords.display_keyword) AS display_keyword,
+            keywords.score_version,
+            COUNT(DISTINCT projections.job_id) AS job_count
+       FROM job_score_keywords AS keywords
+       INNER JOIN job_list_projections AS projections
+         ON projections.tenant_id = keywords.tenant_id
+        AND projections.job_id = keywords.job_id
+        AND projections.score_version = keywords.score_version
+      WHERE keywords.tenant_id = ?
+      GROUP BY keywords.normalized_keyword, keywords.score_version
+      ORDER BY keywords.normalized_keyword ASC, keywords.score_version ASC, display_keyword ASC`,
+    [DEFAULT_TENANT],
+  );
+  return {
+    ok: true,
+    keywords: rows.map((row) => ({
+      normalizedKeyword: row.normalized_keyword,
+      displayKeyword: row.display_keyword,
+      scoreVersion: Number(row.score_version),
+      jobCount: Number(row.job_count),
+    })),
+  };
 }
 
 export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutationFilter> = {}): string[] {
@@ -4639,6 +4679,19 @@ function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue
     clauses.push("LOWER(job_list_projections.employer) LIKE ?");
     params.push(`%${query.company.toLowerCase()}%`);
   }
+  if (query.normalizedScoreKeyword) {
+    // This is the exact canonical key returned by listScoringKeywords. Do not
+    // re-normalize it in TypeScript: persistence owns Unicode casefolding.
+    clauses.push(`EXISTS (
+      SELECT 1
+        FROM job_score_keywords AS keywords INDEXED BY idx_job_score_keywords_tenant_normalized
+       WHERE keywords.tenant_id = job_list_projections.tenant_id
+         AND keywords.job_id = job_list_projections.job_id
+         AND keywords.score_version = job_list_projections.score_version
+         AND keywords.normalized_keyword = ?
+    )`);
+    params.push(query.normalizedScoreKeyword);
+  }
   if (query.minFitScore !== undefined) {
     clauses.push("COALESCE(job_list_projections.fit_score, -1) >= ?");
     params.push(query.minFitScore);
@@ -4801,6 +4854,7 @@ function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
     state: query.state ?? "",
     source: query.source,
     company: query.company,
+    normalizedScoreKeyword: query.normalizedScoreKeyword ?? "",
     applyStatus: query.applyStatus,
     minFitScore: query.minFitScore ?? null,
     maxFitScore: query.maxFitScore ?? null,
