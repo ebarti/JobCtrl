@@ -48,6 +48,8 @@ import {
   LearningRecommendationEvidenceListQuerySchema,
   LearningRecommendationIdSchema,
   LearningRecommendationListQuerySchema,
+  LearningRecommendationReviewRequestSchema,
+  LearningRecommendationReviewResponseSchema,
   JsonRpcErrorCodes,
   JsonRpcRequestSchema,
   MarkJobActionRequestSchema,
@@ -70,6 +72,8 @@ import {
   RunJobStageRequestSchema,
   RoleMatchFeedbackDecisionSchema,
   RetailorJobRequestSchema,
+  ReviewLearningRecommendationResultSchema,
+  RpcMethods,
   ResumeTemplateDefaultSelectionRequestSchema,
   ResumeTemplateVersionSaveRequestSchema,
   ResumeCommentReplyRequestSchema,
@@ -609,6 +613,54 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         }
         return response;
       });
+    },
+  );
+
+  app.post<{ Params: { recommendationId: string } }>(
+    "/v1/learning/recommendations/:recommendationId/reviews",
+    async (request, reply) => {
+      const parsedRecommendationId = LearningRecommendationIdSchema.safeParse(
+        decodeRouteParam(request.params.recommendationId),
+      );
+      if (!parsedRecommendationId.success) {
+        void reply.code(400);
+        return { ok: false, error: "invalid_learning_recommendation_id" };
+      }
+      const body = parseBody(reply, LearningRecommendationReviewRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+
+      let response;
+      try {
+        response = await providerDispatcher.call(RpcMethods.ReviewLearningRecommendation, {
+          tenantId: "local",
+          recommendationId: parsedRecommendationId.data,
+          decision: body.decision,
+          expectedAppDir: appDir,
+          expectedDbPath: options.dbPath,
+        });
+      } catch {
+        return learningRecommendationReviewFailure(reply, 503);
+      }
+
+      if (response.error) {
+        return learningRecommendationReviewFailure(
+          reply,
+          response.error.code === JsonRpcErrorCodes.InvalidParams ? 409 : 502,
+        );
+      }
+
+      const parsedResult = ReviewLearningRecommendationResultSchema.safeParse(response.result);
+      if (
+        !parsedResult.success ||
+        parsedResult.data.recommendationId !== parsedRecommendationId.data ||
+        parsedResult.data.decision !== body.decision
+      ) {
+        return learningRecommendationReviewFailure(reply, 502);
+      }
+      const { status: _status, ...review } = parsedResult.data;
+      return LearningRecommendationReviewResponseSchema.parse({ ok: true, ...review });
     },
   );
 
@@ -3296,6 +3348,15 @@ function providerOperationError(
   message: string,
 ) {
   return { ok: false as const, error, message };
+}
+
+function learningRecommendationReviewFailure(reply: FastifyReply, statusCode: 409 | 502 | 503) {
+  void reply.code(statusCode);
+  return {
+    ok: false as const,
+    error: "learning_recommendation_review_failed" as const,
+    message: "The learning recommendation review could not be completed.",
+  };
 }
 
 async function dispatchProviderModelCatalog(

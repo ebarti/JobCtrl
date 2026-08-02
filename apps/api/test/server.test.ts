@@ -11,8 +11,10 @@ import {
   JsonRpcErrorCodes,
   LearningRecommendationEvidenceListResponseSchema,
   LearningRecommendationListResponseSchema,
+  LearningRecommendationReviewResponseSchema,
   PipelineOperationsSnapshotSchema,
   ProviderConfigurationKeys,
+  RpcMethods,
   ScoringKeywordAggregationResponseSchema,
   SecretCredentialKeys,
   type ActionCommandPayload,
@@ -2700,6 +2702,221 @@ describe("local TypeScript API", () => {
     const unchanged = new Database(options.dbPath);
     expect(learningAuditSnapshot(unchanged)).toBe(auditBefore);
     unchanged.close();
+    await app.close();
+  });
+
+  it("reviews learning recommendations through the runtime-scoped RPC boundary", async () => {
+    const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
+    const acceptedReviewId = `learning-recommendation-review:${"b".repeat(64)}`;
+    const rejectedReviewId = `learning-recommendation-review:${"c".repeat(64)}`;
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async (_method, params) => ({
+      jsonrpc: "2.0" as const,
+      id: 1,
+      result:
+        params.decision === "accepted"
+          ? {
+              status: "succeeded",
+              reviewId: acceptedReviewId,
+              recommendationId,
+              revision: 1,
+              decision: "accepted",
+              context: "materials",
+              policyKind: "tailoring_rule",
+              policyVersion: 2,
+              reviewedAt: "2026-08-01T12:34:56+00:00",
+            }
+          : {
+              status: "succeeded",
+              reviewId: rejectedReviewId,
+              recommendationId,
+              revision: 2,
+              decision: "rejected",
+              context: "materials",
+              policyKind: "tailoring_rule",
+              policyVersion: null,
+              reviewedAt: "2026-08-01T12:35:56Z",
+            },
+    }));
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call, close: vi.fn(async () => undefined) },
+    });
+
+    const accepted = await app.inject({
+      method: "POST",
+      url: `/v1/learning/recommendations/${recommendationId}/reviews`,
+      payload: { decision: "accepted" },
+    });
+    expect(accepted.statusCode, accepted.body).toBe(200);
+    const acceptedReview = LearningRecommendationReviewResponseSchema.parse(accepted.json());
+    expect(acceptedReview).toMatchObject({
+      reviewId: acceptedReviewId,
+      recommendationId,
+      decision: "accepted",
+      policyVersion: 2,
+      reviewedAt: "2026-08-01T12:34:56.000Z",
+    });
+    expect(call).toHaveBeenCalledWith(RpcMethods.ReviewLearningRecommendation, {
+      tenantId: "local",
+      recommendationId,
+      decision: "accepted",
+      expectedAppDir: tempDir,
+      expectedDbPath: options.dbPath,
+    });
+
+    const rejected = await app.inject({
+      method: "POST",
+      url: `/v1/learning/recommendations/${recommendationId}/reviews`,
+      payload: { decision: "rejected" },
+    });
+    expect(rejected.statusCode, rejected.body).toBe(200);
+    expect(LearningRecommendationReviewResponseSchema.parse(rejected.json())).toMatchObject({
+      reviewId: rejectedReviewId,
+      recommendationId,
+      decision: "rejected",
+      policyVersion: null,
+      reviewedAt: "2026-08-01T12:35:56.000Z",
+    });
+    await app.close();
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(acceptedReview), { status: 200, statusText: "OK" }),
+    );
+    await expect(
+      createJobCtrlApiClient().reviewLearningRecommendation(recommendationId, {
+        decision: "accepted",
+      }),
+    ).resolves.toEqual(acceptedReview);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://127.0.0.1:8766/v1/learning/recommendations/${encodeURIComponent(recommendationId)}/reviews`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ decision: "accepted" }),
+      }),
+    );
+    fetchMock.mockRestore();
+  });
+
+  it("rejects invalid learning review input before dispatch", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => {
+      throw new Error("review RPC must not be called");
+    });
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call, close: vi.fn(async () => undefined) },
+    });
+
+    const invalidId = await app.inject({
+      method: "POST",
+      url: "/v1/learning/recommendations/not-a-canonical-recommendation/reviews",
+      payload: { decision: "accepted" },
+    });
+    const invalidDecision = await app.inject({
+      method: "POST",
+      url: `/v1/learning/recommendations/learning-recommendation:${"a".repeat(64)}/reviews`,
+      payload: { decision: "deferred" },
+    });
+
+    expect(invalidId.statusCode, invalidId.body).toBe(400);
+    expect(invalidId.json()).toEqual({ ok: false, error: "invalid_learning_recommendation_id" });
+    expect(invalidDecision.statusCode).toBe(400);
+    expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("sanitizes learning review worker failures", async () => {
+    const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
+    const marker = "private-worker-detail-must-not-appear";
+    const cases = [
+      {
+        statusCode: 409,
+        response: {
+          jsonrpc: "2.0" as const,
+          id: 1,
+          error: { code: JsonRpcErrorCodes.InvalidParams, message: marker, data: { marker } },
+        },
+      },
+      {
+        statusCode: 502,
+        response: {
+          jsonrpc: "2.0" as const,
+          id: 1,
+          error: { code: JsonRpcErrorCodes.InternalError, message: marker, data: { marker } },
+        },
+      },
+      {
+        statusCode: 502,
+        response: {
+          jsonrpc: "2.0" as const,
+          id: 1,
+          result: { status: "succeeded", privateDetail: marker },
+        },
+      },
+      { statusCode: 503, error: new Error(marker) },
+    ] as const;
+
+    for (const failure of cases) {
+      const call = vi.fn<JsonRpcDispatcher["call"]>(async () => {
+        if ("error" in failure) {
+          throw failure.error;
+        }
+        return failure.response;
+      });
+      const app = buildApp({
+        ...options,
+        providerDispatcher: { call, close: vi.fn(async () => undefined) },
+      });
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/learning/recommendations/${recommendationId}/reviews`,
+        payload: { decision: "accepted" },
+      });
+
+      expect(response.statusCode, response.body).toBe(failure.statusCode);
+      expect(response.json()).toEqual({
+        ok: false,
+        error: "learning_recommendation_review_failed",
+        message: "The learning recommendation review could not be completed.",
+      });
+      expect(response.body).not.toContain(marker);
+      await app.close();
+    }
+  });
+
+  it("sanitizes an impossible calendar date in a learning recommendation review result", async () => {
+    const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
+      jsonrpc: "2.0" as const,
+      id: 1,
+      result: {
+        status: "succeeded",
+        reviewId: `learning-recommendation-review:${"b".repeat(64)}`,
+        recommendationId,
+        revision: 1,
+        decision: "accepted",
+        context: "materials",
+        policyKind: "tailoring_rule",
+        policyVersion: 2,
+        reviewedAt: "2026-02-31T12:34:56+00:00",
+      },
+    }));
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call, close: vi.fn(async () => undefined) },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/learning/recommendations/${recommendationId}/reviews`,
+      payload: { decision: "accepted" },
+    });
+
+    expect(response.statusCode, response.body).toBe(502);
+    expect(response.json()).toEqual({
+      ok: false,
+      error: "learning_recommendation_review_failed",
+      message: "The learning recommendation review could not be completed.",
+    });
     await app.close();
   });
 
