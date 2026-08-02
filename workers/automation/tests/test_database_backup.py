@@ -1,9 +1,9 @@
 """Schema-version guard + VACUUM INTO backup for the local SQLite database.
 
 These pin the two data-durability invariants added alongside ``jobctrl
-backup``: every database carries a stamped ``PRAGMA user_version`` (adopted
-cleanly for pre-guard files, never silently downgraded), and a backup is a
-readable standalone SQLite file holding the same tables and rows as the source.
+backup``: every database carries the exact ``PRAGMA user_version`` (never
+silently adopted or downgraded), and a backup is a readable standalone SQLite
+file holding the same tables and rows as the source.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import pytest
 from jobctrl.database import (
     IncompatibleSchemaVersionError,
     SCHEMA_VERSION,
+    SchemaMigrationRequiredError,
     backup_database,
     close_connection,
     init_db,
@@ -49,10 +50,13 @@ def test_schema_version_persists_across_reopen(tmp_path) -> None:
     assert _user_version(db_path) == SCHEMA_VERSION
 
 
-def test_legacy_version_zero_db_is_adopted_without_data_loss(tmp_path) -> None:
+def test_unstamped_existing_db_fails_closed_without_data_loss(tmp_path) -> None:
     db_path = tmp_path / "jobctrl.db"
     conn = init_db(db_path)
-    conn.execute("INSERT INTO jobs (url, title) VALUES (?, ?)", ("https://ex/legacy", "Engineer"))
+    conn.execute(
+        "INSERT INTO jobs (tenant_id, job_id, url, title) VALUES (?, ?, ?, ?)",
+        ("local", "00000000-0000-4000-8000-000000000001", "https://ex/legacy", "Engineer"),
+    )
     conn.commit()
     close_connection(db_path)
 
@@ -62,13 +66,17 @@ def test_legacy_version_zero_db_is_adopted_without_data_loss(tmp_path) -> None:
     raw.commit()
     raw.close()
 
-    init_db(db_path)
+    with pytest.raises(SchemaMigrationRequiredError):
+        init_db(db_path)
     close_connection(db_path)
 
-    assert _user_version(db_path) == SCHEMA_VERSION
+    assert _user_version(db_path) == 0
     check = sqlite3.connect(db_path)
     try:
-        row = check.execute("SELECT title FROM jobs WHERE url = ?", ("https://ex/legacy",)).fetchone()
+        row = check.execute(
+            "SELECT title FROM jobs WHERE tenant_id = ? AND job_id = ?",
+            ("local", "00000000-0000-4000-8000-000000000001"),
+        ).fetchone()
     finally:
         check.close()
     assert row is not None and row[0] == "Engineer"
@@ -103,7 +111,10 @@ def test_newer_schema_version_fails_closed_before_migrations(tmp_path) -> None:
 def test_newer_schema_version_on_populated_db_fails_closed_without_data_loss(tmp_path) -> None:
     db_path = tmp_path / "jobctrl.db"
     conn = init_db(db_path)
-    conn.execute("INSERT INTO jobs (url, title) VALUES (?, ?)", ("https://ex/keep", "Engineer"))
+    conn.execute(
+        "INSERT INTO jobs (tenant_id, job_id, url, title) VALUES (?, ?, ?, ?)",
+        ("local", "00000000-0000-4000-8000-000000000001", "https://ex/keep", "Engineer"),
+    )
     conn.commit()
     close_connection(db_path)
 
@@ -121,7 +132,10 @@ def test_newer_schema_version_on_populated_db_fails_closed_without_data_loss(tmp
     assert _user_version(db_path) == future_version
     check = sqlite3.connect(db_path)
     try:
-        row = check.execute("SELECT title FROM jobs WHERE url = ?", ("https://ex/keep",)).fetchone()
+        row = check.execute(
+            "SELECT title FROM jobs WHERE tenant_id = ? AND job_id = ?",
+            ("local", "00000000-0000-4000-8000-000000000001"),
+        ).fetchone()
     finally:
         check.close()
     assert row is not None and row[0] == "Engineer"
@@ -131,13 +145,29 @@ def test_backup_copies_tables_and_rows_into_readable_sqlite(tmp_path) -> None:
     db_path = tmp_path / "jobctrl.db"
     conn = init_db(db_path)
     conn.execute(
-        "INSERT INTO jobs (url, title, company) VALUES (?, ?, ?)",
-        ("https://ex/backup-1", "Staff Engineer", "Acme"),
+        "INSERT INTO jobs (tenant_id, job_id, url, title, company) VALUES (?, ?, ?, ?, ?)",
+        (
+            "local",
+            "00000000-0000-4000-8000-000000000001",
+            "https://ex/backup-1",
+            "Staff Engineer",
+            "Acme",
+        ),
     )
     conn.execute(
-        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        ("https://ex/backup-1", "discover", "StageCompleted", "info", "done", "2026-05-01T00:00:00+00:00"),
+        "INSERT INTO job_events "
+        "(tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "local",
+            "00000000-0000-4000-8000-000000000001",
+            7,
+            "discover",
+            "StageCompleted",
+            "info",
+            "done",
+            "2026-05-01T00:00:00+00:00",
+        ),
     )
     conn.commit()
 
@@ -155,11 +185,13 @@ def test_backup_copies_tables_and_rows_into_readable_sqlite(tmp_path) -> None:
         for expected in ("jobs", "job_events", "job_stage_states", "candidate_profiles"):
             assert expected in tables
         job_row = backup.execute(
-            "SELECT title, company FROM jobs WHERE url = ?", ("https://ex/backup-1",)
+            "SELECT title, company FROM jobs WHERE tenant_id = ? AND job_id = ?",
+            ("local", "00000000-0000-4000-8000-000000000001"),
         ).fetchone()
         assert job_row == ("Staff Engineer", "Acme")
         event_count = backup.execute(
-            "SELECT COUNT(*) FROM job_events WHERE job_url = ?", ("https://ex/backup-1",)
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ?",
+            ("local", "00000000-0000-4000-8000-000000000001"),
         ).fetchone()[0]
         assert event_count == 1
     finally:
