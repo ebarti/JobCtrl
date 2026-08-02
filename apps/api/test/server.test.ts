@@ -3161,11 +3161,16 @@ describe("local TypeScript API", () => {
       ok: true,
       action: "apply",
       status: "queued",
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
       command: { dryRun: true },
     });
     expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "apply", dryRun: true, jobKey: "https://example.com/jobs/ready" }),
+      expect.objectContaining({
+        action: "apply",
+        dryRun: true,
+        jobKey: jobIdFor("https://example.com/jobs/ready"),
+        jobId: jobIdFor("https://example.com/jobs/ready"),
+      }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 
@@ -3280,11 +3285,16 @@ describe("local TypeScript API", () => {
       ok: true,
       action: "apply",
       status: "queued",
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
       command: { dryRun: true },
     });
     expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "apply", dryRun: true, jobKey: "https://example.com/jobs/ready" }),
+      expect.objectContaining({
+        action: "apply",
+        dryRun: true,
+        jobKey: jobIdFor("https://example.com/jobs/ready"),
+        jobId: jobIdFor("https://example.com/jobs/ready"),
+      }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 
@@ -3380,7 +3390,7 @@ describe("local TypeScript API", () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json().job).toMatchObject({
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
       fitScore: 6,
       scoreVersion: 2,
       scoreCorrection: {
@@ -3674,7 +3684,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       count: 1,
-      jobKeys: [staleUrl],
+      jobKeys: [jobIdFor(staleUrl)],
       nextAction: "jobctrl run score --rescore",
     });
 
@@ -6217,7 +6227,6 @@ describe("local TypeScript API", () => {
           command: {
             action: "run_stage",
             jobKey: "pipeline",
-            jobKeys: ["https://example.com/jobs/failed-score", secondFailedUrl],
             stage: "score",
             stages: ["score", "tailor", "cover"],
             workers: 14,
@@ -6233,7 +6242,7 @@ describe("local TypeScript API", () => {
       expect.objectContaining({
         action: "run_stage",
         jobKey: "pipeline",
-        jobKeys: ["https://example.com/jobs/failed-score", secondFailedUrl],
+        jobIds: [jobIdFor("https://example.com/jobs/failed-score"), jobIdFor(secondFailedUrl)],
         stage: "score",
         stages: ["score", "tailor", "cover"],
         workers: 14,
@@ -6373,7 +6382,7 @@ describe("local TypeScript API", () => {
       expect.objectContaining({
         action: "run_stage",
         jobKey: "pipeline",
-        jobKeys: [pendingEnrichUrl],
+        jobIds: [jobIdFor(pendingEnrichUrl)],
         stage: "enrich",
         stages: ["enrich", "score", "tailor", "cover"],
         workers: 14,
@@ -6384,7 +6393,7 @@ describe("local TypeScript API", () => {
       expect.objectContaining({
         action: "run_stage",
         jobKey: "pipeline",
-        jobKeys: [pendingScoreUrl],
+        jobIds: [jobIdFor(pendingScoreUrl)],
         stage: "score",
         stages: ["score", "tailor", "cover"],
         workers: 14,
@@ -6395,7 +6404,7 @@ describe("local TypeScript API", () => {
       expect.objectContaining({
         action: "run_stage",
         jobKey: "pipeline",
-        jobKeys: [pendingTailorUrl],
+        jobIds: [jobIdFor(pendingTailorUrl)],
         stage: "tailor",
         stages: ["tailor", "cover"],
         workers: 14,
@@ -6663,7 +6672,8 @@ describe("local TypeScript API", () => {
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "retry_stage",
-        jobKey: "https://example.com/jobs/ready",
+        jobKey: jobIdFor("https://example.com/jobs/ready"),
+        jobId: jobIdFor("https://example.com/jobs/ready"),
         stage: "apply",
         runAfter: true,
         dryRun: true,
@@ -6689,7 +6699,8 @@ describe("local TypeScript API", () => {
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "retry_stage",
-        jobKey: "https://example.com/jobs/failed-score",
+        jobKey: jobIdFor("https://example.com/jobs/failed-score"),
+        jobId: jobIdFor("https://example.com/jobs/failed-score"),
         stage: "enrich",
         stages: ["enrich", "score", "tailor", "cover"],
         runAfter: true,
@@ -6728,7 +6739,8 @@ describe("local TypeScript API", () => {
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "run_stage",
-        jobKey: "https://example.com/jobs/pending-score",
+        jobKey: jobIdFor("https://example.com/jobs/pending-score"),
+        jobId: jobIdFor("https://example.com/jobs/pending-score"),
         stage: "score",
         stages: ["score", "tailor", "cover"],
         dryRun: true,
@@ -6769,7 +6781,7 @@ describe("local TypeScript API", () => {
       ok: true,
       action: "run_stage",
       status: "not_eligible",
-      jobKey: "https://example.com/jobs/low-fit-tailor",
+      jobKey: jobIdFor("https://example.com/jobs/low-fit-tailor"),
       result: { reason: "score_below_threshold" },
     });
     expect(dispatch).not.toHaveBeenCalled();
@@ -6836,12 +6848,13 @@ describe("local TypeScript API", () => {
       ok: true,
       action: "run_stage",
       status: "queued",
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
     });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "run_stage",
-        jobKey: "https://example.com/jobs/ready",
+        jobKey: jobIdFor("https://example.com/jobs/ready"),
+        jobId: jobIdFor("https://example.com/jobs/ready"),
         stage: "tailor",
         stages: ["tailor", "cover"],
         dryRun: true,
@@ -6898,13 +6911,14 @@ describe("local TypeScript API", () => {
       ok: true,
       action: "generate_interview_prep",
       status: "queued",
-      jobKey: "https://example.com/jobs/ready",
+      jobKey: jobIdFor("https://example.com/jobs/ready"),
       workflowId: "workflow-prep",
     });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "generate_interview_prep",
-        jobKey: "https://example.com/jobs/ready",
+        jobKey: jobIdFor("https://example.com/jobs/ready"),
+        jobId: jobIdFor("https://example.com/jobs/ready"),
         llmModel: "gpt-test",
       }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
@@ -7023,7 +7037,12 @@ describe("local TypeScript API", () => {
       },
     });
     expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "apply", dryRun: true, jobKey: "https://example.com/jobs/ready" }),
+      expect.objectContaining({
+        action: "apply",
+        dryRun: true,
+        jobKey: jobIdFor("https://example.com/jobs/ready"),
+        jobId: jobIdFor("https://example.com/jobs/ready"),
+      }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 
@@ -7098,7 +7117,7 @@ describe("local TypeScript API", () => {
       expect.objectContaining({
         action: "rescore_jobs_not_on_current_scoring_policy",
         jobKey: "pipeline",
-        jobKeys: ["https://example.com/jobs/failed-score"],
+        jobIds: [jobIdFor("https://example.com/jobs/failed-score")],
         limit: 10,
         dryRun: true,
       }),
@@ -7108,7 +7127,8 @@ describe("local TypeScript API", () => {
       3,
       expect.objectContaining({
         action: "tailor_job",
-        jobKey: "https://example.com/jobs/ready",
+        jobKey: jobIdFor("https://example.com/jobs/ready"),
+        jobId: jobIdFor("https://example.com/jobs/ready"),
         dryRun: true,
         reason: "manual low-fit override",
       }),
@@ -7133,7 +7153,7 @@ describe("local TypeScript API", () => {
       expect.objectContaining({
         action: "retailor_current_policy",
         jobKey: "pipeline",
-        jobKeys: ["https://example.com/jobs/ready"],
+        jobIds: [jobIdFor("https://example.com/jobs/ready")],
         limit: 5,
         dryRun: false,
         suppressExistingArtifacts: true,
@@ -9606,6 +9626,7 @@ function seedDatabase(dbPath: string): void {
     url: "https://example.com/jobs/ready",
     title: "Platform Engineer",
     site: "ExampleCo",
+    company: "ExampleCo",
     fitScore: 9,
     tailoredPath: artifactPath,
   });
@@ -9613,12 +9634,14 @@ function seedDatabase(dbPath: string): void {
     url: "https://example.com/jobs/failed-score",
     title: "Backend Engineer",
     site: "ExampleCo",
+    company: "ExampleCo",
     fitScore: 8,
   });
   insertJob(db, {
     url: "https://example.com/jobs/blocked-tailor",
     title: "Frontend Engineer",
     site: "Acme",
+    company: "Acme",
     fitScore: 6,
   });
   insertScore(db, "https://example.com/jobs/ready", 1, 9);
@@ -9840,6 +9863,7 @@ function insertJob(
     url: string;
     title: string;
     site: string;
+    company?: string;
     fitScore?: number | null;
     scoredAt?: string | null;
     tailoredPath?: string;
@@ -9849,15 +9873,16 @@ function insertJob(
 ): void {
   db.prepare(
     `INSERT INTO jobs (
-      tenant_id, job_id, url, title, site, strategy, location, salary, discovered_at, application_url,
+      tenant_id, job_id, url, title, site, company, strategy, location, salary, discovered_at, application_url,
       description, full_description, detail_scraped_at, fit_score, score_reasoning,
       scored_at, tailored_resume_path, tailored_at
-    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jobIdFor(job.url),
     job.url,
     job.title,
     job.site,
+    job.company ?? null,
     "test",
     "Remote",
     "",
