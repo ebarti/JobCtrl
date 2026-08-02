@@ -3829,6 +3829,73 @@ input[type="radio"] {
   grid-column: 2;
 }
 
+.tailoring-policy-revisions {
+  display: grid;
+  gap: 10px;
+  padding: 12px 16px;
+}
+
+.tailoring-policy-revision-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  padding: 12px;
+}
+
+.tailoring-policy-revision-head {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tailoring-policy-revision-head > span:first-child,
+.tailoring-policy-provenance {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+
+.tailoring-policy-revision-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.tailoring-policy-revision-facts div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tailoring-policy-revision-facts dt {
+  color: var(--muted-foreground);
+  font-size: var(--jh-type-caption-size);
+}
+
+.tailoring-policy-revision-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tailoring-policy-revision-facts ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.tailoring-policy-pagination {
+  display: flex;
+  align-items: center;
+  padding: 0 16px 12px;
+}
+
 .discovery-control-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
