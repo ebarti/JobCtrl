@@ -28,7 +28,11 @@ from jobctrl.database import effective_tailoring_min_score, ensure_tailoring_pol
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.aggregate import MaterialsSet
 from jobctrl.domain.materials.entities import Artifact
-from jobctrl.domain.materials.policy import TailoringPolicy, TailoringPolicyChangedError
+from jobctrl.domain.materials.policy import (
+    TailoringPolicy,
+    TailoringPolicyChangedError,
+    TailoringPolicyRollbackReason,
+)
 from jobctrl.domain.operations.learning import (
     LearningRecommendationDecision,
     LearningRecommendationReview,
@@ -72,6 +76,10 @@ class MaterialsGenerationConflict(ValueError):
 
 class LearningRecommendationReviewError(ValueError):
     """Raised when an explicit recommendation decision cannot be applied."""
+
+
+class TailoringPolicyRevisionError(ValueError):
+    """Raised when a requested policy history operation is not valid."""
 
 
 # ---------------------------------------------------------------------------
@@ -1147,6 +1155,49 @@ class SqliteTailoringPolicyRepository:
             return None
         return self._row_to_policy(row)
 
+    def get_version(self, tenant_id: TenantId, version: int) -> TailoringPolicy | None:
+        row = self._conn.execute(
+            """
+            SELECT tenant_id, version, prompt_version, schema_version,
+                   judge_schema_version, prompt_fingerprint, config_fingerprint,
+                   profile_policy_fingerprint, custom_prompt_fingerprint,
+                   generator_settings_json, judge_settings_json,
+                   runtime_settings_json, rollback_of_version, rollback_reason,
+                   created_at, created_from_event_id
+            FROM tailoring_policies
+            WHERE tenant_id = ? AND version = ?
+            """,
+            (str(tenant_id), version),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_policy(row)
+
+    def list_history(
+        self,
+        tenant_id: TenantId,
+        *,
+        limit: int = 100,
+    ) -> list[TailoringPolicy]:
+        if limit < 1 or limit > 100:
+            raise TailoringPolicyRevisionError("policy history limit must be between 1 and 100")
+        rows = self._conn.execute(
+            """
+            SELECT tenant_id, version, prompt_version, schema_version,
+                   judge_schema_version, prompt_fingerprint, config_fingerprint,
+                   profile_policy_fingerprint, custom_prompt_fingerprint,
+                   generator_settings_json, judge_settings_json,
+                   runtime_settings_json, rollback_of_version, rollback_reason,
+                   created_at, created_from_event_id
+            FROM tailoring_policies
+            WHERE tenant_id = ?
+            ORDER BY version DESC
+            LIMIT ?
+            """,
+            (str(tenant_id), limit),
+        ).fetchall()
+        return [self._row_to_policy(row) for row in rows]
+
     def save(self, policy: TailoringPolicy) -> None:
         self._insert(policy)
         self._conn.commit()
@@ -1231,6 +1282,65 @@ class SqliteTailoringPolicyRepository:
             self._insert(policy)
             self._conn.commit()
             return policy
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    def rollback_to(
+        self,
+        tenant_id: TenantId,
+        *,
+        target_version: int,
+        reason: TailoringPolicyRollbackReason,
+        rolled_back_at: str,
+    ) -> TailoringPolicy:
+        if reason != "user_requested":
+            raise TailoringPolicyRevisionError("unsupported tailoring policy rollback reason")
+        if not str(rolled_back_at or "").strip():
+            raise TailoringPolicyRevisionError("rolled_back_at must not be empty")
+
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            current = self.get_current(tenant_id)
+            if current is None:
+                raise TailoringPolicyRevisionError("tailoring policy is not initialized")
+            target = self.get_version(tenant_id, target_version)
+            if target is None:
+                raise TailoringPolicyRevisionError(
+                    "target tailoring policy version does not exist for tenant"
+                )
+            if (
+                current.rollback_of_version == target.version
+                and current.same_config_as(target)
+            ):
+                self._conn.commit()
+                return current
+            if target.version >= current.version:
+                raise TailoringPolicyRevisionError(
+                    "rollback target must precede the current tailoring policy"
+                )
+
+            rollback = TailoringPolicy(
+                tenant_id=tenant_id,
+                version=current.version + 1,
+                prompt_version=target.prompt_version,
+                schema_version=target.schema_version,
+                judge_schema_version=target.judge_schema_version,
+                prompt_fingerprint=target.prompt_fingerprint,
+                config_fingerprint=target.config_fingerprint,
+                profile_policy_fingerprint=target.profile_policy_fingerprint,
+                custom_prompt_fingerprint=target.custom_prompt_fingerprint,
+                generator_settings=target.generator_settings,
+                judge_settings=target.judge_settings,
+                runtime_settings=target.runtime_settings,
+                rollback_of_version=target.version,
+                rollback_reason=reason,
+                created_at=rolled_back_at,
+                created_from_event_id=None,
+            )
+            self._insert(rollback)
+            self._conn.commit()
+            return rollback
         except Exception:
             self._conn.rollback()
             raise
