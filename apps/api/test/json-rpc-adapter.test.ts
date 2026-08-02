@@ -111,6 +111,33 @@ describe("createContactResearchStarter (JSON-RPC adapter)", () => {
 });
 
 describe("createActionDispatcher (JSON-RPC adapter)", () => {
+  it("preserves the cancel_run RPC canceling status and run id", async () => {
+    const fake = new FakeDispatcher();
+    fake.setResponse({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { runId: "workflow-run-1", status: "canceling" },
+    });
+    const dispatcher = createActionDispatcher(fake);
+
+    const result = await dispatcher(
+      { action: "cancel", jobKey: PIPELINE_ACTION_JOB_KEY, runId: "workflow-run-1" },
+      { appDir: "/tmp", dbPath: "/tmp/jobctrl.db" },
+    );
+
+    expect(fake.calls).toEqual([
+      {
+        method: "cancel_run",
+        params: { tenantId: "local", runId: "workflow-run-1" },
+      },
+    ]);
+    expect(result).toEqual({
+      status: "canceling",
+      runId: "workflow-run-1",
+      result: { runId: "workflow-run-1", status: "canceling" },
+    });
+  });
+
   it("maps an apply action to the apply RPC method", async () => {
     const fake = new FakeDispatcher();
     const dispatcher = createActionDispatcher(fake);
