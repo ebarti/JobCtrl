@@ -180,6 +180,7 @@ interface TailoringFeedbackSignalReviewRow extends Record<string, unknown> {
 interface TailoringFeedbackSignalIdentityRow extends Record<string, unknown> {
   signal_id: string;
   signal_kind: string;
+  job_id: string;
 }
 
 export class TailoringFeedbackReviewInputError extends Error {
@@ -638,7 +639,7 @@ export function reviewResumeFeedbackSignal(
   const tx = db.transaction(() => {
     const signal = getRow<TailoringFeedbackSignalIdentityRow>(
       db,
-      `SELECT signal_id, signal_kind
+      `SELECT signal_id, signal_kind, job_id
          FROM tailoring_feedback_signals
         WHERE tenant_id = ? AND signal_id = ?`,
       [DEFAULT_TENANT, signalId],
@@ -651,6 +652,8 @@ export function reviewResumeFeedbackSignal(
     const expectedRule = TAILORING_FEEDBACK_RULE_ALLOWLIST[signalKind];
     const ruleKey = request.decision === "accepted" ? request.ruleKey : null;
     const ruleValue = request.decision === "accepted" ? request.ruleValue : null;
+    const contradictsSignalIds =
+      request.decision === "accepted" ? request.contradictsSignalIds : [];
     if (
       request.decision === "accepted"
       && (ruleKey !== expectedRule.ruleKey || ruleValue !== expectedRule.ruleValue)
@@ -676,9 +679,16 @@ export function reviewResumeFeedbackSignal(
       && latest.rule_key === ruleKey
       && latest.rule_value === ruleValue
       && latest.allowlist_version === TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION
+      && arraysEqual(
+        contradictionSignalIdsForReview(db, latest.signal_id, latest.revision),
+        contradictsSignalIds,
+      )
     ) {
       projectLatestTailoringFeedbackDecision(db, signalId, request.decision, latest.reviewed_at);
-      return { ok: true as const, review: tailoringFeedbackReviewFromRow(latest) };
+      return {
+        ok: true as const,
+        review: tailoringFeedbackReviewFromRow(db, latest),
+      };
     }
 
     const reviewId = `tailoring_feedback_review_${crypto.randomUUID()}`;
@@ -701,6 +711,16 @@ export function reviewResumeFeedbackSignal(
       TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION,
       reviewedAt,
     );
+    if (request.decision === "accepted") {
+      insertTailoringFeedbackContradictions(
+        db,
+        signalId,
+        revision,
+        signal.job_id,
+        contradictsSignalIds,
+        reviewedAt,
+      );
+    }
     projectLatestTailoringFeedbackDecision(db, signalId, request.decision, reviewedAt);
 
     const review = getRow<TailoringFeedbackSignalReviewRow>(
@@ -714,7 +734,10 @@ export function reviewResumeFeedbackSignal(
     if (!review) {
       throw new Error("Tailoring feedback review was not persisted.");
     }
-    return { ok: true as const, review: tailoringFeedbackReviewFromRow(review) };
+    return {
+      ok: true as const,
+      review: tailoringFeedbackReviewFromRow(db, review),
+    };
   });
   return tx();
 }
@@ -733,6 +756,7 @@ function projectLatestTailoringFeedbackDecision(
 }
 
 function tailoringFeedbackReviewFromRow(
+  db: SqliteDatabase,
   row: TailoringFeedbackSignalReviewRow,
 ): TailoringFeedbackSignalReview {
   const signalKind = feedbackSignalKind(row.signal_kind);
@@ -759,8 +783,158 @@ function tailoringFeedbackReviewFromRow(
     ruleKey: decision === "accepted" ? expectedRule.ruleKey : null,
     ruleValue: decision === "accepted" ? expectedRule.ruleValue : null,
     allowlistVersion: TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION,
+    contradictsSignalIds:
+      decision === "accepted"
+        ? contradictionSignalIdsForReview(db, row.signal_id, row.revision)
+        : [],
     reviewedAt: row.reviewed_at,
   };
+}
+
+function insertTailoringFeedbackContradictions(
+  db: SqliteDatabase,
+  signalId: string,
+  revision: number,
+  signalJobId: string,
+  contradictsSignalIds: string[],
+  recordedAt: string,
+): void {
+  const currentLearningSignalId = tailoringLearningSignalId(signalId, revision);
+  for (const targetId of contradictsSignalIds) {
+    if (targetId === currentLearningSignalId) {
+      throw new TailoringFeedbackReviewInputError(
+        "A tailoring feedback signal cannot contradict itself.",
+      );
+    }
+    const target = parseTailoringLearningSignalId(targetId);
+    const targetReview = getRow<{
+      revision: number;
+      decision: string;
+      job_id: string;
+    }>(
+      db,
+      `SELECT review.revision, review.decision, source.job_id
+         FROM tailoring_feedback_signal_reviews AS review
+         JOIN tailoring_feedback_signals AS source
+           ON source.tenant_id = review.tenant_id
+          AND source.signal_id = review.signal_id
+        WHERE review.tenant_id = ? AND review.signal_id = ?
+        ORDER BY review.revision DESC
+        LIMIT 1`,
+      [DEFAULT_TENANT, target.signalId],
+    );
+    if (
+      !targetReview
+      || targetReview.decision !== "accepted"
+      || Number(targetReview.revision) !== target.revision
+    ) {
+      throw new TailoringFeedbackReviewInputError(
+        `Contradicting signal ${targetId} is not a current accepted review.`,
+      );
+    }
+    const endpoints = [
+      { signalId, revision, jobId: signalJobId },
+      {
+        signalId: target.signalId,
+        revision: target.revision,
+        jobId: targetReview.job_id,
+      },
+    ].sort((left, right) =>
+      left.signalId === right.signalId
+        ? left.revision - right.revision
+        : left.signalId.localeCompare(right.signalId),
+    );
+    const [left, right] = endpoints;
+    if (!left || !right) {
+      throw new Error("Tailoring feedback contradiction endpoints are missing.");
+    }
+    const contradictionId = `tailoring-feedback-contradiction:${stableHash([
+      DEFAULT_TENANT,
+      left.signalId,
+      left.revision,
+      right.signalId,
+      right.revision,
+    ])}`;
+    db.prepare(
+      `INSERT OR IGNORE INTO tailoring_feedback_signal_contradictions (
+         tenant_id, contradiction_id, signal_id, signal_revision, signal_job_id,
+         contradicting_signal_id, contradicting_signal_revision,
+         contradicting_signal_job_id, recorded_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      DEFAULT_TENANT,
+      contradictionId,
+      left.signalId,
+      left.revision,
+      left.jobId,
+      right.signalId,
+      right.revision,
+      right.jobId,
+      recordedAt,
+    );
+  }
+}
+
+function contradictionSignalIdsForReview(
+  db: SqliteDatabase,
+  signalId: string,
+  revision: number,
+): string[] {
+  return allRows<{
+    signal_id: string;
+    signal_revision: number;
+    contradicting_signal_id: string;
+    contradicting_signal_revision: number;
+  }>(
+    db,
+    `SELECT signal_id, signal_revision,
+            contradicting_signal_id, contradicting_signal_revision
+       FROM tailoring_feedback_signal_contradictions
+      WHERE tenant_id = ?
+        AND ((signal_id = ? AND signal_revision = ?)
+          OR (contradicting_signal_id = ? AND contradicting_signal_revision = ?))
+      ORDER BY contradiction_id`,
+    [DEFAULT_TENANT, signalId, revision, signalId, revision],
+  )
+    .map((row) =>
+      row.signal_id === signalId && Number(row.signal_revision) === revision
+        ? tailoringLearningSignalId(
+            row.contradicting_signal_id,
+            Number(row.contradicting_signal_revision),
+          )
+        : tailoringLearningSignalId(row.signal_id, Number(row.signal_revision)),
+    )
+    .sort();
+}
+
+function parseTailoringLearningSignalId(value: string): {
+  signalId: string;
+  revision: number;
+} {
+  const prefix = "tailoring-feedback:";
+  const separator = value.lastIndexOf(":");
+  const signalId = value.slice(prefix.length, separator);
+  const revision = Number(value.slice(separator + 1));
+  if (
+    !value.startsWith(prefix)
+    || separator <= prefix.length
+    || !signalId
+    || !Number.isSafeInteger(revision)
+    || revision < 1
+  ) {
+    throw new TailoringFeedbackReviewInputError(
+      "Contradicting signal IDs must be canonical learning signal IDs.",
+    );
+  }
+  return { signalId, revision };
+}
+
+function tailoringLearningSignalId(signalId: string, revision: number): string {
+  return `tailoring-feedback:${signalId}:${revision}`;
+}
+
+function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function requireExistingJobId(db: SqliteDatabase, jobLocator: string): string {
