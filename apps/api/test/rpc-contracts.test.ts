@@ -19,6 +19,8 @@ import {
   ProviderModelCatalogResultSchema,
   RederiveLearningRecommendationsParamsSchema,
   RederiveLearningRecommendationsResultSchema,
+  ReviewLearningRecommendationParamsSchema,
+  ReviewLearningRecommendationResultSchema,
   RefreshCompensationParamsSchema,
   RefreshCompensationResultSchema,
   RescoreJobParamsSchema,
@@ -73,6 +75,80 @@ describe("learning recommendation derivation RPC contract", () => {
         status: "succeeded",
         recommendationCount: 1,
         recommendationIds: ["private free text"],
+      }),
+    ).toThrow();
+  });
+});
+
+describe("learning recommendation review RPC contract", () => {
+  it("registers runtime-scoped review params and couples decision to policy effect", () => {
+    const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
+    const reviewId = `learning-recommendation-review:${"b".repeat(64)}`;
+    expect(RpcMethods.ReviewLearningRecommendation).toBe("review_learning_recommendation");
+    expect(
+      ReviewLearningRecommendationParamsSchema.parse({
+        recommendationId,
+        decision: "accepted",
+        expectedAppDir: "/tmp/jobctrl",
+        expectedDbPath: "/tmp/jobctrl/jobctrl.db",
+      }),
+    ).toEqual({
+      tenantId: "local",
+      recommendationId,
+      decision: "accepted",
+      expectedAppDir: "/tmp/jobctrl",
+      expectedDbPath: "/tmp/jobctrl/jobctrl.db",
+    });
+    expect(
+      ReviewLearningRecommendationResultSchema.parse({
+        status: "succeeded",
+        reviewId,
+        recommendationId,
+        revision: 1,
+        decision: "accepted",
+        context: "materials",
+        policyKind: "tailoring_rule",
+        policyVersion: 2,
+        reviewedAt: "2026-08-01T12:34:56+00:00",
+      }),
+    ).toMatchObject({
+      reviewId,
+      recommendationId,
+      decision: "accepted",
+      policyVersion: 2,
+      reviewedAt: "2026-08-01T12:34:56.000Z",
+    });
+    expect(() =>
+      ReviewLearningRecommendationParamsSchema.parse({
+        recommendationId,
+        decision: "accepted",
+        unexpected: true,
+      }),
+    ).toThrow();
+    expect(() =>
+      ReviewLearningRecommendationResultSchema.parse({
+        status: "succeeded",
+        reviewId,
+        recommendationId,
+        revision: 1,
+        decision: "accepted",
+        context: "materials",
+        policyKind: "tailoring_rule",
+        policyVersion: null,
+        reviewedAt: "2026-08-01T12:34:56Z",
+      }),
+    ).toThrow();
+    expect(() =>
+      ReviewLearningRecommendationResultSchema.parse({
+        status: "succeeded",
+        reviewId,
+        recommendationId,
+        revision: 1,
+        decision: "rejected",
+        context: "materials",
+        policyKind: "tailoring_rule",
+        policyVersion: 2,
+        reviewedAt: "2026-08-01T12:34:56Z",
       }),
     ).toThrow();
   });

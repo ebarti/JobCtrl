@@ -87,6 +87,8 @@ import type {
   LearningRecommendationEvidenceListResponse,
   LearningRecommendationListResponse,
   LearningRecommendationListQuery,
+  LearningRecommendationReviewRequest,
+  LearningRecommendationReviewResponse,
   JobMutationResponse,
   JobSummary,
   MarkJobActionRequest,
@@ -161,6 +163,7 @@ import type {
 import {
   LearningRecommendationEvidenceListResponseSchema,
   LearningRecommendationListResponseSchema,
+  LearningRecommendationReviewResponseSchema,
 } from "@jobctrl/contracts";
 
 type QueryValue = boolean | number | string | null | undefined;
@@ -269,6 +272,18 @@ export class JobCtrlApiClient {
       await this.get(
         `/v1/learning/recommendations/${encodeURIComponent(recommendationId)}/evidence`,
         query,
+      ),
+    );
+  }
+
+  async reviewLearningRecommendation(
+    recommendationId: string,
+    body: LearningRecommendationReviewRequest,
+  ): Promise<LearningRecommendationReviewResponse> {
+    return LearningRecommendationReviewResponseSchema.parse(
+      await this.post(
+        `/v1/learning/recommendations/${encodeURIComponent(recommendationId)}/reviews`,
+        body,
       ),
     );
   }

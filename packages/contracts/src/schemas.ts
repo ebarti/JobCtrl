@@ -2199,6 +2199,44 @@ export const LearningRecommendationIdSchema = z
   .string()
   .regex(/^learning-recommendation:[a-f0-9]{64}$/);
 
+export const LearningRecommendationReviewIdSchema = z
+  .string()
+  .regex(/^learning-recommendation-review:[a-f0-9]{64}$/);
+
+export const LearningRecommendationReviewRequestSchema = z.discriminatedUnion("decision", [
+  z.object({ decision: z.literal("accepted") }).strict(),
+  z.object({ decision: z.literal("rejected") }).strict(),
+]);
+export type LearningRecommendationReviewRequest = z.infer<
+  typeof LearningRecommendationReviewRequestSchema
+>;
+
+const LearningRecommendationReviewResponseBaseSchema = z
+  .object({
+    ok: z.literal(true),
+    reviewId: LearningRecommendationReviewIdSchema,
+    recommendationId: LearningRecommendationIdSchema,
+    revision: z.number().int().positive(),
+    context: z.literal("materials"),
+    policyKind: z.literal("tailoring_rule"),
+    reviewedAt: IsoTimestampSchema,
+  })
+  .strict();
+
+export const LearningRecommendationReviewResponseSchema = z.discriminatedUnion("decision", [
+  LearningRecommendationReviewResponseBaseSchema.extend({
+    decision: z.literal("accepted"),
+    policyVersion: z.number().int().positive(),
+  }),
+  LearningRecommendationReviewResponseBaseSchema.extend({
+    decision: z.literal("rejected"),
+    policyVersion: z.null(),
+  }),
+]);
+export type LearningRecommendationReviewResponse = z.infer<
+  typeof LearningRecommendationReviewResponseSchema
+>;
+
 const LearningEvidenceIdentifierSchema = z
   .string()
   .min(1)
