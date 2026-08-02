@@ -1800,6 +1800,214 @@ CREATE TABLE tailoring_feedback_signals (
       FOREIGN KEY (tenant_id, job_id)
         REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
     );
+CREATE TABLE learning_recommendations (
+      tenant_id                 TEXT NOT NULL DEFAULT 'local',
+      recommendation_id         TEXT NOT NULL,
+      derivation_version        INTEGER NOT NULL CHECK(derivation_version > 0),
+      evaluation_fixture_version INTEGER NOT NULL CHECK(evaluation_fixture_version > 0),
+      context                   TEXT NOT NULL CHECK(context = 'materials'),
+      policy_kind               TEXT NOT NULL CHECK(policy_kind = 'tailoring_rule'),
+      signal_kind               TEXT NOT NULL CHECK(signal_kind IN (
+        'style_preference',
+        'factual_correction',
+        'claim_policy_correction',
+        'keyword_strategy',
+        'provenance_dispute'
+      )),
+      rule_key                  TEXT NOT NULL CHECK(
+        length(rule_key) BETWEEN 1 AND 80
+        AND rule_key NOT GLOB '*[^a-z0-9_]*'
+      ),
+      rule_value                TEXT NOT NULL CHECK(
+        length(rule_value) BETWEEN 1 AND 160
+        AND rule_value NOT GLOB '*[^a-z0-9_]*'
+      ),
+      allowlist_version         INTEGER NOT NULL CHECK(allowlist_version > 0),
+      status                    TEXT NOT NULL DEFAULT 'pending' CHECK(status = 'pending'),
+      observed_signal_count     INTEGER NOT NULL,
+      observed_job_count        INTEGER NOT NULL,
+      minimum_signal_count      INTEGER NOT NULL CHECK(minimum_signal_count >= 3),
+      minimum_job_count         INTEGER NOT NULL CHECK(minimum_job_count >= 2),
+      confidence_limit          TEXT NOT NULL CHECK(
+        confidence_limit = 'sample_gated_no_population_inference'
+      ),
+      input_fingerprint         TEXT NOT NULL CHECK(
+        length(input_fingerprint) = 64
+        AND input_fingerprint NOT GLOB '*[^a-f0-9]*'
+      ),
+      derived_at                TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, recommendation_id),
+      UNIQUE (tenant_id, derivation_version, input_fingerprint),
+      CHECK(observed_signal_count >= minimum_signal_count),
+      CHECK(observed_job_count >= minimum_job_count)
+    );
+CREATE TRIGGER prevent_learning_recommendation_update
+BEFORE UPDATE ON learning_recommendations
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendations are append-only');
+END;
+CREATE TRIGGER prevent_learning_recommendation_delete
+BEFORE DELETE ON learning_recommendations
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendations are append-only');
+END;
+CREATE TRIGGER validate_learning_recommendation_counts
+BEFORE INSERT ON learning_recommendations
+BEGIN
+  SELECT CASE WHEN (
+    SELECT COUNT(*)
+    FROM learning_recommendation_evidence
+    WHERE tenant_id = NEW.tenant_id
+      AND recommendation_id = NEW.recommendation_id
+      AND evidence_role = 'supporting'
+  ) != NEW.observed_signal_count
+  THEN RAISE(ABORT, 'learning recommendation supporting signal count mismatch') END;
+  SELECT CASE WHEN (
+    SELECT COUNT(*)
+    FROM learning_recommendation_jobs
+    WHERE tenant_id = NEW.tenant_id
+      AND recommendation_id = NEW.recommendation_id
+  ) != NEW.observed_job_count
+  THEN RAISE(ABORT, 'learning recommendation job count mismatch') END;
+END;
+CREATE TABLE learning_recommendation_evidence (
+      tenant_id         TEXT NOT NULL DEFAULT 'local',
+      recommendation_id TEXT NOT NULL,
+      signal_id         TEXT NOT NULL,
+      evidence_role     TEXT NOT NULL CHECK(evidence_role IN ('supporting', 'contradicting')),
+      source_kind       TEXT NOT NULL CHECK(source_kind = 'tailoring_feedback_signal'),
+      source_id         TEXT NOT NULL,
+      source_revision   INTEGER NOT NULL CHECK(source_revision > 0),
+      recorded_at       TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, recommendation_id, signal_id),
+      FOREIGN KEY (tenant_id, recommendation_id)
+        REFERENCES learning_recommendations(tenant_id, recommendation_id)
+        ON DELETE RESTRICT
+        DEFERRABLE INITIALLY DEFERRED
+    );
+CREATE TRIGGER prevent_learning_recommendation_evidence_after_seal
+BEFORE INSERT ON learning_recommendation_evidence
+WHEN EXISTS (
+  SELECT 1 FROM learning_recommendations
+  WHERE tenant_id = NEW.tenant_id
+    AND recommendation_id = NEW.recommendation_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation evidence is sealed');
+END;
+CREATE TRIGGER prevent_learning_recommendation_evidence_update
+BEFORE UPDATE ON learning_recommendation_evidence
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation evidence is append-only');
+END;
+CREATE TRIGGER prevent_learning_recommendation_evidence_delete
+BEFORE DELETE ON learning_recommendation_evidence
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation evidence is append-only');
+END;
+CREATE TABLE learning_recommendation_jobs (
+      tenant_id         TEXT NOT NULL DEFAULT 'local',
+      recommendation_id TEXT NOT NULL,
+      job_id            TEXT NOT NULL CHECK(
+        length(job_id) = 36
+        AND substr(job_id, 9, 1) = '-'
+        AND substr(job_id, 14, 1) = '-'
+        AND substr(job_id, 19, 1) = '-'
+        AND substr(job_id, 24, 1) = '-'
+        AND replace(job_id, '-', '') NOT GLOB '*[^a-f0-9]*'
+      ),
+      PRIMARY KEY (tenant_id, recommendation_id, job_id),
+      FOREIGN KEY (tenant_id, recommendation_id)
+        REFERENCES learning_recommendations(tenant_id, recommendation_id)
+        ON DELETE RESTRICT
+        DEFERRABLE INITIALLY DEFERRED
+    );
+CREATE TRIGGER prevent_learning_recommendation_job_after_seal
+BEFORE INSERT ON learning_recommendation_jobs
+WHEN EXISTS (
+  SELECT 1 FROM learning_recommendations
+  WHERE tenant_id = NEW.tenant_id
+    AND recommendation_id = NEW.recommendation_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation jobs are sealed');
+END;
+CREATE TRIGGER prevent_learning_recommendation_job_update
+BEFORE UPDATE ON learning_recommendation_jobs
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation jobs are append-only');
+END;
+CREATE TRIGGER prevent_learning_recommendation_job_delete
+BEFORE DELETE ON learning_recommendation_jobs
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation jobs are append-only');
+END;
+CREATE TABLE learning_recommendation_tombstones (
+      tenant_id                    TEXT NOT NULL DEFAULT 'local',
+      tombstone_id                 TEXT NOT NULL,
+      recommendation_id            TEXT NOT NULL,
+      affected_signal_id           TEXT NOT NULL,
+      affected_source_revision     INTEGER NOT NULL CHECK(affected_source_revision > 0),
+      reason_code                  TEXT NOT NULL CHECK(reason_code IN (
+        'source_corrected',
+        'source_deleted',
+        'learning_cleared',
+        'derivation_superseded'
+      )),
+      derivation_version           INTEGER NOT NULL CHECK(derivation_version > 0),
+      tombstoned_at                TEXT NOT NULL,
+      rederived_at                 TEXT NOT NULL,
+      replacement_recommendation_id TEXT,
+      PRIMARY KEY (tenant_id, tombstone_id),
+      UNIQUE (
+        tenant_id,
+        recommendation_id,
+        affected_signal_id,
+        affected_source_revision,
+        reason_code,
+        derivation_version
+      ),
+      FOREIGN KEY (tenant_id, recommendation_id)
+        REFERENCES learning_recommendations(tenant_id, recommendation_id)
+        ON DELETE RESTRICT,
+      FOREIGN KEY (tenant_id, replacement_recommendation_id)
+        REFERENCES learning_recommendations(tenant_id, recommendation_id)
+        ON DELETE RESTRICT,
+      CHECK(
+        replacement_recommendation_id IS NULL
+        OR replacement_recommendation_id != recommendation_id
+      )
+    );
+CREATE TRIGGER prevent_learning_recommendation_tombstone_collision
+BEFORE INSERT ON learning_recommendation_tombstones
+WHEN EXISTS (
+  SELECT 1
+  FROM learning_recommendation_tombstones
+  WHERE tenant_id = NEW.tenant_id
+    AND (
+      tombstone_id = NEW.tombstone_id
+      OR (
+        recommendation_id = NEW.recommendation_id
+        AND affected_signal_id = NEW.affected_signal_id
+        AND affected_source_revision = NEW.affected_source_revision
+        AND reason_code = NEW.reason_code
+        AND derivation_version = NEW.derivation_version
+      )
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation tombstones are append-only');
+END;
+CREATE TRIGGER prevent_learning_recommendation_tombstone_update
+BEFORE UPDATE ON learning_recommendation_tombstones
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation tombstones are append-only');
+END;
+CREATE TRIGGER prevent_learning_recommendation_tombstone_delete
+BEFORE DELETE ON learning_recommendation_tombstones
+BEGIN
+  SELECT RAISE(ABORT, 'learning recommendation tombstones are append-only');
+END;
 CREATE INDEX idx_application_email_evidence_job
             ON application_email_evidence(
                 tenant_id,
@@ -2162,6 +2370,24 @@ CREATE INDEX idx_tailoring_feedback_signal_reviews_signal
       ON tailoring_feedback_signal_reviews(tenant_id, signal_id, revision DESC);
 CREATE INDEX idx_tailoring_feedback_signal_reviews_decision
       ON tailoring_feedback_signal_reviews(tenant_id, decision, reviewed_at DESC);
+CREATE INDEX idx_learning_recommendations_tenant_derived
+      ON learning_recommendations(tenant_id, derived_at DESC, recommendation_id);
+CREATE INDEX idx_learning_recommendation_evidence_signal
+      ON learning_recommendation_evidence(tenant_id, signal_id, evidence_role);
+CREATE INDEX idx_learning_recommendation_jobs_job
+      ON learning_recommendation_jobs(tenant_id, job_id, recommendation_id);
+CREATE INDEX idx_learning_recommendation_tombstones_recommendation
+      ON learning_recommendation_tombstones(
+        tenant_id,
+        recommendation_id,
+        tombstoned_at DESC
+      );
+CREATE INDEX idx_learning_recommendation_tombstones_signal
+      ON learning_recommendation_tombstones(
+        tenant_id,
+        affected_signal_id,
+        tombstoned_at DESC
+      );
 CREATE INDEX idx_workflow_run_projections_tenant_started
         ON workflow_run_projections(tenant_id, started_at DESC, workflow_id DESC)
         ;

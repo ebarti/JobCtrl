@@ -167,6 +167,22 @@ def test_identity_locator_and_sequence_roles_are_not_inferred_from_names() -> No
         classify_column("tailoring_feedback_signal_reviews", "signal_id", "target")
         is ColumnRole.PRESERVE
     )
+    for table in (
+        "learning_recommendation_evidence",
+        "learning_recommendation_jobs",
+        "learning_recommendation_tombstones",
+        "learning_recommendations",
+    ):
+        assert not table_plan(table).source_exists
+        assert table_plan(table).disposition is TableDisposition.DIRECT_COPY
+    assert (
+        classify_column("learning_recommendation_jobs", "job_id", "target")
+        is ColumnRole.JOB_ID
+    )
+    assert (
+        classify_column("learning_recommendation_evidence", "signal_id", "target")
+        is ColumnRole.PRESERVE
+    )
     assert (
         table_plan("dashboard_projections").disposition
         is TableDisposition.STRUCTURED_REWRITE

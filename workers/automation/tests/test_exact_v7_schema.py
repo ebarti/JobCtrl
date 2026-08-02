@@ -31,6 +31,10 @@ from jobctrl.infrastructure import runtime_identity
 _CROSS_RUNTIME_DURABLE_TABLES = {
     "discovery_execution_recoveries",
     "jobctrl_hidden_jobs",
+    "learning_recommendation_evidence",
+    "learning_recommendation_jobs",
+    "learning_recommendation_tombstones",
+    "learning_recommendations",
     "role_match_feedback_suggestions",
     "resume_review_comment_replies",
     "resume_review_comment_threads",
@@ -620,6 +624,334 @@ def test_tailoring_feedback_reviews_are_structured_append_only_facts(
         "idx_tailoring_feedback_signal_reviews_signal",
         "idx_tailoring_feedback_signal_reviews_decision",
     } <= indexes
+    close_connection(db_path)
+
+
+def test_learning_recommendation_storage_is_structured_append_only_and_private(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    insert_recommendation = """
+        INSERT INTO learning_recommendations (
+            tenant_id, recommendation_id, derivation_version,
+            evaluation_fixture_version, context, policy_kind, signal_kind,
+            rule_key, rule_value, allowlist_version, status,
+            observed_signal_count, observed_job_count, minimum_signal_count,
+            minimum_job_count, confidence_limit, input_fingerprint, derived_at
+        ) VALUES (
+            'local', ?, 1, 1, 'materials', 'tailoring_rule',
+            'factual_correction', ?, ?, 1, 'pending', ?, ?, 3, 2,
+            'sample_gated_no_population_inference', ?, ?
+        )
+    """
+    for index in range(1, 4):
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_evidence (
+                tenant_id, recommendation_id, signal_id, evidence_role,
+                source_kind, source_id, source_revision, recorded_at
+            ) VALUES (
+                'local', 'recommendation-1', ?, 'supporting',
+                'tailoring_feedback_signal', ?, ?, ?
+            )
+            """,
+            (
+                f"signal-{index}",
+                f"source-signal-{index}",
+                index,
+                f"2026-08-01T00:00:0{index}Z",
+            ),
+        )
+    for job_id in (
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    ):
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_jobs (
+                tenant_id, recommendation_id, job_id
+            ) VALUES ('local', 'recommendation-1', ?)
+            """,
+            (job_id,),
+        )
+    conn.execute(
+        insert_recommendation,
+        (
+            "recommendation-1",
+            "fact_handling",
+            "require_source_match",
+            3,
+            2,
+            "a" * 64,
+            "2026-08-01T01:00:00Z",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO learning_recommendation_tombstones (
+            tenant_id, tombstone_id, recommendation_id, affected_signal_id,
+            affected_source_revision, reason_code, derivation_version,
+            tombstoned_at, rederived_at, replacement_recommendation_id
+        ) VALUES (
+            'local', 'tombstone-1', 'recommendation-1', 'signal-1', 1,
+            'source_corrected', 1, ?, ?, NULL
+        )
+        """,
+        ("2026-08-01T02:00:00Z", "2026-08-01T02:00:01Z"),
+    )
+    conn.commit()
+
+    with pytest.raises(sqlite3.IntegrityError, match="supporting signal count mismatch"):
+        conn.execute(
+            insert_recommendation,
+            (
+                "recommendation-missing-evidence",
+                "fact_handling",
+                "require_source_match",
+                3,
+                2,
+                "c" * 64,
+                "2026-08-01T03:00:00Z",
+            ),
+        )
+
+    for recommendation_id, rule_key, rule_value, signal_count, job_count, match in (
+        (
+            "recommendation-too-few-signals",
+            "fact_handling",
+            "require_source_match",
+            2,
+            2,
+            "observed_signal_count",
+        ),
+        (
+            "recommendation-one-job",
+            "fact_handling",
+            "require_source_match",
+            3,
+            1,
+            "observed_job_count",
+        ),
+        (
+            "recommendation-free-text",
+            "free text",
+            "require_source_match",
+            3,
+            2,
+            "rule_key",
+        ),
+        (
+            "recommendation-free-value",
+            "fact_handling",
+            "free text",
+            3,
+            2,
+            "rule_value",
+        ),
+    ):
+        conn.execute("SAVEPOINT invalid_recommendation")
+        for index in range(1, signal_count + 1):
+            conn.execute(
+                """
+                INSERT INTO learning_recommendation_evidence (
+                    tenant_id, recommendation_id, signal_id, evidence_role,
+                    source_kind, source_id, source_revision, recorded_at
+                ) VALUES (
+                    'local', ?, ?, 'supporting',
+                    'tailoring_feedback_signal', ?, ?, ?
+                )
+                """,
+                (
+                    recommendation_id,
+                    f"{recommendation_id}-signal-{index}",
+                    f"{recommendation_id}-source-{index}",
+                    index,
+                    f"2026-08-01T03:00:0{index}Z",
+                ),
+            )
+        for index in range(1, job_count + 1):
+            conn.execute(
+                """
+                INSERT INTO learning_recommendation_jobs (
+                    tenant_id, recommendation_id, job_id
+                ) VALUES ('local', ?, ?)
+                """,
+                (
+                    recommendation_id,
+                    f"00000000-0000-4000-8000-{index:012d}",
+                ),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match=match):
+            conn.execute(
+                insert_recommendation,
+                (
+                    recommendation_id,
+                    rule_key,
+                    rule_value,
+                    signal_count,
+                    job_count,
+                    "b" * 64,
+                    "2026-08-01T03:00:00Z",
+                ),
+            )
+        conn.execute("ROLLBACK TO invalid_recommendation")
+        conn.execute("RELEASE invalid_recommendation")
+
+    with pytest.raises(sqlite3.IntegrityError, match="evidence is sealed"):
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_evidence (
+                tenant_id, recommendation_id, signal_id, evidence_role,
+                source_kind, source_id, source_revision, recorded_at
+            ) VALUES (
+                'local', 'recommendation-1', 'signal-late', 'supporting',
+                'tailoring_feedback_signal', 'source-late', 4, ?
+            )
+            """,
+            ("2026-08-01T03:00:00Z",),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="jobs are sealed"):
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_jobs (
+                tenant_id, recommendation_id, job_id
+            ) VALUES (
+                'local', 'recommendation-1',
+                '33333333-3333-4333-8333-333333333333'
+            )
+            """
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_jobs (
+                tenant_id, recommendation_id, job_id
+            ) VALUES (
+                'local', 'missing-recommendation',
+                'https://jobs.example/not-a-job-id'
+            )
+            """
+        )
+
+    conn.execute(
+        """
+        INSERT INTO learning_recommendation_evidence (
+            tenant_id, recommendation_id, signal_id, evidence_role,
+            source_kind, source_id, source_revision, recorded_at
+        ) VALUES (
+            'local', 'missing-recommendation', 'signal-orphan', 'supporting',
+            'tailoring_feedback_signal', 'source-orphan', 1, ?
+        )
+        """,
+        ("2026-08-01T03:00:00Z",),
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.commit()
+    conn.rollback()
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO learning_recommendation_tombstones (
+                tenant_id, tombstone_id, recommendation_id, affected_signal_id,
+                affected_source_revision, reason_code, derivation_version,
+                tombstoned_at, rederived_at, replacement_recommendation_id
+            ) VALUES (
+                'local', 'tombstone-self', 'recommendation-1', 'signal-2', 2,
+                'source_deleted', 1, ?, ?, 'recommendation-1'
+            )
+            """,
+            ("2026-08-01T03:00:00Z", "2026-08-01T03:00:01Z"),
+        )
+
+    tombstone_before = tuple(
+        conn.execute(
+            """
+            SELECT tombstone_id, reason_code, tombstoned_at, rederived_at
+            FROM learning_recommendation_tombstones
+            WHERE tenant_id = 'local' AND tombstone_id = 'tombstone-1'
+            """
+        ).fetchone()
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO learning_recommendation_tombstones (
+                tenant_id, tombstone_id, recommendation_id, affected_signal_id,
+                affected_source_revision, reason_code, derivation_version,
+                tombstoned_at, rederived_at, replacement_recommendation_id
+            ) VALUES (
+                'local', 'tombstone-1', 'recommendation-1', 'signal-1', 1,
+                'source_deleted', 1, ?, ?, NULL
+            )
+            """,
+            ("2026-08-01T04:00:00Z", "2026-08-01T04:00:01Z"),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO learning_recommendation_tombstones (
+                tenant_id, tombstone_id, recommendation_id, affected_signal_id,
+                affected_source_revision, reason_code, derivation_version,
+                tombstoned_at, rederived_at, replacement_recommendation_id
+            ) VALUES (
+                'local', 'tombstone-duplicate', 'recommendation-1', 'signal-1', 1,
+                'source_corrected', 1, ?, ?, NULL
+            )
+            """,
+            ("2026-08-01T04:00:00Z", "2026-08-01T04:00:01Z"),
+        )
+    assert tuple(
+        conn.execute(
+            """
+            SELECT tombstone_id, reason_code, tombstoned_at, rederived_at
+            FROM learning_recommendation_tombstones
+            WHERE tenant_id = 'local' AND tombstone_id = 'tombstone-1'
+            """
+        ).fetchone()
+    ) == tombstone_before
+
+    append_only_mutations = (
+        "UPDATE learning_recommendations SET derived_at = derived_at WHERE recommendation_id = 'recommendation-1'",
+        "DELETE FROM learning_recommendation_evidence WHERE recommendation_id = 'recommendation-1'",
+        "UPDATE learning_recommendation_jobs SET job_id = job_id WHERE recommendation_id = 'recommendation-1'",
+        "DELETE FROM learning_recommendation_tombstones WHERE tombstone_id = 'tombstone-1'",
+    )
+    for statement in append_only_mutations:
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute(statement)
+
+    forbidden_fragments = {
+        "artifact",
+        "body",
+        "description",
+        "mail",
+        "note",
+        "path",
+        "prompt",
+        "resume",
+        "summary",
+        "text",
+    }
+    for table in (
+        "learning_recommendations",
+        "learning_recommendation_evidence",
+        "learning_recommendation_jobs",
+        "learning_recommendation_tombstones",
+    ):
+        columns = {
+            str(column[1])
+            for column in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        assert not {
+            column
+            for column in columns
+            if column in forbidden_fragments
+            or any(column.endswith(f"_{fragment}") for fragment in forbidden_fragments)
+        }
+
+    assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
     close_connection(db_path)
 
 

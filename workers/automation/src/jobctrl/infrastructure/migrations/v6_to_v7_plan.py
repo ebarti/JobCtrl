@@ -234,13 +234,21 @@ def _table_plans() -> dict[str, TablePlan]:
         source_exists=False,
         source_required=False,
     )
-    # Structured tailoring reviews are append-only exact-v7 audit facts. The
-    # v6 source has only raw candidate signals, so no review row is inferred.
-    plans["tailoring_feedback_signal_reviews"] = TablePlan(
-        TableDisposition.DIRECT_COPY,
-        source_exists=False,
-        source_required=False,
-    )
+    # Reviewed tailoring facts and derived recommendation audit records exist
+    # only in exact v7. The v6 source cannot imply review, recommendation, job
+    # evidence, or tombstone rows, so all begin empty after cutover.
+    for table in (
+        "learning_recommendation_evidence",
+        "learning_recommendation_jobs",
+        "learning_recommendation_tombstones",
+        "learning_recommendations",
+        "tailoring_feedback_signal_reviews",
+    ):
+        plans[table] = TablePlan(
+            TableDisposition.DIRECT_COPY,
+            source_exists=False,
+            source_required=False,
+        )
     plans["discovery_run_projections"] = TablePlan(
         TableDisposition.RETIRED,
         target_exists=False,
@@ -397,6 +405,7 @@ _TARGET_JOB_ID_COLUMNS: Final = frozenset(
         ("job_duplicate_links", "surviving_job_id"),
         ("job_events", "job_id"),
         ("job_locators", "job_id"),
+        ("learning_recommendation_jobs", "job_id"),
         ("job_score_keywords", "job_id"),
         ("jobs", "job_id"),
     }
@@ -506,6 +515,10 @@ _DECLARED_COLUMNS: Final[Mapping[str, frozenset[str]]] = _column_manifest(
         "jobctrl_hidden_jobs": "job_url tenant_id job_id hidden_at reason unhidden_at",
         "jobs": "url title company salary description location site strategy discovered_at full_description application_url detail_scraped_at detail_error fit_score score_reasoning scored_at tailored_resume_path tailored_at tailor_attempts cover_letter_path cover_letter_at cover_attempts applied_at apply_status apply_error apply_attempts agent_id last_attempted_at apply_duration_ms apply_task_id verification_confidence tenant_id job_id",
         "llm_spend": "day input_tokens output_tokens estimated_usd",
+        "learning_recommendation_evidence": "tenant_id recommendation_id signal_id evidence_role source_kind source_id source_revision recorded_at",
+        "learning_recommendation_jobs": "tenant_id recommendation_id job_id",
+        "learning_recommendation_tombstones": "tenant_id tombstone_id recommendation_id affected_signal_id affected_source_revision reason_code derivation_version tombstoned_at rederived_at replacement_recommendation_id",
+        "learning_recommendations": "tenant_id recommendation_id derivation_version evaluation_fixture_version context policy_kind signal_kind rule_key rule_value allowlist_version status observed_signal_count observed_job_count minimum_signal_count minimum_job_count confidence_limit input_fingerprint derived_at",
         "manual_capture_queue": "tenant_id item_id originating_url source_id reason retry_context_json required_at status imported_at dismissed_at capture_mode captured_url content_sha256 content_length note future_manual_action_required job_key job_id",
         "operational_attempt_metrics": "metric_id tenant_id occurred_at stage source_id source_kind source_priority source_role adapter attempt_kind outcome failure_category is_operational_failure is_scrape_failure is_retryable run_id job_url job_id duration_ms total_count new_count existing_count observed_count duplicate_count error_class error_message metadata_json",
         "outreach_drafts": "tenant_id draft_id thread_id generation kind status body_text gate_results_json provenance_json created_at approved_at rejected_at reason",
