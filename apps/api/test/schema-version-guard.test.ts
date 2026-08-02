@@ -149,7 +149,7 @@ describe("schema version guard at DB open", () => {
       version: SUPPORTED_SCHEMA_VERSION,
       objectCount: 242,
       tableCount: 110,
-      fingerprint: "55d88c87aaf9bec6c8686ee0e40dba31ca19aaaa5767042f9376f5e2756fecfd",
+      fingerprint: "775312f0ec2640a2a87889602886c90e21a49e06fffc53cf26c435856247da97",
     });
   });
 });
