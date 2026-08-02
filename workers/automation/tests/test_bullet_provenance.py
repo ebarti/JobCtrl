@@ -49,9 +49,12 @@ from jobctrl.infrastructure.materials.bullet_provenance_repository import (
     SqliteBulletProvenanceRepository,
 )
 from jobctrl.infrastructure.materials.html_resume_pdf import build_resume_document
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.materials.unit_of_work import SqliteUnitOfWork
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 
 JOB_URL = "https://example.com/senior-backend"
+PERSISTED_JOB_ID = JobId("00000000-0000-4000-8000-000000000041")
+OTHER_TENANT = TenantId("other")
 
 
 # --------------------------------------------------------------------------
@@ -101,7 +104,7 @@ def _analysis(
     )
     return EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(JOB_URL),
+        job_id=PERSISTED_JOB_ID,
         generation=1,
         snapshot_hash=compute_snapshot_hash("jd"),
         canonical=canonical,
@@ -129,10 +132,7 @@ def _profile() -> dict:
                     "achievement_evidence": [
                         {
                             "id": "ev_latency",
-                            "source_text": (
-                                "Reduced API latency 35% by replacing synchronous "
-                                "enrichment calls."
-                            ),
+                            "source_text": ("Reduced API latency 35% by replacing synchronous enrichment calls."),
                             "scope": "owned service",
                             "action": "replaced synchronous enrichment calls",
                             "tools": ["Python", "PostgreSQL"],
@@ -208,6 +208,7 @@ def _numberless_profile() -> dict:
 
 def _job() -> dict:
     return {
+        "job_id": PERSISTED_JOB_ID,
         "url": JOB_URL,
         "title": "Senior Backend Engineer",
         "full_description": "Own Python backend services and improve API latency.",
@@ -711,9 +712,7 @@ def _html_skill_labels(profile: dict, payload: dict) -> set[str]:
     return {category["label"] for category in build_resume_document(payload, profile)["skills"]}
 
 
-def _provenance_skill_labels(
-    profile: dict, payload: dict, analysis: EmployerAnalysis
-) -> set[str]:
+def _provenance_skill_labels(profile: dict, payload: dict, analysis: EmployerAnalysis) -> set[str]:
     """Skill-category labels the provenance audit trail claims shipped."""
     rows = _build(profile, payload, analysis)
     return {row.generated_text.split(":", 1)[0] for row in rows if row.section == "skills"}
@@ -782,9 +781,7 @@ def test_matched_keywords_and_requirement_ids_bind_to_analysis() -> None:
 def test_quantify_from_evidence_transform_when_metric_introduced() -> None:
     # Source bullet has no metric; tailored bullet surfaces a verified metric.
     profile = _profile()
-    profile["resume"]["experience_entries"][0]["bullets"] = [
-        "Replaced synchronous enrichment calls."
-    ]
+    profile["resume"]["experience_entries"][0]["bullets"] = ["Replaced synchronous enrichment calls."]
     rows = _build(
         profile,
         _payload(bullets=["Replaced synchronous calls, cutting 35% latency reduction."]),
@@ -870,9 +867,7 @@ def test_detector_grounds_profile_summary_and_experience_metadata_numbers() -> N
         "current_job_title": "Director of Engineering",
         "current_company": "Acme Corp",
     }
-    profile["resume"]["executive_profile"] = {
-        "baseline_text": "Engineering Director with 12+ years of experience."
-    }
+    profile["resume"]["executive_profile"] = {"baseline_text": "Engineering Director with 12+ years of experience."}
     corpus = build_evidence_corpus(profile)
     findings = find_fabricated_tokens(
         "executive_profile#0",
@@ -964,9 +959,7 @@ def test_detector_grounds_equivalent_money_renderings() -> None:
         ("Scaled to 35 million users.", "35 million"),
     ],
 )
-def test_detector_flags_suffixed_bare_magnitude_against_numberless_profile(
-    bullet: str, needle: str
-) -> None:
+def test_detector_flags_suffixed_bare_magnitude_against_numberless_profile(bullet: str, needle: str) -> None:
     """Regression (criterion 4 / CONTROL-03): a bare magnitude with a suffix and NO
     leading ``$`` (``10M`` / ``5K`` / ``2B`` / ``100K`` / ``3.5M`` / ``35 million``)
     is a numeric the model invented. Before the fix the trailing ``\\b`` of the
@@ -975,9 +968,7 @@ def test_detector_flags_suffixed_bare_magnitude_against_numberless_profile(
     against a numberless profile. Each must now be flagged."""
     profile = _numberless_profile()  # the profile carries NO numerics at all
     corpus = build_evidence_corpus(profile)
-    findings = find_fabricated_tokens(
-        "experience:acme_swe#0", bullet, corpus, employers=employer_name_set(profile)
-    )
+    findings = find_fabricated_tokens("experience:acme_swe#0", bullet, corpus, employers=employer_name_set(profile))
     numeric = [f for f in findings if f.kind == "numeric"]
     assert numeric, (bullet, findings)
     assert all(f.control is ControlRule.NEVER_FABRICATE_METRICS for f in numeric)
@@ -1024,9 +1015,7 @@ def test_metrics_hungry_job_with_numberless_profile_yields_zero_unsourced_numeri
     )
     plan = build_tailoring_plan(profile, _job(), employer_analysis=analysis)
     rows = build_bullet_provenance(profile, _job(), greedy_payload, plan, analysis)
-    findings = scan_resume_bullets(
-        [(row.bullet_id, row.generated_text) for row in rows], corpus, employers=employers
-    )
+    findings = scan_resume_bullets([(row.bullet_id, row.generated_text) for row in rows], corpus, employers=employers)
     fabricated_numerics = [f.token for f in findings if f.kind == "numeric"]
     # Every injected number (40%, 5 million, 12, 99.99%) is unsourced and flagged.
     assert fabricated_numerics, "detector must flag the injected numerics"
@@ -1078,9 +1067,7 @@ def test_detector_flags_ungrounded_lead_title_phrase() -> None:
         employers=employer_name_set(profile),
     )
     assert any(
-        f.kind == "title"
-        and f.token.lower() == "lead engineer"
-        and f.control is ControlRule.NEVER_FABRICATE_TITLES
+        f.kind == "title" and f.token.lower() == "lead engineer" and f.control is ControlRule.NEVER_FABRICATE_TITLES
         for f in findings
     )
 
@@ -1288,9 +1275,7 @@ def _reviewer_scenario_profile() -> dict:
         "personal": {"full_name": "Dana Ops", "email": "dana@example.com"},
         "resume_constraints": {"real_metrics": []},
         "resume": {
-            "executive_profile": {
-                "baseline_text": "Backend engineer who ships reliable, scalable services."
-            },
+            "executive_profile": {"baseline_text": "Backend engineer who ships reliable, scalable services."},
             "experience_entries": [
                 {
                     "id": "acme_swe",
@@ -1490,9 +1475,19 @@ def conn(tmp_path) -> Iterator[sqlite3.Connection]:
     """A real tmp-file DB with the canonical schema (avoids the shared
     ``:memory:`` singleton that ``get_connection`` returns)."""
     connection = init_db(tmp_path / "jobs.db")
+    connection.execute("PRAGMA foreign_keys = ON")
     connection.execute(
-        "INSERT INTO jobs (url, title, site) VALUES (?, ?, ?)",
-        (JOB_URL, "Senior Backend Engineer", "example"),
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, site)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(PERSISTED_JOB_ID),
+            JOB_URL,
+            "Senior Backend Engineer",
+            "example",
+        ),
     )
     connection.commit()
     yield connection
@@ -1502,17 +1497,26 @@ def conn(tmp_path) -> Iterator[sqlite3.Connection]:
 def _seed_materials_generation(connection: sqlite3.Connection, generation: int, *, ts: str) -> None:
     """Insert the ``job_materials`` FK parent row for a generation."""
     connection.execute(
-        "INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at) "
-        "VALUES (?, ?, 'local', 'complete', ?, ?)",
-        (JOB_URL, generation, ts, ts),
+        """
+        INSERT INTO job_materials (
+            tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES (?, ?, ?, 'complete', ?, ?)
+        """,
+        (str(LOCAL_TENANT), str(PERSISTED_JOB_ID), generation, ts, ts),
     )
     connection.commit()
 
 
-def _provenance_set(generation: int, *, artifact_id: str, text: str) -> BulletProvenanceSet:
+def _provenance_set(
+    generation: int,
+    *,
+    artifact_id: str,
+    text: str,
+    tenant_id: TenantId = LOCAL_TENANT,
+) -> BulletProvenanceSet:
     return BulletProvenanceSet(
-        tenant_id=LOCAL_TENANT,
-        job_id=JobId(JOB_URL),
+        tenant_id=tenant_id,
+        job_id=PERSISTED_JOB_ID,
         generation=generation,
         artifact_id=artifact_id,
         bullets=(
@@ -1537,7 +1541,7 @@ def test_repository_round_trip_preserves_canonical_fields(conn: sqlite3.Connecti
     repo = SqliteBulletProvenanceRepository(conn)
     repo.save(_provenance_set(1, artifact_id="art-1", text="Reduced API latency 35%."))
 
-    loaded = repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    loaded = repo.load(LOCAL_TENANT, PERSISTED_JOB_ID)
     assert loaded is not None
     assert loaded.generation == 1
     assert loaded.artifact_id == "art-1"
@@ -1554,12 +1558,108 @@ def test_failed_retailor_never_destroys_last_accepted_generation(conn: sqlite3.C
     repo.save(_provenance_set(2, artifact_id="art-gen2", text="Gen 2 bullet."))
 
     # The latest generation is served by default...
-    latest = repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    latest = repo.load(LOCAL_TENANT, PERSISTED_JOB_ID)
     assert latest is not None and latest.generation == 2 and latest.artifact_id == "art-gen2"
     # ...and generation 1's provenance is retained as audit history (not destroyed).
-    historical = repo.load(LOCAL_TENANT, JobId(JOB_URL), generation=1)
+    historical = repo.load(LOCAL_TENANT, PERSISTED_JOB_ID, generation=1)
     assert historical is not None
     assert historical.bullets[0].generated_text == "Gen 1 bullet."
+
+
+def test_same_generation_save_replaces_only_that_generation(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_materials_generation(conn, 1, ts="2026-06-08T12:00:00Z")
+    repo = SqliteBulletProvenanceRepository(conn)
+    repo.save(
+        _provenance_set(
+            1,
+            artifact_id="art-prior",
+            text="Prior bullet.",
+        )
+    )
+
+    repo.save(
+        _provenance_set(
+            1,
+            artifact_id="art-replacement",
+            text="Replacement bullet.",
+        )
+    )
+
+    loaded = repo.load(LOCAL_TENANT, PERSISTED_JOB_ID)
+    assert loaded is not None
+    assert loaded.artifact_id == "art-replacement"
+    assert tuple(bullet.generated_text for bullet in loaded.bullets) == ("Replacement bullet.",)
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_bullet_provenance WHERE tenant_id = ? AND job_id = ? AND generation = 1",
+            (str(LOCAL_TENANT), str(PERSISTED_JOB_ID)),
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_same_job_id_and_generation_are_isolated_by_tenant(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_materials_generation(conn, 1, ts="2026-06-08T12:00:00Z")
+    conn.execute(
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, site)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            str(OTHER_TENANT),
+            str(PERSISTED_JOB_ID),
+            JOB_URL,
+            "Senior Backend Engineer",
+            "example",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            tenant_id, job_id, generation, status, created_at, updated_at
+        ) VALUES (?, ?, 1, 'complete', ?, ?)
+        """,
+        (
+            str(OTHER_TENANT),
+            str(PERSISTED_JOB_ID),
+            "2026-06-08T12:00:00Z",
+            "2026-06-08T12:00:00Z",
+        ),
+    )
+    conn.commit()
+    repo = SqliteBulletProvenanceRepository(conn)
+
+    repo.save(
+        _provenance_set(
+            1,
+            artifact_id="art-local",
+            text="Local bullet.",
+        )
+    )
+    repo.save(
+        _provenance_set(
+            1,
+            artifact_id="art-other",
+            text="Other tenant bullet.",
+            tenant_id=OTHER_TENANT,
+        )
+    )
+
+    local = repo.load(LOCAL_TENANT, PERSISTED_JOB_ID)
+    other = repo.load(OTHER_TENANT, PERSISTED_JOB_ID)
+    assert local is not None and local.artifact_id == "art-local"
+    assert other is not None and other.artifact_id == "art-other"
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_bullet_provenance WHERE job_id = ? AND generation = 1",
+            (str(PERSISTED_JOB_ID),),
+        ).fetchone()[0]
+        == 2
+    )
 
 
 def test_saving_empty_provenance_set_is_a_noop(conn: sqlite3.Connection) -> None:
@@ -1567,10 +1667,99 @@ def test_saving_empty_provenance_set_is_a_noop(conn: sqlite3.Connection) -> None
     repo = SqliteBulletProvenanceRepository(conn)
     empty = BulletProvenanceSet(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(JOB_URL),
+        job_id=PERSISTED_JOB_ID,
         generation=1,
         artifact_id="art-empty",
         bullets=(),
     )
     repo.save(empty)
-    assert repo.load(LOCAL_TENANT, JobId(JOB_URL)) is None
+    assert repo.load(LOCAL_TENANT, PERSISTED_JOB_ID) is None
+
+
+def test_failed_replacement_preserves_complete_prior_generation(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_materials_generation(conn, 1, ts="2026-06-08T12:00:00Z")
+    repo = SqliteBulletProvenanceRepository(conn)
+    prior = _provenance_set(
+        1,
+        artifact_id="art-prior",
+        text="Prior accepted bullet.",
+    )
+    repo.save(prior)
+    invalid = BulletProvenanceSet(
+        tenant_id=LOCAL_TENANT,
+        job_id=PERSISTED_JOB_ID,
+        generation=1,
+        artifact_id="art-replacement",
+        bullets=(prior.bullets[0], prior.bullets[0]),
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        repo.save(invalid)
+
+    assert conn.in_transaction is False
+    conn.commit()
+    preserved = repo.load(LOCAL_TENANT, PERSISTED_JOB_ID)
+    assert preserved is not None
+    assert preserved.artifact_id == "art-prior"
+    assert preserved.bullets == prior.bullets
+
+
+def test_repository_savepoint_does_not_commit_enclosing_unit_of_work(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_materials_generation(conn, 1, ts="2026-06-08T12:00:00Z")
+    unit_of_work = SqliteUnitOfWork(conn)
+    repo = SqliteBulletProvenanceRepository(
+        conn,
+        unit_of_work=unit_of_work,
+    )
+
+    with pytest.raises(RuntimeError, match="rollback outer transaction"):
+        with unit_of_work:
+            repo.save(
+                _provenance_set(
+                    1,
+                    artifact_id="art-staged",
+                    text="Staged bullet.",
+                )
+            )
+            assert conn.in_transaction is True
+            raise RuntimeError("rollback outer transaction")
+
+    assert repo.load(LOCAL_TENANT, PERSISTED_JOB_ID) is None
+
+
+def test_repository_rejects_url_shaped_job_id(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteBulletProvenanceRepository(conn)
+
+    with pytest.raises(ValueError, match="canonical UUID"):
+        repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    with pytest.raises(ValueError, match="canonical UUID"):
+        repo.save(
+            BulletProvenanceSet(
+                tenant_id=LOCAL_TENANT,
+                job_id=JobId(JOB_URL),
+                generation=1,
+                artifact_id="art-empty",
+                bullets=(),
+            )
+        )
+
+
+def test_repository_does_not_create_runtime_schema() -> None:
+    connection = sqlite3.connect(":memory:")
+    try:
+        SqliteBulletProvenanceRepository(connection)
+
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'job_bullet_provenance'"
+            ).fetchone()
+            is None
+        )
+    finally:
+        connection.close()
