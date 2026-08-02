@@ -28,6 +28,36 @@ TAILORING_RECOMMENDATION_MIN_JOB_COUNT = 2
 
 
 @dataclass(frozen=True, kw_only=True)
+class LearningSourceChange:
+    """Explicit accepted-signal correction or deletion requiring re-derivation."""
+
+    tenant_id: TenantId
+    previous_signal_id: str
+    source_id: str
+    source_revision: int
+    reason_code: Literal["source_corrected", "source_deleted"]
+    changed_at: str
+    source_kind: Literal["tailoring_feedback_signal"] = field(
+        default="tailoring_feedback_signal", init=False
+    )
+
+    def __post_init__(self) -> None:
+        if not str(self.tenant_id).strip():
+            raise ValueError("tenant_id must not be empty")
+        for name, value in (
+            ("previous_signal_id", self.previous_signal_id),
+            ("source_id", self.source_id),
+            ("changed_at", self.changed_at),
+        ):
+            if not value.strip():
+                raise ValueError(f"{name} must not be empty")
+        if self.source_revision < 1:
+            raise ValueError("source_revision must be positive")
+        if self.reason_code not in {"source_corrected", "source_deleted"}:
+            raise ValueError("unsupported learning source change reason")
+
+
+@dataclass(frozen=True, kw_only=True)
 class TailoringRuleEffect:
     """Closed, allowlisted Materials policy effect proposed by learning."""
 
@@ -319,6 +349,7 @@ def _recommendation_id(
 
 __all__ = [
     "LearningRecommendation",
+    "LearningSourceChange",
     "RecommendationEvidenceRef",
     "TAILORING_RECOMMENDATION_DERIVATION_VERSION",
     "TAILORING_RECOMMENDATION_EVALUATION_FIXTURE_VERSION",
