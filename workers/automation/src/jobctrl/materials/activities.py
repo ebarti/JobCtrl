@@ -602,7 +602,7 @@ def _raise_on_failure(stage: str, result: dict[str, Any], error_type: type[JobCt
 
 @activity.defn(name="cover_letter")
 async def cover_letter_activity(payload: CoverLetterActivityInput) -> CoverLetterActivityOutput:
-    """Generate one cover letter by URL for ``JobPreparationWorkflow``."""
+    """Generate one cover letter by canonical JobId for ``JobPreparationWorkflow``."""
     from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
 
     try:
@@ -629,9 +629,9 @@ async def cover_letter_activity(payload: CoverLetterActivityInput) -> CoverLette
 
 def _cover_one_job(payload: CoverLetterActivityInput) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
-    from jobctrl.scoring.cover_letter import cover_letter_by_url
+    from jobctrl.scoring.cover_letter import cover_letter_by_id
 
-    return cover_letter_by_url(
+    return cover_letter_by_id(
         payload.job_id,
         min_score=payload.min_score,
         validation_mode=payload.validation_mode,

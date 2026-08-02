@@ -3434,13 +3434,14 @@ class GenerateCoverLetterUseCase:
         self,
         *,
         job: dict,
+        job_id: JobId,
         profile_snapshot: ProfileSnapshot,
         cover_letter_dir: Path,
         validation_mode: str = "normal",
         tenant_id: TenantId = LOCAL_TENANT,
     ) -> CoverLetterOutcome:
-        job_id = JobId(str(job["url"]))
-        materials = _load_current_approved_materials(self._repository, tenant_id, job_id)
+        stable_job_id = canonical_job_id(str(job_id))
+        materials = _load_current_approved_materials(self._repository, tenant_id, stable_job_id)
         if materials is None:
             return CoverLetterOutcome(
                 materials=None,
@@ -3480,7 +3481,7 @@ class GenerateCoverLetterUseCase:
                 error=f"Could not read tailored resume {resume_path}: {exc}",
             )
 
-        target_skill_terms = self._load_target_skill_terms(tenant_id, job_id)
+        target_skill_terms = self._load_target_skill_terms(tenant_id, stable_job_id)
         letter, validation, findings = self._run_attempts(
             job=job,
             resume_text=resume_text,
