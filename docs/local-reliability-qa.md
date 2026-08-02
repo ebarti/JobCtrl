@@ -76,6 +76,61 @@ and accepted-artifact preservation. The
 [Regression Catalog](developer/qa/regression-catalog.md) explains which layer
 proves each class of invariant; the complete page maps every risk to exact tests.
 
+### Stable JobId v7 and explicit-feedback cumulative gate
+
+Run this gate on the final stack tip with disposable SQLite fixtures only. Do
+not point it at `~/.jobctrl/jobctrl.db`, a real Temporal store, or any live
+application target. The Python commands deliberately use the fixed project
+virtual environment directly so validation does not rewrite lock metadata.
+
+```bash
+PYTHONPATH=workers/automation/src workers/automation/.venv/bin/pytest -q \
+  workers/automation/tests/test_v6_to_v7_*.py \
+  workers/automation/tests/test_exact_v7_*.py \
+  workers/automation/tests/test_detail_projection_job_id_contract.py \
+  workers/automation/tests/test_jobstreaming_gateway.py \
+  workers/automation/tests/test_jobstreaming_resumable_discovery.py \
+  workers/automation/tests/test_learning_recommendations.py \
+  workers/automation/tests/test_sqlite_learning_recommendations.py \
+  workers/automation/tests/test_rpc_learning_recommendations.py \
+  workers/automation/tests/test_tailoring_policy_revisions.py \
+  workers/automation/tests/test_scoring_eval_feedback.py
+workers/automation/.venv/bin/ruff check workers/automation/src workers/automation/tests
+
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/exact-v7-projections.test.ts \
+  test/read-model-v7.test.ts \
+  test/application-feedback-v7.test.ts \
+  test/write-model-cancel.test.ts \
+  test/server.test.ts
+corepack pnpm --filter @jobctrl/web exec vitest run \
+  src/contexts/operations/realtimePatches.test.ts \
+  src/contexts/operations/workflowRealtimePatches.test.ts \
+  src/contexts/operations/invalidation-router.test.ts \
+  src/contexts/apply/components/CancelApplyButton.test.tsx \
+  src/contexts/apply/hooks/useCancelApplyMutation.test.ts \
+  src/contexts/materials/components/LearningRecommendationReviewPanel.test.tsx \
+  src/contexts/materials/components/TailoringPolicyHistoryPanel.test.tsx
+corepack pnpm web:test-d
+go -C launcher test ./internal/launcher
+corepack pnpm check
+corepack pnpm test
+corepack pnpm docs:build
+git diff --check
+```
+
+The product path must then verify in the disposable/demo workspace that Runs
+shows the shared Discover/preparation/Apply timeline; repeated cancellation
+does not overwrite a terminal result; targeted events update an open job,
+registered artifact, and workflow detail without resetting filters, selection,
+pagination, or scroll; and Dashboard supports recommendation evidence,
+accept/reject, policy history, and explicit append-only restore. After
+acceptance, explicitly re-score/re-tailor synthetic work and verify the prior
+score and accepted artifact remain unchanged until those commands are invoked.
+The gate must also prove that no feedback decision or restore automatically
+starts scoring, tailoring, Apply, or artifact work. Do not perform a real
+application submission or mutate a real user database during this QA.
+
 ### Repeat-application prevention
 
 Use disposable SQLite fixtures and the simulated web dispatch boundary; never

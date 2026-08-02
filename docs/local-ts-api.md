@@ -16,8 +16,9 @@ when implementing or debugging a specific endpoint.
   not completed.
 - Synchronous reads and commands return `200 OK`; invalid input, unavailable
   workers, and start failures return an error instead of a misleading `202`.
-- Browser updates arrive through `GET /v1/events/stream`, then TanStack Query
-  refetches the affected projections.
+- Browser updates arrive through `GET /v1/events/stream`; TanStack Query exact-
+  patches truthful detail payloads and boundedly refetches affected projections
+  when membership, aggregation, or missing event data requires reconciliation.
 - Credentials are handled through the local credential boundary, never through
   ordinary settings payloads.
 
@@ -36,6 +37,7 @@ when implementing or debugging a specific endpoint.
 | --- | --- | --- |
 | Profile and configuration | `/v1/profile`, `/v1/settings`, `/v1/credentials`, `/v1/providers/models`, `/v1/discovery/settings`, `/v1/browser-capabilities`, `/v1/extension/pairing-token` | Synchronous reads and validated patches |
 | Jobs and evidence | `/v1/jobs`, `/v1/jobs/:jobKey`, `/v1/evidence-map`, `/v1/artifacts` | Projection-backed reads |
+| Scoring keywords and feedback learning | `/v1/scoring/keywords`, `/v1/learning/recommendations`, `/v1/learning/policies/materials` | Current score-version aggregation plus explicit review and versioned policy history |
 | Review and outcomes | `/v1/apply/review-queue`, `/v1/jobs/:jobKey/apply-review/decision`, `/v1/jobs/:jobKey/repeat-application/override`, `/v1/outcomes` | Explicit review commands plus read models |
 | Workflow operations | `/v1/pipeline/actions/run-stage`, `/v1/pipeline/operations`, `/v1/workflow-runs`, `/v1/health` | `202` for accepted asynchronous work; `200` for projection-backed and runtime-backed reads/sync commands |
 | Realtime | `/v1/events/stream` | Server-Sent Events with replay and reconnect support |
@@ -60,6 +62,23 @@ field.
 The jobs list and detail routes read stable projections. Lifecycle changes—hide,
 restore, delete, score correction, stage retry, and per-job actions—are explicit
 commands. See [Jobs & Materials](api/jobs-and-materials.md).
+
+Internal list/detail identity is the tenant-scoped stable `JobId`; posting URLs
+are locators resolved only at explicit import or API boundaries. Employer and
+Source remain independent facts. `GET /v1/scoring/keywords` aggregates indexed,
+normalized keywords from the current score version, and `GET /v1/jobs` accepts
+an exact `normalizedScoreKeyword` filter using those returned keys.
+
+## Feedback Learning And Policy History
+
+`GET /v1/learning/recommendations` and its evidence route expose only bounded,
+privacy-safe derived evidence. The review route requires an explicit accepted
+or rejected decision. Acceptance creates a versioned Materials policy revision;
+rejection changes no policy. `GET /v1/learning/policies/materials` exposes the
+allowlisted current/superseded history, while the rollback route appends a new
+user-requested revision that restores an earlier version. These routes never
+start scoring, tailoring, Apply, or artifact work. See
+[Jobs & Materials](api/jobs-and-materials.md#feedback-learning-and-materials-policy).
 
 ## Dashboard, Analytics, And Operational Metrics
 
@@ -96,6 +115,11 @@ an exact `workflowType` match, inclusive `startedSince`, and exclusive
 `startedBefore`. Timestamp bounds must be UTC ISO-8601 timestamps; malformed
 optional filter values are ignored. The list response echoes the effective
 filters in its `filter` object (`null` when an optional filter is inactive).
+
+Discover, job preparation, and Apply share the same statuses, lifecycle
+timeline, terminal-state rules, and cancellation command. Cancellation is
+cooperative and idempotent: repeated requests do not replace terminal results
+or emit duplicate cancellation transitions.
 
 ## Profile Resume Preview
 
