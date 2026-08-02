@@ -1,128 +1,102 @@
 {
-  "tenantId": "local",
-  "tasks": [
+  "_comment": "Cross-runtime exact-v7 parity fixture for contact_research_task_projections. TypeScript and Python seed each tenant's canonical jobs, research tasks, and candidates directly, then refresh only that tenant's research projection. URLs are source provenance; jobId is the tenant-scoped root identity.",
+  "tenants": [
     {
-      "taskId": "task-a",
-      "employer": "Acme",
-      "jobUrl": "https://job/1",
-      "status": "needs_review",
-      "sourceAttempts": [
+      "tenantId": "local",
+      "jobs": [
         {
-          "sourceKind": "public_web_page",
-          "sourceRef": "https://acme.example/team",
-          "outcome": "allowed",
-          "attemptedAt": "2026-07-06T00:00:00Z",
-          "detail": "proposed:1"
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "url": "https://job/1"
         },
         {
-          "sourceKind": "public_web_page",
-          "sourceRef": "https://acme.example/login",
-          "outcome": "manual_capture_required",
-          "attemptedAt": "2026-07-06T00:00:01Z",
-          "detail": "login_required"
+          "jobId": "22222222-2222-4222-8222-222222222222",
+          "url": "https://job/2"
         }
       ],
-      "startedAt": "2026-07-06T00:00:00Z",
-      "updatedAt": "2026-07-06T00:00:02Z",
-      "needsReviewAt": "2026-07-06T00:00:02Z",
-      "completedAt": null,
-      "failedAt": null,
-      "errorClass": null
-    },
-    {
-      "taskId": "task-b",
-      "employer": null,
-      "jobUrl": "https://job/2",
-      "status": "failed",
-      "sourceAttempts": [
+      "tasks": [
         {
-          "sourceKind": "public_web_page",
-          "sourceRef": "https://beta.example/people",
-          "outcome": "rate_limited",
-          "attemptedAt": "2026-07-06T00:01:00Z",
-          "detail": ""
-        }
-      ],
-      "startedAt": "2026-07-06T00:01:00Z",
-      "updatedAt": "2026-07-06T00:01:01Z",
-      "needsReviewAt": null,
-      "completedAt": null,
-      "failedAt": "2026-07-06T00:01:01Z",
-      "errorClass": "contact_research_activity_failed"
-    }
-  ],
-  "candidates": [
-    {
-      "candidateId": "cand-a",
-      "taskId": "task-a",
-      "role": "hiring_manager",
-      "attributes": [
-        {
-          "attributeId": "attr-a",
-          "kind": "name",
-          "value": "Dana Hiring-Manager",
-          "provenance": {
-            "source_kind": "public_web_page",
-            "source_ref": "https://acme.example/team",
-            "capture_method": "llm_assisted",
-            "captured_at": "2026-07-06T00:00:00Z",
-            "confidence": 0.8,
-            "user_confirmed": false
-          }
+          "taskId": "task-a",
+          "employer": "Acme",
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "status": "needs_review",
+          "sourceAttempts": [
+            {
+              "sourceKind": "public_web_page",
+              "sourceRef": "https://acme.example/team",
+              "outcome": "allowed",
+              "attemptedAt": "2026-07-06T00:00:00Z",
+              "detail": "proposed:1"
+            },
+            {
+              "sourceKind": "public_web_page",
+              "sourceRef": "https://acme.example/login",
+              "outcome": "manual_capture_required",
+              "attemptedAt": "2026-07-06T00:00:01Z",
+              "detail": "login_required"
+            }
+          ],
+          "startedAt": "2026-07-06T00:00:00Z",
+          "updatedAt": "2026-07-06T00:00:02Z",
+          "needsReviewAt": "2026-07-06T00:00:02Z",
+          "completedAt": null,
+          "failedAt": null,
+          "errorClass": null
         },
         {
-          "attributeId": "attr-b",
-          "kind": "email",
-          "value": "dana@acme.example",
-          "provenance": {
-            "source_kind": "public_web_page",
-            "source_ref": "https://acme.example/team",
-            "capture_method": "llm_assisted",
-            "captured_at": "2026-07-06T00:00:00Z",
-            "confidence": 0.8,
-            "user_confirmed": false
-          }
-        }
-      ],
-      "sourceKind": "public_web_page",
-      "sourceRef": "https://acme.example/team",
-      "captureMethod": "llm_assisted",
-      "confidence": 0.8,
-      "status": "needs_review",
-      "proposedAt": "2026-07-06T00:00:00Z",
-      "confirmedContactId": null,
-      "confirmedAt": null
-    }
-  ],
-  "expected": [
-    {
-      "taskId": "task-a",
-      "employer": "Acme",
-      "jobId": "https://job/1",
-      "status": "needs_review",
-      "candidateCount": 1,
-      "needsReviewCount": 1,
-      "confirmedCount": 0,
-      "sourceAttempts": [
-        {
-          "sourceKind": "public_web_page",
-          "sourceRef": "https://acme.example/team",
-          "outcome": "allowed",
-          "attemptedAt": "2026-07-06T00:00:00Z",
-          "detail": "proposed:1"
-        },
-        {
-          "sourceKind": "public_web_page",
-          "sourceRef": "https://acme.example/login",
-          "outcome": "manual_capture_required",
-          "attemptedAt": "2026-07-06T00:00:01Z",
-          "detail": "login_required"
+          "taskId": "task-b",
+          "employer": null,
+          "jobId": "22222222-2222-4222-8222-222222222222",
+          "status": "failed",
+          "sourceAttempts": [
+            {
+              "sourceKind": "public_web_page",
+              "sourceRef": "https://beta.example/people",
+              "outcome": "rate_limited",
+              "attemptedAt": "2026-07-06T00:01:00Z",
+              "detail": ""
+            }
+          ],
+          "startedAt": "2026-07-06T00:01:00Z",
+          "updatedAt": "2026-07-06T00:01:01Z",
+          "needsReviewAt": null,
+          "completedAt": null,
+          "failedAt": "2026-07-06T00:01:01Z",
+          "errorClass": "contact_research_activity_failed"
         }
       ],
       "candidates": [
         {
           "candidateId": "cand-a",
+          "taskId": "task-a",
           "role": "hiring_manager",
+          "attributes": [
+            {
+              "attributeId": "attr-a",
+              "kind": "name",
+              "value": "Dana Hiring-Manager",
+              "provenance": {
+                "source_kind": "public_web_page",
+                "source_ref": "https://acme.example/team",
+                "capture_method": "llm_assisted",
+                "captured_at": "2026-07-06T00:00:00Z",
+                "confidence": 0.8,
+                "user_confirmed": false
+              }
+            },
+            {
+              "attributeId": "attr-b",
+              "kind": "email",
+              "value": "dana@acme.example",
+              "provenance": {
+                "source_kind": "public_web_page",
+                "source_ref": "https://acme.example/team",
+                "capture_method": "llm_assisted",
+                "captured_at": "2026-07-06T00:00:00Z",
+                "confidence": 0.8,
+                "user_confirmed": false
+              }
+            }
+          ],
           "sourceKind": "public_web_page",
           "sourceRef": "https://acme.example/team",
           "captureMethod": "llm_assisted",
@@ -130,41 +104,126 @@
           "status": "needs_review",
           "proposedAt": "2026-07-06T00:00:00Z",
           "confirmedContactId": null,
-          "confirmedAt": null,
-          "attributeKinds": ["name", "email"]
+          "confirmedAt": null
         }
       ],
-      "startedAt": "2026-07-06T00:00:00Z",
-      "updatedAt": "2026-07-06T00:00:02Z",
-      "needsReviewAt": "2026-07-06T00:00:02Z",
-      "completedAt": null,
-      "failedAt": null,
-      "errorClass": null
+      "expected": [
+        {
+          "taskId": "task-a",
+          "employer": "Acme",
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "status": "needs_review",
+          "candidateCount": 1,
+          "needsReviewCount": 1,
+          "confirmedCount": 0,
+          "sourceAttempts": [
+            {
+              "sourceKind": "public_web_page",
+              "sourceRef": "https://acme.example/team",
+              "outcome": "allowed",
+              "attemptedAt": "2026-07-06T00:00:00Z",
+              "detail": "proposed:1"
+            },
+            {
+              "sourceKind": "public_web_page",
+              "sourceRef": "https://acme.example/login",
+              "outcome": "manual_capture_required",
+              "attemptedAt": "2026-07-06T00:00:01Z",
+              "detail": "login_required"
+            }
+          ],
+          "candidates": [
+            {
+              "candidateId": "cand-a",
+              "role": "hiring_manager",
+              "sourceKind": "public_web_page",
+              "sourceRef": "https://acme.example/team",
+              "captureMethod": "llm_assisted",
+              "confidence": 0.8,
+              "status": "needs_review",
+              "proposedAt": "2026-07-06T00:00:00Z",
+              "confirmedContactId": null,
+              "confirmedAt": null,
+              "attributeKinds": ["name", "email"]
+            }
+          ],
+          "startedAt": "2026-07-06T00:00:00Z",
+          "updatedAt": "2026-07-06T00:00:02Z",
+          "needsReviewAt": "2026-07-06T00:00:02Z",
+          "completedAt": null,
+          "failedAt": null,
+          "errorClass": null
+        },
+        {
+          "taskId": "task-b",
+          "employer": null,
+          "jobId": "22222222-2222-4222-8222-222222222222",
+          "status": "failed",
+          "candidateCount": 0,
+          "needsReviewCount": 0,
+          "confirmedCount": 0,
+          "sourceAttempts": [
+            {
+              "sourceKind": "public_web_page",
+              "sourceRef": "https://beta.example/people",
+              "outcome": "rate_limited",
+              "attemptedAt": "2026-07-06T00:01:00Z",
+              "detail": ""
+            }
+          ],
+          "candidates": [],
+          "startedAt": "2026-07-06T00:01:00Z",
+          "updatedAt": "2026-07-06T00:01:01Z",
+          "needsReviewAt": null,
+          "completedAt": null,
+          "failedAt": "2026-07-06T00:01:01Z",
+          "errorClass": "contact_research_activity_failed"
+        }
+      ]
     },
     {
-      "taskId": "task-b",
-      "employer": null,
-      "jobId": "https://job/2",
-      "status": "failed",
-      "candidateCount": 0,
-      "needsReviewCount": 0,
-      "confirmedCount": 0,
-      "sourceAttempts": [
+      "tenantId": "other",
+      "jobs": [
         {
-          "sourceKind": "public_web_page",
-          "sourceRef": "https://beta.example/people",
-          "outcome": "rate_limited",
-          "attemptedAt": "2026-07-06T00:01:00Z",
-          "detail": ""
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "url": "https://other.example/jobs/one"
+        }
+      ],
+      "tasks": [
+        {
+          "taskId": "task-other",
+          "employer": "Other Corp",
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "status": "queued",
+          "sourceAttempts": [],
+          "startedAt": "2026-07-07T00:00:00Z",
+          "updatedAt": "2026-07-07T00:00:00Z",
+          "needsReviewAt": null,
+          "completedAt": null,
+          "failedAt": null,
+          "errorClass": null
         }
       ],
       "candidates": [],
-      "startedAt": "2026-07-06T00:01:00Z",
-      "updatedAt": "2026-07-06T00:01:01Z",
-      "needsReviewAt": null,
-      "completedAt": null,
-      "failedAt": "2026-07-06T00:01:01Z",
-      "errorClass": "contact_research_activity_failed"
+      "expected": [
+        {
+          "taskId": "task-other",
+          "employer": "Other Corp",
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "status": "queued",
+          "candidateCount": 0,
+          "needsReviewCount": 0,
+          "confirmedCount": 0,
+          "sourceAttempts": [],
+          "candidates": [],
+          "startedAt": "2026-07-07T00:00:00Z",
+          "updatedAt": "2026-07-07T00:00:00Z",
+          "needsReviewAt": null,
+          "completedAt": null,
+          "failedAt": null,
+          "errorClass": null
+        }
+      ]
     }
   ],
   "sensitiveValues": ["Dana Hiring-Manager", "dana@acme.example"]
