@@ -12,6 +12,7 @@ import {
   LearningRecommendationEvidenceListResponseSchema,
   LearningRecommendationListResponseSchema,
   LearningRecommendationReviewResponseSchema,
+  TailoringPolicyRevisionListResponseSchema,
   PipelineOperationsSnapshotSchema,
   ProviderConfigurationKeys,
   RpcMethods,
@@ -2541,6 +2542,145 @@ describe("local TypeScript API", () => {
     fetchMock.mockRestore();
     const unchanged = new Database(options.dbPath);
     expect(learningAuditSnapshot(unchanged)).toBe(auditBefore);
+    unchanged.close();
+    await app.close();
+  });
+
+  it("serves privacy-bounded tailoring policy revision history", async () => {
+    const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
+    const reviewId = `learning-recommendation-review:${"b".repeat(64)}`;
+    const db = new Database(options.dbPath);
+    insertLearningRecommendationFixture(db, {
+      tenantId: "local",
+      recommendationId,
+      tombstoned: false,
+    });
+    insertTailoringPolicyFixture(db, {
+      tenantId: "local",
+      version: 1,
+      learnedRules: {},
+      createdAt: "2026-08-01T10:00:00Z",
+    });
+    insertTailoringPolicyFixture(db, {
+      tenantId: "local",
+      version: 2,
+      learnedRules: { fact_handling: "require_source_match" },
+      createdAt: "2026-08-01T11:00:00Z",
+    });
+    db.prepare(
+      `INSERT INTO learning_recommendation_reviews (
+         tenant_id, review_id, recommendation_id, revision, decision,
+         context, policy_kind, policy_version, reviewed_at
+       ) VALUES ('local', ?, ?, 1, 'accepted', 'materials', 'tailoring_rule', 2, ?)`,
+    ).run(reviewId, recommendationId, "2026-08-01T11:00:00Z");
+    insertTailoringPolicyFixture(db, {
+      tenantId: "local",
+      version: 3,
+      learnedRules: {},
+      rollbackOfVersion: 1,
+      rollbackReason: "private historical rollback narrative",
+      createdAt: "2026-08-01T11:30:00Z",
+    });
+    insertTailoringPolicyFixture(db, {
+      tenantId: "local",
+      version: 4,
+      learnedRules: {},
+      rollbackOfVersion: 1,
+      rollbackReason: "user_requested",
+      createdAt: "2026-08-01T12:00:00Z",
+    });
+    insertTailoringPolicyFixture(db, {
+      tenantId: "other",
+      version: 1,
+      learnedRules: { provenance_policy: "require_direct_evidence" },
+      createdAt: "2026-08-01T10:00:00Z",
+    });
+    const before = JSON.stringify(
+      db.prepare("SELECT * FROM tailoring_policies ORDER BY tenant_id, version").all(),
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/learning/policies/materials?page=1&pageSize=4",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const parsed = TailoringPolicyRevisionListResponseSchema.parse(response.json());
+    expect(parsed).toMatchObject({ page: 1, pageSize: 4, total: 4, totalPages: 1 });
+    expect(parsed.revisions).toEqual([
+      {
+        context: "materials",
+        policyKind: "tailoring_rule",
+        version: 4,
+        status: "current",
+        learnedRules: [],
+        sourceReviewId: null,
+        sourceRecommendationId: null,
+        rollbackOfVersion: 1,
+        rollbackReasonCode: "user_requested",
+        createdAt: "2026-08-01T12:00:00.000Z",
+      },
+      {
+        context: "materials",
+        policyKind: "tailoring_rule",
+        version: 3,
+        status: "superseded",
+        learnedRules: [],
+        sourceReviewId: null,
+        sourceRecommendationId: null,
+        rollbackOfVersion: 1,
+        rollbackReasonCode: "historical_or_unspecified",
+        createdAt: "2026-08-01T11:30:00.000Z",
+      },
+      {
+        context: "materials",
+        policyKind: "tailoring_rule",
+        version: 2,
+        status: "superseded",
+        learnedRules: [{ ruleKey: "fact_handling", ruleValue: "require_source_match" }],
+        sourceReviewId: reviewId,
+        sourceRecommendationId: recommendationId,
+        rollbackOfVersion: null,
+        rollbackReasonCode: null,
+        createdAt: "2026-08-01T11:00:00.000Z",
+      },
+      {
+        context: "materials",
+        policyKind: "tailoring_rule",
+        version: 1,
+        status: "superseded",
+        learnedRules: [],
+        sourceReviewId: null,
+        sourceRecommendationId: null,
+        rollbackOfVersion: null,
+        rollbackReasonCode: null,
+        createdAt: "2026-08-01T10:00:00.000Z",
+      },
+    ]);
+    expect(response.body).not.toContain("sha256:private-prompt");
+    expect(response.body).not.toContain("require_direct_evidence");
+    expect(response.body).not.toContain("private historical rollback narrative");
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(response.body, { status: 200, statusText: "OK" }),
+    );
+    await expect(
+      createJobCtrlApiClient().tailoringPolicyRevisions({ page: 1, pageSize: 4 }),
+    ).resolves.toEqual(parsed);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:8766/v1/learning/policies/materials?page=1&pageSize=4",
+      expect.objectContaining({ method: "GET" }),
+    );
+    fetchMock.mockRestore();
+
+    const unchanged = new Database(options.dbPath);
+    expect(
+      JSON.stringify(
+        unchanged.prepare("SELECT * FROM tailoring_policies ORDER BY tenant_id, version").all(),
+      ),
+    ).toBe(before);
     unchanged.close();
     await app.close();
   });
@@ -10766,6 +10906,43 @@ function insertLearningRecommendationFixture(
       );
     }
   })();
+}
+
+function insertTailoringPolicyFixture(
+  db: Database.Database,
+  options: {
+    tenantId: string;
+    version: number;
+    learnedRules: Record<string, string>;
+    createdAt: string;
+    rollbackOfVersion?: number;
+    rollbackReason?: string;
+  },
+): void {
+  db.prepare(
+    `INSERT INTO tailoring_policies (
+       tenant_id, version, prompt_version, schema_version, judge_schema_version,
+       prompt_fingerprint, config_fingerprint, profile_policy_fingerprint,
+       custom_prompt_fingerprint, generator_settings_json, judge_settings_json,
+       runtime_settings_json, rollback_of_version, rollback_reason, created_at,
+       created_from_event_id
+     ) VALUES (?, ?, 'tailor.v2', 'resume.v1', 'judge.v1', ?, ?, ?, ?, '{}', '{}',
+               ?, ?, ?, ?, NULL)`,
+  ).run(
+    options.tenantId,
+    options.version,
+    "sha256:private-prompt",
+    `sha256:config-${options.version}`,
+    "sha256:private-profile",
+    "sha256:private-custom",
+    JSON.stringify({
+      validation_mode: "normal",
+      learned_tailoring_rules: options.learnedRules,
+    }),
+    options.rollbackOfVersion ?? null,
+    options.rollbackReason ?? "",
+    options.createdAt,
+  );
 }
 
 function learningAuditSnapshot(db: Database.Database): string {
