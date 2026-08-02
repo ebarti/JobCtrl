@@ -23,6 +23,12 @@ export const DEMO_CAPABILITY_MANIFEST = {
   reviewLearningRecommendation: unavailable(
     "Learning recommendation review requires the local audited database.",
   ),
+  tailoringPolicyRevisions: unavailable(
+    "Tailoring policy history requires the local audited database.",
+  ),
+  rollbackTailoringPolicy: unavailable(
+    "Tailoring policy rollback requires the local audited database.",
+  ),
   digest: local("Reads the synthetic daily digest."),
   acknowledgeDigest: local("Acknowledges a digest only in browser-local state."),
   activity: local("Reads synthetic activity history."),

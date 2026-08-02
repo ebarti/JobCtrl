@@ -89,6 +89,10 @@ import type {
   LearningRecommendationListResponse,
   LearningRecommendationReviewRequest,
   LearningRecommendationReviewResponse,
+  TailoringPolicyRevisionListQuery,
+  TailoringPolicyRevisionListResponse,
+  TailoringPolicyRollbackRequest,
+  TailoringPolicyRollbackResponse,
   MarkJobActionRequest,
   ManualCaptureDismissRequest,
   ManualCaptureDismissResponse,
@@ -209,6 +213,12 @@ export interface ApiClientPort {
     recommendationId: string,
     body: LearningRecommendationReviewRequest,
   ): Promise<LearningRecommendationReviewResponse>;
+  tailoringPolicyRevisions(
+    query?: Partial<TailoringPolicyRevisionListQuery>,
+  ): Promise<TailoringPolicyRevisionListResponse>;
+  rollbackTailoringPolicy(
+    body: TailoringPolicyRollbackRequest,
+  ): Promise<TailoringPolicyRollbackResponse>;
   digest(): Promise<DailyDigest>;
   acknowledgeDigest(body?: DigestAcknowledgeRequest): Promise<DigestAcknowledgeResponse>;
   activity(query?: Partial<ActivityListQuery>): Promise<PaginatedResponse<ActivityEventSummary>>;
