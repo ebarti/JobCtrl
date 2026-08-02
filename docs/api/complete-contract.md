@@ -39,6 +39,7 @@ need:
 | [Profile and preferences](#profile-and-preferences) | Reading and writing the candidate profile, autosave, and the Preferences / Discovery / Settings control split. |
 | [Artifacts and tailoring audit](#artifacts-and-tailoring-audit) | Read-model projections, artifact preview/open routes, resume templates, and canonical tailoring evidence. |
 | [Jobs read model and lifecycle](#jobs-read-model-and-lifecycle) | Score evidence, requirement-fit, career evidence map, audit history, list filters, and delete / hide / restore routes. |
+| [Feedback learning and policy history](#feedback-learning-and-policy-history) | Normalized scoring-keyword aggregation, privacy-safe recommendations and evidence, explicit review, Materials policy history, and append-only rollback. |
 | [Dashboard, analytics, and operational metrics](#dashboard-analytics-and-operational-metrics) | `GET /v1/dashboard/summary`, `GET /v1/analytics/outcomes`, source health, and operational attempt counters. |
 | [Pipeline operations snapshot](#pipeline-operations-snapshot) | `GET /v1/pipeline/operations`: immutable Discover execution lineage, scoped backlog, orchestration steps, runtime capacity, active work, task-queue observations, and typed ETA. |
 | [Discovery controls](#discovery-controls) | Source registry, locator / quarantine / manual-capture queues, and feedback endpoints. |
@@ -270,6 +271,44 @@ record, so rediscovery can add the same posting again later.
 `POST /v1/jobs/bulk-retry-failed` accepts the same selected-job or
 all-matching bulk mutation body and resets each active failed or exhausted job's
 failed stage to `pending`; non-failed selected jobs are ignored.
+
+## Feedback learning and policy history
+
+`GET /v1/scoring/keywords` returns `{ ok: true, keywords }`. Each item contains
+`normalizedKeyword`, `displayKeyword`, the positive current `scoreVersion`, and
+positive `jobCount`. `GET /v1/jobs?normalizedScoreKeyword=<key>` performs an
+exact match against that normalized key on each job's current score version;
+historical score keywords are not mixed into either result.
+
+`GET /v1/learning/recommendations?page=<n>&pageSize=<1..100>` returns a
+paginated list of pending Materials `tailoring_rule` recommendations. Each
+summary exposes only an allowlisted rule key/value, derivation and evaluation
+fixture versions, signal kind, threshold/observed counts, bounded
+supporting/contradicting/tombstone counts, the explicit
+`sample_gated_no_population_inference` confidence limit, and timestamps. It
+never exposes feedback free text, raw notes, resumes, job descriptions, prompts,
+mail bodies, or model output.
+
+`GET /v1/learning/recommendations/:recommendationId/evidence` returns paginated
+structured evidence links: signal ID, supporting/contradicting role, source
+revision, stable JobId, and recorded time. An invalid canonical recommendation
+ID returns `400`; an unknown tenant-scoped recommendation returns `404`.
+
+`POST /v1/learning/recommendations/:recommendationId/reviews` accepts exactly
+`{ decision: "accepted" | "rejected" }`. Acceptance creates a new versioned
+Materials tailoring-policy revision and returns its positive `policyVersion`.
+Rejection records the review and returns `policyVersion: null`; it changes no
+policy. Replayed/conflicting/stale review attempts return a bounded error rather
+than applying behavior twice.
+
+`GET /v1/learning/policies/materials?page=<n>&pageSize=<1..100>` returns
+allowlisted current/superseded revision summaries: version, learned rules,
+recommendation/review provenance when present, rollback provenance when
+present, and creation time. `POST /v1/learning/policies/materials/rollbacks`
+accepts `{ targetVersion: <positive integer> }` and appends a new current
+revision with `rollbackOfVersion` and `rollbackReasonCode: "user_requested"`.
+The exact structured replay is idempotent. Neither review nor rollback starts
+scoring, tailoring, Apply, workflow, or artifact work.
 
 ## Dashboard, analytics, and operational metrics
 
@@ -708,7 +747,9 @@ invalidation router uses the event to refresh job list/detail queries.
 `/v1/workflow-runs` reads the unified `workflow_run_projections` table (the
 Python-sole-writer projection folded from the `Workflow*` lifecycle events) and
 projects each row to a `WorkflowRunSummary` across **all** workflow types —
-pipeline orchestrator, apply, and future workflows. Apply rows are enriched with
+Discover, job preparation, Apply, and future workflows. Those workflow families
+share one status vocabulary, ordered timeline, terminal-state interpretation,
+and cancellation boundary. Apply rows are enriched with
 job context (title/company/dry-run/model) via a LEFT JOIN to
 `apply_run_projections`; non-apply rows surface their `workflowType` instead of a
 job title. The `runId` equals the Temporal workflow id, so the web Workflow Runs
@@ -726,6 +767,11 @@ status, input summary, failure cause (`errorCode` / `errorMessage` /
 `POST /v1/workflow-runs/:runId/actions/cancel` dispatches a worker-backed
 `cancel_run` request for in-flight workflow IDs that are not tied to a concrete
 job row, such as global Discover or Apply runs started from the Pipelines tab.
+The command is cooperative, asynchronous, and idempotent. Repeating it cannot
+replace an already-terminal Apply result or emit another cancellation
+transition. Whether cancellation wins or loses its race with completion, the
+terminal result and folded timeline remain inspectable through the same detail
+route.
 `GET /v1/dashboard/summary` also carries recent apply-run timeline summaries
 from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`) so
 the run detail workspace renders persisted history without exposing raw event
@@ -1077,8 +1123,8 @@ configuration choose the active model.
 `POST /v1/jobs/:jobKey/actions/run-stage` starts one job-scoped preparation
 pickup without resetting stage state. It accepts the internal preparation
 stages `enrich`, `score`, `tailor`, and `cover`, rejects product-stage starts
-such as `apply`, resolves the route key to the canonical job URL, checks worker
-readiness, and dispatches `run_stage` for the remaining preparation sequence
+such as `apply`, resolves the route key at the API boundary to the stable JobId,
+checks worker readiness, and dispatches `run_stage` for the remaining preparation sequence
 from the requested substage. Before dispatch, the route refreshes projections
 and checks that the requested substage is still pending and observably eligible;
 known-ineligible rows return `status: "not_eligible"` without starting worker
@@ -1090,7 +1136,7 @@ fanout.
   matching jobs. It does not reset stages. It selects the first eligible pending
   preparation substage per job (`enrich`, `score`, `tailor`, or `cover`),
   groups those jobs by substage, and dispatches bounded `run_stage` workflows
-  with selected job URLs and the requested worker count. Known-ineligible,
+  with selected JobIds and the requested worker count. Known-ineligible,
   failed, exhausted, already-complete, low-fit, and `apply`-pending rows are
   ignored. The Jobs toolbar exposes this as `continue pending prep` so pending
   preparation backlogs are not dependent on page-local pickup.
@@ -1510,6 +1556,15 @@ the browser's native `EventSource`. Per
 single realtime channel from the worker / API write-side to the frontend's
 TanStack Query cache; the frontend's `InvalidationRouter` translates each
 `DomainEvent` into the right `invalidateQueries` / `setQueryData` calls.
+
+`setQueryData` is used only when the tenant-scoped event contains enough
+canonical fields for an exact truthful patch: active job detail,
+already-registered artifact detail, workflow-run detail, or an ordered Apply-run
+event. Filtered/list membership, dashboards, incomplete payloads, and uncertain
+artifact registration use bounded tenant-scoped invalidation. Cache
+reconciliation does not reset view-owned filters, selection, pagination, or
+scroll state and never synthesizes an artifact that is absent from persisted
+registration.
 
 ### Request
 

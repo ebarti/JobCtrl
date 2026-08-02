@@ -113,7 +113,7 @@ and Temporal run ID. Source-run IDs are deliberately excluded.
 That exact reference is carried through planning, source families,
 reconciliation, preparation fan-out, child `JobPreparationWorkflow` input, and
 PDF rendering. `discovery_execution_jobs` stores one membership per execution
-and canonical job URL. Its cohort is `observed_this_run` or
+and stable JobId. Its cohort is `observed_this_run` or
 `existing_backlog`; a later source observation may promote a swept membership
 to current, but cannot duplicate or demote it. A work plan remains explicitly
 `pending` until it becomes `planned`, `not_eligible`, or `failed`; a missing

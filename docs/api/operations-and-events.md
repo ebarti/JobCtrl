@@ -165,14 +165,22 @@ and task-queue observations are runtime telemetry, not domain events.
 /v1/workflow-runs/:runId` returns the projection-backed detail and timeline.
 `POST /v1/workflow-runs/:runId/actions/cancel` requests Temporal cancellation.
 
+Discover, job preparation, and Apply use this same history contract: one status
+vocabulary, ordered lifecycle timeline, terminal-state interpretation, and
+cancellation boundary. Product views may present different workflow details,
+but they do not maintain separate run-state rules.
+
 The list accepts an exact `workflowType`, inclusive UTC `startedSince`, and
 exclusive UTC `startedBefore` in addition to status, sorting, and pagination.
 Filtering happens after lifecycle folding and before pagination, so restarted
 executions use their canonical projected start time and returned totals cover
 the complete filtered result rather than only the current page.
 
-Cancellation is cooperative and asynchronous: the accepted request is not the
-same thing as observing the terminal canceled state.
+Cancellation is cooperative, asynchronous, and idempotent: accepting a request
+is not the same thing as observing terminal `canceled`, and repeating the
+request cannot overwrite an already-terminal result or emit duplicate
+cancellation transitions. Terminal results remain inspectable through the same
+run detail after cancellation wins or loses the race with completion.
 
 ## Health And JSON-RPC
 
@@ -197,6 +205,15 @@ Event IDs support reconnect replay; keepalives preserve quiet connections. See
 the [frontend realtime design](../architecture/frontend/realtime.md) for cache
 behavior and the [complete SSE contract](complete-contract.md#server-sent-events-—-get-v1eventsstream)
 for framing and precedence rules.
+
+The browser patches a tenant-scoped cache row only when the event carries
+enough canonical data to do so truthfully. That includes active job detail,
+already-registered artifact detail, workflow-run detail, and ordered Apply-run
+events. List membership, filtered views, dashboards, missing payload fields,
+and uncertain artifact registration use bounded tenant-scoped invalidation
+instead. Realtime reconciliation preserves view-owned filters, selection,
+pagination, and scroll position; it never inserts a phantom artifact merely
+because a generation event arrived.
 
 ## Implementation Map
 

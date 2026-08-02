@@ -109,6 +109,25 @@ Review its linked profile and requirement evidence before relying on it; the
 current maturity boundary is described in
 [Daily Workflow → Generate Interview Prep](normal-flows.md).
 
+## Policy History And Rollback
+
+The Dashboard's **Learning recommendations** card is a review boundary, not an
+automatic tuning loop. Accepting a pending, active recommendation appends a new
+Materials tailoring-policy revision linked to its recommendation and review;
+rejecting it leaves the current revision unchanged. Recommendations whose
+source evidence was tombstoned are inactive and cannot be accepted until they
+are deterministically re-derived.
+
+**Tailoring policy history** lists every current and superseded revision,
+allowlisted learned rule, safe recommendation/review reference, restore
+provenance, and creation time. Restoring a superseded version appends the next
+version with `user_requested` provenance; it never edits or deletes the target
+or current row. Acceptance and restore affect future tailoring-policy
+resolution only. They do not re-score jobs, re-tailor existing materials,
+replace accepted artifacts, alter the Candidate Profile, or change Apply
+decisions. Use the normal explicit re-tailor action when you want existing work
+to adopt the current policy.
+
 ## Source Of Truth And Ownership
 
 The inputs have intentionally different authority:
@@ -159,6 +178,10 @@ the local-file boundary.
    supersedes the prior active generation while preserving history. If a live
    threshold or blocker makes materials ineligible, JobCtrl soft-suppresses
    them from active/Apply surfaces rather than deleting the audit record.
+8. **Review policy changes separately.** Compatible accepted feedback may
+   produce a pending recommendation. Acceptance or restore appends a policy
+   revision, while rejection or a failed restore leaves the current revision
+   and all generated artifacts unchanged.
 
 The same preservation rule applies to stored interview prep and outreach draft
 generations: a failed replacement does not destroy the last accepted record.
@@ -168,7 +191,7 @@ generations: a failed replacement does not destroy the last accepted record.
 | Layer | Pointer |
 | --- | --- |
 | User workflow | [Daily Workflow → Generate And Inspect Materials](normal-flows.md) and [Apply → Materials And Resume Rendering](apply.md#materials-and-resume-rendering). |
-| HTTP contract | Artifact list/detail/preview routes, `/v1/resume-templates`, and per-job generate/re-tailor actions; see [Jobs & Materials API](../api/jobs-and-materials.md) and the [complete artifacts contract](../api/complete-contract.md#artifacts-and-tailoring-audit). Apply Review routes are owned by [Apply](apply.md). |
+| HTTP contract | Artifact list/detail/preview routes, `/v1/resume-templates`, per-job generate/re-tailor actions, and `/v1/learning/recommendations` plus `/v1/learning/policies/materials`; see [Jobs & Materials API](../api/jobs-and-materials.md) and the [complete learning contract](../api/complete-contract.md#feedback-learning-and-policy-history). Apply Review routes are owned by [Apply](apply.md). |
 | Worker implementation | `workers/automation/src/jobctrl/domain/materials/`, the `tailor.py` and `cover_letter.py` paths in `workers/automation/src/jobctrl/scoring/`, and `workers/automation/src/jobctrl/infrastructure/materials/`. |
 | API and web implementation | In `apps/api/src/`: `resume-review-drafts.ts`, `resume-templates.ts`, and `read-model.ts`; in the web app: `apps/web/src/contexts/materials/`, `apps/web/src/views/artifacts/`, and `apps/web/src/views/apply-review/`. |
 | Deep architecture | [Employer Analysis & Materials Audit](../architecture/materials.md), [Tailoring Contract](../architecture/tailoring.md), and [Stage Walkthrough → Tailor](../architecture/pipeline/stages.md#tailor). |

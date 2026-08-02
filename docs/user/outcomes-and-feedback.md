@@ -4,7 +4,9 @@ An application outcome is a reviewed local record of what happened after you
 applied, such as a reply, interview, rejection, offer, withdrawal, or no
 response. Feedback includes your manual corrections and bounded suggestions
 from linked evidence; it improves the audit trail and analytics without
-changing scoring, ranking, thresholds, or Apply eligibility.
+changing scoring, ranking, thresholds, or Apply eligibility on its own. An
+owning policy changes only through an explicit score correction, approved role
+rule, or accepted learning recommendation.
 
 ## How Email Becomes An Outcome Suggestion
 
@@ -47,6 +49,32 @@ it does not ask a model to read the inbox and decide what happened.
 
 This keeps private mail access narrow and preserves the difference between a
 machine suggestion, a reviewed lifecycle fact, and descriptive analytics.
+
+## Explicit Feedback Learning
+
+Operations exposes one privacy-bounded `FeedbackSignal` union over explicit
+score corrections, recorded Discovery feedback, approved role-match
+suggestions, and accepted structured tailoring feedback. These records carry
+canonical IDs, revisions, timestamps, closed rule codes, and non-sensitive
+evidence references. They never copy raw notes, resume or job-description text,
+prompts, model output, mail bodies, credentials, or local paths.
+
+The first derived recommendation type is a closed Materials tailoring-rule
+revision. JobCtrl creates a pending recommendation only when at least three
+compatible accepted tailoring signals span at least two jobs, no unresolved
+contradiction remains, and the derivation version has a passing deterministic
+evaluation fixture. Application outcomes may support later evaluation, but an
+outcome cannot create or prove a policy improvement by itself. Score
+corrections and approved role rules already passed an explicit user decision,
+so their owning Scoring or Discovery history does not require a second review.
+
+The Dashboard shows the pending recommendation, observed-versus-required
+sample counts, confidence limit, allowlist/derivation versions, and bounded
+evidence IDs. Accept creates a new context-owned Materials policy revision;
+reject leaves the current policy unchanged. Neither action re-scores jobs,
+re-tailors artifacts, changes Apply eligibility, or rewrites history. Corrected,
+deleted, or tombstoned source signals trigger deterministic re-derivation while
+preserving earlier reviews and accepted policy revisions.
 
 ## What You Can See And Control
 
@@ -95,6 +123,9 @@ Both may appear in the same job audit timeline without sharing ownership.
 - **Analytics** is a read model over canonical outcomes and accepted material
   metadata. It cannot write back to a score, policy, profile, discovery query,
   or application decision.
+- **Learning recommendations** remain separate from canonical feedback sources.
+  Their evidence and contradictions are reproducible, and no recommendation
+  changes behavior before explicit acceptance creates an owning revision.
 
 The job detail audit history is allow-listed explanatory history, not a raw
 event dump. It intentionally excludes private notes, mail bodies, local paths,
@@ -123,16 +154,18 @@ and debug payloads.
 4. The suggestion decision remains available for accuracy reporting, while the
    reviewed outcome becomes the job's lifecycle fact.
 
-Outcome feedback does not retrain a model or automatically adjust a scoring
-policy in the current product. Score corrections have their own explicit
-lifecycle under [Scoring](scoring-and-employer-analysis.md).
+Outcome feedback does not retrain a model or automatically adjust a scoring or
+tailoring policy. Score corrections have their own explicit lifecycle under
+[Scoring](scoring-and-employer-analysis.md); accepted tailoring recommendations
+and rollback are documented under
+[Materials & Tailoring](materials-and-tailoring.md#policy-history-and-rollback).
 
 ## Implementation And API Pointers
 
 | Layer | Pointer |
 | --- | --- |
 | User surfaces | `/jobs/:jobId`, `/dashboard`, and `/analytics`; the practical monitoring loop is in [Daily Workflow → Inspect Progress](normal-flows.md). |
-| HTTP contract | `GET /v1/outcomes`, per-job outcome reads/writes, suggestion decisions, `POST /v1/outcomes/gmail/scan`, and `GET /v1/analytics/outcomes`; see [Jobs & Materials API](../api/jobs-and-materials.md#apply-review-and-outcomes) and the [complete outcomes contract](../api/complete-contract.md#apply-review-and-outcomes). |
+| HTTP contract | `GET /v1/outcomes`, per-job outcome reads/writes, suggestion decisions, `POST /v1/outcomes/gmail/scan`, `GET /v1/analytics/outcomes`, and the `/v1/learning/*` review/history routes; see [Jobs & Materials API](../api/jobs-and-materials.md) and the [complete contract](../api/complete-contract.md#feedback-learning-and-policy-history). |
 | API implementation | Outcome routes and projections are composed in `apps/api/src/server.ts`, `apps/api/src/read-model.ts`, and `apps/api/src/projections.ts`. |
 | Web implementation | `apps/web/src/contexts/apply/components/ApplicationOutcomes.tsx`, Operations outcome hooks/keys, `views/dashboard/`, and `views/analytics/`. |
 | Deep architecture | [Apply Feedback & Projections](../architecture/read-model.md#apply-review-and-outcome-feedback) and its [sensitive projection boundaries](../architecture/read-model.md#evidence-analytics-and-compensation). |
