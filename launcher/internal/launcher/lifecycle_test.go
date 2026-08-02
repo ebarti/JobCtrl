@@ -545,7 +545,7 @@ func TestTransitionFailureIsJournaledAtEveryBoundary(t *testing.T) {
 	}
 	old := transitionFailure
 	t.Cleanup(func() { transitionFailure = old })
-	for _, state := range []release.State{release.MetadataVerified, release.Staging, release.PayloadVerified, release.ReleaseCommitted, release.SelectorHandoffPending, release.SelectorReplaced, release.Quiescing, release.PairBackedUp, release.PolicyPending, release.PolicyFinalized, release.CandidateStarting, release.CandidateHealthy, release.Promoted, release.RollbackRestoring, release.RolledBack} {
+	for _, state := range []release.State{release.MetadataVerified, release.Staging, release.PayloadVerified, release.ReleaseCommitted, release.SelectorHandoffPending, release.SelectorReplaced, release.Quiescing, release.PairBackedUp, release.MigrationCandidateReady, release.MigrationActivated, release.PolicyPending, release.PolicyFinalized, release.CandidateStarting, release.CandidateHealthy, release.Promoted, release.RollbackRestoring, release.RolledBack} {
 		transitionFailure = func(got release.State) error {
 			if got == state {
 				return errTransitionInterrupted
@@ -927,7 +927,7 @@ func installLifecycleRelease(t *testing.T, runtime, build string, sequence uint6
 func seedLifecycleSQLitePair(t *testing.T, python, state, marker string) {
 	t.Helper()
 	for _, name := range []string{"jobctrl.db", "temporal.db"} {
-		code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('create table t(v)'); c.execute('insert into t values (?)',(sys.argv[2],)); c.commit()"
+		code := "import pathlib,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('create table t(v)'); c.execute('insert into t values (?)',(sys.argv[2],)); c.execute('PRAGMA user_version=7') if pathlib.Path(sys.argv[1]).name == 'jobctrl.db' else None; c.commit()"
 		if output, err := exec.Command(python, "-c", code, filepath.Join(state, name), marker+name).CombinedOutput(); err != nil {
 			t.Fatalf("seed %s: %v %s", name, err, output)
 		}

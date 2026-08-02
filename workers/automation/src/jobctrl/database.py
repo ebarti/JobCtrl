@@ -219,8 +219,9 @@ def open_exact_v7_database(
     current_version = _assert_schema_version_supported(conn)
     if current_version == 6:
         raise SchemaMigrationRequiredError(
-            "JobCtrl database is schema v6. Stop JobCtrl, take the paired "
-            "backup, then run `jobctrl migrate` before starting the runtime."
+            "JobCtrl database is schema v6. Run `jobctrl update` so the native "
+            "lifecycle can stop JobCtrl, verify quiescence, create the paired "
+            "backup, and activate schema v7 before starting the runtime."
         )
     if current_version != SCHEMA_VERSION:
         raise SchemaMigrationRequiredError(
