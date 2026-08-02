@@ -1,9 +1,7 @@
 import { test, expect } from "@playwright/test";
 import Database from "better-sqlite3";
 
-import { loadE2eDbPath } from "../fixtures/e2e-state.js";
-
-const JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
+import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
 
 // The seeded worker heartbeat is written once at global-setup; the suite runs
 // serially and can exceed the 45s staleness window before this spec runs. Refresh
@@ -71,10 +69,11 @@ test("Generate materials: button enabled → dispatch queued → ResumeApproved 
   const db = new Database(dbPath);
   try {
     db.prepare(
-      `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO job_events (
+         tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES ('local', ?, 1, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      JOB_URL,
+      QA_PLATFORM_JOB_ID,
       "tailor",
       "ResumeApproved",
       "info",
@@ -82,7 +81,7 @@ test("Generate materials: button enabled → dispatch queued → ResumeApproved 
       occurredAt,
       JSON.stringify({
         tenantId: "local",
-        jobId: JOB_URL,
+        jobId: QA_PLATFORM_JOB_ID,
         artifactId: "qa-e2e-resume",
         generation: 2,
         approvedAt: occurredAt,

@@ -254,7 +254,7 @@ export interface DemoReadModel {
 
 export interface DemoSeedValue {
   readonly schemaVersion: 1;
-  readonly seedVersion: "2026-07-12.2";
+  readonly seedVersion: "2026-07-31.1";
   readonly title: string;
   readonly artifacts: DemoArtifacts;
   readonly readModel: DemoReadModel;

@@ -387,7 +387,7 @@ describe("DemoWorkspaceRepository", () => {
     const staleSnapshot: DemoWorkspaceSnapshot = {
       ...baseline.snapshot,
       schemaVersion: 3,
-      seedVersion: "2026-07-11.1",
+      seedVersion: "2026-07-12.2",
       workspaceId: "workspace-stale-seed",
       resetCount: 2,
       resetEpoch: 4,

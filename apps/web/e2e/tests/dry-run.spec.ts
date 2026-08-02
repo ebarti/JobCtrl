@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import Database from "better-sqlite3";
 
-import { loadE2eDbPath } from "../fixtures/e2e-state.js";
+import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
 
 test("Dry-run apply: seed JobScored event → activity feed reflects new event", async ({
   page,
@@ -19,10 +19,11 @@ test("Dry-run apply: seed JobScored event → activity feed reflects new event",
   const db = new Database(dbPath);
   try {
     db.prepare(
-      `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO job_events (
+         tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json
+       ) VALUES ('local', ?, 1, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director",
+      QA_PLATFORM_JOB_ID,
       "score",
       "JobScored",
       "info",
@@ -30,7 +31,7 @@ test("Dry-run apply: seed JobScored event → activity feed reflects new event",
       occurredAt,
       JSON.stringify({
         tenantId: "local",
-        jobId: "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director",
+        jobId: QA_PLATFORM_JOB_ID,
         fitScore: 9,
         breakdown: {},
         keywords: ["platform"],

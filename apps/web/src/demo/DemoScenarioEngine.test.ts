@@ -175,21 +175,21 @@ describe("DemoScenarioEngine", () => {
   it("returns production-shaped results for every simulated-async operation", async () => {
     const cases = [
       { name: "renderResumeReviewDraft", delay: 600, invoke: (engine: DemoScenarioEngine) => engine.execute("renderResumeReviewDraft", ["draft-tailored-resume", {}]) },
-      { name: "ensureCurrentResumeMaterials", delay: 750, invoke: (engine: DemoScenarioEngine) => engine.execute("ensureCurrentResumeMaterials", ["job-northwind-platform", { force: true }]) },
+      { name: "ensureCurrentResumeMaterials", delay: 750, invoke: (engine: DemoScenarioEngine) => engine.execute("ensureCurrentResumeMaterials", ["6e2f4a10-20be-4d5f-98a4-a4bb9a877a35", { force: true }]) },
       { name: "retryFailedJobs", delay: 0, invoke: (engine: DemoScenarioEngine) => engine.execute("retryFailedJobs", [{ jobKeys: ["job-contoso-reliability"], allMatching: false, runAfter: false, workers: 1, minScore: 7, validationMode: "normal", dryRun: false, llmModel: "simulated" }]) },
       { name: "runPendingPreparation", delay: 0, invoke: (engine: DemoScenarioEngine) => engine.execute("runPendingPreparation", [{ jobKeys: ["job-contoso-reliability"], allMatching: false, workers: 1, minScore: 7, validationMode: "normal", dryRun: false, llmModel: "simulated" }]) },
       { name: "rescoreJob", delay: 550, invoke: (engine: DemoScenarioEngine) => engine.execute("rescoreJob", ["job-fabrikam-systems", {}]) },
       { name: "rescoreJobsNotOnCurrentScoringPolicy", delay: 700, invoke: (engine: DemoScenarioEngine) => engine.execute("rescoreJobsNotOnCurrentScoringPolicy", [{ limit: 100, jobKeys: ["job-fabrikam-systems"], dryRun: false }]) },
-      { name: "retailorJob", delay: 850, invoke: (engine: DemoScenarioEngine) => engine.execute("retailorJob", ["job-northwind-platform", {}]) },
-      { name: "tailorJob", delay: 850, invoke: (engine: DemoScenarioEngine) => engine.execute("tailorJob", ["job-northwind-platform", {}]) },
-      { name: "retailorCurrentPolicy", delay: 900, invoke: (engine: DemoScenarioEngine) => engine.execute("retailorCurrentPolicy", [{ limit: 100, jobKeys: ["job-northwind-platform"], dryRun: false, suppressExistingArtifacts: true, tailorModels: [] }]) },
+      { name: "retailorJob", delay: 850, invoke: (engine: DemoScenarioEngine) => engine.execute("retailorJob", ["6e2f4a10-20be-4d5f-98a4-a4bb9a877a35", {}]) },
+      { name: "tailorJob", delay: 850, invoke: (engine: DemoScenarioEngine) => engine.execute("tailorJob", ["6e2f4a10-20be-4d5f-98a4-a4bb9a877a35", {}]) },
+      { name: "retailorCurrentPolicy", delay: 900, invoke: (engine: DemoScenarioEngine) => engine.execute("retailorCurrentPolicy", [{ limit: 100, jobKeys: ["6e2f4a10-20be-4d5f-98a4-a4bb9a877a35"], dryRun: false, suppressExistingArtifacts: true, tailorModels: [] }]) },
       { name: "runPipelineStages", delay: 650, invoke: (engine: DemoScenarioEngine) => engine.execute("runPipelineStages", [{ stages: ["discover"], limit: 25, workers: 1, minScore: 7, validationMode: "normal", dryRun: true, rescore: false, retailor: false, headless: false, model: "default", llmModel: "simulated", tailorModels: [], continuous: false }]) },
-      { name: "generateOutreachDraft", delay: 700, invoke: (engine: DemoScenarioEngine) => engine.execute("generateOutreachDraft", ["contact-demo-hiring-partner", { jobId: "job-northwind-platform", kind: "intro_request" }]) },
+      { name: "generateOutreachDraft", delay: 700, invoke: (engine: DemoScenarioEngine) => engine.execute("generateOutreachDraft", ["contact-demo-hiring-partner", { jobId: "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35", kind: "intro_request" }]) },
       { name: "reviseOutreachDraft", delay: 700, invoke: (engine: DemoScenarioEngine) => engine.execute("reviseOutreachDraft", ["thread-demo", { editedBodyText: "Bounded revision." }]) },
       { name: "retryStage", delay: 650, invoke: (engine: DemoScenarioEngine) => engine.execute("retryStage", ["job-fabrikam-systems", { stage: "score", resetAttempts: false, runAfter: true, dryRun: false }]) },
       { name: "runJobStage", delay: 650, invoke: (engine: DemoScenarioEngine) => engine.execute("runJobStage", ["job-fabrikam-systems", { stage: "score", dryRun: false, limit: 1, workers: 1, minScore: 7, validationMode: "normal", llmModel: "simulated" }]) },
-      { name: "generateMaterials", delay: 850, invoke: (engine: DemoScenarioEngine) => engine.execute("generateMaterials", ["job-northwind-platform", { stages: ["tailor"], dryRun: false, limit: 1 }]) },
-      { name: "generateInterviewPrep", delay: 800, invoke: (engine: DemoScenarioEngine) => engine.execute("generateInterviewPrep", ["job-northwind-platform", {}]) },
+      { name: "generateMaterials", delay: 850, invoke: (engine: DemoScenarioEngine) => engine.execute("generateMaterials", ["6e2f4a10-20be-4d5f-98a4-a4bb9a877a35", { stages: ["tailor"], dryRun: false, limit: 1 }]) },
+      { name: "generateInterviewPrep", delay: 800, invoke: (engine: DemoScenarioEngine) => engine.execute("generateInterviewPrep", ["6e2f4a10-20be-4d5f-98a4-a4bb9a877a35", {}]) },
     ] as const;
 
     expect(cases.map((entry) => entry.name)).toEqual([
@@ -296,7 +296,7 @@ describe("DemoScenarioEngine", () => {
     const initialRevision = (await fixture.repository.snapshot()).revision;
     await expect(
       fixture.engine.execute("ensureCurrentResumeMaterials", [
-        "job-northwind-platform",
+        "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
         { force: false },
       ]),
     ).resolves.toMatchObject({ status: "not_required", generation: 1 });

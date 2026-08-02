@@ -11,7 +11,7 @@ const REFERENCE_TIME_MS = Date.parse(REFERENCE_TIME);
 const at = (value: string) => demoTimestamp(Math.round((Date.parse(value) - REFERENCE_TIME_MS) / 60_000));
 
 const job = {
-  jobKey: "job-northwind-platform",
+  jobKey: "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35",
   url: "demo-job:northwind-platform",
   title: "Platform systems lead",
   company: "Northwind Workshop",
@@ -240,7 +240,7 @@ const clearRepeatApplication = {
 } satisfies DemoReadModel["apply"]["queue"]["items"][number]["repeatApplication"];
 
 const interviewPrep = {
-  jobKey: job.jobKey,
+  jobId: job.jobKey,
   generation: 1,
   status: "accepted",
   generatedAt: at("2026-07-10T10:00:00.000Z"),

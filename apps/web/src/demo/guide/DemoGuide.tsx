@@ -23,7 +23,7 @@ import {
 } from "../../shared/ui/dialog.js";
 
 const GUIDE_STATE_KEY = "demo.guide.state";
-const DEMO_JOB_ID = "job-northwind-platform";
+const DEMO_JOB_ID = "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35";
 const DEMO_ARTIFACT_ID = "artifact-tailored-resume";
 
 type DemoGuideFeature = "scoring" | "materials" | "apply_review" | "pipeline";
