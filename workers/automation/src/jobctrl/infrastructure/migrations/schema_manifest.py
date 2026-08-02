@@ -25,7 +25,7 @@ EXACT_V7_MANIFEST = SchemaManifest(
     version=7,
     object_count=242,
     table_count=110,
-    fingerprint="55d88c87aaf9bec6c8686ee0e40dba31ca19aaaa5767042f9376f5e2756fecfd",
+    fingerprint="775312f0ec2640a2a87889602886c90e21a49e06fffc53cf26c435856247da97",
 )
 
 
