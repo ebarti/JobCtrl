@@ -19,7 +19,8 @@ from jobctrl.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
-from jobctrl.domain.materials.use_cases import TailorOutcome
+from jobctrl.domain.materials.policy import LearnedTailoringRules
+from jobctrl.domain.materials.use_cases import TailorOutcome, build_master_tailor_prompt
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT
@@ -743,13 +744,30 @@ def test_tailor_prompt_includes_writing_style_and_custom_guidance():
     }
 
     snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
-    prompt = _build_master_tailor_prompt(snapshot)
+    prompt = build_master_tailor_prompt(
+        snapshot,
+        learned_tailoring_rules=LearnedTailoringRules.from_mapping(
+            {
+                "style_guidance": "preserve_user_edit_pattern",
+                "fact_handling": "require_source_match",
+                "claim_policy": "omit_unsupported_claims",
+                "keyword_strategy": "use_supported_terms_only",
+                "provenance_policy": "require_direct_evidence",
+            }
+        ),
+    )
 
     assert "WRITING STYLE:" in prompt
     assert "- Tone: technical" in prompt
     assert "- Bullet standards: impact, technical_depth, leadership" in prompt
     assert "USER ADDITIONAL TAILORING PROMPT:" in prompt
     assert "Use concise platform leadership language." in prompt
+    assert "ACCEPTED LEARNING RULES FOR FUTURE MATERIALS:" in prompt
+    assert "style_guidance=preserve_user_edit_pattern" in prompt
+    assert "fact_handling=require_source_match" in prompt
+    assert "claim_policy=omit_unsupported_claims" in prompt
+    assert "keyword_strategy=use_supported_terms_only" in prompt
+    assert "provenance_policy=require_direct_evidence" in prompt
 
 
 def test_tailor_prompt_treats_target_job_as_context_not_evidence():

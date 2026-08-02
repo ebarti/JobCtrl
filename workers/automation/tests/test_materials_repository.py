@@ -29,7 +29,11 @@ from jobctrl.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
-from jobctrl.domain.materials.policy import TailoringPolicy
+from jobctrl.domain.materials.policy import (
+    LearnedTailoringRules,
+    TailoringPolicy,
+    TailoringPolicyChangedError,
+)
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.materials import (
     MaterialsGenerationConflict,
@@ -843,6 +847,70 @@ def _policy(*, fingerprint: str = "sha256:a", version: int = 1) -> TailoringPoli
         runtime_settings={"validation_mode": "normal"},
         created_at="2026-05-26T00:00:00+00:00",
     )
+
+
+@pytest.mark.parametrize(
+    ("rule_key", "rule_value"),
+    [
+        ("style_guidance", "preserve_user_edit_pattern"),
+        ("fact_handling", "require_source_match"),
+        ("claim_policy", "omit_unsupported_claims"),
+        ("keyword_strategy", "use_supported_terms_only"),
+        ("provenance_policy", "require_direct_evidence"),
+    ],
+)
+def test_learned_tailoring_rules_accept_only_closed_pairs(
+    rule_key: str,
+    rule_value: str,
+) -> None:
+    rules = LearnedTailoringRules.from_mapping({rule_key: rule_value})
+    assert rules.to_dict() == {rule_key: rule_value}
+    assert f"{rule_key}={rule_value}" in rules.prompt_lines()[0]
+
+
+def test_learned_tailoring_rules_fail_closed_and_fingerprint_canonically() -> None:
+    with pytest.raises(ValueError, match="versioned allowlist"):
+        LearnedTailoringRules.from_mapping({"fact_handling": "private free text"})
+
+    left = LearnedTailoringRules.from_mapping(
+        {
+            "provenance_policy": "require_direct_evidence",
+            "fact_handling": "require_source_match",
+        }
+    )
+    right = LearnedTailoringRules.from_mapping(
+        {
+            "fact_handling": "require_source_match",
+            "provenance_policy": "require_direct_evidence",
+        }
+    )
+    left_policy = _policy().with_learned_tailoring_rules(left)
+    right_policy = _policy().with_learned_tailoring_rules(right)
+    assert left_policy.runtime_settings == right_policy.runtime_settings
+    assert left_policy.config_fingerprint == right_policy.config_fingerprint
+
+
+def test_tailoring_policy_repository_carries_learned_rules_forward(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteTailoringPolicyRepository(conn)
+    learned = LearnedTailoringRules.from_mapping(
+        {"fact_handling": "require_source_match"}
+    )
+    first = repo.resolve_current(_policy().with_learned_tailoring_rules(learned))
+
+    second = repo.resolve_current(
+        _policy(fingerprint="sha256:new-runtime"),
+        expected_current_version=first.version,
+    )
+
+    assert second.version == first.version + 1
+    assert second.learned_tailoring_rules == learned
+    with pytest.raises(TailoringPolicyChangedError):
+        repo.resolve_current(
+            _policy(fingerprint="sha256:stale"),
+            expected_current_version=first.version,
+        )
 
 
 def test_tailoring_policy_repository_reuses_same_config(conn: sqlite3.Connection) -> None:

@@ -18,7 +18,11 @@ from jobctrl.domain.materials.aggregate import (
     MaterialsSetFactory,
 )
 from jobctrl.domain.materials.entities import Artifact
-from jobctrl.domain.materials.policy import TailoringPolicy
+from jobctrl.domain.materials.policy import (
+    LearnedTailoringRules,
+    TailoringPolicy,
+    TailoringPolicyChangedError,
+)
 from jobctrl.domain.materials.value_objects import (
     ArtifactStatus,
     ArtifactType,
@@ -34,9 +38,11 @@ __all__ = [
     "ArtifactType",
     "JudgeVerdict",
     "LlmModelSpec",
+    "LearnedTailoringRules",
     "MaterialsSet",
     "MaterialsSetFactory",
     "RenderFormat",
     "TailoringPolicy",
+    "TailoringPolicyChangedError",
     "ValidationResult",
 ]
