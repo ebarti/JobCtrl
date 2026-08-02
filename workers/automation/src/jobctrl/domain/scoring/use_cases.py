@@ -34,7 +34,7 @@ from jobctrl.domain.events import (
     create_job_scored,
     create_score_corrected,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.analysis import EmployerAnalysis
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.llm import LlmMessage
@@ -286,6 +286,36 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _job_id(job: dict[str, Any]) -> JobId:
+    """Return the canonical aggregate identity carried by a scoring input."""
+    return canonical_job_id(str(job["job_id"]))
+
+
+def _job_tenant_id(job: dict[str, Any]) -> TenantId:
+    """Return the explicit tenant boundary carried by a scoring input."""
+    return TenantId(str(job["tenant_id"]))
+
+
+def _matching_employer_analysis(
+    job: dict[str, Any],
+    employer_analysis: EmployerAnalysis | None,
+) -> EmployerAnalysis | None:
+    if employer_analysis is None:
+        return None
+    job_id = _job_id(job)
+    tenant_id = _job_tenant_id(job)
+    if employer_analysis.job_id == job_id and employer_analysis.tenant_id == tenant_id:
+        return employer_analysis
+    log.warning(
+        "Ignoring employer analysis for tenant=%s job=%s while scoring tenant=%s job=%s",
+        employer_analysis.tenant_id,
+        employer_analysis.job_id,
+        tenant_id,
+        job_id,
+    )
+    return None
+
+
 def _build_job_blob(job: dict[str, Any]) -> str:
     return (
         f"TITLE: {job.get('title', '')}\n"
@@ -306,14 +336,6 @@ def _build_requirement_fit_inputs_blob(
     employer_analysis: EmployerAnalysis | None,
 ) -> str:
     if employer_analysis is None:
-        return ""
-    job_url = str(job.get("url") or "").strip()
-    if job_url and str(employer_analysis.job_id) != job_url:
-        log.warning(
-            "Ignoring employer analysis for %s while scoring %s",
-            employer_analysis.job_id,
-            job_url,
-        )
         return ""
 
     requirements = [
@@ -493,9 +515,12 @@ class ScoreJobUseCase:
         used. Either way the LLM only sees the resume text — the snapshot
         carries the published candidate language.
         """
+        if _job_tenant_id(job) != tenant_id:
+            raise ValueError("Scoring input tenant_id does not match the requested tenant")
         parse_result = self.compute(
             job=job,
             profile_snapshot=profile_snapshot,
+            tenant_id=tenant_id,
             resume_text=resume_text,
             criteria=criteria,
             employer_analysis=employer_analysis,
@@ -507,6 +532,7 @@ class ScoreJobUseCase:
         *,
         job: dict[str, Any],
         profile_snapshot: ProfileSnapshot,
+        tenant_id: TenantId = LOCAL_TENANT,
         resume_text: str | None = None,
         criteria: ScoringCriteria | None = None,
         employer_analysis: EmployerAnalysis | None = None,
@@ -522,6 +548,9 @@ class ScoreJobUseCase:
         ``ThreadPoolExecutor`` and joins on the main thread to persist
         each parse via :meth:`persist_outcome`.
         """
+        _job_id(job)
+        if _job_tenant_id(job) != tenant_id:
+            raise ValueError("Scoring input tenant_id does not match the requested tenant")
         text = resume_text or profile_snapshot.as_dict().get("resume", {}).get(
             "executive_profile", {}
         ).get("baseline_text", "")
@@ -559,7 +588,9 @@ class ScoreJobUseCase:
                 error=parse.error or "Unknown parse error",
             )
 
-        job_id = JobId(str(job["url"]))
+        if _job_tenant_id(job) != tenant_id:
+            raise ValueError("Scoring input tenant_id does not match the requested tenant")
+        job_id = _job_id(job)
         resolved_parse = (
             self._resolve_with_requirement_fit(
                 parse=parse,
@@ -619,6 +650,7 @@ class ScoreJobUseCase:
         criteria: ScoringCriteria,
         employer_analysis: EmployerAnalysis | None = None,
     ) -> ScoreParseResult:
+        matched_employer_analysis = _matching_employer_analysis(job, employer_analysis)
         trace = ScoreTrace(
             prompt_version=SCORE_PROMPT_VERSION,
             schema_version=SCORE_SCHEMA_VERSION,
@@ -629,7 +661,7 @@ class ScoreJobUseCase:
         requirement_fit_inputs = _build_requirement_fit_inputs_blob(
             job=job,
             profile_snapshot=profile_snapshot,
-            employer_analysis=employer_analysis,
+            employer_analysis=matched_employer_analysis,
         )
         messages = [
             LlmMessage(role="system", content=self._prompt),
@@ -683,10 +715,10 @@ class ScoreJobUseCase:
             parsed = self._parser.parse_json(payload, criteria=criteria, trace=trace)
             if parsed.ok:
                 parsed = self._constraints.apply(parse=parsed, job=job)
-                if employer_analysis is not None:
+                if matched_employer_analysis is not None:
                     parsed = replace(
                         parsed,
-                        employer_analysis_generation=employer_analysis.generation,
+                        employer_analysis_generation=matched_employer_analysis.generation,
                     )
             span.set_attribute("jobctrl.scoring.parse.ok", parsed.ok)
             span.set_attribute("jobctrl.scoring.parser_warning_count", len(parsed.trace.parser_warnings))
@@ -708,7 +740,7 @@ class ScoreJobUseCase:
         parse: ScoreParseResult,
         scored_at: str,
     ) -> JobScore:
-        job_id = JobId(str(job["url"]))
+        job_id = _job_id(job)
         previous = self._repository.load(tenant_id, job_id)
         # Type guard: parse.ok is True at this point (caller checks).
         assert parse.fit_score is not None
