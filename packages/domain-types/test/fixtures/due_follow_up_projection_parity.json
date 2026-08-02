@@ -4,7 +4,7 @@
     {
       "threadId": "thread-due",
       "contactId": "contact-1",
-      "jobUrl": "https://example.com/job/1",
+      "jobId": "00000000-0000-4000-8000-000000000002",
       "createdAt": "2026-07-01T00:00:00+00:00",
       "updatedAt": "2026-07-02T00:00:00+00:00",
       "followUpDueAt": "2026-07-09T00:00:00+00:00",
@@ -14,7 +14,7 @@
     {
       "threadId": "thread-completed",
       "contactId": "contact-2",
-      "jobUrl": null,
+      "jobId": null,
       "createdAt": "2026-07-01T00:00:00+00:00",
       "updatedAt": "2026-07-03T00:00:00+00:00",
       "followUpDueAt": "2026-07-05T00:00:00+00:00",
@@ -24,7 +24,7 @@
     {
       "threadId": "thread-none",
       "contactId": "contact-3",
-      "jobUrl": null,
+      "jobId": null,
       "createdAt": "2026-07-01T00:00:00+00:00",
       "updatedAt": "2026-07-01T00:00:00+00:00",
       "followUpDueAt": null,
@@ -36,7 +36,7 @@
     {
       "threadId": "thread-due",
       "contactId": "contact-1",
-      "jobId": "https://example.com/job/1",
+      "jobId": "00000000-0000-4000-8000-000000000002",
       "dueAt": "2026-07-09T00:00:00+00:00",
       "basis": "application_submitted",
       "state": "scheduled",
