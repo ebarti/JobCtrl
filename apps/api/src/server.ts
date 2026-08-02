@@ -2562,12 +2562,17 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   // Contact & Outreach (R6 Phase 1). Reads project provenance for every fact
   // (INV-2); writes never expose a send transport (INV-1).
-  app.get("/v1/contacts", async (request, reply) =>
-    withDb(reply, options.dbPath, (db) => ({
+  app.get("/v1/contacts", async (request, reply) => {
+    const query = ContactListQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      void reply.code(400);
+      return { ok: false, error: "invalid_contact_query" };
+    }
+    return withDb(reply, options.dbPath, (db) => ({
       ok: true,
-      items: listContacts(db, ContactListQuerySchema.parse(request.query)),
-    })),
-  );
+      items: listContacts(db, query.data),
+    }));
+  });
 
   app.get<{ Params: { contactId: string } }>("/v1/contacts/:contactId", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => {

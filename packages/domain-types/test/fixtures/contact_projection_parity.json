@@ -1,76 +1,38 @@
 {
-  "_comment": "Cross-runtime parity fixture for contact_projections (R6 Phase 1). Python half: workers/automation/tests/test_contact_projection_parity.py. TS half: apps/api/test/contact-projection-parity.test.ts. Both seed the SAME canonical contacts + contact_attributes rows, run their OWN projection refresh, and assert the resulting contact_projections rows equal `expected` (JSON columns compared parsed). `attributes[].value` seeds canonical value_json and MUST NOT appear anywhere in the projection (sensitivity rule, plan §6).",
-  "tenantId": "local",
-  "contacts": [
+  "_comment": "Cross-runtime exact-v7 parity fixture for contact_projections. The TypeScript and Python tests seed each tenant's canonical jobs, contacts, and contact_attributes directly from this fixture, then refresh only that tenant's contact projection. URLs are job locator data; jobId is the tenant-scoped root identity.",
+  "tenants": [
     {
-      "contactId": "contact-1",
-      "employer": "Acme Corp",
-      "jobUrl": "https://boards.example.com/acme/eng-1",
-      "role": "recruiter",
-      "createdAt": "2026-07-01T00:00:00.000Z",
-      "updatedAt": "2026-07-02T00:00:00.000Z"
-    },
-    {
-      "contactId": "contact-2",
-      "employer": "Globex",
-      "jobUrl": null,
-      "role": "hiring_manager",
-      "createdAt": "2026-07-03T00:00:00.000Z",
-      "updatedAt": "2026-07-03T00:00:00.000Z"
-    }
-  ],
-  "attributes": [
-    {
-      "attributeId": "attr-1",
-      "contactId": "contact-1",
-      "kind": "name",
-      "value": "Jane Recruiter",
-      "sourceKind": "user_entered",
-      "sourceRef": "user_entered",
-      "captureMethod": "manual",
-      "confidence": 1.0,
-      "userConfirmed": true,
-      "recordedAt": "2026-07-01T00:00:00.000Z"
-    },
-    {
-      "attributeId": "attr-2",
-      "contactId": "contact-1",
-      "kind": "email",
-      "value": "jane@acme.example",
-      "sourceKind": "user_entered",
-      "sourceRef": "user_entered",
-      "captureMethod": "manual",
-      "confidence": 1.0,
-      "userConfirmed": true,
-      "recordedAt": "2026-07-01T00:00:01.000Z"
-    },
-    {
-      "attributeId": "attr-3",
-      "contactId": "contact-2",
-      "kind": "name",
-      "value": "Bob Manager",
-      "sourceKind": "user_imported_list",
-      "sourceRef": "referrals.csv",
-      "captureMethod": "manual",
-      "confidence": 1.0,
-      "userConfirmed": false,
-      "recordedAt": "2026-07-03T00:00:00.000Z"
-    }
-  ],
-  "sensitiveValues": ["Jane Recruiter", "jane@acme.example", "Bob Manager"],
-  "expected": [
-    {
-      "contactId": "contact-1",
-      "employer": "Acme Corp",
-      "jobId": "https://boards.example.com/acme/eng-1",
-      "role": "recruiter",
-      "attributeCount": 2,
-      "confirmedCount": 2,
-      "sourceKinds": ["user_entered"],
-      "provenance": [
+      "tenantId": "local",
+      "jobs": [
+        {
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "url": "https://boards.example.com/acme/eng-1"
+        }
+      ],
+      "contacts": [
+        {
+          "contactId": "contact-1",
+          "employer": "Acme Corp",
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "role": "recruiter",
+          "createdAt": "2026-07-01T00:00:00.000Z",
+          "updatedAt": "2026-07-02T00:00:00.000Z"
+        },
+        {
+          "contactId": "contact-2",
+          "employer": "Globex",
+          "jobId": null,
+          "role": "hiring_manager",
+          "createdAt": "2026-07-03T00:00:00.000Z",
+          "updatedAt": "2026-07-03T00:00:00.000Z"
+        }
+      ],
+      "attributes": [
         {
           "attributeId": "attr-1",
-          "attributeKind": "name",
+          "contactId": "contact-1",
+          "kind": "name",
+          "value": "Jane Recruiter",
           "sourceKind": "user_entered",
           "sourceRef": "user_entered",
           "captureMethod": "manual",
@@ -80,30 +42,21 @@
         },
         {
           "attributeId": "attr-2",
-          "attributeKind": "email",
+          "contactId": "contact-1",
+          "kind": "email",
+          "value": "jane@acme.example",
           "sourceKind": "user_entered",
           "sourceRef": "user_entered",
           "captureMethod": "manual",
           "confidence": 1.0,
           "userConfirmed": true,
           "recordedAt": "2026-07-01T00:00:01.000Z"
-        }
-      ],
-      "createdAt": "2026-07-01T00:00:00.000Z",
-      "updatedAt": "2026-07-02T00:00:00.000Z"
-    },
-    {
-      "contactId": "contact-2",
-      "employer": "Globex",
-      "jobId": null,
-      "role": "hiring_manager",
-      "attributeCount": 1,
-      "confirmedCount": 0,
-      "sourceKinds": ["user_imported_list"],
-      "provenance": [
+        },
         {
           "attributeId": "attr-3",
-          "attributeKind": "name",
+          "contactId": "contact-2",
+          "kind": "name",
+          "value": "Bob Manager",
           "sourceKind": "user_imported_list",
           "sourceRef": "referrals.csv",
           "captureMethod": "manual",
@@ -112,8 +65,123 @@
           "recordedAt": "2026-07-03T00:00:00.000Z"
         }
       ],
-      "createdAt": "2026-07-03T00:00:00.000Z",
-      "updatedAt": "2026-07-03T00:00:00.000Z"
+      "expected": [
+        {
+          "contactId": "contact-1",
+          "employer": "Acme Corp",
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "role": "recruiter",
+          "attributeCount": 2,
+          "confirmedCount": 2,
+          "sourceKinds": ["user_entered"],
+          "provenance": [
+            {
+              "attributeId": "attr-1",
+              "attributeKind": "name",
+              "sourceKind": "user_entered",
+              "sourceRef": "user_entered",
+              "captureMethod": "manual",
+              "confidence": 1.0,
+              "userConfirmed": true,
+              "recordedAt": "2026-07-01T00:00:00.000Z"
+            },
+            {
+              "attributeId": "attr-2",
+              "attributeKind": "email",
+              "sourceKind": "user_entered",
+              "sourceRef": "user_entered",
+              "captureMethod": "manual",
+              "confidence": 1.0,
+              "userConfirmed": true,
+              "recordedAt": "2026-07-01T00:00:01.000Z"
+            }
+          ],
+          "createdAt": "2026-07-01T00:00:00.000Z",
+          "updatedAt": "2026-07-02T00:00:00.000Z"
+        },
+        {
+          "contactId": "contact-2",
+          "employer": "Globex",
+          "jobId": null,
+          "role": "hiring_manager",
+          "attributeCount": 1,
+          "confirmedCount": 0,
+          "sourceKinds": ["user_imported_list"],
+          "provenance": [
+            {
+              "attributeId": "attr-3",
+              "attributeKind": "name",
+              "sourceKind": "user_imported_list",
+              "sourceRef": "referrals.csv",
+              "captureMethod": "manual",
+              "confidence": 1.0,
+              "userConfirmed": false,
+              "recordedAt": "2026-07-03T00:00:00.000Z"
+            }
+          ],
+          "createdAt": "2026-07-03T00:00:00.000Z",
+          "updatedAt": "2026-07-03T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "tenantId": "other",
+      "jobs": [
+        {
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "url": "https://boards.example.com/acme/eng-1"
+        }
+      ],
+      "contacts": [
+        {
+          "contactId": "contact-other-1",
+          "employer": "Other Corp",
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "role": "referrer",
+          "createdAt": "2026-07-04T00:00:00.000Z",
+          "updatedAt": "2026-07-04T00:00:00.000Z"
+        }
+      ],
+      "attributes": [
+        {
+          "attributeId": "attr-other-1",
+          "contactId": "contact-other-1",
+          "kind": "name",
+          "value": "Other Contact",
+          "sourceKind": "user_entered",
+          "sourceRef": "user_entered",
+          "captureMethod": "manual",
+          "confidence": 1.0,
+          "userConfirmed": true,
+          "recordedAt": "2026-07-04T00:00:00.000Z"
+        }
+      ],
+      "expected": [
+        {
+          "contactId": "contact-other-1",
+          "employer": "Other Corp",
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "role": "referrer",
+          "attributeCount": 1,
+          "confirmedCount": 1,
+          "sourceKinds": ["user_entered"],
+          "provenance": [
+            {
+              "attributeId": "attr-other-1",
+              "attributeKind": "name",
+              "sourceKind": "user_entered",
+              "sourceRef": "user_entered",
+              "captureMethod": "manual",
+              "confidence": 1.0,
+              "userConfirmed": true,
+              "recordedAt": "2026-07-04T00:00:00.000Z"
+            }
+          ],
+          "createdAt": "2026-07-04T00:00:00.000Z",
+          "updatedAt": "2026-07-04T00:00:00.000Z"
+        }
+      ]
     }
-  ]
+  ],
+  "sensitiveValues": ["Jane Recruiter", "jane@acme.example", "Bob Manager", "Other Contact"]
 }

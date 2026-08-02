@@ -10,9 +10,12 @@ import type {
   ContactSummary,
 } from "../src/contracts.js";
 import { buildApp } from "../src/server.js";
+import { initializeExactV7Database } from "./v7-schema.js";
 
 const SECRET_NAME = "Jane Recruiter";
 const SECRET_EMAIL = "jane@acme.example";
+const JOB_ID_ONE = "00000000-0000-4000-8000-000000000011";
+const JOB_ID_TWO = "00000000-0000-4000-8000-000000000012";
 
 const cleanups: Array<() => void> = [];
 
@@ -25,22 +28,15 @@ afterEach(() => {
 function withTempApp() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-contacts-"));
   const dbPath = path.join(dir, "jobs.db");
+  initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE jobs (url TEXT PRIMARY KEY, title TEXT);
-    CREATE TABLE job_events (
-      event_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_url      TEXT,
-      stage        TEXT,
-      event_type   TEXT NOT NULL,
-      level        TEXT NOT NULL DEFAULT 'info',
-      message      TEXT,
-      occurred_at  TEXT NOT NULL,
-      payload_json TEXT,
-      entity_kind  TEXT,
-      entity_ref   TEXT
-    );
-  `);
+  db.pragma("foreign_keys = ON");
+  const insertJob = db.prepare(
+    `INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+     VALUES ('local', ?, ?, 'Fixture job', '2026-07-31T12:00:00Z')`,
+  );
+  insertJob.run(JOB_ID_ONE, "https://jobs.example.test/one");
+  insertJob.run(JOB_ID_TWO, "https://jobs.example.test/two");
   db.close();
   const app = buildApp({ dbPath, configPath: path.join(dir, "config.json") });
   cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -62,7 +58,7 @@ describe("contacts API", () => {
     const { statusCode, contact } = await createContact(app, {
       role: "recruiter",
       employer: "Acme",
-      jobId: "https://job/1",
+      jobId: JOB_ID_ONE,
       attributes: [
         { kind: "name", value: SECRET_NAME },
         { kind: "email", value: SECRET_EMAIL },
@@ -98,12 +94,24 @@ describe("contacts API", () => {
 
   it("filters the list by application (jobId)", async () => {
     const { app } = withTempApp();
-    await createContact(app, { employer: "Acme", jobId: "https://job/1", attributes: [{ kind: "name", value: "A" }] });
-    await createContact(app, { employer: "Acme", jobId: "https://job/2", attributes: [{ kind: "name", value: "B" }] });
-    const res = await app.inject({ method: "GET", url: "/v1/contacts?jobId=https://job/1" });
+    await createContact(app, { employer: "Acme", jobId: JOB_ID_ONE, attributes: [{ kind: "name", value: "A" }] });
+    await createContact(app, { employer: "Acme", jobId: JOB_ID_TWO, attributes: [{ kind: "name", value: "B" }] });
+    const res = await app.inject({ method: "GET", url: `/v1/contacts?jobId=${JOB_ID_ONE}` });
     const items = (res.json() as { items: ContactSummary[] }).items;
     expect(items).toHaveLength(1);
-    expect(items[0]?.jobId).toBe("https://job/1");
+    expect(items[0]?.jobId).toBe(JOB_ID_ONE);
+  });
+
+  it("rejects noncanonical JobId list filters before opening the database", async () => {
+    const { app } = withTempApp();
+    for (const jobId of [
+      "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF",
+      "https://jobs.example.test/not-an-id",
+    ]) {
+      const res = await app.inject({ method: "GET", url: `/v1/contacts?jobId=${encodeURIComponent(jobId)}` });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ ok: false, error: "invalid_contact_query" });
+    }
   });
 
   it("never leaks attribute values into job_events payloads (sensitivity)", async () => {
@@ -116,7 +124,12 @@ describe("contacts API", () => {
       ],
     });
     const db = new Database(dbPath, { readonly: true });
-    const rows = db.prepare("SELECT event_type, payload_json, entity_kind, entity_ref FROM job_events").all() as Array<{
+    const rows = db.prepare(
+      "SELECT tenant_id, job_id, identity_version, event_type, payload_json, entity_kind, entity_ref FROM job_events",
+    ).all() as Array<{
+      tenant_id: string;
+      job_id: string | null;
+      identity_version: number;
       event_type: string;
       payload_json: string;
       entity_kind: string;
@@ -126,6 +139,8 @@ describe("contacts API", () => {
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.map((row) => row.event_type)).toContain("ContactCreated");
     for (const row of rows) {
+      expect(row.tenant_id).toBe("local");
+      expect(row.identity_version).toBe(1);
       expect(row.entity_kind).toBe("contact");
       expect(row.entity_ref).not.toBe("");
       expect(row.payload_json).not.toContain(SECRET_NAME);
@@ -141,6 +156,20 @@ describe("contacts API", () => {
       payload: { attributes: [{ kind: "name", value: "Nobody" }] },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects a URL-shaped JobId before contacts or events are written", async () => {
+    const { app, dbPath } = withTempApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/contacts",
+      payload: { employer: "Acme", jobId: "https://jobs.example.test/not-an-id" },
+    });
+    expect(res.statusCode).toBe(400);
+    const db = new Database(dbPath, { readonly: true });
+    expect((db.prepare("SELECT COUNT(*) AS count FROM contacts").get() as { count: number }).count).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS count FROM job_events").get() as { count: number }).count).toBe(0);
+    db.close();
   });
 
   it("updates role and re-projects", async () => {
