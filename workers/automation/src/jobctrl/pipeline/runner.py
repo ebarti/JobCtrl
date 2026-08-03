@@ -2721,7 +2721,10 @@ def _execution_recoverable_enrichment_job_ids(
         "lower(COALESCE(jobs.site, '')) = 'linkedin' "
         "AND je.current_status = 'failed' "
         "AND jss_enrich.state = 'failed' "
-        "AND COALESCE(jss_enrich.retryable, 1) = 1"
+        "AND (COALESCE(jss_enrich.retryable, 1) = 1 OR ("
+        "jss_enrich.error_code = 'DETAIL_UNSAFE_URL' "
+        "AND jss_enrich.error_message LIKE 'Unsupported public route method:%'"
+        "))"
         ")) "
         f"AND {db_module._NOT_CLOSED_ACTIVE_STATE} "
         "ORDER BY execution.linked_at, execution.job_id",

@@ -869,6 +869,11 @@ def test_live_recovery_selector_is_scoped_and_retryable(
             "https://www.linkedin.com/jobs/view/nonretryable",
             "linkedin",
         )
+        legacy_guard_id = _seed_pending(
+            conn,
+            "https://www.linkedin.com/jobs/view/legacy-public-write",
+            "linkedin",
+        )
         other_run_id = _seed_pending(
             conn,
             "https://www.linkedin.com/jobs/view/other-run",
@@ -877,13 +882,19 @@ def test_live_recovery_selector_is_scoped_and_retryable(
         for job_id, retryable in (
             (retryable_id, True),
             (nonretryable_id, False),
+            (legacy_guard_id, False),
             (other_run_id, True),
         ):
+            error_message = (
+                "Unsupported public route method: POST"
+                if job_id == legacy_guard_id
+                else "browser closed"
+            )
             detail._record_enrich_job_failure(
                 conn,
                 job_id,
                 "https://www.linkedin.com/jobs/view/test",
-                RuntimeError("browser closed"),
+                RuntimeError(error_message),
             )
             ensure_job_stage_rows(conn, job_id)
             set_stage_state(
@@ -891,6 +902,12 @@ def test_live_recovery_selector_is_scoped_and_retryable(
                 job_id,
                 "enrich",
                 "failed",
+                error_code=(
+                    "DETAIL_UNSAFE_URL"
+                    if job_id == legacy_guard_id
+                    else "DETAIL_ERROR"
+                ),
+                error_message=error_message,
                 retryable=retryable,
                 validate_transition=False,
             )
@@ -903,15 +920,17 @@ def test_live_recovery_selector_is_scoped_and_retryable(
             [
                 ("run-current", str(retryable_id)),
                 ("run-current", str(nonretryable_id)),
+                ("run-current", str(legacy_guard_id)),
                 ("run-other", str(other_run_id)),
             ],
         )
         conn.commit()
         monkeypatch.setattr(runner, "get_connection", lambda: conn)
 
-        assert runner._execution_recoverable_enrichment_job_ids(current) == (
+        assert set(runner._execution_recoverable_enrichment_job_ids(current)) == {
             retryable_id,
-        )
+            legacy_guard_id,
+        }
     finally:
         close_connection(db_path)
 
