@@ -1309,10 +1309,6 @@ def plan_discovery_source_families(
         seed_discovery_control_queues(conn, config.load_source_registry(search_cfg=search_cfg))
     except Exception:
         log.debug("Failed to seed discovery control queues", exc_info=True)
-    try:
-        run_discovery_hygiene("before")
-    except Exception:
-        log.warning("Discovery hygiene failed", exc_info=True)
 
     selected_source_ids = tuple(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id.strip()))
     source_filter_active = bool(selected_source_ids)

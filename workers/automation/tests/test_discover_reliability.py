@@ -431,6 +431,30 @@ async def test_discovery_next_run_settings_stay_frozen_after_planning(
     }
 
 
+def test_source_planning_does_not_run_hygiene_before_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "init_db", lambda: object())
+    monkeypatch.setattr(runner.config, "load_search_config", lambda: {})
+    monkeypatch.setattr(runner.config, "load_source_registry", lambda **_kwargs: [])
+    monkeypatch.setattr(runner, "seed_discovery_control_queues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        runner,
+        "_plan_discovery_schedule",
+        lambda *_args, **_kwargs: runner.DiscoverySchedule(()),
+    )
+    monkeypatch.setattr(runner, "_pipeline_job_count", lambda: 0)
+    monkeypatch.setattr(
+        runner,
+        "run_discovery_hygiene",
+        lambda _label: pytest.fail("source planning must not block on historical-job hygiene"),
+    )
+
+    plan = runner.plan_discovery_source_families(limit=500)
+
+    assert plan["families"] == ["jobspy", "workday", "smartextract"]
+
+
 # ---------------------------------------------------------------------------
 # Per-site fault isolation (THE incident shape)
 # ---------------------------------------------------------------------------
