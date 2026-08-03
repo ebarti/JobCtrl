@@ -90,6 +90,23 @@ def _mark_closed(conn: sqlite3.Connection, job_id: JobId, state: str = "removed"
     conn.commit()
 
 
+def _mark_robots_blocked(conn: sqlite3.Connection, job_id: JobId) -> None:
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+    ensure_job_stage_rows(conn, job_id)
+    set_stage_state(
+        conn,
+        job_id,
+        "enrich",
+        "blocked",
+        error_code="ENRICH_ROBOTS_DISALLOWED",
+        error_message="robots.txt disallows this path",
+        retryable=True,
+        validate_transition=False,
+    )
+    conn.commit()
+
+
 def _save_enriched(
     conn: sqlite3.Connection,
     job_id: JobId,
@@ -346,6 +363,138 @@ def test_reset_job_stage_enrich_is_noop_when_no_aggregate_exists(
     # Queue selector still reports the job as pending (it always was).
     pending = get_jobs_by_stage(conn, "pending_detail")
     assert {row["url"] for row in pending} == {url}
+
+
+def test_run_detail_scraper_retries_robots_blocked_only_on_first_workflow_pass(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production queue must reach the existing blocked-to-pending path."""
+
+    from jobctrl.enrichment import detail
+    url = "https://www.linkedin.com/jobs/view/robots-blocked"
+    job_id = _seed_discovered(conn, url)
+    _mark_robots_blocked(conn, job_id)
+
+    batches: list[list[tuple[str, str]]] = []
+
+    def fake_scrape_site_batch(
+        _conn: sqlite3.Connection | None,
+        _site: str,
+        jobs: list[tuple[str, str]],
+        **_kwargs: object,
+    ) -> dict:
+        batches.append(jobs)
+        return {
+            "processed": len(jobs),
+            "ok": 0,
+            "partial": 0,
+            "error": 0,
+            "tiers": {},
+        }
+
+    monkeypatch.setattr(detail, "scrape_site_batch", fake_scrape_site_batch)
+
+    detail._run_detail_scraper(
+        conn,
+        workers=1,
+        reset_linkedin_candidates=True,
+        recovery_key="workflow-1:run-1",
+    )
+    assert batches == [[(str(job_id), "Engineer")]]
+
+    batches.clear()
+    detail._run_detail_scraper(
+        conn,
+        workers=1,
+        reset_linkedin_candidates=True,
+        recovery_key="workflow-1:run-1",
+    )
+    assert batches == []
+
+    detail._run_detail_scraper(
+        conn,
+        workers=1,
+        reset_linkedin_candidates=True,
+        recovery_key="workflow-2:run-1",
+    )
+    assert batches == [[(str(job_id), "Engineer")]]
+
+
+def test_run_detail_scraper_prioritizes_blocked_retry_within_site_limit(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobctrl.enrichment import detail
+
+    _seed_discovered(conn, "https://example.com/jobs/ordinary-pending")
+    blocked_id = _seed_discovered(conn, "https://example.com/jobs/robots-blocked")
+    _mark_robots_blocked(conn, blocked_id)
+    batches: list[list[tuple[str, str]]] = []
+
+    def fake_scrape_site_batch(
+        _conn: sqlite3.Connection | None,
+        _site: str,
+        jobs: list[tuple[str, str]],
+        **_kwargs: object,
+    ) -> dict:
+        batches.append(jobs)
+        return {
+            "processed": len(jobs),
+            "ok": 0,
+            "partial": 0,
+            "error": 0,
+            "tiers": {},
+        }
+
+    monkeypatch.setattr(detail, "scrape_site_batch", fake_scrape_site_batch)
+
+    detail._run_detail_scraper(
+        conn,
+        max_per_site=1,
+        workers=1,
+        recovery_key="workflow-limit:run-1",
+    )
+
+    assert batches == [[(str(blocked_id), "Engineer")]]
+
+
+def test_run_detail_scraper_excludes_closed_robots_blocked_rows(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobctrl.enrichment import detail
+
+    active_id = _seed_discovered(conn, "https://example.com/jobs/active-pending")
+    closed_id = _seed_discovered(conn, "https://example.com/jobs/closed-blocked")
+    _mark_robots_blocked(conn, closed_id)
+    _mark_closed(conn, closed_id)
+    batches: list[list[tuple[str, str]]] = []
+
+    def fake_scrape_site_batch(
+        _conn: sqlite3.Connection | None,
+        _site: str,
+        jobs: list[tuple[str, str]],
+        **_kwargs: object,
+    ) -> dict:
+        batches.append(jobs)
+        return {
+            "processed": len(jobs),
+            "ok": 0,
+            "partial": 0,
+            "error": 0,
+            "tiers": {},
+        }
+
+    monkeypatch.setattr(detail, "scrape_site_batch", fake_scrape_site_batch)
+
+    detail._run_detail_scraper(
+        conn,
+        workers=1,
+        recovery_key="workflow-closed:run-1",
+    )
+
+    assert batches == [[(str(active_id), "Engineer")]]
 
 
 # ---------------------------------------------------------------------------

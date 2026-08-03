@@ -10347,7 +10347,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("lists detected browsers and forwards an explicit detected-browser enable selection", async () => {
+  it("lists detected browsers and forwards explicit browser and profile selections", async () => {
     const browserResult = {
       capabilities: [
         {
@@ -10376,8 +10376,8 @@ describe("local TypeScript API", () => {
         },
       ],
       detectedBrowsers: [
-        { id: "google-chrome", label: "Google Chrome" },
-        { id: "chromium", label: "Chromium" },
+        { id: "google-chrome", label: "Google Chrome", defaultProfileAvailable: true },
+        { id: "chromium", label: "Chromium", defaultProfileAvailable: false },
       ],
     };
     const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
@@ -10401,11 +10401,21 @@ describe("local TypeScript API", () => {
       url: "/v1/browser-capabilities/auto-apply-browser/enable",
       payload: { executablePath: "/Applications/Chromium" },
     });
+    const copiedProfile = await app.inject({
+      method: "POST",
+      url: "/v1/browser-capabilities/authenticated-linkedin-browser/profile-copy",
+      payload: {
+        detectedBrowserId: "google-chrome",
+        consent: true,
+        consentMethod: "explicit-ui-v1",
+      },
+    });
 
     expect(listed.statusCode, listed.body).toBe(200);
     expect(listed.json()).toMatchObject({ ok: true, detectedBrowsers: browserResult.detectedBrowsers });
     expect(enabled.statusCode, enabled.body).toBe(200);
     expect(manuallyEnabled.statusCode, manuallyEnabled.body).toBe(200);
+    expect(copiedProfile.statusCode, copiedProfile.body).toBe(200);
     expect(call).toHaveBeenNthCalledWith(1, "browser_capabilities_list", {});
     expect(call).toHaveBeenNthCalledWith(2, "browser_capability_enable", {
       capabilityId: "auto-apply-browser",
@@ -10414,6 +10424,11 @@ describe("local TypeScript API", () => {
     expect(call).toHaveBeenNthCalledWith(3, "browser_capability_enable", {
       capabilityId: "auto-apply-browser",
       executablePath: "/Applications/Chromium",
+    });
+    expect(call).toHaveBeenNthCalledWith(4, "browser_profile_copy", {
+      detectedBrowserId: "google-chrome",
+      consent: true,
+      consentMethod: "explicit-ui-v1",
     });
 
     await app.close();

@@ -2654,6 +2654,15 @@ _ENRICHMENT_PENDING: str = (
     "(je.job_id IS NULL OR je.current_status = 'pending') "
     "AND COALESCE(jss_enrich.state, 'pending') = 'pending'"
 )
+_ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED: str = (
+    "(je.job_id IS NULL OR je.current_status = 'pending') "
+    "AND jss_enrich.state = 'blocked' "
+    "AND jss_enrich.error_code = 'ENRICH_ROBOTS_DISALLOWED' "
+    "AND COALESCE(jss_enrich.retryable, 1) = 1"
+)
+_ENRICHMENT_RUNNABLE: str = (
+    f"(({_ENRICHMENT_PENDING}) OR ({_ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED}))"
+)
 
 # Closed/removed posting states are Enrichment-owned facts, not user
 # tombstones. Work queues treat them as non-actionable while leaving the

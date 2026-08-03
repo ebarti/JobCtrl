@@ -76,6 +76,8 @@ export function BrowserCapabilitiesPanel() {
   const [manualPathErrors, setManualPathErrors] = useState<
     Record<string, string>
   >({});
+  const [selectedProfileBrowserId, setSelectedProfileBrowserId] =
+    useState<DetectedBrowserId | null>(null);
   const [sourceProfilePath, setSourceProfilePath] = useState("");
   const [profileConsent, setProfileConsent] = useState(false);
   const [message, setMessage] = useState("");
@@ -128,13 +130,36 @@ export function BrowserCapabilitiesPanel() {
     }
   }
 
-  async function copyLinkedInProfile() {
+  async function copyDetectedLinkedInProfile(
+    detectedBrowserId: DetectedBrowserId,
+    label: string,
+  ) {
+    if (!profileConsent) {
+      setMessage("Grant the separate profile-copy consent first.");
+      return;
+    }
+    setProfileConsent(false);
+    try {
+      await copyProfile.mutateAsync({
+        detectedBrowserId,
+        consent: true,
+        consentMethod: "explicit-ui-v1",
+      });
+      setMessage(
+        `${label}'s default profile was copied into JobCtrl-owned storage.`,
+      );
+    } catch {
+      setMessage("The detected browser profile could not be copied.");
+    }
+  }
+
+  async function copyManualLinkedInProfile() {
     const selectedPath = sourceProfilePath.trim();
     setSourceProfilePath("");
     setProfileConsent(false);
     if (!selectedPath || !profileConsent)
       return setMessage(
-        "Select a profile directory and grant the separate copy consent.",
+        "Enter a profile directory and grant the separate copy consent.",
       );
     try {
       await copyProfile.mutateAsync({
@@ -169,6 +194,19 @@ export function BrowserCapabilitiesPanel() {
       null;
     const selectItems = detectedBrowsers.map((browser) => ({
       label: browser.label,
+      value: browser.id,
+    }));
+    const detectedProfileBrowsers = detectedBrowsers.filter(
+      (browser) => browser.defaultProfileAvailable,
+    );
+    const selectedProfileBrowser =
+      detectedProfileBrowsers.find(
+        (browser) => browser.id === selectedProfileBrowserId,
+      ) ??
+      detectedProfileBrowsers[0] ??
+      null;
+    const profileSelectItems = detectedProfileBrowsers.map((browser) => ({
+      label: `${browser.label} · Default`,
       value: browser.id,
     }));
     const manualError = manualPathErrors[capabilityId] ?? "";
@@ -340,25 +378,49 @@ export function BrowserCapabilitiesPanel() {
             <FieldSet>
               <FieldLegend>Separate authenticated profile copy</FieldLegend>
               <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="linkedin-profile-source">
-                    Existing browser profile directory
-                  </FieldLabel>
-                  <Input
-                    id="linkedin-profile-source"
-                    name="linkedin-profile-source"
-                    type="password"
-                    autoComplete="off"
-                    value={sourceProfilePath}
-                    onChange={(event) =>
-                      setSourceProfilePath(event.target.value)
-                    }
-                  />
+                {selectedProfileBrowser ? (
+                  <Field>
+                    <FieldLabel htmlFor="linkedin-detected-profile">
+                      Detected browser profile
+                    </FieldLabel>
+                    <Select
+                      items={profileSelectItems}
+                      value={selectedProfileBrowser.id}
+                      disabled={demo || copyProfile.isPending}
+                      onValueChange={(value) => {
+                        if (value === "google-chrome" || value === "chromium") {
+                          setSelectedProfileBrowserId(value);
+                        }
+                      }}
+                    >
+                      <SelectTrigger
+                        id="linkedin-detected-profile"
+                        aria-label="Detected browser profile for authenticated LinkedIn"
+                        className="max-w-xl"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent alignItemWithTrigger={false}>
+                        <SelectGroup>
+                          {profileSelectItems.map((profile) => (
+                            <SelectItem key={profile.value} value={profile.value}>
+                              {profile.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    <FieldDescription>
+                      Detected locally. No folder navigation or path entry is
+                      required.
+                    </FieldDescription>
+                  </Field>
+                ) : (
                   <FieldDescription>
-                    Request-only. Cleared after submission and never returned or
-                    logged.
+                    No standard Chrome or Chromium default profile was detected.
+                    Use the advanced path only for a non-standard profile location.
                   </FieldDescription>
-                </Field>
+                )}
                 <Field orientation="horizontal">
                   <Checkbox
                     id="linkedin-profile-consent"
@@ -371,18 +433,62 @@ export function BrowserCapabilitiesPanel() {
                     storage.
                   </FieldLabel>
                 </Field>
-                <Button
-                  className="w-fit max-w-xs whitespace-normal"
-                  type="button"
-                  disabled={
-                    copyProfile.isPending ||
-                    !profileConsent ||
-                    !sourceProfilePath.trim()
-                  }
-                  onClick={() => void copyLinkedInProfile()}
-                >
-                  Copy selected profile
-                </Button>
+                {selectedProfileBrowser ? (
+                  <Button
+                    className="w-fit max-w-xs whitespace-normal"
+                    type="button"
+                    disabled={copyProfile.isPending || !profileConsent}
+                    onClick={() =>
+                      void copyDetectedLinkedInProfile(
+                        selectedProfileBrowser.id,
+                        selectedProfileBrowser.label,
+                      )
+                    }
+                  >
+                    Copy {selectedProfileBrowser.label} profile
+                  </Button>
+                ) : null}
+                <Collapsible defaultOpen={!selectedProfileBrowser}>
+                  <CollapsibleTrigger
+                    render={<Button variant="ghost" size="sm" type="button" />}
+                  >
+                    Advanced profile path
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="pt-3">
+                    <Field>
+                      <FieldLabel htmlFor="linkedin-profile-source">
+                        Existing browser user-data directory
+                      </FieldLabel>
+                      <Input
+                        id="linkedin-profile-source"
+                        name="linkedin-profile-source"
+                        type="password"
+                        autoComplete="off"
+                        value={sourceProfilePath}
+                        onChange={(event) =>
+                          setSourceProfilePath(event.target.value)
+                        }
+                      />
+                      <FieldDescription>
+                        Request-only fallback for non-standard locations. Cleared
+                        after submission and never returned or logged.
+                      </FieldDescription>
+                    </Field>
+                    <Button
+                      className="mt-3 w-fit max-w-xs whitespace-normal"
+                      variant="outline"
+                      type="button"
+                      disabled={
+                        copyProfile.isPending ||
+                        !profileConsent ||
+                        !sourceProfilePath.trim()
+                      }
+                      onClick={() => void copyManualLinkedInProfile()}
+                    >
+                      Copy profile from manual path
+                    </Button>
+                  </CollapsibleContent>
+                </Collapsible>
               </FieldGroup>
             </FieldSet>
           </div>
@@ -454,7 +560,7 @@ export function BrowserCapabilitiesPanel() {
                     icon={false}
                     tone={browserStatusTone(capability.status)}
                   >
-                    {browserStatusLabel(capability.status)}
+                    {browserStatusLabel(capability.id, capability.status)}
                   </StatusBadge>
                 </header>
                 {renderCapabilityControls(capability)}
@@ -490,10 +596,17 @@ function browserAccessLabel(capabilityId: BrowserCapabilityId): string {
   return "Optional browser access";
 }
 
-function browserStatusLabel(status: BrowserCapabilityItem["status"]): string {
+function browserStatusLabel(
+  capabilityId: BrowserCapabilityId,
+  status: BrowserCapabilityItem["status"],
+): string {
   if (status === "ready") return "Ready";
   if (status === "disabled") return "Off";
-  if (status === "missing") return "Browser missing";
+  if (status === "missing") {
+    return capabilityId === "authenticated-linkedin-browser"
+      ? "Profile copy missing"
+      : "Browser missing";
+  }
   if (status === "failed") return "Failed";
   return "Unavailable";
 }

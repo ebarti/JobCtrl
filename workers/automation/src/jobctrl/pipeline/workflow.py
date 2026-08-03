@@ -277,6 +277,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
             id=f"{workflow_id}-discover",
         )
     if stage == "enrich":
+        workflow_run_id = workflow.info().run_id
         return await workflow.execute_activity(
             enrich_activity,
             EnrichActivityInput(
@@ -288,6 +289,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 dry_run=payload.dry_run,
                 job_ids=_selected_job_ids(payload),
                 workflow_id=workflow_id,
+                workflow_run_id=workflow_run_id,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,

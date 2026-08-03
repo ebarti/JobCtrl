@@ -1469,10 +1469,12 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
 - `GET /v1/browser-capabilities` returns `core-browser`,
   `auto-apply-browser`, and `authenticated-linkedin-browser` state without
   returning a saved executable or source-profile path. It also returns
-  `detectedBrowsers: Array<{ id: "google-chrome" | "chromium", label: string }>`
-  for currently detected supported installations. Detection is read-only: it
-  does not launch, adopt, copy, or persist the browser, and no filesystem path
-  crosses the RPC/API boundary. The core browser is managed and read-only.
+  `detectedBrowsers: Array<{ id: "google-chrome" | "chromium", label: string,
+  defaultProfileAvailable: boolean }>` for currently detected supported
+  installations. Detection checks only the standard default-profile directory;
+  it does not read profile contents, launch, adopt, copy, or persist the browser,
+  and no filesystem path crosses the RPC/API boundary. The core browser is
+  managed and read-only.
   `POST /v1/browser-capabilities/:capabilityId/enable` accepts exactly one of
   `{ detectedBrowserId }` or `{ executablePath }`; the strict union rejects
   both/neither. The path is write-only. The detected-ID arm resolves the
@@ -1480,9 +1482,13 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   closed with sanitized `400 browser_capability_failed` without adopting any
   fallback. The matching `/disable` route applies
   immediately. `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy`
-  requires explicit consent, clears the source path after the request, and
-  never returns, logs, or persists it. A detected candidate becomes adopted
-  only through this explicit enable mutation.
+  requires explicit consent and accepts exactly one of `{ detectedBrowserId }`
+  or `{ sourceProfilePath }`. The detected-ID arm resolves the standard default
+  profile again at mutation time and copies only `Default` plus sanitized root
+  metadata required by Chrome; sibling profile directories and metadata are
+  excluded. The manual path is cleared after the request and never returned,
+  logged, or persisted. A detected candidate becomes adopted only through the
+  separate explicit enable mutation.
 - Authenticated extension routes under `/v1/extension/*` require `Authorization:
   Bearer <token>`. A valid token allows a `chrome-extension://` origin through
   the route-scoped CORS and unsafe-mutation guards, but only after the loopback

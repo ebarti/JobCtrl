@@ -27,6 +27,7 @@ from jobctrl.discovery.activities import (
     _stage_failure_error,
 )
 from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
+from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.enrichment import detail
@@ -231,6 +232,54 @@ async def test_discovery_enrichment_activity_reports_partial_with_site_errors(
 
     assert result.status == "partial"
     assert result.site_errors == {"linkedin": {"error_class": "Error", "error_message": "boom"}}
+
+
+@pytest.mark.asyncio
+async def test_discovery_enrichment_activity_reuses_execution_key_across_activity_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        lambda **_kwargs: None,
+    )
+
+    async def fake_run_blocking(fn, **_kwargs):
+        return fn()
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        fake_run_blocking,
+    )
+    captured: list[str | None] = []
+
+    def fake_run_stage(**kwargs):
+        captured.append(kwargs.get("recovery_key"))
+        return {"status": "ok", "passes": 1, "pending": 0}
+
+    monkeypatch.setattr(
+        "jobctrl.pipeline.runner.run_discovery_enrichment_stage",
+        fake_run_stage,
+    )
+    monkeypatch.setattr("jobctrl.pipeline.runner.run_discovery_hygiene", lambda _label: 0)
+    monkeypatch.setattr(activities.activity, "heartbeat", lambda *_a, **_k: None)
+    monkeypatch.setattr(activities, "begin_pipeline_step_attempt", lambda _scope: None)
+    execution = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id="discover-workflow-1",
+        temporal_run_id="temporal-run-1",
+    )
+    payload = DiscoveryEnrichmentActivityInput(
+        tenant_id="local",
+        discovery_execution=execution,
+    )
+
+    await activities.discovery_enrichment_activity(payload)
+    await activities.discovery_enrichment_activity(payload)
+
+    assert captured == [
+        "discover-workflow-1:temporal-run-1",
+        "discover-workflow-1:temporal-run-1",
+    ]
 
 
 @pytest.mark.asyncio
@@ -768,6 +817,37 @@ def test_until_idle_resets_linkedin_candidates_only_on_first_pass(
 
     assert reset_flags == [True, False]
     assert result["status"] == "ok"
+
+
+def test_until_idle_runs_one_recovery_pass_for_retryable_robots_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = iter([0, 0, 0])
+    monkeypatch.setattr(runner, "_count_pending", lambda *_a, **_k: next(pending))
+    monkeypatch.setattr(runner, "_count_retryable_enrichment_blocked", lambda: 4)
+
+    reset_flags: list[bool] = []
+
+    def fake_enrich(
+        *,
+        workers,
+        limit,
+        cancel_event=None,
+        reset_linkedin_candidates=True,
+        on_job_enriched=None,
+    ):
+        reset_flags.append(reset_linkedin_candidates)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(runner, "_run_enrich", fake_enrich)
+
+    done = threading.Event()
+    done.set()
+    result: dict = {}
+    runner._run_discovery_enrichment_until_idle(done, result, workers=1, limit=0)
+
+    assert reset_flags == [True]
+    assert result == {"status": "ok", "passes": 1, "pending": 0}
 
 
 # ---------------------------------------------------------------------------

@@ -464,11 +464,24 @@ def _browser_status_payload(status: Any) -> dict[str, object]:
 def _browser_capabilities_payload() -> dict[str, object]:
     """Serialize capability state and transient candidates without local paths."""
 
-    from jobctrl.browser_capabilities import detect_supported_browsers, list_browser_capabilities
+    from jobctrl.browser_capabilities import (
+        detect_default_browser_profile,
+        detect_supported_browsers,
+        list_browser_capabilities,
+    )
+
+    detected_browsers = detect_supported_browsers()
 
     return {
         "capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()],
-        "detectedBrowsers": [{"id": browser.id, "label": browser.label} for browser in detect_supported_browsers()],
+        "detectedBrowsers": [
+            {
+                "id": browser.id,
+                "label": browser.label,
+                "defaultProfileAvailable": detect_default_browser_profile(browser.id) is not None,
+            }
+            for browser in detected_browsers
+        ],
     }
 
 
@@ -525,19 +538,36 @@ def browser_capability_disable(params: dict[str, Any]) -> dict[str, object]:
 def browser_profile_copy(params: dict[str, Any]) -> dict[str, object]:
     """Copy a caller-selected profile only through the versioned explicit UI consent arm."""
 
-    source_profile_path = str(_require(params, "sourceProfilePath"))
+    has_source_profile_path = "sourceProfilePath" in params
+    has_detected_browser_id = "detectedBrowserId" in params
+    if has_source_profile_path == has_detected_browser_id:
+        raise invalid_params("Select exactly one detected browser profile or manual profile path.")
     consent = params.get("consent")
     consent_method = params.get("consentMethod")
     if consent is not True or consent_method != "explicit-ui-v1":
         raise invalid_params("A separate explicit profile-copy consent is required.")
-    from jobctrl.browser_capabilities import BrowserCapabilityError, copy_authenticated_linkedin_profile
+    from jobctrl.browser_capabilities import (
+        BrowserCapabilityError,
+        DetectedBrowserProfileUnavailableError,
+        copy_authenticated_linkedin_profile,
+        copy_detected_authenticated_linkedin_profile,
+    )
 
     try:
-        copy_authenticated_linkedin_profile(
-            source_profile_path,
-            consent=True,
-            consent_method="explicit-ui-v1",
-        )
+        if has_detected_browser_id:
+            copy_detected_authenticated_linkedin_profile(
+                str(_require(params, "detectedBrowserId")),
+                consent=True,
+                consent_method="explicit-ui-v1",
+            )
+        else:
+            copy_authenticated_linkedin_profile(
+                str(_require(params, "sourceProfilePath")),
+                consent=True,
+                consent_method="explicit-ui-v1",
+            )
+    except DetectedBrowserProfileUnavailableError as exc:
+        raise invalid_params("The selected detected browser profile is no longer available.") from exc
     except BrowserCapabilityError as exc:
         raise invalid_params("The selected browser profile could not be copied.") from exc
     return _browser_capabilities_payload()

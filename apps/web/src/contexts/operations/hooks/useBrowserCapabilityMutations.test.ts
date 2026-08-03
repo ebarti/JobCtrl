@@ -10,7 +10,13 @@ import { useDisableBrowserCapabilityMutation } from "./useBrowserCapabilityMutat
 
 const initial = {
   ok: true as const,
-  detectedBrowsers: [{ id: "google-chrome" as const, label: "Google Chrome" }],
+  detectedBrowsers: [
+    {
+      id: "google-chrome" as const,
+      label: "Google Chrome",
+      defaultProfileAvailable: true,
+    },
+  ],
   capabilities: [
     {
       id: "core-browser" as const,

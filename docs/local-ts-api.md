@@ -186,7 +186,9 @@ provider without requiring it to be ready.
 for launch controls. Environment-owned fields are read-only. Discovery runtime
 and schedule controls use `GET/PATCH /v1/discovery/settings`; browser adoption
 uses `GET /v1/browser-capabilities` plus capability-specific `POST` enable,
-disable, and profile-copy routes; extension pairing uses
+disable, and profile-copy routes. Standard default profiles can be selected by
+opaque detected-browser ID; write-only filesystem paths are an advanced
+fallback. Extension pairing uses
 `GET /v1/extension/pairing-token` and `POST /v1/extension/pairing-token/rotate`.
 
 ## Related Packages
