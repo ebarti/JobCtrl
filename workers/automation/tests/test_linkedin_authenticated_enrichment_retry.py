@@ -399,6 +399,65 @@ def test_failed_row_still_reset_for_authenticated_retry(
     assert aggregate.is_pending
 
 
+def test_failed_retry_reset_is_scoped_to_explicit_job_ids(
+    conn: sqlite3.Connection,
+) -> None:
+    selected_url = "https://www.linkedin.com/jobs/view/selected"
+    other_url = "https://www.linkedin.com/jobs/view/other"
+    _seed_discovered(conn, selected_url, "linkedin")
+    _seed_discovered(conn, other_url, "linkedin")
+    _save_failed(conn, selected_url, retryable=True)
+    _save_failed(conn, other_url, retryable=True)
+
+    reset_count = _reset_authenticated_linkedin_retry_candidates(
+        conn,
+        job_ids=(_job_id(conn, selected_url),),
+    )
+
+    assert reset_count == 1
+    repo = SqliteEnrichmentRepository(conn)
+    assert repo.load(LOCAL_TENANT, _job_id(conn, selected_url)).is_pending  # type: ignore[union-attr]
+    assert repo.load(LOCAL_TENANT, _job_id(conn, other_url)).is_failed  # type: ignore[union-attr]
+
+
+def test_exact_cohort_scraper_requeues_failed_linkedin_job(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://www.linkedin.com/jobs/view/exact-cohort"
+    _seed_discovered(conn, url, "linkedin")
+    _save_failed(conn, url, retryable=True)
+    job_id = _job_id(conn, url)
+    batches: list[list[tuple[JobId, str]]] = []
+
+    def fake_scrape_site_batch(
+        _conn: sqlite3.Connection,
+        _site: str,
+        jobs: list[tuple[JobId, str]],
+        **_kwargs: object,
+    ) -> dict:
+        batches.append(jobs)
+        return {
+            "processed": len(jobs),
+            "ok": len(jobs),
+            "partial": 0,
+            "error": 0,
+            "tiers": {},
+        }
+
+    monkeypatch.setattr(detail, "scrape_site_batch", fake_scrape_site_batch)
+
+    result = detail._run_detail_scraper(
+        conn,
+        job_ids=(job_id,),
+        reset_linkedin_candidates=True,
+        recovery_key="discover-local:run-current",
+    )
+
+    assert batches == [[(job_id, "Engineer")]]
+    assert result["ok"] == 1
+
+
 def test_retry_candidates_skip_nonretryable_and_exhausted_rows(
     conn: sqlite3.Connection,
 ) -> None:
