@@ -91,7 +91,11 @@ Two knobs that look like Temporal concurrency but are not:
   first job can be enriched. After producers finish, the workflow cancels that
   live consumer and runs a **terminal reconcile** enrichment + fan-out, which
   remains authoritative for tolerated-partial-failure folding and progress
-  finalization. Per-family preparation fan-outs remain as best-effort backstops.
+  finalization. The live consumer also admits current-execution robots-blocked
+  rows and retryable failed LinkedIn rows once per activity lifetime, so
+  re-observing a recoverable job does not leave it stranded behind the ordinary
+  pending-only selector; non-retryable failures remain excluded. Per-family
+  preparation fan-outs remain as best-effort backstops.
   The live enrichment and backstop fan-outs are **progress-silent**
   (`progress_total=0`) so the Runs bar stays monotonic on the family + terminal
   spine — see

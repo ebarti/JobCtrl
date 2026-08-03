@@ -845,6 +845,77 @@ def test_live_enrichment_selector_is_scoped_to_the_current_execution(
         close_connection(db_path)
 
 
+def test_live_recovery_selector_is_scoped_and_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    current = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id="discover-local",
+        temporal_run_id="run-current",
+    )
+    try:
+        retryable_id = _seed_pending(
+            conn,
+            "https://www.linkedin.com/jobs/view/retryable",
+            "linkedin",
+        )
+        nonretryable_id = _seed_pending(
+            conn,
+            "https://www.linkedin.com/jobs/view/nonretryable",
+            "linkedin",
+        )
+        other_run_id = _seed_pending(
+            conn,
+            "https://www.linkedin.com/jobs/view/other-run",
+            "linkedin",
+        )
+        for job_id, retryable in (
+            (retryable_id, True),
+            (nonretryable_id, False),
+            (other_run_id, True),
+        ):
+            detail._record_enrich_job_failure(
+                conn,
+                job_id,
+                "https://www.linkedin.com/jobs/view/test",
+                RuntimeError("browser closed"),
+            )
+            ensure_job_stage_rows(conn, job_id)
+            set_stage_state(
+                conn,
+                job_id,
+                "enrich",
+                "failed",
+                retryable=retryable,
+                validate_transition=False,
+            )
+        conn.executemany(
+            "INSERT INTO discovery_execution_jobs ("
+            "tenant_id, discover_workflow_id, discover_run_id, job_id, "
+            "cohort_kind, source_family, work_plan_state, linked_at"
+            ") VALUES ('local', 'discover-local', ?, ?, 'observed_this_run', "
+            "'jobspy', 'pending', '2026-01-01T00:00:00+00:00')",
+            [
+                ("run-current", str(retryable_id)),
+                ("run-current", str(nonretryable_id)),
+                ("run-other", str(other_run_id)),
+            ],
+        )
+        conn.commit()
+        monkeypatch.setattr(runner, "get_connection", lambda: conn)
+
+        assert runner._execution_recoverable_enrichment_job_ids(current) == (
+            retryable_id,
+        )
+    finally:
+        close_connection(db_path)
+
+
 def test_until_idle_records_systemic_failure_with_full_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -962,6 +1033,11 @@ def test_until_idle_live_pass_enriches_only_the_current_execution(
         "_execution_pending_enrichment_job_ids",
         lambda selected: next(pending) if selected == execution else (),
     )
+    monkeypatch.setattr(
+        runner,
+        "_execution_recoverable_enrichment_job_ids",
+        lambda _selected: (),
+    )
     captured_job_ids: list[tuple[JobId, ...]] = []
 
     def fake_enrich(**kwargs):
@@ -982,6 +1058,49 @@ def test_until_idle_live_pass_enriches_only_the_current_execution(
     )
 
     assert captured_job_ids == [(current_job_id,)]
+    assert result == {"status": "ok", "passes": 1, "pending": 0}
+
+
+def test_until_idle_live_retries_reobserved_failure_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id="discover-local",
+        temporal_run_id="run-current",
+    )
+    recoverable_job_id = JobId("00000000-0000-4000-8000-000000000002")
+    monkeypatch.setattr(
+        runner,
+        "_execution_pending_enrichment_job_ids",
+        lambda _selected: (),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_execution_recoverable_enrichment_job_ids",
+        lambda selected: (recoverable_job_id,) if selected == execution else (),
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_enrich(**kwargs):
+        calls.append(kwargs)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(runner, "_run_enrich", fake_enrich)
+
+    done = threading.Event()
+    done.set()
+    result: dict = {}
+    runner._run_discovery_enrichment_until_idle(
+        done,
+        result,
+        workers=1,
+        limit=0,
+        discovery_execution=execution,
+    )
+
+    assert [call["job_ids"] for call in calls] == [(recoverable_job_id,)]
+    assert [call["reset_linkedin_candidates"] for call in calls] == [True]
     assert result == {"status": "ok", "passes": 1, "pending": 0}
 
 

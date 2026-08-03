@@ -2002,6 +2002,7 @@ def _reset_authenticated_linkedin_retry_candidates(
     conn: sqlite3.Connection,
     *,
     limit: int | None = None,
+    job_ids: tuple[JobId, ...] = (),
     resolver_factory: Callable[[], object] | None = None,
     run_budget: RunBudgetCounter | None = None,
     session: PolitenessSession | None = None,
@@ -2052,6 +2053,15 @@ def _reset_authenticated_linkedin_retry_candidates(
         "e.current_status IN ('failed', 'enriched')",
         "(e.current_status = 'failed' OR e.application_url IS NULL OR e.application_url = '')",
     ]
+    params: list[object] = []
+    selected_job_ids = tuple(
+        dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids)
+    )
+    if selected_job_ids:
+        placeholders = ", ".join("?" for _ in selected_job_ids)
+        where.append(f"j.tenant_id = ? AND j.job_id IN ({placeholders})")
+        params.append(str(LOCAL_TENANT))
+        params.extend(str(job_id) for job_id in selected_job_ids)
     rows = conn.execute(
         f"""
         SELECT j.tenant_id, j.job_id, j.url,
@@ -2062,6 +2072,7 @@ def _reset_authenticated_linkedin_retry_candidates(
         WHERE {' AND '.join(where)}
         ORDER BY e.updated_at DESC
         """,
+        params,
     ).fetchall()
 
     from jobctrl.state import (
@@ -2308,7 +2319,7 @@ def _run_detail_scraper(
     # prevents a still-disallowed URL from looping within the same workflow.
     enrichment_selector = (
         db_module._ENRICHMENT_RUNNABLE
-        if reset_linkedin_candidates and not job_ids
+        if reset_linkedin_candidates
         else db_module._ENRICHMENT_PENDING
     )
     where_parts = [enrichment_selector, skip_filter]
@@ -2328,10 +2339,11 @@ def _run_detail_scraper(
     # navigation budget bounds them all together.
     run_budget = _new_enrichment_budget()
 
-    if reset_linkedin_candidates and not selected_job_ids:
+    if reset_linkedin_candidates:
         _reset_authenticated_linkedin_retry_candidates(
             conn,
             limit=max_per_site,
+            job_ids=selected_job_ids,
             resolver_factory=_default_linkedin_apply_resolver_factory,
             run_budget=run_budget,
         )

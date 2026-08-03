@@ -2700,6 +2700,40 @@ def _execution_pending_enrichment_job_ids(
     return tuple(JobId(str(row[0])) for row in rows)
 
 
+def _execution_recoverable_enrichment_job_ids(
+    discovery_execution: DiscoveryExecutionRef,
+) -> tuple[JobId, ...]:
+    """Return re-observed failures eligible for one live recovery attempt."""
+
+    conn = get_connection()
+    rows = conn.execute(
+        f"SELECT execution.job_id "
+        "FROM discovery_execution_jobs AS execution "
+        "JOIN jobs ON jobs.tenant_id = execution.tenant_id "
+        "AND jobs.job_id = execution.job_id "
+        f"{db_module._ENRICHMENT_JOIN} {db_module._ACTIVE_STATE_JOIN} "
+        "WHERE execution.tenant_id = ? "
+        "AND execution.discover_workflow_id = ? "
+        "AND execution.discover_run_id = ? "
+        "AND execution.cohort_kind = 'observed_this_run' "
+        "AND ("
+        f"({db_module._ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED}) OR ("
+        "lower(COALESCE(jobs.site, '')) = 'linkedin' "
+        "AND je.current_status = 'failed' "
+        "AND jss_enrich.state = 'failed' "
+        "AND COALESCE(jss_enrich.retryable, 1) = 1"
+        ")) "
+        f"AND {db_module._NOT_CLOSED_ACTIVE_STATE} "
+        "ORDER BY execution.linked_at, execution.job_id",
+        (
+            discovery_execution.tenant_id,
+            discovery_execution.workflow_id,
+            discovery_execution.temporal_run_id,
+        ),
+    ).fetchall()
+    return tuple(JobId(str(row[0])) for row in rows)
+
+
 def _default_retryable(exc: Exception) -> bool:
     """Classify an uncaught enrichment-worker exception when it carries no code.
 
@@ -2732,6 +2766,7 @@ def _run_discovery_enrichment_until_idle(
     passes = 0
     no_progress_passes = 0
     site_errors: dict[str, Any] = {}
+    recovery_attempted_job_ids: set[JobId] = set()
 
     try:
         while True:
@@ -2742,6 +2777,22 @@ def _run_discovery_enrichment_until_idle(
                 if discovery_execution is not None
                 else ()
             )
+            recoverable_job_ids = (
+                tuple(
+                    job_id
+                    for job_id in _execution_recoverable_enrichment_job_ids(
+                        discovery_execution
+                    )
+                    if job_id not in recovery_attempted_job_ids
+                )
+                if discovery_execution is not None
+                else ()
+            )
+            if recoverable_job_ids:
+                recovery_attempted_job_ids.update(recoverable_job_ids)
+                scoped_job_ids = tuple(
+                    dict.fromkeys((*scoped_job_ids, *recoverable_job_ids))
+                )
             pending = (
                 len(scoped_job_ids)
                 if discovery_execution is not None
@@ -2772,7 +2823,11 @@ def _run_discovery_enrichment_until_idle(
                 "workers": workers,
                 "limit": limit,
                 "cancel_event": cancel_event,
-                "reset_linkedin_candidates": passes == 0,
+                "reset_linkedin_candidates": (
+                    bool(recoverable_job_ids)
+                    if discovery_execution is not None
+                    else passes == 0
+                ),
                 "on_job_enriched": on_job_enriched,
             }
             if discovery_execution is not None:
@@ -2785,7 +2840,24 @@ def _run_discovery_enrichment_until_idle(
             if pass_site_errors:
                 site_errors.update(pass_site_errors)
             after = (
-                len(_execution_pending_enrichment_job_ids(discovery_execution))
+                len(
+                    tuple(
+                        dict.fromkeys(
+                            (
+                                *_execution_pending_enrichment_job_ids(
+                                    discovery_execution
+                                ),
+                                *(
+                                    job_id
+                                    for job_id in _execution_recoverable_enrichment_job_ids(
+                                        discovery_execution
+                                    )
+                                    if job_id not in recovery_attempted_job_ids
+                                ),
+                            )
+                        )
+                    )
+                )
                 if discovery_execution is not None
                 else _count_pending("enrich")
             )
