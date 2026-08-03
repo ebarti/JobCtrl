@@ -88,6 +88,7 @@ _ENRICH_RETRY = RetryPolicy(
 )
 _DEFAULT_TIMEOUT = timedelta(minutes=30)
 _DISCOVERY_TIMEOUT = timedelta(hours=6)
+_LIVE_ENRICH_HEARTBEAT_TIMEOUT = timedelta(seconds=5)
 _DEFAULT_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
 
 
@@ -188,14 +189,11 @@ class DiscoverWorkflow:
         completed: list[str] = []
         failed: list[str] = []
         failures: list[str] = []
-        # R9 Phase 1/2 — score-as-you-discover. After each family COMPLETES we
-        # drain that family's fresh jobs through enrichment (Phase 2 hands each
-        # job off to its own SCORE_JOB workflow the moment it is enriched) and
-        # fan out any it missed, instead of waiting for the whole run. These
-        # streaming passes are progress-silent (``progress_total=0``); the Runs
-        # progress bar advances on the family spine + the terminal reconcile
-        # below, so it stays monotonic. Scores still surface incrementally via
-        # ``job_events`` -> projections -> SSE.
+        # Score-as-you-discover uses the durable job commit as its handoff
+        # boundary. One execution-scoped enrichment activity polls while source
+        # activities are still producing jobs and hands each successful job to
+        # SCORE_JOB immediately. Per-family fan-out remains a deduplicated
+        # backstop; the terminal reconcile remains authoritative for folding.
         #
         # The one-time ``pending_tailor`` straggler sweep runs HERE, before any
         # family is enriched — the only moment ``pending_tailor`` cannot contain
@@ -207,16 +205,7 @@ class DiscoverWorkflow:
         # sweep here also keeps it correct when families run concurrently
         # (Phase 3).
         await self._sweep_preexisting_preparation(payload, discovery_execution)
-        # R9 Phase 3 — optional parallel source families, GATED. Families are
-        # processed in batches of ``plan.max_parallel_families`` (env
-        # ``max_parallel_families`` in SQLite, default 1 = sequential =
-        # current behavior). Within a batch the source crawls run concurrently
-        # (``asyncio.gather``); the batch's streaming enrichment + fan-out then
-        # runs ONCE afterwards, so enrichment is never run concurrently (it
-        # drains globally) and concurrent browser use is bounded to the batch's
-        # source crawls. Batches are ordered and results folded in submission
-        # order, so replay stays deterministic; a canceled source in any batch
-        # cooperatively cancels the run.
+        live_enrichment = _start_live_enrichment_activity(payload, discovery_execution)
         indexed_families = list(enumerate(plan.families))
         batch_size = max(1, plan.max_parallel_families)
         streaming_pass_ordinal = 0
@@ -251,6 +240,7 @@ class DiscoverWorkflow:
                     discovery_execution,
                     pass_ordinal=streaming_pass_ordinal,
                 )
+        await _stop_live_enrichment_activity(live_enrichment)
 
         # Legacy semantics: per-source failures are tolerated. The TERMINAL
         # reconcile enrichment + preparation below ALWAYS run so the healthy
@@ -426,33 +416,16 @@ class DiscoverWorkflow:
         *,
         pass_ordinal: int,
     ) -> None:
-        """Drain + fan out the just-completed family's jobs now (R9 Phase 1/2).
+        """Fan out the just-completed family's jobs as a deduplicated backstop.
 
         Progress-silent (``progress_total=0``) so the Runs bar stays monotonic
         on the terminal spine; scores still stream via ``job_events``. Phase 2
-        enrichment hands each job off to its own SCORE_JOB workflow the moment it
-        is enriched; the score-only fan-out here (and the terminal reconcile)
-        are the dedup-safe backstop for anything the handoff missed. Best-effort:
-        a non-cancellation failure is left for the authoritative terminal
-        reconcile (which re-drains and re-derives, deduped by the deterministic
-        ``prep-{idempotency_key}`` id), so streaming never changes the run's
-        terminal status or folding. Cancellation always propagates.
+        live enrichment hands each job off to its own SCORE_JOB workflow the
+        moment it is enriched; the score-only fan-out here catches jobs that
+        were already enriched when a source linked them and any missed handoff.
+        Cancellation always propagates.
         """
         item_key = f"streaming:pass-{pass_ordinal}"
-        try:
-            await _run_enrichment_activity(
-                payload,
-                discovery_execution,
-                progress_completed=0,
-                progress_total=0,
-                per_job_handoff=True,
-                pipeline_step_item_key=item_key,
-                pipeline_step_detail_code="streaming_pass",
-            )
-        except ActivityError as exc:
-            if _activity_error_was_cancelled(exc):
-                raise CancelledError() from exc
-            return
         try:
             await _start_preparation_workflows(
                 payload,
@@ -481,28 +454,89 @@ async def _run_enrichment_activity(
 ) -> DiscoveryEnrichmentActivityOutput:
     return await workflow.execute_activity(
         discovery_enrichment_activity,
-        DiscoveryEnrichmentActivityInput(
-            tenant_id=payload.tenant_id,
-            expected_app_dir=payload.expected_app_dir,
-            expected_db_path=payload.expected_db_path,
-            workers=payload.workers,
-            limit=payload.limit,
+        _enrichment_activity_input(
+            payload,
+            discovery_execution,
             progress_completed=progress_completed,
             progress_total=progress_total,
             per_job_handoff=per_job_handoff,
-            min_score=payload.min_score,
-            validation_mode=payload.validation_mode,
-            llm_model=payload.llm_model,
-            tailor_models=payload.tailor_models,
-            tailor_judge_model=payload.tailor_judge_model,
-            tailor_judge_min_score=payload.tailor_judge_min_score,
-            discovery_execution=discovery_execution,
             pipeline_step_item_key=pipeline_step_item_key,
             pipeline_step_detail_code=pipeline_step_detail_code,
         ),
         start_to_close_timeout=_DISCOVERY_TIMEOUT,
         heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
         retry_policy=_ENRICH_RETRY,
+    )
+
+
+def _start_live_enrichment_activity(
+    payload: DiscoverWorkflowInput,
+    discovery_execution: DiscoveryExecutionRef,
+) -> Any:
+    return workflow.start_activity(
+        discovery_enrichment_activity,
+        _enrichment_activity_input(
+            payload,
+            discovery_execution,
+            progress_completed=0,
+            progress_total=0,
+            per_job_handoff=True,
+            stream_while_discovering=True,
+            pipeline_step_item_key="streaming:live",
+            pipeline_step_detail_code="streaming_pass",
+        ),
+        start_to_close_timeout=_DISCOVERY_TIMEOUT,
+        heartbeat_timeout=_LIVE_ENRICH_HEARTBEAT_TIMEOUT,
+        retry_policy=_ENRICH_RETRY,
+        cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+    )
+
+
+async def _stop_live_enrichment_activity(handle: Any) -> None:
+    """Stop the producer-lifetime consumer; terminal reconciliation follows."""
+
+    if not handle.done():
+        handle.cancel()
+    try:
+        await handle
+    except asyncio.CancelledError:
+        return
+    except ActivityError as exc:
+        if _activity_error_was_cancelled(exc):
+            return
+        workflow.logger.warning("Live discovery enrichment stopped early: %s", exc)
+
+
+def _enrichment_activity_input(
+    payload: DiscoverWorkflowInput,
+    discovery_execution: DiscoveryExecutionRef,
+    *,
+    progress_completed: int,
+    progress_total: int,
+    per_job_handoff: bool = False,
+    stream_while_discovering: bool = False,
+    pipeline_step_item_key: str,
+    pipeline_step_detail_code: PipelineStepDetailCode,
+) -> DiscoveryEnrichmentActivityInput:
+    return DiscoveryEnrichmentActivityInput(
+        tenant_id=payload.tenant_id,
+        expected_app_dir=payload.expected_app_dir,
+        expected_db_path=payload.expected_db_path,
+        workers=payload.workers,
+        limit=payload.limit,
+        progress_completed=progress_completed,
+        progress_total=progress_total,
+        per_job_handoff=per_job_handoff,
+        stream_while_discovering=stream_while_discovering,
+        min_score=payload.min_score,
+        validation_mode=payload.validation_mode,
+        llm_model=payload.llm_model,
+        tailor_models=payload.tailor_models,
+        tailor_judge_model=payload.tailor_judge_model,
+        tailor_judge_min_score=payload.tailor_judge_min_score,
+        discovery_execution=discovery_execution,
+        pipeline_step_item_key=pipeline_step_item_key,
+        pipeline_step_detail_code=pipeline_step_detail_code,
     )
 
 

@@ -79,17 +79,18 @@ Two knobs that look like Temporal concurrency but are not:
   and a family failure is recorded (`families_failed`) while the run continues to
   the next family. Raising the cap runs families concurrently (R9 Phase 3,
   below).
-- **Score-as-you-discover streaming (R9 Phase 1).** After **each family
-  completes**, the workflow immediately runs `discovery_enrichment` (drains that
-  family's fresh jobs) and `discovery_preparation_fanout` (starts their per-job
-  `JobPreparationWorkflow`s), instead of waiting for every family to finish. So a
-  job discovered by the first family is scored while later families are still
-  crawling. A **terminal reconcile** enrichment + fan-out still runs after the
-  loop and remains authoritative for the tolerated-partial-failure folding and
-  progress finalization; the per-family passes are additive and best-effort
-  (any non-cancellation failure is left for the terminal pass to sweep up).
-  These streaming passes are **progress-silent** (`progress_total=0`) so the
-  Runs bar stays monotonic on the family + terminal spine — see
+- **Score-as-you-discover streaming (R9 Phase 1, corrected 2026-08-03).** The
+  workflow starts one execution-scoped `discovery_enrichment` activity before
+  source crawling. It polls the durable current-execution membership while
+  `discovery_source_family` activities are still committing jobs, so a broad
+  JobStreaming family does not have to finish all of its search units before the
+  first job can be enriched. After producers finish, the workflow cancels that
+  live consumer and runs a **terminal reconcile** enrichment + fan-out, which
+  remains authoritative for tolerated-partial-failure folding and progress
+  finalization. Per-family preparation fan-outs remain as best-effort backstops.
+  The live enrichment and backstop fan-outs are **progress-silent**
+  (`progress_total=0`) so the Runs bar stays monotonic on the family + terminal
+  spine — see
   [Operations & Events](operations.md#discovery-run-progress). Repeated fan-out
   is idempotent: the deterministic `prep-{idempotency_key}` id plus
   `USE_EXISTING` means N invocations start exactly one workflow per job. A
@@ -98,7 +99,7 @@ Two knobs that look like Temporal concurrency but are not:
   scored-but-not-tailored work and cannot race a fresh job's in-flight SCORE_JOB
   workflow. Every family + terminal fan-out is score-only, so a fresh job
   crossing `pending_score` -> `pending_tailor` mid-tailor is never double-fanned.
-- **Per-job handoff (R9 Phase 2).** Streaming enrichment passes run with
+- **Per-job handoff (R9 Phase 2).** The live enrichment activity runs with
   `per_job_handoff=True`: as each job is individually enriched (committed to
   `pending_score`), the enrichment worker starts that job's `SCORE_JOB`
   preparation workflow **immediately**, before its siblings in the same family
@@ -115,10 +116,9 @@ Two knobs that look like Temporal concurrency but are not:
 - **Parallel source families (R9 Phase 3, gated, default off).** Families are
   processed in batches of the Discovery Runtime `max_parallel_families` value
   (default `1` = sequential = today's behavior). With a value > 1, that many families'
-  **source crawls** run concurrently (`asyncio.gather` over the batch); the
-  batch's streaming enrichment + score-only fan-out then runs **once** afterward,
-  so enrichment (which drains globally) never runs concurrently and concurrent
-  browser use is confined to the batch's source crawls. The cap is resolved at
+  **source crawls** run concurrently (`asyncio.gather` over the batch) while the
+  single execution-scoped enrichment activity consumes committed jobs. The
+  batch's score-only fan-out then runs once afterward. The cap is resolved at
   planning time (in `plan_discovery_sources`) and threaded through the plan, so
   the workflow stays deterministic; results are folded in submission order, and a
   canceled source in any batch cooperatively cancels the whole run. See the
@@ -153,15 +153,15 @@ browser/resource contention is the first-class risk of running families
 concurrently: there is operational history of uncontrolled browser concurrency
 destroying long runs. For a chosen cap `M`:
 
-- **Peak activity slots.** Up to `M` `discovery_source_family` activities run at
-  once, competing with the interleaved enrichment + fan-out + per-job
+- **Peak activity slots.** Up to `M` `discovery_source_family` activities plus
+  one live `discovery_enrichment` activity run at once, competing with fan-out + per-job
   `JobPreparationWorkflow`s from Phases 1–2 for the same
   `worker_activity_slots` setting (default 4). Temporal queues the
-  excess, so `M` above the slot count buys nothing. **Keep `M` ≤ activity
-  slots**, and leave headroom for the streamed prep work.
-- **Peak concurrent browsers.** Enrichment runs once per batch (never
-  concurrently), so browsers overlap only during the batch's source crawls:
-  roughly `M` browser-launching families × the source's own workers. Each
+  excess, so `M` at or above the slot count starves enrichment. **Keep
+  `M + 1` below the activity-slot ceiling** and leave headroom for preparation.
+- **Peak concurrent browsers.** The single enrichment consumer can overlap the
+  batch's source crawls: roughly `M` browser-launching families plus one
+  enrichment browser group, each with its configured internal workers. Each
   headless Chromium is ~300–600 MB. **Size `M` against available memory** — on a
   typical 16 GB developer machine, `M = 2–3` is a safe starting point; measure
   before going higher.

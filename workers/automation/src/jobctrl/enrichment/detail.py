@@ -2676,6 +2676,7 @@ def stream_detail(
 def run_enrichment(
     limit: int = 100,
     workers: int = 1,
+    job_ids: tuple[JobId, ...] = (),
     cancel_event: threading.Event | None = None,
     reset_linkedin_candidates: bool = True,
     on_job_enriched: Callable[[JobId], None] | None = None,
@@ -2692,6 +2693,7 @@ def run_enrichment(
     Args:
         limit: Maximum number of jobs per site to process.
         workers: Number of parallel threads. Default 1 (sequential).
+        job_ids: Optional exact job cohort. Empty preserves the global queue.
 
     Returns:
         Dict with stats: processed, ok, partial, error, tiers.
@@ -2722,6 +2724,7 @@ def run_enrichment(
             conn,
             max_per_site=limit,
             workers=workers,
+            job_ids=job_ids,
             cancel_event=cancel_event,
             reset_linkedin_candidates=reset_linkedin_candidates,
             on_job_enriched=on_job_enriched,
@@ -2731,6 +2734,7 @@ def run_enrichment(
         conn,
         max_per_site=limit,
         workers=workers,
+        job_ids=job_ids,
         cancel_event=cancel_event,
         reset_linkedin_candidates=reset_linkedin_candidates,
         on_job_enriched=on_job_enriched,

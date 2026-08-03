@@ -1668,6 +1668,8 @@ def run_discovery_enrichment_stage(
     progress_completed: int = 0,
     progress_total: int = 0,
     on_job_enriched: Callable[[JobId], None] | None = None,
+    stream_while_discovering: bool = False,
+    discovery_execution: DiscoveryExecutionRef | None = None,
     recovery_key: str | None = None,
 ) -> dict[str, Any]:
     emit_progress = progress_total > 0
@@ -1687,13 +1689,19 @@ def run_discovery_enrichment_stage(
 
     result: dict[str, Any] = {}
     discovery_done = threading.Event()
-    discovery_done.set()
+    if stream_while_discovering:
+        if discovery_execution is None:
+            raise ValueError("streaming discovery enrichment requires an execution scope")
+    else:
+        discovery_done.set()
     drain_kwargs: dict[str, Any] = {
         "workers": max(1, workers),
         "limit": limit,
         "cancel_event": cancel_event,
         "on_job_enriched": on_job_enriched,
     }
+    if stream_while_discovering:
+        drain_kwargs["discovery_execution"] = discovery_execution
     if recovery_key:
         drain_kwargs["recovery_key"] = recovery_key
     _run_discovery_enrichment_until_idle(
@@ -2311,6 +2319,7 @@ def run_discovery_legacy_once(
 def _run_enrich(
     workers: int = 1,
     limit: int = 0,
+    job_ids: tuple[JobId, ...] = (),
     cancel_event: threading.Event | None = None,
     reset_linkedin_candidates: bool = True,
     on_job_enriched: Callable[[JobId], None] | None = None,
@@ -2326,6 +2335,8 @@ def _run_enrich(
         "reset_linkedin_candidates": reset_linkedin_candidates,
         "on_job_enriched": on_job_enriched,
     }
+    if job_ids:
+        enrich_kwargs["job_ids"] = job_ids
     if recovery_key:
         enrich_kwargs["recovery_key"] = recovery_key
     if cancel_event is None:
@@ -2665,6 +2676,34 @@ def _count_retryable_enrichment_blocked() -> int:
     ).fetchone()[0]
 
 
+def _execution_pending_enrichment_job_ids(
+    discovery_execution: DiscoveryExecutionRef,
+) -> tuple[JobId, ...]:
+    """Return pending enrichment work linked to one live Discover execution."""
+
+    conn = get_connection()
+    rows = conn.execute(
+        f"SELECT execution.job_id "
+        "FROM discovery_execution_jobs AS execution "
+        "JOIN jobs ON jobs.tenant_id = execution.tenant_id "
+        "AND jobs.job_id = execution.job_id "
+        f"{db_module._ENRICHMENT_JOIN} {db_module._ACTIVE_STATE_JOIN} "
+        "WHERE execution.tenant_id = ? "
+        "AND execution.discover_workflow_id = ? "
+        "AND execution.discover_run_id = ? "
+        "AND execution.cohort_kind = 'observed_this_run' "
+        f"AND {db_module._ENRICHMENT_PENDING} "
+        f"AND {db_module._NOT_CLOSED_ACTIVE_STATE} "
+        "ORDER BY execution.linked_at, execution.job_id",
+        (
+            discovery_execution.tenant_id,
+            discovery_execution.workflow_id,
+            discovery_execution.temporal_run_id,
+        ),
+    ).fetchall()
+    return tuple(JobId(str(row[0])) for row in rows)
+
+
 def _default_retryable(exc: Exception) -> bool:
     """Classify an uncaught enrichment-worker exception when it carries no code.
 
@@ -2684,6 +2723,7 @@ def _run_discovery_enrichment_until_idle(
     limit: int,
     cancel_event: threading.Event | None = None,
     on_job_enriched: Callable[[JobId], None] | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
     recovery_key: str | None = None,
 ) -> None:
     """Drain the detail-enrichment queue while discovery is still producing jobs.
@@ -2701,8 +2741,17 @@ def _run_discovery_enrichment_until_idle(
         while True:
             if cancel_event is not None and cancel_event.is_set():
                 raise TransientNetworkError("discovery enrichment canceled")
-            pending = _count_pending("enrich")
-            if pending <= 0 and passes == 0:
+            scoped_job_ids = (
+                _execution_pending_enrichment_job_ids(discovery_execution)
+                if discovery_execution is not None
+                else ()
+            )
+            pending = (
+                len(scoped_job_ids)
+                if discovery_execution is not None
+                else _count_pending("enrich")
+            )
+            if pending <= 0 and passes == 0 and discovery_execution is None:
                 # Robots-blocked is deliberately not steady-state pending: if
                 # robots still disallows the URL, counting it forever would
                 # spin the drain. Admit it once at the start of a later
@@ -2730,6 +2779,8 @@ def _run_discovery_enrichment_until_idle(
                 "reset_linkedin_candidates": passes == 0,
                 "on_job_enriched": on_job_enriched,
             }
+            if discovery_execution is not None:
+                enrich_kwargs["job_ids"] = scoped_job_ids
             if recovery_key:
                 enrich_kwargs["recovery_key"] = recovery_key
             enrichment_result = _run_enrich(**enrich_kwargs)
@@ -2737,7 +2788,11 @@ def _run_discovery_enrichment_until_idle(
             pass_site_errors = enrichment_result.get("site_errors") or {}
             if pass_site_errors:
                 site_errors.update(pass_site_errors)
-            after = _count_pending("enrich")
+            after = (
+                len(_execution_pending_enrichment_job_ids(discovery_execution))
+                if discovery_execution is not None
+                else _count_pending("enrich")
+            )
             status = str(enrichment_result.get("status", "ok"))
 
             # "partial" means healthy sites still progressed; only a hard failure
@@ -2775,6 +2830,8 @@ def _run_discovery_enrichment_until_idle(
                             }
                         )
                     return
+                if not discovery_done.is_set():
+                    discovery_done.wait(timeout=_DISCOVERY_ENRICH_POLL_INTERVAL)
             else:
                 no_progress_passes = 0
     except Exception as exc:

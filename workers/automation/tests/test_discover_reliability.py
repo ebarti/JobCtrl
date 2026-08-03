@@ -8,6 +8,7 @@ network-free: scraping and browsers are stubbed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import threading
@@ -280,6 +281,45 @@ async def test_discovery_enrichment_activity_reuses_execution_key_across_activit
         "discover-workflow-1:temporal-run-1",
         "discover-workflow-1:temporal-run-1",
     ]
+
+
+@pytest.mark.asyncio
+async def test_live_enrichment_cancellation_does_not_persist_a_false_terminal_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        lambda **_kwargs: None,
+    )
+
+    async def canceled_run(_fn, **_kwargs):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        canceled_run,
+    )
+
+    monkeypatch.setattr(
+        activities,
+        "begin_pipeline_step_attempt",
+        lambda _scope: pytest.fail("live enrichment must stay runtime-only"),
+    )
+    execution = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id="discover-workflow-1",
+        temporal_run_id="temporal-run-1",
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await activities.discovery_enrichment_activity(
+            DiscoveryEnrichmentActivityInput(
+                tenant_id="local",
+                discovery_execution=execution,
+                stream_while_discovering=True,
+            )
+        )
+
 
 
 @pytest.mark.asyncio
@@ -748,6 +788,39 @@ def test_scrape_site_batch_handoff_error_does_not_break_enrichment(
 # ---------------------------------------------------------------------------
 
 
+def test_live_enrichment_selector_is_scoped_to_the_current_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    current = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id="discover-local",
+        temporal_run_id="run-current",
+    )
+    try:
+        current_job_id = _seed_pending(conn, "https://example.test/current", "Indeed")
+        other_job_id = _seed_pending(conn, "https://example.test/other", "Indeed")
+        conn.executemany(
+            "INSERT INTO discovery_execution_jobs ("
+            "tenant_id, discover_workflow_id, discover_run_id, job_id, "
+            "cohort_kind, source_family, work_plan_state, linked_at"
+            ") VALUES ('local', 'discover-local', ?, ?, 'observed_this_run', "
+            "'jobspy', 'pending', '2026-01-01T00:00:00+00:00')",
+            [
+                ("run-current", str(current_job_id)),
+                ("run-other", str(other_job_id)),
+            ],
+        )
+        conn.commit()
+        monkeypatch.setattr(runner, "get_connection", lambda: conn)
+
+        assert runner._execution_pending_enrichment_job_ids(current) == (current_job_id,)
+    finally:
+        close_connection(db_path)
+
+
 def test_until_idle_records_systemic_failure_with_full_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -847,6 +920,44 @@ def test_until_idle_runs_one_recovery_pass_for_retryable_robots_blocks(
     runner._run_discovery_enrichment_until_idle(done, result, workers=1, limit=0)
 
     assert reset_flags == [True]
+    assert result == {"status": "ok", "passes": 1, "pending": 0}
+
+
+def test_until_idle_live_pass_enriches_only_the_current_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id="discover-local",
+        temporal_run_id="run-current",
+    )
+    current_job_id = JobId("00000000-0000-4000-8000-000000000001")
+    pending = iter([(current_job_id,), (), ()])
+    monkeypatch.setattr(
+        runner,
+        "_execution_pending_enrichment_job_ids",
+        lambda selected: next(pending) if selected == execution else (),
+    )
+    captured_job_ids: list[tuple[JobId, ...]] = []
+
+    def fake_enrich(**kwargs):
+        captured_job_ids.append(kwargs["job_ids"])
+        return {"status": "ok"}
+
+    monkeypatch.setattr(runner, "_run_enrich", fake_enrich)
+
+    done = threading.Event()
+    done.set()
+    result: dict = {}
+    runner._run_discovery_enrichment_until_idle(
+        done,
+        result,
+        workers=1,
+        limit=0,
+        discovery_execution=execution,
+    )
+
+    assert captured_job_ids == [(current_job_id,)]
     assert result == {"status": "ok", "passes": 1, "pending": 0}
 
 

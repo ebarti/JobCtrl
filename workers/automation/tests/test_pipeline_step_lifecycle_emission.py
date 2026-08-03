@@ -346,19 +346,10 @@ async def test_workflow_assigns_deterministic_stream_and_backlog_scope_keys(
 ) -> None:
     calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def fake_enrichment(_payload, _execution_ref, **kwargs):
-        calls.append(("enrichment", dict(kwargs)))
-        return discovery_activities.DiscoveryEnrichmentActivityOutput(status="ok")
-
     async def fake_fanout(_payload, _execution_ref, **kwargs):
         calls.append(("fanout", dict(kwargs)))
         return 0
 
-    monkeypatch.setattr(
-        discovery_workflow,
-        "_run_enrichment_activity",
-        fake_enrichment,
-    )
     monkeypatch.setattr(
         discovery_workflow,
         "_start_preparation_workflows",
@@ -368,6 +359,16 @@ async def test_workflow_assigns_deterministic_stream_and_backlog_scope_keys(
     instance = discovery_workflow.DiscoverWorkflow()
     payload = discovery_workflow.DiscoverWorkflowInput(tenant_id="local")
     execution = _execution()
+    live_enrichment = discovery_workflow._enrichment_activity_input(
+        payload,
+        execution,
+        progress_completed=0,
+        progress_total=0,
+        per_job_handoff=True,
+        stream_while_discovering=True,
+        pipeline_step_item_key="streaming:live",
+        pipeline_step_detail_code="streaming_pass",
+    )
     await instance._stream_family_preparation(
         payload,
         execution,
@@ -375,17 +376,11 @@ async def test_workflow_assigns_deterministic_stream_and_backlog_scope_keys(
     )
     await instance._sweep_preexisting_preparation(payload, execution)
 
+    assert live_enrichment.stream_while_discovering is True
+    assert live_enrichment.per_job_handoff is True
+    assert live_enrichment.pipeline_step_item_key == "streaming:live"
+    assert live_enrichment.pipeline_step_detail_code == "streaming_pass"
     assert calls == [
-        (
-            "enrichment",
-            {
-                "progress_completed": 0,
-                "progress_total": 0,
-                "per_job_handoff": True,
-                "pipeline_step_item_key": "streaming:pass-3",
-                "pipeline_step_detail_code": "streaming_pass",
-            },
-        ),
         (
             "fanout",
             {
