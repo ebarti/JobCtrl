@@ -86,6 +86,10 @@ class DiscoveryEnrichmentActivityInput:
     # The prep params below mirror the fan-out so the per-job start and the
     # reconciling fan-outs converge on exactly one workflow per job.
     per_job_handoff: bool = False
+    # Keep one execution-scoped queue consumer alive while source activities
+    # are still committing jobs. DiscoverWorkflow cancels this activity after
+    # every producer finishes, then runs the terminal reconciliation pass.
+    stream_while_discovering: bool = False
     min_score: int = 7
     validation_mode: str = "normal"
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -285,7 +289,7 @@ async def discovery_source_family_activity(
 async def discovery_enrichment_activity(
     payload: DiscoveryEnrichmentActivityInput,
 ) -> DiscoveryEnrichmentActivityOutput:
-    """Drain detail enrichment after source-family discovery completes."""
+    """Drain detail enrichment, optionally while source discovery is active."""
     from jobctrl.infrastructure.temporal.run_in_activity import (
         run_blocking_with_heartbeat,
     )
@@ -296,14 +300,23 @@ async def discovery_enrichment_activity(
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
-    lifecycle = begin_pipeline_step_attempt(
-        _pipeline_step_scope(
-            payload.discovery_execution,
-            step_kind="enrichment_pass",
-            item_key=payload.pipeline_step_item_key,
-            detail_code=payload.pipeline_step_detail_code,
-            expected_app_dir=payload.expected_app_dir,
-            expected_db_path=payload.expected_db_path,
+    # The producer-lifetime consumer ends through intentional activity
+    # cancellation, while the lifecycle schema has no canceled terminal event.
+    # Keep it runtime-visible but do not persist a false completed/failed step;
+    # per-job stage rows carry its durable work and terminal reconciliation owns
+    # the persisted enrichment-pass boundary.
+    lifecycle = (
+        None
+        if payload.stream_while_discovering
+        else begin_pipeline_step_attempt(
+            _pipeline_step_scope(
+                payload.discovery_execution,
+                step_kind="enrichment_pass",
+                item_key=payload.pipeline_step_item_key,
+                detail_code=payload.pipeline_step_detail_code,
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
+            )
         )
     )
 
@@ -319,6 +332,8 @@ async def discovery_enrichment_activity(
                 progress_completed=payload.progress_completed,
                 progress_total=payload.progress_total,
                 on_job_enriched=on_job_enriched,
+                stream_while_discovering=payload.stream_while_discovering,
+                discovery_execution=payload.discovery_execution,
                 recovery_key=(
                     f"{payload.discovery_execution.workflow_id}:"
                     f"{payload.discovery_execution.temporal_run_id}"
@@ -328,6 +343,7 @@ async def discovery_enrichment_activity(
             ),
             starting_message="discovery enrichment starting",
             progress_message="discovery enrichment still running",
+            poll_interval=1.0 if payload.stream_while_discovering else 15.0,
             on_cancel=cancel_event.set,
             activity_name="discover:enrichment",
         )

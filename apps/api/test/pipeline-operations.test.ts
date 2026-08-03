@@ -390,6 +390,25 @@ describe("pipeline operations read model", () => {
       .reduce((total, [, value]) => total + value, 0)).toBe(counts.eligible);
   });
 
+  it("reports newly linked pending members as waiting for enrichment", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    const member = insertMember(fixture, { key: "awaiting-enrichment", requiredSteps: ["score"] });
+    fixture.db.prepare(
+      `UPDATE discovery_execution_jobs
+          SET preparation_workflow_id = NULL,
+              work_plan_state = 'pending',
+              required_steps_json = NULL
+        WHERE tenant_id = 'local' AND job_id = ?`,
+    ).run(member.jobId);
+
+    expect(stage(snapshot(fixture), "enrich", "current_execution").currentExecution).toMatchObject({
+      eligible: 1,
+      waiting: 1,
+      unknown: 0,
+    });
+  });
+
   it("uses exact PDF joins, merges safe runtime activity inventory, and omits private input data", () => {
     const fixture = createFixture();
     const current = insertMember(fixture, { key: "pdf-current", requiredSteps: ["pdf"] });

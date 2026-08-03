@@ -1095,7 +1095,12 @@ function jobStageCounts(cohortValue: Cohort, stage: (typeof JOB_STAGES)[number])
         : member.work_plan_state === "planned" && requiredSteps(member).includes(stage);
     if (!eligible) continue;
     counts.eligible += 1;
-    addStageState(counts, cohortValue.stageStates.get(member.job_id)?.get(stage)?.state ?? null);
+    const state = cohortValue.stageStates.get(member.job_id)?.get(stage)?.state ?? null;
+    if (stage === "enrich" && state === null && member.work_plan_state === "pending") {
+      counts.waiting += 1;
+    } else {
+      addStageState(counts, state);
+    }
   }
   return counts;
 }

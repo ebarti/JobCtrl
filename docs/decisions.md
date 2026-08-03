@@ -1468,6 +1468,14 @@ Cites: PR #237 (P3).
 
 Status: accepted
 
+Amendment (2026-08-03): the durable per-job commit, not source-family
+completion, is the streaming boundary. `DiscoverWorkflow` now starts one
+execution-scoped enrichment activity alongside source producers, stops it when
+all producers finish, and retains per-family preparation fan-out plus terminal
+enrichment/fan-out as idempotent backstops. This corrects the original
+per-family design, which still forced every JobStreaming search unit inside a
+broad-board family to finish before any of that family's jobs could enrich.
+
 Decision: `DiscoverWorkflow` scores jobs as it discovers them. After **each
 source family completes** it runs enrichment + preparation fan-out for that
 family's jobs immediately, instead of once after every family. Three sub-choices

@@ -102,9 +102,9 @@ plus a terminal enrichment and a terminal preparation step. The counter is
 monotonic: family source activities advance it `0 … N-1`, then the terminal
 reconcile enrichment (`N`) and preparation (`N+1 → N+2`, i.e. 100%) finalize it.
 
-Under **score-as-you-discover streaming (R9 Phase 1)** the per-family enrichment
-and preparation fan-out that run after each family are **progress-silent**: they
-pass `progress_total=0`, which suppresses progress emission
+Under **score-as-you-discover streaming (R9 Phase 1)** the execution-scoped live
+enrichment activity and per-family preparation backstops are
+**progress-silent**: they pass `progress_total=0`, which suppresses progress emission
 (`emit_progress = progress_total > 0`), so the bar advances only on the family +
 terminal spine and can never oscillate or shrink. Scores still appear
 incrementally in the Jobs view because that path is independent of the progress
@@ -216,6 +216,16 @@ attempt, the first terminal result wins. Details contain only allowlisted codes
 and counts, and failures persist bounded error codes rather than exception text.
 The Python and TypeScript projection builders fold the same events and share the
 normal operations-projection watermark/rebuild path.
+
+A current-execution membership with `work_plan_state='pending'` and no enrich
+stage row is an expected pre-dispatch state and is projected as **waiting**.
+Missing stage state after work-plan resolution remains **unknown** and therefore
+actionable; the read model does not hide a genuine projection gap.
+The producer-lifetime live enrichment activity is runtime telemetry, not a
+durable `enrichment_pass` projection: it ends by intentional cancellation and
+the lifecycle schema has no canceled terminal state. Per-job stage rows record
+its durable work; terminal reconciliation owns the persisted enrichment-pass
+boundary.
 
 ### Durable projection recovery and runtime-only visibility
 
