@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from typing import Any, Coroutine
 
@@ -920,7 +921,16 @@ def _run_coroutine(coro: Coroutine[Any, Any, list[WorkflowHandle]]) -> list[Work
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
-    raise RuntimeError("preparation workflow fan-out cannot run inside an active event loop")
+    # Synchronous enrichment callbacks can run inside a library-owned event
+    # loop (for example while JobStreaming is active). The default starter
+    # creates a fresh Temporal client for each invocation, so execute this
+    # self-contained coroutine on a dedicated loop instead of rejecting the
+    # per-job handoff and deferring all preparation to terminal reconciliation.
+    with ThreadPoolExecutor(
+        max_workers=1,
+        thread_name_prefix="jobctrl-preparation-start",
+    ) as executor:
+        return executor.submit(asyncio.run, coro).result()
 
 
 def _batches(items: list[WorkflowStartSpec], size: int) -> list[list[WorkflowStartSpec]]:
