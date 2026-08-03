@@ -263,7 +263,9 @@ def test_load_source_registry_generates_entries_from_packaged_yaml_shapes(tmp_pa
     assert greenhouse.adapter_config["board_token"] == "acme"
 
     assert by_id["jobspy:linkedin"].kind is SourceKind.BROAD_BOARD
+    assert by_id["jobspy:linkedin"].display_name == "JobStreaming LinkedIn"
     assert by_id["jobspy:indeed"].adapter_config["board"] == "indeed"
+    assert by_id["jobspy:indeed"].display_name == "JobStreaming Indeed"
 
 
 def test_load_source_registry_applies_local_product_control_overrides(tmp_path, monkeypatch) -> None:
@@ -317,6 +319,27 @@ def test_load_source_registry_applies_local_product_control_overrides(tmp_path, 
         """,
         (
             str(LOCAL_TENANT),
+            "jobspy:linkedin",
+            "broad_board",
+            "JobSpy linkedin",
+            "system",
+            "lead_generator",
+            "disabled",
+            "broad_board_lead_generator",
+            None,
+            "2026-05-13T00:00:00Z",
+            "2026-05-13T00:00:00Z",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO source_registry_entries (
+          tenant_id, source_id, kind, display_name, owner, priority,
+          state, policy_id, seed_url, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(LOCAL_TENANT),
             "custom-careers",
             "employer_careers_page",
             "Custom Careers",
@@ -353,6 +376,8 @@ def test_load_source_registry_applies_local_product_control_overrides(tmp_path, 
     assert by_id["smart_extract:remoteok"].adapter_config["url"] == "https://remoteok.example/jobs"
     assert by_id["custom-careers"].kind is SourceKind.EMPLOYER_CAREERS_PAGE
     assert by_id["custom-careers"].adapter_config["url"] == "https://example.com/careers"
+    assert by_id["jobspy:linkedin"].display_name == "JobStreaming LinkedIn"
+    assert by_id["jobspy:linkedin"].state is SourceState.DISABLED
 
 
 def test_load_source_registry_coalesces_known_workday_host_aliases(tmp_path, monkeypatch) -> None:

@@ -516,9 +516,9 @@ fixtures are never a production upgrade path.
    preferences. In Settings, opt into tokenless public Levels.fyi salary pages,
    a licensed Levels.fyi feed, or Glassdoor only when you have the matching
    permitted access.
-3. Run Discover from Pipelines, optionally targeting one source for a lighter
-   run. Keep the same workspace open to distinguish the selected execution,
-   its execution sweep, and unrelated global backlog while watching capacity,
+3. Run Discover from Pipelines, optionally targeting one or more sources for a
+   lighter run. Keep the same workspace open to distinguish the selected
+   execution, its execution sweep, and unrelated global backlog while watching capacity,
    task-queue pressure, freshness, active work, and ETA. Stop the active run
    there when needed; after a failure, start over only when the runtime
    inventory confirms no work is still active.

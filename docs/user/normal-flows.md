@@ -130,7 +130,9 @@ model policy, and the shared spend ceiling remain in
 <WorkflowSurfacePanel surface="web">
 
 Open Pipelines, choose the `Discover` tab, set the run limit, internal
-concurrency, source, and dry-run mode, then start the run.
+concurrency, optional source selection, and dry-run mode, then start the run.
+The source picker accepts up to 50 sources; leave it on **All runnable sources**
+to use the complete enabled registry.
 
 </WorkflowSurfacePanel>
 

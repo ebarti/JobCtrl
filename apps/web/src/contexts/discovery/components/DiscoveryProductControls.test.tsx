@@ -31,7 +31,7 @@ describe("DiscoveryProductControls", () => {
   it("renders source health, quarantine review, and manual capture queues", async () => {
     renderWithProviders(<DiscoveryProductControls />);
 
-    await screen.findByText("LinkedIn");
+    await screen.findByText("JobStreaming LinkedIn");
     expect(screen.getByText("jobspy:linkedin")).toBeInTheDocument();
     expect(screen.getByText("Engineering Manager")).toBeInTheDocument();
     expect(
@@ -41,7 +41,9 @@ describe("DiscoveryProductControls", () => {
     expect(screen.getByText("rate limited")).toBeInTheDocument();
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /preview linkedin/i }));
+    await user.click(
+      screen.getByRole("button", { name: /preview jobstreaming linkedin/i }),
+    );
     expect(await screen.findByText("Product Engineer")).toBeInTheDocument();
   });
 

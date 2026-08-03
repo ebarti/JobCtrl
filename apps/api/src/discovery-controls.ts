@@ -1508,7 +1508,7 @@ function rowToSourceSummary(
   return {
     sourceId: row.source_id,
     kind: sourceKind(row.kind),
-    displayName: row.display_name,
+    displayName: canonicalSourceDisplayName(row.source_id, row.display_name),
     owner: row.owner === "system" ? "system" : "user",
     priority: sourcePriority(row.priority),
     state: sourceState(row.state),
@@ -1538,7 +1538,7 @@ function qualityOnlySourceSummary(
   return {
     sourceId,
     kind: sourceKindFromId(sourceId),
-    displayName: sourceId,
+    displayName: canonicalSourceDisplayName(sourceId, sourceId),
     owner: "system",
     priority: "standard",
     state: sourceStateFromRecommended(recommended),
@@ -1607,6 +1607,17 @@ function sourcePriority(value: string): SourcePriorityValue {
   return SOURCE_PRIORITY_VALUES.includes(value as SourcePriorityValue)
     ? (value as SourcePriorityValue)
     : "standard";
+}
+
+const JOBSTREAMING_SOURCE_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  "jobspy:glassdoor": "JobStreaming Glassdoor",
+  "jobspy:indeed": "JobStreaming Indeed",
+  "jobspy:linkedin": "JobStreaming LinkedIn",
+  "jobspy:zip-recruiter": "JobStreaming ZipRecruiter",
+};
+
+function canonicalSourceDisplayName(sourceId: string, fallback: string): string {
+  return JOBSTREAMING_SOURCE_DISPLAY_NAMES[sourceId] ?? fallback;
 }
 
 function sourceKindFromId(sourceId: string): SourceKindValue {

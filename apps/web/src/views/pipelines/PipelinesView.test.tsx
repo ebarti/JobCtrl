@@ -94,7 +94,7 @@ describe("PipelinesView", () => {
     ).toBeEnabled();
     expect(within(tools).getByLabelText("Limit")).toBeInTheDocument();
     expect(within(tools).getByLabelText("Internal concurrency")).toBeInTheDocument();
-    expect(within(tools).getByLabelText("Source")).toBeInTheDocument();
+    expect(within(tools).getByLabelText("Sources")).toBeInTheDocument();
     expect(within(tools).getByRole("checkbox", { name: "Dry run" })).toBeChecked();
 
     await user.click(within(tools).getByRole("tab", { name: "Apply" }));
@@ -104,7 +104,7 @@ describe("PipelinesView", () => {
     expect(within(tools).getByLabelText("Apply model")).toBeInTheDocument();
     expect(within(tools).getByRole("checkbox", { name: "Headless browser" })).toBeInTheDocument();
     expect(within(tools).getByRole("checkbox", { name: "Continuous" })).toBeInTheDocument();
-    expect(within(tools).queryByLabelText("Source")).not.toBeInTheDocument();
+    expect(within(tools).queryByLabelText("Sources")).not.toBeInTheDocument();
   });
 
   it("renders current execution as status-first stage rows and keeps details collapsed", async () => {

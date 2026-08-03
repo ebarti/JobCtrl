@@ -10,6 +10,7 @@ stream without teaching the domain layer about provider classes.
 
 from __future__ import annotations
 
+import math
 import threading
 from dataclasses import dataclass
 from typing import Any
@@ -19,15 +20,18 @@ from jobstreaming import (
     AckMode,
     AdapterRegistry,
     CheckpointStore,
+    Scraper,
     ErrorEvent,
     JobEvent,
     ProgressEvent,
     SearchCompleteEvent,
     SearchRequest,
     SearchStream,
+    Site,
     SiteCompleteEvent,
     WarningEvent,
     build_search_request,
+    default_registry,
     stream_search,
 )
 from jobstreaming.result import jobs_to_dataframe
@@ -107,6 +111,57 @@ class JobStreamingSearchError(RuntimeError):
         super().__init__(f"{failure.site} failed [{failure.code}]: {failure.error_type}: {failure.message}")
 
 
+_TLS_CLIENT_SITES = frozenset({Site.GLASSDOOR, Site.ZIP_RECRUITER})
+
+
+class _IntegralTlsTimeoutAdapter(Scraper):
+    """Normalize JobStreaming 0.0.2's float timeout for tls-client adapters."""
+
+    def __init__(self, delegate: Scraper) -> None:
+        super().__init__(
+            delegate.site,
+            proxies=delegate.proxies,
+            ca_cert=delegate.ca_cert,
+            user_agent=delegate.user_agent,
+        )
+        self._delegate = delegate
+        self.capabilities = delegate.capabilities
+
+    def scrape(
+        self,
+        scraper_input: SearchRequest,
+        context: Any | None = None,
+    ) -> Any:
+        timeout = max(1, math.ceil(scraper_input.request_timeout))
+        normalized = scraper_input.model_copy(
+            update={"request_timeout": timeout},
+        )
+        return self._delegate.scrape(normalized, context=context)
+
+
+def _normalize_tls_adapter_timeouts(
+    registry: AdapterRegistry | None,
+) -> AdapterRegistry:
+    """Keep the pinned provider fingerprint while satisfying tls-client's int ABI."""
+
+    source = registry or default_registry()
+    normalized = source.copy()
+    for site in _TLS_CLIENT_SITES:
+        if site not in source.sites:
+            continue
+
+        def factory(*, _site: Site = site, **kwargs: Any) -> Scraper:
+            return _IntegralTlsTimeoutAdapter(source.create(_site, **kwargs))
+
+        normalized.register(
+            site,
+            factory,
+            replace=True,
+            cursor_schema_version=source.cursor_schema_version(site),
+        )
+    return normalized
+
+
 class JobStreamingGateway:
     """Build and consume the pinned JobStreaming 0.0.2 event contract."""
 
@@ -154,7 +209,7 @@ class JobStreamingGateway:
             retry_backoff=retry_backoff,
             ack_mode=AckMode.EXPLICIT,
             cancel_event=cancel_event,
-            registry=registry,
+            registry=_normalize_tls_adapter_timeouts(registry),
         )
 
     @classmethod

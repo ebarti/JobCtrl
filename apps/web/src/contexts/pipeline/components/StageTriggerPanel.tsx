@@ -9,7 +9,7 @@ import {
   type PipelineValidationMode,
   type Stage,
 } from "@jobctrl/contracts";
-import { IconPlayerPlay } from "@tabler/icons-react";
+import { IconChevronDown, IconPlayerPlay } from "@tabler/icons-react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 
 import {
@@ -28,6 +28,11 @@ import {
 import { Checkbox } from "../../../shared/ui/checkbox.js";
 import { Field, FieldLabel } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../../../shared/ui/popover.js";
 import {
   Select,
   SelectContent,
@@ -58,6 +63,8 @@ import {
 
 type StageActivity = DashboardSummary["activity"][number];
 type StageProgress = DashboardSummary["progress"][number];
+
+const MAX_DISCOVERY_SOURCE_SELECTIONS = 50;
 
 function labelForStage(stage: Stage): string {
   return `${stage.charAt(0).toUpperCase()}${stage.slice(1)}`;
@@ -234,6 +241,20 @@ function isRunningActivity(activity: StageActivity): boolean {
     activity.eventType === "ActionStarted" ||
     activity.eventType === "StageStarted"
   );
+}
+
+function discoverySourceSelectionLabel(
+  selectedSourceIds: readonly string[],
+  sources: readonly SourceRegistryEntrySummary[],
+): string {
+  if (selectedSourceIds.length === 0) return "All runnable sources";
+  if (selectedSourceIds.length > 1) {
+    return `${selectedSourceIds.length} sources selected`;
+  }
+  const selected = sources.find(
+    (source) => source.sourceId === selectedSourceIds[0],
+  );
+  return selected ? sourceOptionLabel(selected) : "Selected source unavailable";
 }
 
 function isFailedActivity(activity: StageActivity): boolean {
@@ -547,12 +568,16 @@ export function StageTriggerPanel({
   const discoverySources = controls.discoverySource
     ? selectableDiscoverySources(sourceRegistry.data?.sources ?? [])
     : [];
-  const selectedDiscoverySourceId = config.discoverySourceId.trim();
-  const selectedDiscoverySourceAvailable =
-    !selectedDiscoverySourceId ||
-    discoverySources.some(
-      (source) => source.sourceId === selectedDiscoverySourceId,
-    );
+  const selectedDiscoverySourceIds = config.discoverySourceIds.slice(
+    0,
+    MAX_DISCOVERY_SOURCE_SELECTIONS,
+  );
+  const availableDiscoverySourceIds = new Set(
+    discoverySources.map((source) => source.sourceId),
+  );
+  const unavailableDiscoverySourceIds = selectedDiscoverySourceIds.filter(
+    (sourceId) => !availableDiscoverySourceIds.has(sourceId),
+  );
   const selectedApplyModel = applyModelValue(config.model);
   const statusStage = submittedStage ?? activeStage;
   const stageActivity = latestStageActivity(dashboardSummary.data, statusStage);
@@ -590,7 +615,26 @@ export function StageTriggerPanel({
   const patchConfig = (patch: Partial<StageTriggerConfig>) => {
     patchStageConfig(activeStage, patch);
   };
+  const toggleDiscoverySource = (sourceId: string, checked: boolean) => {
+    if (
+      checked &&
+      selectedDiscoverySourceIds.length >= MAX_DISCOVERY_SOURCE_SELECTIONS &&
+      !selectedDiscoverySourceIds.includes(sourceId)
+    ) {
+      return;
+    }
+    const nextSourceIds = checked
+      ? [...new Set([...selectedDiscoverySourceIds, sourceId])]
+      : selectedDiscoverySourceIds.filter((selected) => selected !== sourceId);
+    patchConfig({ discoverySourceIds: nextSourceIds });
+  };
   const fieldId = (name: string) => `stage-trigger-${activeStage}-${name}`;
+  const selectedDiscoverySourceLabel = discoverySourceSelectionLabel(
+    selectedDiscoverySourceIds,
+    discoverySources,
+  );
+  const discoverySourceLimitReached =
+    selectedDiscoverySourceIds.length >= MAX_DISCOVERY_SOURCE_SELECTIONS;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -627,8 +671,8 @@ export function StageTriggerPanel({
       headless: controls.headless ? config.headless : false,
       model: controls.applyModel ? selectedApplyModel : "default",
       continuous: controls.continuous ? config.continuous : false,
-      ...(controls.discoverySource && selectedDiscoverySourceId
-        ? { sourceIds: [selectedDiscoverySourceId] }
+      ...(controls.discoverySource && selectedDiscoverySourceIds.length > 0
+        ? { sourceIds: selectedDiscoverySourceIds }
         : {}),
     });
   };
@@ -673,67 +717,100 @@ export function StageTriggerPanel({
         ) : null}
         {controls.discoverySource ? (
           <Field className="field stage-trigger-source-field">
-            <FieldLabel htmlFor={fieldId("source")}>Source</FieldLabel>
-            <Select
-              items={[
-                { label: "All runnable sources", value: null },
-                ...(sourceRegistry.isLoading
-                  ? [{ label: "Loading sources", value: "__loading" }]
-                  : []),
-                ...(sourceRegistry.isError
-                  ? [{ label: "Source list unavailable", value: "__error" }]
-                  : []),
-                ...(!selectedDiscoverySourceAvailable
-                  ? [
-                      {
-                        label: "Selected source unavailable",
-                        value: selectedDiscoverySourceId,
-                      },
-                    ]
-                  : []),
-                ...discoverySources.map((source) => ({
-                  label: sourceOptionLabel(source),
-                  value: source.sourceId,
-                })),
-              ]}
-              value={selectedDiscoverySourceId || null}
-              onValueChange={(value) =>
-                patchConfig({ discoverySourceId: value ?? "" })
-              }
-            >
-              <SelectTrigger
-                id={fieldId("source")}
-                aria-label="Source"
-                className="w-full"
+            <FieldLabel htmlFor={fieldId("sources")}>Sources</FieldLabel>
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button
+                    id={fieldId("sources")}
+                    aria-label="Sources"
+                    aria-describedby={fieldId("sources-summary")}
+                    className="w-full justify-between overflow-hidden font-normal"
+                    type="button"
+                    variant="outline"
+                  />
+                }
               >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value={null}>All runnable sources</SelectItem>
+                <span
+                  className="truncate text-left"
+                  id={fieldId("sources-summary")}
+                >
+                  {selectedDiscoverySourceLabel}
+                </span>
+                <IconChevronDown aria-hidden />
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                aria-label="Discovery sources"
+                className="w-[min(32rem,calc(100vw-2rem))] p-2"
+              >
+                <div
+                  aria-label="Select discovery sources"
+                  className="grid max-h-80 gap-1 overflow-y-auto"
+                  role="group"
+                >
+                  <p className="px-2 py-1 text-muted-foreground">
+                    Select up to {MAX_DISCOVERY_SOURCE_SELECTIONS} sources.
+                  </p>
+                  <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted">
+                    <Checkbox
+                      checked={selectedDiscoverySourceIds.length === 0}
+                      onCheckedChange={() =>
+                        patchConfig({ discoverySourceIds: [] })
+                      }
+                    />
+                    <span>All runnable sources</span>
+                  </label>
                   {sourceRegistry.isLoading ? (
-                    <SelectItem disabled value="__loading">
+                    <span className="px-2 py-1.5 text-muted-foreground">
                       Loading sources
-                    </SelectItem>
+                    </span>
                   ) : null}
                   {sourceRegistry.isError ? (
-                    <SelectItem disabled value="__error">
+                    <span className="px-2 py-1.5 text-destructive">
                       Source list unavailable
-                    </SelectItem>
+                    </span>
                   ) : null}
-                  {!selectedDiscoverySourceAvailable ? (
-                    <SelectItem value={selectedDiscoverySourceId}>
-                      Selected source unavailable
-                    </SelectItem>
-                  ) : null}
-                  {discoverySources.map((source) => (
-                    <SelectItem key={source.sourceId} value={source.sourceId}>
-                      {sourceOptionLabel(source)}
-                    </SelectItem>
+                  {unavailableDiscoverySourceIds.map((sourceId) => (
+                    <label
+                      className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted"
+                      key={sourceId}
+                    >
+                      <Checkbox
+                        checked
+                        onCheckedChange={(checked) =>
+                          toggleDiscoverySource(sourceId, checked)
+                        }
+                      />
+                      <span>Selected source unavailable: {sourceId}</span>
+                    </label>
                   ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+                  {discoverySources.map((source) => {
+                    const label = sourceOptionLabel(source);
+                    return (
+                      <label
+                        className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted"
+                        key={source.sourceId}
+                      >
+                        <Checkbox
+                          checked={selectedDiscoverySourceIds.includes(
+                            source.sourceId,
+                          )}
+                          disabled={
+                            discoverySourceLimitReached &&
+                            !selectedDiscoverySourceIds.includes(source.sourceId)
+                          }
+                          onCheckedChange={(checked) =>
+                            toggleDiscoverySource(source.sourceId, checked)
+                          }
+                        />
+                        <span>{label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </PopoverContent>
+            </Popover>
           </Field>
         ) : null}
         {controls.minScore ? (
