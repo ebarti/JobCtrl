@@ -138,6 +138,8 @@ def _save_failed(
     *,
     retryable: bool,
     attempts: int = 1,
+    error_code: str = "DETAIL_ERROR",
+    error_message: str = "no data extracted",
 ) -> None:
     repo = SqliteEnrichmentRepository(conn)
     now = datetime.now(timezone.utc).isoformat()
@@ -152,8 +154,8 @@ def _save_failed(
             started_at=now,
         ).fail_attempt(
             error=EnrichmentError(
-                code="DETAIL_ERROR",
-                message="no data extracted",
+                code=error_code,
+                message=error_message,
                 retryable=retryable,
             ),
             finished_at=now,
@@ -395,6 +397,32 @@ def test_failed_row_still_reset_for_authenticated_retry(
     assert resolver.calls == []
     repo = SqliteEnrichmentRepository(conn)
     aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
+    assert aggregate is not None
+    assert aggregate.is_pending
+
+
+def test_legacy_public_write_guard_failure_is_reset_despite_nonretryable_flag(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://www.linkedin.com/jobs/view/legacy-public-write"
+    _seed_discovered(conn, url, "linkedin")
+    _save_failed(
+        conn,
+        url,
+        retryable=False,
+        error_code="DETAIL_UNSAFE_URL",
+        error_message="Unsupported public route method: POST",
+    )
+
+    reset_count = _reset_authenticated_linkedin_retry_candidates(
+        conn,
+        job_ids=(_job_id(conn, url),),
+    )
+
+    assert reset_count == 1
+    aggregate = SqliteEnrichmentRepository(conn).load(
+        LOCAL_TENANT, _job_id(conn, url)
+    )
     assert aggregate is not None
     assert aggregate.is_pending
 

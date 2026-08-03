@@ -104,6 +104,7 @@ from jobctrl.infrastructure.network import (
 log = logging.getLogger(__name__)
 
 _SECURITY_OUTCOME_UNSAFE_URL = "unsafe_url"
+_LEGACY_PUBLIC_WRITE_GUARD_ERROR_PREFIX = "Unsupported public route method:"
 
 
 class _OwnerAuthenticatedRobots:
@@ -1986,6 +1987,33 @@ def _last_failed_attempt_retryable(attempts_json: str | None) -> bool:
     return True
 
 
+def _last_failed_attempt_is_legacy_public_write_guard(
+    attempts_json: str | None,
+) -> bool:
+    """Identify failures made obsolete by the public-write guard correction."""
+
+    if not attempts_json:
+        return False
+    try:
+        attempts = json.loads(attempts_json)
+    except Exception:
+        return False
+    if not isinstance(attempts, list):
+        return False
+    for attempt in reversed(attempts):
+        if not isinstance(attempt, dict):
+            continue
+        if str(attempt.get("status") or "").lower() != "failed":
+            continue
+        error = attempt.get("error")
+        if not isinstance(error, dict):
+            return False
+        return str(error.get("message") or "").startswith(
+            _LEGACY_PUBLIC_WRITE_GUARD_ERROR_PREFIX
+        )
+    return False
+
+
 def _default_linkedin_apply_resolver_factory() -> LinkedInApplyUrlResolver:
     """Build the authenticated resolver used for apply-URL recovery.
 
@@ -2094,7 +2122,13 @@ def _reset_authenticated_linkedin_retry_candidates(
                 if _attempt_count_from_json(attempts_json) >= _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS:
                     continue
                 current_status = row["current_status"] if isinstance(row, sqlite3.Row) else row[3]
-                if str(current_status) == "failed" and not _last_failed_attempt_retryable(attempts_json):
+                if (
+                    str(current_status) == "failed"
+                    and not _last_failed_attempt_retryable(attempts_json)
+                    and not _last_failed_attempt_is_legacy_public_write_guard(
+                        attempts_json
+                    )
+                ):
                     continue
                 tenant_id = TenantId(
                     str(row["tenant_id"] if isinstance(row, sqlite3.Row) else row[0])
