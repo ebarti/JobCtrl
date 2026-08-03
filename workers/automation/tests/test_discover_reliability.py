@@ -30,6 +30,14 @@ from jobctrl.discovery.activities import (
 )
 from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+from jobctrl.domain.discovery.scheduler import SourceQualitySnapshot
+from jobctrl.domain.discovery.source_registry import (
+    BROAD_BOARD_LEAD_POLICY,
+    SourceKind,
+    SourcePriority,
+    SourceRegistryEntry,
+    SourceState,
+)
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.enrichment import detail
@@ -376,6 +384,46 @@ def test_source_cancellation_keeps_worker_shutdown_recoverable(
     activities._signal_source_cancellation(cancel_event)
 
     assert cancel_event.is_set() is expected_set
+
+
+def test_explicit_source_selection_overrides_adaptive_quality_demotion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_id = "jobspy:indeed"
+    entry = SourceRegistryEntry(
+        tenant_id=LOCAL_TENANT,
+        source_id=source_id,
+        kind=SourceKind.BROAD_BOARD,
+        display_name="JobStreaming Indeed",
+        owner="system",
+        priority=SourcePriority.LEAD_GENERATOR,
+        state=SourceState.EXPERIMENTAL,
+        policy=BROAD_BOARD_LEAD_POLICY,
+        adapter_config={"board": "indeed"},
+    )
+    monkeypatch.setattr(
+        runner.config,
+        "load_source_registry",
+        lambda **_kwargs: [entry],
+    )
+    monkeypatch.setattr(
+        runner,
+        "_load_source_quality_snapshots",
+        lambda: (
+            SourceQualitySnapshot(
+                source_id=source_id,
+                consecutive_failures=5,
+            ),
+        ),
+    )
+
+    automatic = runner._plan_discovery_schedule(500)
+    selected = runner._plan_discovery_schedule(500, source_ids=(source_id,))
+
+    assert automatic.sources[0].should_run is False
+    assert automatic.sources[0].recommended_state == "disabled"
+    assert selected.sources[0].should_run is True
+    assert selected.sources[0].reason == "no quality history"
 
 
 @pytest.mark.asyncio
