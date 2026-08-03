@@ -294,7 +294,9 @@ describe("<JobsView> realtime UI state", () => {
         )?.artifact.status,
       ).toBe("approved");
       expect(
-        harness.queryClient.getQueryData<ReturnType<typeof makeWorkflowRunDetail>>(
+        harness.queryClient.getQueryData<
+          ReturnType<typeof makeWorkflowRunDetail>
+        >(
           workflowRunsKeys.detail(
             LOCAL_TENANT,
             eventByType.WorkflowCompleted.payload.workflowId,
@@ -308,7 +310,9 @@ describe("<JobsView> realtime UI state", () => {
         artifactsKeys.list(LOCAL_TENANT, { status: "candidate", page: 3 }),
       )?.isInvalidated,
     ).toBe(true);
-    expect(harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(false);
+    expect(harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(
+      false,
+    );
     expect(screen.getByText("1 selected")).toBeInTheDocument();
     expect(
       screen.getByRole("checkbox", { name: `Select ${latestJob.title}` }),
@@ -1193,16 +1197,8 @@ describe("<JobsView> bulk delete integration", () => {
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText("discover candidate")).toBeInTheDocument();
-    const firstMoreActions = screen.getByRole("button", {
-      name: "More actions",
-    });
-    firstMoreActions.focus();
-    await user.keyboard("{Enter}");
     await user.click(
-      within(screen.getByRole("menu", { name: "More actions" })).getByRole(
-        "menuitem",
-        { name: "Select all matching" },
-      ),
+      screen.getByRole("button", { name: "Select all matching" }),
     );
     await waitFor(() =>
       expect(screen.getByText("1 selected")).toBeInTheDocument(),
@@ -1232,16 +1228,8 @@ describe("<JobsView> bulk delete integration", () => {
       },
     );
 
-    const secondMoreActions = screen.getByRole("button", {
-      name: "More actions",
-    });
-    secondMoreActions.focus();
-    await user.keyboard("{Enter}");
     await user.click(
-      within(screen.getByRole("menu", { name: "More actions" })).getByRole(
-        "menuitem",
-        { name: "Select all matching" },
-      ),
+      screen.getByRole("button", { name: "Select all matching" }),
     );
     await waitFor(() =>
       expect(screen.getByText(/2 selected/i)).toBeInTheDocument(),
@@ -1312,24 +1300,11 @@ describe("<JobsView> bulk delete integration", () => {
       ).not.toBeInTheDocument(),
     );
     await user.keyboard("{Escape}");
-    const filteredMoreActions = screen.getByRole("button", {
-      name: "More actions",
-    });
-    filteredMoreActions.focus();
-    await user.keyboard("{Enter}");
     expect(
-      within(screen.getByRole("menu", { name: "More actions" })).getByRole(
-        "menuitem",
-        { name: "Select all matching" },
-      ),
-    ).toHaveAttribute("aria-disabled", "true");
+      screen.getByRole("button", { name: "Select all matching" }),
+    ).toBeDisabled();
 
-    await user.click(
-      within(screen.getByRole("menu", { name: "More actions" })).getByRole(
-        "menuitem",
-        { name: /select page/i },
-      ),
-    );
+    await user.click(screen.getByRole("button", { name: /select page/i }));
     await waitFor(() =>
       expect(screen.getByText(/1 selected/i)).toBeInTheDocument(),
     );

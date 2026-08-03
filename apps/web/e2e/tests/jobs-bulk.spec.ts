@@ -9,17 +9,12 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
   page.on("dialog", (dialog) => void dialog.accept());
 
   await page.goto("/jobs");
-  const moreActions = page.getByRole("button", { name: "More actions" });
-  await expect(moreActions).toBeVisible({
+  await expect(page.getByRole("button", { name: "Select page" })).toBeVisible({
     timeout: 30_000,
   });
-  await moreActions.click();
   await expect(
-    page
-      .getByRole("menu", { name: "More actions" })
-      .getByRole("menuitem", { name: "Select page" }),
+    page.getByRole("button", { name: "Select all matching" }),
   ).toBeVisible();
-  await page.keyboard.press("Escape");
   await expect(page.getByText(/Director of Platform Engineering/i)).toBeVisible(
     {
       timeout: 30_000,
