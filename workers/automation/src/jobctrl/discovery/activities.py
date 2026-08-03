@@ -242,7 +242,7 @@ async def discovery_source_family_activity(
             ),
             starting_message=f"discover {payload.family} starting",
             progress_message=f"discover {payload.family} still running",
-            on_cancel=cancel_event.set,
+            on_cancel=lambda: _signal_source_cancellation(cancel_event),
             activity_name=f"discover:{payload.family}",
         )
         status = str(result.get("status") or "ok")
@@ -283,6 +283,20 @@ async def discovery_source_family_activity(
     if lifecycle is not None:
         lifecycle.completed(item_count=1)
     return output
+
+
+def _signal_source_cancellation(cancel_event: threading.Event) -> None:
+    """Stop source work only for a real Temporal cancellation request.
+
+    Worker shutdown also cancels the local activity coroutine, but Temporal will
+    retry that activity on another worker. Propagating shutdown into the
+    JobStreaming cancellation event would durably terminalize every remaining
+    search unit before the retry can reclaim it.
+    """
+    details = activity.cancellation_details()
+    if details is not None and details.worker_shutdown:
+        return
+    cancel_event.set()
 
 
 @activity.defn(name="discovery_enrichment")

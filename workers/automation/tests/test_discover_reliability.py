@@ -13,6 +13,7 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
@@ -354,6 +355,27 @@ async def test_discovery_source_family_activity_treats_skipped_limit_as_success(
 
     assert result.status == "skipped_limit"
     assert result.source_ids == ["ats:x"]
+
+
+@pytest.mark.parametrize(
+    ("worker_shutdown", "expected_set"),
+    [(True, False), (False, True)],
+)
+def test_source_cancellation_keeps_worker_shutdown_recoverable(
+    monkeypatch: pytest.MonkeyPatch,
+    worker_shutdown: bool,
+    expected_set: bool,
+) -> None:
+    cancel_event = threading.Event()
+    monkeypatch.setattr(
+        activities.activity,
+        "cancellation_details",
+        lambda: SimpleNamespace(worker_shutdown=worker_shutdown),
+    )
+
+    activities._signal_source_cancellation(cancel_event)
+
+    assert cancel_event.is_set() is expected_set
 
 
 @pytest.mark.asyncio
