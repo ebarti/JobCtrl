@@ -74,6 +74,10 @@ Two knobs that look like Temporal concurrency but are not:
 - **DiscoverWorkflow** plans sources once (`plan_discovery_sources`), then runs
   the `discovery_source_family` activities **one family at a time by default**
   (`max_parallel_families=1` in Discovery Runtime's SQLite-backed settings).
+  Planning is intentionally limited to seeding source controls and freezing the
+  execution schedule; it does not run historical-job hygiene before producers
+  start. That potentially expensive audit remains in terminal enrichment, so it
+  preserves the cleanup contract without delaying time to first discovered job.
   This is deliberate isolation:
   each family gets its own activity-level timeout, heartbeat, and retry policy,
   and a family failure is recorded (`families_failed`) while the run continues to
