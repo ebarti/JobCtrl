@@ -130,6 +130,12 @@ LinkedIn resolution, contact research, and apply launch validate their relevant
 initial, redirect, final-page, popup, or subrequest boundaries instead of
 trusting the first URL once.
 
+For public-page rendering, JobCtrl replays only safe public `GET` and `HEAD`
+requests through its DNS-pinned fetcher. It drops public write subrequests such
+as analytics or telemetry `POST`s without replaying them and without rejecting
+the otherwise safe page. A private, loopback, metadata, rebinding, or otherwise
+non-public destination remains fatal for the whole extraction.
+
 Apply adds a stricter browser capability: every intercepted HTTP(S) request
 from its owned Chrome page targets must remain on the canonical origin of the
 approved application URL. The check is enforced in the browser-level CDP guard

@@ -159,8 +159,12 @@ class PublicHttpUrlRouteGuard:
                 return
             method = str(getattr(request, "method", "GET") or "GET").upper()
             if method not in {"GET", "HEAD"}:
-                self.blocked_url = request_url
-                self.blocked_reason = f"Unsupported public route method: {method}"
+                # Public pages commonly emit analytics, telemetry, or API
+                # writes while loading. We deliberately do not replay those
+                # side-effecting requests through the pinned fetcher, but
+                # aborting one must not poison an otherwise safe top-level
+                # read. Non-public destinations above remain fatal and keep
+                # the page-wide blocked marker.
                 playwright_route.abort("blockedbyclient")
                 return
             headers = getattr(request, "headers", {}) or {}
