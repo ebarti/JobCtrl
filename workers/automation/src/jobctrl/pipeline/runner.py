@@ -1147,9 +1147,14 @@ def _plan_discovery_schedule(
     if source_ids:
         selected = set(source_ids)
         registry = [entry for entry in registry if entry.source_id in selected]
+    # An explicit manual selection is an operator override of adaptive quality
+    # demotion. The configured registry state still applies (so hard-disabled
+    # sources remain disabled), but stale failure history must not silently
+    # turn a requested production crawl into ``skipped_quality``.
+    quality = () if source_ids else _load_source_quality_snapshots()
     return scheduler.plan(
         registry=registry,
-        quality=_load_source_quality_snapshots(),
+        quality=quality,
         global_limit=limit,
     )
 
