@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import sys
 from pathlib import Path
@@ -412,6 +413,34 @@ def test_per_job_handoff_id_converges_with_fanout_and_forks_on_reenrichment(
     )
     preparation.start_job_preparation_workflow(job_id, workflow_starter=fake_starter)
     assert requested[-1] != handoff_id
+
+
+def test_per_job_handoff_starts_from_inside_active_event_loop(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
+    monkeypatch.setattr(preparation, "current_scoring_policy_version", lambda *_a, **_k: 4)
+    monkeypatch.setattr(
+        preparation,
+        "_latest_source_event_id",
+        lambda _conn, *, tenant_id, job_id: "event-active-loop",
+    )
+    requested: list[str] = []
+
+    async def fake_starter(spec):
+        requested.append(spec.workflow_id)
+        return SimpleNamespace(id=spec.workflow_id)
+
+    async def invoke_sync_handoff() -> bool:
+        return preparation.start_job_preparation_workflow(
+            _job_id(31),
+            workflow_starter=fake_starter,
+        )
+
+    assert asyncio.run(invoke_sync_handoff()) is True
+    assert len(requested) == 1
+    assert requested[0].startswith("prep-preparation:")
 
 
 def test_preparation_fan_out_starts_batches_of_at_most_25(
