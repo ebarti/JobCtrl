@@ -319,6 +319,12 @@ async def discovery_enrichment_activity(
                 progress_completed=payload.progress_completed,
                 progress_total=payload.progress_total,
                 on_job_enriched=on_job_enriched,
+                recovery_key=(
+                    f"{payload.discovery_execution.workflow_id}:"
+                    f"{payload.discovery_execution.temporal_run_id}"
+                    if payload.discovery_execution is not None
+                    else None
+                ),
             ),
             starting_message="discovery enrichment starting",
             progress_message="discovery enrichment still running",

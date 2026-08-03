@@ -24,6 +24,7 @@ class EnrichActivityInput:
     dry_run: bool = False
     job_ids: tuple[JobId, ...] = ()
     workflow_id: str | None = None
+    workflow_run_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
@@ -92,6 +93,16 @@ async def enrich_activity(payload: EnrichActivityInput) -> EnrichActivityOutput:
                     "workers": payload.workers,
                     "limit": payload.limit,
                     "cancel_event": cancel_event,
+                    **(
+                        {
+                            "recovery_key": (
+                                f"{payload.workflow_id}:"
+                                f"{payload.workflow_run_id or 'initial'}"
+                            )
+                        }
+                        if payload.workflow_id
+                        else {}
+                    ),
                 },
                 mode="workflow",
                 pass_number=1,

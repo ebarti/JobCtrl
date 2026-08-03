@@ -3,8 +3,12 @@ import { expect, type Page, test } from "@playwright/test";
 const browserCapabilitiesResponse = {
   ok: true,
   detectedBrowsers: [
-    { id: "google-chrome", label: "Google Chrome" },
-    { id: "chromium", label: "Chromium" },
+    {
+      id: "google-chrome",
+      label: "Google Chrome",
+      defaultProfileAvailable: true,
+    },
+    { id: "chromium", label: "Chromium", defaultProfileAvailable: false },
   ],
   capabilities: [
     {

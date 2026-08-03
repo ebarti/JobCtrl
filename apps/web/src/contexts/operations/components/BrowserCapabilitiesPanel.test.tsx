@@ -91,13 +91,17 @@ describe("<BrowserCapabilitiesPanel>", () => {
     expect(input).toHaveValue("/Applications/Safari.app");
   });
 
-  it("requires separate consent before copying an authenticated profile", async () => {
+  it("copies a detected authenticated profile without requiring a filesystem path", async () => {
     const user = userEvent.setup();
     const copyLinkedInBrowserProfile = vi.fn();
     const browserCapabilities = vi.fn(async () => ({
       ok: true as const,
       detectedBrowsers: [
-        { id: "google-chrome" as const, label: "Google Chrome" },
+        {
+          id: "google-chrome" as const,
+          label: "Google Chrome",
+          defaultProfileAvailable: true,
+        },
       ],
       capabilities: [
         {
@@ -118,8 +122,8 @@ describe("<BrowserCapabilitiesPanel>", () => {
         },
         {
           id: "authenticated-linkedin-browser" as const,
-          status: "ready" as const,
-          detail: "Browser access is enabled.",
+          status: "missing" as const,
+          detail: "Profile copy is missing.",
           mutable: true,
           enabled: true,
           profileCopyReady: false,
@@ -132,18 +136,22 @@ describe("<BrowserCapabilitiesPanel>", () => {
       }),
     });
 
-    const source = await screen.findByLabelText(
-      "Existing browser profile directory",
+    expect(
+      await screen.findByLabelText("Detected browser profile"),
+    ).toHaveTextContent(
+      "Google Chrome · Default",
     );
+    expect(screen.getByText("Profile copy missing")).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Existing browser user-data directory"),
+    ).not.toBeInTheDocument();
     const consent = screen.getByRole("checkbox", {
       name: /I explicitly consent to copy this profile/i,
     });
     const copy = screen.getByRole("button", {
-      name: "Copy selected profile",
+      name: "Copy Google Chrome profile",
     });
 
-    expect(copy).toBeDisabled();
-    await user.type(source, "/synthetic/chrome-profile");
     expect(copy).toBeDisabled();
     await user.click(consent);
     expect(copy).toBeEnabled();
@@ -153,7 +161,7 @@ describe("<BrowserCapabilitiesPanel>", () => {
       expect(copyLinkedInBrowserProfile).toHaveBeenCalledOnce(),
     );
     expect(copyLinkedInBrowserProfile).toHaveBeenCalledWith({
-      sourceProfilePath: "/synthetic/chrome-profile",
+      detectedBrowserId: "google-chrome",
       consent: true,
       consentMethod: "explicit-ui-v1",
     });

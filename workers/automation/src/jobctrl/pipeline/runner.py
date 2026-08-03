@@ -1668,6 +1668,7 @@ def run_discovery_enrichment_stage(
     progress_completed: int = 0,
     progress_total: int = 0,
     on_job_enriched: Callable[[JobId], None] | None = None,
+    recovery_key: str | None = None,
 ) -> dict[str, Any]:
     emit_progress = progress_total > 0
     if emit_progress:
@@ -1687,13 +1688,18 @@ def run_discovery_enrichment_stage(
     result: dict[str, Any] = {}
     discovery_done = threading.Event()
     discovery_done.set()
+    drain_kwargs: dict[str, Any] = {
+        "workers": max(1, workers),
+        "limit": limit,
+        "cancel_event": cancel_event,
+        "on_job_enriched": on_job_enriched,
+    }
+    if recovery_key:
+        drain_kwargs["recovery_key"] = recovery_key
     _run_discovery_enrichment_until_idle(
         discovery_done,
         result,
-        workers=max(1, workers),
-        limit=limit,
-        cancel_event=cancel_event,
-        on_job_enriched=on_job_enriched,
+        **drain_kwargs,
     )
     final = result or {"status": "ok", "passes": 0, "pending": 0}
 
@@ -2308,26 +2314,24 @@ def _run_enrich(
     cancel_event: threading.Event | None = None,
     reset_linkedin_candidates: bool = True,
     on_job_enriched: Callable[[JobId], None] | None = None,
+    recovery_key: str | None = None,
 ) -> dict:
     """Stage: Detail enrichment — scrape full descriptions and apply URLs."""
     if cancel_event is not None and cancel_event.is_set():
         raise TransientNetworkError("enrichment canceled before start")
     from jobctrl.enrichment.detail import run_enrichment
+    enrich_kwargs: dict[str, Any] = {
+        "limit": limit,
+        "workers": workers,
+        "reset_linkedin_candidates": reset_linkedin_candidates,
+        "on_job_enriched": on_job_enriched,
+    }
+    if recovery_key:
+        enrich_kwargs["recovery_key"] = recovery_key
     if cancel_event is None:
-        stats = run_enrichment(
-            limit=limit,
-            workers=workers,
-            reset_linkedin_candidates=reset_linkedin_candidates,
-            on_job_enriched=on_job_enriched,
-        )
+        stats = run_enrichment(**enrich_kwargs)
     else:
-        stats = run_enrichment(
-            limit=limit,
-            workers=workers,
-            cancel_event=cancel_event,
-            reset_linkedin_candidates=reset_linkedin_candidates,
-            on_job_enriched=on_job_enriched,
-        )
+        stats = run_enrichment(cancel_event=cancel_event, **enrich_kwargs)
     if cancel_event is not None and cancel_event.is_set():
         raise TransientNetworkError("enrichment canceled")
     site_errors = stats.get("site_errors") or {}
@@ -2649,6 +2653,18 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
     return conn.execute(sql).fetchone()[0]
 
 
+def _count_retryable_enrichment_blocked() -> int:
+    """Count robots-blocked jobs eligible for one first-pass recheck."""
+
+    conn = get_connection()
+    return conn.execute(
+        f"SELECT COUNT(*) FROM jobs {db_module._ENRICHMENT_JOIN} "
+        f"{db_module._ACTIVE_STATE_JOIN} "
+        f"WHERE {db_module._ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED} "
+        f"AND {db_module._NOT_CLOSED_ACTIVE_STATE}"
+    ).fetchone()[0]
+
+
 def _default_retryable(exc: Exception) -> bool:
     """Classify an uncaught enrichment-worker exception when it carries no code.
 
@@ -2668,6 +2684,7 @@ def _run_discovery_enrichment_until_idle(
     limit: int,
     cancel_event: threading.Event | None = None,
     on_job_enriched: Callable[[JobId], None] | None = None,
+    recovery_key: str | None = None,
 ) -> None:
     """Drain the detail-enrichment queue while discovery is still producing jobs.
 
@@ -2685,6 +2702,13 @@ def _run_discovery_enrichment_until_idle(
             if cancel_event is not None and cancel_event.is_set():
                 raise TransientNetworkError("discovery enrichment canceled")
             pending = _count_pending("enrich")
+            if pending <= 0 and passes == 0:
+                # Robots-blocked is deliberately not steady-state pending: if
+                # robots still disallows the URL, counting it forever would
+                # spin the drain. Admit it once at the start of a later
+                # workflow so an authenticated profile (or changed policy)
+                # gets a fresh chance.
+                pending = _count_retryable_enrichment_blocked()
             if pending <= 0:
                 if discovery_done.is_set():
                     drained: dict[str, Any] = {
@@ -2699,13 +2723,16 @@ def _run_discovery_enrichment_until_idle(
                 discovery_done.wait(timeout=_DISCOVERY_ENRICH_POLL_INTERVAL)
                 continue
 
-            enrichment_result = _run_enrich(
-                workers=workers,
-                limit=limit,
-                cancel_event=cancel_event,
-                reset_linkedin_candidates=(passes == 0),
-                on_job_enriched=on_job_enriched,
-            )
+            enrich_kwargs: dict[str, Any] = {
+                "workers": workers,
+                "limit": limit,
+                "cancel_event": cancel_event,
+                "reset_linkedin_candidates": passes == 0,
+                "on_job_enriched": on_job_enriched,
+            }
+            if recovery_key:
+                enrich_kwargs["recovery_key"] = recovery_key
+            enrichment_result = _run_enrich(**enrich_kwargs)
             passes += 1
             pass_site_errors = enrichment_result.get("site_errors") or {}
             if pass_site_errors:

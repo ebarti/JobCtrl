@@ -51,7 +51,13 @@ async def test_enrich_activity_invokes_observed_enrich_core():
             ):
                 output: EnrichActivityOutput = await env.client.execute_workflow(
                     _EnrichHarness.run,
-                    EnrichActivityInput(tenant_id="local", limit=5, workers=2),
+                    EnrichActivityInput(
+                        tenant_id="local",
+                        limit=5,
+                        workers=2,
+                        workflow_id="pipeline-workflow-1",
+                        workflow_run_id="pipeline-run-1",
+                    ),
                     id=f"enrich-wf-{uuid.uuid4()}",
                     task_queue=queue,
                 )
@@ -61,9 +67,51 @@ async def test_enrich_activity_invokes_observed_enrich_core():
     assert args[0] == "enrich"
     assert args[2]["workers"] == 2
     assert args[2]["limit"] == 5
+    assert args[2]["recovery_key"] == "pipeline-workflow-1:pipeline-run-1"
     assert kwargs["mode"] == "workflow"
     assert output.status == "ok"
     assert output.elapsed == pytest.approx(0.2)
+
+
+@pytest.mark.asyncio
+async def test_enrich_activity_reuses_recovery_key_across_activity_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        lambda **_kwargs: None,
+    )
+
+    async def fake_run_blocking(fn, **_kwargs):
+        return fn()
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        fake_run_blocking,
+    )
+    observed: list[str | None] = []
+
+    def fake_observed(_stage, _run, kwargs, **_options):
+        observed.append(kwargs.get("recovery_key"))
+        return {"status": "ok"}, 0.1, "ok"
+
+    monkeypatch.setattr(
+        "jobctrl.pipeline.runner._run_stage_observed",
+        fake_observed,
+    )
+    payload = EnrichActivityInput(
+        tenant_id="local",
+        workflow_id="pipeline-workflow-1",
+        workflow_run_id="pipeline-run-1",
+    )
+
+    await enrich_activity(payload)
+    await enrich_activity(payload)
+
+    assert observed == [
+        "pipeline-workflow-1:pipeline-run-1",
+        "pipeline-workflow-1:pipeline-run-1",
+    ]
 
 
 def test_selected_enrichment_uses_only_the_requested_v7_job_id_at_fetch_boundary(
