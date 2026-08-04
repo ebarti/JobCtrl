@@ -8,6 +8,7 @@ implicitly adopted merely because it can be discovered on the host.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
@@ -15,7 +16,7 @@ import shutil
 import stat
 import subprocess
 import sys
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,7 @@ _CORE_BROWSER = "core-browser"
 _OPTIONAL_SYSTEM_BROWSER_CAPABILITIES = frozenset(
     {"auto-apply-browser", "authenticated-linkedin-browser"}
 )
+_PROFILE_COPY_LOCK_NAME = ".linkedin-profile-copy.lock"
 _PROFILE_COPY_SKIP = frozenset(
     {
         "ShaderCache",
@@ -75,7 +77,7 @@ class DetectedBrowserUnavailableError(BrowserCapabilityError):
 
 
 class DetectedBrowserProfileUnavailableError(BrowserCapabilityError):
-    """Raised when a detected browser's default profile is no longer available."""
+    """Raised when an explicitly selected detected profile is no longer available."""
 
 
 class BrowserProfileConsentRequiredError(BrowserCapabilityError):
@@ -121,6 +123,17 @@ class DetectedBrowser:
     id: Literal["google-chrome", "chromium"]
     label: str
     executable: Path
+
+
+@dataclass(frozen=True)
+class DetectedBrowserProfile:
+    """One transient browser profile; host paths stay worker-local."""
+
+    id: str
+    browser_id: Literal["google-chrome", "chromium"]
+    label: str
+    user_data_root: Path
+    directory_name: str
 
 
 def browser_capability_config_path(*, app_dir: Path | None = None) -> Path:
@@ -520,21 +533,174 @@ def _default_browser_profile_locations(browser_id: str) -> tuple[Path, ...]:
     return (Path.home() / relative,)
 
 
-def detect_default_browser_profile(browser_id: str) -> Path | None:
-    """Resolve a standard default-profile source without returning it over RPC."""
+def _detected_profile_id(browser_id: str, root: Path, directory_name: str) -> str:
+    """Build a stable opaque ID without returning a host path or directory name."""
 
-    if not any(browser.id == browser_id for browser in detect_supported_browsers()):
-        return None
+    identity = "\0".join(
+        (
+            browser_id,
+            os.path.abspath(os.fspath(root.expanduser())),
+            directory_name,
+        )
+    )
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+    return f"profile-{digest}"
+
+
+def _safe_profile_label(value: object, fallback: str) -> str:
+    if not isinstance(value, str):
+        return fallback
+    label = "".join(character for character in value.strip() if character.isprintable())
+    if not label:
+        return fallback
+    result: list[str] = []
+    utf16_units = 0
+    for character in label:
+        character_units = 2 if ord(character) > 0xFFFF else 1
+        if utf16_units + character_units > 80:
+            break
+        result.append(character)
+        utf16_units += character_units
+    return "".join(result) or fallback
+
+
+def _profile_metadata(root: Path) -> tuple[dict[str, object], tuple[str, ...]]:
+    """Read bounded Chrome display metadata without following a Local State symlink."""
+
+    root_descriptor = -1
+    source_file = -1
+    try:
+        root_descriptor = _open_directory_no_symlinks(root)
+        status = os.stat("Local State", dir_fd=root_descriptor, follow_symlinks=False)
+    except OSError:
+        if root_descriptor >= 0:
+            os.close(root_descriptor)
+        return {}, ()
+    if not stat.S_ISREG(status.st_mode) or status.st_size > 16 * 1024 * 1024:
+        os.close(root_descriptor)
+        return {}, ()
+    try:
+        source_file = os.open(
+            "Local State",
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=root_descriptor,
+        )
+        if not _same_entry(status, os.fstat(source_file)):
+            return {}, ()
+        chunks: list[bytes] = []
+        size = 0
+        while chunk := os.read(source_file, 1024 * 1024):
+            size += len(chunk)
+            if size > 16 * 1024 * 1024:
+                return {}, ()
+            chunks.append(chunk)
+        payload = json.loads(b"".join(chunks).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}, ()
+    finally:
+        if source_file >= 0:
+            os.close(source_file)
+        if root_descriptor >= 0:
+            os.close(root_descriptor)
+    if not isinstance(payload, dict):
+        return {}, ()
+    profile = payload.get("profile")
+    if not isinstance(profile, dict):
+        return {}, ()
+    info_cache = profile.get("info_cache")
+    metadata = info_cache if isinstance(info_cache, dict) else {}
+    ordered_names: list[str] = []
+    last_used = profile.get("last_used")
+    if isinstance(last_used, str):
+        ordered_names.append(last_used)
+    profiles_order = profile.get("profiles_order")
+    if isinstance(profiles_order, list):
+        ordered_names.extend(name for name in profiles_order if isinstance(name, str))
+    ordered_names.extend(name for name in metadata if isinstance(name, str))
+    return metadata, tuple(dict.fromkeys(ordered_names))
+
+
+def _is_profile_directory_name(name: str) -> bool:
+    return (
+        name == "Default"
+        or name.startswith("Profile ")
+    ) and name not in {"Guest Profile", "System Profile"}
+
+
+def detect_browser_profiles(browser_id: str) -> tuple[DetectedBrowserProfile, ...]:
+    """Discover selectable profiles without adopting, launching, or returning paths."""
+
+    browser = next(
+        (candidate for candidate in detect_supported_browsers() if candidate.id == browser_id),
+        None,
+    )
+    if browser is None:
+        return ()
+    detected: list[DetectedBrowserProfile] = []
     for root in _default_browser_profile_locations(browser_id):
-        default_profile = root / "Default"
-        if (
-            root.is_dir()
-            and not root.is_symlink()
-            and default_profile.is_dir()
-            and not default_profile.is_symlink()
-        ):
-            return root
-    return None
+        if not root.is_dir() or root.is_symlink():
+            continue
+        metadata, metadata_order = _profile_metadata(root)
+        names = list(metadata_order)
+        try:
+            names.extend(
+                entry.name
+                for entry in sorted(root.iterdir(), key=lambda item: item.name)
+                if _is_profile_directory_name(entry.name)
+            )
+        except OSError:
+            continue
+        for directory_name in dict.fromkeys(names):
+            if not _is_profile_directory_name(directory_name):
+                continue
+            profile_directory = root / directory_name
+            if not profile_directory.is_dir() or profile_directory.is_symlink():
+                continue
+            record = metadata.get(directory_name)
+            display_name = record.get("name") if isinstance(record, dict) else None
+            fallback = "Default" if directory_name == "Default" else directory_name
+            detected.append(
+                DetectedBrowserProfile(
+                    id=_detected_profile_id(browser.id, root, directory_name),
+                    browser_id=browser.id,
+                    label=_safe_profile_label(display_name, fallback),
+                    user_data_root=root,
+                    directory_name=directory_name,
+                )
+            )
+
+    label_counts: dict[str, int] = {}
+    for profile in detected:
+        label_counts[profile.label] = label_counts.get(profile.label, 0) + 1
+    return tuple(
+        profile
+        if label_counts[profile.label] == 1
+        else DetectedBrowserProfile(
+            id=profile.id,
+            browser_id=profile.browser_id,
+            label=_safe_profile_label(
+                f"{profile.label} ({profile.directory_name})",
+                profile.label,
+            ),
+            user_data_root=profile.user_data_root,
+            directory_name=profile.directory_name,
+        )
+        for profile in detected
+    )
+
+
+def detect_default_browser_profile(browser_id: str) -> Path | None:
+    """Resolve the legacy default-profile source without returning it over RPC."""
+
+    profile = next(
+        (
+            candidate
+            for candidate in detect_browser_profiles(browser_id)
+            if candidate.directory_name == "Default"
+        ),
+        None,
+    )
+    return profile.user_data_root if profile is not None else None
 
 
 def browser_capability_status(
@@ -774,7 +940,10 @@ def copy_authenticated_linkedin_profile(
     app_dir: Path | None = None,
     catalog: BrowserCapabilityCatalog | None = None,
     _root_entries: frozenset[str] | None = None,
+    _root_entry_renames: dict[str, str] | None = None,
     _sanitize_default_local_state: bool = False,
+    _sanitize_profile_name: str = "Default",
+    _replace_existing: bool = False,
 ) -> Path:
     """Copy a profile only after separate affirmative consent.
 
@@ -790,6 +959,37 @@ def copy_authenticated_linkedin_profile(
         raise BrowserProfileConsentRequiredError("browser profile-copy consent must be explicit")
     resolved_catalog = catalog or load_browser_capability_catalog()
 
+    # The dedicated OS lock has no stale timeout, so a large profile copy cannot
+    # overlap another request or be mistaken for an abandoned lock. Config
+    # transactions remain short and retain their normal stale-lock behavior.
+    with _browser_profile_copy_lock(app_dir=app_dir):
+        return _copy_authenticated_linkedin_profile_locked(
+            source_profile,
+            consent_method=consent_method,
+            app_dir=app_dir,
+            catalog=resolved_catalog,
+            root_entries=_root_entries,
+            root_entry_renames=_root_entry_renames,
+            sanitize_default_local_state=_sanitize_default_local_state,
+            sanitize_profile_name=_sanitize_profile_name,
+            replace_existing=_replace_existing,
+        )
+
+
+def _copy_authenticated_linkedin_profile_locked(
+    source_profile: Path | str,
+    *,
+    consent_method: str,
+    app_dir: Path | None,
+    catalog: BrowserCapabilityCatalog,
+    root_entries: frozenset[str] | None,
+    root_entry_renames: dict[str, str] | None,
+    sanitize_default_local_state: bool,
+    sanitize_profile_name: str,
+    replace_existing: bool,
+) -> Path:
+    """Copy and commit one profile while the dedicated copy lock is held."""
+
     # A profile can be large enough that copying it takes longer than the
     # config-lock stale threshold.  Keep the config transaction limited to
     # inspecting and later recording capability state; the no-follow copy has
@@ -800,7 +1000,7 @@ def copy_authenticated_linkedin_profile(
     destination = capability_profile_dir("authenticated-linkedin-browser", app_dir=app_dir)
     _owned_profile_path(destination, app_dir=app_dir, require_existing=False)
 
-    with _browser_capability_state_transaction(app_dir=app_dir, catalog=resolved_catalog) as state:
+    with _browser_capability_state_transaction(app_dir=app_dir, catalog=catalog) as state:
         record = _record_for(state, "authenticated-linkedin-browser")
         if record is None or not record["enabled"] or record["systemBrowser"] is None:
             raise BrowserCapabilityError("enable authenticated-linkedin-browser before copying a browser profile")
@@ -822,17 +1022,22 @@ def copy_authenticated_linkedin_profile(
                 raise BrowserCapabilityError(
                     "an existing JobCtrl browser-profile destination cannot be adopted without a prior explicit copy"
                 )
-            return _owned_profile_path(destination, app_dir=app_dir, require_existing=True)
+            _owned_profile_path(destination, app_dir=app_dir, require_existing=True)
+            if not replace_existing:
+                return destination
 
-    _copy_profile_tree(
+    replaced_profile_name = _copy_profile_tree(
         source,
         destination,
         app_dir=app_dir,
-        root_entries=_root_entries,
-        sanitize_default_local_state=_sanitize_default_local_state,
+        root_entries=root_entries,
+        root_entry_renames=root_entry_renames,
+        sanitize_default_local_state=sanitize_default_local_state,
+        sanitize_profile_name=sanitize_profile_name,
+        replace_existing=replace_existing,
     )
     try:
-        with _browser_capability_state_transaction(app_dir=app_dir, catalog=resolved_catalog) as state:
+        with _browser_capability_state_transaction(app_dir=app_dir, catalog=catalog) as state:
             record = _record_for(state, "authenticated-linkedin-browser")
             if (
                 record is None
@@ -851,28 +1056,55 @@ def copy_authenticated_linkedin_profile(
                 "method": consent_method,
             }
     except Exception:
-        _discard_owned_profile_copy(destination, app_dir=app_dir)
+        if replaced_profile_name is None:
+            _discard_owned_profile_copy(destination, app_dir=app_dir)
+        else:
+            _restore_replaced_profile_copy(
+                destination,
+                replaced_profile_name,
+                app_dir=app_dir,
+            )
         raise
+    if replaced_profile_name is not None:
+        _discard_replaced_profile_copy(
+            destination,
+            replaced_profile_name,
+            app_dir=app_dir,
+        )
     return destination
 
 
 def copy_detected_authenticated_linkedin_profile(
     detected_browser_id: str,
     *,
+    detected_profile_id: str | None = None,
     consent: bool,
     consent_method: str = "explicit-cli",
     app_dir: Path | None = None,
     catalog: BrowserCapabilityCatalog | None = None,
+    replace_existing: bool = False,
 ) -> Path:
-    """Copy a standard detected profile while keeping its host path worker-local."""
+    """Copy one detected profile while keeping its host path worker-local."""
 
-    source = detect_default_browser_profile(detected_browser_id)
-    if source is None:
+    profiles = detect_browser_profiles(detected_browser_id)
+    selected = next(
+        (
+            profile
+            for profile in profiles
+            if (
+                profile.id == detected_profile_id
+                if detected_profile_id is not None
+                else profile.directory_name == "Default"
+            )
+        ),
+        None,
+    )
+    if selected is None:
         raise DetectedBrowserProfileUnavailableError(
             "the selected detected browser profile is no longer available"
         )
     return copy_authenticated_linkedin_profile(
-        source,
+        selected.user_data_root,
         consent=consent,
         consent_method=consent_method,
         app_dir=app_dir,
@@ -880,8 +1112,11 @@ def copy_detected_authenticated_linkedin_profile(
         # The detected-profile contract names exactly one profile. Chrome's
         # root Local State is needed for platform encryption metadata, but
         # sibling profile directories and their sessions are outside consent.
-        _root_entries=frozenset({"Default", "Local State"}),
+        _root_entries=frozenset({selected.directory_name, "Local State"}),
+        _root_entry_renames={selected.directory_name: "Default"},
         _sanitize_default_local_state=True,
+        _sanitize_profile_name=selected.directory_name,
+        _replace_existing=replace_existing,
     )
 
 
@@ -940,6 +1175,76 @@ def _open_owned_profile_parent(*, app_dir: Path | None):
         os.close(root_descriptor)
 
 
+@contextmanager
+def _browser_profile_copy_lock(*, app_dir: Path | None):
+    """Serialize profile copies with a crash-releasing OS advisory lock."""
+
+    with ExitStack() as stack:
+        try:
+            parent_descriptor = stack.enter_context(
+                _open_owned_profile_parent(app_dir=app_dir)
+            )
+        except OSError as exc:
+            raise BrowserCapabilityError(
+                "JobCtrl browser-profile storage must not use symlinks or invalid ancestors"
+            ) from exc
+        lock_descriptor = -1
+        try:
+            lock_descriptor = os.open(
+                _PROFILE_COPY_LOCK_NAME,
+                os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                stat.S_IRUSR | stat.S_IWUSR,
+                dir_fd=parent_descriptor,
+            )
+            lock_status = os.stat(
+                _PROFILE_COPY_LOCK_NAME,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+            if not stat.S_ISREG(lock_status.st_mode) or not _same_entry(
+                lock_status,
+                os.fstat(lock_descriptor),
+            ):
+                raise OSError("profile-copy lock is not a regular owned file")
+            os.fchmod(lock_descriptor, 0o600)
+            if sys.platform == "win32":
+                import msvcrt
+
+                if os.fstat(lock_descriptor).st_size == 0:
+                    os.write(lock_descriptor, b"\0")
+                    os.fsync(lock_descriptor)
+                os.lseek(lock_descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(lock_descriptor, msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+        except OSError as exc:
+            if lock_descriptor >= 0:
+                os.close(lock_descriptor)
+            raise BrowserCapabilityError(
+                "the browser profile copy lock is unavailable"
+            ) from exc
+
+        try:
+            yield
+        finally:
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+
+                    os.lseek(lock_descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(lock_descriptor, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+            except OSError:
+                # Closing the descriptor releases the process-owned lock.
+                pass
+            os.close(lock_descriptor)
+
+
 def _same_entry(first: os.stat_result, second: os.stat_result) -> bool:
     return (first.st_dev, first.st_ino) == (second.st_dev, second.st_ino)
 
@@ -949,21 +1254,25 @@ def _copy_profile_directory(
     destination_descriptor: int,
     *,
     root_entries: frozenset[str] | None = None,
+    root_entry_renames: dict[str, str] | None = None,
 ) -> None:
     for name in os.listdir(source_descriptor):
         if name in _PROFILE_COPY_SKIP or (
             root_entries is not None and name not in root_entries
         ):
             continue
+        destination_name = (
+            root_entry_renames.get(name, name) if root_entry_renames else name
+        )
         source_status = os.stat(name, dir_fd=source_descriptor, follow_symlinks=False)
         if stat.S_ISDIR(source_status.st_mode):
             child_source = os.open(name, _directory_open_flags(), dir_fd=source_descriptor)
             try:
                 if not _same_entry(source_status, os.fstat(child_source)):
                     raise BrowserCapabilityError("the selected browser profile changed while being copied")
-                os.mkdir(name, mode=0o700, dir_fd=destination_descriptor)
+                os.mkdir(destination_name, mode=0o700, dir_fd=destination_descriptor)
                 child_destination = os.open(
-                    name,
+                    destination_name,
                     _directory_open_flags(),
                     dir_fd=destination_descriptor,
                 )
@@ -986,7 +1295,7 @@ def _copy_profile_directory(
             destination_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
             destination_flags |= getattr(os, "O_NOFOLLOW", 0)
             destination_file = os.open(
-                name,
+                destination_name,
                 destination_flags,
                 stat.S_IRUSR | stat.S_IWUSR,
                 dir_fd=destination_descriptor,
@@ -1032,8 +1341,63 @@ def _discard_owned_profile_copy(destination: Path, *, app_dir: Path | None) -> N
         raise BrowserCapabilityError("the copied browser profile could not be discarded") from exc
 
 
-def _sanitize_detected_default_local_state_at(directory_descriptor: int) -> None:
-    """Sanitize Local State inside an unpublished Default-profile staging tree."""
+def _restore_replaced_profile_copy(
+    destination: Path,
+    replaced_name: str,
+    *,
+    app_dir: Path | None,
+) -> None:
+    """Restore the prior owned copy when post-publish state validation fails."""
+
+    expected_prefix = f".{destination.name}.replaced-"
+    if (
+        not replaced_name.startswith(expected_prefix)
+        or Path(replaced_name).name != replaced_name
+    ):
+        raise BrowserCapabilityError("the previous browser profile copy could not be restored")
+    _owned_profile_path(destination, app_dir=app_dir, require_existing=True)
+    try:
+        with _open_owned_profile_parent(app_dir=app_dir) as parent_descriptor:
+            _remove_profile_tree_at(parent_descriptor, destination.name)
+            os.rename(
+                replaced_name,
+                destination.name,
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=parent_descriptor,
+            )
+    except OSError as exc:
+        raise BrowserCapabilityError("the previous browser profile copy could not be restored") from exc
+    _owned_profile_path(destination, app_dir=app_dir, require_existing=True)
+
+
+def _discard_replaced_profile_copy(
+    destination: Path,
+    replaced_name: str,
+    *,
+    app_dir: Path | None,
+) -> None:
+    """Remove the prior copy after the replacement and state transaction succeed."""
+
+    expected_prefix = f".{destination.name}.replaced-"
+    if (
+        not replaced_name.startswith(expected_prefix)
+        or Path(replaced_name).name != replaced_name
+    ):
+        return
+    try:
+        with _open_owned_profile_parent(app_dir=app_dir) as parent_descriptor:
+            _remove_profile_tree_at(parent_descriptor, replaced_name)
+    except OSError:
+        # The active copy is already committed. Preserve the inactive owned
+        # recovery copy instead of risking damage to the working profile.
+        pass
+
+
+def _sanitize_detected_profile_local_state_at(
+    directory_descriptor: int,
+    source_profile_name: str,
+) -> None:
+    """Sanitize Local State inside an unpublished single-profile staging tree."""
 
     source_file = -1
     replacement_file = -1
@@ -1082,8 +1446,13 @@ def _sanitize_detected_default_local_state_at(directory_descriptor: int) -> None
                 "profiles_order": ["Default"],
             }
             info_cache = profile.get("info_cache")
-            if isinstance(info_cache, dict) and isinstance(info_cache.get("Default"), dict):
-                sanitized_profile["info_cache"] = {"Default": info_cache["Default"]}
+            selected_info = (
+                info_cache.get(source_profile_name)
+                if isinstance(info_cache, dict)
+                else None
+            )
+            if isinstance(selected_info, dict):
+                sanitized_profile["info_cache"] = {"Default": selected_info}
             sanitized["profile"] = sanitized_profile
         encoded = json.dumps(
             sanitized,
@@ -1130,24 +1499,39 @@ def _copy_profile_tree(
     *,
     app_dir: Path | None,
     root_entries: frozenset[str] | None = None,
+    root_entry_renames: dict[str, str] | None = None,
     sanitize_default_local_state: bool = False,
-) -> None:
+    sanitize_profile_name: str = "Default",
+    replace_existing: bool = False,
+) -> str | None:
     """Copy through no-follow directory FDs and publish with an anchored rename."""
 
     _owned_profile_path(destination, app_dir=app_dir, require_existing=False)
     source_descriptor = -1
     parent_descriptor = -1
     staging_name = f".{destination.name}.copy-{secrets.token_hex(12)}"
+    replaced_name = f".{destination.name}.replaced-{secrets.token_hex(12)}"
     published = False
+    replaced_existing = False
     try:
         source_descriptor = _open_directory_no_symlinks(source)
         with _open_owned_profile_parent(app_dir=app_dir) as opened_parent:
             parent_descriptor = os.dup(opened_parent)
+            destination_exists = False
             try:
-                os.stat(destination.name, dir_fd=parent_descriptor, follow_symlinks=False)
+                destination_status = os.stat(
+                    destination.name,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+                destination_exists = True
             except FileNotFoundError:
-                pass
-            else:
+                destination_status = None
+            if destination_exists and (
+                not replace_existing
+                or destination_status is None
+                or not stat.S_ISDIR(destination_status.st_mode)
+            ):
                 raise BrowserCapabilityError(
                     "an existing JobCtrl browser-profile destination cannot be adopted without a prior explicit copy"
                 )
@@ -1163,11 +1547,23 @@ def _copy_profile_tree(
                     source_descriptor,
                     staging_descriptor,
                     root_entries=root_entries,
+                    root_entry_renames=root_entry_renames,
                 )
                 if sanitize_default_local_state:
-                    _sanitize_detected_default_local_state_at(staging_descriptor)
+                    _sanitize_detected_profile_local_state_at(
+                        staging_descriptor,
+                        sanitize_profile_name,
+                    )
             finally:
                 os.close(staging_descriptor)
+            if destination_exists:
+                os.rename(
+                    destination.name,
+                    replaced_name,
+                    src_dir_fd=parent_descriptor,
+                    dst_dir_fd=parent_descriptor,
+                )
+                replaced_existing = True
             os.rename(
                 staging_name,
                 destination.name,
@@ -1176,8 +1572,23 @@ def _copy_profile_tree(
             )
             published = True
             _owned_profile_path(destination, app_dir=app_dir, require_existing=True)
+            return replaced_name if replaced_existing else None
     except Exception as exc:
         if parent_descriptor >= 0:
+            if replaced_existing:
+                try:
+                    if published:
+                        _remove_profile_tree_at(parent_descriptor, destination.name)
+                    os.rename(
+                        replaced_name,
+                        destination.name,
+                        src_dir_fd=parent_descriptor,
+                        dst_dir_fd=parent_descriptor,
+                    )
+                    replaced_existing = False
+                    published = False
+                except OSError:
+                    pass
             cleanup_name = destination.name if published else staging_name
             try:
                 _remove_profile_tree_at(parent_descriptor, cleanup_name)
@@ -1201,6 +1612,7 @@ __all__ = [
     "BrowserCapabilityUnavailableError",
     "BrowserProfileConsentRequiredError",
     "DetectedBrowser",
+    "DetectedBrowserProfile",
     "DetectedBrowserProfileUnavailableError",
     "DetectedBrowserUnavailableError",
     "BROWSER_CAPABILITIES_CONFIG_KEY",
@@ -1210,6 +1622,7 @@ __all__ = [
     "browser_capability_config_path",
     "copy_authenticated_linkedin_profile",
     "copy_detected_authenticated_linkedin_profile",
+    "detect_browser_profiles",
     "detect_default_browser_profile",
     "detect_supported_browsers",
     "disable_browser_capability",

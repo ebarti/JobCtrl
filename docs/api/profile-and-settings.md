@@ -48,10 +48,10 @@ enter the system. They do not hold provider credentials or raw feed contents.
 | `POST /v1/providers/codex/verify` | Explicitly validate and import a reusable normal Codex CLI `auth.json` once when isolated auth is absent, then verify isolated auth without a model call. |
 | `GET /v1/extension/pairing-token` | Read the local extension pairing state. |
 | `POST /v1/extension/pairing-token/rotate` | Rotate the token immediately and disconnect existing extension clients. |
-| `GET /v1/browser-capabilities` | Read managed/optional capability states plus transient supported-browser candidates as ID/label/profile-availability records; no local path is returned or adopted. |
+| `GET /v1/browser-capabilities` | Read managed/optional capability states plus transient supported-browser candidates and their selectable profiles as opaque IDs and safe labels; no local path is returned or adopted. |
 | `POST /v1/browser-capabilities/:capabilityId/enable` | Explicitly adopt exactly one transient `detectedBrowserId` or one write-only `executablePath` for an optional capability. |
 | `POST /v1/browser-capabilities/:capabilityId/disable` | Disable an optional capability immediately. |
-| `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy` | Copy exactly one detected default profile by opaque browser ID or one write-only manual source path, only with explicit consent. |
+| `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy` | Copy exactly one explicitly selected detected profile by opaque browser/profile IDs, retain the legacy browser-only Default arm, or accept one write-only manual source path; every arm requires explicit consent. |
 
 Credential responses expose enough state for the UI to show whether a provider
 is configured, but do not return stored secret material. Guided provider
@@ -65,9 +65,10 @@ never overwrites JobCtrl's existing isolated auth or changes the normal Codex
 home. It invokes the same copy-once behavior retained by setup and generation.
 
 Browser detection is read-only discovery, not consent. The list response may
-offer supported Chrome/Chromium candidates as bounded `{ id, label }` values;
-the executable path stays inside the worker and nothing is launched, copied,
-or persisted. Enablement is a strict XOR input: send either
+offer supported Chrome/Chromium candidates as bounded `{ id, label, profiles }`
+values. Each profile contains only an opaque transient ID and Chrome's bounded
+display label; executable, user-data, and profile paths stay inside the worker,
+and nothing is launched, copied, or persisted. Enablement is a strict XOR input: send either
 `{ detectedBrowserId }` or `{ executablePath }`, never both or neither. A
 detected ID is resolved again at mutation time. If it is stale or no longer
 available, enablement fails closed with `400 browser_capability_failed` and

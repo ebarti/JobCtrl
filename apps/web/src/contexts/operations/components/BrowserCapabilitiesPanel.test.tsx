@@ -101,6 +101,16 @@ describe("<BrowserCapabilitiesPanel>", () => {
           id: "google-chrome" as const,
           label: "Google Chrome",
           defaultProfileAvailable: true,
+          profiles: [
+            {
+              id: "profile-0123456789abcdef0123456789abcdef",
+              label: "Default",
+            },
+            {
+              id: "profile-fedcba9876543210fedcba9876543210",
+              label: "E",
+            },
+          ],
         },
       ],
       capabilities: [
@@ -145,11 +155,15 @@ describe("<BrowserCapabilitiesPanel>", () => {
     expect(
       screen.queryByLabelText("Existing browser user-data directory"),
     ).not.toBeInTheDocument();
+    const profileSelect = screen.getByLabelText("Detected browser profile");
+    await user.click(profileSelect);
+    await user.click(await screen.findByRole("option", { name: "Google Chrome · E" }));
+    expect(profileSelect).toHaveTextContent("Google Chrome · E");
     const consent = screen.getByRole("checkbox", {
       name: /I explicitly consent to copy this profile/i,
     });
     const copy = screen.getByRole("button", {
-      name: "Copy Google Chrome profile",
+      name: "Copy E profile",
     });
 
     expect(copy).toBeDisabled();
@@ -162,6 +176,7 @@ describe("<BrowserCapabilitiesPanel>", () => {
     );
     expect(copyLinkedInBrowserProfile).toHaveBeenCalledWith({
       detectedBrowserId: "google-chrome",
+      detectedProfileId: "profile-fedcba9876543210fedcba9876543210",
       consent: true,
       consentMethod: "explicit-ui-v1",
     });

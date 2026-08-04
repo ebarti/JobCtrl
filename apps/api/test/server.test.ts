@@ -10689,8 +10689,23 @@ describe("local TypeScript API", () => {
         },
       ],
       detectedBrowsers: [
-        { id: "google-chrome", label: "Google Chrome", defaultProfileAvailable: true },
-        { id: "chromium", label: "Chromium", defaultProfileAvailable: false },
+        {
+          id: "google-chrome",
+          label: "Google Chrome",
+          defaultProfileAvailable: true,
+          profiles: [
+            {
+              id: "profile-0123456789abcdef0123456789abcdef",
+              label: "Signed in",
+            },
+          ],
+        },
+        {
+          id: "chromium",
+          label: "Chromium",
+          defaultProfileAvailable: false,
+          profiles: [],
+        },
       ],
     };
     const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
@@ -10719,6 +10734,7 @@ describe("local TypeScript API", () => {
       url: "/v1/browser-capabilities/authenticated-linkedin-browser/profile-copy",
       payload: {
         detectedBrowserId: "google-chrome",
+        detectedProfileId: "profile-0123456789abcdef0123456789abcdef",
         consent: true,
         consentMethod: "explicit-ui-v1",
       },
@@ -10740,6 +10756,7 @@ describe("local TypeScript API", () => {
     });
     expect(call).toHaveBeenNthCalledWith(4, "browser_profile_copy", {
       detectedBrowserId: "google-chrome",
+      detectedProfileId: "profile-0123456789abcdef0123456789abcdef",
       consent: true,
       consentMethod: "explicit-ui-v1",
     });

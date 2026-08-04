@@ -24,6 +24,7 @@ from jobctrl.browser_capabilities import (
     browser_capability_config_path,
     copy_authenticated_linkedin_profile,
     copy_detected_authenticated_linkedin_profile,
+    detect_browser_profiles,
     detect_default_browser_profile,
     detect_supported_browsers,
     disable_browser_capability,
@@ -142,6 +143,102 @@ def test_default_profile_detection_requires_a_supported_browser_and_standard_def
     assert detect_default_browser_profile("chromium") is None
 
 
+def test_profile_detection_lists_safe_labels_with_opaque_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobctrl import browser_capabilities
+
+    profile_root = tmp_path / "Chrome"
+    (profile_root / "Default").mkdir(parents=True)
+    (profile_root / "Profile 1").mkdir()
+    (profile_root / "System Profile").mkdir()
+    (profile_root / "Local State").write_text(
+        json.dumps(
+            {
+                "profile": {
+                    "last_used": "Profile 1",
+                    "profiles_order": ["Profile 1", "Default"],
+                    "info_cache": {
+                        "Default": {"name": "Personal"},
+                        "Profile 1": {"name": "Work"},
+                        "System Profile": {"name": "Private system data"},
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "detect_supported_browsers",
+        lambda: (
+            DetectedBrowser(
+                "google-chrome",
+                "Google Chrome",
+                tmp_path / "Chrome executable",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_default_browser_profile_locations",
+        lambda browser_id: (profile_root,) if browser_id == "google-chrome" else (),
+    )
+
+    profiles = detect_browser_profiles("google-chrome")
+
+    assert [profile.label for profile in profiles] == ["Work", "Personal"]
+    assert all(
+        profile.id.startswith("profile-") and len(profile.id) == 40
+        for profile in profiles
+    )
+    assert str(profile_root) not in repr(
+        [(profile.id, profile.label) for profile in profiles]
+    )
+
+
+def test_profile_detection_bounds_non_bmp_labels_to_the_rpc_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobctrl import browser_capabilities
+
+    profile_root = tmp_path / "Chrome"
+    (profile_root / "Default").mkdir(parents=True)
+    (profile_root / "Local State").write_text(
+        json.dumps(
+            {
+                "profile": {
+                    "info_cache": {
+                        "Default": {"name": "🚀" * 80},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "detect_supported_browsers",
+        lambda: (
+            DetectedBrowser(
+                "google-chrome",
+                "Google Chrome",
+                tmp_path / "Chrome executable",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_default_browser_profile_locations",
+        lambda _browser_id: (profile_root,),
+    )
+
+    (profile,) = detect_browser_profiles("google-chrome")
+
+    assert len(profile.label.encode("utf-16-le")) // 2 == 80
+    assert profile.label == "🚀" * 40
+
+
 def test_detected_profile_copy_resolves_the_host_path_without_a_caller_path(
     tmp_path: Path, browser_executable: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -206,6 +303,69 @@ def test_detected_profile_copy_resolves_the_host_path_without_a_caller_path(
     assert not (destination / "Profile 1").exists()
 
 
+def test_detected_profile_copy_normalizes_the_explicitly_selected_profile(
+    tmp_path: Path, browser_executable: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobctrl import browser_capabilities
+
+    profile_root = tmp_path / "Chrome profile"
+    (profile_root / "Default").mkdir(parents=True)
+    (profile_root / "Default" / "Cookies").write_text("default", encoding="utf-8")
+    (profile_root / "Profile 1").mkdir()
+    (profile_root / "Profile 1" / "Cookies").write_text("selected", encoding="utf-8")
+    (profile_root / "Local State").write_text(
+        json.dumps(
+            {
+                "os_crypt": {"encrypted_key": "required"},
+                "profile": {
+                    "last_used": "Profile 1",
+                    "info_cache": {
+                        "Default": {"name": "Default"},
+                        "Profile 1": {"name": "Signed in"},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "detect_supported_browsers",
+        lambda: (
+            DetectedBrowser("google-chrome", "Google Chrome", browser_executable),
+        ),
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_default_browser_profile_locations",
+        lambda _browser_id: (profile_root,),
+    )
+    enable_system_browser_capability(
+        "authenticated-linkedin-browser", browser_executable, app_dir=tmp_path
+    )
+    selected = next(
+        profile
+        for profile in detect_browser_profiles("google-chrome")
+        if profile.label == "Signed in"
+    )
+
+    destination = copy_detected_authenticated_linkedin_profile(
+        "google-chrome",
+        detected_profile_id=selected.id,
+        consent=True,
+        app_dir=tmp_path,
+    )
+
+    assert (destination / "Default" / "Cookies").read_text(encoding="utf-8") == "selected"
+    assert not (destination / "Profile 1").exists()
+    copied_local_state = json.loads(
+        (destination / "Local State").read_text(encoding="utf-8")
+    )
+    assert copied_local_state["profile"]["info_cache"] == {
+        "Default": {"name": "Signed in"}
+    }
+
+
 def test_detected_profile_metadata_is_sanitized_before_destination_publish(
     tmp_path: Path,
     browser_executable: Path,
@@ -238,8 +398,10 @@ def test_detected_profile_metadata_is_sanitized_before_destination_publish(
     )
     monkeypatch.setattr(
         browser_capabilities,
-        "_sanitize_detected_default_local_state_at",
-        lambda _descriptor: (_ for _ in ()).throw(RuntimeError("interrupted")),
+        "_sanitize_detected_profile_local_state_at",
+        lambda _descriptor, _profile_name: (_ for _ in ()).throw(
+            RuntimeError("interrupted")
+        ),
     )
 
     with pytest.raises(BrowserCapabilityError):
@@ -254,6 +416,345 @@ def test_detected_profile_metadata_is_sanitized_before_destination_publish(
         app_dir=tmp_path,
     ).exists()
     assert list((tmp_path / "browser-profiles").glob(".*.copy-*")) == []
+
+
+def test_explicit_detected_profile_replaces_an_existing_owned_copy_after_staging(
+    tmp_path: Path, browser_executable: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobctrl import browser_capabilities
+
+    profile_root = tmp_path / "Chrome profile"
+    (profile_root / "Default").mkdir(parents=True)
+    (profile_root / "Default" / "Cookies").write_text("old", encoding="utf-8")
+    (profile_root / "Profile 1").mkdir()
+    (profile_root / "Profile 1" / "Cookies").write_text("new", encoding="utf-8")
+    (profile_root / "Local State").write_text(
+        json.dumps(
+            {
+                "profile": {
+                    "info_cache": {
+                        "Default": {"name": "Old"},
+                        "Profile 1": {"name": "New"},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "detect_supported_browsers",
+        lambda: (
+            DetectedBrowser("google-chrome", "Google Chrome", browser_executable),
+        ),
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_default_browser_profile_locations",
+        lambda _browser_id: (profile_root,),
+    )
+    enable_system_browser_capability(
+        "authenticated-linkedin-browser", browser_executable, app_dir=tmp_path
+    )
+    copy_detected_authenticated_linkedin_profile(
+        "google-chrome", consent=True, app_dir=tmp_path
+    )
+    selected = next(
+        profile
+        for profile in detect_browser_profiles("google-chrome")
+        if profile.label == "New"
+    )
+
+    destination = copy_detected_authenticated_linkedin_profile(
+        "google-chrome",
+        detected_profile_id=selected.id,
+        consent=True,
+        app_dir=tmp_path,
+        replace_existing=True,
+    )
+
+    assert (destination / "Default" / "Cookies").read_text(encoding="utf-8") == "new"
+    assert list((tmp_path / "browser-profiles").glob(".*.replaced-*")) == []
+
+
+def test_failed_detected_profile_replacement_preserves_the_existing_copy(
+    tmp_path: Path, browser_executable: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobctrl import browser_capabilities
+
+    profile_root = tmp_path / "Chrome profile"
+    (profile_root / "Default").mkdir(parents=True)
+    (profile_root / "Default" / "Cookies").write_text("old", encoding="utf-8")
+    (profile_root / "Profile 1").mkdir()
+    (profile_root / "Profile 1" / "Cookies").write_text("new", encoding="utf-8")
+    (profile_root / "Local State").write_text(
+        json.dumps(
+            {
+                "profile": {
+                    "info_cache": {
+                        "Default": {"name": "Old"},
+                        "Profile 1": {"name": "New"},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "detect_supported_browsers",
+        lambda: (
+            DetectedBrowser("google-chrome", "Google Chrome", browser_executable),
+        ),
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_default_browser_profile_locations",
+        lambda _browser_id: (profile_root,),
+    )
+    enable_system_browser_capability(
+        "authenticated-linkedin-browser", browser_executable, app_dir=tmp_path
+    )
+    destination = copy_detected_authenticated_linkedin_profile(
+        "google-chrome", consent=True, app_dir=tmp_path
+    )
+    selected = next(
+        profile
+        for profile in detect_browser_profiles("google-chrome")
+        if profile.label == "New"
+    )
+    original_copy_directory = browser_capabilities._copy_profile_directory
+
+    def interrupted_copy(*args, **kwargs) -> None:
+        original_copy_directory(*args, **kwargs)
+        raise RuntimeError("interrupted before publish")
+
+    monkeypatch.setattr(browser_capabilities, "_copy_profile_directory", interrupted_copy)
+
+    with pytest.raises(BrowserCapabilityError):
+        copy_detected_authenticated_linkedin_profile(
+            "google-chrome",
+            detected_profile_id=selected.id,
+            consent=True,
+            app_dir=tmp_path,
+            replace_existing=True,
+        )
+
+    assert (destination / "Default" / "Cookies").read_text(encoding="utf-8") == "old"
+    assert list((tmp_path / "browser-profiles").glob(".*.copy-*")) == []
+
+
+def test_profile_replacement_restores_existing_copy_when_capability_changes_after_publish(
+    tmp_path: Path, browser_executable: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobctrl import browser_capabilities
+
+    profile_root = tmp_path / "Chrome profile"
+    (profile_root / "Default").mkdir(parents=True)
+    (profile_root / "Default" / "Cookies").write_text("old", encoding="utf-8")
+    (profile_root / "Profile 1").mkdir()
+    (profile_root / "Profile 1" / "Cookies").write_text("new", encoding="utf-8")
+    (profile_root / "Local State").write_text(
+        json.dumps(
+            {
+                "profile": {
+                    "info_cache": {
+                        "Default": {"name": "Old"},
+                        "Profile 1": {"name": "New"},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "detect_supported_browsers",
+        lambda: (
+            DetectedBrowser("google-chrome", "Google Chrome", browser_executable),
+        ),
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_default_browser_profile_locations",
+        lambda _browser_id: (profile_root,),
+    )
+    enable_system_browser_capability(
+        "authenticated-linkedin-browser", browser_executable, app_dir=tmp_path
+    )
+    destination = copy_detected_authenticated_linkedin_profile(
+        "google-chrome", consent=True, app_dir=tmp_path
+    )
+    selected = next(
+        profile
+        for profile in detect_browser_profiles("google-chrome")
+        if profile.label == "New"
+    )
+    original_copy_profile_tree = browser_capabilities._copy_profile_tree
+
+    def copied_then_revoked(*args, **kwargs):
+        replaced_name = original_copy_profile_tree(*args, **kwargs)
+        disable_browser_capability(
+            "authenticated-linkedin-browser",
+            app_dir=tmp_path,
+        )
+        return replaced_name
+
+    monkeypatch.setattr(browser_capabilities, "_copy_profile_tree", copied_then_revoked)
+
+    with pytest.raises(
+        BrowserCapabilityError,
+        match="changed while the profile was copied",
+    ):
+        copy_detected_authenticated_linkedin_profile(
+            "google-chrome",
+            detected_profile_id=selected.id,
+            consent=True,
+            app_dir=tmp_path,
+            replace_existing=True,
+        )
+
+    assert (destination / "Default" / "Cookies").read_text(encoding="utf-8") == "old"
+    assert list((tmp_path / "browser-profiles").glob(".*.replaced-*")) == []
+
+
+def test_concurrent_profile_replacement_waits_for_failed_rollback_before_publishing(
+    tmp_path: Path, browser_executable: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobctrl import browser_capabilities
+
+    profile_root = tmp_path / "Chrome profile"
+    for directory_name, cookie in (
+        ("Default", "old"),
+        ("Profile 1", "replacement-a"),
+        ("Profile 2", "replacement-b"),
+    ):
+        profile_directory = profile_root / directory_name
+        profile_directory.mkdir(parents=True)
+        (profile_directory / "Cookies").write_text(cookie, encoding="utf-8")
+    (profile_root / "Local State").write_text(
+        json.dumps(
+            {
+                "profile": {
+                    "info_cache": {
+                        "Default": {"name": "Old"},
+                        "Profile 1": {"name": "Replacement A"},
+                        "Profile 2": {"name": "Replacement B"},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "detect_supported_browsers",
+        lambda: (
+            DetectedBrowser("google-chrome", "Google Chrome", browser_executable),
+        ),
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_default_browser_profile_locations",
+        lambda _browser_id: (profile_root,),
+    )
+    enable_system_browser_capability(
+        "authenticated-linkedin-browser", browser_executable, app_dir=tmp_path
+    )
+    destination = copy_detected_authenticated_linkedin_profile(
+        "google-chrome", consent=True, app_dir=tmp_path
+    )
+    profiles = detect_browser_profiles("google-chrome")
+    selected_a = next(
+        profile for profile in profiles if profile.label == "Replacement A"
+    )
+    selected_b = next(
+        profile for profile in profiles if profile.label == "Replacement B"
+    )
+
+    a_validation_started = threading.Event()
+    allow_a_failure = threading.Event()
+    b_attempted = threading.Event()
+    b_copy_started = threading.Event()
+    errors: dict[str, Exception] = {}
+    a_state_transactions = 0
+    original_state_transaction = browser_capabilities._browser_capability_state_transaction
+    original_copy_profile_tree = browser_capabilities._copy_profile_tree
+
+    @contextmanager
+    def controlled_state_transaction(*args, **kwargs):
+        nonlocal a_state_transactions
+        if threading.current_thread().name == "replacement-a":
+            a_state_transactions += 1
+            if a_state_transactions == 2:
+                a_validation_started.set()
+                assert allow_a_failure.wait(timeout=5)
+                raise browser_capabilities.BrowserCapabilityStateError(
+                    "forced post-publish validation failure"
+                )
+        with original_state_transaction(*args, **kwargs) as state:
+            yield state
+
+    def observed_copy_profile_tree(*args, **kwargs):
+        if threading.current_thread().name == "replacement-b":
+            b_copy_started.set()
+        return original_copy_profile_tree(*args, **kwargs)
+
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_browser_capability_state_transaction",
+        controlled_state_transaction,
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_copy_profile_tree",
+        observed_copy_profile_tree,
+    )
+
+    def replace(name: str, profile_id: str) -> None:
+        if name == "replacement-b":
+            b_attempted.set()
+        try:
+            copy_detected_authenticated_linkedin_profile(
+                "google-chrome",
+                detected_profile_id=profile_id,
+                consent=True,
+                app_dir=tmp_path,
+                replace_existing=True,
+            )
+        except Exception as exc:
+            errors[name] = exc
+
+    replacement_a = threading.Thread(
+        target=replace,
+        args=("replacement-a", selected_a.id),
+        name="replacement-a",
+    )
+    replacement_b = threading.Thread(
+        target=replace,
+        args=("replacement-b", selected_b.id),
+        name="replacement-b",
+    )
+
+    replacement_a.start()
+    assert a_validation_started.wait(timeout=5)
+    replacement_b.start()
+    assert b_attempted.wait(timeout=5)
+    assert not b_copy_started.wait(timeout=0.2)
+    allow_a_failure.set()
+    replacement_a.join(timeout=5)
+    replacement_b.join(timeout=5)
+
+    assert not replacement_a.is_alive()
+    assert not replacement_b.is_alive()
+    assert isinstance(errors.get("replacement-a"), BrowserCapabilityError)
+    assert "replacement-b" not in errors
+    assert b_copy_started.is_set()
+    assert (
+        destination / "Default" / "Cookies"
+    ).read_text(encoding="utf-8") == "replacement-b"
+    assert list((tmp_path / "browser-profiles").glob(".*.copy-*")) == []
+    assert list((tmp_path / "browser-profiles").glob(".*.replaced-*")) == []
 
 
 def test_explicit_detected_browser_id_is_resolved_and_enabled(
