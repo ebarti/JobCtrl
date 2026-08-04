@@ -8,7 +8,6 @@ from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
 from jobctrl.state import (
-    SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE,
     ensure_job_stage_rows,
     reconcile_score_eligibility_blockers,
     set_stage_state,
@@ -93,7 +92,7 @@ def _stage_rows(
     return {str(row["stage"]): row for row in rows}
 
 
-def test_score_eligibility_blocker_blocks_actionable_downstream_stages(
+def test_salary_preference_never_blocks_actionable_downstream_stages(
     conn: sqlite3.Connection,
 ) -> None:
     url = "https://example.com/job/blocked"
@@ -108,15 +107,118 @@ def test_score_eligibility_blocker_blocks_actionable_downstream_stages(
         now="2024-01-02T00:00:00+00:00",
     )
 
-    assert changed == 3
+    assert changed == 0
     rows = _stage_rows(conn, tenant_id=_TENANT_A, job_id=_JOB_ID)
     for stage in ("tailor", "cover", "apply"):
-        row = rows[stage]
-        assert row["state"] == "blocked"
-        assert row["error_code"] == SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE
-        assert row["retryable"] == 0
-        assert "posted compensation appears below profile minimum" in row["error_message"]
-        assert row["blocked_by_json"] == '["score"]'
+        assert rows[stage]["state"] == "pending"
+        assert rows[stage]["error_code"] is None
+
+
+def test_salary_reason_is_demoted_but_other_hard_blockers_still_block(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_scored_job(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=_JOB_ID,
+        url="https://example.com/job/mixed-blockers",
+    )
+
+    changed = reconcile_score_eligibility_blockers(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=_JOB_ID,
+        eligibility_status="blocked",
+        hard_blockers=[
+            "posted compensation appears below profile minimum",
+            "candidate requires sponsorship",
+        ],
+    )
+
+    assert changed == 3
+    rows = _stage_rows(conn, tenant_id=_TENANT_A, job_id=_JOB_ID)
+    assert rows["tailor"]["state"] == "blocked"
+    assert "candidate requires sponsorship" in rows["tailor"]["error_message"]
+    assert "compensation" not in rows["tailor"]["error_message"]
+
+
+def test_combined_salary_and_sponsorship_reason_remains_blocking(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_scored_job(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=_JOB_ID,
+        url="https://example.com/job/combined-blocker",
+    )
+
+    changed = reconcile_score_eligibility_blockers(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=_JOB_ID,
+        eligibility_status="blocked",
+        hard_blockers=["Compensation is below range and visa sponsorship is unavailable."],
+    )
+
+    assert changed == 3
+    rows = _stage_rows(conn, tenant_id=_TENANT_A, job_id=_JOB_ID)
+    assert rows["tailor"]["state"] == "blocked"
+    assert "visa sponsorship" in rows["tailor"]["error_message"]
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected_actionable"),
+    (
+        (
+            "Salary is below target and German proficiency is required.",
+            "German proficiency is required",
+        ),
+        (
+            "Salary is below target and posting matches excluded criterion: gambling.",
+            "posting matches excluded criterion: gambling",
+        ),
+        (
+            "Salary is below target / German proficiency is required.",
+            "German proficiency is required",
+        ),
+        (
+            "Salary is below target: posting matches excluded criterion: gambling.",
+            "posting matches excluded criterion: gambling",
+        ),
+        (
+            "Salary is below target — German proficiency is required.",
+            "German proficiency is required",
+        ),
+        (
+            "Salary is below target\nGerman proficiency is required.",
+            "German proficiency is required",
+        ),
+    ),
+)
+def test_combined_salary_reason_preserves_non_compensation_clause(
+    conn: sqlite3.Connection,
+    reason: str,
+    expected_actionable: str,
+) -> None:
+    _seed_scored_job(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=_JOB_ID,
+        url="https://example.com/job/combined-clause",
+    )
+
+    changed = reconcile_score_eligibility_blockers(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=_JOB_ID,
+        eligibility_status="blocked",
+        hard_blockers=[reason],
+    )
+
+    assert changed == 3
+    row = _stage_rows(conn, tenant_id=_TENANT_A, job_id=_JOB_ID)["tailor"]
+    assert row["state"] == "blocked"
+    assert expected_actionable in row["error_message"]
 
 
 def test_score_eligibility_clear_restores_dependency_states(conn: sqlite3.Connection) -> None:

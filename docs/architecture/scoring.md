@@ -116,6 +116,15 @@ calibration anchor on the next `scoring_policies` version. The current policy
 keeps rubric weights and fit-band thresholds stable; subsequent scores load the
 latest policy version and include the active anchor IDs in `trace_json`.
 
+Compensation range is always a soft preference. A parsed posted salary below
+the profile range is retained as a sourced warning and never becomes a hard
+eligibility blocker or prevents downstream material generation. The scoring
+policy enforces this after model parsing as well as in deterministic checks,
+so a model-supplied compensation blocker cannot cross the persistence boundary.
+Downstream state reconciliation and every materials queue selector enforce the
+same rule independently, which keeps historical or imported salary-only
+`blocked` payloads eligible for tailoring without requiring a re-score.
+
 ::: warning Applicant-side triage only — not an employer hiring system
 This is not an employer-side candidate selection system. If JobCtrl is ever
 used to rank people for hiring decisions, the architecture needs a separate

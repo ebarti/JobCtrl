@@ -61,7 +61,7 @@ feature off, but cannot turn it on.
 | Settings → General | [`config.json`](../api/profile-and-settings.md#config-json-field-reference) | `/v1/settings` | Live, next poll/run/workflow, or restart, as labeled; worker activity slots show desired versus active values |
 | Settings → Credentials | Non-secret desired values in `config.json`; secrets in macOS Keychain, the launch environment, or native provider stores | `/v1/credentials` | Claude and Google Keychain edits require the relevant Python process to restart; an environment-owned active route remains authoritative until its value is removed and the process restarts; Codex verification is immediate |
 | Settings → Model selection | [`config.json`](../api/profile-and-settings.md#config-json-field-reference) | `/v1/settings`; `/v1/providers/models` | Newly started work; no worker restart |
-| Settings → Browser & extension | Non-secret capability choices and adopted executable configuration in `config.json`; pairing token and copied profile contents remain separate | `/v1/browser-capabilities`; `/v1/extension/pairing-token` | Capability changes and token rotation are live |
+| Settings → Browser & extension | Non-secret capability choices and adopted executable configuration in `config.json`; pairing token and copied profile contents remain separate | `/v1/browser-capabilities`; `/v1/extension/pairing-token` | Capability changes and token rotation are live; making the authenticated LinkedIn browser ready immediately continues condition-blocked Enrich → Score → Tailor → Cover work without Discover |
 
 [Discovery](discovery.md) and [Apply](apply.md) document the storage and
 activation timing for their feature-specific controls.

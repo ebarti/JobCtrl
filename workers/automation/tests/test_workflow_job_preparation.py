@@ -97,6 +97,64 @@ async def test_preparation_workflow_treats_already_done_step_as_complete(
     assert result.failure is None
 
 
+@pytest.mark.asyncio
+async def test_preparation_workflow_stops_dependents_when_tailor_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def fake_execute_activity(activity_fn, _payload, **_kwargs):
+        calls.append(activity_fn.__name__)
+        return SimpleNamespace(
+            status="skipped" if activity_fn.__name__ == "tailor_job_activity" else "ok",
+            reason="Posting snapshot is quarantined.",
+        )
+
+    monkeypatch.setattr(prep_workflow_mod.workflow, "execute_activity", fake_execute_activity)
+
+    result = await JobPreparationWorkflow()._execute_steps(
+        JobPreparationInput(
+            tenant_id="local",
+            job_id=_JOB_ID,
+            steps=["tailor", "cover", "pdf"],
+            target_version="1",
+            idempotency_key="preparation:skip-dependents",
+        )
+    )
+
+    assert result.steps_completed == []
+    assert result.steps_skipped == ["tailor"]
+    assert result.steps_failed == []
+    assert result.failure is None
+    assert calls == ["tailor_job_activity"]
+
+
+@pytest.mark.asyncio
+async def test_preparation_workflow_reports_pdf_error_as_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_execute_activity(_activity_fn, _payload, **_kwargs):
+        return SimpleNamespace(status="error", error="No approved material is renderable.")
+
+    monkeypatch.setattr(prep_workflow_mod.workflow, "execute_activity", fake_execute_activity)
+
+    result = await JobPreparationWorkflow()._execute_steps(
+        JobPreparationInput(
+            tenant_id="local",
+            job_id=_JOB_ID,
+            steps=["pdf"],
+            target_version="1",
+            idempotency_key="preparation:pdf-error",
+        )
+    )
+
+    assert result.steps_completed == []
+    assert result.steps_skipped == []
+    assert result.steps_failed == ["pdf"]
+    assert result.error_code == "pdf_render_failed"
+    assert result.failure == "pdf: No approved material is renderable."
+
+
 def test_preparation_workflow_rejects_url_shaped_job_id() -> None:
     with pytest.raises(ValueError, match="JobId must be a canonical UUID"):
         JobPreparationInput(

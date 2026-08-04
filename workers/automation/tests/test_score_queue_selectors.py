@@ -373,6 +373,139 @@ def test_pending_tailor_excludes_high_score_blocked_jobs(
     assert blocked_job_id not in job_ids
 
 
+@pytest.mark.parametrize(
+    "advisory_reason",
+    (
+        "Posted salary is below the preferred range.",
+        "Pay is below the candidate minimum.",
+        "Expected earnings are below the target.",
+        "The total cash package is under the preferred range.",
+        "The salary range falls below the candidate's minimum expectation.",
+        "Salary—below the preferred range.",
+        "Expected “salary” is below target.",
+        "Posted [salary] is below target.",
+        "Pay is below the preferred range but negotiable.",
+        "Salary is below target, although negotiable.",
+        "Compensation is low; however it is open to negotiation.",
+        (
+            "posted compensation appears below profile minimum: $40,000 vs profile "
+            "minimum $120,000 (source jobs.salary, period year)"
+        ),
+        (
+            "posted compensation appears below profile minimum: $72,000 vs profile "
+            "minimum $120,000 (source jobs.description, period month, Monthly amounts "
+            "annualized by multiplying by 12.)"
+        ),
+        (
+            "posted compensation appears below profile minimum: $83,200 vs profile "
+            "minimum $120,000 (source jobs.salary, period hour, Hourly amounts "
+            "annualized by multiplying by 2,080 work hours.)"
+        ),
+    ),
+)
+def test_pending_tailor_includes_historical_compensation_only_blocked_score(
+    conn: sqlite3.Connection,
+    advisory_reason: str,
+) -> None:
+    job_id = _seed_enriched_job(conn, "https://example.com/job/salary-advisory")
+    _save_score(
+        conn,
+        job_id,
+        fit=9,
+        eligibility=EligibilityAssessment(
+            status="blocked",
+            hard_blockers=(advisory_reason,),
+        ),
+    )
+
+    pending = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)
+
+    assert job_id in {row["job_id"] for row in pending}
+
+
+@pytest.mark.parametrize(
+    "hard_blocker",
+    (
+        "Remote location is incompatible with the required work model.",
+        "Posting matches excluded criterion: wagering companies.",
+        "Candidate does not meet the required work hours and salary is below target.",
+        (
+            "posted compensation appears below profile minimum: $40,000 vs profile "
+            "minimum $120,000 (source jobs.salary, period year, candidate lacks work "
+            "authorization)"
+        ),
+    ),
+)
+def test_pending_tailor_does_not_mistake_non_compensation_words_for_advice(
+    conn: sqlite3.Connection,
+    hard_blocker: str,
+) -> None:
+    job_id = _seed_enriched_job(conn, "https://example.com/job/remote-blocked")
+    _save_score(
+        conn,
+        job_id,
+        fit=9,
+        eligibility=EligibilityAssessment(
+            status="blocked",
+            hard_blockers=(hard_blocker,),
+        ),
+    )
+
+    pending = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)
+
+    assert job_id not in {row["job_id"] for row in pending}
+
+
+@pytest.mark.parametrize(
+    "mixed_reason",
+    (
+        "Salary is below target and German language is required.",
+        "Compensation is below target and the candidate must speak German.",
+    ),
+)
+def test_pending_tailor_does_not_trust_mixed_typed_compensation_blocker(
+    conn: sqlite3.Connection,
+    mixed_reason: str,
+) -> None:
+    job_id = _seed_enriched_job(conn, "https://example.com/job/typed-mixed-blocker")
+    _save_score(
+        conn,
+        job_id,
+        fit=9,
+        eligibility=EligibilityAssessment(
+            status="blocked",
+            hard_blockers=(mixed_reason,),
+            hard_blocker_categories=("compensation_preference",),
+        ),
+    )
+
+    pending = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)
+
+    assert job_id not in {row["job_id"] for row in pending}
+
+
+def test_pending_tailor_accepts_arbitrary_typed_compensation_wording(
+    conn: sqlite3.Connection,
+) -> None:
+    job_id = _seed_enriched_job(conn, "https://example.com/job/typed-salary-advice")
+    _save_score(
+        conn,
+        job_id,
+        fit=9,
+        eligibility=EligibilityAssessment(
+            status="blocked",
+            hard_blockers=(
+                "Compensation does not align with the candidate expectations.",
+            ),
+            hard_blocker_categories=("compensation_preference",),
+        ),
+    )
+
+    pending = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)
+
+    assert job_id in {row["job_id"] for row in pending}
+
+
 def test_pending_cover_includes_jobs_scored_through_repository(
     conn: sqlite3.Connection,
 ) -> None:
@@ -404,7 +537,7 @@ def test_closed_postings_are_excluded_from_cover_queue(
     assert pipeline._count_pending("cover", min_score=7) == 0
 
 
-def test_pending_cover_excludes_high_score_blocked_jobs(
+def test_pending_cover_includes_high_score_salary_advisory_jobs(
     conn: sqlite3.Connection,
     ) -> None:
     url_allowed = "https://example.com/job/allowed-cover"
@@ -424,7 +557,7 @@ def test_pending_cover_excludes_high_score_blocked_jobs(
     pending = get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7)
     job_ids = {row["job_id"] for row in pending}
     assert allowed_job_id in job_ids
-    assert blocked_job_id not in job_ids
+    assert blocked_job_id in job_ids
 
 
 @pytest.mark.parametrize("stage", ["pending_tailor", "pending_cover"])

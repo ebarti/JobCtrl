@@ -22,6 +22,11 @@ from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.pipeline.aggregate import OptimisticLockError
 from jobctrl.domain.pipeline.state_machine import is_valid_transition
 from jobctrl.domain.ports.events import EventPublisher
+from jobctrl.domain.scoring.eligibility import (
+    eligibility_blocks_downstream,
+    normalize_eligibility_for_downstream,
+)
+from jobctrl.domain.scoring.value_objects import EligibilityAssessment
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.domain.pipeline_types import deserialize_stage_state_kind
 
@@ -503,8 +508,15 @@ def reconcile_score_eligibility_blockers(
 ) -> int:
     """Keep downstream stage rows aligned with score hard-blocker eligibility."""
     stable_job_id = canonical_job_id(str(job_id))
-    blockers = _clean_blocker_reasons(hard_blockers)
-    blocked = str(eligibility_status or "").strip().lower() == "blocked" or bool(blockers)
+    raw_blockers = _clean_blocker_reasons(hard_blockers)
+    eligibility = normalize_eligibility_for_downstream(
+        EligibilityAssessment(
+            status=str(eligibility_status or "unknown"),
+            hard_blockers=tuple(raw_blockers),
+        )
+    )
+    blockers = list(eligibility.hard_blockers)
+    blocked = eligibility_blocks_downstream(eligibility)
     updated_at = now or utc_now()
 
     if not blocked:

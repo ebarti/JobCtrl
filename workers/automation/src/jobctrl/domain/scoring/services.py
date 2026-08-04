@@ -30,6 +30,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from jobctrl.domain.compensation import PostedCompensationFact, parse_posted_compensation
+from jobctrl.domain.scoring.eligibility import (
+    eligibility_blocks_downstream,
+    normalize_eligibility_for_downstream,
+)
 from jobctrl.domain.scoring.value_objects import (
     EligibilityAssessment,
     FitScore,
@@ -548,10 +552,7 @@ class ConstraintChecker:
                 signal = _posted_compensation_signal(job)
                 if signal is not None and signal.annual_ceiling < desired_min:
                     reason = _compensation_reason(signal, desired_min)
-                    if signal.reliable_annual:
-                        blockers.append(reason)
-                    else:
-                        warnings.append(reason)
+                    warnings.append(reason)
 
         excluded = _explicit_exclusions(criteria.criteria_text, criteria.target_criteria)
         for phrase in excluded:
@@ -559,11 +560,21 @@ class ConstraintChecker:
                 blockers.append(f"posting matches excluded criterion: {phrase}")
 
         status = "blocked" if blockers else ("warning" if warnings else "eligible")
-        return EligibilityAssessment(status=status, hard_blockers=blockers, warnings=warnings)
+        blocker_categories = tuple(
+            "work_authorization" if "sponsorship" in blocker else "explicit_exclusion"
+            for blocker in blockers
+        )
+        return EligibilityAssessment(
+            status=status,
+            hard_blockers=blockers,
+            hard_blocker_categories=blocker_categories,
+            warnings=warnings,
+        )
 
     def apply(self, *, parse: ScoreParseResult, job: dict[str, Any]) -> ScoreParseResult:
         deterministic = self.evaluate(job=job, criteria=parse.criteria)
-        merged = parse.breakdown.eligibility.merge(deterministic)
+        model_eligibility = normalize_eligibility_for_downstream(parse.breakdown.eligibility)
+        merged = model_eligibility.merge(deterministic)
         if merged == parse.breakdown.eligibility:
             return parse
         breakdown = ScoreBreakdown(
@@ -612,9 +623,7 @@ class EligibilityChecker:
         eligibility: EligibilityAssessment | None = None,
     ) -> bool:
         """True iff the candidate clears score and hard-blocker gates."""
-        if eligibility is not None and (
-            eligibility.status == "blocked" or eligibility.hard_blockers
-        ):
+        if eligibility is not None and eligibility_blocks_downstream(eligibility):
             return False
         return fit_score.value >= criteria.min_fit_score
 
@@ -654,21 +663,17 @@ _DAILY_MARKER = re.compile(r"/\s*day\b|\bper\s+day\b|\bday\s*rate\b|\bper\s+diem
 
 @dataclass(frozen=True)
 class _PostedCompensationSignal:
-    """A single posted-compensation reading distilled for the eligibility gate.
+    """A posted-compensation reading retained for preference audit only.
 
-    ``reliable_annual`` is the only thing that can turn a below-minimum
-    reading into a hard blocker: it is true only for a genuinely annual
-    figure taken from the structured salary field. Hourly/monthly figures
-    (annualized via a fixed-hours assumption) and description-derived
-    figures stay warnings so a truthful, high-fit job is never dropped from
-    the funnel on a brittle guess.
+    Compensation preferences never decide eligibility. Even an explicit
+    annual figure below the preferred range remains a warning so the job can
+    continue through tailoring and the user can make the final trade-off.
     """
 
     annual_ceiling: int
     source_field: str
     period: str
     assumption: str
-    reliable_annual: bool
 
 
 def _posted_compensation_signal(job: dict[str, Any]) -> _PostedCompensationSignal | None:
@@ -676,7 +681,6 @@ def _posted_compensation_signal(job: dict[str, Any]) -> _PostedCompensationSigna
     if salary:
         signal = _signal_from_fact(
             parse_posted_compensation(salary, source_field="jobs.salary"),
-            salary_field=True,
         )
         if signal is not None:
             return signal
@@ -686,7 +690,6 @@ def _posted_compensation_signal(job: dict[str, Any]) -> _PostedCompensationSigna
     for window in _compensation_windows(description):
         signal = _signal_from_fact(
             parse_posted_compensation(window, source_field="jobs.description"),
-            salary_field=False,
         )
         if signal is None:
             continue
@@ -697,8 +700,6 @@ def _posted_compensation_signal(job: dict[str, Any]) -> _PostedCompensationSigna
 
 def _signal_from_fact(
     fact: PostedCompensationFact,
-    *,
-    salary_field: bool,
 ) -> _PostedCompensationSignal | None:
     if fact.parse_state != "parsed_range":
         return None
@@ -711,7 +712,6 @@ def _signal_from_fact(
             source_field=fact.source_field,
             period=fact.period,
             assumption=fact.annualization_assumption or "",
-            reliable_annual=salary_field and fact.period == "year",
         )
     ceiling = fact.maximum_amount
     if ceiling is None:
@@ -724,7 +724,6 @@ def _signal_from_fact(
             source_field=fact.source_field,
             period=period,
             assumption=assumption,
-            reliable_annual=False,
         )
     if ceiling < _ANNUAL_SALARY_FLOOR:
         return None
@@ -733,7 +732,6 @@ def _signal_from_fact(
         source_field=fact.source_field,
         period="unknown",
         assumption="amount without an explicit pay period; read as annual",
-        reliable_annual=salary_field,
     )
 
 

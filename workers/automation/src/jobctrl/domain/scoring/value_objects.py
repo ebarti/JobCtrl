@@ -48,6 +48,14 @@ _FIT_SCORE_MAX = 10
 FIT_BANDS = ("excellent", "strong", "plausible", "stretch", "poor")
 CONFIDENCE_LEVELS = ("high", "medium", "low")
 ELIGIBILITY_STATUSES = ("eligible", "warning", "blocked", "unknown")
+HARD_BLOCKER_CATEGORIES = (
+    "work_authorization",
+    "application_language",
+    "seniority",
+    "explicit_exclusion",
+    "compensation_preference",
+    "unknown",
+)
 REQUIREMENT_TIERS = ("must_have", "nice_to_have")
 REQUIREMENT_FIT_KINDS = ("matched", "transferable", "missing", "blocked", "not_assessed")
 REQUIREMENT_MATCH_STRENGTHS = ("direct", "strong")
@@ -195,6 +203,7 @@ class EligibilityAssessment:
 
     status: str = "unknown"
     hard_blockers: tuple[str, ...] = ()
+    hard_blocker_categories: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -203,16 +212,35 @@ class EligibilityAssessment:
             status = "unknown"
         object.__setattr__(self, "status", status)
         object.__setattr__(self, "hard_blockers", _clean_strings(self.hard_blockers))
+        categories = [
+            str(category or "unknown").strip().lower()
+            for category in self.hard_blocker_categories
+        ]
+        categories = [
+            category if category in HARD_BLOCKER_CATEGORIES else "unknown"
+            for category in categories
+        ]
+        blocker_count = len(self.hard_blockers)
+        categories = (categories + ["unknown"] * blocker_count)[:blocker_count]
+        object.__setattr__(self, "hard_blocker_categories", tuple(categories))
         object.__setattr__(self, "warnings", _clean_strings(self.warnings))
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "EligibilityAssessment":
         data = data or {}
         blockers = data.get("hard_blockers", data.get("hardBlockers", data.get("blockers", ())))
+        blocker_categories = data.get(
+            "hard_blocker_categories",
+            data.get("hardBlockerCategories", ()),
+        )
         warnings = data.get("warnings", ())
         return cls(
             status=str(data.get("status") or "unknown"),
             hard_blockers=_clean_strings(blockers),
+            hard_blocker_categories=tuple(blocker_categories)
+            if isinstance(blocker_categories, IterableABC)
+            and not isinstance(blocker_categories, (str, bytes))
+            else (),
             warnings=_clean_strings(warnings),
         )
 
@@ -220,17 +248,27 @@ class EligibilityAssessment:
         status_rank = {"unknown": 0, "eligible": 1, "warning": 2, "blocked": 3}
         status = self.status if status_rank[self.status] >= status_rank[other.status] else other.status
         blockers = (*self.hard_blockers, *other.hard_blockers)
+        blocker_categories = (
+            *self.hard_blocker_categories,
+            *other.hard_blocker_categories,
+        )
         warnings = (*self.warnings, *other.warnings)
         if blockers:
             status = "blocked"
         elif warnings and status == "eligible":
             status = "warning"
-        return EligibilityAssessment(status=status, hard_blockers=blockers, warnings=warnings)
+        return EligibilityAssessment(
+            status=status,
+            hard_blockers=blockers,
+            hard_blocker_categories=blocker_categories,
+            warnings=warnings,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
             "hard_blockers": list(self.hard_blockers),
+            "hard_blocker_categories": list(self.hard_blocker_categories),
             "warnings": list(self.warnings),
         }
 

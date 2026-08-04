@@ -296,6 +296,73 @@ def test_derive_preparation_targets_uses_exact_v7_job_identity_queries(
         conn.close()
 
 
+def test_derive_preparation_targets_admits_repairable_historical_salary_block() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    create_exact_v7_schema(conn)
+    job_id = _job_id(66)
+    now = "2026-07-31T09:00:00+00:00"
+    try:
+        conn.execute(
+            "INSERT INTO jobs (tenant_id, job_id, url, discovered_at) VALUES (?, ?, ?, ?)",
+            (str(LOCAL_TENANT), str(job_id), "https://jobs.example/salary-advisory", now),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_enrichments (
+                tenant_id, job_id, current_status, full_description, updated_at
+            ) VALUES (?, ?, 'enriched', 'Canonical description', ?)
+            """,
+            (str(LOCAL_TENANT), str(job_id), now),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_scores (
+                tenant_id, job_id, version, fit_score, breakdown_json,
+                keywords_json, scored_at
+            ) VALUES (?, ?, 1, 9, ?, '[]', ?)
+            """,
+            (
+                str(LOCAL_TENANT),
+                str(job_id),
+                '{"eligibility":{"status":"blocked","hard_blockers":["Salary is below target."]}}',
+                now,
+            ),
+        )
+        conn.executemany(
+            """
+            INSERT INTO job_stage_states (
+                tenant_id, job_id, stage, state, attempt_count, updated_at,
+                error_code, error_message
+            ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+            """,
+            (
+                (str(LOCAL_TENANT), str(job_id), "score", "succeeded", now, None, None),
+                (
+                    str(LOCAL_TENANT),
+                    str(job_id),
+                    "tailor",
+                    "blocked",
+                    now,
+                    "SCORE_ELIGIBILITY_BLOCKED",
+                    "Score eligibility blocks tailoring: salary below target",
+                ),
+            ),
+        )
+        conn.commit()
+
+        selected = preparation._preparation_job_ids(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            stage="pending_tailor",
+            min_score=7,
+        )
+
+        assert selected == [job_id]
+    finally:
+        conn.close()
+
+
 class _FakeUseExistingStarter:
     """Simulate ``WorkflowIDConflictPolicy.USE_EXISTING`` for fan-out tests.
 

@@ -81,6 +81,13 @@ stops before the application form and cannot submit an application; capability
 and consent ownership remains documented under
 [Apply](apply.md#browser-apply-automation).
 
+When that capability becomes fully ready, JobCtrl immediately continues the
+browser-conditioned Enrich → Score → Tailor → Cover path for the affected
+LinkedIn jobs only; unrelated robots blocks and ordinary pending jobs are not
+retriggered, and another Discover run is not required. A successfully recovered apply URL creates a new immutable posting
+snapshot version, recomputes confidence, and clears a low-confidence quarantine
+only when the new evidence passes the same quality policy.
+
 ## Source Of Truth And Ownership
 
 Several records participate, but they do not own the same fact:

@@ -77,6 +77,7 @@ class JobPreparationInput:
 @dataclass(frozen=True)
 class JobPreparationResult:
     steps_completed: list[str] = field(default_factory=list)
+    steps_skipped: list[str] = field(default_factory=list)
     steps_failed: list[str] = field(default_factory=list)
     failure: str | None = None
     error_code: str | None = None
@@ -154,12 +155,13 @@ class JobPreparationWorkflow:
 
     async def _execute_steps(self, payload: JobPreparationInput) -> JobPreparationResult:
         completed: list[str] = []
+        skipped: list[str] = []
         failed: list[str] = []
         failure: str | None = None
         error_code: str | None = None
         for step in _ordered_steps(payload.steps):
             try:
-                await _execute_step(step, payload)
+                output = await _execute_step(step, payload)
             except ActivityError as exc:
                 if _activity_error_was_cancelled(exc):
                     raise CancelledError("Workflow canceled by request.") from exc
@@ -167,13 +169,36 @@ class JobPreparationWorkflow:
                 error_code = _activity_error_code(exc)
                 failure = f"{step}: {exc.cause if exc.cause else exc}"
                 break
+            status = _activity_output_status(output)
+            if status in {"skipped", "not_eligible"}:
+                skipped.append(step)
+                break
+            if status in {"error", "failed"}:
+                failed.append(step)
+                error_code = f"{step}_failed" if step != "pdf" else "pdf_render_failed"
+                detail = _activity_output_detail(output) or status
+                failure = f"{step}: {detail}"
+                break
             completed.append(step)
         return JobPreparationResult(
             steps_completed=completed,
+            steps_skipped=skipped,
             steps_failed=failed,
             failure=failure,
             error_code=error_code,
         )
+
+
+def _activity_output_status(output: Any) -> str:
+    if isinstance(output, dict):
+        return str(output.get("status") or "ok").strip().lower()
+    return str(getattr(output, "status", "ok") or "ok").strip().lower()
+
+
+def _activity_output_detail(output: Any) -> str:
+    if isinstance(output, dict):
+        return str(output.get("error") or output.get("reason") or "").strip()
+    return str(getattr(output, "error", "") or getattr(output, "reason", "") or "").strip()
 
 
 async def _execute_step(step: str, payload: JobPreparationInput) -> Any:

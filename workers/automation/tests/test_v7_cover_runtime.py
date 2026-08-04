@@ -378,6 +378,36 @@ def test_cover_by_id_enforces_score_eligibility_before_llm_work(
     assert llm.calls == 0
 
 
+def test_cover_by_id_generates_for_historical_salary_only_block(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    _seed_target(conn, tenant_id=_TENANT_A)
+    _seed_eligible_score(
+        conn,
+        tenant_id=_TENANT_A,
+        fit_score=9,
+        eligibility=EligibilityAssessment(
+            status="blocked",
+            hard_blockers=("Posted salary is below the preferred compensation range.",),
+        ),
+    )
+    _seed_approved_resume(conn, tmp_path, tenant_id=_TENANT_A)
+    llm = _CoverLlm()
+
+    result = cover_letter_module.cover_letter_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=_snapshot(_TENANT_A),
+        repository=SqliteMaterialsRepository(conn),
+        llm_port=llm,
+        pdf_renderer=_PdfRenderer(),
+    )
+
+    assert result["status"] == "ok"
+    assert llm.calls == 1
+
+
 @pytest.mark.parametrize(
     ("score_state", "seed_staleness", "reason"),
     (

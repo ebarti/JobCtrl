@@ -13,6 +13,7 @@ suite needs no browser binary and performs no live board traffic.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -24,6 +25,7 @@ import pytest
 
 from jobctrl.database import close_connection, init_db
 from jobctrl.domain.identifiers import JobId, generate_job_id
+from jobctrl.domain.ports.politeness import PolitenessDecision, PolitenessOutcome
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.enrichment import detail
 from jobctrl.enrichment.detail import scrape_detail_page, scrape_site_batch
@@ -46,6 +48,37 @@ from .politeness_helpers import (
 )
 
 LONG_DESC = "Build reliable distributed systems with Python and TypeScript. " * 8
+
+
+def test_linkedin_robots_block_records_the_typed_recovery_condition(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    url = "https://www.linkedin.com/jobs/view/typed-condition"
+    try:
+        _seed_pending(conn, url, "linkedin")
+        detail._record_enrich_robots_blocked(
+            conn,
+            _job_id(conn, url),
+            url,
+            PolitenessDecision(
+                allowed=False,
+                outcome=PolitenessOutcome.ROBOTS_DISALLOWED,
+                user_agent="JobCtrl/test",
+                reason="robots.txt disallows this path",
+            ),
+            site="linkedin",
+        )
+
+        row = conn.execute(
+            "SELECT metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            (str(LOCAL_TENANT), str(_job_id(conn, url))),
+        ).fetchone()
+        assert row is not None
+        assert json.loads(row[0])["blockedConditions"] == [
+            "authenticated_linkedin_browser_unavailable"
+        ]
+    finally:
+        close_connection(db_path)
 
 
 def _allow_test_url_safety(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -150,6 +150,8 @@
 
 .apply-review-queue-item {
   min-height: 88px;
+  justify-content: stretch;
+  justify-items: stretch;
   gap: 6px;
   border: 0;
   border-bottom: 1px solid color-mix(in oklch, var(--border) 78%, transparent);
