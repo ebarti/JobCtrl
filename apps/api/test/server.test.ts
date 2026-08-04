@@ -9521,16 +9521,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("records profile updates and starts an event-driven re-tailoring run", async () => {
-    const seedDb = new Database(options.dbPath);
-    insertMaterialsGeneration(seedDb, {
-      jobUrl: "https://example.com/jobs/ready",
-      artifactId: "artifact-profile-update-retailor",
-      artifactType: "tailored_resume",
-      status: "approved",
-      path: path.join(tempDir, "ready-resume.txt"),
-    });
-    seedDb.close();
+  it("records profile updates and resumes preparation without requiring an existing resume", async () => {
     const dispatch = vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-retailor" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
     const response = await app.inject({
@@ -9544,11 +9535,12 @@ describe("local TypeScript API", () => {
       expect.objectContaining({
         action: "run_stage",
         jobKey: "pipeline",
-        stage: "tailor",
-        stages: ["tailor", "cover"],
+        stage: "score",
+        stages: ["score", "tailor", "cover"],
         dryRun: false,
         limit: 0,
         minScore: 6,
+        rescore: true,
         retailor: true,
       }),
       { appDir: tempDir, configPath: options.configPath, dbPath: options.dbPath },
@@ -10430,6 +10422,118 @@ describe("local TypeScript API", () => {
       consent: true,
       consentMethod: "explicit-ui-v1",
     });
+
+    await app.close();
+  });
+
+  it("continues pending preparation when the authenticated browser becomes ready", async () => {
+    const typedBlockedUrl = "https://www.linkedin.com/jobs/view/condition-blocked";
+    const legacyBlockedUrl = "https://linkedin.com/jobs/view/legacy-condition-blocked";
+    const unrelatedBlockedUrl = "https://example.com/jobs/robots-blocked";
+    const pendingLinkedInUrl = "https://www.linkedin.com/jobs/view/still-pending";
+    const db = new Database(options.dbPath);
+    for (const [url, site] of [
+      [typedBlockedUrl, "linkedin"],
+      [legacyBlockedUrl, "linkedin"],
+      [unrelatedBlockedUrl, "example"],
+      [pendingLinkedInUrl, "linkedin"],
+    ] as const) {
+      insertJob(db, { url, title: "Recovery target", site });
+    }
+    insertStage(db, typedBlockedUrl, "enrich", "blocked", "ENRICH_ROBOTS_DISALLOWED");
+    insertStage(db, legacyBlockedUrl, "enrich", "blocked", "ENRICH_ROBOTS_DISALLOWED");
+    insertStage(db, unrelatedBlockedUrl, "enrich", "blocked", "ENRICH_ROBOTS_DISALLOWED");
+    insertStage(db, pendingLinkedInUrl, "enrich", "pending");
+    db.prepare(
+      `UPDATE job_stage_states
+          SET retryable = 1,
+              metadata_json = ?
+        WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
+    ).run(
+      JSON.stringify({ blockedConditions: ["authenticated_linkedin_browser_unavailable"] }),
+      jobIdFor(typedBlockedUrl),
+    );
+    db.prepare(
+      `UPDATE job_stage_states
+          SET retryable = 1,
+              metadata_json = ?
+        WHERE tenant_id = 'local' AND job_id IN (?, ?) AND stage = 'enrich'`,
+    ).run(
+      JSON.stringify({ blockedConditions: ["authenticated_linkedin_browser_unavailable"] }),
+      jobIdFor(legacyBlockedUrl),
+      jobIdFor(unrelatedBlockedUrl),
+    );
+    db.prepare(
+      `UPDATE job_stage_states
+          SET metadata_json = NULL
+        WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
+    ).run(jobIdFor(legacyBlockedUrl));
+    db.close();
+
+    const readyResult = {
+      capabilities: [
+        {
+          id: "core-browser",
+          status: "ready",
+          detail: "Managed browser is ready.",
+          mutable: false,
+          enabled: true,
+          profileCopyReady: false,
+        },
+        {
+          id: "auto-apply-browser",
+          status: "disabled",
+          detail: "Disabled by default.",
+          mutable: true,
+          enabled: false,
+          profileCopyReady: false,
+        },
+        {
+          id: "authenticated-linkedin-browser",
+          status: "ready",
+          detail: "Authenticated browser is ready.",
+          mutable: true,
+          enabled: true,
+          profileCopyReady: true,
+        },
+      ],
+      detectedBrowsers: [],
+    };
+    const providerDispatcher: JsonRpcDispatcher = {
+      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: readyResult })),
+      close: vi.fn(async () => undefined),
+    };
+    const dispatch = vi.fn(async (): Promise<ActionDispatchResult> => ({
+      status: "queued",
+      runId: "run-browser-ready-continuation",
+    }));
+    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/browser-capabilities/authenticated-linkedin-browser/profile-copy",
+      payload: {
+        detectedBrowserId: "google-chrome",
+        consent: true,
+        consentMethod: "explicit-ui-v1",
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "run_stage",
+        jobKey: "pipeline",
+        jobIds: [jobIdFor(typedBlockedUrl), jobIdFor(legacyBlockedUrl)].sort(),
+        stage: "enrich",
+        stages: ["enrich", "score", "tailor", "cover"],
+        dryRun: false,
+        limit: 2,
+        minScore: 6,
+        reason: "condition_resolved:authenticated_linkedin_browser_unavailable",
+      }),
+      { appDir: tempDir, configPath: options.configPath, dbPath: options.dbPath },
+    );
 
     await app.close();
   });

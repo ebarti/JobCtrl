@@ -47,6 +47,10 @@ from jobctrl.domain.materials.value_objects import (
 )
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.materials.unit_of_work import SqliteUnitOfWork
+from jobctrl.scoring.eligibility_sql import (
+    register_score_eligibility_sql,
+    score_eligible_for_downstream_sql,
+)
 
 _LINEAGE_KEY = "__jobctrl_materials_lineage_id"
 
@@ -107,6 +111,7 @@ class SqliteMaterialsRepository:
     ) -> None:
         self._conn = conn
         self._unit_of_work = unit_of_work
+        register_score_eligibility_sql(conn)
 
     # ------------------------------------------------------------------
     # Read
@@ -278,15 +283,7 @@ class SqliteMaterialsRepository:
             "GROUP BY tenant_id, job_id"
             "), scored_jobs AS ("
             "SELECT s.tenant_id, s.job_id, s.fit_score, "
-            "CASE WHEN json_valid(s.breakdown_json) "
-            "THEN LOWER(COALESCE(CAST(json_extract(s.breakdown_json, '$.eligibility.status') AS TEXT), '')) "
-            "ELSE '' END AS eligibility_status, "
-            "CASE WHEN json_valid(s.breakdown_json) "
-            "THEN COALESCE("
-            "json_array_length(s.breakdown_json, '$.eligibility.hard_blockers'), "
-            "json_array_length(s.breakdown_json, '$.eligibility.hardBlockers'), "
-            "json_array_length(s.breakdown_json, '$.eligibility.blockers'), "
-            "0) ELSE 0 END AS hard_blocker_count "
+            f"{score_eligible_for_downstream_sql('s.breakdown_json')} AS eligible_for_downstream "
             "FROM job_scores s "
             "INNER JOIN latest_scores latest "
             "ON latest.tenant_id = s.tenant_id "
@@ -315,8 +312,7 @@ class SqliteMaterialsRepository:
             "WHERE j.tenant_id = ? "
             "AND e.full_description IS NOT NULL "
             "AND s.fit_score >= ? "
-            "AND s.eligibility_status != 'blocked' "
-            "AND s.hard_blocker_count = 0 "
+            "AND s.eligible_for_downstream = 1 "
             f"{where}"
             "ORDER BY s.fit_score DESC, j.discovered_at DESC"
         )
@@ -344,15 +340,7 @@ class SqliteMaterialsRepository:
             "GROUP BY tenant_id, job_id"
             "), scored_jobs AS ("
             "SELECT s.tenant_id, s.job_id, s.fit_score, "
-            "CASE WHEN json_valid(s.breakdown_json) "
-            "THEN LOWER(COALESCE(CAST(json_extract(s.breakdown_json, '$.eligibility.status') AS TEXT), '')) "
-            "ELSE '' END AS eligibility_status, "
-            "CASE WHEN json_valid(s.breakdown_json) "
-            "THEN COALESCE("
-            "json_array_length(s.breakdown_json, '$.eligibility.hard_blockers'), "
-            "json_array_length(s.breakdown_json, '$.eligibility.hardBlockers'), "
-            "json_array_length(s.breakdown_json, '$.eligibility.blockers'), "
-            "0) ELSE 0 END AS hard_blocker_count "
+            f"{score_eligible_for_downstream_sql('s.breakdown_json')} AS eligible_for_downstream "
             "FROM job_scores s "
             "INNER JOIN latest_scores latest "
             "ON latest.tenant_id = s.tenant_id "
@@ -389,8 +377,7 @@ class SqliteMaterialsRepository:
             "AND cl.artifact_type = 'cover_letter' AND cl.status = 'approved' "
             "WHERE j.tenant_id = ? "
             "AND s.fit_score >= ? "
-            "AND s.eligibility_status != 'blocked' "
-            "AND s.hard_blocker_count = 0 "
+            "AND s.eligible_for_downstream = 1 "
             "AND cl.artifact_id IS NULL "
             "ORDER BY s.fit_score DESC, j.discovered_at DESC"
         )

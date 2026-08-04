@@ -37,6 +37,7 @@ from jobctrl.domain.ports.materials import (
     PdfRendererPort,
 )
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.scoring.eligibility import eligibility_blocks_downstream
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.domain.materials.value_objects import ArtifactStatus
 from jobctrl.infrastructure.discovery.sqlite_identity_resolver import SqliteJobIdentityResolver
@@ -493,8 +494,7 @@ def _cover_eligibility_reason(
         return "missing_score"
     if score.fit_score.value < min_score:
         return "below_min_score"
-    eligibility = score.breakdown.eligibility
-    if eligibility.status == "blocked" or eligibility.hard_blockers:
+    if eligibility_blocks_downstream(score.breakdown.eligibility):
         return "score_ineligible"
     return None
 

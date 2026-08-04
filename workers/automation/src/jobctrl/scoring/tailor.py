@@ -52,6 +52,10 @@ from jobctrl.domain.ports.materials import (
     TailoringPolicyRepository,
 )
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.scoring.eligibility import (
+    eligibility_blocks_downstream,
+    normalize_eligibility_for_downstream,
+)
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.llm import get_llm_adapter
 from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
@@ -749,6 +753,23 @@ def tailor_job_by_id(
             "reason": "not_found",
         }
 
+    # Reconcile score-derived state before the stage-state gate. Historical
+    # salary-only scores may still carry SCORE_ELIGIBILITY_BLOCKED rows from
+    # the old policy; clearing them after selection would skip this invocation
+    # and strand the preparation workflow until another external trigger.
+    if _reconcile_score_eligibility_skip(
+        conn,
+        job_id=stable_job_id,
+        tenant_id=tenant_id,
+    ):
+        conn.commit()
+        return {
+            "url": target["url"],
+            "job_id": str(stable_job_id),
+            "status": "skipped",
+            "reason": "score_eligibility_blocked",
+        }
+
     job = _load_tailor_eligible_job_by_id(
         conn,
         tenant_id=tenant_id,
@@ -759,17 +780,18 @@ def tailor_job_by_id(
         allow_low_fit_override=allow_low_fit_override,
     )
     if job is None:
-        if _reconcile_score_eligibility_skip(
+        if _record_tailor_enrichment_block(
             conn,
             job_id=stable_job_id,
             tenant_id=tenant_id,
+            discovered_at=target.get("discovered_at"),
         ):
             conn.commit()
             return {
                 "url": target["url"],
                 "job_id": str(stable_job_id),
                 "status": "skipped",
-                "reason": "score_eligibility_blocked",
+                "reason": "enrichment_quarantined",
             }
         _record_tailor_skip(
             conn,
@@ -917,8 +939,15 @@ def _reconcile_score_eligibility_skip(
     score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
     if score is None:
         return False
-    eligibility = score.breakdown.eligibility
-    if eligibility.status != "blocked" and not eligibility.hard_blockers:
+    eligibility = normalize_eligibility_for_downstream(score.breakdown.eligibility)
+    if not eligibility_blocks_downstream(eligibility):
+        reconcile_score_eligibility_blockers(
+            conn,
+            tenant_id=tenant_id,
+            job_id=score.job_id,
+            eligibility_status=eligibility.status,
+            hard_blockers=list(eligibility.hard_blockers),
+        )
         return False
     row = conn.execute(
         "SELECT discovered_at FROM jobs WHERE tenant_id = ? AND job_id = ?",
@@ -937,6 +966,60 @@ def _reconcile_score_eligibility_skip(
         job_id=score.job_id,
         eligibility_status=eligibility.status,
         hard_blockers=list(eligibility.hard_blockers),
+    )
+    return True
+
+
+def _record_tailor_enrichment_block(
+    conn: sqlite3.Connection,
+    *,
+    job_id: JobId,
+    tenant_id: TenantId,
+    discovered_at: str | None,
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT latest_confidence, latest_quarantine_reason
+        FROM posting_snapshot_sets
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if row is None:
+        return False
+    confidence = str(row["latest_confidence"] or "").lower()
+    quarantine_reason = str(row["latest_quarantine_reason"] or "").lower()
+    if confidence != "low" or quarantine_reason in {"", "none"}:
+        return False
+    ensure_job_stage_rows(
+        conn,
+        job_id,
+        tenant_id=tenant_id,
+        discovered_at=discovered_at,
+    )
+    set_stage_state(
+        conn,
+        job_id,
+        "tailor",
+        "blocked",
+        tenant_id=tenant_id,
+        error_code="ENRICHMENT_QUARANTINED",
+        error_message="Tailoring is waiting for a trustworthy posting snapshot.",
+        retryable=True,
+        blocked_by=["enrich"],
+        next_action="Retry enrichment after the posting-confidence condition is resolved.",
+        metadata={"condition": quarantine_reason},
+        validate_transition=False,
+    )
+    record_job_event(
+        conn,
+        job_id,
+        "tailor",
+        "StageBlocked",
+        tenant_id=tenant_id,
+        level="warning",
+        message="Tailoring is waiting for a trustworthy posting snapshot.",
+        payload={"reason": "enrichment_quarantined", "condition": quarantine_reason},
     )
     return True
 
@@ -1048,8 +1131,7 @@ def _load_tailor_eligible_job_by_id(
     score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
     if score is None:
         return None
-    eligibility = score.breakdown.eligibility
-    if eligibility.status == "blocked" or eligibility.hard_blockers:
+    if eligibility_blocks_downstream(score.breakdown.eligibility):
         return None
     effective_min_score = 0 if allow_low_fit_override else db_module.effective_tailoring_min_score(min_score)
     if score.fit_score.value < effective_min_score:

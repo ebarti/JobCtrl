@@ -92,6 +92,9 @@ applies the same score bands.
   caps requirement-led scoring at 4, while hard eligibility blockers can also
   prevent downstream tailoring. Warnings and eligibility are not added as a
   generic points penalty.
+- **Compensation preferences never block tailoring.** A posted salary below
+  your preferred range remains visible as an auditable warning, including the
+  parsed amount and source, while the job continues through materials.
 - **The minimum-fit threshold does not change the saved score.** It decides
   whether an existing score is eligible for materials. Changing it does not
   call the model or recalculate the score.

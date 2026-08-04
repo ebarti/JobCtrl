@@ -18,6 +18,13 @@ function rule(source: string, selector: string): string {
 }
 
 describe("Apply Review and Contacts responsive layout contracts", () => {
+  it("left-aligns short and long Apply Review queue rows consistently", () => {
+    const queueItem = rule(applyReviewCss, ".apply-review-queue-item");
+
+    expect(queueItem).toContain("justify-content: stretch");
+    expect(queueItem).toContain("justify-items: stretch");
+  });
+
   it("wraps every review decision without changing the desktop or mobile queue model", () => {
     const shell = rule(applyReviewCss, ".apply-review-shell");
     const decisions = rule(applyReviewCss, ".apply-review-decision-buttons");

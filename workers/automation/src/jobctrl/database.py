@@ -24,6 +24,10 @@ from jobctrl.infrastructure.migrations.schema_manifest import (
     assert_exact_manifest,
     schema_dump,
 )
+from jobctrl.scoring.eligibility_sql import (
+    register_score_eligibility_sql,
+    score_eligible_for_downstream_sql,
+)
 
 # Schema version stamped into the SQLite ``user_version`` header. Runtime opens
 # only this exact schema and refuses databases written by newer code. The only
@@ -84,6 +88,7 @@ def get_connection(
     if conn is not None:
         try:
             conn.execute("SELECT 1")
+            register_score_eligibility_sql(conn)
             return conn
         except sqlite3.ProgrammingError:
             pass
@@ -93,6 +98,7 @@ def get_connection(
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=10000")
     conn.row_factory = sqlite3.Row
+    register_score_eligibility_sql(conn)
     _local.connections[path] = conn
     return conn
 
@@ -2812,15 +2818,7 @@ _LATEST_SCORE_JOIN: str = (
     "LEFT JOIN ("
     "SELECT s.tenant_id AS js_tenant_id, s.job_id AS js_job_id, "
     "s.fit_score AS js_fit_score, "
-    "CASE WHEN json_valid(s.breakdown_json) "
-    "THEN LOWER(COALESCE(CAST(json_extract(s.breakdown_json, '$.eligibility.status') AS TEXT), '')) "
-    "ELSE '' END AS js_eligibility_status, "
-    "CASE WHEN json_valid(s.breakdown_json) "
-    "THEN COALESCE("
-    "json_array_length(s.breakdown_json, '$.eligibility.hard_blockers'), "
-    "json_array_length(s.breakdown_json, '$.eligibility.hardBlockers'), "
-    "json_array_length(s.breakdown_json, '$.eligibility.blockers'), "
-    "0) ELSE 0 END AS js_hard_blocker_count "
+    f"{score_eligible_for_downstream_sql('s.breakdown_json')} AS js_eligible_for_downstream "
     "FROM job_scores s "
     "INNER JOIN ("
     "SELECT tenant_id, job_id, MAX(version) AS max_version "
@@ -2831,9 +2829,7 @@ _LATEST_SCORE_JOIN: str = (
 )
 
 _EFFECTIVE_FIT_SCORE: str = "js.js_fit_score"
-_SCORE_ELIGIBLE_FOR_DOWNSTREAM: str = (
-    "(COALESCE(js.js_eligibility_status, '') != 'blocked' AND COALESCE(js.js_hard_blocker_count, 0) = 0)"
-)
+_SCORE_ELIGIBLE_FOR_DOWNSTREAM: str = "COALESCE(js.js_eligible_for_downstream, 0) = 1"
 
 
 # ---------------------------------------------------------------------------
@@ -2906,6 +2902,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     """
     if conn is None:
         conn = get_connection()
+    register_score_eligibility_sql(conn)
 
     stats: dict = {}
 
@@ -3028,6 +3025,7 @@ def count_ready_to_apply(
     queue selectors instead of the legacy ``jobs.*`` columns.
     """
 
+    register_score_eligibility_sql(conn)
     where = [
         _READY_TAILORED_RESUME_WITH_PDF,
         f"{_EFFECTIVE_FIT_SCORE} >= ?",
@@ -3278,6 +3276,7 @@ def get_jobs_by_stage(
     """
     if conn is None:
         conn = get_connection()
+    register_score_eligibility_sql(conn)
     if stage in ("pending_tailor", "pending_cover"):
         min_score = effective_tailoring_min_score(min_score)
 

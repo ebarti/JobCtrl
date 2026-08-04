@@ -202,6 +202,21 @@ run is appropriate only when the exact execution is genuinely absent and the
 runtime inventory confirms that no work remains. Workflow IDs, Temporal run
 IDs, and the raw reason code stay in a collapsed technical disclosure.
 
+Condition-driven preparation is resumed by the mutation that resolves the
+condition. A candidate-profile or preference update dispatches current-input
+scoring followed by Tailor and Cover; an authenticated-LinkedIn browser
+transition to fully ready maps the resolved browser condition to canonical
+`enrich` rows blocked with `ENRICH_ROBOTS_DISALLOWED`, selects only LinkedIn
+jobs carrying that typed condition (with a source-identity fallback for legacy
+rows), and dispatches those JobIds through Enrich, Score, Tailor, and Cover.
+Unrelated robots blocks and ordinary pending Enrich rows are not swept into the
+recovery. These continuations use the normal idempotent workflow path and do
+not rerun Discover.
+A low-confidence posting keeps Tailor explicitly `blocked` by Enrich rather
+than leaving it as unexplained `pending`; when authenticated apply-URL recovery
+produces a trustworthy snapshot, Enrich resets that exact condition-blocked
+Tailor row to `pending` before the continuation reaches it.
+
 ### Two durable progress authorities
 
 Canonical `job_stage_states` remains the source of truth for per-job `enrich`,

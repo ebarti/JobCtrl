@@ -243,7 +243,9 @@ Behavior notes:
 
 - Steps run in order; each retries its *current* failing step under Temporal
   without regenerating already-durable earlier steps. A failed score does not
-  block other jobs' preparation, and a failed tailor can resume at cover/pdf.
+  block other jobs' preparation. A skipped or not-eligible step stops its
+  dependent steps, so Tailor cannot fall through into Cover or PDF without an
+  approved material input.
 - Threshold changes are **live eligibility changes**, not scoring changes:
   lowering the threshold can derive new `tailor`/`cover`/`pdf` work from
   persisted scores; raising it suppresses active artifacts. Neither path invokes
@@ -347,6 +349,9 @@ deterministic tail of preparation (no LLM, no spend preflight) and emits
 `PdfRendered`. When it belongs to a Discover execution it also emits the
 attempt-aware `PipelineStep*` lifecycle under `pdf_render`, keyed to that exact
 workflow/run identity. As a prep step it retries under the Cover retry policy.
+An error result is a failed preparation step and workflow outcome; it is never
+counted as a completed PDF step merely because the activity returned a typed
+error payload.
 
 ## Apply
 

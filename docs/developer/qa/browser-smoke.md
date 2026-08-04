@@ -93,7 +93,9 @@ the full-width PDF preview. Stack Profile's editor before its preview and
 Evidence Map's entry/detail/inspector regions without a dead resize gutter or
 page overflow. Keep Apply Review's queue on the left at a working desktop width,
 then verify the queue moves above full-width sequential review content and its
-decision actions wrap at narrow width.
+decision actions wrap at narrow width. Compare a short title/company row with a
+long one and verify their score, title, company, and status share the same left
+alignment rather than centering the shorter row.
 
 On Apply Review, keep matched persisted comments attached to their rendered
 line and unmatched/unresolved comments in the labeled fallback while replies

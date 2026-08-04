@@ -27,7 +27,7 @@ export function profileChangedSections(request: ProfileUpdateRequest): string[] 
   return sections;
 }
 
-export function shouldRetailorForProfileUpdate(request: ProfileUpdateRequest): boolean {
+export function shouldContinuePreparationForProfileUpdate(request: ProfileUpdateRequest): boolean {
   return request.profile !== undefined || request.profileText !== undefined;
 }
 
@@ -69,13 +69,14 @@ export async function handleProfileUpdatedEvent(
   const command: ActionCommandPayload = {
     action: "run_stage",
     jobKey: PIPELINE_ACTION_JOB_KEY,
-    stage: "tailor",
-    stages: ["tailor", "cover"],
+    stage: "score",
+    stages: ["score", "tailor", "cover"],
     dryRun: false,
     limit: 0,
     workers: 1,
     minScore: MIN_TAILORING_FIT_SCORE,
     validationMode: "normal",
+    rescore: true,
     retailor: true,
   };
   await actionDispatcher(command, actionContext);

@@ -54,6 +54,7 @@ from jobctrl.domain.enrichment import (
 )
 from jobctrl.domain.enrichment.snapshot_services import (
     ActiveStateVerifier,
+    _quarantine_for_capture,
     judge_snapshot_confidence,
 )
 from jobctrl.domain.enrichment.services import (
@@ -863,6 +864,7 @@ def _record_enrich_robots_blocked(
     url: str,
     decision: PolitenessDecision,
     *,
+    site: str | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
     recovery_key: str | None = None,
     activity_lease: EnrichmentExecutionLease | None = None,
@@ -889,6 +891,11 @@ def _record_enrich_robots_blocked(
     if activity_lease is not None:
         _fence_execution_enrichment_lease(conn, activity_lease)
     ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
+    blocked_conditions = (
+        ["authenticated_linkedin_browser_unavailable"]
+        if _is_linkedin_job(site, url)
+        else []
+    )
     set_stage_state(
         conn,
         job_id,
@@ -902,6 +909,7 @@ def _record_enrich_robots_blocked(
         metadata={
             "reason": "robots_disallowed",
             "politenessOutcome": decision.outcome.value,
+            "blockedConditions": blocked_conditions,
             **(
                 {"lastRobotsRetryWorkflow": recovery_key}
                 if recovery_key
@@ -1481,6 +1489,7 @@ def scrape_site_batch(
                         job_id,
                         url,
                         gate,
+                        site=site,
                         tenant_id=tenant_id,
                         recovery_key=recovery_key,
                         activity_lease=activity_lease,
@@ -2287,6 +2296,112 @@ def _default_linkedin_apply_resolver_factory() -> LinkedInApplyUrlResolver:
     return LinkedInApplyUrlResolver(proxy=_PROXY_CONFIG, user_agent=None)
 
 
+def _record_authenticated_apply_url_snapshot_recovery(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    enrichment: JobEnrichment,
+    recovered: ApplicationUrl,
+    captured_at: str,
+) -> bool:
+    """Append a truthful snapshot version after authenticated URL recovery."""
+
+    if enrichment.full_description is None:
+        return False
+    repo = SqlitePostingSnapshotSetRepository(conn)
+    snapshot_set = repo.load(tenant_id, job_id)
+    if snapshot_set is None or snapshot_set.latest_snapshot is None:
+        return False
+    latest = snapshot_set.latest_snapshot
+    try:
+        tier = ExtractionTier(latest.extraction_tier)
+    except ValueError:
+        tier = enrichment.extraction_tier or ExtractionTier.LLM_ASSISTED
+    apply_url = SnapshotApplyUrl(value=recovered.value)
+    confidence = judge_snapshot_confidence(
+        tier=tier,
+        description=enrichment.full_description,
+        apply_url_present=True,
+    )
+    quarantine_reason = _quarantine_for_capture(
+        confidence=confidence,
+        active_state=latest.active_state,
+        has_apply_url=True,
+        filter_override=latest.filter_override,
+    )
+    snapshot_set, snapshot = snapshot_set.record_snapshot(
+        source_id=latest.source_id,
+        extraction_tier=latest.extraction_tier,
+        description_hash=latest.description_hash,
+        apply_url=apply_url,
+        active_state=latest.active_state,
+        confidence=confidence,
+        quarantine_reason=quarantine_reason,
+        captured_at=captured_at,
+        raw_text_hash=latest.raw_text_hash,
+        filter_override=latest.filter_override,
+        evidence=(*latest.evidence, "apply_url_recovered:authenticated_browser"),
+    )
+    repo.save(snapshot_set, commit=False)
+
+    from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state
+
+    tailor_state = conn.execute(
+        """
+        SELECT state, error_code
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if (
+        quarantine_reason is QuarantineReason.NONE
+        and tailor_state is not None
+        and str(tailor_state["state"]) == "blocked"
+        and str(tailor_state["error_code"] or "") == "ENRICHMENT_QUARANTINED"
+    ):
+        ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
+        set_stage_state(
+            conn,
+            job_id,
+            "tailor",
+            "pending",
+            tenant_id=tenant_id,
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            job_id,
+            "tailor",
+            "StageReset",
+            tenant_id=tenant_id,
+            message="Tailoring resumed after posting confidence recovered.",
+            payload={
+                "reason": "enrichment_quarantine_resolved",
+                "snapshotVersion": snapshot.snapshot_version,
+                "automated": True,
+            },
+        )
+
+    record_job_event(
+        conn,
+        job_id,
+        "enrich",
+        "PostingContentSnapshotCaptured",
+        tenant_id=tenant_id,
+        message="Posting snapshot refreshed after authenticated apply URL recovery.",
+        payload={
+            "snapshotVersion": snapshot.snapshot_version,
+            "snapshotRef": f"{job_id}:{snapshot.snapshot_version}",
+            "confidence": confidence.value,
+            "quarantineReason": quarantine_reason.value,
+            "reason": "linkedin_authenticated_apply_url",
+        },
+    )
+    return True
+
+
 def _reset_authenticated_linkedin_retry_candidates(
     conn: sqlite3.Connection,
     *,
@@ -2449,15 +2564,22 @@ def _reset_authenticated_linkedin_retry_candidates(
                     # touched.
                     if activity_lease is not None:
                         _fence_execution_enrichment_lease(conn, activity_lease)
-                    repo.save(
-                        aggregate.record_apply_url_recovery(
+                    updated_aggregate = aggregate.record_apply_url_recovery(
                             application_url=recovered,
                             extraction_tier=ExtractionTier.CSS_SELECTORS,
                             started_at=now,
                             finished_at=utc_now(),
-                        ),
-                        commit=activity_lease is None,
                     )
+                    repo.save(updated_aggregate, commit=False)
+                    if recovered is not None:
+                        _record_authenticated_apply_url_snapshot_recovery(
+                            conn,
+                            tenant_id=tenant_id,
+                            job_id=job_id,
+                            enrichment=updated_aggregate,
+                            recovered=recovered,
+                            captured_at=updated_aggregate.updated_at,
+                        )
                     record_job_event(
                         conn,
                         job_id,
@@ -2484,8 +2606,7 @@ def _reset_authenticated_linkedin_retry_candidates(
                     recovery_count += 1
                     if recovered is not None:
                         backfill_count += 1
-                    if activity_lease is not None:
-                        conn.commit()
+                    conn.commit()
                     if limit and limit > 0 and (reset_count + recovery_count) >= limit:
                         break
                     continue
@@ -2528,6 +2649,7 @@ def _reset_authenticated_linkedin_retry_candidates(
                 conn.rollback()
                 raise
             except Exception:  # noqa: BLE001 - one bad row must not abort the scan
+                conn.rollback()
                 log.exception("LinkedIn authenticated retry candidate scan failed for a row")
                 continue
     finally:

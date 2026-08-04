@@ -272,6 +272,52 @@ def test_tailor_job_by_id_skips_blocked_scores_without_generation(
     }
 
 
+def test_tailor_job_by_id_generates_for_historical_salary_only_block(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_job(
+        conn,
+        tenant_id=_TENANT_A,
+        url="https://example.com/salary-advisory",
+        fit_score=9,
+        eligibility_status="blocked",
+        hard_blockers=["Base salary is below the preferred compensation range."],
+    )
+    conn.execute(
+        """
+        UPDATE job_stage_states
+        SET state = 'blocked', error_code = 'SCORE_ELIGIBILITY_BLOCKED',
+            error_message = 'Score eligibility blocks tailoring: salary below range',
+            retryable = 0, blocked_by_json = '["score"]'
+        WHERE tenant_id = ? AND job_id = ? AND stage IN ('tailor', 'cover', 'apply')
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    )
+    conn.commit()
+    calls: list[str] = []
+
+    def fake_tailor(job: dict, *_args, **_kwargs) -> dict:
+        calls.append(str(job["job_id"]))
+        return _fake_approved_result(job)
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", fake_tailor)
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+    )
+
+    assert result["status"] == "approved"
+    assert calls == [str(_JOB_ID)]
+
+
 @pytest.mark.parametrize(
     ("score_state", "seed_staleness"),
     [
@@ -384,7 +430,22 @@ def test_tailor_job_by_id_rejects_inactive_or_quarantined_postings(
         llm_model=None,
     )
 
-    assert result["reason"] == "not_eligible"
+    if confidence == "low":
+        assert result["reason"] == "enrichment_quarantined"
+        state = conn.execute(
+            "SELECT state, error_code, retryable, blocked_by_json "
+            "FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+            (str(_TENANT_A), str(_JOB_ID)),
+        ).fetchone()
+        assert state is not None
+        assert dict(state) == {
+            "state": "blocked",
+            "error_code": "ENRICHMENT_QUARANTINED",
+            "retryable": 1,
+            "blocked_by_json": '["enrich"]',
+        }
+    else:
+        assert result["reason"] == "not_eligible"
 
 
 def test_tailor_job_by_id_allows_explicit_low_confidence_override_state(

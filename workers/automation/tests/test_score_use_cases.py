@@ -985,7 +985,7 @@ def test_score_job_does_not_treat_numeric_prose_as_posted_compensation(profile_s
     )
 
 
-def test_score_job_blocks_when_explicit_posted_compensation_is_below_minimum(profile_snapshot) -> None:
+def test_score_job_warns_when_explicit_posted_compensation_is_below_minimum(profile_snapshot) -> None:
     repo = _MemoryRepo()
     llm = _ScriptedLlm(_strong_llm_response())
     criteria = ScoringCriteria(
@@ -1011,20 +1011,90 @@ def test_score_job_blocks_when_explicit_posted_compensation_is_below_minimum(pro
 
     assert outcome.ok is True
     assert outcome.score is not None
-    assert outcome.score.breakdown.eligibility.status == "blocked"
-    blocker = next(
+    assert outcome.score.breakdown.eligibility.status == "warning"
+    assert outcome.score.breakdown.eligibility.hard_blockers == ()
+    warning = next(
         (
             entry
-            for entry in outcome.score.breakdown.eligibility.hard_blockers
+            for entry in outcome.score.breakdown.eligibility.warnings
             if "posted compensation appears below profile minimum" in entry
         ),
         None,
     )
-    assert blocker is not None
+    assert warning is not None
     # The audit trail must name the source and the parsed figure it judged.
-    assert "jobs.salary" in blocker
-    assert "$95,000" in blocker
-    assert "$120,000" in blocker
+    assert "jobs.salary" in warning
+    assert "$95,000" in warning
+    assert "$120,000" in warning
+
+
+@pytest.mark.parametrize(
+    "blocker",
+    (
+        "Compensation range is below the candidate's expectation.",
+        "Pay is below the candidate minimum.",
+        "Expected earnings are below the target.",
+        "The total cash package is under the preferred range.",
+        "The salary range falls below the candidate's minimum expectation.",
+        "Compensation does not align with the candidate expectations.",
+    ),
+)
+def test_score_job_demotes_model_compensation_blocker_to_warning(
+    profile_snapshot,
+    blocker: str,
+) -> None:
+    response = _strong_llm_response()
+    response["eligibility"] = {
+        "status": "blocked",
+        "hard_blockers": [blocker],
+        "hard_blocker_categories": ["compensation_preference"],
+        "warnings": [],
+    }
+    outcome = ScoreJobUseCase(repository=_MemoryRepo(), llm=_ScriptedLlm(response)).score(
+        job={
+            **_job("https://example.com/job/model-salary-blocker"),
+            "salary": "",
+            "full_description": "Senior engineering role with compensation discussed later.",
+        },
+        profile_snapshot=profile_snapshot,
+        criteria=ScoringCriteria(min_fit_score=8),
+    )
+
+    assert outcome.ok is True
+    assert outcome.score is not None
+    eligibility = outcome.score.breakdown.eligibility
+    assert eligibility.status == "warning"
+    assert eligibility.hard_blockers == ()
+    assert eligibility.warnings == (blocker,)
+
+
+def test_score_job_preserves_mixed_language_constraint_despite_compensation_category(
+    profile_snapshot,
+) -> None:
+    blocker = "Compensation is below target and the candidate must speak German."
+    response = _strong_llm_response()
+    response["eligibility"] = {
+        "status": "blocked",
+        "hard_blockers": [blocker],
+        "hard_blocker_categories": ["compensation_preference"],
+        "warnings": [],
+    }
+
+    outcome = ScoreJobUseCase(repository=_MemoryRepo(), llm=_ScriptedLlm(response)).score(
+        job={
+            **_job("https://example.com/job/model-language-blocker"),
+            "salary": "",
+            "full_description": "Senior engineering role with German required.",
+        },
+        profile_snapshot=profile_snapshot,
+        criteria=ScoringCriteria(min_fit_score=8),
+    )
+
+    assert outcome.ok is True
+    assert outcome.score is not None
+    eligibility = outcome.score.breakdown.eligibility
+    assert eligibility.status == "blocked"
+    assert eligibility.hard_blockers == (blocker,)
 
 
 def _comp_criteria(desired_min: str) -> ScoringCriteria:
@@ -1067,24 +1137,23 @@ def test_constraint_checker_hourly_below_minimum_is_warning_with_annualization_a
     assert "2,080" in warning
 
 
-def test_constraint_checker_confident_annual_below_minimum_is_hard_blocker_with_source() -> None:
-    # A confidently-parsed annual salary from the structured salary field that
-    # is below the profile minimum remains a hard blocker, with its source and
-    # parsed figure captured for the audit trail.
+def test_constraint_checker_confident_annual_below_minimum_is_warning_with_source() -> None:
+    # Salary range is a preference, so even a confidently-parsed annual salary
+    # stays actionable and records the mismatch as an auditable warning.
     assessment = ConstraintChecker().evaluate(
         job={"title": "Engineer", "salary": "$40,000 per year"},
         criteria=_comp_criteria("120,000"),
     )
 
-    assert assessment.status == "blocked"
-    assert assessment.warnings == ()
-    assert len(assessment.hard_blockers) == 1
-    blocker = assessment.hard_blockers[0]
-    assert "posted compensation appears below profile minimum" in blocker
-    assert "$40,000" in blocker
-    assert "$120,000" in blocker
-    assert "jobs.salary" in blocker
-    assert "period year" in blocker
+    assert assessment.status == "warning"
+    assert assessment.hard_blockers == ()
+    assert len(assessment.warnings) == 1
+    warning = assessment.warnings[0]
+    assert "posted compensation appears below profile minimum" in warning
+    assert "$40,000" in warning
+    assert "$120,000" in warning
+    assert "jobs.salary" in warning
+    assert "period year" in warning
 
 
 def test_constraint_checker_monthly_pay_below_minimum_is_warning_not_hard_blocker() -> None:
@@ -1155,18 +1224,18 @@ def test_constraint_checker_daily_rate_below_minimum_is_warning_not_hard_blocker
 
 def test_constraint_checker_bare_amount_without_period_is_still_read_as_annual() -> None:
     # A bare salary-field amount with no sub-annual marker keeps the existing
-    # behavior: it is read as annual, so a below-minimum figure hard-blocks.
+    # parsing behavior: it is read as annual, but remains a preference warning.
     assessment = ConstraintChecker().evaluate(
         job={"title": "Engineer", "salary": "$13,000"},
         criteria=_comp_criteria("120,000"),
     )
 
-    assert assessment.status == "blocked"
-    assert assessment.warnings == ()
-    assert len(assessment.hard_blockers) == 1
-    blocker = assessment.hard_blockers[0]
-    assert "$13,000" in blocker
-    assert "read as annual" in blocker
+    assert assessment.status == "warning"
+    assert assessment.hard_blockers == ()
+    assert len(assessment.warnings) == 1
+    warning = assessment.warnings[0]
+    assert "$13,000" in warning
+    assert "read as annual" in warning
 
 
 def test_score_job_resolves_final_score_from_policy_not_llm_overall(profile_snapshot) -> None:

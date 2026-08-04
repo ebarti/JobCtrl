@@ -74,8 +74,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-SCORE_PROMPT_VERSION = "score-fit-assessment-v2"
-SCORE_SCHEMA_VERSION = "score-fit-assessment-v2"
+SCORE_PROMPT_VERSION = "score-fit-assessment-v4"
+SCORE_SCHEMA_VERSION = "score-fit-assessment-v3"
 SCORE_THINKING_BUDGET = 0
 
 
@@ -93,7 +93,7 @@ DIMENSION SCORES (0..10 each — be strict, do not anchor on the overall score):
 - `experience_fit`: alignment of years / seniority level / domain depth.
 - `role_fit`: alignment of role responsibilities and the candidate's recent role focus.
 
-ELIGIBILITY: keep hard constraints separate from the numeric score. Use `blocked` when work authorization, location/work model, compensation, application language, seniority floor, or an explicit exclusion is a non-negotiable mismatch. Use `warning` for likely mismatches that need review. Use `eligible` only when no hard blocker is visible.
+ELIGIBILITY: keep hard constraints separate from the numeric score. Use `blocked` when work authorization, application language, seniority floor, or an explicit exclusion is a non-negotiable mismatch. For every `hard_blockers` entry, provide the corresponding typed `hard_blocker_categories` entry in the same order. Compensation range and location/work-model preferences are always `warning` signals and must never appear in `hard_blockers`; if compensation is nevertheless returned there, classify it as `compensation_preference` so the deterministic boundary can demote it. Use `warning` for likely mismatches that need review. Use `eligible` only when no hard blocker or warning is visible.
 
 EVIDENCE: name matched signals, missing signals, and transferable signals. Do not invent candidate experience to close a gap.
 
@@ -157,12 +157,26 @@ SCORE_SCHEMA: dict = {
                     "type": "array",
                     "items": {"type": "string"},
                 },
+                "hard_blocker_categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "work_authorization",
+                            "application_language",
+                            "seniority",
+                            "explicit_exclusion",
+                            "compensation_preference",
+                        ],
+                    },
+                    "description": "One category per hard_blockers entry, in the same order.",
+                },
                 "warnings": {
                     "type": "array",
                     "items": {"type": "string"},
                 },
             },
-            "required": ["status", "hard_blockers", "warnings"],
+            "required": ["status", "hard_blockers", "hard_blocker_categories", "warnings"],
         },
         "matched_signals": {
             "type": "array",
