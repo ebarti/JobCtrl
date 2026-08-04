@@ -1486,9 +1486,9 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   or `{ sourceProfilePath }`. The detected-ID arm resolves the standard default
   profile again at mutation time and copies only `Default` plus sanitized root
   metadata required by Chrome; sibling profile directories and metadata are
-  excluded. The manual path is cleared after the request and never returned,
-  logged, or persisted. A detected candidate becomes adopted only through the
-  separate explicit enable mutation.
+  excluded. The manual path is cleared after the request; JobCtrl never
+  returns, logs, or persists it. A detected candidate becomes adopted only
+  through the separate explicit enable mutation.
 - Authenticated extension routes under `/v1/extension/*` require `Authorization:
   Bearer <token>`. A valid token allows a `chrome-extension://` origin through
   the route-scoped CORS and unsafe-mutation guards, but only after the loopback
