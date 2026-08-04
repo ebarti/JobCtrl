@@ -315,6 +315,18 @@ def _native_step_keys_v1(
                 raise LegacyDiscoveryRecoveryError("source_family_missing")
             keys.add(("source_family", f"family:{family}"))
         elif activity_type == "discovery_enrichment":
+            # The producer-lifetime consumer is runtime telemetry only. It ends
+            # through intentional cancellation and deliberately emits no
+            # durable PipelineStep lifecycle; terminal reconciliation owns the
+            # persisted enrichment-pass boundary.
+            if bool(
+                _first(
+                    payload,
+                    "stream_while_discovering",
+                    "streamWhileDiscovering",
+                )
+            ):
+                continue
             item_key = str(_first(payload, "pipeline_step_item_key", "pipelineStepItemKey") or "")
             if not item_key:
                 if _safe_int(_first(payload, "progress_total", "progressTotal")) == 0:
