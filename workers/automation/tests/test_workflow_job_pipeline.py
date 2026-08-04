@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 from temporalio import activity, workflow
 from temporalio.client import WorkflowFailureError
-from temporalio.common import RetryPolicy
+from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, CancelledError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
@@ -97,6 +97,7 @@ def _all_activities():
         apply_activity,
         record_workflow_started,
         record_workflow_outcome,
+        _recover_preparation_state,
     ]
 
 
@@ -110,6 +111,11 @@ async def _check_spend_budget(_payload) -> SpendBudgetStatus:
         daily_budget_usd=25.0,
         exceeded=False,
     )
+
+
+@activity.defn(name="recover_preparation_state")
+async def _recover_preparation_state(_payload) -> dict[str, int]:
+    return {"restored": 0, "failed": 0}
 
 
 @activity.defn(name="plan_discovery_sources")
@@ -352,6 +358,35 @@ def test_pipeline_apply_spec_boundaries_preserve_batch_and_canonical_target() ->
     (targeted_payload,) = targeted.args
     assert targeted_payload.apply_selector_keys == ("jobId",)
     assert targeted_payload.job_id == _APPLY_JOB_ID
+
+
+def test_condition_recovery_run_stage_uses_a_stable_reusable_workflow_id() -> None:
+    reason = "condition_resolved:authenticated_linkedin_browser_unavailable"
+    first = build_run_stage_workflow_spec(
+        {"tenantId": "local", "stage": "enrich", "reason": reason}
+    )
+    replay = build_run_stage_workflow_spec(
+        {"tenantId": "local", "stage": "enrich", "reason": reason}
+    )
+
+    assert first.workflow_id == replay.workflow_id
+    assert first.workflow_id is not None
+    assert first.workflow_id.startswith("condition-recovery-")
+    assert first.id_reuse_policy is WorkflowIDReusePolicy.ALLOW_DUPLICATE
+
+
+def test_profile_continuation_uses_exactly_once_durable_event_identity() -> None:
+    first = build_run_stage_workflow_spec(
+        {"tenantId": "local", "stage": "score", "reason": "profile_updated:42"}
+    )
+    replay = build_run_stage_workflow_spec(
+        {"tenantId": "local", "stage": "score", "reason": "profile_updated:42"}
+    )
+
+    assert first.workflow_id == replay.workflow_id
+    assert first.workflow_id is not None
+    assert first.workflow_id.startswith("profile-continuation-")
+    assert first.id_reuse_policy is WorkflowIDReusePolicy.REJECT_DUPLICATE
 
 
 @pytest.mark.parametrize(

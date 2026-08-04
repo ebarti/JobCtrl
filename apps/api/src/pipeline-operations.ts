@@ -27,13 +27,21 @@ const ETA_SAMPLE_WINDOW_MS = 14 * 24 * 60 * 60 * 1_000;
 const CURRENT_DISCOVERY_EXECUTION_DECODER_VERSION = 2;
 
 const JOB_STAGES = ["enrich", "score", "tailor", "cover"] as const;
-const STEP_STAGES = ["source_planning", "source_family", "reconciliation", "pdf_render"] as const;
-const OPERATIONAL_STAGES = [...STEP_STAGES, ...JOB_STAGES] as const;
+const OPERATIONAL_STAGES = [
+  "source_planning",
+  "source_family",
+  "enrich",
+  "reconciliation",
+  "score",
+  "tailor",
+  "cover",
+  "pdf_render",
+] as const;
 
 const STAGE_LABELS: Record<(typeof OPERATIONAL_STAGES)[number], string> = {
   source_planning: "Plan sources",
   source_family: "Crawl sources",
-  reconciliation: "Reconciliation",
+  reconciliation: "Enrichment reconciliation",
   pdf_render: "Render PDF",
   enrich: "Enrich",
   score: "Score",

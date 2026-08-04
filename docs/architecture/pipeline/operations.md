@@ -203,19 +203,40 @@ runtime inventory confirms that no work remains. Workflow IDs, Temporal run
 IDs, and the raw reason code stay in a collapsed technical disclosure.
 
 Condition-driven preparation is resumed by the mutation that resolves the
-condition. A candidate-profile or preference update dispatches current-input
-scoring followed by Tailor and Cover; an authenticated-LinkedIn browser
-transition to fully ready maps the resolved browser condition to canonical
+condition. A genuine candidate-profile change and its outbox event commit in
+the same SQLite transaction. Before Temporal start, the API appends a durable
+dispatch-intent fact. Startup and every later profile save drain that outbox,
+reattach and await any older intended execution, coalesce only revisions that
+provably never started, and use one deterministic Temporal identity per
+delivered profile event. The
+continuation runs Score, Tailor, and Cover without forcing a rescore, so valid
+current scores are reused; a normalized no-op or an unrelated style/template
+save does not start preparation. An authenticated-LinkedIn browser transition
+to fully ready maps the resolved browser condition to canonical
 `enrich` rows blocked with `ENRICH_ROBOTS_DISALLOWED`, selects only LinkedIn
 jobs carrying that typed condition (with a source-identity fallback for legacy
 rows), and dispatches those JobIds through Enrich, Score, Tailor, and Cover.
 Unrelated robots blocks and ordinary pending Enrich rows are not swept into the
-recovery. These continuations use the normal idempotent workflow path and do
-not rerun Discover.
+recovery. The browser continuation uses one stable workflow identity for the
+resolved condition even while individual rows leave the blocked cohort; a
+concurrent trigger attaches to the active execution, while a later resolution
+episode may reuse the identity after it closes. These continuations use the
+normal idempotent workflow path and do not rerun Discover.
 A low-confidence posting keeps Tailor explicitly `blocked` by Enrich rather
 than leaving it as unexplained `pending`; when authenticated apply-URL recovery
 produces a trustworthy snapshot, Enrich resets that exact condition-blocked
 Tailor row to `pending` before the continuation reaches it.
+
+Score, Tailor, and Cover stage rows record the Temporal run ID that owns every
+`running` write. Rescore/retailor rows also preserve the score version or
+accepted-material generation that existed before that run. An activity retry
+reconciles its owned rows before selector-based work: a result committed after
+the baseline is accepted without another model call, while an uncommitted row
+becomes explicitly retryable. If the stage activity exhausts, that same
+owner-scoped reconciliation is a mandatory workflow step; the workflow cannot
+publish a terminal outcome while its rows still claim that owner. This is not
+a second scheduler or a polling reaper—Temporal durably delivers one
+idempotent reconciliation decision.
 
 ### Two durable progress authorities
 

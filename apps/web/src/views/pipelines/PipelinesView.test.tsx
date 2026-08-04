@@ -167,7 +167,7 @@ describe("PipelinesView", () => {
 
     const planned = screen.getByRole("region", { name: "Plan sources stage" });
     const crawling = screen.getByRole("region", { name: "Crawl sources stage" });
-    const reconciling = screen.getByRole("region", { name: "Reconciliation stage" });
+    const reconciling = screen.getByRole("region", { name: "Enrichment reconciliation stage" });
 
     expect(planned).toHaveAttribute("data-stage-status", "completed");
     expect(within(planned).getByText("Completed")).toHaveAttribute(
@@ -392,7 +392,7 @@ describe("PipelinesView", () => {
       screen.queryByRole("button", { name: /Backlog and diagnostics/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Source families and reconciliation/i }),
+      screen.queryByRole("button", { name: /Source families and enrichment reconciliation/i }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("group", { name: "Pipeline action tools" }),
@@ -578,7 +578,7 @@ describe("PipelinesView", () => {
       screen.queryByRole("region", { name: "Plan sources stage" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Source families and reconciliation/i }),
+      screen.queryByRole("button", { name: /Source families and enrichment reconciliation/i }),
     ).not.toBeInTheDocument();
 
     expect(getLivePipelineMetric("Workers online")).toHaveTextContent(
@@ -791,7 +791,7 @@ describe("PipelinesView", () => {
     await renderPipelineOperations(pipelinesThreeSourceSixStepSnapshot);
 
     const sourceHeading = screen.getByRole("heading", {
-      name: "Source families and reconciliation",
+      name: "Source families and enrichment reconciliation",
     });
     const sourceLedger =
       sourceHeading.closest<HTMLElement>(".pipeline-source-ledger");
@@ -803,7 +803,9 @@ describe("PipelinesView", () => {
         name: "Source-family progress",
       }),
     ).toHaveAttribute("aria-valuenow", "100");
-    expect(sourceLedger).toHaveTextContent("Exactly two post-source operations");
+    expect(sourceLedger).toHaveTextContent(
+      "Runs one final enrichment pass for stragglers, then hands every ready job to preparation.",
+    );
     expect(sourceLedger).toHaveTextContent("Enrichment pass");
     expect(sourceLedger).toHaveTextContent("Preparation fanout");
     expect(sourceLedger).toHaveTextContent("2 steps");

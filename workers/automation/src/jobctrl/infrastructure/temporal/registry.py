@@ -47,6 +47,7 @@ from jobctrl.materials.activities import (
 )
 from jobctrl.pipeline.workflow import JobPipelineWorkflow
 from jobctrl.pipeline.preparation import derive_preparation_targets
+from jobctrl.infrastructure.preparation_recovery import recover_preparation_state_activity
 from jobctrl.preparation.workflow import JobPreparationWorkflow
 from jobctrl.profile.activities import profile_import_activity
 from jobctrl.profile.workflow import ProfileImportWorkflow
@@ -73,6 +74,7 @@ ACTIVITIES: list[Callable[..., Any]] = [
     enrich_activity,
     score_activity,
     score_job_activity,
+    recover_preparation_state_activity,
     tailor_activity,
     tailor_job_activity,
     cover_activity,

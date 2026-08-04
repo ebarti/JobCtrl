@@ -859,6 +859,53 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     });
   });
 
+  it("passes a durable condition-recovery reason through global run-stage RPC", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+
+    await dispatcher(
+      {
+        action: "run_stage",
+        jobKey: "pipeline",
+        jobIds: [CANONICAL_JOB_ID],
+        stage: "enrich",
+        stages: ["enrich", "score", "tailor", "cover"],
+        reason: "condition_resolved:authenticated_linkedin_browser_unavailable:abc123",
+      },
+      { appDir: "/tmp", dbPath: "/tmp/jobctrl.db" },
+    );
+
+    expect(fake.calls[0]?.params).toMatchObject({
+      reason: "condition_resolved:authenticated_linkedin_browser_unavailable:abc123",
+    });
+  });
+
+  it("waits for profile continuations so revisions cannot overlap", async () => {
+    const fake = new FakeDispatcher();
+    const dispatch = createActionDispatcher(fake);
+
+    await dispatch(
+      {
+        action: "run_stage",
+        jobKey: PIPELINE_ACTION_JOB_KEY,
+        stage: "score",
+        stages: ["score", "tailor", "cover"],
+        reason: "profile_updated:42",
+      },
+      { appDir: "/tmp", dbPath: "/tmp/jobctrl.db" },
+    );
+
+    expect(fake.calls).toEqual([
+      {
+        method: "run_stage",
+        params: expect.objectContaining({
+          reason: "profile_updated:42",
+          awaitResult: true,
+        }),
+      },
+    ]);
+  });
+
   it("passes selected discovery source IDs through global run-stage RPC", async () => {
     const fake = new FakeDispatcher();
     const dispatcher = createActionDispatcher(fake);

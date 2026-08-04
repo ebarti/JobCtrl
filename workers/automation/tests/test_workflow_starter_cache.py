@@ -20,6 +20,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from temporalio.client import WorkflowExecutionStatus
+from temporalio.common import WorkflowIDReusePolicy
+from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
 
 from jobctrl.cli import _reconcile_workflow_runs
@@ -130,6 +132,35 @@ def test_starter_survives_cross_loop_invocation() -> None:
         asyncio.run(ws.default_workflow_starter(spec))
 
     assert fake_client.start_workflow.await_count == 2
+
+
+def test_starter_reattaches_rejected_durable_outbox_replay() -> None:
+    workflow_id = "profile-continuation-test"
+    handle = MagicMock()
+    fake_client = MagicMock()
+    fake_client.start_workflow = AsyncMock(
+        side_effect=WorkflowAlreadyStartedError(
+            workflow_id,
+            "JobPipelineWorkflow",
+            run_id="temporal-run",
+        )
+    )
+    fake_client.get_workflow_handle = MagicMock(return_value=handle)
+    spec = WorkflowStartSpec(
+        workflow=_FakeWorkflow,
+        args=(),
+        workflow_id=workflow_id,
+        id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+    )
+
+    with (
+        patch.object(ws, "get_temporal_client", AsyncMock(return_value=fake_client)),
+        patch.object(ws, "_record_dispatch_started"),
+    ):
+        result = asyncio.run(ws.default_workflow_starter(spec))
+
+    assert result is handle
+    fake_client.get_workflow_handle.assert_called_once_with(workflow_id)
 
 
 @pytest.mark.asyncio

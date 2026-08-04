@@ -1,10 +1,12 @@
+import { createHash } from "node:crypto";
+
 import {
   MIN_TAILORING_FIT_SCORE,
   PIPELINE_ACTION_JOB_KEY,
   type ActionCommandPayload,
   type Stage,
 } from "./contracts.js";
-import { openReadOnlyDatabase } from "./db.js";
+import { openDatabase } from "./db.js";
 
 export const AUTHENTICATED_LINKEDIN_BROWSER_UNAVAILABLE =
   "authenticated_linkedin_browser_unavailable" as const;
@@ -24,6 +26,7 @@ interface BlockedStageRow {
   url: string;
   site: string | null;
   metadata_json: string | null;
+  version: number;
 }
 
 const RECOVERY_RULES: Record<ResolvedBlockCondition, BlockConditionRecoveryRule> = {
@@ -42,11 +45,13 @@ export function commandForResolvedBlockCondition(
   condition: ResolvedBlockCondition,
 ): ActionCommandPayload | null {
   const rule = RECOVERY_RULES[condition];
-  const db = openReadOnlyDatabase(dbPath);
+  const db = openDatabase(dbPath);
   try {
-    const rows = db
-      .prepare(
-        `SELECT stage_state.job_id, jobs.url, jobs.site, stage_state.metadata_json
+    return db.transaction(() => {
+      const rows = db
+        .prepare(
+          `SELECT stage_state.job_id, jobs.url, jobs.site,
+                  stage_state.metadata_json, stage_state.version
            FROM job_stage_states stage_state
            JOIN jobs
              ON jobs.tenant_id = stage_state.tenant_id
@@ -57,27 +62,72 @@ export function commandForResolvedBlockCondition(
             AND stage_state.error_code = ?
             AND COALESCE(stage_state.retryable, 1) = 1
           ORDER BY stage_state.job_id`,
-      )
-      .all(rule.stage, rule.errorCode) as BlockedStageRow[];
-    const jobIds = rows
-      .filter((row) => rowMatchesCondition(row, condition, rule))
-      .map((row) => row.job_id);
-    if (jobIds.length === 0) return null;
-    return {
-      action: "run_stage",
-      jobKey: PIPELINE_ACTION_JOB_KEY,
-      jobIds,
-      stage: rule.stage,
-      stages: rule.stages,
-      dryRun: false,
-      limit: jobIds.length,
-      workers: 1,
-      minScore: MIN_TAILORING_FIT_SCORE,
-      validationMode: "normal",
-      reason: `condition_resolved:${condition}`,
-    };
+        )
+        .all(rule.stage, rule.errorCode) as BlockedStageRow[];
+      const claimed = rows
+        .filter((row) => rowMatchesCondition(row, condition, rule))
+        .map((row) => claimRecoveryKey(db, row, condition))
+        .filter((row): row is { jobId: string; recoveryKey: string } => row !== null);
+      if (claimed.length === 0) return null;
+      const jobIds = claimed.map((row) => row.jobId);
+      const command: ActionCommandPayload = {
+        action: "run_stage",
+        jobKey: PIPELINE_ACTION_JOB_KEY,
+        jobIds,
+        stage: rule.stage,
+        stages: rule.stages,
+        dryRun: false,
+        limit: jobIds.length,
+        workers: 1,
+        minScore: MIN_TAILORING_FIT_SCORE,
+        validationMode: "normal",
+        reason: `condition_resolved:${condition}`,
+      };
+      return command;
+    })();
   } finally {
     db.close();
+  }
+}
+
+function claimRecoveryKey(
+  db: ReturnType<typeof openDatabase>,
+  row: BlockedStageRow,
+  condition: ResolvedBlockCondition,
+): { jobId: string; recoveryKey: string } | null {
+  const metadata = parseMetadata(row.metadata_json);
+  const existingKey = typeof metadata.conditionRecoveryKey === "string"
+    ? metadata.conditionRecoveryKey.trim()
+    : "";
+  if (existingKey) {
+    return { jobId: row.job_id, recoveryKey: existingKey };
+  }
+  const recoveryKey = createHash("sha256")
+    .update(`${condition}\n${row.job_id}\n${row.version}`)
+    .digest("hex")
+    .slice(0, 24);
+  metadata.conditionRecoveryKey = recoveryKey;
+  const updated = db.prepare(
+    `UPDATE job_stage_states
+        SET metadata_json = ?, updated_at = ?, version = version + 1
+      WHERE tenant_id = 'local'
+        AND job_id = ?
+        AND stage = 'enrich'
+        AND state = 'blocked'
+        AND version = ?`,
+  ).run(JSON.stringify(metadata), new Date().toISOString(), row.job_id, row.version);
+  return updated.changes === 1 ? { jobId: row.job_id, recoveryKey } : null;
+}
+
+function parseMetadata(value: string | null): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? { ...(parsed as Record<string, unknown>) }
+      : {};
+  } catch {
+    return {};
   }
 }
 

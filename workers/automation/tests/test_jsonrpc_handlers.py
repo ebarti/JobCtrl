@@ -1925,7 +1925,11 @@ async def test_pipeline_workflow_preserves_selected_job_ids_in_activity_inputs(m
 
     monkeypatch.setattr(workflow_mod.workflow, "execute_activity", fake_execute_activity)
     monkeypatch.setattr(workflow_mod.workflow, "execute_child_workflow", fake_execute_child_workflow)
-    monkeypatch.setattr(workflow_mod.workflow, "info", lambda: SimpleNamespace(workflow_id="unit-test-workflow"))
+    monkeypatch.setattr(
+        workflow_mod.workflow,
+        "info",
+        lambda: SimpleNamespace(workflow_id="unit-test-workflow", run_id="unit-test-run"),
+    )
 
     await workflow_mod._execute_stage(
         "discover",
@@ -2236,6 +2240,22 @@ def test_selected_tailor_activity_runs_only_requested_job_ids(monkeypatch) -> No
         JobId("50000000-0000-4000-8000-000000000001"),
         JobId("50000000-0000-4000-8000-000000000002"),
     ]
+
+
+def test_selected_tailor_activity_accepts_committed_acknowledgement_replay(monkeypatch) -> None:
+    job_id = JobId("50000000-0000-4000-8000-000000000003")
+    monkeypatch.setattr(
+        "jobctrl.scoring.tailor.tailor_job_by_id",
+        lambda _job_id, **_kwargs: {"status": "already_done"},
+    )
+
+    result = materials_activities_mod._run_selected_tailoring(
+        TailorActivityInput(tenant_id="local", job_ids=(job_id,), retailor=True)
+    )
+
+    assert result["status"] == "ok"
+    assert result["errors"] == {}
+    assert result["stages"][0]["approvedJobIds"] == [job_id]
 
 
 def test_current_policy_tailor_activity_skips_current_policy_artifacts(

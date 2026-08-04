@@ -192,6 +192,88 @@ def test_tailor_job_by_id_is_tenant_scoped_and_writes_canonical_state(
     }
 
 
+def test_tailor_job_replay_closes_running_state_from_committed_approved_resume(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/replayed-tailor")
+    conn.execute(
+        """
+        UPDATE job_stage_states
+        SET state = 'running'
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    )
+    conn.commit()
+    approved = SimpleNamespace(is_resume_approved=True, generation=3)
+    repository = SimpleNamespace(load_current_approved=lambda *_args: approved)
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "SqliteMaterialsRepository", lambda _conn: repository)
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+    )
+
+    assert result["status"] == "already_done"
+    assert result["materials"] is approved
+    state = conn.execute(
+        """
+        SELECT state FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert state["state"] == "succeeded"
+
+
+def test_retailor_job_replay_reuses_generation_committed_by_same_activity_owner(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/replayed-retailor")
+    conn.execute(
+        """
+        UPDATE job_stage_states
+        SET state = 'running', metadata_json = ?
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (
+            json.dumps({
+                "activityOwner": "workflow-run-owned",
+                "retailor": True,
+                "priorApprovedGeneration": 2,
+            }),
+            str(_TENANT_A),
+            str(_JOB_ID),
+        ),
+    )
+    conn.commit()
+    approved = SimpleNamespace(is_resume_approved=True, generation=3)
+    repository = SimpleNamespace(load_current_approved=lambda *_args: approved)
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "SqliteMaterialsRepository", lambda _conn: repository)
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+        retailor=True,
+        workflow_id="workflow-run-owned",
+    )
+
+    assert result["status"] == "already_done"
+    assert result["materials"] is approved
+    assert conn.execute(
+        "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()["state"] == "succeeded"
+
+
 def test_tailor_job_by_id_enforces_score_boundary_before_generation(
     conn: sqlite3.Connection,
     tmp_path: Path,

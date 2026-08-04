@@ -55,7 +55,10 @@ describe("exact-v7 profile events", () => {
     expect(hasRetailorableResumes(db)).toBe(true);
 
     const event = recordProfileUpdatedEvent(db, ["resume", "preferences"], NOW);
-    expect(event).toMatchObject({ tenantId: "local", eventType: "ProfileUpdated" });
+    expect(event).toMatchObject({
+      eventId: expect.any(Number),
+      event: { tenantId: "local", eventType: "ProfileUpdated" },
+    });
     const row = db
       .prepare(
         `SELECT tenant_id, job_id, identity_version, stage, event_type, payload_json

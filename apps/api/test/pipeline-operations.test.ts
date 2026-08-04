@@ -31,6 +31,33 @@ afterEach(() => {
 });
 
 describe("pipeline operations read model", () => {
+  it("presents stages in dependency order with an explicit enrichment reconciliation label", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, {
+      key: "ordered-stages",
+      requiredSteps: ["score", "tailor", "cover", "pdf"],
+    });
+    for (const stageName of ["score", "tailor", "cover"] as const) {
+      insertStageState(fixture, "ordered-stages", stageName, "pending");
+    }
+
+    expect(
+      snapshot(fixture).stages
+        .filter((stageRow) => stageRow.scope === "current_execution")
+        .map((stageRow) => [stageRow.stage, stageRow.label]),
+    ).toEqual([
+      ["source_planning", "Plan sources"],
+      ["source_family", "Crawl sources"],
+      ["enrich", "Enrich"],
+      ["reconciliation", "Enrichment reconciliation"],
+      ["score", "Score"],
+      ["tailor", "Tailor"],
+      ["cover", "Cover letter"],
+      ["pdf_render", "Render PDF"],
+    ]);
+  });
+
   it("keeps projection coverage absent only when fresh telemetry proves no selected execution or runtime work", () => {
     const fixture = createFixture();
     insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });

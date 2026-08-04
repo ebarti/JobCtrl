@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import type {
   ExtensionAutofillProfileField,
   ExtensionAutofillProfileResponse,
@@ -10,6 +12,7 @@ import type { SqliteDatabase } from "./db.js";
 
 const TENANT_ID = "local";
 const PROFILE_ID = "default";
+const NO_PROFILE_CHANGE = Symbol("no-profile-change");
 
 export class ProfileInputError extends Error {}
 
@@ -445,10 +448,27 @@ export function writeProfileConfig(
   const nextTemplate =
     templateText ??
     (existing ? String(existing.resume_template_text || DEFAULT_RESUME_TEMPLATE) : DEFAULT_RESUME_TEMPLATE);
+  const previousResponse = existing ? readProfileConfig(db) : null;
   const nextVersion = existing ? Number(existing.version ?? 0) + 1 : 1;
-
-  replaceProfile(db, nextProfile, nextStyle, nextTemplate, nextVersion);
-  return readProfileConfig(db);
+  let response: ProfileConfigResponse | null = null;
+  try {
+    db.transaction(() => {
+      replaceProfile(db, nextProfile, nextStyle, nextTemplate, nextVersion);
+      response = readProfileConfig(db);
+      if (previousResponse && isDeepStrictEqual(previousResponse, response)) {
+        throw NO_PROFILE_CHANGE;
+      }
+    })();
+  } catch (error) {
+    if (error === NO_PROFILE_CHANGE && previousResponse) {
+      return previousResponse;
+    }
+    throw error;
+  }
+  if (!response) {
+    throw new ProfileInputError("profile update did not produce a readable profile.");
+  }
+  return response;
 }
 
 export function parseProfileUpdateProfile(request: ProfileUpdateRequest): ProfileShape | undefined {

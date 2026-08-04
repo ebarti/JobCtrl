@@ -30,6 +30,7 @@ from jobctrl.infrastructure.temporal.finalize import (
     record_workflow_outcome,
     record_workflow_started,
 )
+from jobctrl.infrastructure.preparation_recovery import recover_preparation_state_activity
 from jobctrl.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
 from jobctrl.scoring.activities import score_activity
 from jobctrl.llm import SpendBudgetStatus
@@ -50,7 +51,13 @@ async def _check_spend_budget(_payload) -> SpendBudgetStatus:
 
 
 def _activities():
-    return [score_activity, _check_spend_budget, record_workflow_started, record_workflow_outcome]
+    return [
+        score_activity,
+        recover_preparation_state_activity,
+        _check_spend_budget,
+        record_workflow_started,
+        record_workflow_outcome,
+    ]
 
 
 def _workflow_run_row(workflow_id: str):

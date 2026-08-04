@@ -29,6 +29,7 @@ from uuid import uuid4
 
 from temporalio.client import WorkflowHandle
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from jobctrl.domain.rpc.messages import WorkflowStartSpec
 from jobctrl.infrastructure.temporal.client import get_temporal_client
@@ -56,15 +57,23 @@ async def default_workflow_starter(spec: WorkflowStartSpec) -> WorkflowHandle:
     # trigger, so they are safe as global defaults.
     id_conflict_policy = spec.id_conflict_policy or WorkflowIDConflictPolicy.USE_EXISTING
     id_reuse_policy = spec.id_reuse_policy or WorkflowIDReusePolicy.ALLOW_DUPLICATE
-    handle = await client.start_workflow(
-        spec.workflow,
-        *spec.args,
-        id=workflow_id,
-        task_queue=JOBCTRL_TASK_QUEUE,
-        retry_policy=spec.retry_policy,
-        id_conflict_policy=id_conflict_policy,
-        id_reuse_policy=id_reuse_policy,
-    )
+    try:
+        handle = await client.start_workflow(
+            spec.workflow,
+            *spec.args,
+            id=workflow_id,
+            task_queue=JOBCTRL_TASK_QUEUE,
+            retry_policy=spec.retry_policy,
+            id_conflict_policy=id_conflict_policy,
+            id_reuse_policy=id_reuse_policy,
+        )
+    except WorkflowAlreadyStartedError:
+        if id_reuse_policy is not WorkflowIDReusePolicy.REJECT_DUPLICATE:
+            raise
+        # The durable outbox may lose the acknowledgement after Temporal has
+        # already started or completed the exact deterministic execution.
+        # Reattach to that history instead of creating a second run.
+        handle = client.get_workflow_handle(workflow_id)
     _record_dispatch_started(spec, workflow_id, handle)
     return handle
 

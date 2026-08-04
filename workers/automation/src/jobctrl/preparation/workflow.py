@@ -37,6 +37,10 @@ with workflow.unsafe.imports_passed_through():
         _TAILOR_RETRY,
     )
     from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
+    from jobctrl.infrastructure.preparation_recovery import (
+        RecoverPreparationStateInput,
+        recover_preparation_state_activity,
+    )
     from jobctrl.scoring.activities import ScoreJobActivityInput, score_job_activity
 
 
@@ -165,6 +169,8 @@ class JobPreparationWorkflow:
             except ActivityError as exc:
                 if _activity_error_was_cancelled(exc):
                     raise CancelledError("Workflow canceled by request.") from exc
+                if step in {"score", "tailor", "cover"}:
+                    await _recover_stage_state(step, payload)
                 failed.append(step)
                 error_code = _activity_error_code(exc)
                 failure = f"{step}: {exc.cause if exc.cause else exc}"
@@ -187,6 +193,26 @@ class JobPreparationWorkflow:
             failure=failure,
             error_code=error_code,
         )
+
+
+async def _recover_stage_state(
+    stage: str,
+    payload: JobPreparationInput,
+) -> None:
+    """Close the one row owned by an exhausted preparation activity."""
+    await workflow.execute_activity(
+        recover_preparation_state_activity,
+        RecoverPreparationStateInput(
+            tenant_id=payload.tenant_id,
+            workflow_id=workflow.info().run_id,
+            stage=stage,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        ),
+        start_to_close_timeout=timedelta(seconds=30),
+        retry_policy=RetryPolicy(maximum_attempts=0),
+        cancellation_type=workflow.ActivityCancellationType.ABANDON,
+    )
 
 
 def _activity_output_status(output: Any) -> str:

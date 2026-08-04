@@ -2443,12 +2443,19 @@ def _run_score(
     workers: int = 1,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     cancel_event: threading.Event | None = None,
+    workflow_id: str | None = None,
 ) -> dict:
     """Stage: LLM scoring — assign fit scores 1-10."""
     if cancel_event is not None and cancel_event.is_set():
         raise LlmTransientError("scoring canceled before start")
     from jobctrl.scoring.scorer import run_scoring
-    run_scoring(limit=limit, rescore=rescore, workers=workers, llm_model=llm_model)
+    run_scoring(
+        limit=limit,
+        rescore=rescore,
+        workers=workers,
+        llm_model=llm_model,
+        workflow_id=workflow_id,
+    )
     if cancel_event is not None and cancel_event.is_set():
         raise LlmTransientError("scoring canceled")
     return {"status": "ok"}
@@ -2465,6 +2472,7 @@ def _run_tailor(
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
     cancel_event: threading.Event | None = None,
+    workflow_id: str | None = None,
 ) -> dict:
     """Stage: Resume tailoring — generate tailored resumes for high-fit jobs."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2480,6 +2488,7 @@ def _run_tailor(
         tailor_judge_model=tailor_judge_model,
         tailor_judge_min_score=tailor_judge_min_score,
         llm_model=llm_model,
+        workflow_id=workflow_id,
     )
     if cancel_event is not None and cancel_event.is_set():
         raise LlmTransientError("tailoring canceled")
@@ -2502,6 +2511,7 @@ def _run_cover(
     validation_mode: str = "normal",
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     cancel_event: threading.Event | None = None,
+    workflow_id: str | None = None,
 ) -> dict:
     """Stage: Cover letter generation."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2526,6 +2536,7 @@ def _run_cover(
             min_score=min_score,
             validation_mode=validation_mode,
             llm_model=llm_model,
+            workflow_id=workflow_id,
         )
         status = str(result.get("status") or "error")
         if status in {"ok", "already_done"}:

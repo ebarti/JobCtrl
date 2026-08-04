@@ -303,14 +303,13 @@ import {
   parseProfileUpdateProfile,
   readExtensionAutofillProfile,
   readProfileConfig,
-  writeProfileConfig,
 } from "./profile-store.js";
 import { validateProfileTargetPlaces, type PlaceValidator } from "./place-validation.js";
 import {
+  claimNextProfileContinuationEvent,
   handleProfileUpdatedEvent,
-  profileChangedSections,
-  recordProfileUpdatedEvent,
-  shouldContinuePreparationForProfileUpdate,
+  markProfileContinuationEventsHandled,
+  persistProfileUpdate,
 } from "./profile-events.js";
 import { dbFileIdentity, readLlmSpendHealth, readWorkerHealth } from "./worker-health.js";
 import {
@@ -409,6 +408,33 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const providerDispatcher =
     options.providerDispatcher ??
     createRuntimeJsonRpcDispatcherFactory(pythonRuntime)(actionContext);
+  let authenticatedBrowserContinuation: Promise<void> | null = null;
+  let profileContinuation: Promise<void> | null = null;
+  const continueAuthenticatedBrowserPreparation = (): Promise<void> => {
+    if (authenticatedBrowserContinuation) return authenticatedBrowserContinuation;
+    const continuation = dispatchAuthenticatedBrowserContinuation(actionDispatcher, actionContext)
+      .finally(() => {
+        if (authenticatedBrowserContinuation === continuation) {
+          authenticatedBrowserContinuation = null;
+        }
+      });
+    authenticatedBrowserContinuation = continuation;
+    return continuation;
+  };
+  const continueProfilePreparation = (): Promise<void> => {
+    if (profileContinuation) return profileContinuation;
+    const continuation = dispatchPendingProfileContinuations(
+      options.dbPath,
+      actionDispatcher,
+      actionContext,
+    ).finally(() => {
+      if (profileContinuation === continuation) {
+        profileContinuation = null;
+      }
+    });
+    profileContinuation = continuation;
+    return continuation;
+  };
   const manualCaptureImporter =
     options.manualCaptureImporter ?? createWorkerManualCaptureImporter({ pythonRuntime });
   const gmailFeedbackScanner =
@@ -419,6 +445,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const requireHealthyWorkerForActions =
     options.requireHealthyWorkerForActions ?? !options.actionDispatcher;
   ensureLocalCapabilityToken(appDir);
+
+  app.addHook("onListen", async () => {
+    void reconcileAuthenticatedBrowserContinuation(
+      providerDispatcher,
+      continueAuthenticatedBrowserPreparation,
+    ).catch((error: unknown) => {
+      app.log.error({ err: error }, "Failed to reconcile browser-triggered preparation during startup");
+    });
+    void continueProfilePreparation().catch((error: unknown) => {
+      app.log.error({ err: error }, "Failed to reconcile profile-triggered preparation during startup");
+    });
+  });
 
   void app.register(cors, {
     delegator: (request, callback) => {
@@ -2453,12 +2491,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     const db = openDatabase(options.dbPath);
     let profileResponse: ProfileConfigResponse | undefined;
-    let profileUpdatedEvent: ReturnType<typeof recordProfileUpdatedEvent> = null;
+    let profileUpdatedEvent: ReturnType<typeof persistProfileUpdate>["recorded"] = null;
     let queuePreparationContinuation = false;
     try {
-      profileResponse = writeProfileConfig(db, body);
-      profileUpdatedEvent = recordProfileUpdatedEvent(db, profileChangedSections(body));
-      queuePreparationContinuation = shouldContinuePreparationForProfileUpdate(body);
+      const update = persistProfileUpdate(db, body);
+      profileResponse = update.profile;
+      profileUpdatedEvent = update.recorded;
+      queuePreparationContinuation = update.continuePreparation;
     } catch (error) {
       if (error instanceof InputError || error instanceof ProfileInputError) {
         void reply.code(400);
@@ -2469,19 +2508,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       db.close();
     }
     if (profileUpdatedEvent && queuePreparationContinuation) {
-      try {
-        const workerHealth = readWorkerHealth(options.dbPath);
-        if (requireHealthyWorkerForActions && workerHealth.status !== "healthy") {
-          request.log.warn(
-            { workerHealth },
-            "Skipped profile-update preparation continuation because the worker runtime is not healthy",
-          );
-        } else {
-          await handleProfileUpdatedEvent(profileUpdatedEvent, actionDispatcher, actionContext);
-        }
-      } catch (error) {
+      void continueProfilePreparation().catch((error: unknown) => {
         request.log.error({ err: error }, "Failed to dispatch profile-update preparation continuation");
-      }
+      });
     }
     return profileResponse;
   });
@@ -2598,7 +2627,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       });
       if (capabilityId === "authenticated-linkedin-browser" && authenticatedLinkedInBrowserReady(result)) {
         try {
-          await dispatchAuthenticatedBrowserContinuation(actionDispatcher, actionContext);
+          await continueAuthenticatedBrowserPreparation();
         } catch (error) {
           request.log.error({ err: error }, "Failed to continue preparation after browser capability became ready");
         }
@@ -2627,7 +2656,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const result = await dispatchBrowserCapabilities(reply, providerDispatcher, "browser_profile_copy", body);
       if (authenticatedLinkedInBrowserReady(result)) {
         try {
-          await dispatchAuthenticatedBrowserContinuation(actionDispatcher, actionContext);
+          await continueAuthenticatedBrowserPreparation();
         } catch (error) {
           request.log.error({ err: error }, "Failed to continue preparation after browser profile copy became ready");
         }
@@ -3493,6 +3522,51 @@ async function dispatchAuthenticatedBrowserContinuation(
   );
   if (!command) return;
   await actionDispatcher(command, actionContext);
+}
+
+async function dispatchPendingProfileContinuations(
+  dbPath: string,
+  actionDispatcher: ActionDispatcher,
+  actionContext: ActionDispatchContext,
+): Promise<void> {
+  // Yield once so profile writes committed in the same event-loop turn can be
+  // coalesced before any spendful continuation starts.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  while (true) {
+    const db = openDatabase(dbPath);
+    let eventId: number | null;
+    try {
+      eventId = claimNextProfileContinuationEvent(db);
+    } finally {
+      db.close();
+    }
+    if (eventId === null) return;
+
+    // The JSON-RPC adapter waits for this deterministic workflow to finish.
+    // That serializes genuine profile revisions; a restart attaches to the
+    // same Temporal execution before writing the handled marker.
+    await handleProfileUpdatedEvent(eventId, actionDispatcher, actionContext);
+
+    const handledDb = openDatabase(dbPath);
+    try {
+      markProfileContinuationEventsHandled(handledDb, [eventId], eventId);
+    } finally {
+      handledDb.close();
+    }
+  }
+}
+
+async function reconcileAuthenticatedBrowserContinuation(
+  providerDispatcher: JsonRpcDispatcher,
+  continuePreparation: () => Promise<void>,
+): Promise<void> {
+  const response = await providerDispatcher.call("browser_capabilities_list", {});
+  if (response.error) return;
+  const parsed = BrowserCapabilitiesResultSchema.safeParse(response.result);
+  if (!parsed.success) return;
+  if (authenticatedLinkedInBrowserReady({ ok: true, ...parsed.data })) {
+    await continuePreparation();
+  }
 }
 
 async function dispatchBrowserCapabilities(

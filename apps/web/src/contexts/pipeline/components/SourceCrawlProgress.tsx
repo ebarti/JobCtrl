@@ -66,8 +66,8 @@ export function SourceCrawlProgress({ snapshot }: { readonly snapshot: PipelineO
         <div className="pipeline-reconciliation">
           <div className="pipeline-section-heading">
             <div>
-              <h3>Reconciliation</h3>
-              <p>Two post-source steps remain separate from source-family progress.</p>
+              <h3>Enrichment reconciliation</h3>
+              <p>Runs one final enrichment pass for stragglers, then hands every ready job to preparation.</p>
             </div>
             {reconciliation ? <time dateTime={reconciliation.asOf}>{formatDateTime(reconciliation.asOf)}</time> : null}
           </div>
@@ -83,7 +83,7 @@ export function SourceCrawlProgress({ snapshot }: { readonly snapshot: PipelineO
                   <CountSummary counts={reconciliation.preparationFanout} />
                 </div>
               </div>
-              <InlineDisclosure label="Reconciliation diagnostics">
+              <InlineDisclosure label="Enrichment reconciliation diagnostics">
                 <div className="pipeline-detail-stack">
                   <CountDetails counts={reconciliation.enrichment} label="Enrichment pass outcomes" />
                   <CountDetails counts={reconciliation.preparationFanout} label="Preparation fanout outcomes" />
@@ -91,7 +91,7 @@ export function SourceCrawlProgress({ snapshot }: { readonly snapshot: PipelineO
               </InlineDisclosure>
             </>
           ) : (
-            <Empty title="No reconciliation projection is available for the selected execution." />
+            <Empty title="No enrichment reconciliation history is available for the selected execution." />
           )}
         </div>
       </CardContent>
