@@ -61,8 +61,8 @@ dev = [
 providers = [
     "claude-agent-sdk==0.2.115",
     "mcp>=1.28.1",
-    "openai-codex==0.1.0b3",
-    "openai-codex-cli-bin==0.137.0a4",
+    "openai-codex==0.144.4",
+    "openai-codex-cli-bin==0.144.4",
     "google-antigravity==0.1.2",
     "pyasn1>=0.6.4",
 ]
@@ -73,8 +73,8 @@ providers = [
 [dependency-groups]
 provider-runtime = [
     "claude-agent-sdk==0.2.115",
-    "openai-codex==0.1.0b3",
-    "openai-codex-cli-bin==0.137.0a4",
+    "openai-codex==0.144.4",
+    "openai-codex-cli-bin==0.144.4",
     "google-antigravity==0.1.2",
 ]
 release-build = ["build==1.4.3", "hatchling==1.29.0"]
@@ -129,5 +129,5 @@ default-groups = ["provider-runtime"]
 # workflows resolve against the same graph. Provider runtimes and the audited
 # JobStreaming integration move independently, so admit only their reviewed
 # releases without moving the global cutoff for everything else.
-exclude-newer = "2026-07-09T19:15:43.240437Z"
+exclude-newer = "P7D"
 exclude-newer-package = { "google-antigravity" = "2026-06-04T21:19:27Z", "claude-agent-sdk" = "2026-07-10T00:00:00Z", "jobstreaming" = "2026-07-18T00:00:00Z" }
