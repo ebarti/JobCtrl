@@ -1007,6 +1007,41 @@ def test_native_history_declares_exact_step_keys() -> None:
     }
 
 
+def test_native_history_excludes_runtime_only_live_enrichment_key() -> None:
+    execution = {
+        "tenant_id": "local",
+        "workflow_id": "discover-local",
+        "temporal_run_id": "run-native-live",
+    }
+    records = [
+        {
+            "kind": "scheduled",
+            "activity_type": "discovery_enrichment",
+            "payload": {
+                "discovery_execution": execution,
+                "stream_while_discovering": True,
+                "pipeline_step_item_key": "streaming:live",
+            },
+        },
+        {
+            "kind": "scheduled",
+            "activity_type": "discovery_enrichment",
+            "payload": {
+                "discovery_execution": execution,
+                "stream_while_discovering": False,
+                "pipeline_step_item_key": "terminal",
+            },
+        },
+    ]
+
+    assert _native_step_keys_v1(
+        records,
+        tenant_id="local",
+        workflow_id="discover-local",
+        temporal_run_id="run-native-live",
+    ) == {("enrichment_pass", "terminal")}
+
+
 def test_recovery_manifest_upserts_monotonic_history_watermark(tmp_path) -> None:
     conn = init_db(tmp_path / "manifest.db")
     execution = DiscoveryExecutionRef(

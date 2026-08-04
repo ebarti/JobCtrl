@@ -204,6 +204,12 @@ Temporal running, restart the worker, and verify that startup reconciliation:
    and step-key digest; and
 4. publishes `ready` only after projection refresh and exact set equality.
 
+For native streaming history, verify that the producer-lifetime live enrichment
+activity remains runtime-only and is excluded from the durable expected-step
+set, while terminal enrichment reconciliation remains required. A closed run
+must not retry forever because `streaming:live` intentionally has no persisted
+`PipelineStep*` lifecycle.
+
 The legacy fixture must also reproduce the lossy projection shape: repeated
 fanout passes declare `0`, `71`, `67`, and `34` targets with legitimate overlap,
 the folded workflow projection retains only `jobUrl`, and the append-only event
