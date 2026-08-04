@@ -308,7 +308,7 @@ async def discovery_enrichment_activity(
         run_blocking_with_heartbeat,
     )
     from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
-    from jobctrl.pipeline.runner import run_discovery_enrichment_stage, run_discovery_hygiene
+    from jobctrl.pipeline.runner import run_discovery_enrichment_stage
 
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
@@ -336,6 +336,16 @@ async def discovery_enrichment_activity(
 
     cancel_event = threading.Event()
     on_job_enriched = _build_per_job_handoff(payload)
+    try:
+        info = activity.info()
+        activity_attempt = info.attempt
+        activity_owner_token = (
+            f"{info.activity_id}:{info.activity_run_id}:{info.attempt}"
+        )
+    except RuntimeError:
+        # Direct unit calls have no Temporal activity context.
+        activity_attempt = 1
+        activity_owner_token = None
 
     try:
         result = await run_blocking_with_heartbeat(
@@ -354,6 +364,8 @@ async def discovery_enrichment_activity(
                     if payload.discovery_execution is not None
                     else None
                 ),
+                activity_attempt=activity_attempt,
+                activity_owner_token=activity_owner_token,
             ),
             starting_message="discovery enrichment starting",
             progress_message="discovery enrichment still running",
@@ -362,7 +374,6 @@ async def discovery_enrichment_activity(
             activity_name="discover:enrichment",
         )
         activity.heartbeat({"status": result.get("status", "ok")})
-        run_discovery_hygiene("after")
         status = str(result.get("status") or "ok")
         if not _is_success_status(status):
             raise _stage_failure_error("discover:enrichment", result)

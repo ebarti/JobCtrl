@@ -753,10 +753,13 @@ def retire_invalid_source_jobs(
     *,
     search_cfg: Mapping[str, Any],
     run_id: str = "discovery:hygiene",
+    ensure_tables: bool = True,
+    commit: bool = True,
 ) -> dict[str, Any]:
     """Soft-delete active discovered jobs that fail today's discovery contract."""
 
-    ensure_source_observation_tables(conn)
+    if ensure_tables:
+        ensure_source_observation_tables(conn)
     query_specs_by_family = _query_specs_by_family(search_cfg)
     accept_locs, reject_locs = configured_location_filters(search_cfg)
     locations = tuple(_location_values(search_cfg))
@@ -847,7 +850,7 @@ def retire_invalid_source_jobs(
         )
         retired.append({"job_url": job_url, "reason": reason})
 
-    if retired:
+    if retired and commit:
         conn.commit()
     return {"retired_jobs": len(retired), "jobs": retired}
 

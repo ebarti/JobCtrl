@@ -30,6 +30,42 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from jobctrl.domain.errors import TransientNetworkError
+from jobctrl.domain.tenant import TenantId
+
+
+@dataclass(frozen=True)
+class EnrichmentExecutionLease:
+    """Fencing token for one Discover execution's active enrichment activity."""
+
+    tenant_id: TenantId
+    workflow_id: str
+    run_id: str
+    owner_token: str
+    epoch: int
+    generation: int
+    activity_phase: int
+    activity_attempt: int
+
+    def __post_init__(self) -> None:
+        if not self.workflow_id.strip() or not self.run_id.strip():
+            raise ValueError("enrichment lease execution ids must be non-empty")
+        if not self.owner_token.strip():
+            raise ValueError("enrichment lease owner_token must be non-empty")
+        if (
+            self.epoch < 1
+            or self.generation < 1
+            or self.activity_phase < 1
+            or self.activity_attempt < 1
+        ):
+            raise ValueError(
+                "enrichment lease epoch, generation, phase, and attempt must be positive"
+            )
+
+
+class StaleEnrichmentExecutionLease(TransientNetworkError):
+    """Raised when an older enrichment activity tries to mutate durable state."""
+
 
 # ---------------------------------------------------------------------------
 # FullDescription

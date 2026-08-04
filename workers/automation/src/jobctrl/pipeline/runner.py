@@ -31,8 +31,16 @@ from jobctrl.domain.discovery.scheduler import (
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
 from jobctrl.domain.errors import LlmTransientError, SourceUnavailableError, TransientNetworkError
+from jobctrl.domain.enrichment import (
+    EnrichmentExecutionLease,
+    StaleEnrichmentExecutionLease,
+)
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.enrichment.execution_lease import (
+    claim_enrichment_execution_lease,
+    fence_enrichment_execution_lease,
+)
 from jobctrl.infrastructure.discovery.sqlite_run_repository import (
     SqliteDiscoveryRunRepository,
 )
@@ -94,14 +102,21 @@ def _record_pipeline_event(
     level: str,
     message: str,
     payload: dict[str, Any] | None = None,
+    *,
+    activity_lease: EnrichmentExecutionLease | None = None,
 ) -> None:
     """Emit a durable pipeline-level event plus a short Langfuse event observation."""
     now = utc_now()
     enriched = _pipeline_event_payload(stage, event_type, now, payload)
-    _record_pipeline_observation_event(stage, event_type, level, message, enriched)
+    if activity_lease is None:
+        _record_pipeline_observation_event(stage, event_type, level, message, enriched)
 
+    conn = None
     try:
         conn = get_connection()
+        if activity_lease is not None:
+            fence_enrichment_execution_lease(conn, activity_lease)
+            _record_pipeline_observation_event(stage, event_type, level, message, enriched)
         record_job_event(
             conn,
             None,
@@ -112,7 +127,11 @@ def _record_pipeline_event(
             payload=enriched,
         )
         conn.commit()
+    except StaleEnrichmentExecutionLease:
+        raise
     except Exception:
+        if activity_lease is not None and conn is not None:
+            conn.rollback()
         log.exception("Failed to record pipeline event %s for stage %s", event_type, stage)
 
 
@@ -1362,14 +1381,32 @@ def plan_discovery_source_families(
     }
 
 
-def run_discovery_hygiene(label: str) -> int:
+def run_discovery_hygiene(
+    label: str,
+    *,
+    activity_lease: EnrichmentExecutionLease | None = None,
+) -> int:
     conn = get_connection()
     search_cfg = config.load_search_config() or {}
-    hygiene = retire_invalid_source_jobs(
-        conn,
-        search_cfg=search_cfg,
-        run_id=f"discovery:hygiene:{label}",
-    )
+    if activity_lease is not None:
+        fence_enrichment_execution_lease(conn, activity_lease)
+    try:
+        hygiene = retire_invalid_source_jobs(
+            conn,
+            search_cfg=search_cfg,
+            run_id=f"discovery:hygiene:{label}",
+            # Exact-schema runtimes already own these tables. Avoid the helper's
+            # eager commit so the lease fence and every soft-delete/event remain
+            # one SQLite writer transaction.
+            ensure_tables=activity_lease is None,
+            commit=activity_lease is None,
+        )
+        if activity_lease is not None:
+            conn.commit()
+    except Exception:
+        if activity_lease is not None:
+            conn.rollback()
+        raise
     retired = int(hygiene.get("retired_jobs") or 0)
     if retired:
         console.print(f"  [yellow]Discovery hygiene retired {retired} invalid source jobs[/yellow]")
@@ -1672,9 +1709,39 @@ def run_discovery_enrichment_stage(
     stream_while_discovering: bool = False,
     discovery_execution: DiscoveryExecutionRef | None = None,
     recovery_key: str | None = None,
+    activity_attempt: int = 1,
+    activity_owner_token: str | None = None,
 ) -> dict[str, Any]:
     emit_progress = progress_total > 0
+    result: dict[str, Any] = {}
+    discovery_done = threading.Event()
+    if stream_while_discovering and discovery_execution is None:
+        raise ValueError("streaming discovery enrichment requires an execution scope")
+    activity_lease = None
+    if discovery_execution is not None and activity_owner_token:
+        activity_lease = _claim_execution_enrichment_lease(
+            discovery_execution,
+            owner_token=activity_owner_token,
+            activity_phase=1 if stream_while_discovering else 2,
+            activity_attempt=activity_attempt,
+        )
+        recovered_job_ids = _reconcile_execution_enrichment_stages(activity_lease)
+        if recovered_job_ids:
+            log.warning(
+                "Reconciled %d enrichment stage(s) for activity lease epoch %d",
+                len(recovered_job_ids),
+                activity_lease.epoch,
+            )
+            if on_job_enriched is not None:
+                _handoff_reconciled_enriched_jobs(
+                    recovered_job_ids,
+                    on_job_enriched=on_job_enriched,
+                    tenant_id=activity_lease.tenant_id,
+                )
     if emit_progress:
+        progress_event_kwargs = (
+            {"activity_lease": activity_lease} if activity_lease is not None else {}
+        )
         _record_pipeline_event(
             "discover",
             "StageStarted",
@@ -1686,14 +1753,9 @@ def run_discovery_enrichment_stage(
                 current_step="Detail enrichment",
                 message="Detail enrichment finishing",
             ),
+            **progress_event_kwargs,
         )
-
-    result: dict[str, Any] = {}
-    discovery_done = threading.Event()
-    if stream_while_discovering:
-        if discovery_execution is None:
-            raise ValueError("streaming discovery enrichment requires an execution scope")
-    else:
+    if not stream_while_discovering:
         discovery_done.set()
     drain_kwargs: dict[str, Any] = {
         "workers": max(1, workers),
@@ -1705,12 +1767,20 @@ def run_discovery_enrichment_stage(
         drain_kwargs["discovery_execution"] = discovery_execution
     if recovery_key:
         drain_kwargs["recovery_key"] = recovery_key
+    if activity_lease is not None:
+        drain_kwargs["activity_lease"] = activity_lease
     _run_discovery_enrichment_until_idle(
         discovery_done,
         result,
         **drain_kwargs,
     )
     final = result or {"status": "ok", "passes": 0, "pending": 0}
+
+    # Hygiene mutates canonical soft-delete state. Keep it inside the terminal
+    # owner's lease before final progress is committed; a superseded attempt
+    # must fail its fence without evaluating or hiding any job.
+    if not stream_while_discovering:
+        run_discovery_hygiene("after", activity_lease=activity_lease)
 
     if emit_progress:
         status = str(final.get("status") or "ok")
@@ -1740,6 +1810,11 @@ def run_discovery_enrichment_stage(
                 "warn" if status == "partial" else "info",
                 message,
                 payload,
+                **(
+                    {"activity_lease": activity_lease}
+                    if activity_lease is not None
+                    else {}
+                ),
             )
         else:
             error_class = final.get("error_class")
@@ -1766,6 +1841,11 @@ def run_discovery_enrichment_stage(
                         message="Detail enrichment failed",
                     ),
                 },
+                **(
+                    {"activity_lease": activity_lease}
+                    if activity_lease is not None
+                    else {}
+                ),
             )
 
     return final
@@ -2325,6 +2405,7 @@ def _run_enrich(
     reset_linkedin_candidates: bool = True,
     on_job_enriched: Callable[[JobId], None] | None = None,
     recovery_key: str | None = None,
+    activity_lease: EnrichmentExecutionLease | None = None,
 ) -> dict:
     """Stage: Detail enrichment — scrape full descriptions and apply URLs."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2340,6 +2421,8 @@ def _run_enrich(
         enrich_kwargs["job_ids"] = job_ids
     if recovery_key:
         enrich_kwargs["recovery_key"] = recovery_key
+    if activity_lease is not None:
+        enrich_kwargs["activity_lease"] = activity_lease
     if cancel_event is None:
         stats = run_enrichment(**enrich_kwargs)
     else:
@@ -2705,6 +2788,196 @@ def _execution_pending_enrichment_job_ids(
     return tuple(JobId(str(row[0])) for row in rows)
 
 
+def _claim_execution_enrichment_lease(
+    discovery_execution: DiscoveryExecutionRef,
+    *,
+    owner_token: str,
+    activity_phase: int,
+    activity_attempt: int,
+) -> EnrichmentExecutionLease:
+    """Claim the monotonically fenced enrichment lane for one Discover run."""
+
+    conn = get_connection()
+    return claim_enrichment_execution_lease(
+        conn,
+        discovery_execution,
+        owner_token=owner_token,
+        activity_phase=activity_phase,
+        activity_attempt=activity_attempt,
+    )
+
+
+def _reconcile_execution_enrichment_stages(
+    activity_lease: EnrichmentExecutionLease,
+) -> tuple[JobId, ...]:
+    """Repair interrupted stage projections under the current activity lease.
+
+    The enrichment aggregate is saved only after a job succeeds or fails. If a
+    worker disappears between the stage's ``running`` transition and that
+    terminal save, the aggregate remains pending while the stage projection is
+    left running. The normal selector intentionally excludes running stages, so
+    a later Temporal activity attempt must reconcile that split state before it
+    can resume the same Discover execution.
+
+    Lease epoch one has no predecessor. Later live attempts and the terminal
+    reconciliation activity both receive higher epochs and reconcile the exact
+    execution before selecting work.
+    """
+
+    conn = get_connection()
+    fence_enrichment_execution_lease(conn, activity_lease)
+    rows = conn.execute(
+        "SELECT stage.job_id, stage.version, enrichment.current_status, "
+        "enrichment.attempts_json, enrichment.enriched_at, enrichment.updated_at "
+        "FROM discovery_execution_jobs AS execution "
+        "JOIN job_stage_states AS stage "
+        "ON stage.tenant_id = execution.tenant_id "
+        "AND stage.job_id = execution.job_id "
+        "AND stage.stage = 'enrich' "
+        "LEFT JOIN job_enrichments AS enrichment "
+        "ON enrichment.tenant_id = execution.tenant_id "
+        "AND enrichment.job_id = execution.job_id "
+        "WHERE execution.tenant_id = ? "
+        "AND execution.discover_workflow_id = ? "
+        "AND execution.discover_run_id = ? "
+        "AND execution.cohort_kind = 'observed_this_run' "
+        "AND stage.state = 'running' "
+        "ORDER BY execution.linked_at, execution.job_id",
+        (
+            str(activity_lease.tenant_id),
+            activity_lease.workflow_id,
+            activity_lease.run_id,
+        ),
+    ).fetchall()
+
+    recovered: list[JobId] = []
+    for row in rows:
+        job_id = JobId(str(row[0]))
+        version = int(row[1] or 0)
+        aggregate_status = str(row[2] or "pending")
+        recovered_at = utc_now()
+        attempts = json.loads(row[3] or "[]")
+        attempt_count = len(attempts) if isinstance(attempts, list) else 0
+        metadata = json.dumps(
+            {
+                "recoveryReason": "orphaned_activity_attempt",
+                "activityAttempt": activity_lease.activity_attempt,
+                "leaseEpoch": activity_lease.epoch,
+            },
+            sort_keys=True,
+        )
+        if aggregate_status == "enriched":
+            state = "succeeded"
+            finished_at = str(row[4] or row[5] or recovered_at)
+            error_code = None
+            error_message = None
+            retryable = 1
+            event_type = "StageCompleted"
+            message = "Reconciled enrichment completed before worker interruption"
+        elif aggregate_status == "failed":
+            state = "failed"
+            finished_at = str(row[5] or recovered_at)
+            last_attempt = attempts[-1] if isinstance(attempts, list) and attempts else {}
+            last_error = last_attempt.get("error") if isinstance(last_attempt, dict) else {}
+            last_error = last_error if isinstance(last_error, dict) else {}
+            error_code = str(last_error.get("code") or "DETAIL_ERROR")
+            error_message = str(last_error.get("message") or "enrichment failed")[:500]
+            retryable = int(bool(last_error.get("retryable", True)))
+            event_type = "StageFailed"
+            message = "Reconciled enrichment failure recorded before worker interruption"
+        else:
+            state = "pending"
+            finished_at = None
+            error_code = None
+            error_message = None
+            retryable = 1
+            event_type = "StageReset"
+            message = "Recovering enrichment interrupted by a previous worker attempt"
+        update = conn.execute(
+            "UPDATE job_stage_states SET state = ?, started_at = NULL, "
+            "updated_at = ?, finished_at = ?, duration_ms = NULL, "
+            "attempt_count = ?, error_code = ?, error_message = ?, retryable = ?, "
+            "blocked_by_json = NULL, next_action = NULL, metadata_json = ?, "
+            "version = version + 1 "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich' "
+            "AND state = 'running' AND version = ? "
+            "AND COALESCE((SELECT current_status FROM job_enrichments "
+            "WHERE tenant_id = job_stage_states.tenant_id "
+            "AND job_id = job_stage_states.job_id), 'pending') = ?",
+            (
+                state,
+                recovered_at,
+                finished_at,
+                attempt_count,
+                error_code,
+                error_message,
+                retryable,
+                metadata,
+                str(activity_lease.tenant_id),
+                str(job_id),
+                version,
+                aggregate_status,
+            ),
+        )
+        if update.rowcount != 1:
+            conn.rollback()
+            raise StaleEnrichmentExecutionLease(
+                "enrichment reconciliation lost its execution lease"
+            )
+        record_job_event(
+            conn,
+            job_id,
+            "enrich",
+            event_type,
+            tenant_id=activity_lease.tenant_id,
+            message=message,
+            payload={
+                "reason": "orphaned_activity_attempt",
+                "previousState": "running",
+                "activityAttempt": activity_lease.activity_attempt,
+                "leaseEpoch": activity_lease.epoch,
+                "aggregateStatus": aggregate_status,
+            },
+        )
+        recovered.append(job_id)
+    conn.commit()
+    return tuple(recovered)
+
+
+def _handoff_reconciled_enriched_jobs(
+    job_ids: tuple[JobId, ...],
+    *,
+    on_job_enriched: Callable[[JobId], None],
+    tenant_id: str,
+) -> None:
+    """Restore per-job preparation handoffs lost after aggregate commit."""
+
+    if not job_ids:
+        return
+    conn = get_connection()
+    placeholders = ", ".join("?" for _ in job_ids)
+    rows = conn.execute(
+        "SELECT stage.job_id FROM job_stage_states stage "
+        "JOIN job_enrichments enrichment "
+        "ON enrichment.tenant_id = stage.tenant_id "
+        "AND enrichment.job_id = stage.job_id "
+        f"WHERE stage.tenant_id = ? AND stage.job_id IN ({placeholders}) "
+        "AND stage.stage = 'enrich' AND stage.state = 'succeeded' "
+        "AND enrichment.current_status = 'enriched'",
+        (str(tenant_id), *(str(job_id) for job_id in job_ids)),
+    ).fetchall()
+    for row in rows:
+        job_id = JobId(str(row[0]))
+        try:
+            on_job_enriched(job_id)
+        except Exception:  # noqa: BLE001 - recovery handoff is best-effort
+            log.warning(
+                "Per-job preparation recovery handoff failed for %s",
+                job_id,
+                exc_info=True,
+            )
+
+
 def _execution_recoverable_enrichment_job_ids(
     discovery_execution: DiscoveryExecutionRef,
 ) -> tuple[JobId, ...]:
@@ -2763,6 +3036,7 @@ def _run_discovery_enrichment_until_idle(
     on_job_enriched: Callable[[JobId], None] | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
     recovery_key: str | None = None,
+    activity_lease: EnrichmentExecutionLease | None = None,
 ) -> None:
     """Drain the detail-enrichment queue while discovery is still producing jobs.
 
@@ -2842,6 +3116,8 @@ def _run_discovery_enrichment_until_idle(
                 enrich_kwargs["job_ids"] = scoped_job_ids
             if recovery_key:
                 enrich_kwargs["recovery_key"] = recovery_key
+            if activity_lease is not None:
+                enrich_kwargs["activity_lease"] = activity_lease
             enrichment_result = _run_enrich(**enrich_kwargs)
             passes += 1
             pass_site_errors = enrichment_result.get("site_errors") or {}
