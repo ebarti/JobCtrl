@@ -20,7 +20,7 @@ const PACKS = [
   },
   {
     id: "codex-provider-runtime",
-    version: "0.137.0a4",
+    version: "0.144.4",
     owner: "OpenAI",
     source: "https://pypi.org/project/openai-codex-cli-bin/",
     license: "Apache-2.0",
