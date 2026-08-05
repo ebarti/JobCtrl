@@ -97,6 +97,64 @@ async def test_preparation_workflow_treats_already_done_step_as_complete(
     assert result.failure is None
 
 
+@pytest.mark.asyncio
+async def test_preparation_workflow_stops_dependents_when_tailor_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def fake_execute_activity(activity_fn, _payload, **_kwargs):
+        calls.append(activity_fn.__name__)
+        return SimpleNamespace(
+            status="skipped" if activity_fn.__name__ == "tailor_job_activity" else "ok",
+            reason="Posting snapshot is quarantined.",
+        )
+
+    monkeypatch.setattr(prep_workflow_mod.workflow, "execute_activity", fake_execute_activity)
+
+    result = await JobPreparationWorkflow()._execute_steps(
+        JobPreparationInput(
+            tenant_id="local",
+            job_id=_JOB_ID,
+            steps=["tailor", "cover", "pdf"],
+            target_version="1",
+            idempotency_key="preparation:skip-dependents",
+        )
+    )
+
+    assert result.steps_completed == []
+    assert result.steps_skipped == ["tailor"]
+    assert result.steps_failed == []
+    assert result.failure is None
+    assert calls == ["tailor_job_activity"]
+
+
+@pytest.mark.asyncio
+async def test_preparation_workflow_reports_pdf_error_as_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_execute_activity(_activity_fn, _payload, **_kwargs):
+        return SimpleNamespace(status="error", error="No approved material is renderable.")
+
+    monkeypatch.setattr(prep_workflow_mod.workflow, "execute_activity", fake_execute_activity)
+
+    result = await JobPreparationWorkflow()._execute_steps(
+        JobPreparationInput(
+            tenant_id="local",
+            job_id=_JOB_ID,
+            steps=["pdf"],
+            target_version="1",
+            idempotency_key="preparation:pdf-error",
+        )
+    )
+
+    assert result.steps_completed == []
+    assert result.steps_skipped == []
+    assert result.steps_failed == ["pdf"]
+    assert result.error_code == "pdf_render_failed"
+    assert result.failure == "pdf: No approved material is renderable."
+
+
 def test_preparation_workflow_rejects_url_shaped_job_id() -> None:
     with pytest.raises(ValueError, match="JobId must be a canonical UUID"):
         JobPreparationInput(
@@ -112,6 +170,11 @@ def test_preparation_workflow_rejects_url_shaped_job_id() -> None:
 async def test_preparation_workflow_records_failed_step_and_error_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    recoveries: list[tuple[str, JobPreparationInput]] = []
+
+    async def fake_recover(stage: str, payload: JobPreparationInput) -> None:
+        recoveries.append((stage, payload))
+
     async def fake_execute_activity(activity_fn, _payload, **_kwargs):
         if activity_fn.__name__ != "tailor_job_activity":
             return SimpleNamespace(status="ok")
@@ -129,6 +192,7 @@ async def test_preparation_workflow_records_failed_step_and_error_code(
             ) from exc
 
     monkeypatch.setattr(prep_workflow_mod.workflow, "execute_activity", fake_execute_activity)
+    monkeypatch.setattr(prep_workflow_mod, "_recover_stage_state", fake_recover)
 
     result = await JobPreparationWorkflow()._execute_steps(
         JobPreparationInput(
@@ -145,6 +209,50 @@ async def test_preparation_workflow_records_failed_step_and_error_code(
     assert result.error_code == "missing_input"
     assert result.failure is not None
     assert result.failure.startswith("tailor:")
+    assert len(recoveries) == 1
+    assert recoveries[0][0] == "tailor"
+
+
+@pytest.mark.asyncio
+async def test_preparation_workflow_recovers_owned_score_after_retry_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = JobPreparationInput(
+        tenant_id="local",
+        job_id=_JOB_ID,
+        steps=["score", "tailor"],
+        target_version="1",
+        idempotency_key="preparation:score-owner-loss",
+    )
+    recoveries: list[tuple[str, JobPreparationInput]] = []
+
+    async def fake_recover(stage: str, failed_payload: JobPreparationInput) -> None:
+        recoveries.append((stage, failed_payload))
+
+    async def fake_execute_activity(activity_fn, _payload, **_kwargs):
+        if activity_fn.__name__ != "score_job_activity":
+            return SimpleNamespace(status="ok")
+        try:
+            raise ApplicationError("heartbeat timed out", type="Timeout", non_retryable=False)
+        except ApplicationError as exc:
+            raise ActivityError(
+                "score failed",
+                scheduled_event_id=1,
+                started_event_id=2,
+                identity="killed-worker",
+                activity_type="score_job",
+                activity_id="activity-1",
+                retry_state=None,
+            ) from exc
+
+    monkeypatch.setattr(prep_workflow_mod.workflow, "execute_activity", fake_execute_activity)
+    monkeypatch.setattr(prep_workflow_mod, "_recover_stage_state", fake_recover)
+
+    result = await JobPreparationWorkflow()._execute_steps(payload)
+
+    assert result.steps_completed == []
+    assert result.steps_failed == ["score"]
+    assert recoveries == [("score", payload)]
 
 
 def test_preparation_workflow_specs_are_deterministic_for_duplicate_triggers() -> None:
@@ -367,7 +475,7 @@ async def test_preparation_workflow_resumes_at_cover_after_worker_restart(
     async def record_outcome(_payload) -> None:
         return None
 
-    def fake_score_job(_payload) -> dict[str, object]:
+    def fake_score_job(_payload, **_kwargs) -> dict[str, object]:
         calls.append("score")
         return {"status": "ok", "score_version": 1}
 
@@ -451,6 +559,176 @@ async def test_preparation_workflow_resumes_at_cover_after_worker_restart(
     assert result.steps_completed == ["score", "tailor", "cover", "pdf"]
     assert result.steps_failed == []
     assert calls == ["score", "tailor", "cover", "cover", "pdf"]
+
+
+@pytest.mark.asyncio
+async def test_preparation_workflow_resumes_pdf_after_worker_loss(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    queue = f"prep-pdf-worker-loss-{uuid.uuid4()}"
+    first_render_started = threading.Event()
+    release_lost_worker = threading.Event()
+    attempts = 0
+
+    request.addfinalizer(release_lost_worker.set)
+
+    @activity.defn(name="record_workflow_started")
+    async def record_started(_payload) -> None:
+        return None
+
+    @activity.defn(name="record_workflow_outcome")
+    async def record_outcome(_payload) -> None:
+        return None
+
+    def fake_render_pdf(_payload) -> dict[str, object]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            first_render_started.set()
+            if not release_lost_worker.wait(timeout=120):
+                raise TimeoutError("lost PDF worker fixture was not released")
+        return {"status": "ok", "rendered": ["resume_pdf"]}
+
+    monkeypatch.setattr("jobctrl.materials.activities._render_pdf_for_job", fake_render_pdf)
+    from jobctrl.infrastructure.temporal import run_in_activity
+
+    original_run_blocking = run_in_activity.run_blocking_with_heartbeat
+
+    async def simulate_process_kill(fn, **kwargs):
+        return await original_run_blocking(fn, **kwargs, cancel_wait_seconds=0)
+
+    monkeypatch.setattr(
+        run_in_activity,
+        "run_blocking_with_heartbeat",
+        simulate_process_kill,
+    )
+    monkeypatch.setattr(
+        prep_workflow_mod,
+        "_DEFAULT_HEARTBEAT_TIMEOUT",
+        timedelta(seconds=2),
+    )
+    original_cover_retry = prep_workflow_mod._COVER_RETRY
+    prep_workflow_mod._COVER_RETRY = RetryPolicy(
+        initial_interval=timedelta(milliseconds=100),
+        maximum_interval=timedelta(milliseconds=100),
+        maximum_attempts=3,
+    )
+    activities = [
+        record_started,
+        record_outcome,
+        render_pdf_activity,
+    ]
+    payload = JobPreparationInput(
+        tenant_id="local",
+        job_id=_JOB_ID,
+        steps=["pdf"],
+        target_version="1",
+        idempotency_key=f"preparation:{uuid.uuid4().hex}",
+    )
+
+    try:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            first_worker = Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPreparationWorkflow],
+                activities=activities,
+                workflow_runner=UnsandboxedWorkflowRunner(),
+                graceful_shutdown_timeout=timedelta(0),
+                max_cached_workflows=0,
+            )
+            first_worker_run = asyncio.create_task(first_worker.run())
+            handle = await env.client.start_workflow(
+                JobPreparationWorkflow.run,
+                payload,
+                id=f"prep-{payload.idempotency_key}",
+                task_queue=queue,
+            )
+            assert await asyncio.to_thread(first_render_started.wait, 30)
+            first_worker_run.cancel()
+            await asyncio.gather(first_worker_run, return_exceptions=True)
+
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPreparationWorkflow],
+                activities=activities,
+                workflow_runner=UnsandboxedWorkflowRunner(),
+                max_cached_workflows=0,
+                ):
+                    result = await asyncio.wait_for(handle.result(), timeout=120)
+            release_lost_worker.set()
+            await asyncio.sleep(0)
+    finally:
+        prep_workflow_mod._COVER_RETRY = original_cover_retry
+
+    assert result.steps_completed == ["pdf"]
+    assert result.steps_failed == []
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_preparation_workflow_retries_pdf_when_renderer_returns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue = f"prep-pdf-renderer-return-{uuid.uuid4()}"
+    attempts = 0
+
+    @activity.defn(name="record_workflow_started")
+    async def record_started(_payload) -> None:
+        return None
+
+    @activity.defn(name="record_workflow_outcome")
+    async def record_outcome(_payload) -> None:
+        return None
+
+    def fake_render_pdf(_payload) -> dict[str, object]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("renderer executable temporarily unavailable")
+        return {"status": "ok", "rendered": ["resume_pdf"]}
+
+    monkeypatch.setattr("jobctrl.materials.activities._render_pdf_for_job", fake_render_pdf)
+    original_cover_retry = prep_workflow_mod._COVER_RETRY
+    prep_workflow_mod._COVER_RETRY = RetryPolicy(
+        initial_interval=timedelta(milliseconds=100),
+        maximum_interval=timedelta(milliseconds=100),
+        maximum_attempts=3,
+    )
+    payload = JobPreparationInput(
+        tenant_id="local",
+        job_id=_JOB_ID,
+        steps=["pdf"],
+        target_version="1",
+        idempotency_key=f"preparation:{uuid.uuid4().hex}",
+    )
+
+    try:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPreparationWorkflow],
+                activities=[record_started, record_outcome, render_pdf_activity],
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await asyncio.wait_for(
+                    env.client.execute_workflow(
+                        JobPreparationWorkflow.run,
+                        payload,
+                        id=f"prep-{payload.idempotency_key}",
+                        task_queue=queue,
+                    ),
+                    timeout=30,
+                )
+    finally:
+        prep_workflow_mod._COVER_RETRY = original_cover_retry
+
+    assert result.steps_completed == ["pdf"]
+    assert result.steps_failed == []
+    assert attempts == 2
 
 
 @pytest.mark.asyncio

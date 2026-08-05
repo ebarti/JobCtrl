@@ -52,6 +52,10 @@ from jobctrl.domain.ports.materials import (
     TailoringPolicyRepository,
 )
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.scoring.eligibility import (
+    eligibility_blocks_downstream,
+    normalize_eligibility_for_downstream,
+)
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.llm import get_llm_adapter
 from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
@@ -63,6 +67,7 @@ from jobctrl.infrastructure.materials import (
     SqliteUnitOfWork,
 )
 from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
+from jobctrl.infrastructure.preparation_recovery import stage_completed_by_activity_owner
 from jobctrl.infrastructure.scoring import (
     SqliteRequirementFitReportRepository,
     SqliteScoreRepository,
@@ -455,6 +460,7 @@ def run_tailoring(
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    workflow_id: str | None = None,
 ) -> dict:
     """Generate tailored resumes for high-scoring jobs.
 
@@ -485,6 +491,18 @@ def run_tailoring(
         limit=limit,
         retailor=retailor,
     )
+    if workflow_id:
+        jobs = [
+            job
+            for job in jobs
+            if not stage_completed_by_activity_owner(
+                conn,
+                tenant_id=str(tenant_id),
+                job_id=str(canonical_job_id(str(job["job_id"]))),
+                stage="tailor",
+                workflow_id=workflow_id,
+            )
+        ]
 
     if not jobs:
         if retailor:
@@ -520,6 +538,7 @@ def run_tailoring(
     )
 
     started_ats: dict[str, str] = {}
+    activity_metadata: dict[str, dict[str, object]] = {}
     for job in jobs:
         ensure_job_stage_rows(conn, job["url"], discovered_at=job.get("discovered_at"))
         started_at = utc_now()
@@ -529,12 +548,21 @@ def run_tailoring(
         # transition Failed -> Running needs to be permitted even though
         # the canonical state machine table only allows Failed -> Pending
         # (via Reset). Skip validation here; the writer is the runner.
+        metadata = _tailor_activity_metadata(
+            repository,
+            tenant_id=tenant_id,
+            job_id=canonical_job_id(str(job["job_id"])),
+            workflow_id=workflow_id,
+            retailor=retailor,
+        )
+        activity_metadata[job["url"]] = metadata or {}
         set_stage_state(
             conn,
             job["url"],
             "tailor",
             "running",
             started_at=started_at,
+            metadata=metadata,
             validate_transition=False,
         )
         record_job_event(conn, job["url"], "tailor", "StageStarted", message="Tailoring started")
@@ -611,6 +639,7 @@ def run_tailoring(
                 attempt_count=attempts,
                 started_at=started_ats.get(url),
                 finished_at=finished_at,
+                metadata=activity_metadata.get(url) or None,
             )
             record_job_event(
                 conn,
@@ -687,6 +716,7 @@ def tailor_job_by_url(
     pdf_renderer: PdfRendererPort | None = None,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
+    workflow_id: str | None = None,
 ) -> dict:
     """Resolve an active external posting locator, then tailor its JobId."""
     conn = get_connection()
@@ -711,6 +741,7 @@ def tailor_job_by_url(
         pdf_renderer=pdf_renderer,
         suppress_existing_artifacts=suppress_existing_artifacts,
         allow_low_fit_override=allow_low_fit_override,
+        workflow_id=workflow_id,
     )
 
 
@@ -730,6 +761,7 @@ def tailor_job_by_id(
     pdf_renderer: PdfRendererPort | None = None,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
+    workflow_id: str | None = None,
 ) -> dict:
     """Tailor one active, eligible JobId for its tenant-scoped preparation step.
 
@@ -749,6 +781,39 @@ def tailor_job_by_id(
             "reason": "not_found",
         }
 
+    # Reconcile score-derived state before the stage-state gate. Historical
+    # salary-only scores may still carry SCORE_ELIGIBILITY_BLOCKED rows from
+    # the old policy; clearing them after selection would skip this invocation
+    # and strand the preparation workflow until another external trigger.
+    if _reconcile_score_eligibility_skip(
+        conn,
+        job_id=stable_job_id,
+        tenant_id=tenant_id,
+    ):
+        conn.commit()
+        return {
+            "url": target["url"],
+            "job_id": str(stable_job_id),
+            "status": "skipped",
+            "reason": "score_eligibility_blocked",
+        }
+
+    existing_materials = _reconcile_existing_approved_resume(
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        retailor=retailor,
+        workflow_id=workflow_id,
+    )
+    if existing_materials is not None:
+        return {
+            "url": target["url"],
+            "job_id": str(stable_job_id),
+            "status": "already_done",
+            "reason": "approved_resume_already_committed",
+            "materials": existing_materials,
+        }
+
     job = _load_tailor_eligible_job_by_id(
         conn,
         tenant_id=tenant_id,
@@ -759,17 +824,18 @@ def tailor_job_by_id(
         allow_low_fit_override=allow_low_fit_override,
     )
     if job is None:
-        if _reconcile_score_eligibility_skip(
+        if _record_tailor_enrichment_block(
             conn,
             job_id=stable_job_id,
             tenant_id=tenant_id,
+            discovered_at=target.get("discovered_at"),
         ):
             conn.commit()
             return {
                 "url": target["url"],
                 "job_id": str(stable_job_id),
                 "status": "skipped",
-                "reason": "score_eligibility_blocked",
+                "reason": "enrichment_quarantined",
             }
         _record_tailor_skip(
             conn,
@@ -811,6 +877,13 @@ def tailor_job_by_id(
         discovered_at=job.get("discovered_at"),
     )
     started_at = utc_now()
+    metadata = _tailor_activity_metadata(
+        SqliteMaterialsRepository(conn),
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        workflow_id=workflow_id,
+        retailor=retailor,
+    )
     set_stage_state(
         conn,
         stable_job_id,
@@ -818,6 +891,7 @@ def tailor_job_by_id(
         "running",
         tenant_id=tenant_id,
         started_at=started_at,
+        metadata=metadata,
         validate_transition=False,
     )
     record_job_event(
@@ -854,6 +928,7 @@ def tailor_job_by_id(
             attempt_count=attempts,
             started_at=started_at,
             finished_at=finished_at,
+            metadata=metadata,
         )
         record_job_event(
             conn,
@@ -907,6 +982,91 @@ def tailor_job_by_id(
     return result
 
 
+def _tailor_activity_metadata(
+    repository: MaterialsRepository,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    workflow_id: str | None,
+    retailor: bool,
+) -> dict[str, object] | None:
+    if not workflow_id:
+        return None
+    current = repository.load_current_approved(tenant_id, job_id)
+    return {
+        "activityOwner": workflow_id,
+        "retailor": retailor,
+        "priorApprovedGeneration": int(current.generation) if current is not None else 0,
+    }
+
+
+def _reconcile_existing_approved_resume(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    retailor: bool,
+    workflow_id: str | None,
+):
+    """Treat the committed resume as authoritative after activity replay."""
+    materials = SqliteMaterialsRepository(conn).load_current_approved(
+        tenant_id,
+        job_id,
+    )
+    if materials is None or not materials.is_resume_approved:
+        return None
+    row = conn.execute(
+        """
+        SELECT state, metadata_json
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    metadata = {}
+    if row is not None:
+        try:
+            parsed = json.loads(str(row["metadata_json"] or "{}"))
+            metadata = parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            metadata = {}
+    completed_by_owner = bool(
+        workflow_id
+        and metadata.get("activityOwner") == workflow_id
+        and str(row["state"] if row is not None else "") == "succeeded"
+    )
+    committed_retailor = bool(
+        retailor
+        and workflow_id
+        and metadata.get("activityOwner") == workflow_id
+        and int(materials.generation) > int(metadata.get("priorApprovedGeneration") or 0)
+    )
+    if retailor and not (completed_by_owner or committed_retailor):
+        return None
+    if row is None or str(row["state"]) != "succeeded":
+        set_stage_state(
+            conn,
+            job_id,
+            "tailor",
+            "succeeded",
+            tenant_id=tenant_id,
+            finished_at=utc_now(),
+            metadata={"activityOwner": workflow_id} if workflow_id else None,
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            job_id,
+            "tailor",
+            "StageCompleted",
+            tenant_id=tenant_id,
+            message="Tailoring recovered from the committed approved resume.",
+            payload={"recoveredAfterActivityReplay": True},
+        )
+        conn.commit()
+    return materials
+
+
 def _reconcile_score_eligibility_skip(
     conn: sqlite3.Connection,
     *,
@@ -917,8 +1077,15 @@ def _reconcile_score_eligibility_skip(
     score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
     if score is None:
         return False
-    eligibility = score.breakdown.eligibility
-    if eligibility.status != "blocked" and not eligibility.hard_blockers:
+    eligibility = normalize_eligibility_for_downstream(score.breakdown.eligibility)
+    if not eligibility_blocks_downstream(eligibility):
+        reconcile_score_eligibility_blockers(
+            conn,
+            tenant_id=tenant_id,
+            job_id=score.job_id,
+            eligibility_status=eligibility.status,
+            hard_blockers=list(eligibility.hard_blockers),
+        )
         return False
     row = conn.execute(
         "SELECT discovered_at FROM jobs WHERE tenant_id = ? AND job_id = ?",
@@ -937,6 +1104,60 @@ def _reconcile_score_eligibility_skip(
         job_id=score.job_id,
         eligibility_status=eligibility.status,
         hard_blockers=list(eligibility.hard_blockers),
+    )
+    return True
+
+
+def _record_tailor_enrichment_block(
+    conn: sqlite3.Connection,
+    *,
+    job_id: JobId,
+    tenant_id: TenantId,
+    discovered_at: str | None,
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT latest_confidence, latest_quarantine_reason
+        FROM posting_snapshot_sets
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if row is None:
+        return False
+    confidence = str(row["latest_confidence"] or "").lower()
+    quarantine_reason = str(row["latest_quarantine_reason"] or "").lower()
+    if confidence != "low" or quarantine_reason in {"", "none"}:
+        return False
+    ensure_job_stage_rows(
+        conn,
+        job_id,
+        tenant_id=tenant_id,
+        discovered_at=discovered_at,
+    )
+    set_stage_state(
+        conn,
+        job_id,
+        "tailor",
+        "blocked",
+        tenant_id=tenant_id,
+        error_code="ENRICHMENT_QUARANTINED",
+        error_message="Tailoring is waiting for a trustworthy posting snapshot.",
+        retryable=True,
+        blocked_by=["enrich"],
+        next_action="Retry enrichment after the posting-confidence condition is resolved.",
+        metadata={"condition": quarantine_reason},
+        validate_transition=False,
+    )
+    record_job_event(
+        conn,
+        job_id,
+        "tailor",
+        "StageBlocked",
+        tenant_id=tenant_id,
+        level="warning",
+        message="Tailoring is waiting for a trustworthy posting snapshot.",
+        payload={"reason": "enrichment_quarantined", "condition": quarantine_reason},
     )
     return True
 
@@ -1048,8 +1269,7 @@ def _load_tailor_eligible_job_by_id(
     score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
     if score is None:
         return None
-    eligibility = score.breakdown.eligibility
-    if eligibility.status == "blocked" or eligibility.hard_blockers:
+    if eligibility_blocks_downstream(score.breakdown.eligibility):
         return None
     effective_min_score = 0 if allow_low_fit_override else db_module.effective_tailoring_min_score(min_score)
     if score.fit_score.value < effective_min_score:

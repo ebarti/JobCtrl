@@ -86,6 +86,10 @@ class DiscoveryEnrichmentActivityInput:
     # The prep params below mirror the fan-out so the per-job start and the
     # reconciling fan-outs converge on exactly one workflow per job.
     per_job_handoff: bool = False
+    # Keep one execution-scoped queue consumer alive while source activities
+    # are still committing jobs. DiscoverWorkflow cancels this activity after
+    # every producer finishes, then runs the terminal reconciliation pass.
+    stream_while_discovering: bool = False
     min_score: int = 7
     validation_mode: str = "normal"
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -238,7 +242,7 @@ async def discovery_source_family_activity(
             ),
             starting_message=f"discover {payload.family} starting",
             progress_message=f"discover {payload.family} still running",
-            on_cancel=cancel_event.set,
+            on_cancel=lambda: _signal_source_cancellation(cancel_event),
             activity_name=f"discover:{payload.family}",
         )
         status = str(result.get("status") or "ok")
@@ -281,34 +285,67 @@ async def discovery_source_family_activity(
     return output
 
 
+def _signal_source_cancellation(cancel_event: threading.Event) -> None:
+    """Stop source work only for a real Temporal cancellation request.
+
+    Worker shutdown also cancels the local activity coroutine, but Temporal will
+    retry that activity on another worker. Propagating shutdown into the
+    JobStreaming cancellation event would durably terminalize every remaining
+    search unit before the retry can reclaim it.
+    """
+    details = activity.cancellation_details()
+    if details is not None and details.worker_shutdown:
+        return
+    cancel_event.set()
+
+
 @activity.defn(name="discovery_enrichment")
 async def discovery_enrichment_activity(
     payload: DiscoveryEnrichmentActivityInput,
 ) -> DiscoveryEnrichmentActivityOutput:
-    """Drain detail enrichment after source-family discovery completes."""
+    """Drain detail enrichment, optionally while source discovery is active."""
     from jobctrl.infrastructure.temporal.run_in_activity import (
         run_blocking_with_heartbeat,
     )
     from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
-    from jobctrl.pipeline.runner import run_discovery_enrichment_stage, run_discovery_hygiene
+    from jobctrl.pipeline.runner import run_discovery_enrichment_stage
 
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
-    lifecycle = begin_pipeline_step_attempt(
-        _pipeline_step_scope(
-            payload.discovery_execution,
-            step_kind="enrichment_pass",
-            item_key=payload.pipeline_step_item_key,
-            detail_code=payload.pipeline_step_detail_code,
-            expected_app_dir=payload.expected_app_dir,
-            expected_db_path=payload.expected_db_path,
+    # The producer-lifetime consumer ends through intentional activity
+    # cancellation, while the lifecycle schema has no canceled terminal event.
+    # Keep it runtime-visible but do not persist a false completed/failed step;
+    # per-job stage rows carry its durable work and terminal reconciliation owns
+    # the persisted enrichment-pass boundary.
+    lifecycle = (
+        None
+        if payload.stream_while_discovering
+        else begin_pipeline_step_attempt(
+            _pipeline_step_scope(
+                payload.discovery_execution,
+                step_kind="enrichment_pass",
+                item_key=payload.pipeline_step_item_key,
+                detail_code=payload.pipeline_step_detail_code,
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
+            )
         )
     )
 
     cancel_event = threading.Event()
     on_job_enriched = _build_per_job_handoff(payload)
+    try:
+        info = activity.info()
+        activity_attempt = info.attempt
+        activity_owner_token = (
+            f"{info.activity_id}:{info.activity_run_id}:{info.attempt}"
+        )
+    except RuntimeError:
+        # Direct unit calls have no Temporal activity context.
+        activity_attempt = 1
+        activity_owner_token = None
 
     try:
         result = await run_blocking_with_heartbeat(
@@ -319,20 +356,24 @@ async def discovery_enrichment_activity(
                 progress_completed=payload.progress_completed,
                 progress_total=payload.progress_total,
                 on_job_enriched=on_job_enriched,
+                stream_while_discovering=payload.stream_while_discovering,
+                discovery_execution=payload.discovery_execution,
                 recovery_key=(
                     f"{payload.discovery_execution.workflow_id}:"
                     f"{payload.discovery_execution.temporal_run_id}"
                     if payload.discovery_execution is not None
                     else None
                 ),
+                activity_attempt=activity_attempt,
+                activity_owner_token=activity_owner_token,
             ),
             starting_message="discovery enrichment starting",
             progress_message="discovery enrichment still running",
+            poll_interval=1.0 if payload.stream_while_discovering else 15.0,
             on_cancel=cancel_event.set,
             activity_name="discover:enrichment",
         )
         activity.heartbeat({"status": result.get("status", "ok")})
-        run_discovery_hygiene("after")
         status = str(result.get("status") or "ok")
         if not _is_success_status(status):
             raise _stage_failure_error("discover:enrichment", result)

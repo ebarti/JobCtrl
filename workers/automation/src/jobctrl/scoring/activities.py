@@ -75,6 +75,24 @@ async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
         expected_db_path=payload.expected_db_path,
     )
 
+    if activity.info().attempt > 1 and payload.workflow_id:
+        from jobctrl.database import get_connection
+        from jobctrl.infrastructure.preparation_recovery import (
+            RecoverPreparationStateInput,
+            recover_preparation_state_rows,
+        )
+
+        recover_preparation_state_rows(
+            get_connection(),
+            RecoverPreparationStateInput(
+                tenant_id=payload.tenant_id,
+                workflow_id=payload.workflow_id,
+                stage="score",
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
+            ),
+        )
+
     cancel_event = threading.Event()
     try:
         if payload.current_policy_only:
@@ -134,6 +152,7 @@ async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
                     "rescore": payload.rescore,
                     "llm_model": payload.llm_model,
                     "cancel_event": cancel_event,
+                    "workflow_id": payload.workflow_id,
                 },
                 mode="workflow",
                 pass_number=1,
@@ -221,6 +240,7 @@ def _run_selected_scores(
             tenant_id=TenantId(payload.tenant_id),
             rescore=payload.rescore,
             llm_model=payload.llm_model,
+            workflow_id=payload.workflow_id,
         )
 
     worker_count = max(1, int(payload.workers or 1))
@@ -284,9 +304,25 @@ async def score_job_activity(payload: ScoreJobActivityInput) -> ScoreJobActivity
     """Score one canonical JobId for ``JobPreparationWorkflow``."""
     from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
 
+    workflow_id = str(activity.info().workflow_run_id or activity.info().workflow_id)
+    if activity.info().attempt > 1:
+        from jobctrl.database import get_connection
+        from jobctrl.infrastructure.preparation_recovery import (
+            RecoverPreparationStateInput,
+            recover_preparation_state_rows,
+        )
+
+        recover_preparation_state_rows(
+            get_connection(),
+            RecoverPreparationStateInput(
+                tenant_id=payload.tenant_id,
+                workflow_id=workflow_id,
+                stage="score",
+            ),
+        )
     try:
         result = await run_blocking_with_heartbeat(
-            lambda: _score_one_job(payload),
+            lambda: _score_one_job(payload, workflow_id=workflow_id),
             starting_message="score-job starting",
             progress_message="score-job still running",
             activity_name="score_job",
@@ -305,7 +341,11 @@ async def score_job_activity(payload: ScoreJobActivityInput) -> ScoreJobActivity
         raise to_application_error(exc) from exc
 
 
-def _score_one_job(payload: ScoreJobActivityInput) -> dict[str, Any]:
+def _score_one_job(
+    payload: ScoreJobActivityInput,
+    *,
+    workflow_id: str | None = None,
+) -> dict[str, Any]:
     from jobctrl.domain.errors import MissingInputError
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.scorer import score_job_by_id
@@ -315,6 +355,7 @@ def _score_one_job(payload: ScoreJobActivityInput) -> dict[str, Any]:
         tenant_id=TenantId(payload.tenant_id),
         rescore=payload.rescore,
         llm_model=payload.llm_model,
+        workflow_id=workflow_id,
     )
     if outcome.ok:
         return {

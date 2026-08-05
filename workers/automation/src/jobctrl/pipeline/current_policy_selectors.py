@@ -11,6 +11,10 @@ from jobctrl.database import (
     ensure_tailoring_policy_tables,
 )
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.scoring.eligibility_sql import (
+    register_score_eligibility_sql,
+    score_eligible_for_downstream_sql,
+)
 
 
 def scoring_current_policy_job_ids(
@@ -22,6 +26,7 @@ def scoring_current_policy_job_ids(
 ) -> tuple[JobId, ...]:
     """Return active enriched jobs missing a current-policy score."""
 
+    register_score_eligibility_sql(conn)
     current_version = _current_scoring_policy_version(conn, tenant_id)
     requested = _clean_job_ids(job_ids)
     requested_sql, requested_params = _requested_filter("j.job_id", requested)
@@ -72,6 +77,7 @@ def tailoring_current_policy_job_ids(
 ) -> tuple[JobId, ...]:
     """Return active eligible jobs missing a current-policy tailored artifact."""
 
+    register_score_eligibility_sql(conn)
     min_score = effective_tailoring_min_score(min_score)
     current_version = _current_tailoring_policy_version(conn, tenant_id)
     requested = _clean_job_ids(job_ids)
@@ -242,19 +248,7 @@ def _tailoring_policy_version_expr(json_expr: str) -> str:
 
 
 def _score_eligible_expr(json_expr: str) -> str:
-    status_expr = (
-        f"CASE WHEN json_valid({json_expr}) "
-        f"THEN LOWER(COALESCE(CAST(json_extract({json_expr}, '$.eligibility.status') AS TEXT), '')) "
-        "ELSE '' END"
-    )
-    blockers_expr = (
-        f"CASE WHEN json_valid({json_expr}) THEN COALESCE("
-        f"json_array_length({json_expr}, '$.eligibility.hard_blockers'), "
-        f"json_array_length({json_expr}, '$.eligibility.hardBlockers'), "
-        f"json_array_length({json_expr}, '$.eligibility.blockers'), "
-        "0) ELSE 0 END"
-    )
-    return f"{status_expr} != 'blocked' AND {blockers_expr} = 0"
+    return score_eligible_for_downstream_sql(json_expr)
 
 
 def _positive_int(value: Any, *, default: int) -> int:

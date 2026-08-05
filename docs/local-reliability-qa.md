@@ -66,6 +66,46 @@ uv --project workers/automation run pytest -q \
   workers/automation/tests/test_jobstreaming_gateway.py
 ```
 
+### Preparation ownership and four-process chaos
+
+Score, Tailor, and Cover must recover from both sides of the commit boundary:
+an interrupted activity before persistence leaves one retryable owned row, and
+an interrupted acknowledgement after persistence reuses the committed score or
+accepted artifact without another model call. Profile and browser-setting
+continuations must also survive an API stop after their durable write and
+before dispatch. The focused deterministic gate is:
+
+```bash
+uv --project workers/automation run pytest -q \
+  workers/automation/tests/test_score_activity_recovery.py \
+  workers/automation/tests/test_material_activity_recovery.py \
+  workers/automation/tests/test_workflow_job_preparation.py \
+  workers/automation/tests/test_workflow_job_pipeline.py
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/server.test.ts \
+  test/json-rpc-adapter.test.ts \
+  test/profile-events-v7.test.ts
+```
+
+Then run the four-process harness in both restart orders. It creates its own
+temporary `JOBCTRL_DIR`, SQLite database, Temporal persistence, ports, and PID
+manifest; it may kill only those captured process trees. Never point it at a
+personal workspace or live application target.
+
+```bash
+JOBCTRL_RELIABILITY_RESTART_TEMPORAL=1 \
+  scripts/reliability-demo.sh 1 8
+JOBCTRL_RELIABILITY_RESTART_TEMPORAL=1 \
+JOBCTRL_RELIABILITY_TEMPORAL_FIRST=1 \
+  scripts/reliability-demo.sh 1 8
+```
+
+Both passes must retain the original Temporal run ID, complete it exactly once,
+and converge in Temporal history, the SQLite read model, API health, and the
+web-origin proxy. The complete R01-R22 scenario definitions and stop conditions
+live in
+[`plans/2026-08-04-pipeline-reliability-chaos.md`](plans/2026-08-04-pipeline-reliability-chaos.md).
+
 <a id="durable-execution-recovery-demo"></a>
 
 ## High-Risk Regression Areas
@@ -203,6 +243,12 @@ Temporal running, restart the worker, and verify that startup reconciliation:
 3. records the current Temporal history-event watermark and exact membership
    and step-key digest; and
 4. publishes `ready` only after projection refresh and exact set equality.
+
+For native streaming history, verify that the producer-lifetime live enrichment
+activity remains runtime-only and is excluded from the durable expected-step
+set, while terminal enrichment reconciliation remains required. A closed run
+must not retry forever because `streaming:live` intentionally has no persisted
+`PipelineStep*` lifecycle.
 
 The legacy fixture must also reproduce the lossy projection shape: repeated
 fanout passes declare `0`, `71`, `67`, and `34` targets with legitimate overlap,

@@ -15,6 +15,8 @@ Follow links beyond the owning document only when they are needed to resolve a s
 
 **Corepack pnpm requirement:** Always invoke pnpm through Corepack as `corepack pnpm ...`. Never run bare `pnpm ...`, even when a global pnpm binary is installed.
 
+**Sandbox false-negative warning:** Localhost requests and process inspection can fail inside the agent sandbox even when JobCtrl services are healthy. A refused or blocked sandboxed `curl`, `ps`, or similar diagnostic is not evidence that a service is down. Before reporting a runtime as unavailable, retry the same read-only probe with the required sandbox escalation and corroborate it with the supervisor status plus an independent listener/process check such as `lsof`. If those sources disagree, report the disagreement and investigate orphaned supervisors or child processes; never collapse contradictory evidence into a “down” diagnosis.
+
 Use `corepack pnpm dev` for the full local development stack. It stops previously tracked JobCtrl process trees for the selected components, then runs the Temporal dev server, TypeScript API, React/Vite web app, and JobCtrl Temporal worker in the foreground so supervised terminals keep the child processes alive. Keep the terminal session open while using the app and stop it with Ctrl-C. Use `corepack pnpm dev:start` only when an explicitly detached background stack is desired in a normal shell.
 
 Known local commands:

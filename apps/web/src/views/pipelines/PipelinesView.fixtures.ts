@@ -112,7 +112,7 @@ function stage(
 const discoveringStages: PipelineOperationalStage[] = [
   stage("source_planning", "Plan sources", "current_execution", counts({ eligible: 1, succeeded: 1 })),
   stage("source_family", "Crawl sources", "current_execution", counts({ eligible: 3, processing: 2, succeeded: 1 })),
-  stage("reconciliation", "Reconciliation", "current_execution", counts({ eligible: 2, waiting: 2 })),
+  stage("reconciliation", "Enrichment reconciliation", "current_execution", counts({ eligible: 2, waiting: 2 })),
   stage("enrich", "Enrich", "execution_sweep", counts({ eligible: 9, waiting: 5, processing: 2, succeeded: 2 })),
   stage("score", "Score", "execution_sweep", counts({ eligible: 7, waiting: 4, processing: 1, succeeded: 2 })),
   stage("tailor", "Tailor", "execution_sweep", counts({ eligible: 4, waiting: 4 })),
@@ -802,7 +802,7 @@ export const pipelinesThreeSourceSixStepSnapshot = snapshot({
   stages: [
     stage("source_planning", "Plan sources", "current_execution", counts({ eligible: 1, succeeded: 1 })),
     stage("source_family", "Crawl sources", "current_execution", counts({ eligible: 3, succeeded: 3 })),
-    stage("reconciliation", "Reconciliation", "current_execution", counts({ eligible: 2, succeeded: 2 })),
+    stage("reconciliation", "Enrichment reconciliation", "current_execution", counts({ eligible: 2, succeeded: 2 })),
     stage("enrich", "Enrich", "execution_sweep", counts({ eligible: 1, succeeded: 1 })),
     stage("score", "Score", "execution_sweep", counts({ eligible: 1, succeeded: 1 })),
     stage("tailor", "Tailor", "execution_sweep", counts({ eligible: 1, succeeded: 1 })),

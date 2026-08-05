@@ -449,3 +449,17 @@ def test_eligibility_checker_rejects_hard_blockers_despite_high_score() -> None:
         )
         is False
     )
+
+
+def test_eligibility_checker_treats_salary_blockers_as_advisory() -> None:
+    checker = EligibilityChecker()
+    criteria = ScoringCriteria(min_fit_score=7)
+
+    assert checker.is_eligible(
+        FitScore.create(9),
+        criteria,
+        EligibilityAssessment(
+            status="blocked",
+            hard_blockers=("Base salary is below the preferred compensation range.",),
+        ),
+    )

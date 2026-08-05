@@ -163,7 +163,7 @@ activity call sites.
 
 | Workflow | Business activities | Key timeouts | Retry |
 | --- | --- | --- | --- |
-| `DiscoverWorkflow` | `plan_discovery_sources`, then per **completed** family `discovery_source_family` → `discovery_enrichment` → `discovery_preparation_fanout` (score-as-you-discover), plus a terminal reconcile enrichment + fan-out | source/enrichment 6 h; plan/fanout 30 min; heartbeat 2 min | source & enrich: 5 s→60 s ×3 |
+| `DiscoverWorkflow` | `plan_discovery_sources`, then one execution-scoped live `discovery_enrichment` alongside `discovery_source_family` producers, per-family preparation backstops, and a terminal reconcile enrichment + fan-out | source/enrichment 6 h; plan/fanout 30 min; live-enrich heartbeat 5 s; other heartbeats 2 min | source & enrich: 5 s→60 s ×3 |
 | `JobPipelineWorkflow` | serial stage dispatch; `discover`→child `DiscoverWorkflow`, `enrich`/`score`/`tailor`/`cover`→activities, `apply`→child `ApplyWorkflow` | stage activities 30 min; heartbeat 2 min | enrich/score 5 s→60 s ×3; tailor/cover 10 s→120 s ×3 |
 | `JobPreparationWorkflow` | `score_job`, `tailor_job`, `cover_letter`, `render_pdf` in fixed order | each 30 min; heartbeat 2 min | score ×3; tailor ×3; cover/pdf ×3 |
 | `ApplyWorkflow` | `apply_activity` | 2 h batch / 1 h continuous batch; heartbeat 60 s | live: 1 attempt; dry-run: 2 attempts |
@@ -176,14 +176,14 @@ activity call sites.
 
 A few catalog details worth calling out:
 
-- **`DiscoverWorkflow` streams scoring as it discovers (R9 Phase 1–2).** After each
-  family completes it drains that family's jobs (`discovery_enrichment`) and fans
-  out their preparation (`discovery_preparation_fanout`) immediately, so early
-  jobs are scored while later families still crawl. Phase 2 tightens this to
-  per-job: the streaming enrichment passes run with `per_job_handoff=True`, so a
+- **`DiscoverWorkflow` streams scoring as it discovers (R9 Phase 1–2).** One
+  execution-scoped enrichment activity consumes durable job memberships while
+  source activities are still crawling. Phase 2 hands off per job: the live
+  enrichment pass runs with `per_job_handoff=True`, so a
   job starts its `SCORE_JOB` preparation the moment it is individually enriched
   (a side effect inside the enrichment activity — the workflow command history is
-  unchanged). A terminal reconcile enrichment + fan-out runs last and stays
+  unchanged). Per-family score-only fan-outs catch already-enriched jobs and
+  missed handoffs. A terminal reconcile enrichment + fan-out runs last and stays
   authoritative for the tolerated-partial-failure folding (succeed if ≥1 family
   completed; fail as `discovery_source_failed` only if every family failed) and
   progress finalization. Repeated starts are deduped by the deterministic

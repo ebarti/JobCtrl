@@ -74,6 +74,7 @@ class TailorJobActivityInput:
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+    workflow_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
@@ -100,6 +101,14 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
+    if activity.info().attempt > 1 and payload.workflow_id:
+        _reconcile_activity_retry(
+            tenant_id=payload.tenant_id,
+            workflow_id=payload.workflow_id,
+            stage="tailor",
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        )
 
     cancel_event = threading.Event()
     try:
@@ -166,6 +175,7 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
                     "tailor_judge_model": payload.tailor_judge_model,
                     "tailor_judge_min_score": payload.tailor_judge_min_score,
                     "llm_model": payload.llm_model,
+                    "workflow_id": payload.workflow_id,
                     "cancel_event": cancel_event,
                 },
                 mode="workflow",
@@ -267,9 +277,10 @@ def _run_selected_tailoring(
             tailor_models=payload.tailor_models,
             tailor_judge_model=payload.tailor_judge_model,
             tailor_judge_min_score=payload.tailor_judge_min_score,
+            workflow_id=payload.workflow_id,
         )
         status = str(result.get("status") or "error")
-        if status == "approved":
+        if status in {"approved", "already_done"}:
             approved += 1
             approved_job_ids.append(job_id)
         elif status in {"skipped", "not_eligible"}:
@@ -316,9 +327,16 @@ async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActiv
     """Tailor one canonical JobId for ``JobPreparationWorkflow``."""
     from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
 
+    owned_payload = replace(payload, workflow_id=activity.info().workflow_run_id)
+    if activity.info().attempt > 1:
+        _reconcile_activity_retry(
+            tenant_id=payload.tenant_id,
+            workflow_id=owned_payload.workflow_id or "",
+            stage="tailor",
+        )
     try:
         result = await run_blocking_with_heartbeat(
-            lambda: _tailor_one_job(payload),
+            lambda: _tailor_one_job(owned_payload),
             starting_message="tailor-job starting",
             progress_message="tailor-job still running",
             activity_name="tailor_job",
@@ -357,6 +375,7 @@ def _tailor_one_job(payload: TailorJobActivityInput) -> dict[str, Any]:
         tailor_models=payload.tailor_models,
         tailor_judge_model=payload.tailor_judge_model,
         tailor_judge_min_score=payload.tailor_judge_min_score,
+        workflow_id=payload.workflow_id,
     )
 
 
@@ -399,6 +418,7 @@ class CoverLetterActivityInput:
     min_score: int = 7
     validation_mode: str = "normal"
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+    workflow_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
@@ -451,6 +471,14 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
+    if activity.info().attempt > 1 and payload.workflow_id:
+        _reconcile_activity_retry(
+            tenant_id=payload.tenant_id,
+            workflow_id=payload.workflow_id,
+            stage="cover",
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        )
 
     cancel_event = threading.Event()
     try:
@@ -494,6 +522,7 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
                     "validation_mode": payload.validation_mode,
                     "limit": payload.limit,
                     "llm_model": payload.llm_model,
+                    "workflow_id": payload.workflow_id,
                     "cancel_event": cancel_event,
                 },
                 mode="workflow",
@@ -568,6 +597,7 @@ def _run_selected_cover(
             validation_mode=payload.validation_mode,
             llm_model=payload.llm_model,
             tenant_id=TenantId(payload.tenant_id),
+            workflow_id=payload.workflow_id,
         )
         results.append(result)
         result_status = str(result.get("status") or "error")
@@ -615,9 +645,16 @@ async def cover_letter_activity(payload: CoverLetterActivityInput) -> CoverLette
     """Generate one cover letter by canonical JobId for ``JobPreparationWorkflow``."""
     from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
 
+    owned_payload = replace(payload, workflow_id=activity.info().workflow_run_id)
+    if activity.info().attempt > 1:
+        _reconcile_activity_retry(
+            tenant_id=payload.tenant_id,
+            workflow_id=owned_payload.workflow_id or "",
+            stage="cover",
+        )
     try:
         result = await run_blocking_with_heartbeat(
-            lambda: _cover_one_job(payload),
+            lambda: _cover_one_job(owned_payload),
             starting_message="cover-letter starting",
             progress_message="cover-letter still running",
             activity_name="cover_letter",
@@ -647,6 +684,33 @@ def _cover_one_job(payload: CoverLetterActivityInput) -> dict[str, Any]:
         validation_mode=payload.validation_mode,
         llm_model=payload.llm_model,
         tenant_id=TenantId(payload.tenant_id),
+        workflow_id=payload.workflow_id,
+    )
+
+
+def _reconcile_activity_retry(
+    *,
+    tenant_id: str,
+    workflow_id: str,
+    stage: str,
+    expected_app_dir: str | None = None,
+    expected_db_path: str | None = None,
+) -> None:
+    from jobctrl.database import get_connection
+    from jobctrl.infrastructure.preparation_recovery import (
+        RecoverPreparationStateInput,
+        recover_preparation_state_rows,
+    )
+
+    recover_preparation_state_rows(
+        get_connection(),
+        RecoverPreparationStateInput(
+            tenant_id=tenant_id,
+            workflow_id=workflow_id,
+            stage=stage,
+            expected_app_dir=expected_app_dir,
+            expected_db_path=expected_db_path,
+        ),
     )
 
 

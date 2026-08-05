@@ -163,6 +163,41 @@ def test_public_route_guard_fulfills_public_requests_with_pinned_fetcher() -> No
     assert not route.aborted
 
 
+def test_public_route_guard_aborts_public_write_without_poisoning_page() -> None:
+    page = _RouteOnlyPage()
+    calls: list[tuple[str, str, dict[str, str]]] = []
+
+    def fetcher(url: str, method: str, headers: dict[str, str]) -> RouteFulfillment:
+        calls.append((url, method, headers))
+        raise AssertionError("write requests must never reach the pinned fetcher")
+
+    guard = PublicHttpUrlRouteGuard(
+        page,
+        resolver=_resolver_for("93.184.216.34"),
+        fetch_public_requests=True,
+        request_fetcher=fetcher,
+    ).install()
+    route = _FulfillRoute()
+
+    assert page.handler is not None
+    page.handler(
+        route,
+        SimpleNamespace(
+            url="https://jobs.example/telemetry",
+            method="POST",
+            headers={"content-type": "application/json"},
+        ),
+    )
+
+    assert route.aborted
+    assert not route.continued
+    assert route.fulfilled is None
+    assert calls == []
+    assert not guard.blocked
+    assert guard.blocked_url is None
+    assert guard.blocked_reason is None
+
+
 def test_public_route_guard_aborts_when_pinned_fetch_rejects_rebound_dns() -> None:
     page = _RouteOnlyPage()
 

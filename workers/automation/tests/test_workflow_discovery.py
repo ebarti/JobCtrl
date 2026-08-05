@@ -232,7 +232,14 @@ async def _discovery_source_family(payload: DiscoverySourceActivityInput) -> Dis
 
 @activity.defn(name="discovery_enrichment")
 async def _discovery_enrichment(payload: DiscoveryEnrichmentActivityInput) -> DiscoveryEnrichmentActivityOutput:
-    _EVENTS.append(("enrichment", payload.limit))
+    _EVENTS.append(
+        (
+            "enrichment",
+            payload.limit,
+            payload.stream_while_discovering,
+            payload.pipeline_step_item_key,
+        )
+    )
     return DiscoveryEnrichmentActivityOutput(status="ok", passes=1, pending=0)
 
 
@@ -440,39 +447,100 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
     assert result.families_completed == ["jobspy", "workday", "smartextract"]
     assert result.families_failed == []
     assert result.preparation_started == 1
-    # R9 Phase 1/2 — score-as-you-discover. A one-time straggler sweep fan-out
-    # runs first (pre-existing pending_tailor work), then enrichment + fan-out
-    # interleave AFTER EACH completed family (streaming) instead of once at the
-    # end, so a family's jobs are prepared before the next family runs. A
-    # terminal reconcile enrichment + fan-out still runs last (authoritative for
-    # folding + progress) — plan option (b).
-    assert [event[0] for event in _EVENTS] == [
-        "workflow_started",
-        "plan",
-        "fanout",  # pre-loop straggler sweep (pre-existing pending_tailor)
-        "source",  # jobspy
-        "enrichment",
-        "fanout",
-        "source",  # workday
-        "enrichment",
-        "fanout",
-        "source",  # smartextract
-        "enrichment",
-        "fanout",
-        "enrichment",  # terminal reconcile
-        "fanout",
-        "workflow_outcome",
-    ]
-    # Prove the interleaving structurally: the first family's enrichment + fan-out
-    # both happen before the second family's source activity runs (the TTFS
-    # structural proxy — a job discovered early is prepared while later families
-    # are still discovering).
+    # One producer-lifetime enrichment pass overlaps source crawling; the
+    # per-family score-only fan-outs and terminal reconcile remain backstops.
     kinds = [event[0] for event in _EVENTS]
+    enrichment_events = [event for event in _EVENTS if event[0] == "enrichment"]
+    assert [event[2] for event in enrichment_events] == [True, False]
+    assert [event[3] for event in enrichment_events] == ["streaming:live", "terminal"]
+    live_enrichment = _EVENTS.index(enrichment_events[0])
     first_source = kinds.index("source")
     second_source = kinds.index("source", first_source + 1)
-    assert "enrichment" in kinds[first_source:second_source]
-    assert "fanout" in kinds[first_source:second_source]
+    assert live_enrichment < second_source
+    assert kinds.count("fanout") == 5
+    assert _EVENTS.index(enrichment_events[-1]) > max(
+        index for index, event in enumerate(_EVENTS) if event[0] == "source"
+    )
     assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
+
+
+@activity.defn(name="discovery_source_family")
+async def _source_waiting_for_live_enrichment(
+    payload: DiscoverySourceActivityInput,
+) -> DiscoverySourceActivityOutput:
+    """Model a JobStreaming family that has committed a job but is still crawling."""
+
+    _EVENTS.append(("source_committed_job", payload.family))
+    await asyncio.wait_for(_RESUME_GATE["live_enrichment_started"].wait(), timeout=5)
+    _EVENTS.append(("source_completed", payload.family))
+    return DiscoverySourceActivityOutput(
+        family=payload.family,
+        status="ok",
+        result={"new": 1},
+        source_ids=[f"{payload.family}:source"],
+    )
+
+
+@activity.defn(name="discovery_enrichment")
+async def _live_enrichment_probe(
+    payload: DiscoveryEnrichmentActivityInput,
+) -> DiscoveryEnrichmentActivityOutput:
+    if getattr(payload, "stream_while_discovering", False):
+        _EVENTS.append(("live_enrichment_started", payload.pipeline_step_item_key))
+        _RESUME_GATE["live_enrichment_started"].set()
+        try:
+            while True:
+                activity.heartbeat("waiting for more discovered jobs")
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            _EVENTS.append(("live_enrichment_canceled", payload.pipeline_step_item_key))
+            raise
+    _EVENTS.append(("terminal_enrichment", payload.pipeline_step_item_key))
+    return DiscoveryEnrichmentActivityOutput(status="ok", passes=1, pending=0)
+
+
+@pytest.mark.asyncio
+async def test_discover_workflow_starts_enrichment_before_source_family_completes() -> None:
+    """A committed job must not wait for a broad-board family crawl to finish."""
+
+    _reset_state()
+    _RESUME_GATE["live_enrichment_started"] = asyncio.Event()
+    queue = f"discover-live-enrichment-{uuid.uuid4()}"
+    activities = [
+        _check_spend_budget,
+        _record_workflow_started,
+        _record_workflow_outcome,
+        _plan_discovery_sources,
+        _source_waiting_for_live_enrichment,
+        _live_enrichment_probe,
+        _discovery_preparation_fanout,
+    ]
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[DiscoverWorkflow],
+            activities=activities,
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            try:
+                result = await asyncio.wait_for(
+                    env.client.execute_workflow(
+                        DiscoverWorkflow.run,
+                        DiscoverWorkflowInput(tenant_id="local"),
+                        id=f"{queue}-wf",
+                        task_queue=queue,
+                    ),
+                    timeout=15,
+                )
+            except TimeoutError:
+                pytest.fail(f"workflow timed out with events: {_EVENTS!r}")
+
+    assert result.families_completed == ["jobspy", "workday", "smartextract"]
+    kinds = [event[0] for event in _EVENTS]
+    assert kinds.index("live_enrichment_started") < kinds.index("source_completed")
+    assert kinds.index("live_enrichment_canceled") < kinds.index("terminal_enrichment")
 
 
 @pytest.mark.asyncio
@@ -568,9 +636,14 @@ async def test_discover_workflow_tolerates_partial_source_failure() -> None:
         for index, event in enumerate(_EVENTS)
         if event[0] == "source" and event[1] == "workday"
     )
-    # jobspy's streaming enrichment + fan-out land between jobspy's source and
-    # workday's source.
-    assert "enrichment" in kinds[jobspy_source:workday_source]
+    # Live enrichment is already active before the failing later source; the
+    # completed family's score-only fan-out lands between the two sources.
+    live_enrichment = next(
+        index
+        for index, event in enumerate(_EVENTS)
+        if event[0] == "enrichment" and event[2] is True
+    )
+    assert live_enrichment < workday_source
     assert "fanout" in kinds[jobspy_source:workday_source]
     # A failed family produces no streaming enrichment/fanout of its own: the
     # pre-loop straggler sweep + two completed families + one terminal reconcile
@@ -676,11 +749,10 @@ async def test_discover_workflow_fails_only_when_every_source_fails() -> None:
 
     assert any(event[0] == "enrichment" for event in _EVENTS)
     assert any(event[0] == "fanout" for event in _EVENTS)
-    # No family completed, so no streaming enrichment/fanout ran: only the
-    # pre-loop straggler sweep fan-out and the terminal reconcile
-    # (one enrichment + one fanout) run — two fan-outs, one enrichment.
+    # No family completed, so there is no per-family fanout. The live
+    # producer-lifetime enrichment and terminal reconcile both still run.
     kinds = [event[0] for event in _EVENTS]
-    assert kinds.count("enrichment") == 1
+    assert kinds.count("enrichment") == 2
     assert kinds.count("fanout") == 2
     assert ("workflow_outcome", "failed") in _EVENTS
     cause = excinfo.value.cause

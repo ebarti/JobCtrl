@@ -8,11 +8,14 @@ import pytest
 
 from jobctrl.database import init_db
 from jobctrl.domain.enrichment import (
+    ActiveState,
     ApplicationUrl,
     EnrichmentError,
     ExtractionTier,
     FullDescription,
     JobEnrichment,
+    QuarantineReason,
+    SnapshotConfidence,
 )
 from jobctrl.domain.identifiers import JobId, generate_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT
@@ -20,6 +23,7 @@ from jobctrl.enrichment.detail import (
     _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS,
     _apply_authenticated_linkedin_apply_url,
     _is_linkedin_job,
+    _record_posting_snapshot_from_cascade,
     _reset_authenticated_linkedin_retry_candidates,
 )
 from jobctrl.enrichment import detail
@@ -27,6 +31,7 @@ from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
 from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
     LinkedInApplyResolution,
 )
+from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
 from .politeness_helpers import offline_session
 
@@ -107,6 +112,7 @@ def _save_enriched(
     *,
     application_url: str | None,
     attempts: int = 1,
+    description: str = "A complete LinkedIn description",
 ) -> None:
     repo = SqliteEnrichmentRepository(conn)
     now = datetime.now(timezone.utc).isoformat()
@@ -120,7 +126,7 @@ def _save_enriched(
             extraction_tier=ExtractionTier.JSON_LD,
             started_at=now,
         ).succeed_attempt(
-            full_description=FullDescription(text="A complete LinkedIn description"),
+            full_description=FullDescription(text=description),
             application_url=(
                 ApplicationUrl(value=application_url) if application_url else None
             ),
@@ -138,6 +144,8 @@ def _save_failed(
     *,
     retryable: bool,
     attempts: int = 1,
+    error_code: str = "DETAIL_ERROR",
+    error_message: str = "no data extracted",
 ) -> None:
     repo = SqliteEnrichmentRepository(conn)
     now = datetime.now(timezone.utc).isoformat()
@@ -152,8 +160,8 @@ def _save_failed(
             started_at=now,
         ).fail_attempt(
             error=EnrichmentError(
-                code="DETAIL_ERROR",
-                message="no data extracted",
+                code=error_code,
+                message=error_message,
                 retryable=retryable,
             ),
             finished_at=now,
@@ -325,7 +333,45 @@ def test_enriched_missing_apply_url_backfills_on_successful_recovery(
     url = "https://www.linkedin.com/jobs/view/backfill"
     apply_target = "https://jobs.ashbyhq.com/acme/role"
     _seed_discovered(conn, url, "linkedin")
-    _save_enriched(conn, url, application_url=None)
+    description = " ".join(["Senior platform engineering responsibilities"] * 20)
+    _save_enriched(conn, url, application_url=None, description=description)
+    job_id = _job_id(conn, url)
+    _record_posting_snapshot_from_cascade(
+        conn,
+        job_id=job_id,
+        url=url,
+        source_id="jobspy:linkedin",
+        title="Engineer",
+        cascade_result={
+            "full_description": description,
+            "application_url": None,
+            "active_state": ActiveState.ACTIVE.value,
+            "verification_method": "enrichment_success",
+            "tier_used": 3,
+        },
+        captured_at="2026-01-01T00:00:00+00:00",
+    )
+    before = conn.execute(
+        "SELECT latest_confidence, latest_quarantine_reason "
+        "FROM posting_snapshot_sets WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert before is not None
+    assert before["latest_confidence"] == SnapshotConfidence.LOW.value
+    assert before["latest_quarantine_reason"] == QuarantineReason.LOW_CONFIDENCE_EXTRACTION.value
+    ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+    set_stage_state(
+        conn,
+        job_id,
+        "tailor",
+        "blocked",
+        tenant_id=LOCAL_TENANT,
+        error_code="ENRICHMENT_QUARANTINED",
+        retryable=True,
+        blocked_by=["enrich"],
+        validate_transition=False,
+    )
+    conn.commit()
     resolver = _RecoveryResolver(LinkedInApplyResolution(apply_target, "click"))
 
     reset_count = _reset_authenticated_linkedin_retry_candidates(
@@ -337,13 +383,30 @@ def test_enriched_missing_apply_url_backfills_on_successful_recovery(
     assert reset_count == 0
     assert resolver.calls == [url]
     repo = SqliteEnrichmentRepository(conn)
-    aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
+    aggregate = repo.load(LOCAL_TENANT, job_id)
     assert aggregate is not None
     assert aggregate.is_enriched
     assert aggregate.full_description is not None
-    assert aggregate.full_description.text == "A complete LinkedIn description"
+    assert aggregate.full_description.text == description
     assert aggregate.application_url is not None
     assert aggregate.application_url.value == apply_target
+    after = conn.execute(
+        "SELECT latest_snapshot_version, latest_confidence, latest_quarantine_reason, "
+        "snapshot_set_json FROM posting_snapshot_sets WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert after is not None
+    assert after["latest_snapshot_version"] == 2
+    assert after["latest_confidence"] == SnapshotConfidence.MEDIUM.value
+    assert after["latest_quarantine_reason"] == QuarantineReason.NONE.value
+    assert "apply_url_recovered:authenticated_browser" in after["snapshot_set_json"]
+    tailor_state = conn.execute(
+        "SELECT state, error_code FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert tailor_state is not None
+    assert dict(tailor_state) == {"state": "pending", "error_code": None}
 
 
 def test_enriched_missing_apply_url_recovery_is_bounded_across_runs(
@@ -397,6 +460,91 @@ def test_failed_row_still_reset_for_authenticated_retry(
     aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
     assert aggregate is not None
     assert aggregate.is_pending
+
+
+def test_legacy_public_write_guard_failure_is_reset_despite_nonretryable_flag(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://www.linkedin.com/jobs/view/legacy-public-write"
+    _seed_discovered(conn, url, "linkedin")
+    _save_failed(
+        conn,
+        url,
+        retryable=False,
+        error_code="DETAIL_UNSAFE_URL",
+        error_message="Unsupported public route method: POST",
+    )
+
+    reset_count = _reset_authenticated_linkedin_retry_candidates(
+        conn,
+        job_ids=(_job_id(conn, url),),
+    )
+
+    assert reset_count == 1
+    aggregate = SqliteEnrichmentRepository(conn).load(
+        LOCAL_TENANT, _job_id(conn, url)
+    )
+    assert aggregate is not None
+    assert aggregate.is_pending
+
+
+def test_failed_retry_reset_is_scoped_to_explicit_job_ids(
+    conn: sqlite3.Connection,
+) -> None:
+    selected_url = "https://www.linkedin.com/jobs/view/selected"
+    other_url = "https://www.linkedin.com/jobs/view/other"
+    _seed_discovered(conn, selected_url, "linkedin")
+    _seed_discovered(conn, other_url, "linkedin")
+    _save_failed(conn, selected_url, retryable=True)
+    _save_failed(conn, other_url, retryable=True)
+
+    reset_count = _reset_authenticated_linkedin_retry_candidates(
+        conn,
+        job_ids=(_job_id(conn, selected_url),),
+    )
+
+    assert reset_count == 1
+    repo = SqliteEnrichmentRepository(conn)
+    assert repo.load(LOCAL_TENANT, _job_id(conn, selected_url)).is_pending  # type: ignore[union-attr]
+    assert repo.load(LOCAL_TENANT, _job_id(conn, other_url)).is_failed  # type: ignore[union-attr]
+
+
+def test_exact_cohort_scraper_requeues_failed_linkedin_job(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://www.linkedin.com/jobs/view/exact-cohort"
+    _seed_discovered(conn, url, "linkedin")
+    _save_failed(conn, url, retryable=True)
+    job_id = _job_id(conn, url)
+    batches: list[list[tuple[JobId, str]]] = []
+
+    def fake_scrape_site_batch(
+        _conn: sqlite3.Connection,
+        _site: str,
+        jobs: list[tuple[JobId, str]],
+        **_kwargs: object,
+    ) -> dict:
+        batches.append(jobs)
+        return {
+            "processed": len(jobs),
+            "ok": len(jobs),
+            "partial": 0,
+            "error": 0,
+            "tiers": {},
+        }
+
+    monkeypatch.setattr(detail, "scrape_site_batch", fake_scrape_site_batch)
+
+    result = detail._run_detail_scraper(
+        conn,
+        job_ids=(job_id,),
+        reset_linkedin_candidates=True,
+        recovery_key="discover-local:run-current",
+    )
+
+    assert batches == [[(job_id, "Engineer")]]
+    assert result["ok"] == 1
 
 
 def test_retry_candidates_skip_nonretryable_and_exhausted_rows(

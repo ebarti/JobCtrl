@@ -37,6 +37,10 @@ with workflow.unsafe.imports_passed_through():
         _TAILOR_RETRY,
     )
     from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
+    from jobctrl.infrastructure.preparation_recovery import (
+        RecoverPreparationStateInput,
+        recover_preparation_state_activity,
+    )
     from jobctrl.scoring.activities import ScoreJobActivityInput, score_job_activity
 
 
@@ -77,6 +81,7 @@ class JobPreparationInput:
 @dataclass(frozen=True)
 class JobPreparationResult:
     steps_completed: list[str] = field(default_factory=list)
+    steps_skipped: list[str] = field(default_factory=list)
     steps_failed: list[str] = field(default_factory=list)
     failure: str | None = None
     error_code: str | None = None
@@ -154,26 +159,72 @@ class JobPreparationWorkflow:
 
     async def _execute_steps(self, payload: JobPreparationInput) -> JobPreparationResult:
         completed: list[str] = []
+        skipped: list[str] = []
         failed: list[str] = []
         failure: str | None = None
         error_code: str | None = None
         for step in _ordered_steps(payload.steps):
             try:
-                await _execute_step(step, payload)
+                output = await _execute_step(step, payload)
             except ActivityError as exc:
                 if _activity_error_was_cancelled(exc):
                     raise CancelledError("Workflow canceled by request.") from exc
+                if step in {"score", "tailor", "cover"}:
+                    await _recover_stage_state(step, payload)
                 failed.append(step)
                 error_code = _activity_error_code(exc)
                 failure = f"{step}: {exc.cause if exc.cause else exc}"
                 break
+            status = _activity_output_status(output)
+            if status in {"skipped", "not_eligible"}:
+                skipped.append(step)
+                break
+            if status in {"error", "failed"}:
+                failed.append(step)
+                error_code = f"{step}_failed" if step != "pdf" else "pdf_render_failed"
+                detail = _activity_output_detail(output) or status
+                failure = f"{step}: {detail}"
+                break
             completed.append(step)
         return JobPreparationResult(
             steps_completed=completed,
+            steps_skipped=skipped,
             steps_failed=failed,
             failure=failure,
             error_code=error_code,
         )
+
+
+async def _recover_stage_state(
+    stage: str,
+    payload: JobPreparationInput,
+) -> None:
+    """Close the one row owned by an exhausted preparation activity."""
+    await workflow.execute_activity(
+        recover_preparation_state_activity,
+        RecoverPreparationStateInput(
+            tenant_id=payload.tenant_id,
+            workflow_id=workflow.info().run_id,
+            stage=stage,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        ),
+        start_to_close_timeout=timedelta(seconds=30),
+        retry_policy=RetryPolicy(maximum_attempts=0),
+        cancellation_type=workflow.ActivityCancellationType.ABANDON,
+    )
+
+
+def _activity_output_status(output: Any) -> str:
+    if isinstance(output, dict):
+        return str(output.get("status") or "ok").strip().lower()
+    return str(getattr(output, "status", "ok") or "ok").strip().lower()
+
+
+def _activity_output_detail(output: Any) -> str:
+    if isinstance(output, dict):
+        return str(output.get("error") or output.get("reason") or "").strip()
+    return str(getattr(output, "error", "") or getattr(output, "reason", "") or "").strip()
 
 
 async def _execute_step(step: str, payload: JobPreparationInput) -> Any:

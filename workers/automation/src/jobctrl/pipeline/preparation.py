@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from typing import Any, Coroutine
 
@@ -44,33 +45,22 @@ from jobctrl.preparation.workflow import (
     JobPreparationWorkflow,
     preparation_workflow_id,
 )
+from jobctrl.scoring.eligibility_sql import (
+    register_score_eligibility_sql,
+    score_eligible_for_downstream_sql,
+)
 from jobctrl.state import utc_now
 
 log = logging.getLogger(__name__)
 
 PREPARATION_CHILD_BATCH_SIZE = 25
 
-_LATEST_SCORES_CTE = """
+_LATEST_SCORES_CTE = f"""
 latest_scores AS (
     SELECT scores.tenant_id,
            scores.job_id,
            scores.fit_score,
-           CASE WHEN json_valid(scores.breakdown_json)
-                THEN LOWER(COALESCE(
-                    CAST(json_extract(scores.breakdown_json, '$.eligibility.status') AS TEXT),
-                    ''
-                ))
-                ELSE ''
-           END AS eligibility_status,
-           CASE WHEN json_valid(scores.breakdown_json)
-                THEN COALESCE(
-                    json_array_length(scores.breakdown_json, '$.eligibility.hard_blockers'),
-                    json_array_length(scores.breakdown_json, '$.eligibility.hardBlockers'),
-                    json_array_length(scores.breakdown_json, '$.eligibility.blockers'),
-                    0
-                )
-                ELSE 0
-           END AS hard_blocker_count
+           {score_eligible_for_downstream_sql('scores.breakdown_json')} AS eligible_for_downstream
       FROM job_scores scores
       INNER JOIN (
           SELECT tenant_id, job_id, MAX(version) AS version
@@ -485,6 +475,7 @@ def _preparation_job_ids(
     min_score: int,
 ) -> list[JobId]:
     """Select exact-v7 preparation candidates by canonical identity."""
+    register_score_eligibility_sql(conn)
     if stage == "pending_score":
         rows = conn.execute(
             f"""
@@ -579,11 +570,17 @@ def _preparation_job_ids(
                )
                AND enrichment.full_description IS NOT NULL
                AND score.fit_score >= ?
-               AND score.eligibility_status != 'blocked'
-               AND score.hard_blocker_count = 0
+               AND score.eligible_for_downstream = 1
                AND (score_stage.state IS NULL OR score_stage.state = 'succeeded')
                AND stale_score.job_id IS NULL
-               AND COALESCE(tailor_stage.state, 'pending') = 'pending'
+               AND (
+                    COALESCE(tailor_stage.state, 'pending') = 'pending'
+                    OR (
+                        tailor_stage.state = 'blocked'
+                        AND tailor_stage.error_code = 'SCORE_ELIGIBILITY_BLOCKED'
+                        AND score.eligible_for_downstream = 1
+                    )
+               )
                AND COALESCE(tailor_stage.attempt_count, 0) < 5
                AND (
                     snapshots.latest_active_state IS NULL
@@ -822,14 +819,13 @@ def _unselected_work_plan_outcome(
     job_id: JobId,
     min_score: int,
 ) -> tuple[DiscoveryExecutionWorkPlanState, str]:
+    register_score_eligibility_sql(conn)
     row = conn.execute(
         f"""
         WITH {_LATEST_SCORES_CTE},
              {_LATEST_ACTIVE_MATERIALS_CTE}
         SELECT score.fit_score AS effective_score,
-               CASE WHEN score.eligibility_status != 'blocked'
-                         AND score.hard_blocker_count = 0
-                    THEN 1 ELSE 0 END AS score_eligible,
+               COALESCE(score.eligible_for_downstream, 0) AS score_eligible,
                snapshots.latest_active_state AS active_state,
                resume_pdf.artifact_id IS NOT NULL AS has_resume_pdf,
                cover_pdf.artifact_id IS NOT NULL AS has_cover_pdf,
@@ -920,7 +916,16 @@ def _run_coroutine(coro: Coroutine[Any, Any, list[WorkflowHandle]]) -> list[Work
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
-    raise RuntimeError("preparation workflow fan-out cannot run inside an active event loop")
+    # Synchronous enrichment callbacks can run inside a library-owned event
+    # loop (for example while JobStreaming is active). The default starter
+    # creates a fresh Temporal client for each invocation, so execute this
+    # self-contained coroutine on a dedicated loop instead of rejecting the
+    # per-job handoff and deferring all preparation to terminal reconciliation.
+    with ThreadPoolExecutor(
+        max_workers=1,
+        thread_name_prefix="jobctrl-preparation-start",
+    ) as executor:
+        return executor.submit(asyncio.run, coro).result()
 
 
 def _batches(items: list[WorkflowStartSpec], size: int) -> list[list[WorkflowStartSpec]]:
@@ -1047,6 +1052,7 @@ def _jobs_needing_artifact_suppression(
     tenant_id: TenantId,
     min_score: int,
 ) -> list[JobId]:
+    register_score_eligibility_sql(conn)
     rows = conn.execute(
         f"""
         WITH {_LATEST_SCORES_CTE},
@@ -1070,8 +1076,7 @@ def _jobs_needing_artifact_suppression(
           AND (
             score.fit_score IS NULL
             OR score.fit_score < ?
-            OR score.eligibility_status = 'blocked'
-            OR score.hard_blocker_count > 0
+            OR score.eligible_for_downstream = 0
           )
         ORDER BY jobs.discovered_at DESC, jobs.job_id
         """,

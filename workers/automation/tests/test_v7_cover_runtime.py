@@ -280,6 +280,57 @@ def test_cover_by_id_persists_artifacts_and_isolates_same_job_id_across_tenants(
     assert tuple(event) == (str(_TENANT_A), str(_JOB_ID))
 
 
+def test_cover_job_replay_closes_running_state_from_committed_approved_artifact(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    _seed_target(conn, tenant_id=_TENANT_A)
+    _seed_eligible_score(conn, tenant_id=_TENANT_A)
+    _seed_approved_resume(conn, tmp_path, tenant_id=_TENANT_A)
+    _seed_stage_rows(conn, tenant_id=_TENANT_A)
+    repository = SqliteMaterialsRepository(conn)
+    llm = _CoverLlm()
+    first = cover_letter_module.cover_letter_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=_snapshot(_TENANT_A),
+        repository=repository,
+        llm_port=llm,
+        pdf_renderer=_PdfRenderer(),
+    )
+    assert first["status"] == "ok"
+    conn.execute(
+        """
+        UPDATE job_stage_states
+        SET state = 'running'
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    )
+    conn.commit()
+
+    replay = cover_letter_module.cover_letter_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=_snapshot(_TENANT_A),
+        repository=repository,
+        llm_port=llm,
+        pdf_renderer=_PdfRenderer(),
+    )
+
+    assert replay["status"] == "already_done"
+    assert replay["reason"] == "approved_cover_already_committed"
+    assert llm.calls == 1
+    state = conn.execute(
+        """
+        SELECT state FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert state["state"] == "succeeded"
+
+
 def test_cover_by_id_skips_missing_approved_materials_before_llm_or_artifact_work(
     conn: sqlite3.Connection,
 ) -> None:
@@ -376,6 +427,36 @@ def test_cover_by_id_enforces_score_eligibility_before_llm_work(
     assert result["status"] == "skipped"
     assert result["reason"] == reason
     assert llm.calls == 0
+
+
+def test_cover_by_id_generates_for_historical_salary_only_block(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    _seed_target(conn, tenant_id=_TENANT_A)
+    _seed_eligible_score(
+        conn,
+        tenant_id=_TENANT_A,
+        fit_score=9,
+        eligibility=EligibilityAssessment(
+            status="blocked",
+            hard_blockers=("Posted salary is below the preferred compensation range.",),
+        ),
+    )
+    _seed_approved_resume(conn, tmp_path, tenant_id=_TENANT_A)
+    llm = _CoverLlm()
+
+    result = cover_letter_module.cover_letter_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=_snapshot(_TENANT_A),
+        repository=SqliteMaterialsRepository(conn),
+        llm_port=llm,
+        pdf_renderer=_PdfRenderer(),
+    )
+
+    assert result["status"] == "ok"
+    assert llm.calls == 1
 
 
 @pytest.mark.parametrize(

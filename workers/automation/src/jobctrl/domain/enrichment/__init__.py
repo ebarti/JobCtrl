@@ -44,9 +44,11 @@ from jobctrl.domain.enrichment.snapshot_value_objects import (
 from jobctrl.domain.enrichment.value_objects import (
     ApplicationUrl,
     DetailPage,
+    EnrichmentExecutionLease,
     EnrichmentError,
     ExtractionTier,
     FullDescription,
+    StaleEnrichmentExecutionLease,
 )
 
 __all__ = [
@@ -59,6 +61,7 @@ __all__ = [
     "DuplicateEvidenceKind",
     "EnrichmentAttempt",
     "EnrichmentError",
+    "EnrichmentExecutionLease",
     "EnrichmentLifecycle",
     "EnrichmentStatus",
     "ExtractionTier",
@@ -72,4 +75,5 @@ __all__ = [
     "SnapshotCaptureFailure",
     "SnapshotConfidence",
     "SnapshotDescriptionHash",
+    "StaleEnrichmentExecutionLease",
 ]

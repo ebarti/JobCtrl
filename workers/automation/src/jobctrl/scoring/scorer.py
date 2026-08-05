@@ -62,6 +62,7 @@ from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.infrastructure.profile.factory import get_profile_repository
 from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
+from jobctrl.infrastructure.preparation_recovery import stage_completed_by_activity_owner
 from jobctrl.infrastructure.scoring import (
     LocalScoringCriteriaProvider,
     SqliteRequirementFitReportRepository,
@@ -220,6 +221,7 @@ def run_scoring(
     employer_analysis_repository: EmployerAnalysisRepository | None = None,
     analyze_use_case: AnalyzeJobUseCaseLike | None = None,
     require_employer_analysis: bool = True,
+    workflow_id: str | None = None,
 ) -> dict:
     """Score unscored jobs that have full descriptions.
 
@@ -283,11 +285,26 @@ def run_scoring(
             search_index=search_index,
         )
     ]
+    if workflow_id:
+        jobs = [
+            job
+            for job in jobs
+            if not stage_completed_by_activity_owner(
+                conn,
+                tenant_id=str(tenant_id),
+                job_id=str(canonical_job_id(str(job["job_id"]))),
+                stage="score",
+                workflow_id=workflow_id,
+            )
+        ]
+    if not jobs:
+        return {"scored": 0, "errors": 0, "elapsed": 0.0, "distribution": []}
 
     worker_count = max(1, workers)
     log.info("Scoring %d jobs with %d worker(s)...", len(jobs), worker_count)
 
     started_ats: dict[str, str] = {}
+    activity_metadata: dict[str, dict[str, object]] = {}
     for job in jobs:
         job_id = canonical_job_id(str(job["job_id"]))
         ensure_job_stage_rows(
@@ -302,6 +319,14 @@ def run_scoring(
         # scoring is re-selected here, so allow Failed -> Running even
         # though the canonical state machine table only permits Failed ->
         # Pending (via Reset). Skip validation; the writer is the runner.
+        metadata = _score_activity_metadata(
+            conn,
+            tenant_id=tenant_id,
+            job_id=job_id,
+            workflow_id=workflow_id,
+            rescore=rescore,
+        )
+        activity_metadata[str(job_id)] = metadata or {}
         set_stage_state(
             conn,
             job_id,
@@ -316,6 +341,7 @@ def run_scoring(
                 job_id=job_id,
             ),
             started_at=started_at,
+            metadata=metadata,
             validate_transition=False,
         )
         record_job_event(
@@ -522,6 +548,7 @@ def run_scoring(
                 attempt_count=1,
                 started_at=started_ats.get(url),
                 finished_at=finished_at,
+                metadata=activity_metadata.get(str(job_id)) or None,
             )
             record_job_event(
                 conn,
@@ -606,6 +633,7 @@ def score_job_by_url(
     employer_analysis_repository: EmployerAnalysisRepository | None = None,
     analyze_use_case: AnalyzeJobUseCaseLike | None = None,
     require_employer_analysis: bool = True,
+    workflow_id: str | None = None,
 ) -> ScoreJobOutcome:
     """Resolve one tenant-scoped posting locator, then score its JobId."""
     conn = get_connection()
@@ -632,6 +660,7 @@ def score_job_by_url(
         employer_analysis_repository=employer_analysis_repository,
         analyze_use_case=analyze_use_case,
         require_employer_analysis=require_employer_analysis,
+        workflow_id=workflow_id,
     )
 
 
@@ -653,6 +682,7 @@ def score_job_by_id(
     employer_analysis_repository: EmployerAnalysisRepository | None = None,
     analyze_use_case: AnalyzeJobUseCaseLike | None = None,
     require_employer_analysis: bool = True,
+    workflow_id: str | None = None,
 ) -> ScoreJobOutcome:
     """Score exactly one enriched job by tenant-scoped canonical JobId.
 
@@ -667,6 +697,15 @@ def score_job_by_id(
     job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
     if job is None:
         return ScoreJobOutcome(ok=False, score=None, error=f"Job not found: {stable_job_id}")
+    if workflow_id and stage_completed_by_activity_owner(
+        conn,
+        tenant_id=str(tenant_id),
+        job_id=str(stable_job_id),
+        stage="score",
+        workflow_id=workflow_id,
+    ):
+        committed_score = (repository or SqliteScoreRepository(conn)).load(tenant_id, stable_job_id)
+        return ScoreJobOutcome(ok=True, score=committed_score)
     if not job.get("full_description"):
         return ScoreJobOutcome(ok=False, score=None, error=f"Job is not enriched: {stable_job_id}")
 
@@ -739,6 +778,13 @@ def score_job_by_id(
         discovered_at=job.get("discovered_at"),
     )
     started_at = utc_now()
+    metadata = _score_activity_metadata(
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        workflow_id=workflow_id,
+        rescore=rescore,
+    )
     set_stage_state(
         conn,
         stable_job_id,
@@ -753,6 +799,7 @@ def score_job_by_id(
             job_id=stable_job_id,
         ),
         started_at=started_at,
+        metadata=metadata,
         validate_transition=False,
     )
     record_job_event(
@@ -793,6 +840,7 @@ def score_job_by_id(
             attempt_count=1,
             started_at=started_at,
             finished_at=finished_at,
+            metadata=metadata,
         )
         record_job_event(
             conn,
@@ -1375,6 +1423,27 @@ def _persist_reused_score(
         )
     repository.save(copied)
     return ScoreJobOutcome(ok=True, score=copied)
+
+
+def _score_activity_metadata(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    workflow_id: str | None,
+    rescore: bool,
+) -> dict[str, object] | None:
+    if not workflow_id:
+        return None
+    row = conn.execute(
+        "SELECT COALESCE(MAX(version), 0) AS version FROM job_scores WHERE tenant_id = ? AND job_id = ?",
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    return {
+        "activityOwner": workflow_id,
+        "rescore": rescore,
+        "priorScoreVersion": int(row["version"] if row else 0),
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -1238,8 +1238,8 @@ function PipelineSources({
           ? `${sources.counts.succeeded}/${sources.planned} source families succeeded`
           : "Source plan unavailable"
       }
-      description="Discovery intake and the two post-source reconciliation steps are reported independently."
-      title="Source families and reconciliation"
+      description="Discovery intake and the terminal enrichment reconciliation are reported independently."
+      title="Source families and enrichment reconciliation"
     >
       <div className="pipeline-source-reconciliation">
         <section className="pipeline-ledger-panel" aria-labelledby="source-family-title">
@@ -1285,10 +1285,10 @@ function PipelineSources({
           <div className="pipeline-ledger-panel__heading">
             <div>
               <h3 data-typography="component-title" id="reconciliation-title">
-                Reconciliation
+                Enrichment reconciliation
               </h3>
               <p data-typography="body">
-                Exactly two post-source operations, never additional source families.
+                Runs one final enrichment pass for stragglers, then hands every ready job to preparation.
               </p>
             </div>
             {reconciliation && trackingReady ? (
@@ -1321,9 +1321,9 @@ function PipelineSources({
               </p>
             </>
           ) : !trackingReady ? (
-            <Empty title="Reconciliation history is being restored automatically." />
+            <Empty title="Enrichment reconciliation history is being restored automatically." />
           ) : (
-            <Empty title="No reconciliation projection is available for the selected execution." />
+            <Empty title="No enrichment reconciliation history is available for the selected execution." />
           )}
         </section>
       </div>

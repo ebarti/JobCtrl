@@ -694,6 +694,12 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
   if (command.jobIds && command.jobIds.length > 0) {
     params.jobIds = command.jobIds;
   }
+  if (command.reason) {
+    params.reason = command.reason;
+    if (command.reason.startsWith("profile_updated:")) {
+      params.awaitResult = true;
+    }
+  }
   return params;
 }
 

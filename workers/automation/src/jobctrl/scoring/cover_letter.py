@@ -37,6 +37,7 @@ from jobctrl.domain.ports.materials import (
     PdfRendererPort,
 )
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.scoring.eligibility import eligibility_blocks_downstream
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.domain.materials.value_objects import ArtifactStatus
 from jobctrl.infrastructure.discovery.sqlite_identity_resolver import SqliteJobIdentityResolver
@@ -171,6 +172,7 @@ def cover_letter_by_id(
     publisher: EventPublisher | None = None,
     pdf_renderer: PdfRendererPort | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
+    workflow_id: str | None = None,
 ) -> dict:
     """Generate exactly one eligible cover letter by tenant-scoped JobId."""
     stable_job_id = canonical_job_id(str(job_id))
@@ -198,12 +200,26 @@ def cover_letter_by_id(
         )
 
     materials = repository.load_current_approved(tenant_id, stable_job_id)
+    if (
+        materials is not None
+        and materials.cover_letter is not None
+        and materials.cover_letter.status is ArtifactStatus.APPROVED
+    ):
+        _reconcile_existing_approved_cover(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+        )
+        return _skipped_result(
+            stable_job_id,
+            reason="approved_cover_already_committed",
+            url=str(job.get("url") or ""),
+            status="already_done",
+        )
     if materials is None or not materials.is_resume_approved:
         return _skipped_result(stable_job_id, reason="missing_approved_resume", url=str(job.get("url") or ""))
     if materials.resume_pdf is None or materials.resume_pdf.status is not ArtifactStatus.APPROVED:
         return _skipped_result(stable_job_id, reason="missing_approved_resume_pdf", url=str(job.get("url") or ""))
-    if materials.cover_letter is not None and materials.cover_letter.status is ArtifactStatus.APPROVED:
-        return _skipped_result(stable_job_id, reason="already_done", url=str(job.get("url") or ""), status="already_done")
     if _cover_stage_succeeded(conn, tenant_id=tenant_id, job_id=stable_job_id):
         return _skipped_result(stable_job_id, reason="already_done", url=str(job.get("url") or ""), status="already_done")
 
@@ -246,6 +262,7 @@ def cover_letter_by_id(
         tenant_id=tenant_id,
         attempt_count=current_attempt,
         started_at=started_at,
+        metadata={"activityOwner": workflow_id} if workflow_id else None,
         validate_transition=False,
     )
     record_job_event(
@@ -367,6 +384,44 @@ def cover_letter_by_id(
         "elapsed": elapsed,
         "error": outcome.error,
     }
+
+
+def _reconcile_existing_approved_cover(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> None:
+    """Close a replayed running row when its cover artifact already committed."""
+    row = conn.execute(
+        """
+        SELECT state
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if row is not None and str(row["state"]) == "succeeded":
+        return
+    set_stage_state(
+        conn,
+        job_id,
+        "cover",
+        "succeeded",
+        tenant_id=tenant_id,
+        finished_at=utc_now(),
+        validate_transition=False,
+    )
+    record_job_event(
+        conn,
+        job_id,
+        "cover",
+        "StageCompleted",
+        tenant_id=tenant_id,
+        message="Cover generation recovered from the committed approved artifact.",
+        payload={"recoveredAfterActivityReplay": True},
+    )
+    conn.commit()
 
 
 def cover_letter_by_url(
@@ -493,8 +548,7 @@ def _cover_eligibility_reason(
         return "missing_score"
     if score.fit_score.value < min_score:
         return "below_min_score"
-    eligibility = score.breakdown.eligibility
-    if eligibility.status == "blocked" or eligibility.hard_blockers:
+    if eligibility_blocks_downstream(score.breakdown.eligibility):
         return "score_ineligible"
     return None
 

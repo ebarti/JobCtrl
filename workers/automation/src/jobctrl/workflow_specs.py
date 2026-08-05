@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
+
+from temporalio.common import WorkflowIDReusePolicy
 
 from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
 from jobctrl.contact.activities import ResearchSourceInput
@@ -108,7 +111,13 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
         continuous=bool(params.get("continuous", False)),
     )
-    return WorkflowStartSpec(workflow=JobPipelineWorkflow, args=(payload,))
+    workflow_id, id_reuse_policy = _run_stage_workflow_identity(params)
+    return WorkflowStartSpec(
+        workflow=JobPipelineWorkflow,
+        args=(payload,),
+        workflow_id=workflow_id,
+        id_reuse_policy=id_reuse_policy,
+    )
 
 
 def build_pipeline_workflow_spec(
@@ -539,6 +548,22 @@ def _source_ids(params: dict[str, Any]) -> tuple[str, ...]:
     if not isinstance(raw, list):
         raise ValueError("sourceIds must be an array")
     return tuple(dict.fromkeys(str(item).strip() for item in raw if str(item).strip()))
+
+
+def _run_stage_workflow_identity(
+    params: dict[str, Any],
+) -> tuple[str | None, WorkflowIDReusePolicy | None]:
+    reason = str(params.get("reason") or "").strip()
+    if reason.startswith("condition_resolved:"):
+        prefix = "condition-recovery"
+        reuse_policy = WorkflowIDReusePolicy.ALLOW_DUPLICATE
+    elif reason.startswith("profile_updated:"):
+        prefix = "profile-continuation"
+        reuse_policy = WorkflowIDReusePolicy.REJECT_DUPLICATE
+    else:
+        return None, None
+    digest = hashlib.sha256(reason.encode("utf-8")).hexdigest()[:24]
+    return f"{prefix}-{digest}", reuse_policy
 
 
 def _optional_string(

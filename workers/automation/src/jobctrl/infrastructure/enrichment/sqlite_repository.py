@@ -127,7 +127,7 @@ class SqliteEnrichmentRepository:
     # Write
     # ------------------------------------------------------------------
 
-    def save(self, enrichment: JobEnrichment) -> None:
+    def save(self, enrichment: JobEnrichment, *, commit: bool = True) -> None:
         job_id = canonical_job_id(str(enrichment.job_id))
         attempts_json = json.dumps(
             [a.to_dict() for a in enrichment.attempts],
@@ -173,7 +173,8 @@ class SqliteEnrichmentRepository:
                 enrichment.updated_at,
             ),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -250,7 +251,7 @@ class SqlitePostingSnapshotSetRepository:
         data = json.loads(raw_json) if raw_json else {}
         return _snapshot_set_from_dict(data)
 
-    def save(self, snapshot_set: PostingSnapshotSet) -> None:
+    def save(self, snapshot_set: PostingSnapshotSet, *, commit: bool = True) -> None:
         latest = snapshot_set.latest_snapshot
         self._conn.execute(
             """
@@ -278,7 +279,8 @@ class SqlitePostingSnapshotSetRepository:
                 snapshot_set.updated_at,
             ),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
 
     def index_entries(
         self,

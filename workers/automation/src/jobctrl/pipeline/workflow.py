@@ -32,10 +32,11 @@ with workflow.unsafe.imports_passed_through():
         tailor_activity,
     )
     from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
-    from jobctrl.scoring.activities import (
-        ScoreActivityInput,
-        score_activity,
+    from jobctrl.infrastructure.preparation_recovery import (
+        RecoverPreparationStateInput,
+        recover_preparation_state_activity,
     )
+    from jobctrl.scoring.activities import ScoreActivityInput, score_activity
 
 
 @dataclass(frozen=True)
@@ -228,6 +229,8 @@ class JobPipelineWorkflow:
             except ActivityError as exc:
                 if _activity_error_was_cancelled(exc):
                     raise CancelledError("Workflow canceled by request.") from exc
+                if stage in {"score", "tailor", "cover"}:
+                    await _recover_stage_state(stage, stage_payload)
                 failed.append(stage)
                 error_code = _activity_error_code(exc)
                 failure = f"{stage}: {exc.cause if exc.cause else exc}"
@@ -254,9 +257,30 @@ class JobPipelineWorkflow:
         )
 
 
+async def _recover_stage_state(
+    stage: str,
+    payload: JobPipelineWorkflowInput,
+) -> None:
+    """Close rows owned by an exhausted batch activity."""
+    await workflow.execute_activity(
+        recover_preparation_state_activity,
+        RecoverPreparationStateInput(
+            tenant_id=payload.tenant_id,
+            workflow_id=workflow.info().run_id,
+            stage=stage,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        ),
+        start_to_close_timeout=timedelta(seconds=30),
+        retry_policy=RetryPolicy(maximum_attempts=0),
+        cancellation_type=workflow.ActivityCancellationType.ABANDON,
+    )
+
+
 async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
     """Dispatch one stage to its Temporal activity."""
     workflow_id = workflow.info().workflow_id
+    activity_owner = workflow.info().run_id
     if stage == "discover":
         return await workflow.execute_child_workflow(
             DiscoverWorkflow.run,
@@ -309,7 +333,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 job_ids=_selected_job_ids(payload),
                 current_policy_only=payload.score_current_policy_only,
                 llm_model=payload.llm_model,
-                workflow_id=workflow_id,
+                workflow_id=activity_owner,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -336,7 +360,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 tailor_judge_model=payload.tailor_judge_model,
                 tailor_judge_min_score=payload.tailor_judge_min_score,
                 llm_model=payload.llm_model,
-                workflow_id=workflow_id,
+                workflow_id=activity_owner,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -355,7 +379,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 dry_run=payload.dry_run,
                 job_ids=_selected_job_ids(payload),
                 llm_model=payload.llm_model,
-                workflow_id=workflow_id,
+                workflow_id=activity_owner,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
