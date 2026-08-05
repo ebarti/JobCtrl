@@ -278,7 +278,11 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
     browserCapabilities: vi.fn(async () => ({
       ok: true as const,
       detectedBrowsers: [
-        { id: "google-chrome" as const, label: "Google Chrome" },
+        {
+          id: "google-chrome" as const,
+          label: "Google Chrome",
+          defaultProfileAvailable: true,
+        },
       ],
       capabilities: [
         {

@@ -48,10 +48,10 @@ enter the system. They do not hold provider credentials or raw feed contents.
 | `POST /v1/providers/codex/verify` | Explicitly validate and import a reusable normal Codex CLI `auth.json` once when isolated auth is absent, then verify isolated auth without a model call. |
 | `GET /v1/extension/pairing-token` | Read the local extension pairing state. |
 | `POST /v1/extension/pairing-token/rotate` | Rotate the token immediately and disconnect existing extension clients. |
-| `GET /v1/browser-capabilities` | Read managed/optional capability states plus transient supported-browser candidates as ID/label pairs; no local path is returned or adopted. |
+| `GET /v1/browser-capabilities` | Read managed/optional capability states plus transient supported-browser candidates as ID/label/profile-availability records; no local path is returned or adopted. |
 | `POST /v1/browser-capabilities/:capabilityId/enable` | Explicitly adopt exactly one transient `detectedBrowserId` or one write-only `executablePath` for an optional capability. |
 | `POST /v1/browser-capabilities/:capabilityId/disable` | Disable an optional capability immediately. |
-| `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy` | Copy a profile only with explicit consent; the source path is request-only. |
+| `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy` | Copy exactly one detected default profile by opaque browser ID or one write-only manual source path, only with explicit consent. |
 
 Credential responses expose enough state for the UI to show whether a provider
 is configured, but do not return stored secret material. Guided provider

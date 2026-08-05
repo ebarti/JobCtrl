@@ -28,6 +28,7 @@ import logging
 import sqlite3
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -772,6 +773,7 @@ def _record_enrich_robots_blocked(
     decision: PolitenessDecision,
     *,
     tenant_id: TenantId = LOCAL_TENANT,
+    recovery_key: str | None = None,
 ) -> None:
     """Fold a robots-disallowed navigation into the enrichment lifecycle.
 
@@ -803,7 +805,15 @@ def _record_enrich_robots_blocked(
         retryable=True,
         next_action=f"Import this posting manually — robots.txt disallows automated fetch: {url}",
         finished_at=finished_at,
-        metadata={"reason": "robots_disallowed", "politenessOutcome": decision.outcome.value},
+        metadata={
+            "reason": "robots_disallowed",
+            "politenessOutcome": decision.outcome.value,
+            **(
+                {"lastRobotsRetryWorkflow": recovery_key}
+                if recovery_key
+                else {}
+            ),
+        },
         validate_transition=False,
         tenant_id=tenant_id,
     )
@@ -868,6 +878,61 @@ def _unblock_enrich_stage_if_blocked(
         payload={"reason": "robots_recheck", "previousState": "blocked"},
         tenant_id=tenant_id,
     )
+
+
+def _claim_robots_retry_for_workflow(
+    conn: sqlite3.Connection,
+    job_id: JobId,
+    recovery_key: str,
+    *,
+    tenant_id: TenantId,
+) -> bool:
+    """Atomically claim one robots-blocked row for one workflow execution.
+
+    Ordinary pending rows return ``True`` without mutation. A robots-blocked
+    row is admitted only when this workflow key has not claimed it before.
+    The claim lives on the canonical stage row, so a Temporal activity retry
+    cannot repeat the same owner-authenticated navigation.
+    """
+
+    row = conn.execute(
+        """
+        SELECT state, error_code, metadata_json, version
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if row is None or row[0] != "blocked" or row[1] != "ENRICH_ROBOTS_DISALLOWED":
+        return True
+    try:
+        metadata = json.loads(row[2] or "{}")
+    except (TypeError, ValueError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if metadata.get("lastRobotsRetryWorkflow") == recovery_key:
+        return False
+    metadata["lastRobotsRetryWorkflow"] = recovery_key
+    updated = conn.execute(
+        """
+        UPDATE job_stage_states
+        SET metadata_json = ?, updated_at = ?, version = version + 1
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'
+          AND state = 'blocked'
+          AND error_code = 'ENRICH_ROBOTS_DISALLOWED'
+          AND version = ?
+        """,
+        (
+            json.dumps(metadata, sort_keys=True),
+            datetime.now(timezone.utc).isoformat(),
+            str(tenant_id),
+            str(job_id),
+            int(row[3] or 0),
+        ),
+    )
+    conn.commit()
+    return updated.rowcount == 1
 
 
 def _record_enrich_politeness_deferral(
@@ -1031,6 +1096,7 @@ def scrape_site_batch(
     gateway: PolitenessGateway | None = None,
     run_budget: RunBudgetCounter | None = None,
     on_job_enriched: Callable[[JobId], None] | None = None,
+    recovery_key: str | None = None,
 ) -> dict:
     """Process all jobs for one site using a shared browser context.
 
@@ -1215,6 +1281,7 @@ def scrape_site_batch(
                         url,
                         gate,
                         tenant_id=tenant_id,
+                        recovery_key=recovery_key,
                     )
                     stats["blocked"] += 1
                     continue
@@ -2217,6 +2284,7 @@ def _run_detail_scraper(
     cancel_event: threading.Event | None = None,
     reset_linkedin_candidates: bool = True,
     on_job_enriched: Callable[[JobId], None] | None = None,
+    recovery_key: str | None = None,
 ) -> dict:
     """Group pending jobs by site and process each batch.
 
@@ -2233,7 +2301,17 @@ def _run_detail_scraper(
     # ``detail_scraped_at IS NULL`` gate was redundant AND blocked the
     # post-``reset_job_stage("enrich")`` re-pickup.
     stable_tenant_id = TenantId(str(tenant_id))
-    where_parts = [db_module._ENRICHMENT_PENDING, skip_filter]
+    if reset_linkedin_candidates and not job_ids and not recovery_key:
+        recovery_key = f"local-enrich:{uuid.uuid4().hex}"
+    # A later enrichment workflow must reconsider robots-blocked rows, but only
+    # on its first pass.  Keeping them out of the steady-state pending selector
+    # prevents a still-disallowed URL from looping within the same workflow.
+    enrichment_selector = (
+        db_module._ENRICHMENT_RUNNABLE
+        if reset_linkedin_candidates and not job_ids
+        else db_module._ENRICHMENT_PENDING
+    )
+    where_parts = [enrichment_selector, skip_filter]
     params: list[object] = []
     selected_job_ids = tuple(
         dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids)
@@ -2259,9 +2337,15 @@ def _run_detail_scraper(
         )
 
     rows = conn.execute(
-        f"SELECT jobs.job_id, jobs.title, jobs.site FROM jobs {db_module._ENRICHMENT_JOIN} "
+        f"SELECT jobs.job_id, jobs.title, jobs.site, "
+        "jss_enrich.state, jss_enrich.error_code, jss_enrich.metadata_json "
+        f"FROM jobs {db_module._ENRICHMENT_JOIN} {db_module._ACTIVE_STATE_JOIN} "
         f"WHERE {' AND '.join(where_parts)} "
-        "ORDER BY jobs.site",
+        f"AND {db_module._NOT_CLOSED_ACTIVE_STATE} "
+        "ORDER BY jobs.site, "
+        "CASE WHEN jss_enrich.state = 'blocked' "
+        "AND jss_enrich.error_code = 'ENRICH_ROBOTS_DISALLOWED' THEN 0 ELSE 1 END, "
+        "jobs.job_id",
         params,
     ).fetchall()
 
@@ -2274,6 +2358,17 @@ def _run_detail_scraper(
         job_id, title, site = canonical_job_id(str(row[0])), row[1], row[2]
         if sites and site not in sites:
             continue
+        if row[3] == "blocked" and row[4] == "ENRICH_ROBOTS_DISALLOWED":
+            try:
+                metadata = json.loads(row[5] or "{}")
+            except (TypeError, ValueError):
+                metadata = {}
+            if (
+                recovery_key
+                and isinstance(metadata, dict)
+                and metadata.get("lastRobotsRetryWorkflow") == recovery_key
+            ):
+                continue
         site_jobs.setdefault(site, []).append((job_id, title))
 
     log.info("Pending: %d jobs across %d sites (workers=%d)", len(rows), len(site_jobs), workers)
@@ -2321,6 +2416,23 @@ def _run_detail_scraper(
     # every site batch, in both sequential and parallel modes.
     gateway = PolitenessGateway()
 
+    def _jobs_for_site(site: str, site_conn: sqlite3.Connection) -> list[tuple]:
+        jobs = site_jobs[site]
+        if max_per_site and max_per_site > 0:
+            jobs = jobs[:max_per_site]
+        if not recovery_key:
+            return jobs
+        return [
+            job
+            for job in jobs
+            if _claim_robots_retry_for_workflow(
+                site_conn,
+                canonical_job_id(str(job[0])),
+                recovery_key,
+                tenant_id=stable_tenant_id,
+            )
+        ]
+
     if workers > 1 and len(order) > 1:
         database_path = next(
             str(row[2])
@@ -2331,32 +2443,34 @@ def _run_detail_scraper(
         def _scrape_site(site: str) -> dict:
             if cancel_event is not None and cancel_event.is_set():
                 raise TransientNetworkError("enrichment canceled")
-            jobs = site_jobs[site]
-            log.info("%s -- %d jobs", site, len(jobs))
             thread_conn = db_module.get_connection(database_path)
             try:
+                jobs = _jobs_for_site(site, thread_conn)
+                log.info("%s -- %d jobs", site, len(jobs))
                 if cancel_event is None:
                     stats = scrape_site_batch(
                         thread_conn,
                         site,
                         jobs,
-                        max_jobs=max_per_site,
+                        max_jobs=None,
                         tenant_id=stable_tenant_id,
                         gateway=gateway,
                         run_budget=run_budget,
                         on_job_enriched=on_job_enriched,
+                        recovery_key=recovery_key,
                     )
                 else:
                     stats = scrape_site_batch(
                         thread_conn,
                         site,
                         jobs,
-                        max_jobs=max_per_site,
+                        max_jobs=None,
                         cancel_event=cancel_event,
                         tenant_id=stable_tenant_id,
                         gateway=gateway,
                         run_budget=run_budget,
                         on_job_enriched=on_job_enriched,
+                        recovery_key=recovery_key,
                     )
             finally:
                 db_module.close_connection(database_path)
@@ -2391,7 +2505,7 @@ def _run_detail_scraper(
         for site in order:
             if cancel_event is not None and cancel_event.is_set():
                 raise TransientNetworkError("enrichment canceled")
-            jobs = site_jobs[site]
+            jobs = _jobs_for_site(site, conn)
             log.info("%s -- %d jobs", site, len(jobs))
             try:
                 if cancel_event is None:
@@ -2399,23 +2513,25 @@ def _run_detail_scraper(
                         conn,
                         site,
                         jobs,
-                        max_jobs=max_per_site,
+                        max_jobs=None,
                         tenant_id=stable_tenant_id,
                         gateway=gateway,
                         run_budget=run_budget,
                         on_job_enriched=on_job_enriched,
+                        recovery_key=recovery_key,
                     )
                 else:
                     stats = scrape_site_batch(
                         conn,
                         site,
                         jobs,
-                        max_jobs=max_per_site,
+                        max_jobs=None,
                         cancel_event=cancel_event,
                         tenant_id=stable_tenant_id,
                         gateway=gateway,
                         run_budget=run_budget,
                         on_job_enriched=on_job_enriched,
+                        recovery_key=recovery_key,
                     )
             except TransientNetworkError:
                 raise
@@ -2563,6 +2679,7 @@ def run_enrichment(
     cancel_event: threading.Event | None = None,
     reset_linkedin_candidates: bool = True,
     on_job_enriched: Callable[[JobId], None] | None = None,
+    recovery_key: str | None = None,
 ) -> dict:
     """Main entry point for detail page enrichment.
 
@@ -2600,6 +2717,16 @@ def run_enrichment(
             updated = resolve_wttj_urls(conn)
             log.info("WTTJ: %d URLs updated", updated)
 
+    if recovery_key:
+        return _run_detail_scraper(
+            conn,
+            max_per_site=limit,
+            workers=workers,
+            cancel_event=cancel_event,
+            reset_linkedin_candidates=reset_linkedin_candidates,
+            on_job_enriched=on_job_enriched,
+            recovery_key=recovery_key,
+        )
     return _run_detail_scraper(
         conn,
         max_per_site=limit,

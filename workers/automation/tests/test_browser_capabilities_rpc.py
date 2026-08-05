@@ -42,13 +42,27 @@ def test_capability_list_never_returns_executable_paths(monkeypatch: pytest.Monk
             ),
         ),
     )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "detect_default_browser_profile",
+        lambda browser_id: (
+            "/secret/detected/profile/path" if browser_id == "google-chrome" else None
+        ),
+    )
 
     result = handlers.browser_capabilities_list({})
 
-    assert result["detectedBrowsers"] == [{"id": "google-chrome", "label": "Google Chrome"}]
+    assert result["detectedBrowsers"] == [
+        {
+            "id": "google-chrome",
+            "label": "Google Chrome",
+            "defaultProfileAvailable": True,
+        }
+    ]
     assert "executable" not in json.dumps(result)
     assert "/secret/host/path" not in json.dumps(result)
     assert "/secret/detected/browser/path" not in json.dumps(result)
+    assert "/secret/detected/profile/path" not in json.dumps(result)
 
 
 def test_enable_accepts_an_explicit_detected_browser_id(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -161,6 +175,73 @@ def test_profile_copy_requires_separate_versioned_ui_consent(
     )
     assert called == [("/private/profile", True, "explicit-ui-v1")]
     assert "/private/profile" not in json.dumps(response)
+
+
+def test_profile_copy_accepts_a_detected_browser_without_crossing_a_host_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobctrl import browser_capabilities
+
+    called: list[tuple[str, bool, str]] = []
+    monkeypatch.setattr(
+        browser_capabilities,
+        "copy_detected_authenticated_linkedin_profile",
+        lambda browser_id, *, consent, consent_method: called.append(
+            (browser_id, consent, consent_method)
+        ),
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "list_browser_capabilities",
+        lambda: (
+            _status("core-browser", "ready"),
+            _status("auto-apply-browser"),
+            _status("authenticated-linkedin-browser", "ready"),
+        ),
+    )
+    monkeypatch.setattr(browser_capabilities, "detect_supported_browsers", lambda: ())
+
+    response = handlers.browser_profile_copy(
+        {
+            "detectedBrowserId": "google-chrome",
+            "consent": True,
+            "consentMethod": "explicit-ui-v1",
+        }
+    )
+
+    assert called == [("google-chrome", True, "explicit-ui-v1")]
+    assert "sourceProfilePath" not in json.dumps(response)
+
+
+def test_stale_detected_profile_error_does_not_expose_a_host_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobctrl import browser_capabilities
+
+    secret_path = "/secret/browser/profile/path"
+
+    def stale_profile(*_args, **_kwargs):
+        raise browser_capabilities.DetectedBrowserProfileUnavailableError(
+            f"missing: {secret_path}"
+        )
+
+    monkeypatch.setattr(
+        browser_capabilities,
+        "copy_detected_authenticated_linkedin_profile",
+        stale_profile,
+    )
+
+    with pytest.raises(Exception) as caught:
+        handlers.browser_profile_copy(
+            {
+                "detectedBrowserId": "google-chrome",
+                "consent": True,
+                "consentMethod": "explicit-ui-v1",
+            }
+        )
+
+    assert "no longer available" in str(caught.value)
+    assert secret_path not in str(caught.value)
 
 
 def test_disable_hot_revokes_without_returning_adopted_state(

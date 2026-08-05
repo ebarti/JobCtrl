@@ -200,12 +200,17 @@ The provider key and returned token stay outside the model prompt. An
 unsupported challenge, missing configuration, or failed solve stops the apply
 path; solving a challenge never grants form-entry or final-submit authority.
 
-A source profile path is cleared after the copy request and is never returned,
-logged, or persisted. Profile copying retains its separate affirmative consent;
-selecting or enabling a browser does not grant that consent. Rotating the
-pairing token takes effect immediately. Existing extensions are disconnected;
-the UI never exposes the token's file path. The CLI commands below remain an
-equivalent manual-path operator surface.
+When Chrome or Chromium has a standard local default profile, Settings lists it
+by browser label and can copy it without asking you to navigate to or paste a
+filesystem path. Only the opaque detected-browser ID crosses the API boundary;
+the worker resolves the standard profile location again at copy time, copies
+only `Default`, and sanitizes the required Chrome root metadata so sibling
+profiles are excluded. A manual source profile path remains an advanced
+fallback, is cleared after the request, and is never returned, logged, or
+persisted. Both paths retain separate affirmative consent: selecting or enabling
+a browser does not grant profile-copy consent. Rotating the pairing token takes effect immediately. Existing
+extensions are disconnected; the UI never exposes the token's file path. The
+CLI commands below remain an equivalent manual-path operator surface.
 
 The same explicitly enabled and separately consented authenticated LinkedIn
 profile can recover a full LinkedIn posting and its external application URL.

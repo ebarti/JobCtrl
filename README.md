@@ -672,7 +672,12 @@ from **Settings → Browser & extension**. JobCtrl can list supported local
 Chrome/Chromium installations by label, but detection is read-only: it does not
 launch, enable, or persist a browser. Choosing a detected browser and clicking
 Enable explicitly adopts it; an advanced manual executable path remains
-available. Browser enable/disable and pairing-token rotation are live, and
+available. For authenticated LinkedIn, JobCtrl can also detect a standard local
+default profile and copy it by browser label after separate affirmative consent;
+no filesystem path entry is required. That detected flow copies only the
+`Default` profile plus sanitized root metadata needed by Chrome; sibling
+profiles are excluded. A write-only manual profile path remains an advanced
+fallback. Browser enable/disable and pairing-token rotation are live, and
 extension pairing remains separate from browser adoption.
 
 ## Development

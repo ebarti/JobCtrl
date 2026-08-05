@@ -4922,6 +4922,7 @@ export const DetectedBrowserSchema = z
   .object({
     id: z.enum(DetectedBrowserIds),
     label: z.string().trim().min(1).max(80),
+    defaultProfileAvailable: z.boolean(),
   })
   .strict();
 export type DetectedBrowser = z.infer<typeof DetectedBrowserSchema>;
@@ -4955,12 +4956,18 @@ export const BrowserCapabilityEnableRequestSchema = z
 export type BrowserCapabilityEnableRequest = z.infer<typeof BrowserCapabilityEnableRequestSchema>;
 
 export const BrowserProfileCopyRequestSchema = z
-  .object({
-    sourceProfilePath: z.string().trim().min(1).max(4096),
-    consent: z.literal(true),
-    consentMethod: z.literal("explicit-ui-v1"),
-  })
-  .strict();
+  .union([
+    z.object({
+      detectedBrowserId: z.enum(DetectedBrowserIds),
+      consent: z.literal(true),
+      consentMethod: z.literal("explicit-ui-v1"),
+    }).strict(),
+    z.object({
+      sourceProfilePath: z.string().trim().min(1).max(4096),
+      consent: z.literal(true),
+      consentMethod: z.literal("explicit-ui-v1"),
+    }).strict(),
+  ]);
 export type BrowserProfileCopyRequest = z.infer<typeof BrowserProfileCopyRequestSchema>;
 
 export interface BrowserCapabilityErrorResponse {

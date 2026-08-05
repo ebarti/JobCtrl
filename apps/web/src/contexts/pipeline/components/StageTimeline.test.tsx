@@ -35,7 +35,13 @@ function makeStage(
 function readyAuthenticatedLinkedInBrowser(): BrowserCapabilitiesResponse {
   return {
     ok: true,
-    detectedBrowsers: [{ id: "google-chrome", label: "Google Chrome" }],
+    detectedBrowsers: [
+      {
+        id: "google-chrome",
+        label: "Google Chrome",
+        defaultProfileAvailable: true,
+      },
+    ],
     capabilities: [
       {
         id: "core-browser",
