@@ -1073,6 +1073,22 @@ def _source_slug(value: str) -> str:
     return slug or "source"
 
 
+_JOBSTREAMING_BOARD_DISPLAY_NAMES = {
+    "glassdoor": "Glassdoor",
+    "indeed": "Indeed",
+    "linkedin": "LinkedIn",
+    "zip_recruiter": "ZipRecruiter",
+}
+
+
+def _jobstreaming_source_display_name(board: str) -> str:
+    display_board = _JOBSTREAMING_BOARD_DISPLAY_NAMES.get(
+        board.strip().lower(),
+        board.replace("_", " ").strip().title(),
+    )
+    return f"JobStreaming {display_board}"
+
+
 def _validated_source(entry: SourceRegistryEntry) -> SourceRegistryEntry:
     with source_validation_span(
         tenant_id=entry.tenant_id,
@@ -1165,7 +1181,7 @@ def _jobspy_sources(search_cfg: dict | None) -> list[SourceRegistryEntry]:
                     tenant_id=LOCAL_TENANT,
                     source_id=f"jobspy:{_source_slug(board)}",
                     kind=SourceKind.BROAD_BOARD,
-                    display_name=f"Broad board: {board}",
+                    display_name=_jobstreaming_source_display_name(board),
                     owner="system",
                     priority=SourcePriority.LEAD_GENERATOR,
                     state=SourceState.EXPERIMENTAL,
@@ -1334,8 +1350,12 @@ def _merge_local_source_registry(
         adapter_config = dict(existing.adapter_config) if existing else {}
         if _row_overrides_adapter_config(row, existing):
             adapter_config.update(_adapter_config_from_row(row))
-        display_name = str(row["display_name"] or (existing.display_name if existing else source_id))
         owner = str(row["owner"] or (existing.owner if existing else "user"))
+        display_name = (
+            existing.display_name
+            if existing and owner == "system" and source_id.startswith("jobspy:")
+            else str(row["display_name"] or (existing.display_name if existing else source_id))
+        )
         merged[source_id] = _validated_source(
             SourceRegistryEntry(
                 tenant_id=LOCAL_TENANT,

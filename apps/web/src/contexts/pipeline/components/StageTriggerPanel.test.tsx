@@ -16,6 +16,37 @@ import { buildTestPorts } from "../../../test/testPorts.js";
 import { useStageTriggerStore } from "../stores/stage-trigger-store.js";
 import { StageTriggerPanel } from "./StageTriggerPanel.js";
 
+function jobStreamingSource(sourceId: string, displayName: string) {
+  return {
+    sourceId,
+    kind: "broad_board" as const,
+    displayName,
+    owner: "system" as const,
+    priority: "standard" as const,
+    state: "active" as const,
+    policyId: "jobspy_default",
+    recommendedState: "normal" as const,
+    lastRunId: null,
+    lastRunCompletedAt: null,
+    lastErrorClass: null,
+    consecutiveFailures: 0,
+    observedJobs: 0,
+    newJobs: 0,
+    duplicateRate: null,
+    activeVerificationRate: null,
+    fullDescriptionSuccessRate: null,
+    applyUrlSuccessRate: null,
+    politeness: {
+      robotsDisallowedCount: 0,
+      rateLimitedCount: 0,
+      budgetExhaustedCount: 0,
+      lastBlockedReason: null,
+      lastBlockedAt: null,
+    },
+    qualityTrend: "unknown" as const,
+  };
+}
+
 describe("StageTriggerPanel", () => {
   beforeEach(() => {
     window.localStorage.removeItem?.("jh:stage-trigger-config");
@@ -222,7 +253,7 @@ describe("StageTriggerPanel", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("submits a bounded Discover run from the stage tab", async () => {
+  it("submits a bounded Discover run for multiple selected JobStreaming sources", async () => {
     const user = userEvent.setup();
     const runPipelineStages = vi.fn(
       async (_request: unknown): Promise<PipelineStageRunResponse> => ({
@@ -250,15 +281,40 @@ describe("StageTriggerPanel", () => {
       }),
     );
     renderWithProviders(<StageTriggerPanel />, {
-      ports: buildTestPorts({ api: { runPipelineStages } }),
+      ports: buildTestPorts({
+        api: {
+          runPipelineStages,
+          discoverySources: vi.fn(async () => ({
+            ok: true as const,
+            sources: [
+              jobStreamingSource("jobspy:linkedin", "JobStreaming LinkedIn"),
+              jobStreamingSource("jobspy:indeed", "JobStreaming Indeed"),
+            ],
+          })),
+        },
+      }),
     });
 
     const limitInput = screen.getByLabelText("Limit");
     expect(limitInput).toHaveAttribute("max", "1000");
     await user.clear(limitInput);
     await user.type(limitInput, "1000");
-    await user.click(await screen.findByRole("combobox", { name: "Source" }));
-    await user.click(await screen.findByRole("option", { name: /LinkedIn/ }));
+    await user.click(await screen.findByRole("button", { name: "Sources" }));
+    await user.click(
+      await screen.findByRole("checkbox", { name: /JobStreaming LinkedIn/ }),
+    );
+    expect(
+      screen.getByRole("checkbox", { name: /JobStreaming Indeed/ }),
+    ).toBeVisible();
+    await user.click(
+      screen.getByRole("checkbox", { name: /JobStreaming Indeed/ }),
+    );
+    expect(screen.getByRole("button", { name: "Sources" })).toHaveTextContent(
+      "2 sources selected",
+    );
+    expect(
+      screen.getByRole("button", { name: "Sources" }),
+    ).toHaveAccessibleDescription("2 sources selected");
     await user.click(screen.getByRole("checkbox", { name: "Dry run" }));
     await user.click(
       await screen.findByRole("button", { name: "Run Discover" }),
@@ -281,10 +337,69 @@ describe("StageTriggerPanel", () => {
       model: "default",
       llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       continuous: false,
-      sourceIds: ["jobspy:linkedin"],
+      sourceIds: ["jobspy:linkedin", "jobspy:indeed"],
     });
     expect(request).not.toHaveProperty("tailorJudgeMinScore");
   }, 10_000);
+
+  it("caps explicit discovery source selection at the API limit", async () => {
+    const user = userEvent.setup();
+    const sources = Array.from({ length: 51 }, (_, index) =>
+      jobStreamingSource(
+        `jobspy:board-${index + 1}`,
+        `JobStreaming Board ${index + 1}`,
+      ),
+    );
+    useStageTriggerStore.getState().patchStageConfig("discover", {
+      discoverySourceIds: sources
+        .slice(0, 50)
+        .map((source) => source.sourceId),
+    });
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          discoverySources: vi.fn(async () => ({
+            ok: true as const,
+            sources,
+          })),
+        },
+      }),
+    });
+
+    const picker = await screen.findByRole("button", { name: "Sources" });
+    expect(picker).toHaveAccessibleDescription("50 sources selected");
+    await user.click(picker);
+    expect(screen.getByText("Select up to 50 sources.")).toBeVisible();
+    const fiftyFirstSource = screen.getByRole("checkbox", {
+      name: /^JobStreaming Board 51 ·/,
+    });
+    expect(fiftyFirstSource).toHaveAttribute("aria-disabled", "true");
+    await user.click(fiftyFirstSource);
+    expect(
+      useStageTriggerStore.getState().configs.discover.discoverySourceIds,
+    ).toHaveLength(50);
+  });
+
+  it("migrates the persisted single-source trigger selection", async () => {
+    window.localStorage.setItem(
+      "jh:stage-trigger-config",
+      JSON.stringify({
+        state: {
+          activeStage: "discover",
+          configs: {
+            discover: { discoverySourceId: "jobspy:linkedin" },
+          },
+        },
+        version: 1,
+      }),
+    );
+
+    await useStageTriggerStore.persist.rehydrate();
+
+    expect(
+      useStageTriggerStore.getState().configs.discover.discoverySourceIds,
+    ).toEqual(["jobspy:linkedin"]);
+  });
 
   it("shows a stop control for queued pipeline stage runs", async () => {
     const user = userEvent.setup();

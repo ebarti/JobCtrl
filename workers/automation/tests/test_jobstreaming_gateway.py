@@ -52,6 +52,20 @@ class _RateLimitedAdapter(Scraper):
         raise RateLimitError("slow down")
 
 
+class _TlsTimeoutInspectingAdapter(Scraper):
+    seen_timeouts: list[object] = []
+
+    def __init__(self, **_: object) -> None:
+        super().__init__(Site.GLASSDOOR)
+
+    def scrape(self, request, context=None) -> JobResponse:
+        del context
+        type(self).seen_timeouts.append(request.request_timeout)
+        if not isinstance(request.request_timeout, int):
+            raise ValueError("TLS timeout must be an integer")
+        return JobResponse()
+
+
 def test_request_translation_is_immutable_and_preserves_search_options() -> None:
     spec = JobStreamingSearchSpec(
         sites=("indeed", "linkedin"),
@@ -105,6 +119,31 @@ def test_collect_preserves_partial_results_and_projects_typed_failure() -> None:
     assert result.failures[0].code == "rate_limited"
     assert result.failures[0].retryable is True
     assert result.completed is False
+
+
+def test_tls_backed_adapters_receive_an_integral_request_timeout() -> None:
+    _TlsTimeoutInspectingAdapter.seen_timeouts = []
+    registry = AdapterRegistry()
+    registry.register(Site.GLASSDOOR, _TlsTimeoutInspectingAdapter)
+
+    result = JobStreamingGateway().collect(
+        JobStreamingSearchSpec(
+            sites=("glassdoor",),
+            query="Director of Engineering",
+            location="Remote",
+            results_per_site=10,
+            remote_only=True,
+        ),
+        registry=registry,
+        max_retries=0,
+    )
+
+    assert [
+        (type(timeout), timeout)
+        for timeout in _TlsTimeoutInspectingAdapter.seen_timeouts
+    ] == [(int, 30)]
+    assert result.failures == ()
+    assert result.completed is True
 
 
 def test_durable_stream_does_not_checkpoint_until_the_consumer_acknowledges() -> None:

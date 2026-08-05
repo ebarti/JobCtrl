@@ -30,7 +30,7 @@ const sampleDiscoverySourceRegistry = {
     {
       sourceId: "jobspy:linkedin",
       kind: "broad_board" as const,
-      displayName: "LinkedIn",
+      displayName: "JobStreaming LinkedIn",
       owner: "system" as const,
       priority: "standard" as const,
       state: "active" as const,

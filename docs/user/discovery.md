@@ -126,8 +126,10 @@ not merge the jobs or turn either record into application history. See
 
 Discovery owns the controls that decide what may enter a run; **Pipelines** owns
 starting and observing that run. In Pipelines, choose the Discover action, set a
-bounded result limit, internal source concurrency, optional source, and dry-run
-mode, then keep the operations workspace open while work proceeds.
+bounded result limit, internal source concurrency, optional sources, and dry-run
+mode, then keep the operations workspace open while work proceeds. The source
+picker supports up to 50 selections and labels broad-board adapters as
+JobStreaming; the persisted `jobspy:` prefix remains only a compatibility ID.
 
 The workspace deliberately keeps different scopes and units separate:
 

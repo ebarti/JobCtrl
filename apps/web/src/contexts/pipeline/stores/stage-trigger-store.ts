@@ -18,7 +18,7 @@ export interface StageTriggerConfig {
   tailorModels: string;
   tailorJudgeModel: string;
   tailorJudgeMinScore: string;
-  discoverySourceId: string;
+  discoverySourceIds: string[];
   headless: boolean;
   model: string;
   continuous: boolean;
@@ -45,7 +45,7 @@ const defaultConfig: StageTriggerConfig = {
   tailorModels: "",
   tailorJudgeModel: "",
   tailorJudgeMinScore: "",
-  discoverySourceId: "",
+  discoverySourceIds: [],
   headless: false,
   model: "default",
   continuous: false,
@@ -95,10 +95,29 @@ function isValidationMode(value: unknown): value is PipelineValidationMode {
 }
 
 function mergeConfig(value: unknown): StageTriggerConfig {
-  const source = typeof value === "object" && value !== null ? (value as Partial<StageTriggerConfig>) : {};
+  const source =
+    typeof value === "object" && value !== null
+      ? (value as Partial<StageTriggerConfig> & { discoverySourceId?: unknown })
+      : {};
+  const { discoverySourceId, ...currentSource } = source;
+  const legacyDiscoverySourceId =
+    typeof discoverySourceId === "string" ? discoverySourceId.trim() : "";
+  const discoverySourceIds = Array.isArray(source.discoverySourceIds)
+    ? [
+        ...new Set(
+          source.discoverySourceIds
+            .filter((sourceId): sourceId is string => typeof sourceId === "string")
+            .map((sourceId) => sourceId.trim())
+            .filter(Boolean),
+        ),
+      ].slice(0, 50)
+    : legacyDiscoverySourceId
+      ? [legacyDiscoverySourceId]
+      : [];
   return {
     ...defaultConfig,
-    ...source,
+    ...currentSource,
+    discoverySourceIds,
     validationMode: isValidationMode(source.validationMode) ? source.validationMode : defaultConfig.validationMode,
   };
 }
@@ -131,7 +150,8 @@ export const useStageTriggerStore = create<StageTriggerState>()(
     {
       name: "jh:stage-trigger-config",
       storage: createJSONStorage(getStorage),
-      version: 1,
+      version: 2,
+      migrate: (persisted) => persisted,
       partialize: ({ activeStage, configs }) => ({ activeStage, configs }),
       merge: (persisted, current) => {
         const source =

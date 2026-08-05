@@ -192,6 +192,65 @@ describe("discovery product controls API", () => {
     }
   });
 
+  it("projects legacy broad-board source IDs with JobStreaming display names", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const app = buildApp(options(dbPath, dir));
+    try {
+      await app.inject({ method: "GET", url: "/v1/discovery/sources" });
+      const db = new Database(dbPath);
+      const insert = db.prepare(
+        `INSERT INTO source_registry_entries (
+           tenant_id, source_id, kind, display_name, owner, priority, state,
+           policy_id, seed_url, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const now = "2026-05-15T10:00:00+00:00";
+      for (const [sourceId, displayName] of [
+        ["jobspy:glassdoor", "JobSpy glassdoor"],
+        ["jobspy:indeed", "JobSpy indeed"],
+        ["jobspy:linkedin", "JobSpy linkedin"],
+        ["jobspy:zip-recruiter", "JobSpy zip_recruiter"],
+      ]) {
+        insert.run(
+          "local",
+          sourceId,
+          "broad_board",
+          displayName,
+          "system",
+          "lead_generator",
+          "experimental",
+          "broad_board_lead_generator",
+          null,
+          now,
+          now,
+        );
+      }
+      db.close();
+
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/discovery/sources",
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(
+        response.json().sources.map(
+          (source: { sourceId: string; displayName: string }) => [
+            source.sourceId,
+            source.displayName,
+          ],
+        ),
+      ).toEqual([
+        ["jobspy:glassdoor", "JobStreaming Glassdoor"],
+        ["jobspy:indeed", "JobStreaming Indeed"],
+        ["jobspy:linkedin", "JobStreaming LinkedIn"],
+        ["jobspy:zip-recruiter", "JobStreaming ZipRecruiter"],
+      ]);
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("filters America-only source registry rows when profile target search is Europe-focused", async () => {
     const { dbPath, dir, cleanup } = withTempDb();
     const app = buildApp(options(dbPath, dir));
