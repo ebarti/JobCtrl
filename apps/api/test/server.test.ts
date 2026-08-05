@@ -9772,6 +9772,37 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("does not launch startup continuations before the health-only database exists", async () => {
+    fs.rmSync(options.dbPath, { force: true });
+    const providerCall = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
+      jsonrpc: "2.0" as const,
+      id: 1,
+      result: { capabilities: [], detectedBrowsers: [] },
+    }));
+    const dispatch = vi.fn<ActionDispatcher>(async () => ({
+      status: "queued",
+      runId: "run-missing-database",
+    }));
+    const app = buildApp({
+      ...options,
+      providerDispatcher: {
+        call: providerCall,
+        close: vi.fn(async () => undefined),
+      },
+      actionDispatcher: dispatch,
+    });
+
+    await app.listen({ host: "127.0.0.1", port: 0 });
+
+    expect(providerCall).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    const health = await app.inject({ method: "GET", url: "/v1/health" });
+    expect(health.statusCode, health.body).toBe(200);
+    expect(health.json()).toMatchObject({ dbExists: false, dbPath: options.dbPath });
+
+    await app.close();
+  });
+
   it("reattaches an intended older profile continuation before dispatching a newer revision", async () => {
     const db = new Database(options.dbPath);
     const insertProfileEvent = db.prepare(

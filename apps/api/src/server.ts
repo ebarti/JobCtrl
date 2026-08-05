@@ -447,6 +447,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   ensureLocalCapabilityToken(appDir);
 
   app.addHook("onListen", async () => {
+    // Health-only startup is allowed before initialization creates the exact
+    // database. Do not launch the Python RPC bootstrap or any continuation
+    // reader against a path that the initializer still owns.
+    if (!databaseExists(options.dbPath)) return;
     void reconcileAuthenticatedBrowserContinuation(
       providerDispatcher,
       continueAuthenticatedBrowserPreparation,
