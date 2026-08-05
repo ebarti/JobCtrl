@@ -1470,11 +1470,12 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   `auto-apply-browser`, and `authenticated-linkedin-browser` state without
   returning a saved executable or source-profile path. It also returns
   `detectedBrowsers: Array<{ id: "google-chrome" | "chromium", label: string,
-  defaultProfileAvailable: boolean }>` for currently detected supported
-  installations. Detection checks only the standard default-profile directory;
-  it does not read profile contents, launch, adopt, copy, or persist the browser,
-  and no filesystem path crosses the RPC/API boundary. The core browser is
-  managed and read-only.
+  defaultProfileAvailable: boolean, profiles: Array<{ id: string, label: string }> }>`
+  for currently detected supported installations. Profile IDs are opaque and
+  transient; labels come only from bounded Chrome display metadata. Detection
+  does not read cookies or session contents, launch, adopt, copy, or persist the
+  browser, and no filesystem path crosses the RPC/API boundary. The core
+  browser is managed and read-only.
   `POST /v1/browser-capabilities/:capabilityId/enable` accepts exactly one of
   `{ detectedBrowserId }` or `{ executablePath }`; the strict union rejects
   both/neither. The path is write-only. The detected-ID arm resolves the
@@ -1482,11 +1483,14 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   closed with sanitized `400 browser_capability_failed` without adopting any
   fallback. The matching `/disable` route applies
   immediately. `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy`
-  requires explicit consent and accepts exactly one of `{ detectedBrowserId }`
-  or `{ sourceProfilePath }`. The detected-ID arm resolves the standard default
-  profile again at mutation time and copies only `Default` plus sanitized root
-  metadata required by Chrome; sibling profile directories and metadata are
-  excluded. The manual path is cleared after the request; JobCtrl never
+  requires explicit consent and accepts an explicit
+  `{ detectedBrowserId, detectedProfileId }`, the compatible browser-only
+  Default selection, or `{ sourceProfilePath }`. The explicit detected-profile
+  arm resolves both opaque IDs again at mutation time, copies only that profile
+  plus sanitized root metadata required by Chrome, normalizes it to the owned
+  `Default` directory, and safely replaces a prior consented copy only after the
+  new copy has staged successfully. Sibling profile directories and metadata
+  are excluded. The manual path is cleared after the request; JobCtrl never
   returns, logs, or persists it. A detected candidate becomes adopted only
   through the separate explicit enable mutation.
 - Authenticated extension routes under `/v1/extension/*` require `Authorization:

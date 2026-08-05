@@ -327,7 +327,14 @@ not launch, adopt, or persist a browser. Enabling requires an explicit detected
 selection or one advanced manual path, re-resolves a detected selection at
 mutation time, and fails closed when the installation disappeared. Profile-copy
 consent remains a separate affirmative action; capability enablement must not
-imply it.
+imply it. With Default plus at least one `Profile N` fixture, prove Settings
+renders every safe Chrome display label, forwards the chosen opaque profile ID,
+copies only that profile as the isolated owned Default, and never returns a host
+path. Replacing a prior consented copy must stage the new profile first, preserve
+the old copy on pre-publish or post-publish state-validation failure, and exclude
+every sibling profile. Concurrent replacements must serialize through publish,
+state validation, rollback, and cleanup so a stale failure cannot overwrite a
+newer successful selection.
 
 <a id="scoring-policy-eval-gate"></a>
 <a id="saved-views-smoke"></a>

@@ -282,6 +282,12 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
           id: "google-chrome" as const,
           label: "Google Chrome",
           defaultProfileAvailable: true,
+          profiles: [
+            {
+              id: "profile-0123456789abcdef0123456789abcdef",
+              label: "Signed in",
+            },
+          ],
         },
       ],
       capabilities: [

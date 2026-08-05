@@ -103,8 +103,19 @@ const syntheticBrowserCapabilitiesResponse = {
       id: "google-chrome",
       label: "Google Chrome",
       defaultProfileAvailable: true,
+      profiles: [
+        {
+          id: "profile-0123456789abcdef0123456789abcdef",
+          label: "Signed in",
+        },
+      ],
     },
-    { id: "chromium", label: "Chromium", defaultProfileAvailable: false },
+    {
+      id: "chromium",
+      label: "Chromium",
+      defaultProfileAvailable: false,
+      profiles: [],
+    },
   ],
   capabilities: [
     {

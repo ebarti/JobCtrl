@@ -10,6 +10,9 @@ import pytest
 from jobctrl.infrastructure.rpc import handlers
 
 
+PROFILE_ID = "profile-0123456789abcdef0123456789abcdef"
+
+
 def _status(capability_id: str, status: str = "disabled") -> SimpleNamespace:
     return SimpleNamespace(
         id=capability_id,
@@ -44,9 +47,18 @@ def test_capability_list_never_returns_executable_paths(monkeypatch: pytest.Monk
     )
     monkeypatch.setattr(
         browser_capabilities,
-        "detect_default_browser_profile",
+        "detect_browser_profiles",
         lambda browser_id: (
-            "/secret/detected/profile/path" if browser_id == "google-chrome" else None
+            (
+                SimpleNamespace(
+                    id=PROFILE_ID,
+                    label="Signed in",
+                    directory_name="Profile 1",
+                    user_data_root="/secret/detected/profile/path",
+                ),
+            )
+            if browser_id == "google-chrome"
+            else ()
         ),
     )
 
@@ -56,7 +68,8 @@ def test_capability_list_never_returns_executable_paths(monkeypatch: pytest.Monk
         {
             "id": "google-chrome",
             "label": "Google Chrome",
-            "defaultProfileAvailable": True,
+            "defaultProfileAvailable": False,
+            "profiles": [{"id": PROFILE_ID, "label": "Signed in"}],
         }
     ]
     assert "executable" not in json.dumps(result)
@@ -182,12 +195,12 @@ def test_profile_copy_accepts_a_detected_browser_without_crossing_a_host_path(
 ) -> None:
     from jobctrl import browser_capabilities
 
-    called: list[tuple[str, bool, str]] = []
+    called: list[tuple[str, str | None, bool, str, bool]] = []
     monkeypatch.setattr(
         browser_capabilities,
         "copy_detected_authenticated_linkedin_profile",
-        lambda browser_id, *, consent, consent_method: called.append(
-            (browser_id, consent, consent_method)
+        lambda browser_id, *, detected_profile_id, consent, consent_method, replace_existing: called.append(
+            (browser_id, detected_profile_id, consent, consent_method, replace_existing)
         ),
     )
     monkeypatch.setattr(
@@ -204,12 +217,13 @@ def test_profile_copy_accepts_a_detected_browser_without_crossing_a_host_path(
     response = handlers.browser_profile_copy(
         {
             "detectedBrowserId": "google-chrome",
+            "detectedProfileId": PROFILE_ID,
             "consent": True,
             "consentMethod": "explicit-ui-v1",
         }
     )
 
-    assert called == [("google-chrome", True, "explicit-ui-v1")]
+    assert called == [("google-chrome", PROFILE_ID, True, "explicit-ui-v1", True)]
     assert "sourceProfilePath" not in json.dumps(response)
 
 
@@ -235,6 +249,7 @@ def test_stale_detected_profile_error_does_not_expose_a_host_path(
         handlers.browser_profile_copy(
             {
                 "detectedBrowserId": "google-chrome",
+                "detectedProfileId": PROFILE_ID,
                 "consent": True,
                 "consentMethod": "explicit-ui-v1",
             }

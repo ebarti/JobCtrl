@@ -465,12 +465,15 @@ def _browser_capabilities_payload() -> dict[str, object]:
     """Serialize capability state and transient candidates without local paths."""
 
     from jobctrl.browser_capabilities import (
-        detect_default_browser_profile,
+        detect_browser_profiles,
         detect_supported_browsers,
         list_browser_capabilities,
     )
 
     detected_browsers = detect_supported_browsers()
+    detected_profiles = {
+        browser.id: detect_browser_profiles(browser.id) for browser in detected_browsers
+    }
 
     return {
         "capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()],
@@ -478,7 +481,14 @@ def _browser_capabilities_payload() -> dict[str, object]:
             {
                 "id": browser.id,
                 "label": browser.label,
-                "defaultProfileAvailable": detect_default_browser_profile(browser.id) is not None,
+                "defaultProfileAvailable": any(
+                    profile.directory_name == "Default"
+                    for profile in detected_profiles[browser.id]
+                ),
+                "profiles": [
+                    {"id": profile.id, "label": profile.label}
+                    for profile in detected_profiles[browser.id]
+                ],
             }
             for browser in detected_browsers
         ],
@@ -557,8 +567,14 @@ def browser_profile_copy(params: dict[str, Any]) -> dict[str, object]:
         if has_detected_browser_id:
             copy_detected_authenticated_linkedin_profile(
                 str(_require(params, "detectedBrowserId")),
+                detected_profile_id=(
+                    str(_require(params, "detectedProfileId"))
+                    if "detectedProfileId" in params
+                    else None
+                ),
                 consent=True,
                 consent_method="explicit-ui-v1",
+                replace_existing="detectedProfileId" in params,
             )
         else:
             copy_authenticated_linkedin_profile(

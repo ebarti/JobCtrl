@@ -72,9 +72,12 @@ origin as provenance. Protected or login-walled pages stay on a manual path
 unless they use the explicit owner-authenticated LinkedIn recovery below.
 
 After the authenticated-LinkedIn browser capability is explicitly enabled and
-the user separately consents to copy an existing LinkedIn profile, JobCtrl may
-use that owned session to recover the full posting and external application
-URL. The anonymous `robots.txt` verdict is not applied to this
+the user selects one detected Chrome profile and separately consents to copy
+it, JobCtrl may use that isolated owned session to recover the full posting and
+external application URL. Settings shows Chrome's profile display labels while
+keeping executable and profile paths private; choosing another profile stages
+the new copy before replacing the prior JobCtrl-owned copy. The anonymous
+`robots.txt` verdict is not applied to this
 owner-authenticated request. Public-destination validation, per-host pacing,
 the shared run request budget, and audit history remain enforced. Recovery
 stops before the application form and cannot submit an application; capability

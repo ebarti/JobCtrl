@@ -4918,11 +4918,25 @@ export type BrowserCapabilityItem = z.infer<typeof BrowserCapabilityItemSchema>;
 export const DetectedBrowserIds = ["google-chrome", "chromium"] as const;
 export type DetectedBrowserId = (typeof DetectedBrowserIds)[number];
 
+export const DetectedBrowserProfileIdSchema = z
+  .string()
+  .regex(/^profile-[a-f0-9]{32}$/);
+export type DetectedBrowserProfileId = z.infer<typeof DetectedBrowserProfileIdSchema>;
+
+export const DetectedBrowserProfileSchema = z
+  .object({
+    id: DetectedBrowserProfileIdSchema,
+    label: z.string().trim().min(1).max(80),
+  })
+  .strict();
+export type DetectedBrowserProfile = z.infer<typeof DetectedBrowserProfileSchema>;
+
 export const DetectedBrowserSchema = z
   .object({
     id: z.enum(DetectedBrowserIds),
     label: z.string().trim().min(1).max(80),
     defaultProfileAvailable: z.boolean(),
+    profiles: z.array(DetectedBrowserProfileSchema).max(64),
   })
   .strict();
 export type DetectedBrowser = z.infer<typeof DetectedBrowserSchema>;
@@ -4957,6 +4971,12 @@ export type BrowserCapabilityEnableRequest = z.infer<typeof BrowserCapabilityEna
 
 export const BrowserProfileCopyRequestSchema = z
   .union([
+    z.object({
+      detectedBrowserId: z.enum(DetectedBrowserIds),
+      detectedProfileId: DetectedBrowserProfileIdSchema,
+      consent: z.literal(true),
+      consentMethod: z.literal("explicit-ui-v1"),
+    }).strict(),
     z.object({
       detectedBrowserId: z.enum(DetectedBrowserIds),
       consent: z.literal(true),

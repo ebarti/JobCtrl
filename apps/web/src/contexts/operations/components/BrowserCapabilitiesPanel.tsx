@@ -2,6 +2,7 @@ import type {
   BrowserCapabilityId,
   BrowserCapabilityItem,
   DetectedBrowserId,
+  DetectedBrowserProfileId,
 } from "@jobctrl/contracts";
 import { Fragment, useState } from "react";
 
@@ -76,8 +77,8 @@ export function BrowserCapabilitiesPanel() {
   const [manualPathErrors, setManualPathErrors] = useState<
     Record<string, string>
   >({});
-  const [selectedProfileBrowserId, setSelectedProfileBrowserId] =
-    useState<DetectedBrowserId | null>(null);
+  const [selectedProfileId, setSelectedProfileId] =
+    useState<DetectedBrowserProfileId | null>(null);
   const [sourceProfilePath, setSourceProfilePath] = useState("");
   const [profileConsent, setProfileConsent] = useState(false);
   const [message, setMessage] = useState("");
@@ -132,6 +133,7 @@ export function BrowserCapabilitiesPanel() {
 
   async function copyDetectedLinkedInProfile(
     detectedBrowserId: DetectedBrowserId,
+    detectedProfileId: DetectedBrowserProfileId,
     label: string,
   ) {
     if (!profileConsent) {
@@ -142,12 +144,11 @@ export function BrowserCapabilitiesPanel() {
     try {
       await copyProfile.mutateAsync({
         detectedBrowserId,
+        detectedProfileId,
         consent: true,
         consentMethod: "explicit-ui-v1",
       });
-      setMessage(
-        `${label}'s default profile was copied into JobCtrl-owned storage.`,
-      );
+      setMessage(`${label} was copied into JobCtrl-owned storage.`);
     } catch {
       setMessage("The detected browser profile could not be copied.");
     }
@@ -196,18 +197,20 @@ export function BrowserCapabilitiesPanel() {
       label: browser.label,
       value: browser.id,
     }));
-    const detectedProfileBrowsers = detectedBrowsers.filter(
-      (browser) => browser.defaultProfileAvailable,
+    const detectedProfiles = detectedBrowsers.flatMap((browser) =>
+      browser.profiles.map((profile) => ({
+        ...profile,
+        browserId: browser.id,
+        displayLabel: `${browser.label} · ${profile.label}`,
+      })),
     );
-    const selectedProfileBrowser =
-      detectedProfileBrowsers.find(
-        (browser) => browser.id === selectedProfileBrowserId,
-      ) ??
-      detectedProfileBrowsers[0] ??
+    const selectedProfile =
+      detectedProfiles.find((profile) => profile.id === selectedProfileId) ??
+      detectedProfiles[0] ??
       null;
-    const profileSelectItems = detectedProfileBrowsers.map((browser) => ({
-      label: `${browser.label} · Default`,
-      value: browser.id,
+    const profileSelectItems = detectedProfiles.map((profile) => ({
+      label: profile.displayLabel,
+      value: profile.id,
     }));
     const manualError = manualPathErrors[capabilityId] ?? "";
 
@@ -378,18 +381,18 @@ export function BrowserCapabilitiesPanel() {
             <FieldSet>
               <FieldLegend>Separate authenticated profile copy</FieldLegend>
               <FieldGroup>
-                {selectedProfileBrowser ? (
+                {selectedProfile ? (
                   <Field>
                     <FieldLabel htmlFor="linkedin-detected-profile">
                       Detected browser profile
                     </FieldLabel>
                     <Select
                       items={profileSelectItems}
-                      value={selectedProfileBrowser.id}
+                      value={selectedProfile.id}
                       disabled={demo || copyProfile.isPending}
                       onValueChange={(value) => {
-                        if (value === "google-chrome" || value === "chromium") {
-                          setSelectedProfileBrowserId(value);
+                        if (value?.startsWith("profile-")) {
+                          setSelectedProfileId(value as DetectedBrowserProfileId);
                         }
                       }}
                     >
@@ -417,8 +420,8 @@ export function BrowserCapabilitiesPanel() {
                   </Field>
                 ) : (
                   <FieldDescription>
-                    No standard Chrome or Chromium default profile was detected.
-                    Use the advanced path only for a non-standard profile location.
+                    No standard Chrome or Chromium profile was detected. Use
+                    the advanced path only for a non-standard profile location.
                   </FieldDescription>
                 )}
                 <Field orientation="horizontal">
@@ -433,22 +436,23 @@ export function BrowserCapabilitiesPanel() {
                     storage.
                   </FieldLabel>
                 </Field>
-                {selectedProfileBrowser ? (
+                {selectedProfile ? (
                   <Button
                     className="w-fit max-w-xs whitespace-normal"
                     type="button"
                     disabled={copyProfile.isPending || !profileConsent}
                     onClick={() =>
                       void copyDetectedLinkedInProfile(
-                        selectedProfileBrowser.id,
-                        selectedProfileBrowser.label,
+                        selectedProfile.browserId,
+                        selectedProfile.id,
+                        selectedProfile.displayLabel,
                       )
                     }
                   >
-                    Copy {selectedProfileBrowser.label} profile
+                    Copy {selectedProfile.label} profile
                   </Button>
                 ) : null}
-                <Collapsible defaultOpen={!selectedProfileBrowser}>
+                <Collapsible defaultOpen={!selectedProfile}>
                   <CollapsibleTrigger
                     render={<Button variant="ghost" size="sm" type="button" />}
                   >
