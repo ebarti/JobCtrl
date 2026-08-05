@@ -1,3 +1,4 @@
+import { IconChevronDown } from "@tabler/icons-react";
 import { useId } from "react";
 
 import { RefreshAllCompensationButton } from "../../contexts/enrichment/index.js";
@@ -158,32 +159,34 @@ export function JobBulkActions({
           {selectedCount ? (
             <span data-typography="metadata">{selectedCount} selected</span>
           ) : null}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={<Button size="sm" type="button" variant="outline" />}
+          <Button
+            disabled={!hasItems}
+            size="sm"
+            type="button"
+            variant="outline"
+            onClick={onSelectPage}
+          >
+            Select page
+          </Button>
+          <Button
+            disabled={!hasAnyMatching || hasLocalFilters}
+            size="sm"
+            type="button"
+            variant="outline"
+            onClick={onSelectAllMatching}
+          >
+            Select all matching
+          </Button>
+          {selectedCount ? (
+            <Button
+              size="sm"
+              type="button"
+              variant="ghost"
+              onClick={onClearSelection}
             >
-              More actions
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" aria-label="More actions">
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>Selection</DropdownMenuLabel>
-                <DropdownMenuItem disabled={!hasItems} onClick={onSelectPage}>
-                  Select page
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={!hasAnyMatching || hasLocalFilters}
-                  onClick={onSelectAllMatching}
-                >
-                  Select all matching
-                </DropdownMenuItem>
-                {selectedCount ? (
-                  <DropdownMenuItem onClick={onClearSelection}>
-                    Clear selection
-                  </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+              Clear selection
+            </Button>
+          ) : null}
         </div>
         {hasUnavailableDemoAutomation ? (
           <span data-typography="body" id={unavailableReasonId} role="status">
@@ -202,6 +205,7 @@ export function JobBulkActions({
               render={<Button size="sm" type="button" variant="outline" />}
             >
               Job operations
+              <IconChevronDown aria-hidden="true" data-icon="inline-end" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" aria-label="Job operations">
               {retrySelectedFailures || retryAllFailures ? (

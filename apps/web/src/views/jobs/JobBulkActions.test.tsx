@@ -274,24 +274,19 @@ describe("<JobBulkActions>", () => {
       }),
     ).toBeInTheDocument();
 
-    const moreActions = screen.getByRole("button", { name: "More actions" });
-    moreActions.focus();
-    await user.keyboard("{Enter}");
-    const menu = screen.getByRole("menu", { name: "More actions" });
+    expect(
+      screen.queryByRole("button", { name: "More actions" }),
+    ).not.toBeInTheDocument();
     await user.click(
-      within(menu).getByRole("menuitem", { name: "Select all matching" }),
+      screen.getByRole("button", { name: "Select all matching" }),
     );
     expect(onSelectAllMatching).toHaveBeenCalledTimes(1);
 
-    moreActions.focus();
-    await user.keyboard("{Enter}");
-    await user.click(
-      within(screen.getByRole("menu", { name: "More actions" })).getByRole(
-        "menuitem",
-        { name: "Clear selection" },
-      ),
-    );
+    await user.click(screen.getByRole("button", { name: "Clear selection" }));
     expect(onClearSelection).toHaveBeenCalledTimes(1);
+    expect(
+      jobOperations.querySelector('[data-icon="inline-end"]'),
+    ).not.toBeNull();
   });
 
   it("invokes onMutateSelected when the danger button is clicked", async () => {
