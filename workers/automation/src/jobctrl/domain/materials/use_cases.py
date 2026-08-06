@@ -610,11 +610,12 @@ def _generated_claim_surfaces(
     tailoring_plan: TailoringPlan | None = None,
 ) -> dict[str, str]:
     surfaces: dict[str, str] = {}
-    executive_profile = str(payload.get("executive_profile") or "").strip()
+    executive_profile = str(payload.get("executive_profile") or "")
     if executive_profile:
-        for location in ("executive_profile", "summary", "resume.executive_profile"):
-            surfaces[location] = executive_profile
         summary_sentences, _errors = _generated_summary_sentence_contract(payload)
+        if len(summary_sentences) == 1:
+            for location in ("executive_profile", "summary", "resume.executive_profile"):
+                surfaces[location] = executive_profile
         for index, sentence in enumerate(summary_sentences):
             surfaces[f"executive_profile.sentence[{index}]"] = sentence
     updates = payload.get("experience_updates")
@@ -754,7 +755,7 @@ def _generated_summary_sentence_contract(
                 f"executive_profile_sentences[{index}] must not contain outer whitespace."
             )
         sentences.append(value.strip())
-    executive_profile = str(payload.get("executive_profile") or "").strip()
+    executive_profile = str(payload.get("executive_profile") or "")
     if sentences and " ".join(sentences) != executive_profile:
         errors.append(
             "Joining executive_profile_sentences with one space must reproduce "

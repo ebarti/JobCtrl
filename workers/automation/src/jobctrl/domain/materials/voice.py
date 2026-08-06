@@ -178,14 +178,16 @@ def apply_voice_to_payload(tailored_payload: dict, result: VoiceResult) -> dict:
         if str(sentence).strip()
     )
     voiced_summary_sentences = tuple(
-        sentence.strip()
-        for sentence in result.executive_profile_sentences
-        if sentence.strip()
+        str(sentence) for sentence in result.executive_profile_sentences
     )
     if (
-        result.executive_profile.strip()
+        result.executive_profile
+        and all(
+            sentence and sentence == sentence.strip()
+            for sentence in voiced_summary_sentences
+        )
         and len(voiced_summary_sentences) == len(source_summary_sentences)
-        and " ".join(voiced_summary_sentences) == result.executive_profile.strip()
+        and " ".join(voiced_summary_sentences) == result.executive_profile
     ):
         voiced["executive_profile"] = result.executive_profile
         voiced["executive_profile_sentences"] = list(voiced_summary_sentences)

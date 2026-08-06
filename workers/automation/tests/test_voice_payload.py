@@ -101,6 +101,19 @@ def test_apply_keeps_original_summary_when_sentence_contract_does_not_reconstruc
     assert voiced["executive_profile_sentences"] == ["Spearheaded robust solutions."]
 
 
+def test_apply_keeps_original_summary_when_voiced_profile_has_outer_whitespace() -> None:
+    result = VoiceResult(
+        executive_profile=" Rebuilt the pipeline. ",
+        executive_profile_sentences=("Rebuilt the pipeline.",),
+        experience_bullets=(),
+    )
+
+    voiced = apply_voice_to_payload(_payload(), result)
+
+    assert voiced["executive_profile"] == "Spearheaded robust solutions."
+    assert voiced["executive_profile_sentences"] == ["Spearheaded robust solutions."]
+
+
 def test_voice_result_from_payload_maps_ids() -> None:
     payload = VoicePayload(
         executive_profile="Voiced summary.",
