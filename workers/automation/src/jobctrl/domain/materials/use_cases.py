@@ -1064,6 +1064,12 @@ _RETRY_GUIDANCE: dict[str, str] = {
         "Regenerate the cover letter in the required shape using only canonical "
         "resume evidence and the required completion marker."
     ),
+    "cover_letter_numeric_grounding_failed": (
+        "Remove every number and date that comes only from the target job. Use "
+        "numeric or date facts only when they already appear in the provided "
+        "resume; describe target-job timelines, team sizes, goals, and requirements "
+        "qualitatively."
+    ),
     "fabrication_detected": (
         "Remove unsupported claims and use only metrics, tools, roles, employers, "
         "and dates present in canonical profile evidence."
@@ -1705,9 +1711,9 @@ Dear Hiring Manager,
 
 PARAGRAPH 1 (2-3 sentences): Open with a specific thing YOU built that solves THEIR problem. Not "I'm excited about this role." Not "This role aligns with my experience." Start with the work.
 
-PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST relevant to THIS job. Use numbers. Frame as solving their problem, not listing your accomplishments.{projects_hint}{metrics_hint}
+PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST relevant to THIS job. Use a number only when that exact candidate fact appears in the RESUME. Otherwise use supported scope or outcomes. Frame as solving their problem, not listing your accomplishments.{projects_hint}{metrics_hint}
 
-PARAGRAPH 3 (1-2 sentences): One specific thing about the company from the job description (a product, a technical challenge, a team structure). Then close. "Happy to walk through any of this in more detail." or "Let's discuss." Nothing else.
+PARAGRAPH 3 (1-2 sentences): One specific thing about the company from the job description (a product or technical challenge). Describe it qualitatively. NEVER repeat a number, date, percentage, money amount, team size, goal period, or timeline from the TARGET JOB. Then close. "Happy to walk through any of this in more detail." or "Let's discuss." Nothing else.
 
 BANNED WORDS AND PHRASES (automated validator rejects ANY of these — do not use even once):
 {all_banned}
@@ -1721,12 +1727,13 @@ VOICE:
 - Write like a real engineer emailing someone they respect. Not formal, not casual. Just direct.
 - NEVER narrate or explain what you're doing. BAD: "This demonstrates my commitment to X." GOOD: Just state the fact and move on.
 - NEVER hedge. BAD: "might address some of your challenges." GOOD: "solves the same problem your team is facing."
-- Every sentence should contain either a number, a tool name, or a specific outcome. If it doesn't, cut it.
+- Every sentence should contain either a profile-grounded number, a profile-grounded tool name, or a specific outcome. If it doesn't, cut it.
 - Read it out loud. If it sounds like a robot wrote it, rewrite it.
 
 FABRICATION = INSTANT REJECTION:
 The candidate's real tools are ONLY: {skills_str}.
 Do NOT mention ANY tool not in this list. If the job asks for tools not listed, talk about the work you did, not the tools.
+The TARGET JOB is context, never evidence about the candidate. Do NOT copy any number or date from it into the letter. If a target-job fact is numeric, express only its qualitative meaning.
 
 Sign off: just "{sign_off_name}"
 
@@ -4096,6 +4103,8 @@ class GenerateCoverLetterUseCase:
             last_validation = validation
             if validation.passed:
                 return letter, validation, findings
+            if any(finding.kind in {"numeric", "date"} for finding in findings):
+                retry_reasons.append("cover_letter_numeric_grounding_failed")
             retry_reasons.append("cover_letter_validation_failed")
             log.debug(
                 "Cover letter attempt %d/%d failed: %s",

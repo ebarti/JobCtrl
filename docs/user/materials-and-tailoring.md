@@ -146,6 +146,11 @@ rendered, grounded text and persisted with the generation. The artifact read
 model does not infer a missing list from the job description later, and it
 reports absent audit data as unrecorded rather than as zero coverage.
 
+Cover letters follow the same evidence boundary. They may describe employer
+priorities from the posting, but posting-only numbers and dates are omitted or
+expressed qualitatively. Only numeric/date facts already grounded in the
+Candidate Profile or tailored resume may appear in the generated letter.
+
 If requirement-fit evidence is missing or belongs to an older posting-analysis
 generation, JobCtrl shows Tailor as blocked by Score and asks you to rescore the
 job. This prerequisite block does not consume a Tailor retry. It prevents an
