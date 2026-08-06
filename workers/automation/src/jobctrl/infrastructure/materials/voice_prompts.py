@@ -52,9 +52,11 @@ that is not already in the input. Do NOT change any existing number/date/title/ 
 employer. If a bullet has no metric, do NOT invent one. Removing a buzzword must \
 never become adding a claim.
 
-Output the SAME structure you received: the voiced executive_profile and, for each \
-experience entry, the SAME id and the SAME number of bullets, voiced. Preserve \
-bullet order so each voiced bullet corresponds to its source bullet.\
+Output the SAME structure you received: the voiced executive_profile, the SAME \
+number of ordered executive_profile_sentences whose one-space join exactly equals \
+executive_profile, and, for each experience entry, the SAME id and the SAME number \
+of bullets, voiced. Preserve bullet order so each voiced bullet corresponds to its \
+source bullet.\
 """
 
 
@@ -69,6 +71,7 @@ def build_voice_user_prompt(request: VoiceRequest) -> str:
     """
     payload = {
         "executive_profile": request.executive_profile,
+        "executive_profile_sentences": list(request.executive_profile_sentences),
         "experience_updates": [
             {"id": entry_id, "bullets": list(bullets)}
             for entry_id, bullets in request.experience_bullets

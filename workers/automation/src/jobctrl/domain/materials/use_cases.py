@@ -176,8 +176,8 @@ from jobctrl.resume_profile import (
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v4.claim-mapping"
-TAILORING_SCHEMA_VERSION = "tailored-resume.v2"
+TAILORING_PROMPT_VERSION = "tailor.v5.explicit-summary-sentences"
+TAILORING_SCHEMA_VERSION = "tailored-resume.v3"
 TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v1"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
     "relevance_to_job",
@@ -208,12 +208,23 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "required": [
         "executive_profile",
+        "executive_profile_sentences",
         "experience_updates",
         "skill_category_updates",
         "generated_claim_mappings",
     ],
     "properties": {
         "executive_profile": {"type": "string"},
+        "executive_profile_sentences": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "description": (
+                "The ordered grammatical sentences that form executive_profile. Joining these "
+                "items with one space must reproduce executive_profile exactly."
+            ),
+            "items": {"type": "string"},
+        },
         "experience_updates": {
             "type": "array",
             "minItems": 1,
@@ -271,10 +282,10 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
                     "location": {
                         "type": "string",
                         "description": (
-                            "Use executive_profile only for a one-sentence summary; otherwise use "
-                            "executive_profile.sentence[N] for each summary sentence. Use "
-                            "experience.<id>.bullets[N] for bullets and skills.<id> for one "
-                            "complete rendered skill group."
+                            "Use executive_profile only when executive_profile_sentences has one "
+                            "item; otherwise use executive_profile.sentence[N] for each explicit "
+                            "sentence. Use experience.<id>.bullets[N] for bullets and skills.<id> "
+                            "for one complete rendered skill group."
                         ),
                     },
                     "text": {
@@ -554,7 +565,8 @@ def _claim_mapping_binding_errors(
 ) -> tuple[str, ...]:
     surfaces = _generated_claim_surfaces(payload, tailoring_plan=tailoring_plan)
     mappings = tuple(mappings)
-    errors: list[str] = []
+    _summary_sentences, summary_contract_errors = _generated_summary_sentence_contract(payload)
+    errors = list(summary_contract_errors)
     bound_locations: list[str] = []
     for mapping in mappings:
         location = _canonical_claim_location(mapping.location)
@@ -602,7 +614,8 @@ def _generated_claim_surfaces(
     if executive_profile:
         for location in ("executive_profile", "summary", "resume.executive_profile"):
             surfaces[location] = executive_profile
-        for index, sentence in enumerate(_generated_summary_sentences(executive_profile)):
+        summary_sentences, _errors = _generated_summary_sentence_contract(payload)
+        for index, sentence in enumerate(summary_sentences):
             surfaces[f"executive_profile.sentence[{index}]"] = sentence
     updates = payload.get("experience_updates")
     for update_index, update in enumerate(updates if isinstance(updates, list) else ()):
@@ -720,47 +733,34 @@ def _claim_location_requires_exact_text(location: str) -> bool:
     )
 
 
-_SUMMARY_TITLE_ABBREVIATIONS = frozenset({"dr.", "mr.", "mrs.", "ms.", "prof."})
-_SUMMARY_ALWAYS_INLINE_ABBREVIATIONS = frozenset({"e.g.", "i.e."})
-
-
-def _summary_period_is_abbreviation(text: str, boundary_end: int) -> bool:
-    prefix_match = re.search(r"([^\s]+)$", text[:boundary_end])
-    if prefix_match is None:
-        return False
-    token = prefix_match.group(1).strip("()[]{}\"'").lower()
-    continuation = text[boundary_end:].lstrip()
-    if not continuation:
-        return False
-    return bool(
-        token in _SUMMARY_TITLE_ABBREVIATIONS | _SUMMARY_ALWAYS_INLINE_ABBREVIATIONS
-        or re.fullmatch(r"(?:[a-z]\.){2,}", token)
-        or token in {"ph.d.", "u.s.", "u.k."}
-    )
-
-
-def _generated_summary_sentences(text: str) -> tuple[str, ...]:
-    normalized = text.strip()
-    if not normalized:
-        return ()
+def _generated_summary_sentence_contract(
+    payload: dict,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    raw_sentences = payload.get("executive_profile_sentences")
+    if not isinstance(raw_sentences, list):
+        return (), ("executive_profile_sentences must be an ordered array.",)
+    errors: list[str] = []
+    if not 1 <= len(raw_sentences) <= 4:
+        errors.append("executive_profile_sentences must contain between 1 and 4 items.")
     sentences: list[str] = []
-    start = 0
-    for boundary in re.finditer(r"[.!?]+(?:[\"')\]}]+)?(?=\s+|$)", normalized):
-        punctuation = re.match(r"[.!?]+", boundary.group())
-        if (
-            punctuation is not None
-            and punctuation.group().endswith(".")
-            and _summary_period_is_abbreviation(normalized, boundary.end())
-        ):
+    for index, value in enumerate(raw_sentences):
+        if not isinstance(value, str) or not value.strip():
+            errors.append(
+                f"executive_profile_sentences[{index}] must be a non-empty string."
+            )
             continue
-        sentence = normalized[start : boundary.end()].strip()
-        if sentence:
-            sentences.append(sentence)
-        start = boundary.end()
-    remainder = normalized[start:].strip()
-    if remainder:
-        sentences.append(remainder)
-    return tuple(sentences)
+        if value != value.strip():
+            errors.append(
+                f"executive_profile_sentences[{index}] must not contain outer whitespace."
+            )
+        sentences.append(value.strip())
+    executive_profile = str(payload.get("executive_profile") or "").strip()
+    if sentences and " ".join(sentences) != executive_profile:
+        errors.append(
+            "Joining executive_profile_sentences with one space must reproduce "
+            "executive_profile exactly."
+        )
+    return tuple(sentences), tuple(errors)
 
 
 def _required_claim_surface_groups(
@@ -769,8 +769,7 @@ def _required_claim_surface_groups(
     """Return every generated surface that must have exactly one bound mapping."""
 
     groups: list[tuple[str, frozenset[str]]] = []
-    executive_profile = str(payload.get("executive_profile") or "").strip()
-    summary_sentences = _generated_summary_sentences(executive_profile)
+    summary_sentences, _errors = _generated_summary_sentence_contract(payload)
     for index, _sentence in enumerate(summary_sentences):
         locations = {f"executive_profile.sentence[{index}]"}
         if len(summary_sentences) == 1:
@@ -1474,8 +1473,11 @@ HARD RULES:
   group, emit a generated_claim_mappings entry that references valid
   coverage_edge_ids, requirement_ids, and evidence_ids; use non_requirement_reason
   only for pinned, positioning, or structure claims
-- Use executive_profile only when the generated summary has exactly one sentence;
-  otherwise map every sentence with executive_profile.sentence[N], where N is zero-based
+- Return executive_profile_sentences as the ordered 1-4 grammatical sentences
+  that form executive_profile; joining them with one space must reproduce
+  executive_profile exactly
+- Use executive_profile only when executive_profile_sentences has exactly one item;
+  otherwise map every explicit item with executive_profile.sentence[N], where N is zero-based
 - For a skills.<category-id> mapping, text must be the exact selected items in
   rendered order joined with ", " (comma plus one space), not the category label
 - Every achievement_evidence_id present on any COVERAGE_GRAPH edge must appear
@@ -1535,6 +1537,7 @@ REQUIRED BULLETS BY EXPERIENCE ID:
 OUTPUT ONLY VALID JSON:
 {{
   "executive_profile": "2-4 sentences tailored to the target role.",
+  "executive_profile_sentences": ["Sentence 1.", "Sentence 2."],
   "experience_updates": [
     {{"id": "{required_experience_ids[0] if required_experience_ids else 'experience_entry_id'}", "title": "", "bullets": ["bullet 1", "bullet 2"]}}
   ],

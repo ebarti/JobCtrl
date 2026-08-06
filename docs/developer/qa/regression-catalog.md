@@ -89,9 +89,10 @@ posting after an earlier employer analysis, then prove Score refreshes through
 the analysis cache owner and writes fit evidence for the refreshed generation.
 Tailor must never turn a missing or mismatched fit report into a zero-edge plan:
 it blocks on Score without spending a durable attempt. The claim-mapping fixture
-also covers sentence-level summary aliases, exact rendered skill-group text,
-mandatory coverage-edge evidence, missing or duplicate generated surfaces, and
-immutable raw audit payloads before any judge call.
+also covers explicit ordered summary-sentence identity and reconstruction,
+sentence-level aliases, exact rendered bullet and skill-group text, mandatory
+coverage-edge evidence, missing or duplicate generated surfaces, and immutable
+raw audit payloads before any judge call.
 
 The [complete matrix](complete-checklist.md#temporal-fault-injection-matrix)
 lists the exact tests for Discover, Pipeline, Preparation, Apply, Profile Import,

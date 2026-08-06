@@ -46,7 +46,6 @@ from jobctrl.domain.materials.use_cases import (
     _bullet_limit_overflow_metadata,
     _canonical_claim_location,
     _claim_mappings_from_payload,
-    _generated_summary_sentences,
     _safe_filename_prefix,
 )
 from jobctrl.domain.ports.events import EventPublisher
@@ -499,6 +498,7 @@ def _good_json_payload() -> str:
     return json.dumps(
         {
             "executive_profile": "Senior engineer focused on systems.",
+            "executive_profile_sentences": ["Senior engineer focused on systems."],
             "experience_updates": [
                 {"id": "acme_swe", "title": "", "bullets": ["Cut latency 40%."]},
             ],
@@ -531,6 +531,9 @@ def _unbound_claim_mapping_payload() -> str:
 def _review_required_claim_payload() -> str:
     payload = json.loads(_quality_json_payload())
     payload["executive_profile"] = "Draft developer-experience translation requires confirmation."
+    payload["executive_profile_sentences"] = [
+        "Draft developer-experience translation requires confirmation."
+    ]
     bullet = payload["experience_updates"][0]["bullets"][0]
     payload["generated_claim_mappings"] = [
         {
@@ -574,7 +577,7 @@ def _positioning_claim_mappings(
             }
         )
     if include_summary:
-        summary_sentences = _generated_summary_sentences(summary)
+        summary_sentences = (summary,)
         for index, sentence in enumerate(summary_sentences):
             mappings.append(
                 {
@@ -616,6 +619,7 @@ def _payload_with_bullet(bullet: str, *, summary: str = "Senior engineer focused
     return json.dumps(
         {
             "executive_profile": summary,
+            "executive_profile_sentences": [summary],
             "experience_updates": [{"id": "acme_swe", "title": "", "bullets": [bullet]}],
             "skill_category_updates": [{"id": "languages", "items": ["Python", "Go"]}],
             "generated_claim_mappings": _positioning_claim_mappings(
@@ -631,6 +635,7 @@ def _keyword_stuffed_json_payload() -> str:
     return json.dumps(
         {
             "executive_profile": f"Senior engineer focused on {stuffed}.",
+            "executive_profile_sentences": [f"Senior engineer focused on {stuffed}."],
             "experience_updates": [
                 {"id": "acme_swe", "title": "", "bullets": [f"Built {stuffed}."]},
             ],
@@ -649,6 +654,9 @@ def _quality_json_payload(*, metric: str = "35%") -> str:
     return json.dumps(
         {
             "executive_profile": "Senior backend engineer focused on Python API reliability.",
+            "executive_profile_sentences": [
+                "Senior backend engineer focused on Python API reliability."
+            ],
             "experience_updates": [
                 {
                     "id": "acme_swe",
@@ -675,6 +683,7 @@ def _coherent_requirement_payload() -> str:
     return json.dumps(
         {
             "executive_profile": summary,
+            "executive_profile_sentences": [summary],
             "experience_updates": [
                 {"id": "acme_swe", "title": "", "bullets": [bullet]},
             ],
@@ -724,6 +733,9 @@ def _stock_phrase_json_payload() -> str:
     return json.dumps(
         {
             "executive_profile": "Senior backend engineer focused on Python API reliability.",
+            "executive_profile_sentences": [
+                "Senior backend engineer focused on Python API reliability."
+            ],
             "experience_updates": [
                 {
                     "id": "acme_swe",
@@ -944,18 +956,6 @@ def test_claim_location_normalizes_summary_sentence_aliases(
     assert _canonical_claim_location(location) == expected
 
 
-@pytest.mark.parametrize(
-    "summary",
-    [
-        "U.S. backend engineer focused on Python API reliability.",
-        "Senior engineer focused on U.S. API systems.",
-        "U.S. Python backend engineer focused on API reliability.",
-    ],
-)
-def test_summary_sentence_segmentation_preserves_dotted_abbreviation(summary: str) -> None:
-    assert _generated_summary_sentences(summary) == (summary,)
-
-
 def test_claim_mapping_parser_preserves_raw_fallback_while_clearing_domain_reason() -> None:
     payload = _good_json_payload_dict()
     payload["generated_claim_mappings"][0]["coverage_edge_ids"] = ["edge_req_latency"]
@@ -1011,6 +1011,7 @@ def test_tailor_use_case_accepts_aggregate_mapping_for_abbreviated_one_sentence_
     summary = "U.S. Python backend engineer focused on API reliability."
     payload = _good_json_payload_dict()
     payload["executive_profile"] = summary
+    payload["executive_profile_sentences"] = [summary]
     payload["generated_claim_mappings"][1]["text"] = summary
     llm = _ScriptedLlm([json.dumps(payload), _judge_pass()])
     use_case = TailorResumeUseCase(
@@ -1153,12 +1154,19 @@ def test_tailor_use_case_rejects_partial_experience_bullet_claim_mapping(
     assert any("does not exactly match" in error for error in errors)
 
 
+@pytest.mark.parametrize(
+    "first_sentence",
+    [
+        'Senior backend engineer known for "reliable APIs."',
+        "Senior backend engineer based in the U.S.",
+    ],
+)
 def test_tailor_use_case_rejects_one_whole_profile_mapping_for_multiple_sentences(
-    tmp_path: Path, job: dict
+    tmp_path: Path, job: dict, first_sentence: str
 ) -> None:
-    snapshot = ProfileSnapshot.from_profile(
-        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
-    )
+    profile = _profile_with_evidence_dict()
+    profile["resume"]["experience_entries"][0]["location"] = "U.S."
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
     job = {
         **job,
         "title": "Senior Backend Engineer",
@@ -1167,11 +1175,10 @@ def test_tailor_use_case_rejects_one_whole_profile_mapping_for_multiple_sentence
     }
     analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
     payload = json.loads(_coherent_requirement_payload())
-    summary = (
-        'Senior backend engineer known for "reliable APIs." '
-        "Reduced API latency 35% with Python."
-    )
+    second_sentence = "Reduced API latency 35% with Python."
+    summary = f"{first_sentence} {second_sentence}"
     payload["executive_profile"] = summary
+    payload["executive_profile_sentences"] = [first_sentence, second_sentence]
     payload["generated_claim_mappings"][0].update(
         location="executive_profile",
         text=summary,
@@ -1200,12 +1207,19 @@ def test_tailor_use_case_rejects_one_whole_profile_mapping_for_multiple_sentence
     assert "Generated claim mapping is missing for executive profile sentence 1." in errors
 
 
-def test_tailor_use_case_accepts_indexed_mappings_for_quoted_multiple_sentences(
-    tmp_path: Path, job: dict
+@pytest.mark.parametrize(
+    "first_sentence",
+    [
+        'Senior backend engineer known for "reliable APIs."',
+        "Senior backend engineer based in the U.S.",
+    ],
+)
+def test_tailor_use_case_accepts_indexed_mappings_for_explicit_multiple_sentences(
+    tmp_path: Path, job: dict, first_sentence: str
 ) -> None:
-    snapshot = ProfileSnapshot.from_profile(
-        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
-    )
+    profile = _profile_with_evidence_dict()
+    profile["resume"]["experience_entries"][0]["location"] = "U.S."
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
     job = {
         **job,
         "title": "Senior Backend Engineer",
@@ -1214,9 +1228,9 @@ def test_tailor_use_case_accepts_indexed_mappings_for_quoted_multiple_sentences(
     }
     analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
     payload = json.loads(_coherent_requirement_payload())
-    first_sentence = 'Senior backend engineer known for "reliable APIs."'
     second_sentence = "Reduced API latency 35% with Python."
     payload["executive_profile"] = f"{first_sentence} {second_sentence}"
+    payload["executive_profile_sentences"] = [first_sentence, second_sentence]
     payload["generated_claim_mappings"][0].update(
         location="executive_profile.sentence[0]",
         text=first_sentence,
@@ -1255,6 +1269,8 @@ def test_tailor_use_case_accepts_indexed_mappings_for_quoted_multiple_sentences(
     ("case", "expected_error"),
     [
         ("wrong_summary_index", "does not exist in the generated payload"),
+        ("missing_summary_sentences", "must be an ordered array"),
+        ("mismatched_summary_sentences", "must reproduce executive_profile exactly"),
         ("missing_skill_group", "mapping is missing for skill group languages"),
         ("duplicate_skill_group", "has 2 mappings; expected exactly one"),
     ],
@@ -1278,6 +1294,10 @@ def test_tailor_use_case_rejects_incomplete_or_ambiguous_claim_surfaces(
     payload = json.loads(_coherent_requirement_payload())
     if case == "wrong_summary_index":
         payload["generated_claim_mappings"][0]["location"] = "summary.sentence[999]"
+    elif case == "missing_summary_sentences":
+        payload.pop("executive_profile_sentences")
+    elif case == "mismatched_summary_sentences":
+        payload["executive_profile_sentences"] = ["Different summary."]
     elif case == "missing_skill_group":
         payload["generated_claim_mappings"].pop(2)
     else:
@@ -2638,6 +2658,7 @@ def test_tailor_use_case_allows_versioned_declared_skill(tmp_path: Path, job: di
     payload = json.dumps(
         {
             "executive_profile": "Senior engineer.",
+            "executive_profile_sentences": ["Senior engineer."],
             "experience_updates": [
                 {"id": "acme_swe", "title": "", "bullets": ["Cut API latency 40% with Python."]}
             ],

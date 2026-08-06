@@ -390,6 +390,7 @@ def _payload(bullet: str, *, summary: str) -> str:
     return json.dumps(
         {
             "executive_profile": summary,
+            "executive_profile_sentences": [summary],
             "experience_updates": [{"id": "acme_swe", "title": "", "bullets": [bullet]}],
             "skill_category_updates": [{"id": "languages", "items": ["Python", "Go"]}],
             "generated_claim_mappings": _claim_mapping(bullet, summary=summary),
@@ -451,6 +452,9 @@ def test_voice_runs_before_audit_and_provenance_anchors_to_voiced_text(tmp_path:
         # De-buzzword: keep the grounded "40%"/"Python", drop "spearheaded/robust".
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=(
+                "Backend engineer who cut API latency with Python.",
+            ),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
             ),
@@ -488,6 +492,9 @@ def test_gate_grounding_and_shipped_fit_persist_with_lifecycle_labels(tmp_path: 
     def voice_fn(request: VoiceRequest) -> VoiceResult:
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=(
+                "Backend engineer who cut API latency with Python.",
+            ),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
             ),
@@ -536,6 +543,9 @@ def test_voiced_bullet_is_recorded_as_voice_transform(tmp_path: Path) -> None:
     def voice_fn(request: VoiceRequest) -> VoiceResult:
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=(
+                "Backend engineer who cut API latency with Python.",
+            ),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
             ),
@@ -568,6 +578,7 @@ def test_voice_introduced_fabrication_is_rejected_and_pre_voice_ships(tmp_path: 
         # The voice pass invents "10M users" — unsourced; the profile has no such number.
         return VoiceResult(
             executive_profile="Backend engineer who scaled to 10M users.",
+            executive_profile_sentences=("Backend engineer who scaled to 10M users.",),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40%, scaling to 10M users.",)),
             ),
@@ -605,6 +616,7 @@ def test_coverage_is_computed_against_rendered_text_and_provenance_backed(tmp_pa
         # Voiced bullet keeps "latency" + "Python" (both analysis keywords).
         return VoiceResult(
             executive_profile="Backend engineer focused on API latency.",
+            executive_profile_sentences=("Backend engineer focused on API latency.",),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
             ),
@@ -636,6 +648,9 @@ def test_round_trip_audited_bullet_text_equals_rendered_text(tmp_path: Path) -> 
     def voice_fn(request: VoiceRequest) -> VoiceResult:
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=(
+                "Backend engineer who cut API latency with Python.",
+            ),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
             ),
@@ -681,6 +696,9 @@ def test_round_trip_audited_bullet_text_equals_rendered_html_resume(tmp_path: Pa
     def voice_fn(request: VoiceRequest) -> VoiceResult:
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=(
+                "Backend engineer who cut API latency with Python.",
+            ),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
             ),

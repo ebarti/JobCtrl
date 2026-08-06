@@ -536,6 +536,9 @@ def _payload(
     return json.dumps(
         {
             "executive_profile": "Senior backend engineer focused on Python API reliability.",
+            "executive_profile_sentences": [
+                "Senior backend engineer focused on Python API reliability."
+            ],
             "experience_updates": [{"id": "acme_swe", "title": "", "bullets": [bullet]}],
             "skill_category_updates": [{"id": "languages", "items": ["Python", "Go"]}],
             "generated_claim_mappings": _claim_mapping(

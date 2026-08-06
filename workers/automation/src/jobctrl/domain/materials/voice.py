@@ -36,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # Bump when the voice system prompt / contract changes so audits can tell which
 # voice contract produced a given generation (mirrors ``PROMPT_VERSION``).
-VOICE_PROMPT_VERSION = "voice-pass-v1"
+VOICE_PROMPT_VERSION = "voice-pass-v2-explicit-summary-sentences"
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +71,13 @@ class VoicePayload(BaseModel):
         default="",
         description="The voiced executive profile — de-buzzworded, same facts.",
     )
+    executive_profile_sentences: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The voiced executive profile's ordered sentences; the one-space join must equal "
+            "executive_profile and the item count must match the input."
+        ),
+    )
     experience_updates: list[VoicedExperience] = Field(default_factory=list)
 
 
@@ -91,6 +98,7 @@ class VoiceRequest:
 
     executive_profile: str
     experience_bullets: tuple[tuple[str, tuple[str, ...]], ...]  # (experience_id, bullets)
+    executive_profile_sentences: tuple[str, ...] = ()
     banned_terms: tuple[str, ...] = ()
 
 
@@ -100,11 +108,15 @@ class VoiceResult:
 
     executive_profile: str
     experience_bullets: tuple[tuple[str, tuple[str, ...]], ...]  # (experience_id, bullets)
+    executive_profile_sentences: tuple[str, ...] = ()
 
     @classmethod
     def from_payload(cls, payload: VoicePayload) -> VoiceResult:
         return cls(
             executive_profile=payload.executive_profile or "",
+            executive_profile_sentences=tuple(
+                str(sentence) for sentence in payload.executive_profile_sentences
+            ),
             experience_bullets=tuple(
                 (entry.id, tuple(str(bullet) for bullet in entry.bullets))
                 for entry in payload.experience_updates
@@ -137,6 +149,11 @@ def build_voice_request(
             experience_bullets.append((entry_id, bullets))
     return VoiceRequest(
         executive_profile=str(tailored_payload.get("executive_profile") or ""),
+        executive_profile_sentences=tuple(
+            str(sentence)
+            for sentence in tailored_payload.get("executive_profile_sentences") or ()
+            if str(sentence).strip()
+        ),
         experience_bullets=tuple(experience_bullets),
         banned_terms=banned_terms,
     )
@@ -155,8 +172,23 @@ def apply_voice_to_payload(tailored_payload: dict, result: VoiceResult) -> dict:
     """
     voiced = copy.deepcopy(tailored_payload)
 
-    if result.executive_profile.strip():
+    source_summary_sentences = tuple(
+        str(sentence)
+        for sentence in voiced.get("executive_profile_sentences") or ()
+        if str(sentence).strip()
+    )
+    voiced_summary_sentences = tuple(
+        sentence.strip()
+        for sentence in result.executive_profile_sentences
+        if sentence.strip()
+    )
+    if (
+        result.executive_profile.strip()
+        and len(voiced_summary_sentences) == len(source_summary_sentences)
+        and " ".join(voiced_summary_sentences) == result.executive_profile.strip()
+    ):
         voiced["executive_profile"] = result.executive_profile
+        voiced["executive_profile_sentences"] = list(voiced_summary_sentences)
 
     voiced_by_id = {entry_id: bullets for entry_id, bullets in result.experience_bullets}
     for update in voiced.get("experience_updates") or []:

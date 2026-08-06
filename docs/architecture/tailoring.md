@@ -59,14 +59,17 @@ profile evidence, allowed skills, verified metrics, and the quality plan.
 Rewrite only these mutable resume fields and return JSON plus generated claim
 mapping:
 - executive_profile
+- executive_profile_sentences (ordered explicit sentence boundaries whose
+  one-space join exactly equals executive_profile)
 - experience_updates for existing profile experience IDs
 - skill_category_updates for existing profile skill category IDs
 - generated_claim_mappings that link each generated claim to coverage edges,
   requirement IDs, evidence IDs, or a non-requirement reason such as pinned or
   positioning content; exactly one bound mapping is required for every summary
   sentence, generated experience bullet, and complete rendered skill group;
-  executive_profile is valid only for a one-sentence summary, while multi-sentence
-  summaries use executive_profile.sentence[N] for every sentence
+  executive_profile is valid only when executive_profile_sentences contains one
+  item, while multi-sentence summaries use executive_profile.sentence[N] for every
+  explicit item
 ```
 
 The target job and employer analysis decide what to emphasize. The existing
@@ -204,6 +207,7 @@ The generator must return JSON matching `TAILORED_RESUME_RESPONSE_SCHEMA`:
 ```json
 {
   "executive_profile": "Grounded executive profile.",
+  "executive_profile_sentences": ["Grounded executive profile."],
   "experience_updates": [
     {
       "id": "existing_profile_experience_id",
