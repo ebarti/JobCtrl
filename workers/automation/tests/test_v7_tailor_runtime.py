@@ -1119,6 +1119,71 @@ def test_legacy_tailor_batch_counts_all_failures_and_exhausts_durable_budget(
     ) == ("exhausted", 5, 0)
 
 
+def test_legacy_tailor_batch_blocks_stale_fit_without_consuming_retry(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://example.com/legacy-batch-stale-fit"
+    _seed_job(conn, tenant_id=LOCAL_TENANT, job_id=_JOB_ID, url=url)
+    job = {
+        "tenant_id": str(LOCAL_TENANT),
+        "job_id": str(_JOB_ID),
+        "url": url,
+        "title": "Platform Engineer",
+        "site": None,
+        "discovered_at": "2026-07-31T12:00:00+00:00",
+    }
+
+    def stale_fit(*_args, **_kwargs) -> dict:
+        raise TailoringPrerequisiteError(
+            reason="requirement_fit_generation_mismatch",
+            job_id=str(_JOB_ID),
+            analysis_generation=2,
+            report_generation=1,
+        )
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "get_jobs_by_stage", lambda **_kwargs: [job])
+    monkeypatch.setattr(
+        tailor_module.db_module,
+        "effective_tailoring_min_score",
+        lambda score: score,
+    )
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", stale_fit)
+
+    result = tailor_module.run_tailoring(
+        snapshot=SimpleNamespace(),
+        tenant_id=LOCAL_TENANT,
+        llm_model=None,
+    )
+
+    assert result["blocked"] == 1
+    assert result["failed"] == 0
+    assert result["errors"] == 0
+    assert result["exhausted"] == 0
+    state = conn.execute(
+        "SELECT state, attempt_count, error_code, retryable, blocked_by_json "
+        "FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(LOCAL_TENANT), str(_JOB_ID)),
+    ).fetchone()
+    assert tuple(state) == (
+        "blocked",
+        0,
+        "REQUIREMENT_FIT_STALE",
+        1,
+        '["score"]',
+    )
+    event = conn.execute(
+        "SELECT event_type FROM job_events WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'tailor' ORDER BY event_id DESC LIMIT 1",
+        (str(LOCAL_TENANT), str(_JOB_ID)),
+    ).fetchone()
+    assert event["event_type"] == "StageBlocked"
+
+
 def test_tailor_job_by_id_rejects_deleted_and_url_shaped_targets_before_generation(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,

@@ -643,6 +643,19 @@ def run_tailoring(
             job = future_to_job[future]
             try:
                 result = future.result()
+            except TailoringPrerequisiteError as error:
+                result = {
+                    "job_id": str(canonical_job_id(str(job["job_id"]))),
+                    "url": job["url"],
+                    "title": job["title"],
+                    "site": job.get("site"),
+                    "status": "blocked_prerequisite",
+                    "attempts": 0,
+                    "path": None,
+                    "pdf_path": None,
+                    "materials": None,
+                    "prerequisite_error": error,
+                }
             except Exception as e:
                 result = {
                     "job_id": str(canonical_job_id(str(job["job_id"]))),
@@ -687,7 +700,17 @@ def run_tailoring(
         url = r["url"]
         current_attempt = stage_attempts[stage_key]
         generation_attempts = r.get("attempts") or 1
-        if r.get("status") in _success_statuses:
+        prerequisite_error = r.get("prerequisite_error")
+        if isinstance(prerequisite_error, TailoringPrerequisiteError):
+            _record_tailor_requirement_fit_block(
+                conn,
+                job_id=stable_job_id,
+                tenant_id=tenant_id,
+                error=prerequisite_error,
+                attempt_count=current_attempt - 1,
+                metadata=activity_metadata.get(stage_key) or None,
+            )
+        elif r.get("status") in _success_statuses:
             set_stage_state(
                 conn,
                 stable_job_id,
@@ -769,10 +792,11 @@ def run_tailoring(
     failed = sum(
         count
         for status, count in stats.items()
-        if status not in {"approved", "error"}
+        if status not in {"approved", "blocked_prerequisite", "error"}
     )
     return {
         "approved": stats.get("approved", 0),
+        "blocked": stats.get("blocked_prerequisite", 0),
         "failed": failed,
         "errors": errors,
         "exhausted": durable_exhausted,

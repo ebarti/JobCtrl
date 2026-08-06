@@ -563,9 +563,18 @@ def _claim_mapping_binding_errors(
                 "does not exist in the generated payload."
             )
             continue
-        if not _claim_text_is_bound(actual_text, mapping.text):
+        if _skill_group_claim_location(location):
+            text_is_bound = actual_text == mapping.text
+        else:
+            text_is_bound = _claim_text_is_bound(actual_text, mapping.text)
+        if not text_is_bound:
+            relationship = (
+                "does not exactly match"
+                if _skill_group_claim_location(location)
+                else "is not present at"
+            )
             errors.append(
-                f"Generated claim {mapping.claim_id} text is not present at "
+                f"Generated claim {mapping.claim_id} text {relationship} "
                 f"generated payload location {mapping.location!r}."
             )
     return tuple(errors)
@@ -671,6 +680,17 @@ def _canonical_claim_location(location: str) -> str:
     ):
         return "executive_profile"
     return re.sub(r"\.bullet\[(\d+)\]$", r".bullets[\1]", normalized)
+
+
+def _skill_group_claim_location(location: str) -> bool:
+    """Return whether a mapping targets one complete rendered skill group."""
+    return bool(
+        re.fullmatch(
+            r"(?:skills|skill_categories|skill_category_updates)\.[^.\[]+",
+            location,
+        )
+        or re.fullmatch(r"skill_category_updates\[\d+\]", location)
+    )
 
 
 def _claim_text_is_bound(actual_text: str, mapped_text: str) -> bool:
