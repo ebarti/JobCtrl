@@ -712,6 +712,10 @@ def _claim_location_requires_exact_text(location: str) -> bool:
     return bool(
         location in {"executive_profile", "summary", "resume.executive_profile"}
         or re.fullmatch(r"executive_profile\.sentence\[\d+\]", location)
+        or re.fullmatch(
+            r"(?:experience|experience_updates)(?:\.[^.\[]+|\[\d+\])\.bullets\[\d+\]",
+            location,
+        )
         or _skill_group_claim_location(location)
     )
 

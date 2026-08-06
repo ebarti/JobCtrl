@@ -1075,6 +1075,44 @@ def test_tailor_use_case_rejects_partial_skill_group_claim_mapping(
     assert any("does not exactly match" in error for error in errors)
 
 
+def test_tailor_use_case_rejects_partial_experience_bullet_claim_mapping(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "Go"],
+        "full_description": "Own Python API reliability.",
+    }
+    analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
+    payload = json.loads(_coherent_requirement_payload())
+    payload["generated_claim_mappings"][1]["text"] = "Reduced latency 35%"
+    llm = _ScriptedLlm([json.dumps(payload)])
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=analysis,
+        requirement_fit_report=requirement_fit_report,
+    )
+
+    assert outcome.status == "failed_validation"
+    assert outcome.report["judge"] is None
+    errors = outcome.report["candidate_summaries"][0]["validation"]["errors"]
+    assert any("does not exactly match" in error for error in errors)
+
+
 def test_tailor_use_case_rejects_one_whole_profile_mapping_for_multiple_sentences(
     tmp_path: Path, job: dict
 ) -> None:
