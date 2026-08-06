@@ -5721,6 +5721,7 @@ function activityRowToSummary(row: Record<string, unknown>): ActivityEventSummar
  */
 const WORKFLOW_LIFECYCLE_EVENT_TYPES = [
   "WorkflowStarted",
+  "WorkflowCancellationRequested",
   "WorkflowCompleted",
   "WorkflowFailed",
   "WorkflowCanceled",

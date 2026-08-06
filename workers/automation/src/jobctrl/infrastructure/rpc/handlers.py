@@ -841,9 +841,32 @@ def make_cancel_run(canceler: WorkflowCanceler):
     """
 
     def cancel_run(params: dict[str, Any]) -> dict[str, Any]:
-        _tenant_id(params)
+        tenant_id = _tenant_id(params)
         run_id = str(_require(params, "runId"))
+        requested_by = str(params.get("requestedBy") or "local_operator")[:160]
+        source = str(params.get("source") or "jobctrl_rpc")[:80]
+        raw_reason = params.get("reason")
+        reason = str(raw_reason)[:500] if raw_reason is not None else None
+        from jobctrl.database import get_connection
+        from jobctrl.infrastructure.temporal.cancellation_audit import (
+            record_workflow_cancellation_requested,
+        )
+        from jobctrl.state import utc_now
+
+        # A local intent becomes a cancellation request only after Temporal
+        # accepts delivery. The immutable history requester is reconciled as a
+        # separate evidence fact, so neither source can suppress the other.
         asyncio.run(canceler(run_id))
+        record_workflow_cancellation_requested(
+            get_connection(),
+            workflow_id=run_id,
+            requested_by=requested_by,
+            source=source,
+            requested_at=utc_now(),
+            evidence_kind="request_intent",
+            reason=reason,
+            tenant_id=tenant_id,
+        )
         return {"runId": run_id, "status": "canceling"}
 
     return cancel_run

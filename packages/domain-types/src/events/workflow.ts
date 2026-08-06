@@ -51,6 +51,35 @@ export function createWorkflowStarted(
   return createDomainEvent("WorkflowStarted", tenantId, payload);
 }
 
+// -- WorkflowCancellationRequested -----------------------------------------
+
+export interface WorkflowCancellationRequestedPayload {
+  readonly workflowId: string;
+  readonly workflowType: string;
+  readonly requestedBy: string;
+  readonly source: string;
+  readonly evidenceKind:
+    | "request_intent"
+    | "temporal_history"
+    | "recovered_temporal_history";
+  readonly reason: string | null;
+  readonly requestedAt: string;
+  readonly temporalRunId: string | null;
+  readonly message: string;
+}
+
+export type WorkflowCancellationRequested = DomainEvent<
+  "WorkflowCancellationRequested",
+  WorkflowCancellationRequestedPayload
+>;
+
+export function createWorkflowCancellationRequested(
+  tenantId: TenantId,
+  payload: WorkflowCancellationRequestedPayload,
+): WorkflowCancellationRequested {
+  return createDomainEvent("WorkflowCancellationRequested", tenantId, payload);
+}
+
 // -- WorkflowCompleted ------------------------------------------------------
 
 export interface WorkflowCompletedPayload {

@@ -290,6 +290,9 @@ export {
   type WorkflowStartedPayload,
   type WorkflowStarted,
   createWorkflowStarted,
+  type WorkflowCancellationRequestedPayload,
+  type WorkflowCancellationRequested,
+  createWorkflowCancellationRequested,
   type WorkflowCompletedPayload,
   type WorkflowCompleted,
   createWorkflowCompleted,
@@ -456,6 +459,7 @@ import type {
 } from "./operations.js";
 import type {
   WorkflowStarted,
+  WorkflowCancellationRequested,
   WorkflowCompleted,
   WorkflowFailed,
   WorkflowCanceled,
@@ -560,6 +564,7 @@ export type DomainEventUnion =
   | PipelineStepFailed
   | DigestReviewed
   | WorkflowStarted
+  | WorkflowCancellationRequested
   | WorkflowCompleted
   | WorkflowFailed
   | WorkflowCanceled
@@ -663,6 +668,7 @@ export const DOMAIN_EVENT_TYPES = [
   "PipelineStepFailed",
   "DigestReviewed",
   "WorkflowStarted",
+  "WorkflowCancellationRequested",
   "WorkflowCompleted",
   "WorkflowFailed",
   "WorkflowCanceled",

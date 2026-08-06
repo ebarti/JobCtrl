@@ -436,6 +436,11 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
     pipelineKeys.operations(LOCAL_TENANT),
   ],
+  WorkflowCancellationRequested: [
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    pipelineKeys.operations(LOCAL_TENANT),
+  ],
   WorkflowCompleted: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),

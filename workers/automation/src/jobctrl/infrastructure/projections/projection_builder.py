@@ -111,6 +111,7 @@ COMPENSATION_PROJECTION_VERSION = 1
 # event maps to a terminal status in the 12-state ``WORKFLOW_RUN_STATUSES``.
 WORKFLOW_EVENT_TYPES: tuple[str, ...] = (
     "WorkflowStarted",
+    "WorkflowCancellationRequested",
     "WorkflowCompleted",
     "WorkflowFailed",
     "WorkflowCanceled",
