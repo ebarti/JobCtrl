@@ -7,9 +7,11 @@ the underlying stage runners stubbed so the test stays fast and hermetic.
 from __future__ import annotations
 
 import asyncio
+import threading
 import uuid
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -28,11 +30,19 @@ from jobctrl.discovery.activities import (
     PlanDiscoverySourcesOutput,
 )
 from jobctrl.discovery.workflow import DiscoverWorkflow
-from jobctrl.enrichment.activities import enrich_activity
+from jobctrl.enrichment.activities import (
+    cancel_enrichment_cohort_activity,
+    enrich_activity,
+)
+from jobctrl.database import get_connection
 from jobctrl.domain.identifiers import JobId
 from jobctrl.infrastructure.temporal.finalize import (
     record_workflow_outcome,
     record_workflow_started,
+)
+from jobctrl.infrastructure.preparation_recovery import (
+    assert_material_activity_commit_allowed,
+    cancel_preparation_state_activity,
 )
 from jobctrl.materials.activities import (
     cover_activity,
@@ -41,8 +51,12 @@ from jobctrl.materials.activities import (
 from jobctrl.pipeline.workflow import (
     _COVER_RETRY,
     _ENRICH_RETRY,
+    _MAX_SELECTED_BATCH_TIMEOUT,
+    _SELECTED_BATCH_TIMEOUT_PATCH,
     _SCORE_RETRY,
     _TAILOR_RETRY,
+    _activity_timeout,
+    _selected_batch_timeout,
     JobPipelineWorkflow,
     JobPipelineWorkflowInput,
 )
@@ -52,6 +66,69 @@ from jobctrl.workflow_specs import (
     build_pipeline_workflow_spec,
     build_run_stage_workflow_spec,
 )
+from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+
+def test_selected_batch_timeout_scales_by_worker_waves_and_is_capped() -> None:
+    job_ids = tuple(
+        JobId(f"20000000-0000-4000-8000-{index:012d}") for index in range(20)
+    )
+
+    assert _selected_batch_timeout(
+        JobPipelineWorkflowInput(
+            tenant_id="local",
+            stages=["tailor"],
+            job_ids=job_ids[:9],
+            workers=4,
+        )
+    ) == timedelta(minutes=90)
+    assert _selected_batch_timeout(
+        JobPipelineWorkflowInput(
+            tenant_id="local",
+            stages=["tailor"],
+            job_ids=job_ids[:1],
+            workers=4,
+        )
+    ) == timedelta(minutes=30)
+    assert _selected_batch_timeout(
+        JobPipelineWorkflowInput(
+            tenant_id="local",
+            stages=["tailor"],
+            job_ids=job_ids,
+            workers=1,
+        )
+    ) == _MAX_SELECTED_BATCH_TIMEOUT
+
+    selected_payload = JobPipelineWorkflowInput(
+        tenant_id="local",
+        stages=["tailor"],
+        job_ids=job_ids[:9],
+        workers=4,
+    )
+    with patch(
+        "jobctrl.pipeline.workflow.workflow.patched",
+        side_effect=AssertionError("single-item batches do not need a patch marker"),
+    ):
+        assert _activity_timeout(
+            JobPipelineWorkflowInput(
+                tenant_id="local",
+                stages=["tailor"],
+                job_ids=job_ids[:1],
+                workers=4,
+            )
+        ) == timedelta(minutes=30)
+    with patch(
+        "jobctrl.pipeline.workflow.workflow.patched",
+        return_value=False,
+    ) as patched:
+        assert _activity_timeout(selected_payload) == timedelta(minutes=30)
+        patched.assert_called_once_with(_SELECTED_BATCH_TIMEOUT_PATCH)
+    with patch(
+        "jobctrl.pipeline.workflow.workflow.patched",
+        return_value=True,
+    ) as patched:
+        assert _activity_timeout(selected_payload) == timedelta(minutes=90)
+        patched.assert_called_once_with(_SELECTED_BATCH_TIMEOUT_PATCH)
 
 
 @pytest.fixture(autouse=True)
@@ -91,6 +168,7 @@ def _all_activities():
         _discovery_enrichment,
         _discovery_preparation_fanout,
         enrich_activity,
+        cancel_enrichment_cohort_activity,
         score_activity,
         tailor_activity,
         cover_activity,
@@ -98,6 +176,7 @@ def _all_activities():
         record_workflow_started,
         record_workflow_outcome,
         _recover_preparation_state,
+        cancel_preparation_state_activity,
     ]
 
 
@@ -165,6 +244,69 @@ async def test_pipeline_workflow_runs_requested_stages_in_order():
 
     invoked_stages = [call.args[0] for call in observed_mock.call_args_list]
     assert invoked_stages == ["enrich", "score"]
+
+
+@pytest.mark.asyncio
+async def test_selected_pipeline_scores_only_canonically_enriched_subset():
+    """Blocked/failed Enrich rows never poison the downstream Score batch."""
+
+    queue = f"pipeline-enrich-subset-{uuid.uuid4()}"
+    selected = tuple(JobId(str(uuid.uuid4())) for _ in range(3))
+    enriched = (selected[0], selected[2])
+    score_calls: list[JobId] = []
+
+    def fake_selected_enrichment(_payload, **_kwargs):
+        return {
+            "status": "partial",
+            "elapsed": 0.01,
+            "errors": {},
+            "stages": [
+                {
+                    "stage": "enrich",
+                    "status": "partial",
+                    "selected": len(selected),
+                    "enrichedJobIds": [str(job_id) for job_id in enriched],
+                }
+            ],
+        }
+
+    def fake_score_job_by_id(job_id: JobId, **_kwargs):
+        score_calls.append(job_id)
+        return SimpleNamespace(ok=True, error=None)
+
+    with (
+        patch(
+            "jobctrl.enrichment.activities._run_selected_enrichment",
+            side_effect=fake_selected_enrichment,
+        ),
+        patch(
+            "jobctrl.scoring.scorer.score_job_by_id",
+            side_effect=fake_score_job_by_id,
+        ),
+    ):
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await env.client.execute_workflow(
+                    JobPipelineWorkflow.run,
+                    JobPipelineWorkflowInput(
+                        tenant_id="local",
+                        stages=["enrich", "score"],
+                        job_ids=selected,
+                        workers=1,
+                    ),
+                    id=f"pipeline-enrich-subset-wf-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+
+    assert result.stages_completed == ["enrich", "score"]
+    assert result.stages_failed == []
+    assert score_calls == list(enriched)
 
 
 @pytest.mark.asyncio
@@ -333,9 +475,7 @@ def test_pipeline_apply_spec_boundaries_reject_present_unsupported_or_empty_sele
     selector: dict[str, object],
 ) -> None:
     with pytest.raises(ValueError, match="apply (accepts|jobId)"):
-        build_run_stage_workflow_spec(
-            {"tenantId": "local", "stage": "apply", **selector}
-        )
+        build_run_stage_workflow_spec({"tenantId": "local", "stage": "apply", **selector})
     with pytest.raises(ValueError, match="apply (accepts|jobId)"):
         build_pipeline_workflow_spec(
             {"tenantId": "local", **selector},
@@ -362,12 +502,8 @@ def test_pipeline_apply_spec_boundaries_preserve_batch_and_canonical_target() ->
 
 def test_condition_recovery_run_stage_uses_a_stable_reusable_workflow_id() -> None:
     reason = "condition_resolved:authenticated_linkedin_browser_unavailable"
-    first = build_run_stage_workflow_spec(
-        {"tenantId": "local", "stage": "enrich", "reason": reason}
-    )
-    replay = build_run_stage_workflow_spec(
-        {"tenantId": "local", "stage": "enrich", "reason": reason}
-    )
+    first = build_run_stage_workflow_spec({"tenantId": "local", "stage": "enrich", "reason": reason})
+    replay = build_run_stage_workflow_spec({"tenantId": "local", "stage": "enrich", "reason": reason})
 
     assert first.workflow_id == replay.workflow_id
     assert first.workflow_id is not None
@@ -376,12 +512,8 @@ def test_condition_recovery_run_stage_uses_a_stable_reusable_workflow_id() -> No
 
 
 def test_profile_continuation_uses_exactly_once_durable_event_identity() -> None:
-    first = build_run_stage_workflow_spec(
-        {"tenantId": "local", "stage": "score", "reason": "profile_updated:42"}
-    )
-    replay = build_run_stage_workflow_spec(
-        {"tenantId": "local", "stage": "score", "reason": "profile_updated:42"}
-    )
+    first = build_run_stage_workflow_spec({"tenantId": "local", "stage": "score", "reason": "profile_updated:42"})
+    replay = build_run_stage_workflow_spec({"tenantId": "local", "stage": "score", "reason": "profile_updated:42"})
 
     assert first.workflow_id == replay.workflow_id
     assert first.workflow_id is not None
@@ -622,7 +754,10 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
         # dummy), so stub the finalize writer — the finalize wiring itself is
         # covered by test_workflow_finalize.py.
         patch("jobctrl.infrastructure.temporal.finalize._emit"),
-        patch("jobctrl.pipeline.current_policy_selectors.tailoring_current_policy_job_ids", side_effect=fake_current_policy_job_ids),
+        patch(
+            "jobctrl.pipeline.current_policy_selectors.tailoring_current_policy_job_ids",
+            side_effect=fake_current_policy_job_ids,
+        ),
         patch("jobctrl.scoring.tailor.tailor_job_by_id", side_effect=fake_tailor_job_by_id),
         patch("jobctrl.scoring.cover_letter.cover_letter_by_id", side_effect=fake_cover_letter_by_id),
     ):
@@ -651,6 +786,50 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
     assert result.stages_failed == []
     assert tailored_job_ids == [selected_job_id]
     assert cover_job_ids == [selected_job_id]
+
+
+@pytest.mark.asyncio
+async def test_selected_tailor_partial_continues_cover_for_approved_subset():
+    queue = f"pipeline-tailor-partial-{uuid.uuid4()}"
+    approved_job_id = JobId("10000000-0000-4000-8000-000000000011")
+    failed_job_id = JobId("10000000-0000-4000-8000-000000000012")
+    cover_job_ids: list[JobId] = []
+
+    def fake_tailor_job_by_id(job_id: JobId, **_kwargs):
+        if job_id == approved_job_id:
+            return {"status": "approved"}
+        return {"status": "error", "error": "validation exhausted"}
+
+    def fake_cover_letter_by_id(job_id: JobId, **_kwargs):
+        cover_job_ids.append(job_id)
+        return {"status": "ok", "generated": 1, "errors": 0, "elapsed": 0.01}
+
+    with (
+        patch("jobctrl.scoring.tailor.tailor_job_by_id", side_effect=fake_tailor_job_by_id),
+        patch("jobctrl.scoring.cover_letter.cover_letter_by_id", side_effect=fake_cover_letter_by_id),
+    ):
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await env.client.execute_workflow(
+                    JobPipelineWorkflow.run,
+                    JobPipelineWorkflowInput(
+                        tenant_id="local",
+                        stages=["tailor", "cover"],
+                        job_ids=(approved_job_id, failed_job_id),
+                    ),
+                    id=f"pipeline-tailor-partial-wf-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+
+    assert result.stages_completed == ["tailor", "cover"]
+    assert result.stages_failed == []
+    assert cover_job_ids == [approved_job_id]
 
 
 @pytest.mark.asyncio
@@ -763,3 +942,340 @@ async def test_workflow_cancel_propagates_to_activity_as_cancelled_error():
     # The workflow surfaces the cancellation as CancelledError.
     assert isinstance(exc_info.value.cause, CancelledError)
     assert _cancel_observed is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_enrich_cancel_terminalizes_exact_selected_cohort():
+    """A real pipeline cancel cannot leave its selected Enrich rows pending."""
+
+    from jobctrl.domain.errors import TransientNetworkError
+
+    conn = get_connection()
+    selected = tuple(JobId(str(uuid.uuid4())) for _ in range(2))
+    unrelated = JobId(str(uuid.uuid4()))
+    discovered_at = "2026-08-05T00:00:00+00:00"
+    for index, job_id in enumerate((*selected, unrelated)):
+        url = f"https://example.test/cancel-cohort/{job_id}"
+        conn.execute(
+            "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
+            "VALUES ('local', ?, ?, 'Engineer', ?, ?)",
+            (
+                str(job_id),
+                url,
+                "RemoteOK" if index != 1 else "Job Bank Canada",
+                discovered_at,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO job_locators (tenant_id, job_id, locator_kind, locator_value, "
+            "is_current, first_seen_at, last_seen_at) "
+            "VALUES ('local', ?, 'posting_url', ?, 1, ?, ?)",
+            (str(job_id), url, discovered_at, discovered_at),
+        )
+        ensure_job_stage_rows(conn, job_id)
+    conn.commit()
+
+    started = threading.Event()
+
+    def blocking_batch(
+        _conn,
+        _site,
+        _jobs,
+        *,
+        cancel_event=None,
+        **_kwargs,
+    ):
+        started.set()
+        assert cancel_event is not None
+        assert cancel_event.wait(timeout=15)
+        raise TransientNetworkError("enrichment canceled")
+
+    queue = f"pipeline-enrich-cancel-{uuid.uuid4()}"
+    workflow_id = f"pipeline-enrich-cancel-wf-{uuid.uuid4()}"
+    with patch("jobctrl.enrichment.detail.scrape_site_batch", side_effect=blocking_batch):
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                handle = await env.client.start_workflow(
+                    JobPipelineWorkflow.run,
+                    JobPipelineWorkflowInput(
+                        tenant_id="local",
+                        stages=["enrich"],
+                        job_ids=selected,
+                        workers=2,
+                    ),
+                    id=workflow_id,
+                    task_queue=queue,
+                )
+                observed = await asyncio.wait_for(
+                    asyncio.to_thread(started.wait, 10),
+                    timeout=12,
+                )
+                assert observed is True
+                await handle.cancel()
+                with pytest.raises(WorkflowFailureError) as exc_info:
+                    await handle.result()
+
+    assert isinstance(exc_info.value.cause, CancelledError)
+    states = {
+        str(row[0]): str(row[1])
+        for row in conn.execute(
+            "SELECT job_id, state FROM job_stage_states "
+            "WHERE tenant_id = 'local' AND stage = 'enrich' "
+            "AND job_id IN (?, ?, ?)",
+            (str(selected[0]), str(selected[1]), str(unrelated)),
+        ).fetchall()
+    }
+    assert states[str(selected[0])] == "canceled"
+    assert states[str(selected[1])] == "canceled"
+    assert states[str(unrelated)] == "pending"
+
+
+@pytest.mark.parametrize(
+    ("stage", "runner_patch"),
+    (
+        ("tailor", "jobctrl.scoring.tailor.tailor_job_by_id"),
+        ("cover", "jobctrl.scoring.cover_letter.cover_letter_by_id"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_pipeline_material_cancel_stops_fanout_and_fences_late_writes(
+    stage: str,
+    runner_patch: str,
+):
+    """Real workflow cancellation closes the exact cohort without late writes."""
+
+    conn = get_connection()
+    selected = tuple(JobId(str(uuid.uuid4())) for _ in range(4))
+    discovered_at = "2026-08-06T00:00:00+00:00"
+    for job_id in selected:
+        conn.execute(
+            "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
+            "VALUES ('local', ?, ?, 'Engineer', 'synthetic', ?)",
+            (
+                str(job_id),
+                f"https://example.test/material-cancel/{stage}/{job_id}",
+                discovered_at,
+            ),
+        )
+        ensure_job_stage_rows(conn, job_id)
+    conn.commit()
+
+    first_wave_started = threading.Event()
+    first_wave_fenced = threading.Event()
+    started: list[str] = []
+    fenced: list[str] = []
+    late_writes: list[str] = []
+    lock = threading.Lock()
+
+    def blocking_material_job(job_id: JobId, **kwargs):
+        cancel_event = kwargs.get("cancel_event")
+        workflow_id = str(kwargs.get("workflow_id") or "")
+        assert cancel_event is not None
+        assert workflow_id
+        thread_conn = get_connection()
+        set_stage_state(
+            thread_conn,
+            job_id,
+            stage,
+            "running",
+            metadata={"activityOwner": workflow_id},
+            validate_transition=False,
+        )
+        thread_conn.commit()
+        with lock:
+            started.append(str(job_id))
+            if len(started) == 2:
+                first_wave_started.set()
+        assert cancel_event.wait(timeout=15)
+        try:
+            assert_material_activity_commit_allowed(
+                thread_conn,
+                tenant_id="local",
+                job_id=str(job_id),
+                stage=stage,
+                workflow_id=workflow_id,
+                cancel_event=cancel_event,
+            )
+        except RuntimeError:
+            with lock:
+                fenced.append(str(job_id))
+                if len(fenced) == 2:
+                    first_wave_fenced.set()
+            raise
+        late_writes.append(str(job_id))
+        thread_conn.execute(
+            "INSERT INTO job_events "
+            "(tenant_id, job_id, stage, event_type, occurred_at, payload_json) "
+            "VALUES ('local', ?, ?, 'ForbiddenLateMaterialCommit', ?, '{}')",
+            (str(job_id), stage, discovered_at),
+        )
+        thread_conn.commit()
+        return {"status": "approved" if stage == "tailor" else "ok"}
+
+    queue = f"pipeline-{stage}-cancel-{uuid.uuid4()}"
+    workflow_id = f"pipeline-{stage}-cancel-wf-{uuid.uuid4()}"
+    with patch(runner_patch, side_effect=blocking_material_job):
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                handle = await env.client.start_workflow(
+                    JobPipelineWorkflow.run,
+                    JobPipelineWorkflowInput(
+                        tenant_id="local",
+                        stages=[stage],
+                        job_ids=selected,
+                        workers=2,
+                    ),
+                    id=workflow_id,
+                    task_queue=queue,
+                )
+                observed = await asyncio.wait_for(
+                    asyncio.to_thread(first_wave_started.wait, 10),
+                    timeout=12,
+                )
+                assert observed is True
+                await handle.cancel()
+                with pytest.raises(WorkflowFailureError) as exc_info:
+                    await handle.result()
+
+    assert isinstance(exc_info.value.cause, CancelledError)
+    assert first_wave_fenced.wait(timeout=5)
+    assert len(started) == 2
+    assert set(started) == {str(selected[0]), str(selected[1])}
+    assert sorted(fenced) == sorted(started)
+    assert late_writes == []
+    rows = conn.execute(
+        "SELECT job_id, state FROM job_stage_states "
+        "WHERE tenant_id = 'local' AND stage = ? AND job_id IN (?, ?, ?, ?)",
+        (stage, *(str(job_id) for job_id in selected)),
+    ).fetchall()
+    assert {str(row["job_id"]): str(row["state"]) for row in rows} == {
+        str(job_id): "canceled" for job_id in selected
+    }
+    assert conn.execute(
+        "SELECT COUNT(*) FROM job_events "
+        "WHERE tenant_id = 'local' AND event_type = 'ForbiddenLateMaterialCommit' "
+        "AND job_id IN (?, ?, ?, ?)",
+        tuple(str(job_id) for job_id in selected),
+    ).fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM job_materials WHERE tenant_id = 'local' "
+        "AND job_id IN (?, ?, ?, ?)",
+        tuple(str(job_id) for job_id in selected),
+    ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_pipeline_enrich_timeout_retries_without_false_cancellation():
+    """An activity timeout releases its cohort; only user cancel terminalizes it."""
+
+    from jobctrl.domain.errors import TransientNetworkError
+    from jobctrl.infrastructure.temporal.run_in_activity import (
+        run_blocking_with_heartbeat as production_run_blocking,
+    )
+
+    conn = get_connection()
+    job_id = JobId(str(uuid.uuid4()))
+    discovered_at = "2026-08-06T00:00:00+00:00"
+    url = f"https://example.test/timeout-cohort/{job_id}"
+    conn.execute(
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
+        "VALUES ('local', ?, ?, 'Engineer', 'RemoteOK', ?)",
+        (str(job_id), url, discovered_at),
+    )
+    conn.execute(
+        "INSERT INTO job_locators (tenant_id, job_id, locator_kind, locator_value, "
+        "is_current, first_seen_at, last_seen_at) "
+        "VALUES ('local', ?, 'posting_url', ?, 1, ?, ?)",
+        (str(job_id), url, discovered_at, discovered_at),
+    )
+    ensure_job_stage_rows(conn, job_id)
+    conn.commit()
+
+    calls = 0
+
+    def timeout_once(
+        _conn,
+        _site,
+        _jobs,
+        *,
+        cancel_event=None,
+        **_kwargs,
+    ):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            assert cancel_event is not None
+            assert cancel_event.wait(timeout=10)
+            raise TransientNetworkError("attempt interrupted")
+        return {
+            "processed": 0,
+            "ok": 0,
+            "partial": 0,
+            "error": 0,
+            "blocked": 0,
+            "tiers": {1: 0, 2: 0, 3: 0},
+        }
+
+    async def fast_heartbeat(fn, **kwargs):
+        kwargs["poll_interval"] = 0.05
+        kwargs["cancel_wait_seconds"] = 1.0
+        return await production_run_blocking(fn, **kwargs)
+
+    queue = f"pipeline-enrich-timeout-{uuid.uuid4()}"
+    workflow_id = f"pipeline-enrich-timeout-wf-{uuid.uuid4()}"
+    with (
+        patch("jobctrl.enrichment.detail.scrape_site_batch", side_effect=timeout_once),
+        patch(
+            "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+            side_effect=fast_heartbeat,
+        ),
+        patch(
+            "jobctrl.pipeline.workflow._DEFAULT_TIMEOUT",
+            timedelta(seconds=1),
+        ),
+    ):
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await env.client.execute_workflow(
+                    JobPipelineWorkflow.run,
+                    JobPipelineWorkflowInput(
+                        tenant_id="local",
+                        stages=["enrich"],
+                        job_ids=(job_id,),
+                    ),
+                    id=workflow_id,
+                    task_queue=queue,
+                )
+
+    row = conn.execute(
+        "SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'",
+        (str(job_id),),
+    ).fetchone()
+    canceled_events = conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE tenant_id = 'local' "
+        "AND job_id = ? AND stage = 'enrich' AND event_type = 'StageCanceled'",
+        (str(job_id),),
+    ).fetchone()[0]
+    assert result.stages_completed == ["enrich"]
+    assert result.stages_failed == []
+    assert calls == 2
+    assert row is not None and str(row[0]) == "pending"
+    assert canceled_events == 0

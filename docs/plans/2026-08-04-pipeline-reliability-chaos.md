@@ -1,6 +1,6 @@
 # Pipeline Reliability Chaos Campaign
 
-- **Status:** Implementation, complete isolated chaos campaign, and live Pipelines UI smoke pass; final independent QA gate pending
+- **Status:** R01-R24 campaign completed; R25 and live incident recovery are under final cumulative verification
 - **Authored:** 2026-08-04
 - **Environment:** Production-shaped local stack with disposable non-production data
 - **Safety boundary:** Never use `~/.jobctrl/jobctrl.db`, real applications, or real submission targets
@@ -14,8 +14,12 @@ Reliability remains simple when ownership is explicit:
 3. Recovery resumes at the earliest incomplete stage and reuses valid upstream work.
 4. Accepted scores and artifacts remain available until a replacement succeeds.
 5. Runtime inventory and durable stage state converge; zero live work cannot coexist indefinitely with `running` rows.
+6. Canceling a batch records who requested it and terminalizes every unfinished
+   member of its exact selected cohort without mutating unrelated pending work.
+7. Inner model-repair attempts and durable stage executions have separate,
+   bounded counters; retrying a failed stage must converge to `exhausted`.
 
-Every scenario below must prove those five invariants through the database, Temporal history, API operations snapshot, and rendered Pipelines UI. A scenario fails if it needs a manual retry button unless the terminal condition is explicitly non-retryable.
+Every scenario below must prove those seven invariants through the database, Temporal history, API operations snapshot, and rendered Pipelines UI. A scenario fails if it needs a manual retry button unless the terminal condition is explicitly non-retryable.
 
 ## Test Topology
 
@@ -47,6 +51,9 @@ The campaign owns an isolated `JOBCTRL_DIR`, SQLite database, Temporal data dire
 | R20 | Existing listener, stale heartbeat rows, or orphan child process | Start the supervisor again | Health identifies the actual listener/poller; the supervisor replaces or reports the conflict rather than duplicating processes. |
 | R21 | Queued and in-flight work | Restart Temporal, worker, API, and web in varied orders | Every order converges to the same durable result with no manual recovery. |
 | R22 | Mixed jobs with valid scores, missing scores, and pending materials | Trigger profile/preference continuation | Valid scores are reused, only missing/stale scores run, and downstream work begins as soon as each job is ready. |
+| R23 | Global or explicitly selected Enrich cohort running | Request cancellation through JobCtrl or Temporal, then restart the worker before/after cooperative cleanup | Requester/source is auditable; the workflow is canceled; every unfinished owned row is canceled; accepted and unrelated pending jobs are untouched; no row remains falsely pending with zero live owner. |
+| R24 | Blocking activity call ignores cancellation after its Temporal attempt ends | Hold the provider seam past the cooperative grace window while another activity waits | The late writer remains fenced; the abandoned executor generation is observable and retired; fresh bounded capacity runs the next retry/reconciliation activity without a worker restart. |
+| R25 | Tailor repeatedly fails after using its inner model-repair budget | Redeliver the activity and start a later retry workflow | Each durable execution advances the outer counter exactly once, inner attempts remain separately auditable, the fifth durable failure becomes non-retryable `exhausted`, and later pickup does not create an infinite retry/spend loop. |
 
 ## Execution Order
 
@@ -55,7 +62,9 @@ The campaign owns an isolated `JOBCTRL_DIR`, SQLite database, Temporal data dire
 3. Run dispatch/history/transport faults R11-R14.
 4. Run concurrent setting and dependency faults R15-R18.
 5. Run persistence/supervisor/restart-order faults R19-R21.
-6. Finish with mixed-state streaming scenario R22 and rerun every previously failing scenario.
+6. Finish with mixed-state streaming scenario R22, explicit Enrich cancellation
+   R23, abandoned-thread capacity recovery R24, retry-budget convergence R25,
+   and rerun every previously failing scenario.
 
 ## Evidence Per Scenario
 
@@ -67,7 +76,7 @@ Stop and fix immediately when a scenario produces orphaned `running` rows, dupli
 
 ## Findings And Repairs
 
-The campaign reproduced four independent reliability defects:
+The campaign reproduced independent reliability defects:
 
 1. Profile/preference submissions treated every submitted section as changed. A compensation-only update could therefore enqueue a broad `score -> tailor -> cover` continuation and recompute scores that already existed. Profile writes now compare the requested sections with their persisted values, suppress true no-ops, and continue preparation without forcing rescore.
 2. Condition recovery was not durably claimed before dispatch. Concurrent browser-ready notifications could start equivalent recovery work, and a shrinking cohort could change the workflow identity. Matching blocked rows now record a per-row recovery claim transactionally while every episode uses the stable resolved-condition workflow ID; concurrent starts attach to that execution and a later resolved episode may reuse the ID only after completion.
@@ -77,8 +86,104 @@ The campaign reproduced four independent reliability defects:
 6. A profile change could commit without its continuation event, or dispatch before the API recorded that intent. The profile mutation and outbox event now share one SQLite transaction. A dispatch-intent event commits before Temporal start; startup reattaches and awaits any older intended execution, coalesces only revisions proven never dispatched, and uses a deterministic workflow identity to survive acknowledgement loss.
 7. Recovery failure was initially allowed to be swallowed after a finite retry count, which could let a workflow terminalize while its rows remained `running`. Owner reconciliation is now a mandatory durable workflow step. Temporal may keep that step pending while its dependency is unavailable, but the workflow cannot publish a terminal outcome before reconciliation succeeds.
 8. The first consolidation of preparation recovery placed the shared activity under a package whose initializer imports the preparation workflow. A clean worker-registry import exposed the resulting circular initialization before deployment. The activity now lives at the neutral infrastructure boundary, and clean worker startup is a required regression check.
+9. The campaign's cancellation check proved only that `CancelledError` reached a
+   generic activity. It never asserted selected Enrich rows through SQLite, the
+   API read model, or the UI. A canceled global Enrich run therefore reset its
+   interrupted row to `pending` and left unstarted selected rows untouched. R23
+   now persists exact workflow/run ownership, terminalizes the cohort
+   cooperatively, reconciles it after restart, and records the Temporal
+   requester/source as a separate audit event.
+10. Follow-up fault injection exposed four narrower cancellation boundaries:
+    the authenticated LinkedIn pre-pass could reset before ownership; an
+    abandoned producer could write after cancellation; a failed local cancel
+    intent could suppress Temporal's requester; and a trustworthy snapshot
+    could commit before Tailor release. Enrich now owns pre-pass rows before
+    navigation, seals canceled executions with a terminal lease, conditions
+    cleanup on exact workflow/run metadata, records intent and history as
+    distinct evidence, and commits snapshot trust plus downstream release in
+    one transaction.
+11. The guarded restart path exposed two additional preparation handoff gaps.
+    Pending pickup used a stale list projection instead of the canonical
+    enrichment aggregate, so a reset cohort could be skipped; a repeated bulk
+    request could then bypass queued Enrich and start Score. The API also wrote
+    the workflow-handle compatibility ID where the worker required the exact
+    Temporal execution ID. Pickup now reads canonical enrichment status and
+    text, active upstream preparation blocks downstream pickup, and durable
+    ownership uses `firstExecutionRunId`. If that execution ID is unavailable,
+    Enrich stays pending until the selected activity claims its runtime identity.
+12. The authorized recovery exposed a 30-minute Enrich activity timeout that
+    was incorrectly interpreted as terminal cancellation. A retry could then
+    mark the interrupted row canceled and send the entire selected cohort to
+    Score, including rows without usable enrichment. Timeout, worker shutdown,
+    and reset now release unfinished ownership for retry; only an explicit
+    workflow cancellation terminalizes the exact cohort through a separate
+    durable cleanup activity. Downstream selected stages receive only the
+    canonical successful job IDs returned by the preceding stage.
+13. Authenticated LinkedIn apply-URL recovery shared its attempt cap with the
+    normal extraction cascade, so ordinary history could exhaust recovery
+    before the authenticated browser ran. Adopted Chrome extensions were also
+    blocked correctly but misattributed to the posting as a fatal unsafe URL.
+    Apply-URL recovery now has its own three-pass budget. Extension resources
+    remain blocked without poisoning the remote navigation, while loopback,
+    file, and other non-public destinations remain fatal. The exact live probe
+    upgraded a low quarantined snapshot to trusted and released Tailor before
+    the bounded cohort recovery was allowed to fan out.
+14. Selected Tailor and Cover activities ignored the requested worker count and
+    processed large cohorts serially under the same 30-minute activity ceiling.
+    They now use bounded deterministic fan-out. Per-job material failures are
+    recorded as item diagnostics and a partial batch result, allowing Cover to
+    continue only for the Tailor-approved subset instead of retrying or
+    stranding successful rows. Explicitly selected batches now receive 30
+    minutes per worker wave, capped at 6 hours, while the 2-minute heartbeat
+    remains fixed. A Temporal patch marker preserves the old 30-minute timer
+    when an already-open history replays.
+15. The per-job continuation exposed a Tailoring Policy compare-and-swap that
+    treated another job's prompt fingerprint as a user policy change. Parallel
+    jobs could therefore pay for generation and then invalidate one another at
+    artifact persistence. The rollbackable policy now fingerprints only global
+    generation controls, including the complete tailoring-relevant profile
+    projection; each artifact records its target-job prompt fingerprint
+    separately. Parallel jobs with the same controls reuse one global version,
+    while any tailoring-relevant profile or control change advances it and still
+    fails stale persistence closed. Application-only profile edits such as
+    compensation do not invalidate generated Materials.
+16. Adversarial review of that repair exposed three final commit-boundary gaps:
+    a profile save could land after generation loaded its snapshot but before
+    artifact persistence; selected Tailor/Cover cancellation had already queued
+    the full cohort and did not pass a cooperative token into each job; and the
+    per-artifact digest covered only a reusable prompt base rather than the exact
+    selected message set. Artifact persistence now compares the generation's
+    tailoring-relevant profile projection and global policy against canonical
+    current data inside the same SQLite write transaction. Selected material
+    fan-out schedules one bounded
+    worker wave at a time, stops filling slots on cancellation, fences final
+    writes and stage transitions against exact ownership, preserves a result
+    committed before cancellation, and leaves a successor owner untouched. The
+    artifact stores the digest of the exact selected role/content messages,
+    including job and retry content.
+17. The live per-job recovery then exposed a worker-capacity failure outside the
+    durable state machine: provider calls that ignored cancellation survived
+    their 30-minute Temporal attempts inside the shared executor. Four such
+    threads filled every activity slot, leaving a two-hour queue with a healthy
+    poller but zero dispatch. Blocking async activities now use a dedicated
+    bounded executor. Cancellation now retires that executor generation before
+    its grace wait, closing the race where a server-dispatched retry could enter
+    the poisoned generation. A thread that survives the grace window is then
+    recorded as abandoned, while exact ownership fences the late writer.
+18. The same recovery exposed two Tailor counters being collapsed into one.
+    Every generation invocation may use several inner model-repair attempts,
+    but the durable stage row repeatedly overwrote its outer execution count
+    with that inner count. Failed jobs could therefore remain eligible forever.
+    Tailor now advances the durable counter once per execution, records inner
+    generation attempts in an append-only audit keyed by execution and durable
+    attempt, and becomes non-retryable `exhausted` on the fifth durable failure,
+    matching the established Cover contract.
 
-No timer, polling reaper, or broad database sweep was added. Recovery is one idempotent step in the workflow that owns the work, plus a durable event dispatch when a setting resolves an explicit blocking condition. Temporal supplies delivery; the application does not add a second scheduler.
+No timer or second scheduler was added. Recovery is one idempotent step in the
+workflow that owns the work, plus a durable event dispatch when a setting
+resolves an explicit blocking condition. Worker reconciliation also checks only
+nonterminal Enrich rows carrying an exact workflow/run owner whose projected run
+is already canceled; it never mutates ownerless or unrelated pending work.
 
 ## Execution Ledger
 
@@ -92,10 +197,18 @@ No timer, polling reaper, or broad database sweep was added. Recovery is one ide
 | R14, R20 | SSE reconnect, operations/projection telemetry, launcher conflict, stale-process, and heartbeat coverage | Pass |
 | R16 | LLM retry, timeout, malformed-output, budget, and spend-limit coverage | Pass |
 | R18 | Renderer-unavailable retry and hard process-loss seam | Pass |
+| R23 | Real Enrich/Tailor/Cover `JobPipelineWorkflow` cancellation; exact selected/unrelated assertions; authenticated pre-pass child-process kill; abandoned-producer and successor-owner races; mixed local/Temporal requester audit; atomic snapshot/Tailor release; canonical restart pickup and exact execution-ID handoff; activity-timeout retry; successful-subset handoff; authenticated-recovery budget and extension-noise guard; selected-material incremental fan-out, cooperative commit fencing, committed-fact preservation, partial continuation, replay-versioned worker-wave deadline, atomic profile/policy comparison, and exact selected-message artifact fingerprints | Final verification in progress: focused automated regressions pass; authorized live recovery is still running; final independent review/QA and refreshed UI proof remain |
+| R24 | Ignored-cancellation thread held past the grace window; distinct Temporal-sync and blocking executors; executor-generation rotation; immediate subsequent activity | Pass: focused abandoned-thread and worker-construction regressions; live recovery exposed and reproduced the zero-dispatch backlog before the fix |
+| R25 | Inner Tailor retry exhaustion followed by repeated durable executions, including the fifth-failure boundary | Focused proof passes: inner exhaustion leaves outer attempt 1 retryable; two executions retain both complete audit reports; retry re-entry advances cumulatively; durable attempt 5 is `exhausted` and non-retryable. Final cumulative gates remain. |
 | Worker composition | Clean import of the complete Temporal workflow/activity registry | Pass: 10 workflows and 23 activities compose without an import cycle |
 | API cumulative | Server, profile-event, and JSON-RPC adapter suites, including loopback SSE and startup recovery | Pass: 263 tests |
 | Live Pipelines UI | Browser DOM, console, screenshot, and disclosure interaction against the running app | Pass: Enrich precedes Enrichment reconciliation; Render PDF follows Cover letter; no relevant console warning/error |
 
 The process-chaos harness owns exact PID trees, treats zombies as stopped, isolates Temporal persistence and application data, and can vary whether Temporal or the worker dies first. The first harness iterations themselves exposed two false-positive hazards—broad process matching and zombie liveness—which are now regression-protected by the stricter harness.
 
-The remaining live-runtime operation is intentionally separate from this isolated campaign: repairing legacy ownerless rows in the user's database and restarting its stack require explicit approval because those rows predate the new owner identity. The non-destructive Pipelines presentation smoke has passed on the currently running app.
+Live-runtime incident recovery remains intentionally separate from this
+isolated campaign and requires explicit authorization plus an exact backup and
+cohort guard. The authorized recovery verification exercised the repaired
+pickup and ownership handoff without adding personal row content or workflow
+identifiers to this plan. The non-destructive Pipelines, job-detail, and
+cancellation-audit presentation smoke passed on the running app.

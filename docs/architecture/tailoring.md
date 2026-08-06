@@ -116,6 +116,28 @@ Tailoring combines several inputs. Each input has a different authority.
 | Requirement-led coverage graph | Deterministic target-profile adapter plus constrained planner | Which profile achievements can cover which target requirements, which requirements are uncovered, which achievements are unused, and what claim policy each edge requires |
 | Previous attempt outcome | Tailoring retry loop | Typed, code-owned retry reason only; free-form validator, judge, adversarial, and prior-output text remains audit data |
 
+The rollbackable tailoring-policy revision contains only tenant-wide generation
+controls: the complete tailoring-relevant `ProfileSnapshot` projection,
+profile/custom policy, learned rules, prompt/schema versions, generator and
+judge settings, and validation mode. The projection covers rendered contact
+fields, experience metadata, resume facts and evidence, constraints, and
+tailoring rules. It deliberately excludes application-only sections such as
+compensation, work authorization, availability, EEO answers, application
+preferences, and the stored application password. The target-job plan is not a
+global policy revision. Every artifact records its own job-prompt fingerprint
+separately from the global
+policy fingerprint and version. That artifact fingerprint hashes the exact
+role/content message set sent for the selected candidate, including its target
+job and any typed retry guidance; it is not a digest of only the reusable
+system-prompt base. Parallel jobs with identical generation controls therefore
+reuse one global policy version while retaining distinct job-prompt audit facts.
+A tailoring-relevant profile or control change advances the global version;
+an application-only edit does not. Immediately before artifact persistence,
+the same SQLite write transaction derives the current canonical
+tailoring-relevant projection and compares its fingerprint plus the policy
+against the generation inputs, so a concurrent resume-evidence or policy change
+rejects the stale artifact rather than committing it after the user's change.
+
 The target job is context, not candidate evidence. The prompt explicitly tells
 the model not to copy target-job tools, systems, responsibilities, or business
 claims into the candidate resume unless the same fact appears in the candidate's
@@ -649,7 +671,12 @@ repair-loop history.
 
 `exhausted_retries` means the inner tailoring loop could not produce an
 acceptable candidate within its retry budget. The durable preparation queue has
-its own retry budget outside this inner loop.
+its own retry budget outside this inner loop. The stage `attempt_count` advances
+once per durable Tailor execution, not once per candidate-repair call; inner
+attempts remain in an append-only generation audit keyed by workflow execution
+and durable attempt, so a later retry cannot overwrite earlier prompts,
+candidates, validation, or judge evidence. A fifth failed durable execution is
+stored as non-retryable `exhausted` until an explicit attempt reset.
 
 ## How To Change Tailoring Safely
 

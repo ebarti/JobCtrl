@@ -479,11 +479,11 @@ async def test_preparation_workflow_resumes_at_cover_after_worker_restart(
         calls.append("score")
         return {"status": "ok", "score_version": 1}
 
-    def fake_tailor_job(_payload) -> dict[str, object]:
+    def fake_tailor_job(_payload, **_kwargs) -> dict[str, object]:
         calls.append("tailor")
         return {"status": "approved", "materials": SimpleNamespace(generation=1)}
 
-    def fake_cover_letter(_payload) -> dict[str, object]:
+    def fake_cover_letter(_payload, **_kwargs) -> dict[str, object]:
         nonlocal cover_attempts
         cover_attempts += 1
         calls.append("cover")
@@ -746,7 +746,7 @@ async def test_preparation_workflow_retries_transient_tailor_failure(
     async def record_outcome(_payload) -> None:
         return None
 
-    def fake_tailor_job(_payload) -> dict[str, object]:
+    def fake_tailor_job(_payload, **_kwargs) -> dict[str, object]:
         nonlocal attempts
         attempts += 1
         if attempts == 1:

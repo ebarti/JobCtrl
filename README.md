@@ -221,7 +221,9 @@ evidence, qualifications, and the complete capability matrix.
   detail workspaces keep record-specific evidence and actions adjacent.
 - Inspect Discover, preparation, and Apply through the same Runs vocabulary,
   timeline, terminal-state rules, and cancellation control. Repeated cancel
-  requests are harmless, and an already-terminal result remains inspectable.
+  requests are harmless, the requester/source remains in the run timeline, and
+  an already-terminal result remains inspectable. Canceling Enrich terminalizes
+  only that run's unfinished selected jobs; unrelated pending work is untouched.
 - Review privacy-bounded learning recommendations on the Dashboard. JobCtrl
   derives them only from explicit reviewed signals, requires compatible
   evidence across jobs, and changes Materials behavior only after you accept a

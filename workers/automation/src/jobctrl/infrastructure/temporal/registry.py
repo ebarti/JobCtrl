@@ -25,7 +25,10 @@ from jobctrl.discovery.manual_capture_workflow import (
     manual_capture_import_activity,
 )
 from jobctrl.discovery.workflow import DiscoverWorkflow
-from jobctrl.enrichment.activities import enrich_activity
+from jobctrl.enrichment.activities import (
+    cancel_enrichment_cohort_activity,
+    enrich_activity,
+)
 from jobctrl.infrastructure.compensation.workflow import (
     CompensationRefreshWorkflow,
     refresh_compensation_activity,
@@ -47,7 +50,10 @@ from jobctrl.materials.activities import (
 )
 from jobctrl.pipeline.workflow import JobPipelineWorkflow
 from jobctrl.pipeline.preparation import derive_preparation_targets
-from jobctrl.infrastructure.preparation_recovery import recover_preparation_state_activity
+from jobctrl.infrastructure.preparation_recovery import (
+    cancel_preparation_state_activity,
+    recover_preparation_state_activity,
+)
 from jobctrl.preparation.workflow import JobPreparationWorkflow
 from jobctrl.profile.activities import profile_import_activity
 from jobctrl.profile.workflow import ProfileImportWorkflow
@@ -72,9 +78,11 @@ ACTIVITIES: list[Callable[..., Any]] = [
     discovery_enrichment_activity,
     discovery_preparation_fanout_activity,
     enrich_activity,
+    cancel_enrichment_cohort_activity,
     score_activity,
     score_job_activity,
     recover_preparation_state_activity,
+    cancel_preparation_state_activity,
     tailor_activity,
     tailor_job_activity,
     cover_activity,

@@ -22,7 +22,9 @@ with workflow.unsafe.imports_passed_through():
     )
     from jobctrl.llm import SpendBudgetInput, check_spend_budget
     from jobctrl.enrichment.activities import (
+        CancelEnrichmentCohortInput,
         EnrichActivityInput,
+        cancel_enrichment_cohort_activity,
         enrich_activity,
     )
     from jobctrl.materials.activities import (
@@ -33,7 +35,9 @@ with workflow.unsafe.imports_passed_through():
     )
     from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
     from jobctrl.infrastructure.preparation_recovery import (
+        CancelPreparationStateInput,
         RecoverPreparationStateInput,
+        cancel_preparation_state_activity,
         recover_preparation_state_activity,
     )
     from jobctrl.scoring.activities import ScoreActivityInput, score_activity
@@ -125,6 +129,8 @@ _COVER_RETRY = RetryPolicy(
     non_retryable_error_types=_NON_RETRYABLE_ERROR_TYPES,
 )
 _DEFAULT_TIMEOUT = timedelta(minutes=30)
+_MAX_SELECTED_BATCH_TIMEOUT = timedelta(hours=6)
+_SELECTED_BATCH_TIMEOUT_PATCH = "pipeline-selected-batch-timeout-v1"
 # Discovery does long-running external crawls and owns source-level retry,
 # dedupe, and progress persistence below the workflow boundary. Retrying the
 # entire activity can overlap with a still-running adapter thread after timeout
@@ -162,6 +168,7 @@ class JobPipelineWorkflow:
                 await _check_spend(payload)
             result = await self._execute_stages(payload)
         except CancelledError:
+            await _cancel_owned_enrichment(payload)
             await emit_workflow_outcome(
                 tenant_id=payload.tenant_id,
                 workflow_type="JobPipelineWorkflow",
@@ -213,21 +220,31 @@ class JobPipelineWorkflow:
         failed: list[str] = []
         failure: str | None = None
         error_code: str | None = None
-        derived_cover_job_ids: tuple[JobId, ...] | None = None
+        derived_preparation_job_ids: tuple[JobId, ...] | None = None
 
         for stage in payload.stages:
             stage_payload = payload
-            if stage == "cover" and derived_cover_job_ids is not None and not _has_selected_job_scope(payload):
-                if not derived_cover_job_ids:
+            if stage in {"score", "tailor", "cover"} and derived_preparation_job_ids is not None:
+                if not derived_preparation_job_ids:
                     completed.append(stage)
-                    derived_cover_job_ids = None
                     continue
-                stage_payload = replace(payload, job_ids=derived_cover_job_ids, limit=0)
+                stage_payload = replace(
+                    payload,
+                    job_id=None,
+                    job_ids=derived_preparation_job_ids,
+                    limit=0,
+                )
 
             try:
                 result = await _execute_stage(stage, stage_payload)
+            except CancelledError:
+                if stage in {"tailor", "cover"}:
+                    await _cancel_material_stage_state(stage, stage_payload)
+                raise
             except ActivityError as exc:
                 if _activity_error_was_cancelled(exc):
+                    if stage in {"tailor", "cover"}:
+                        await _cancel_material_stage_state(stage, stage_payload)
                     raise CancelledError("Workflow canceled by request.") from exc
                 if stage in {"score", "tailor", "cover"}:
                     await _recover_stage_state(stage, stage_payload)
@@ -244,10 +261,14 @@ class JobPipelineWorkflow:
                 break
 
             completed.append(stage)
-            if stage == "tailor" and not _has_selected_job_scope(payload):
-                derived_cover_job_ids = _approved_tailor_job_ids(result)
-            elif stage != "cover":
-                derived_cover_job_ids = None
+            if stage == "enrich":
+                enriched_job_ids = _enriched_job_ids(result)
+                if enriched_job_ids is not None:
+                    derived_preparation_job_ids = enriched_job_ids
+            elif stage == "tailor":
+                approved_job_ids = _approved_tailor_job_ids(result)
+                if approved_job_ids is not None:
+                    derived_preparation_job_ids = approved_job_ids
 
         return JobPipelineWorkflowResult(
             stages_completed=completed,
@@ -268,6 +289,30 @@ async def _recover_stage_state(
             tenant_id=payload.tenant_id,
             workflow_id=workflow.info().run_id,
             stage=stage,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        ),
+        start_to_close_timeout=timedelta(seconds=30),
+        retry_policy=RetryPolicy(maximum_attempts=0),
+        cancellation_type=workflow.ActivityCancellationType.ABANDON,
+    )
+
+
+async def _cancel_material_stage_state(
+    stage: str,
+    payload: JobPipelineWorkflowInput,
+) -> None:
+    """Terminalize the exact selected material cohort after cancellation."""
+
+    if not workflow.patched("pipeline-material-cancellation-v1"):
+        return
+    await workflow.execute_activity(
+        cancel_preparation_state_activity,
+        CancelPreparationStateInput(
+            tenant_id=payload.tenant_id,
+            workflow_id=workflow.info().run_id,
+            stage=stage,
+            job_ids=tuple(str(job_id) for job_id in _selected_job_ids(payload)),
             expected_app_dir=payload.expected_app_dir,
             expected_db_path=payload.expected_db_path,
         ),
@@ -315,7 +360,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 workflow_id=workflow_id,
                 workflow_run_id=workflow_run_id,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_activity_timeout(payload),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_ENRICH_RETRY,
         )
@@ -335,7 +380,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 llm_model=payload.llm_model,
                 workflow_id=activity_owner,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_activity_timeout(payload),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_SCORE_RETRY,
         )
@@ -362,7 +407,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 llm_model=payload.llm_model,
                 workflow_id=activity_owner,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_activity_timeout(payload),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_TAILOR_RETRY,
         )
@@ -375,13 +420,14 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 expected_db_path=payload.expected_db_path,
                 min_score=payload.min_score,
                 limit=payload.limit,
+                workers=payload.workers,
                 validation_mode=payload.validation_mode,
                 dry_run=payload.dry_run,
                 job_ids=_selected_job_ids(payload),
                 llm_model=payload.llm_model,
                 workflow_id=activity_owner,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_activity_timeout(payload),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_COVER_RETRY,
         )
@@ -416,6 +462,51 @@ async def _check_spend(payload: JobPipelineWorkflowInput) -> None:
         SpendBudgetInput(tenant_id=payload.tenant_id),
         start_to_close_timeout=timedelta(seconds=30),
         retry_policy=RetryPolicy(maximum_attempts=1),
+    )
+
+
+def _activity_timeout(payload: JobPipelineWorkflowInput) -> timedelta:
+    if len(_selected_job_ids(payload)) <= 1:
+        return _DEFAULT_TIMEOUT
+    if not workflow.patched(_SELECTED_BATCH_TIMEOUT_PATCH):
+        return _DEFAULT_TIMEOUT
+    return _selected_batch_timeout(payload)
+
+
+def _selected_batch_timeout(payload: JobPipelineWorkflowInput) -> timedelta:
+    """Scale selected batch deadlines by bounded worker waves."""
+
+    selected_count = len(_selected_job_ids(payload))
+    if selected_count <= 1:
+        return _DEFAULT_TIMEOUT
+    worker_count = max(1, int(payload.workers or 1))
+    waves = (selected_count + worker_count - 1) // worker_count
+    return min(_MAX_SELECTED_BATCH_TIMEOUT, _DEFAULT_TIMEOUT * waves)
+
+
+async def _cancel_owned_enrichment(payload: JobPipelineWorkflowInput) -> None:
+    """Durably close the exact Enrich cohort before a canceled workflow exits."""
+
+    if "enrich" not in payload.stages:
+        return
+    info = workflow.info()
+    await workflow.execute_activity(
+        cancel_enrichment_cohort_activity,
+        CancelEnrichmentCohortInput(
+            tenant_id=payload.tenant_id,
+            workflow_id=info.workflow_id,
+            workflow_run_id=info.run_id,
+            job_ids=_selected_job_ids(payload),
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        ),
+        start_to_close_timeout=timedelta(seconds=30),
+        retry_policy=RetryPolicy(
+            initial_interval=timedelta(seconds=1),
+            maximum_interval=timedelta(seconds=10),
+            maximum_attempts=5,
+        ),
+        cancellation_type=workflow.ActivityCancellationType.ABANDON,
     )
 
 
@@ -469,10 +560,6 @@ def _selected_job_ids(payload: JobPipelineWorkflowInput) -> tuple[JobId, ...]:
     return ()
 
 
-def _has_selected_job_scope(payload: JobPipelineWorkflowInput) -> bool:
-    return payload.job_id is not None or bool(payload.job_ids)
-
-
 def _apply_child_job_id(payload: JobPipelineWorkflowInput) -> JobId | None:
     """Validate the preserved selector shape before starting an Apply child."""
 
@@ -502,6 +589,26 @@ def _approved_tailor_job_ids(result: Any) -> tuple[JobId, ...] | None:
         if "approvedJobIds" not in stage_result:
             return None
         raw_job_ids = stage_result.get("approvedJobIds")
+        if not isinstance(raw_job_ids, list):
+            return ()
+        return _canonical_job_ids(tuple(canonical_job_id(str(job_id)) for job_id in raw_job_ids))
+    return None
+
+
+def _enriched_job_ids(result: Any) -> tuple[JobId, ...] | None:
+    """Read the canonical downstream-eligible subset from Enrich output."""
+
+    stages = _result_value(result, "stages")
+    if not isinstance(stages, list):
+        return None
+    for stage_result in stages:
+        if not isinstance(stage_result, dict):
+            continue
+        if stage_result.get("stage") != "enrich":
+            continue
+        if "enrichedJobIds" not in stage_result:
+            return None
+        raw_job_ids = stage_result.get("enrichedJobIds")
         if not isinstance(raw_job_ids, list):
             return ()
         return _canonical_job_ids(tuple(canonical_job_id(str(job_id)) for job_id in raw_job_ids))

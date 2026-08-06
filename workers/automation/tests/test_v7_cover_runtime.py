@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import threading
 from pathlib import Path
 
 import pytest
@@ -83,6 +85,16 @@ class _FailingCoverLlm:
     def chat(self, *_args, **_kwargs) -> str:
         self.calls += 1
         raise RuntimeError("LLM outage")
+
+
+class _CancelingCoverLlm(_CoverLlm):
+    def __init__(self, cancel_event: threading.Event) -> None:
+        super().__init__()
+        self._cancel_event = cancel_event
+
+    def chat(self, *_args, **_kwargs) -> str:
+        self._cancel_event.set()
+        return super().chat(*_args, **_kwargs)
 
 
 @pytest.fixture()
@@ -278,6 +290,55 @@ def test_cover_by_id_persists_artifacts_and_isolates_same_job_id_across_tenants(
         "SELECT tenant_id, job_id FROM job_events WHERE event_type = 'StageCompleted' AND stage = 'cover'"
     ).fetchone()
     assert tuple(event) == (str(_TENANT_A), str(_JOB_ID))
+
+
+def test_cover_default_runner_fences_cancellation_before_artifact_or_terminal_write(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    """The production runner's default repository shares the guarded UOW."""
+
+    _seed_target(conn, tenant_id=_TENANT_A)
+    _seed_eligible_score(conn, tenant_id=_TENANT_A)
+    _seed_approved_resume(conn, tmp_path, tenant_id=_TENANT_A)
+    cancel_event = threading.Event()
+    llm = _CancelingCoverLlm(cancel_event)
+
+    with pytest.raises(RuntimeError, match="cover activity canceled before persistence"):
+        cover_letter_module.cover_letter_by_id(
+            _JOB_ID,
+            tenant_id=_TENANT_A,
+            snapshot=_snapshot(_TENANT_A),
+            llm_port=llm,
+            pdf_renderer=_PdfRenderer(),
+            workflow_id="workflow-run-canceled",
+            cancel_event=cancel_event,
+        )
+
+    assert llm.calls == 1
+    materials = SqliteMaterialsRepository(conn).load_current_approved(
+        _TENANT_A,
+        _JOB_ID,
+    )
+    assert materials is not None
+    assert materials.cover_letter is None
+    assert materials.cover_letter_pdf is None
+    state = conn.execute(
+        "SELECT state, attempt_count, metadata_json FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert state["state"] == "running"
+    assert state["attempt_count"] == 0
+    assert json.loads(state["metadata_json"])["activityOwner"] == (
+        "workflow-run-canceled"
+    )
+    terminal_events = conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'cover' AND event_type IN ('StageCompleted', 'StageFailed')",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()[0]
+    assert terminal_events == 0
 
 
 def test_cover_job_replay_closes_running_state_from_committed_approved_artifact(

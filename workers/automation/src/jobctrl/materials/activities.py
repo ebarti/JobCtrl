@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 from temporalio import activity
 
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
-from jobctrl.domain.errors import JobCtrlError, LlmTransientError, to_application_error
+from jobctrl.domain.errors import (
+    AttemptBudgetExhaustedError,
+    JobCtrlError,
+    LlmTransientError,
+    to_application_error,
+)
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.infrastructure.temporal.pipeline_step_lifecycle import (
     PipelineStepScope,
@@ -261,10 +267,9 @@ def _run_selected_tailoring(
     skipped = 0
     failed = 0
     errors: dict[str, str] = {}
-    for job_id in job_ids:
-        if cancel_event is not None and cancel_event.is_set():
-            raise LlmTransientError("tailor activity canceled")
-        result = tailor_job_by_id(
+
+    def run_one(job_id: JobId) -> dict[str, Any]:
+        return tailor_job_by_id(
             job_id,
             min_score=payload.min_score,
             validation_mode=payload.validation_mode,
@@ -278,7 +283,16 @@ def _run_selected_tailoring(
             tailor_judge_model=payload.tailor_judge_model,
             tailor_judge_min_score=payload.tailor_judge_min_score,
             workflow_id=payload.workflow_id,
+            cancel_event=cancel_event,
         )
+
+    for job_id, result in _run_selected_material_jobs(
+        job_ids,
+        workers=payload.workers,
+        cancel_event=cancel_event,
+        stage="tailor",
+        run_one=run_one,
+    ):
         status = str(result.get("status") or "error")
         if status in {"approved", "already_done"}:
             approved += 1
@@ -290,11 +304,14 @@ def _run_selected_tailoring(
             errors[str(job_id)] = str(result.get("error") or f"Tailoring ended with status {status}")
 
     elapsed = time.time() - t0
-    status = "failed" if errors else "ok"
+    status = "partial" if errors else "ok"
     return {
         "status": status,
         "elapsed": elapsed,
-        "errors": errors,
+        # Per-job failures are terminal item outcomes, not a systemic activity
+        # failure. Keep them on the stage detail so approved jobs can continue
+        # to Cover without retrying or hiding the failed rows.
+        "errors": {},
         "stages": [
             {
                 "stage": "tailor",
@@ -306,6 +323,7 @@ def _run_selected_tailoring(
                 "approvedJobIds": approved_job_ids,
                 "skipped": skipped,
                 "failed": failed,
+                "itemErrors": errors,
             }
         ],
     }
@@ -334,14 +352,20 @@ async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActiv
             workflow_id=owned_payload.workflow_id or "",
             stage="tailor",
         )
+    cancel_event = threading.Event()
     try:
         result = await run_blocking_with_heartbeat(
-            lambda: _tailor_one_job(owned_payload),
+            lambda: _tailor_one_job(owned_payload, cancel_event=cancel_event),
             starting_message="tailor-job starting",
             progress_message="tailor-job still running",
+            on_cancel=cancel_event.set,
             activity_name="tailor_job",
         )
         status = str(result.get("status") or "error")
+        if status == "exhausted":
+            raise AttemptBudgetExhaustedError(
+                str(result.get("error") or "Tailor durable attempt budget exhausted")
+            )
         if status not in {"approved", "skipped", "not_eligible", "already_done"}:
             raise LlmTransientError(str(result.get("error") or f"Tailoring ended with status {status}"))
         materials = result.get("materials")
@@ -358,7 +382,11 @@ async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActiv
         raise to_application_error(exc) from exc
 
 
-def _tailor_one_job(payload: TailorJobActivityInput) -> dict[str, Any]:
+def _tailor_one_job(
+    payload: TailorJobActivityInput,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.tailor import tailor_job_by_id
 
@@ -376,6 +404,7 @@ def _tailor_one_job(payload: TailorJobActivityInput) -> dict[str, Any]:
         tailor_judge_model=payload.tailor_judge_model,
         tailor_judge_min_score=payload.tailor_judge_min_score,
         workflow_id=payload.workflow_id,
+        cancel_event=cancel_event,
     )
 
 
@@ -393,6 +422,7 @@ class CoverActivityInput:
     expected_db_path: str | None = None
     min_score: int = 7
     limit: int = 0
+    workers: int = 1
     validation_mode: str = "normal"
     dry_run: bool = False
     job_ids: tuple[JobId, ...] = ()
@@ -588,17 +618,25 @@ def _run_selected_cover(
     failed = 0
     errors: dict[str, str] = {}
     results: list[dict[str, Any]] = []
-    for job_id in job_ids:
-        if cancel_event is not None and cancel_event.is_set():
-            raise LlmTransientError("cover activity canceled")
-        result = cover_letter_by_id(
+
+    def run_one(job_id: JobId) -> dict[str, Any]:
+        return cover_letter_by_id(
             job_id,
             min_score=payload.min_score,
             validation_mode=payload.validation_mode,
             llm_model=payload.llm_model,
             tenant_id=TenantId(payload.tenant_id),
             workflow_id=payload.workflow_id,
+            cancel_event=cancel_event,
         )
+
+    for job_id, result in _run_selected_material_jobs(
+        job_ids,
+        workers=payload.workers,
+        cancel_event=cancel_event,
+        stage="cover",
+        run_one=run_one,
+    ):
         results.append(result)
         result_status = str(result.get("status") or "error")
         if result_status in {"ok", "already_done"}:
@@ -609,11 +647,11 @@ def _run_selected_cover(
             failed += 1
             errors[str(job_id)] = str(result.get("error") or f"Cover ended with status {result_status}")
     elapsed = time.time() - t0
-    status = "failed" if errors else "ok"
+    status = "partial" if errors else "ok"
     return {
         "status": status,
         "elapsed": elapsed,
-        "errors": errors,
+        "errors": {},
         "stages": [
             {
                 "stage": "cover",
@@ -623,10 +661,79 @@ def _run_selected_cover(
                 "generated": generated,
                 "skipped": skipped,
                 "failed": failed,
+                "itemErrors": errors,
                 "results": results,
             }
         ],
     }
+
+
+def _run_selected_material_jobs(
+    job_ids: tuple[JobId, ...],
+    *,
+    workers: int,
+    cancel_event: threading.Event | None,
+    stage: str,
+    run_one: Callable[[JobId], dict[str, Any]],
+) -> list[tuple[JobId, dict[str, Any]]]:
+    """Run selected material jobs with bounded, deterministic fan-out."""
+
+    if not job_ids:
+        return []
+    worker_count = min(max(1, int(workers or 1)), len(job_ids))
+
+    def ensure_active() -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise LlmTransientError(f"{stage} activity canceled")
+
+    if worker_count == 1:
+        results: list[tuple[JobId, dict[str, Any]]] = []
+        for job_id in job_ids:
+            ensure_active()
+            results.append((job_id, run_one(job_id)))
+        return results
+
+    ensure_active()
+    executor = ThreadPoolExecutor(
+        max_workers=worker_count,
+        thread_name_prefix=f"selected-{stage}",
+    )
+    in_flight: dict[Future[dict[str, Any]], JobId] = {}
+    completed: dict[JobId, dict[str, Any]] = {}
+    next_index = 0
+
+    def fill_worker_slots() -> None:
+        nonlocal next_index
+        while next_index < len(job_ids) and len(in_flight) < worker_count:
+            ensure_active()
+            job_id = job_ids[next_index]
+            next_index += 1
+            in_flight[executor.submit(run_one, job_id)] = job_id
+
+    try:
+        fill_worker_slots()
+        while in_flight:
+            ensure_active()
+            done, _pending = wait(
+                tuple(in_flight),
+                timeout=0.1,
+                return_when=FIRST_COMPLETED,
+            )
+            for future in done:
+                job_id = in_flight.pop(future)
+                completed[job_id] = future.result()
+            fill_worker_slots()
+        return [(job_id, completed[job_id]) for job_id in job_ids]
+    finally:
+        canceled = cancel_event is not None and cancel_event.is_set()
+        if canceled:
+            for future in in_flight:
+                future.cancel()
+        # A cooperative cancellation must release the parent activity thread
+        # promptly. Already-running calls may finish in the background, but
+        # their per-item commit guard observes the same token and durable owner
+        # row before any artifact or terminal-state write.
+        executor.shutdown(wait=not canceled, cancel_futures=True)
 
 
 _SUCCESS_STATUSES = {"ok", "partial", "skipped", "already_done"}
@@ -652,11 +759,13 @@ async def cover_letter_activity(payload: CoverLetterActivityInput) -> CoverLette
             workflow_id=owned_payload.workflow_id or "",
             stage="cover",
         )
+    cancel_event = threading.Event()
     try:
         result = await run_blocking_with_heartbeat(
-            lambda: _cover_one_job(owned_payload),
+            lambda: _cover_one_job(owned_payload, cancel_event=cancel_event),
             starting_message="cover-letter starting",
             progress_message="cover-letter still running",
+            on_cancel=cancel_event.set,
             activity_name="cover_letter",
         )
         status = str(result.get("status") or "error")
@@ -674,7 +783,11 @@ async def cover_letter_activity(payload: CoverLetterActivityInput) -> CoverLette
         raise to_application_error(exc) from exc
 
 
-def _cover_one_job(payload: CoverLetterActivityInput) -> dict[str, Any]:
+def _cover_one_job(
+    payload: CoverLetterActivityInput,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.cover_letter import cover_letter_by_id
 
@@ -685,6 +798,7 @@ def _cover_one_job(payload: CoverLetterActivityInput) -> dict[str, Any]:
         llm_model=payload.llm_model,
         tenant_id=TenantId(payload.tenant_id),
         workflow_id=payload.workflow_id,
+        cancel_event=cancel_event,
     )
 
 

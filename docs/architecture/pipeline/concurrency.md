@@ -17,7 +17,10 @@ flowchart LR
     CLI -->|"start workflows"| TQ --> W
     subgraph W2["Worker capacity"]
         SLOTS@{ icon: "tabler:layout-grid", form: "rounded", label: "Activity slots<br/>default 4", h: 64 }
-        EXEC@{ icon: "tabler:cpu", form: "rounded", label: "Thread pool<br/>slots + 2", h: 64 }
+        SYNC@{ icon: "tabler:cpu", form: "rounded", label: "Temporal sync pool<br/>slots + 2", h: 64 }
+        BLOCK@{ icon: "tabler:refresh", form: "rounded", label: "Blocking-stage pool<br/>slots + 2 · rotating", h: 64 }
+        SLOTS --- SYNC
+        SLOTS --- BLOCK
     end
     D@{ icon: "tabler:radar", form: "rounded", label: "Discover workflow<br/>per-source family", h: 64 }
     P@{ icon: "tabler:git-merge", form: "rounded", label: "Job pipeline<br/>ordered stages", h: 64 }
@@ -29,7 +32,7 @@ flowchart LR
     W --> A
     BUDGET -.->|"blocks over-budget starts"| D & P & A
 
-    class CLI,W,SLOTS,EXEC,D,P,A,BUDGET py
+    class CLI,W,SLOTS,SYNC,BLOCK,D,P,A,BUDGET py
     class TQ infra
 ```
 
@@ -45,11 +48,15 @@ worker startup in
 - **Activity slots** — the `worker_activity_slots` Setting in `config.json`
   (default `4`): the maximum number of Temporal activities running at once,
   across all workflows.
-- **Executor threads** — a worker-owned `ThreadPoolExecutor` sized
-  `slots + 2`, so blocking stage work never spills into the process default
-  executor.
+- **Executor threads** — separate worker-owned Temporal-sync and blocking-stage
+  `ThreadPoolExecutor` pools, each sized `slots + 2`, so blocking stage work
+  never spills into the process default executor or starves Temporal's own
+  synchronous activities. Cancellation retires the affected blocking pool
+  generation before its grace wait, so a fresh bounded generation accepts an
+  immediate retry even when the old provider call ignores cancellation.
 
-The worker heartbeat records both values. `GET /v1/health` exposes the health
+The worker heartbeat records the activity slots and configured executor width.
+`GET /v1/health` exposes the health
 boundary, while `GET /v1/pipeline/operations` derives the app directory from
 its configured database path, filters heartbeats to that resolved
 database/app-dir identity, selects the task queue named by the newest matching
@@ -145,7 +152,7 @@ Two knobs that look like Temporal concurrency but are not:
 
 | Bound | Mechanism | Where |
 | --- | --- | --- |
-| Activity slots | Settings `worker_activity_slots`, executor `slots + 2` | `config.json`, `infrastructure/temporal/worker.py` |
+| Activity slots and executor pools | Settings `worker_activity_slots`; Temporal-sync and blocking-stage executors each `slots + 2`; canceled blocking generations retire before grace | `config.json`, `infrastructure/temporal/worker.py`, `infrastructure/temporal/run_in_activity.py` |
 | Parallel discovery families | Discovery Runtime `max_parallel_families` (default `1`) | SQLite, `infrastructure/temporal/concurrency.py`, `discovery/workflow.py` |
 | LLM spend | `check_spend_budget` preflight stops spendful workflows at the daily ceiling | [Spend Ceiling](operations.md#spend-ceiling) |
 | Retries | per-activity retry policies from the error taxonomy | [Envelope & Activities](envelope.md) |

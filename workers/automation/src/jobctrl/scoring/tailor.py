@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -67,7 +68,10 @@ from jobctrl.infrastructure.materials import (
     SqliteUnitOfWork,
 )
 from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
-from jobctrl.infrastructure.preparation_recovery import stage_completed_by_activity_owner
+from jobctrl.infrastructure.preparation_recovery import (
+    assert_material_activity_commit_allowed,
+    stage_completed_by_activity_owner,
+)
 from jobctrl.infrastructure.scoring import (
     SqliteRequirementFitReportRepository,
     SqliteScoreRepository,
@@ -84,7 +88,7 @@ from jobctrl.state import (
 
 log = logging.getLogger(__name__)
 
-MAX_ATTEMPTS = 5  # max cross-run retries before giving up
+MAX_ATTEMPTS = config.DEFAULTS["max_tailor_attempts"]  # durable executions
 
 
 def _split_model_specs(value: str | None) -> tuple[str, ...]:
@@ -172,7 +176,10 @@ def _build_use_case(
     if repository is None:
         repository = SqliteMaterialsRepository(conn, unit_of_work=unit_of_work)
     if policy_repository is None:
-        policy_repository = SqliteTailoringPolicyRepository(conn)
+        policy_repository = SqliteTailoringPolicyRepository(
+            conn,
+            unit_of_work=unit_of_work,
+        )
     if provenance_repository is None:
         provenance_repository = SqliteBulletProvenanceRepository(conn, unit_of_work=unit_of_work)
     if requirement_fit_repository is None:
@@ -351,6 +358,9 @@ def _tailor_one_job(
     suppress_existing_artifacts: bool = False,
     tenant_id: TenantId = LOCAL_TENANT,
     llm_policy: TailoringLlmPolicy | None = None,
+    commit_guard=None,
+    audit_execution_id: str | None = None,
+    durable_attempt: int | None = None,
 ) -> dict:
     """Tailor one job and return the legacy-shaped result dict.
 
@@ -382,9 +392,13 @@ def _tailor_one_job(
         retailor=retailor,
         suppress_existing_artifacts=suppress_existing_artifacts,
         requirement_fit_report=requirement_fit_report,
+        commit_guard=commit_guard,
+        audit_execution_id=audit_execution_id,
+        durable_attempt=durable_attempt,
     )
 
     return {
+        "job_id": str(canonical_job_id(str(job["job_id"]))),
         "url": job["url"],
         "path": outcome.text_path,
         "pdf_path": outcome.pdf_path,
@@ -392,6 +406,7 @@ def _tailor_one_job(
         "site": job.get("site"),
         "status": outcome.status,
         "attempts": outcome.attempts,
+        "report": getattr(outcome, "report", {}),
         "materials": outcome.materials,
         "error": outcome.error,
     }
@@ -491,6 +506,11 @@ def run_tailoring(
         limit=limit,
         retailor=retailor,
     )
+    jobs = [
+        job
+        for job in jobs
+        if str(job.get("tenant_id") or tenant_id) == str(tenant_id)
+    ]
     if workflow_id:
         jobs = [
             job
@@ -538,11 +558,26 @@ def run_tailoring(
     )
 
     started_ats: dict[str, str] = {}
+    stage_attempts: dict[str, int] = {}
     activity_metadata: dict[str, dict[str, object]] = {}
     for job in jobs:
-        ensure_job_stage_rows(conn, job["url"], discovered_at=job.get("discovered_at"))
+        stable_job_id = canonical_job_id(str(job["job_id"]))
+        stage_key = str(stable_job_id)
+        ensure_job_stage_rows(
+            conn,
+            stable_job_id,
+            tenant_id=tenant_id,
+            discovered_at=job.get("discovered_at"),
+        )
         started_at = utc_now()
-        started_ats[job["url"]] = started_at
+        started_ats[stage_key] = started_at
+        prior_attempts = _tailor_attempt_count(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+        )
+        current_attempt = prior_attempts + 1
+        stage_attempts[stage_key] = current_attempt
         # The runner owns the restart policy: a job that failed last time is
         # eligible for retailoring per ``get_jobs_by_stage``, so the
         # transition Failed -> Running needs to be permitted even though
@@ -551,21 +586,32 @@ def run_tailoring(
         metadata = _tailor_activity_metadata(
             repository,
             tenant_id=tenant_id,
-            job_id=canonical_job_id(str(job["job_id"])),
+            job_id=stable_job_id,
             workflow_id=workflow_id,
             retailor=retailor,
         )
-        activity_metadata[job["url"]] = metadata or {}
+        activity_metadata[stage_key] = metadata or {}
         set_stage_state(
             conn,
-            job["url"],
+            stable_job_id,
             "tailor",
             "running",
+            tenant_id=tenant_id,
+            # Running exposes the completed durable count. Normal completion
+            # or owner recovery advances this execution exactly once.
+            attempt_count=prior_attempts,
             started_at=started_at,
             metadata=metadata,
             validate_transition=False,
         )
-        record_job_event(conn, job["url"], "tailor", "StageStarted", message="Tailoring started")
+        record_job_event(
+            conn,
+            stable_job_id,
+            "tailor",
+            "StageStarted",
+            tenant_id=tenant_id,
+            message="Tailoring started",
+        )
 
     future_to_job: dict = {}
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
@@ -585,6 +631,10 @@ def run_tailoring(
                 retailor=retailor,
                 tenant_id=tenant_id,
                 llm_policy=llm_policy,
+                audit_execution_id=workflow_id,
+                durable_attempt=stage_attempts[
+                    str(canonical_job_id(str(job["job_id"])))
+                ],
             )
             future_to_job[future] = job
 
@@ -594,6 +644,7 @@ def run_tailoring(
                 result = future.result()
             except Exception as e:
                 result = {
+                    "job_id": str(canonical_job_id(str(job["job_id"]))),
                     "url": job["url"],
                     "title": job["title"],
                     "site": job.get("site"),
@@ -605,6 +656,7 @@ def run_tailoring(
                 }
                 log.error("%d/%d [ERROR] %s -- %s", completed, len(jobs), job["title"][:40], e)
 
+            result.setdefault("job_id", str(canonical_job_id(str(job["job_id"]))))
             results.append(result)
             stats[result.get("status", "error")] = stats.get(result.get("status", "error"), 0) + 1
 
@@ -627,58 +679,78 @@ def run_tailoring(
     # those columns are read-only fallbacks now.
     finished_at = utc_now()
     _success_statuses = {"approved"}
+    durable_exhausted = 0
     for r in results:
+        stable_job_id = canonical_job_id(str(r["job_id"]))
+        stage_key = str(stable_job_id)
         url = r["url"]
-        attempts = r.get("attempts") or 1
+        current_attempt = stage_attempts[stage_key]
+        generation_attempts = r.get("attempts") or 1
         if r.get("status") in _success_statuses:
             set_stage_state(
                 conn,
-                url,
+                stable_job_id,
                 "tailor",
                 "succeeded",
-                attempt_count=attempts,
-                started_at=started_ats.get(url),
+                tenant_id=tenant_id,
+                attempt_count=current_attempt,
+                started_at=started_ats.get(stage_key),
                 finished_at=finished_at,
-                metadata=activity_metadata.get(url) or None,
+                metadata=activity_metadata.get(stage_key) or None,
             )
             record_job_event(
                 conn,
-                url,
+                stable_job_id,
                 "tailor",
                 "StageCompleted",
+                tenant_id=tenant_id,
                 message=f"Tailoring {r.get('status')}",
-                payload={"attempts": attempts},
+                payload={
+                    "attempts": current_attempt,
+                    "generationAttempts": generation_attempts,
+                },
             )
-            _mark_cover_pending_after_tailor_success(
+            _mark_cover_pending_after_tailor_success_by_id(
                 conn,
-                url,
+                stable_job_id,
+                tenant_id=tenant_id,
                 reason="tailor_stage_completed",
             )
         else:
-            exhausted = attempts >= config.DEFAULTS["max_tailor_attempts"] or r.get("status") == "exhausted_retries"
+            exhausted = current_attempt >= MAX_ATTEMPTS
+            durable_exhausted += int(exhausted)
             set_stage_state(
                 conn,
-                url,
+                stable_job_id,
                 "tailor",
                 "exhausted" if exhausted else "failed",
-                attempt_count=attempts,
-                max_attempts=config.DEFAULTS["max_tailor_attempts"],
-                started_at=started_ats.get(url),
+                tenant_id=tenant_id,
+                attempt_count=current_attempt,
+                max_attempts=MAX_ATTEMPTS,
+                started_at=started_ats.get(stage_key),
                 finished_at=finished_at,
                 error_code=str(r.get("status", "error")).upper(),
                 error_message=f"Tailoring ended with status {r.get('status', 'error')}",
-                retryable=True,
+                retryable=not exhausted,
                 next_action=(
                     f"jobctrl retry tailor {url} --reset-attempts" if exhausted else f"jobctrl retry tailor {url}"
                 ),
+                validate_transition=False,
             )
             record_job_event(
                 conn,
-                url,
+                stable_job_id,
                 "tailor",
-                "StageFailed",
+                "StageExhausted" if exhausted else "StageFailed",
+                tenant_id=tenant_id,
                 level="error",
                 message=f"Tailoring ended with status {r.get('status', 'error')}",
+                payload={
+                    "attempts": current_attempt,
+                    "generationAttempts": generation_attempts,
+                    "generationStatus": str(r.get("status") or "error"),
+                    "retryable": not exhausted,
+                },
             )
     conn.commit()
 
@@ -692,10 +764,17 @@ def run_tailoring(
         stats.get("error", 0),
     )
 
+    errors = stats.get("error", 0)
+    failed = sum(
+        count
+        for status, count in stats.items()
+        if status not in {"approved", "error"}
+    )
     return {
         "approved": stats.get("approved", 0),
-        "failed": stats.get("failed_validation", 0) + stats.get("failed_judge", 0),
-        "errors": stats.get("error", 0),
+        "failed": failed,
+        "errors": errors,
+        "exhausted": durable_exhausted,
         "elapsed": elapsed,
     }
 
@@ -762,6 +841,7 @@ def tailor_job_by_id(
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
     workflow_id: str | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Tailor one active, eligible JobId for its tenant-scoped preparation step.
 
@@ -812,6 +892,19 @@ def tailor_job_by_id(
             "status": "already_done",
             "reason": "approved_resume_already_committed",
             "materials": existing_materials,
+        }
+
+    if _tailor_attempt_budget_exhausted(
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+    ):
+        return {
+            "url": target["url"],
+            "job_id": str(stable_job_id),
+            "status": "exhausted",
+            "reason": "durable_attempt_budget_exhausted",
+            "error": "Tailor durable attempt budget exhausted.",
         }
 
     job = _load_tailor_eligible_job_by_id(
@@ -877,6 +970,12 @@ def tailor_job_by_id(
         discovered_at=job.get("discovered_at"),
     )
     started_at = utc_now()
+    prior_attempts = _tailor_attempt_count(
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+    )
+    current_attempt = prior_attempts + 1
     metadata = _tailor_activity_metadata(
         SqliteMaterialsRepository(conn),
         tenant_id=tenant_id,
@@ -890,6 +989,9 @@ def tailor_job_by_id(
         "tailor",
         "running",
         tenant_id=tenant_id,
+        # Owner recovery increments an interrupted running row, so the start
+        # write must preserve the completed count instead of pre-incrementing.
+        attempt_count=prior_attempts,
         started_at=started_at,
         metadata=metadata,
         validate_transition=False,
@@ -904,82 +1006,184 @@ def tailor_job_by_id(
     )
     conn.commit()
 
-    result = _tailor_one_job(
-        job,
-        "",
-        snapshot,
-        validation_mode,
-        use_case=None,
-        pdf_renderer=pdf_renderer,
-        retailor=retailor,
-        suppress_existing_artifacts=suppress_existing_artifacts,
-        tenant_id=tenant_id,
-        llm_policy=llm_policy,
-    )
+    def commit_guard() -> None:
+        assert_material_activity_commit_allowed(
+            conn,
+            tenant_id=str(tenant_id),
+            job_id=str(stable_job_id),
+            stage="tailor",
+            workflow_id=workflow_id,
+            cancel_event=cancel_event,
+        )
+
+    try:
+        result = _tailor_one_job(
+            job,
+            "",
+            snapshot,
+            validation_mode,
+            use_case=None,
+            pdf_renderer=pdf_renderer,
+            retailor=retailor,
+            suppress_existing_artifacts=suppress_existing_artifacts,
+            tenant_id=tenant_id,
+            llm_policy=llm_policy,
+            commit_guard=commit_guard,
+            audit_execution_id=workflow_id,
+            durable_attempt=current_attempt,
+        )
+        commit_guard()
+    except Exception as exc:  # noqa: BLE001 - one item must terminalize its stage
+        # A cancellation/successor fence must escape this item runner. Turning
+        # it into an ordinary generation failure would let this stale owner
+        # overwrite the durable canceled/successor-owned row below.
+        commit_guard()
+        committed = _reconcile_existing_approved_resume(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+            retailor=retailor,
+            workflow_id=workflow_id,
+            commit_guard=commit_guard,
+        )
+        if committed is not None:
+            return {
+                "url": target["url"],
+                "job_id": str(stable_job_id),
+                "status": "already_done",
+                "reason": "approved_resume_committed_before_exception",
+                "materials": committed,
+            }
+        result = {
+            "url": target["url"],
+            "job_id": str(stable_job_id),
+            "status": "error",
+            "attempts": 1,
+            "error": str(exc),
+        }
     finished_at = utc_now()
-    attempts = result.get("attempts") or 1
-    if result.get("status") == "approved":
-        set_stage_state(
-            conn,
-            stable_job_id,
-            "tailor",
-            "succeeded",
-            tenant_id=tenant_id,
-            attempt_count=attempts,
-            started_at=started_at,
-            finished_at=finished_at,
-            metadata=metadata,
-        )
-        record_job_event(
-            conn,
-            stable_job_id,
-            "tailor",
-            "StageCompleted",
-            tenant_id=tenant_id,
-            message="Tailoring approved",
-            payload={"attempts": attempts},
-        )
-        _mark_cover_pending_after_tailor_success_by_id(
-            conn,
-            stable_job_id,
-            tenant_id=tenant_id,
-            reason="tailor_stage_completed",
-        )
-    else:
-        exhausted = attempts >= config.DEFAULTS["max_tailor_attempts"] or result.get("status") == "exhausted_retries"
-        set_stage_state(
-            conn,
-            stable_job_id,
-            "tailor",
-            "exhausted" if exhausted else "failed",
-            tenant_id=tenant_id,
-            attempt_count=attempts,
-            max_attempts=config.DEFAULTS["max_tailor_attempts"],
-            started_at=started_at,
-            finished_at=finished_at,
-            error_code=str(result.get("status", "error")).upper(),
-            error_message=f"Tailoring ended with status {result.get('status', 'error')}",
-            retryable=True,
-            next_action=(
-                (
+    generation_attempts = result.get("attempts") or 1
+    # The final owner check and stage transition share SQLite's write-lock
+    # boundary, so cancellation or a successor cannot slip between them.
+    durable_exhausted = False
+    with SqliteUnitOfWork(conn):
+        commit_guard()
+        if result.get("status") == "approved":
+            set_stage_state(
+                conn,
+                stable_job_id,
+                "tailor",
+                "succeeded",
+                tenant_id=tenant_id,
+                attempt_count=current_attempt,
+                started_at=started_at,
+                finished_at=finished_at,
+                metadata=metadata,
+            )
+            record_job_event(
+                conn,
+                stable_job_id,
+                "tailor",
+                "StageCompleted",
+                tenant_id=tenant_id,
+                message="Tailoring approved",
+                payload={
+                    "attempts": current_attempt,
+                    "generationAttempts": generation_attempts,
+                },
+            )
+            _mark_cover_pending_after_tailor_success_by_id(
+                conn,
+                stable_job_id,
+                tenant_id=tenant_id,
+                reason="tailor_stage_completed",
+            )
+        else:
+            exhausted = current_attempt >= MAX_ATTEMPTS
+            durable_exhausted = exhausted
+            set_stage_state(
+                conn,
+                stable_job_id,
+                "tailor",
+                "exhausted" if exhausted else "failed",
+                tenant_id=tenant_id,
+                attempt_count=current_attempt,
+                max_attempts=MAX_ATTEMPTS,
+                started_at=started_at,
+                finished_at=finished_at,
+                error_code=str(result.get("status", "error")).upper(),
+                error_message=f"Tailoring ended with status {result.get('status', 'error')}",
+                retryable=not exhausted,
+                next_action=(
                     f"jobctrl retry tailor {job['url']} --reset-attempts"
                     if exhausted
                     else f"jobctrl retry tailor {job['url']}"
-                )
-            ),
-            validate_transition=False,
-        )
-        record_job_event(
-            conn,
-            stable_job_id,
-            "tailor",
-            "StageFailed",
-            tenant_id=tenant_id,
-            level="error",
-            message=f"Tailoring ended with status {result.get('status', 'error')}",
-        )
-    conn.commit()
+                ),
+                validate_transition=False,
+            )
+            record_job_event(
+                conn,
+                stable_job_id,
+                "tailor",
+                "StageExhausted" if exhausted else "StageFailed",
+                tenant_id=tenant_id,
+                level="error",
+                message=f"Tailoring ended with status {result.get('status', 'error')}",
+                payload={
+                    "attempts": current_attempt,
+                    "generationAttempts": generation_attempts,
+                    "generationStatus": str(result.get("status") or "error"),
+                    "retryable": not exhausted,
+                },
+            )
+    if durable_exhausted:
+        return {
+            **result,
+            "status": "exhausted",
+            "reason": "durable_attempt_budget_exhausted",
+            "inner_status": str(result.get("status") or "error"),
+        }
     return result
+
+
+def _tailor_attempt_count(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> int:
+    """Return durable Tailor executions, separate from inner LLM attempts."""
+    row = conn.execute(
+        """
+        SELECT attempt_count
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (str(tenant_id), str(canonical_job_id(str(job_id)))),
+    ).fetchone()
+    if row is None:
+        return 0
+    return int(row["attempt_count"] if hasattr(row, "keys") else row[0] or 0)
+
+
+def _tailor_attempt_budget_exhausted(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT state, attempt_count, max_attempts
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (str(tenant_id), str(canonical_job_id(str(job_id)))),
+    ).fetchone()
+    if row is None:
+        return False
+    max_attempts = int(row["max_attempts"] or MAX_ATTEMPTS)
+    return str(row["state"]) == "exhausted" or int(row["attempt_count"] or 0) >= max_attempts
 
 
 def _tailor_activity_metadata(
@@ -995,6 +1199,7 @@ def _tailor_activity_metadata(
     current = repository.load_current_approved(tenant_id, job_id)
     return {
         "activityOwner": workflow_id,
+        "attemptCountBasis": "completed",
         "retailor": retailor,
         "priorApprovedGeneration": int(current.generation) if current is not None else 0,
     }
@@ -1007,6 +1212,7 @@ def _reconcile_existing_approved_resume(
     job_id: JobId,
     retailor: bool,
     workflow_id: str | None,
+    commit_guard=None,
 ):
     """Treat the committed resume as authoritative after activity replay."""
     materials = SqliteMaterialsRepository(conn).load_current_approved(
@@ -1044,26 +1250,28 @@ def _reconcile_existing_approved_resume(
     if retailor and not (completed_by_owner or committed_retailor):
         return None
     if row is None or str(row["state"]) != "succeeded":
-        set_stage_state(
-            conn,
-            job_id,
-            "tailor",
-            "succeeded",
-            tenant_id=tenant_id,
-            finished_at=utc_now(),
-            metadata={"activityOwner": workflow_id} if workflow_id else None,
-            validate_transition=False,
-        )
-        record_job_event(
-            conn,
-            job_id,
-            "tailor",
-            "StageCompleted",
-            tenant_id=tenant_id,
-            message="Tailoring recovered from the committed approved resume.",
-            payload={"recoveredAfterActivityReplay": True},
-        )
-        conn.commit()
+        with SqliteUnitOfWork(conn):
+            if commit_guard is not None:
+                commit_guard()
+            set_stage_state(
+                conn,
+                job_id,
+                "tailor",
+                "succeeded",
+                tenant_id=tenant_id,
+                finished_at=utc_now(),
+                metadata={"activityOwner": workflow_id} if workflow_id else None,
+                validate_transition=False,
+            )
+            record_job_event(
+                conn,
+                job_id,
+                "tailor",
+                "StageCompleted",
+                tenant_id=tenant_id,
+                message="Tailoring recovered from the committed approved resume.",
+                payload={"recoveredAfterActivityReplay": True},
+            )
     return materials
 
 
@@ -1257,7 +1465,7 @@ def _load_tailor_eligible_job_by_id(
     if tailor_stage is not None:
         tailor_state = str(tailor_stage["state"])
         attempt_count = int(tailor_stage["attempt_count"] or 0)
-        if tailor_state == "exhausted" or attempt_count >= 5:
+        if tailor_state == "exhausted" or attempt_count >= MAX_ATTEMPTS:
             return None
         if not retailor and tailor_state not in {
             "pending",

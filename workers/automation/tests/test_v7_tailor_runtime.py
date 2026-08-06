@@ -4,13 +4,23 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
-from jobctrl.domain.tenant import TenantId
+from jobctrl.domain.materials.analysis import (
+    AnalysisAgreement,
+    EmployerAnalysis,
+    JobAnalysis,
+    ReasonedKeyword,
+    compute_snapshot_hash,
+)
+from jobctrl.domain.profile.aggregate import Profile
+from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
 from jobctrl.materials import activities as activities_module
 from jobctrl.materials.activities import TailorJobActivityInput
@@ -134,6 +144,128 @@ def _fake_approved_result(job: dict) -> dict:
     }
 
 
+def _snapshot(tenant_id: TenantId) -> ProfileSnapshot:
+    return ProfileSnapshot.from_profile(
+        Profile.from_dict(
+            tenant_id,
+            {
+                "personal": {"full_name": "Candidate"},
+                "resume": {
+                    "executive_profile": {
+                        "baseline_text": "Python platform engineer."
+                    },
+                    "experience_entries": [
+                        {
+                            "id": "platform",
+                            "title": "Platform Engineer",
+                            "company": "Previous Co",
+                            "bullets": ["Built Python platform services."],
+                        }
+                    ],
+                    "education_entries": [],
+                    "skill_categories": [
+                        {"id": "skills", "label": "Skills", "items": ["Python"]}
+                    ],
+                },
+            },
+        )
+    )
+
+
+class _FakeAnalyzeUseCase:
+    def execute(self, *, job: dict, tenant_id: TenantId, force: bool = False):
+        _ = force
+        analysis = JobAnalysis(
+            role_framing="Platform engineering.",
+            inferred_seniority="senior",
+            ideal_candidate_narrative="A Python platform engineer.",
+            requirements=[],
+            keywords=[ReasonedKeyword(keyword="Python", evidence_span="Python")],
+        )
+        return SimpleNamespace(
+            analysis=EmployerAnalysis.build(
+                tenant_id=tenant_id,
+                job_id=canonical_job_id(str(job["job_id"])),
+                generation=1,
+                snapshot_hash=compute_snapshot_hash(
+                    str(job.get("full_description") or "")
+                ),
+                canonical=analysis,
+                sub_analyses=(),
+                failures=(),
+                agreement=AnalysisAgreement(score=1.0),
+                legs_attempted=2,
+            )
+        )
+
+
+class _CancelingTailorLlm:
+    model = "test-model"
+
+    def __init__(self, cancel_event: threading.Event) -> None:
+        self._cancel_event = cancel_event
+        self.calls = 0
+
+    def chat(self, *_args, **_kwargs) -> str:
+        self.calls += 1
+        self._cancel_event.set()
+        return "{}"
+
+
+def test_tailor_default_runner_fences_cancellation_before_material_or_terminal_write(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production runner and default shared UOW retain the cancel fence."""
+
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/canceled-tailor")
+    cancel_event = threading.Event()
+    llm = _CancelingTailorLlm(cancel_event)
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "get_llm_adapter", lambda: llm)
+    monkeypatch.setattr(
+        tailor_module,
+        "_build_analyze_use_case",
+        lambda **_kwargs: _FakeAnalyzeUseCase(),
+    )
+    monkeypatch.setattr(tailor_module, "_build_voice_port", lambda: None)
+
+    with pytest.raises(RuntimeError, match="tailor activity canceled before persistence"):
+        tailor_module.tailor_job_by_id(
+            _JOB_ID,
+            tenant_id=_TENANT_A,
+            snapshot=_snapshot(_TENANT_A),
+            tailor_models=("codex:test-model",),
+            llm_model=None,
+            pdf_renderer=object(),
+            workflow_id="workflow-run-canceled",
+            cancel_event=cancel_event,
+        )
+
+    assert llm.calls == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM job_materials WHERE tenant_id = ? AND job_id = ?",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()[0] == 0
+    state = conn.execute(
+        "SELECT state, metadata_json FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert state["state"] == "running"
+    assert json.loads(state["metadata_json"])["activityOwner"] == (
+        "workflow-run-canceled"
+    )
+    terminal_events = conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'tailor' AND event_type IN ('StageCompleted', 'StageFailed')",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()[0]
+    assert terminal_events == 0
+
+
 def test_tailor_job_by_id_is_tenant_scoped_and_writes_canonical_state(
     conn: sqlite3.Connection,
     tmp_path: Path,
@@ -190,6 +322,45 @@ def test_tailor_job_by_id_is_tenant_scoped_and_writes_canonical_state(
         "job_id": str(_JOB_ID),
         "event_type": "StageCompleted",
     }
+
+
+def test_tailor_job_by_id_terminalizes_unhandled_item_exception(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/exception")
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(
+        tailor_module,
+        "_tailor_one_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("provider failed")),
+    )
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+        workflow_id="workflow-run-owned",
+    )
+
+    assert result["status"] == "error"
+    state = conn.execute(
+        "SELECT state, error_code, metadata_json FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert state["state"] == "failed"
+    assert state["error_code"] == "ERROR"
+    event = conn.execute(
+        "SELECT event_type FROM job_events WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'tailor' ORDER BY event_id DESC LIMIT 1",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert event["event_type"] == "StageFailed"
 
 
 def test_tailor_job_replay_closes_running_state_from_committed_approved_resume(
@@ -591,9 +762,19 @@ def test_tailor_job_by_id_allows_temporal_retry_to_reenter_generation(
     )
     conn.commit()
     calls: list[str] = []
+    running_attempt_counts: list[int] = []
 
     def fake_tailor(job: dict, *_args, **_kwargs) -> dict:
         calls.append(str(job["job_id"]))
+        running_attempt_counts.append(
+            int(
+                conn.execute(
+                    "SELECT attempt_count FROM job_stage_states "
+                    "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+                    (str(_TENANT_A), str(_JOB_ID)),
+                ).fetchone()[0]
+            )
+        )
         return _fake_approved_result(job)
 
     monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
@@ -610,6 +791,264 @@ def test_tailor_job_by_id_allows_temporal_retry_to_reenter_generation(
 
     assert result["status"] == "approved"
     assert calls == [str(_JOB_ID)]
+    assert running_attempt_counts == [1]
+    state = conn.execute(
+        """
+        SELECT state, attempt_count
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert tuple(state) == ("succeeded", 2)
+
+
+def test_tailor_job_by_id_keeps_inner_retry_exhaustion_outer_retryable(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/inner-retries")
+
+    def fake_tailor(job: dict, *_args, **_kwargs) -> dict:
+        return {
+            "url": job["url"],
+            "status": "exhausted_retries",
+            "attempts": 4,
+            "error": "No parseable candidate",
+        }
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", fake_tailor)
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+    )
+
+    assert result["status"] == "exhausted_retries"
+    state = conn.execute(
+        """
+        SELECT state, attempt_count, retryable, next_action
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert tuple(state) == (
+        "failed",
+        1,
+        1,
+        "jobctrl retry tailor https://example.com/inner-retries",
+    )
+    event_payload = json.loads(
+        conn.execute(
+            "SELECT payload_json FROM job_events "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor' "
+            "AND event_type = 'StageFailed' ORDER BY event_id DESC LIMIT 1",
+            (str(_TENANT_A), str(_JOB_ID)),
+        ).fetchone()[0]
+    )
+    assert {
+        key: event_payload[key]
+        for key in (
+            "attempts",
+            "generationAttempts",
+            "generationStatus",
+            "retryable",
+        )
+    } == {
+        "attempts": 1,
+        "generationAttempts": 4,
+        "generationStatus": "exhausted_retries",
+        "retryable": True,
+    }
+
+
+def test_tailor_job_by_id_marks_fifth_durable_failure_exhausted(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/outer-retries")
+    conn.execute(
+        """
+        UPDATE job_stage_states
+        SET state = 'failed', attempt_count = 4
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    )
+    conn.commit()
+
+    def fake_tailor(job: dict, *_args, **_kwargs) -> dict:
+        return {
+            "url": job["url"],
+            "status": "failed_validation",
+            "attempts": 4,
+            "error": "Candidate did not pass validation",
+        }
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", fake_tailor)
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+    )
+
+    assert result["status"] == "exhausted"
+    assert result["inner_status"] == "failed_validation"
+    assert result["reason"] == "durable_attempt_budget_exhausted"
+    state = conn.execute(
+        """
+        SELECT state, attempt_count, retryable, next_action
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert tuple(state) == (
+        "exhausted",
+        5,
+        0,
+        "jobctrl retry tailor https://example.com/outer-retries --reset-attempts",
+    )
+
+
+def test_tailor_job_by_id_does_not_reenter_generation_after_exhaustion(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/already-exhausted")
+    conn.execute(
+        "UPDATE job_stage_states SET state = 'exhausted', attempt_count = 5, retryable = 0 "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    )
+    conn.commit()
+    prior_events = conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()[0]
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(
+        tailor_module,
+        "_tailor_one_job",
+        lambda *_args, **_kwargs: pytest.fail("exhausted job re-entered generation"),
+    )
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+    )
+
+    assert result == {
+        "url": "https://example.com/already-exhausted",
+        "job_id": str(_JOB_ID),
+        "status": "exhausted",
+        "reason": "durable_attempt_budget_exhausted",
+        "error": "Tailor durable attempt budget exhausted.",
+    }
+    state = conn.execute(
+        "SELECT state, attempt_count, retryable FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert tuple(state) == ("exhausted", 5, 0)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()[0] == prior_events
+
+
+def test_legacy_tailor_batch_counts_all_failures_and_exhausts_durable_budget(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://example.com/legacy-batch-exhaustion"
+    job_id = _JOB_ID
+    _seed_job(conn, tenant_id=LOCAL_TENANT, job_id=job_id, url=url)
+    job = {
+        "tenant_id": str(LOCAL_TENANT),
+        "job_id": str(job_id),
+        "url": url,
+        "title": "Platform Engineer",
+        "site": None,
+        "discovered_at": "2026-07-31T12:00:00+00:00",
+    }
+
+    def fake_tailor(candidate: dict, *_args, **_kwargs) -> dict:
+        return {
+            "url": candidate["url"],
+            "title": candidate["title"],
+            "site": candidate.get("site"),
+            "status": "exhausted_retries",
+            "attempts": 4,
+            "error": "No parseable candidate",
+        }
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "get_jobs_by_stage", lambda **_kwargs: [job])
+    monkeypatch.setattr(
+        tailor_module.db_module,
+        "effective_tailoring_min_score",
+        lambda score: score,
+    )
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", fake_tailor)
+
+    first = tailor_module.run_tailoring(
+        snapshot=SimpleNamespace(),
+        tenant_id=LOCAL_TENANT,
+        llm_model=None,
+    )
+    assert first["failed"] == 1
+    assert first["errors"] == 0
+    assert first["exhausted"] == 0
+    assert tuple(
+        conn.execute(
+            "SELECT state, attempt_count, retryable FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()
+    ) == ("failed", 1, 1)
+
+    conn.execute(
+        "UPDATE job_stage_states SET state = 'failed', attempt_count = 4, retryable = 1 "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(LOCAL_TENANT), str(job_id)),
+    )
+    conn.commit()
+    fifth = tailor_module.run_tailoring(
+        snapshot=SimpleNamespace(),
+        tenant_id=LOCAL_TENANT,
+        llm_model=None,
+    )
+    assert fifth["failed"] == 1
+    assert fifth["errors"] == 0
+    assert fifth["exhausted"] == 1
+    assert tuple(
+        conn.execute(
+            "SELECT state, attempt_count, retryable FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()
+    ) == ("exhausted", 5, 0)
 
 
 def test_tailor_job_by_id_rejects_deleted_and_url_shaped_targets_before_generation(

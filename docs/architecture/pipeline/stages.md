@@ -479,8 +479,16 @@ workflow handle (`handle.cancel()` via the default canceler) — this is a Tempo
 cancellation, not an application signal. The cancel propagates through
 `run_blocking_with_heartbeat`'s `on_cancel` hook so the launcher stops
 cooperatively; the terminal state is recorded as `WorkflowCanceled` (by finalize
-on the cancel path, or by the reconciler). The post-hoc SQLite stage-canceled
-write is the API's `cancelJobAction`.
+on the cancel path, or by the reconciler). `WorkflowCancellationRequested`
+separately preserves who requested the cancel and through which boundary. Batch
+Enrich persists its exact selected cohort before navigation, marks every
+unfinished owned row `canceled`, and lets a restarted worker reconcile the same
+ownership if cooperative cleanup was interrupted. Its terminal cancellation
+lease supersedes every producer attempt, while conditional workflow/run metadata
+prevents an old cleanup from canceling or overwriting a successor's row. A
+trustworthy posting snapshot, quarantine resolution, Tailor release, and their
+audit events commit atomically. The post-hoc SQLite stage-canceled write is the
+API's `cancelJobAction`.
 
 ## Contact Research (supervised, off-pipeline)
 

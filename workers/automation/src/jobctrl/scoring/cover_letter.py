@@ -17,6 +17,7 @@ module is a thin adapter around :class:`GenerateCoverLetterUseCase`
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -46,6 +47,10 @@ from jobctrl.infrastructure.materials import (
     PlaywrightHtmlPdfAdapter,
     SqliteEmployerAnalysisRepository,
     SqliteMaterialsRepository,
+    SqliteUnitOfWork,
+)
+from jobctrl.infrastructure.preparation_recovery import (
+    assert_material_activity_commit_allowed,
 )
 from jobctrl.infrastructure.preparation.sqlite_repository import SqlitePreparationTargetReader
 from jobctrl.infrastructure.scoring import SqliteScoreRepository
@@ -76,9 +81,16 @@ def _build_use_case(
     publisher: EventPublisher | None = None,
     validator: ContentValidator | None = None,
     analysis_repository: EmployerAnalysisRepository | None = None,
+    unit_of_work: SqliteUnitOfWork | None = None,
 ) -> GenerateCoverLetterUseCase:
+    conn = get_connection()
+    shared_unit_of_work = unit_of_work or SqliteUnitOfWork(conn)
+    default_repository = repository is None
     if repository is None:
-        repository = SqliteMaterialsRepository(get_connection())
+        repository = SqliteMaterialsRepository(
+            conn,
+            unit_of_work=shared_unit_of_work,
+        )
     if llm_port is None:
         llm_port = (
             LlmAdapter(default_model=llm_model)
@@ -88,13 +100,18 @@ def _build_use_case(
     if validator is None:
         validator = ContentValidator()
     if analysis_repository is None:
-        analysis_repository = SqliteEmployerAnalysisRepository(get_connection())
+        analysis_repository = SqliteEmployerAnalysisRepository(conn)
     return GenerateCoverLetterUseCase(
         repository=repository,
         llm=llm_port,
         validator=validator,
         publisher=publisher,
         analysis_repository=analysis_repository,
+        unit_of_work=(
+            shared_unit_of_work
+            if default_repository or unit_of_work is not None
+            else None
+        ),
     )
 
 
@@ -173,6 +190,7 @@ def cover_letter_by_id(
     pdf_renderer: PdfRendererPort | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
     workflow_id: str | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Generate exactly one eligible cover letter by tenant-scoped JobId."""
     stable_job_id = canonical_job_id(str(job_id))
@@ -181,8 +199,13 @@ def cover_letter_by_id(
     if job is None:
         return _skipped_result(stable_job_id, reason="job_not_found")
 
+    material_unit_of_work: SqliteUnitOfWork | None = None
     if repository is None:
-        repository = SqliteMaterialsRepository(conn)
+        material_unit_of_work = SqliteUnitOfWork(conn)
+        repository = SqliteMaterialsRepository(
+            conn,
+            unit_of_work=material_unit_of_work,
+        )
     min_score = effective_tailoring_min_score(min_score)
 
     eligibility_reason = _cover_eligibility_reason(
@@ -236,6 +259,7 @@ def cover_letter_by_id(
         llm_port=llm_port,
         llm_model=llm_model,
         publisher=publisher,
+        unit_of_work=material_unit_of_work,
     )
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
@@ -260,9 +284,19 @@ def cover_letter_by_id(
         "cover",
         "running",
         tenant_id=tenant_id,
-        attempt_count=current_attempt,
+        # Owner recovery advances an interrupted execution. Preserve the
+        # completed count while running so timeout and normal completion each
+        # count this execution exactly once.
+        attempt_count=prior_attempts,
         started_at=started_at,
-        metadata={"activityOwner": workflow_id} if workflow_id else None,
+        metadata=(
+            {
+                "activityOwner": workflow_id,
+                "attemptCountBasis": "completed",
+            }
+            if workflow_id
+            else None
+        ),
         validate_transition=False,
     )
     record_job_event(
@@ -275,6 +309,16 @@ def cover_letter_by_id(
     )
     conn.commit()
 
+    def commit_guard() -> None:
+        assert_material_activity_commit_allowed(
+            conn,
+            tenant_id=str(tenant_id),
+            job_id=str(stable_job_id),
+            stage="cover",
+            workflow_id=workflow_id,
+            cancel_event=cancel_event,
+        )
+
     try:
         outcome = use_case.execute(
             job=job,
@@ -283,6 +327,7 @@ def cover_letter_by_id(
             validation_mode=validation_mode,
             tenant_id=tenant_id,
             job_id=stable_job_id,
+            commit_guard=commit_guard,
         )
     except Exception as exc:  # noqa: BLE001
         outcome = CoverLetterOutcome(
@@ -294,6 +339,7 @@ def cover_letter_by_id(
 
     finished_at = utc_now()
     elapsed = time.time() - t0
+    commit_guard()
     if outcome.status == "ok":
         # Best-effort PDF render. Failure is non-fatal: the cover letter text
         # is the canonical artifact and the PDF is an optional sibling.
@@ -309,29 +355,36 @@ def cover_letter_by_id(
                 materials = outcome.materials.with_cover_letter_pdf(
                     pdf_artifact, updated_at=utc_now()
                 )
-                repository.save(materials)
+                if material_unit_of_work is not None:
+                    with material_unit_of_work:
+                        commit_guard()
+                        repository.save(materials)
+                else:
+                    commit_guard()
+                    repository.save(materials)
             except Exception:
                 log.debug("PDF generation failed for cover letter", exc_info=True)
 
-        set_stage_state(
-            conn,
-            stable_job_id,
-            "cover",
-            "succeeded",
-            tenant_id=tenant_id,
-            attempt_count=current_attempt,
-            started_at=started_at,
-            finished_at=finished_at,
-        )
-        record_job_event(
-            conn,
-            stable_job_id,
-            "cover",
-            "StageCompleted",
-            tenant_id=tenant_id,
-            message="Cover letter generated",
-        )
-        conn.commit()
+        with SqliteUnitOfWork(conn):
+            commit_guard()
+            set_stage_state(
+                conn,
+                stable_job_id,
+                "cover",
+                "succeeded",
+                tenant_id=tenant_id,
+                attempt_count=current_attempt,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+            record_job_event(
+                conn,
+                stable_job_id,
+                "cover",
+                "StageCompleted",
+                tenant_id=tenant_id,
+                message="Cover letter generated",
+            )
         log.info("Cover letter done in %.1fs: generated for %s", elapsed, url)
         return {
             "jobId": str(stable_job_id),
@@ -345,36 +398,39 @@ def cover_letter_by_id(
 
     failed_attempts = current_attempt
     exhausted = failed_attempts >= _COVER_MAX_ATTEMPTS
-    set_stage_state(
-        conn,
-        stable_job_id,
-        "cover",
-        "exhausted" if exhausted else "failed",
-        tenant_id=tenant_id,
-        attempt_count=failed_attempts,
-        max_attempts=_COVER_MAX_ATTEMPTS,
-        started_at=started_at,
-        finished_at=finished_at,
-        error_code="COVER_FAILED",
-        error_message=outcome.error or f"Cover letter generation failed ({outcome.status})",
-        retryable=not exhausted,
-        next_action=(
-            f"jobctrl retry cover {url or stable_job_id} --reset-attempts"
-            if exhausted
-            else f"jobctrl retry cover {url or stable_job_id}"
-        ),
-        validate_transition=False,
-    )
-    record_job_event(
-        conn,
-        stable_job_id,
-        "cover",
-        "StageFailed",
-        tenant_id=tenant_id,
-        level="error",
-        message=outcome.error or f"Cover letter generation failed ({outcome.status})",
-    )
-    conn.commit()
+    with SqliteUnitOfWork(conn):
+        commit_guard()
+        set_stage_state(
+            conn,
+            stable_job_id,
+            "cover",
+            "exhausted" if exhausted else "failed",
+            tenant_id=tenant_id,
+            attempt_count=failed_attempts,
+            max_attempts=_COVER_MAX_ATTEMPTS,
+            started_at=started_at,
+            finished_at=finished_at,
+            error_code="COVER_FAILED",
+            error_message=outcome.error
+            or f"Cover letter generation failed ({outcome.status})",
+            retryable=not exhausted,
+            next_action=(
+                f"jobctrl retry cover {url or stable_job_id} --reset-attempts"
+                if exhausted
+                else f"jobctrl retry cover {url or stable_job_id}"
+            ),
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            stable_job_id,
+            "cover",
+            "StageFailed",
+            tenant_id=tenant_id,
+            level="error",
+            message=outcome.error
+            or f"Cover letter generation failed ({outcome.status})",
+        )
     return {
         "jobId": str(stable_job_id),
         "url": url,

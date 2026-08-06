@@ -31,7 +31,7 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Iterable, Mapping as MappingABC
+from collections.abc import Callable, Iterable, Mapping as MappingABC
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -88,7 +88,12 @@ from jobctrl.domain.materials.fabrication_detector import (
     scan_prose_skill_fabrications,
     scan_resume_bullets,
 )
-from jobctrl.domain.materials.policy import LearnedTailoringRules, TailoringPolicy
+from jobctrl.domain.materials.policy import (
+    LearnedTailoringRules,
+    TailoringPolicy,
+    fingerprint_profile_snapshot,
+    fingerprint_value,
+)
 from jobctrl.domain.materials.provenance import BulletProvenance, BulletProvenanceSet
 from jobctrl.domain.materials.provenance_builder import (
     ProvenanceBindingError,
@@ -968,6 +973,7 @@ def _safe_candidate_summary(record: dict[str, Any]) -> dict[str, Any]:
         "generator": record.get("model"),
         "status": record.get("status"),
         "schema_version": record.get("schema_version"),
+        "prompt_fingerprint": record.get("prompt_fingerprint"),
         "validation": record.get("validator"),
         "judge": record.get("judge"),
         "fabrication_gate": record.get("fabrication_gate"),
@@ -976,6 +982,59 @@ def _safe_candidate_summary(record: dict[str, Any]) -> dict[str, Any]:
         "bullet_limit_overflows": record.get("bullet_limit_overflows") or [],
         "summary": _candidate_payload_summary(payload),
     }
+
+
+def _with_tailoring_attempt_audit(
+    materials: MaterialsSet,
+    *,
+    report: dict[str, Any],
+    recorded_at: str,
+    execution_id: str | None,
+    durable_attempt: int | None,
+) -> MaterialsSet:
+    """Append one durable execution's complete inner-attempt audit idempotently."""
+
+    metadata = dict(materials.metadata)
+    history: list[dict[str, Any]] = []
+    raw_history = metadata.get("tailoring_attempt_audits")
+    if isinstance(raw_history, list):
+        history = [dict(entry) for entry in raw_history if isinstance(entry, MappingABC)]
+    elif isinstance(metadata.get("tailoring_attempt_audit"), MappingABC):
+        # Preserve the singular pre-R25 record when an existing generation is
+        # first saved by the append-only writer.
+        history.append(
+            {
+                "audit_key": f"legacy:{materials.updated_at}",
+                "execution_id": None,
+                "durable_attempt": None,
+                "recorded_at": materials.updated_at,
+                "report": dict(metadata["tailoring_attempt_audit"]),
+            }
+        )
+
+    normalized_execution_id = str(execution_id or "local")
+    attempt_key = str(durable_attempt) if durable_attempt is not None else recorded_at
+    audit_key = f"{normalized_execution_id}:{attempt_key}"
+    if not any(str(entry.get("audit_key") or "") == audit_key for entry in history):
+        history.append(
+            {
+                "audit_key": audit_key,
+                "execution_id": execution_id,
+                "durable_attempt": durable_attempt,
+                "recorded_at": recorded_at,
+                "report": report,
+            }
+        )
+
+    return materials.with_metadata(
+        {
+            **metadata,
+            # Singular latest-record compatibility plus append-only history.
+            "tailoring_attempt_audit": report,
+            "tailoring_attempt_audits": history,
+        },
+        updated_at=recorded_at,
+    )
 
 
 def _voice_system_prompt() -> str:
@@ -1583,7 +1642,12 @@ class TailorResumeUseCase:
         suppress_existing_artifacts: bool = False,
         employer_analysis: EmployerAnalysis | None = None,
         requirement_fit_report: "RequirementFitReport | None" = None,
+        commit_guard: Callable[[], None] | None = None,
+        audit_execution_id: str | None = None,
+        durable_attempt: int | None = None,
     ) -> TailorOutcome:
+        if commit_guard is not None:
+            commit_guard()
         stable_job_id = job_id if job_id is not None else job.get("job_id")
         job_id = canonical_job_id(str(stable_job_id))
         # D-20: run/reuse the canonical employer analysis as the front-half
@@ -1655,6 +1719,10 @@ class TailorResumeUseCase:
             tailoring_plan=tailoring_plan,
             learned_tailoring_rules=learned_tailoring_rules,
         )
+        tailoring_policy_prompt = build_master_tailor_prompt(
+            profile_snapshot,
+            learned_tailoring_rules=learned_tailoring_rules,
+        )
         report, parsed_payload, validation, verdict = self._run_attempts(
             job=job,
             profile_snapshot=profile_snapshot,
@@ -1663,14 +1731,27 @@ class TailorResumeUseCase:
             requirement_fit_report=requirement_fit_report,
             tailoring_plan=tailoring_plan,
             tailor_prompt_base=tailor_prompt_base,
+            execution_guard=commit_guard,
         )
+        if commit_guard is not None:
+            commit_guard()
         attempts = report["attempts"]
 
         if not parsed_payload:
             # Nothing to persist beyond the empty aggregate; surface the
             # failure to the caller and emit ``ResumeFailed`` so downstream
             # observers see the attempt counter advance.
-            self._repository.save(materials)
+            materials = _with_tailoring_attempt_audit(
+                materials,
+                report=report,
+                recorded_at=created_at,
+                execution_id=audit_execution_id,
+                durable_attempt=durable_attempt,
+            )
+            with self._unit_of_work if self._unit_of_work is not None else nullcontext():
+                if commit_guard is not None:
+                    commit_guard()
+                self._repository.save(materials)
             self._publish_failed(materials, validation_errors=("exhausted_retries",), attempt=attempts)
             return TailorOutcome(
                 materials=materials,
@@ -1690,6 +1771,8 @@ class TailorResumeUseCase:
         # ``generated_text`` is byte-identical to the rendered/PDF text, and
         # ``coverage`` is the honest generation-time keyword coverage over that same
         # grounded text (GROUND-06 / success criterion 4).
+        if commit_guard is not None:
+            commit_guard()
         (
             final_payload,
             provenance_rows,
@@ -1704,6 +1787,8 @@ class TailorResumeUseCase:
             employer_analysis=employer_analysis,
             requirement_fit_report=requirement_fit_report,
         )
+        if commit_guard is not None:
+            commit_guard()
         if fabrication_error is not None:
             validation = ValidationResult.failure(
                 (*validation.errors, fabrication_error),
@@ -1712,7 +1797,7 @@ class TailorResumeUseCase:
 
         tailoring_policy = self._resolve_tailoring_policy(
             profile_snapshot=profile_snapshot,
-            prompt_text=tailor_prompt_base,
+            prompt_text=tailoring_policy_prompt,
             validation_mode=validation_mode,
             tenant_id=tenant_id,
             learned_tailoring_rules=learned_tailoring_rules,
@@ -1749,6 +1834,9 @@ class TailorResumeUseCase:
             "tailoring_policy_id": tailoring_policy.policy_id,
             "tailoring_policy_version": tailoring_policy.version,
             "tailoring_policy": policy_metadata,
+            "job_prompt_fingerprint": str(
+                report.get("selected_prompt_fingerprint") or ""
+            ),
             "prompt_version": report.get("prompt_version"),
             "schema_version": report.get("schema_version"),
             "candidate_models": report.get("candidate_models") or [],
@@ -1803,6 +1891,13 @@ class TailorResumeUseCase:
             review_required=review_required,
             updated_at=_utc_now(),
         )
+        materials = _with_tailoring_attempt_audit(
+            materials,
+            report=report,
+            recorded_at=materials.updated_at,
+            execution_id=audit_execution_id,
+            durable_attempt=durable_attempt,
+        )
         materials = materials.with_metadata(
             {
                 **dict(materials.metadata),
@@ -1838,7 +1933,13 @@ class TailorResumeUseCase:
                     verdict=verdict,
                     updated_at=_utc_now(),
                 )
-                self._repository.save(rejected)
+                with self._unit_of_work if self._unit_of_work is not None else nullcontext():
+                    self._assert_generation_persistable(
+                        policy=tailoring_policy,
+                        profile_snapshot=profile_snapshot,
+                        commit_guard=commit_guard,
+                    )
+                    self._repository.save(rejected)
                 self._publish_failed(
                     rejected,
                     validation_errors=(render,),
@@ -1877,6 +1978,11 @@ class TailorResumeUseCase:
         # writes and reopens the crash window A9 closed. Event publication and
         # projection refresh (which do commit) stay OUTSIDE the block, below.
         with self._unit_of_work if self._unit_of_work is not None else nullcontext():
+            self._assert_generation_persistable(
+                policy=tailoring_policy,
+                profile_snapshot=profile_snapshot,
+                commit_guard=commit_guard,
+            )
             if materials.is_resume_approved and prior_generation is not None:
                 self._repository.save(prior_generation)
             self._repository.save(materials)
@@ -2030,6 +2136,7 @@ class TailorResumeUseCase:
         requirement_fit_report: "RequirementFitReport | None" = None,
         tailoring_plan: TailoringPlan,
         tailor_prompt_base: str,
+        execution_guard: Callable[[], None] | None = None,
     ) -> tuple[dict, dict | None, ValidationResult, JudgeVerdict | None]:
         """Run the LLM ⇒ validate ⇒ judge attempt loop.
 
@@ -2089,6 +2196,9 @@ class TailorResumeUseCase:
             report["adversarial_review"] = selected.record.get("adversarial_review")
             report["selected_candidate"] = selected.record.get("candidate_id")
             report["selected_model"] = selected.model
+            report["selected_prompt_fingerprint"] = selected.record.get(
+                "prompt_fingerprint"
+            )
             report["post_generation_fit"] = selected.record.get("post_generation_fit")
             report["review_required"] = review_required
             report["review_blockers"] = selected.record.get("review_blockers") or []
@@ -2118,6 +2228,8 @@ class TailorResumeUseCase:
             return report, selected.payload, selected.validation, selected.verdict
 
         for attempt in range(self._max_retries + 1):
+            if execution_guard is not None:
+                execution_guard()
             report["attempts"] = attempt + 1
 
             prompt = _retry_system_prompt(tailor_prompt_base, retry_reasons)
@@ -2145,6 +2257,8 @@ class TailorResumeUseCase:
 
             approved_candidates: list[_TailorCandidate] = []
             for model in model_policy.effective_candidate_models:
+                if execution_guard is not None:
+                    execution_guard()
                 candidate = self._run_candidate(
                     messages=messages,
                     model=model,
@@ -2159,6 +2273,9 @@ class TailorResumeUseCase:
                 last_payload = candidate.payload or last_payload
                 last_validation = candidate.validation
                 last_verdict = candidate.verdict
+                report["selected_prompt_fingerprint"] = candidate.record.get(
+                    "prompt_fingerprint"
+                )
 
                 if candidate.validation.passed and (
                     candidate.verdict is None or candidate.verdict.approved
@@ -2290,6 +2407,9 @@ class TailorResumeUseCase:
             report["adversarial_review"] = best_rejected.record.get("adversarial_review")
             report["selected_candidate"] = best_rejected.record.get("candidate_id")
             report["selected_model"] = best_rejected.model
+            report["selected_prompt_fingerprint"] = best_rejected.record.get(
+                "prompt_fingerprint"
+            )
             return report, best_rejected.payload, best_rejected.validation, best_rejected.verdict
         if last_payload is not None and not last_validation.passed:
             report["status"] = "failed_validation"
@@ -2306,7 +2426,12 @@ class TailorResumeUseCase:
         expected_current_version: int,
     ) -> TailoringPolicy:
         profile = profile_snapshot.as_dict()
-        runtime_settings: dict[str, Any] = {"validation_mode": validation_mode}
+        runtime_settings: dict[str, Any] = {
+            "validation_mode": validation_mode,
+            "profile_snapshot_fingerprint": fingerprint_profile_snapshot(
+                profile_snapshot
+            ),
+        }
         if learned_tailoring_rules.rules:
             runtime_settings["learned_tailoring_rules"] = learned_tailoring_rules.to_dict()
         candidate = TailoringPolicy.from_runtime(
@@ -2340,6 +2465,23 @@ class TailorResumeUseCase:
             expected_current_version=expected_current_version,
         )
 
+    def _assert_generation_persistable(
+        self,
+        *,
+        policy: TailoringPolicy,
+        profile_snapshot: ProfileSnapshot,
+        commit_guard: Callable[[], None] | None,
+    ) -> None:
+        """Fence the final artifact write inside its transaction."""
+
+        if commit_guard is not None:
+            commit_guard()
+        if self._unit_of_work is not None and self._policy_repository is not None:
+            self._policy_repository.assert_generation_current(
+                policy,
+                profile_snapshot,
+            )
+
     def _run_candidate(
         self,
         *,
@@ -2357,6 +2499,12 @@ class TailorResumeUseCase:
             "candidate_id": candidate_id,
             "model": model,
             "schema_version": TAILORING_SCHEMA_VERSION,
+            "prompt_fingerprint": fingerprint_value(
+                [
+                    {"role": message.role, "content": message.content}
+                    for message in messages
+                ]
+            ),
         }
         empty_validation = ValidationResult.failure(("no candidate generated",))
         try:
@@ -3458,6 +3606,7 @@ class GenerateCoverLetterUseCase:
         publisher: EventPublisher | None = None,
         analysis_repository: EmployerAnalysisRepository | None = None,
         max_retries: int = 3,
+        unit_of_work: UnitOfWork | None = None,
     ) -> None:
         self._repository = repository
         self._llm = llm
@@ -3465,6 +3614,7 @@ class GenerateCoverLetterUseCase:
         self._publisher = publisher
         self._analysis_repository = analysis_repository
         self._max_retries = max_retries
+        self._unit_of_work = unit_of_work
 
     def execute(
         self,
@@ -3475,7 +3625,10 @@ class GenerateCoverLetterUseCase:
         cover_letter_dir: Path,
         validation_mode: str = "normal",
         tenant_id: TenantId = LOCAL_TENANT,
+        commit_guard: Callable[[], None] | None = None,
     ) -> CoverLetterOutcome:
+        if commit_guard is not None:
+            commit_guard()
         stable_job_id = canonical_job_id(str(job_id))
         materials = _load_current_approved_materials(self._repository, tenant_id, stable_job_id)
         if materials is None:
@@ -3524,7 +3677,10 @@ class GenerateCoverLetterUseCase:
             profile_snapshot=profile_snapshot,
             validation_mode=validation_mode,
             target_skill_terms=target_skill_terms,
+            execution_guard=commit_guard,
         )
+        if commit_guard is not None:
+            commit_guard()
 
         generated_at = _utc_now()
         prefix = _safe_filename_prefix(job)
@@ -3592,7 +3748,10 @@ class GenerateCoverLetterUseCase:
                         "cover_letter_attempts": attempt_history,
                     }
                 )
-        self._repository.save(materials)
+        with self._unit_of_work if self._unit_of_work is not None else nullcontext():
+            if commit_guard is not None:
+                commit_guard()
+            self._repository.save(materials)
 
         if validation.passed:
             self._publish_generated(materials)
@@ -3635,6 +3794,7 @@ class GenerateCoverLetterUseCase:
         profile_snapshot: ProfileSnapshot,
         validation_mode: str,
         target_skill_terms: list[str],
+        execution_guard: Callable[[], None] | None = None,
     ) -> tuple[str, ValidationResult, list[FabricationFinding]]:
         cl_prompt_base = build_cover_letter_prompt(profile_snapshot)
         # The deterministic grounding context is fixed across attempts — build it
@@ -3652,6 +3812,8 @@ class GenerateCoverLetterUseCase:
         findings: list[FabricationFinding] = []
         last_validation: ValidationResult = ValidationResult.failure(("no attempt yet",))
         for attempt in range(self._max_retries + 1):
+            if execution_guard is not None:
+                execution_guard()
             prompt = _retry_system_prompt(cl_prompt_base, retry_reasons)
             messages = [
                 LlmMessage(role="system", content=prompt),

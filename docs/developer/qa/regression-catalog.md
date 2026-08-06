@@ -26,11 +26,63 @@ For the affected workflow, prove four outcomes:
 
 1. Kill the worker mid-activity: the same workflow resumes from durable history
    or reaches its designed verification state.
-2. Cancel the run: cancellation propagates and the read model eventually shows a
-   terminal state without deleting completed facts.
+2. Cancel the run: cancellation propagates, the requester/source is auditable,
+   and the read model eventually shows a terminal state without deleting
+   completed facts. For batch Enrich, every unfinished selected row is
+   `canceled`, unrelated pending rows stay pending, and a restarted reconciler
+   reaches the same result from persisted ownership.
 3. Make Temporal unavailable at start: the caller receives a clear error and no
    in-process fallback runs.
 4. Lose local dev-server history: the reconciler terminalizes orphaned open rows.
+
+An Enrich restart also proves the API-to-worker ownership handoff: canonical
+`job_enrichments` state, not stale projected text, selects the reset row; a
+repeat pickup cannot bypass queued/running Enrich; and queued metadata carries
+the exact Temporal execution ID (`firstExecutionRunId`). A workflow handle is
+never accepted as an execution owner. Matching and foreign-owner worker probes
+must respectively process and reject the same prequeued fixture.
+
+Timeout and explicit cancellation are separate fault classes. A timeout,
+worker shutdown, or reset releases unfinished Enrich ownership for the same
+Temporal execution to retry; only an explicit cancellation request
+terminalizes the exact owned cohort. The successful canonical Enrich IDs, not
+the original selection, become the Score/Tailor/Cover subset. For authenticated
+LinkedIn recovery, ordinary extraction attempts do not consume the independent
+three-pass apply-URL budget, and browser extension requests remain blocked
+without being misreported as an unsafe posting redirect.
+
+Selected Tailor and Cover batches must use their requested bounded worker count.
+A durable item failure yields a partial batch with inspectable item diagnostics;
+it does not retry approved jobs or prevent Cover from running for the exact
+approved Tailor subset. Their selected-batch activity deadline scales at 30
+minutes per worker wave, capped at 6 hours and protected by a Temporal patch
+marker so replay of older open histories retains its recorded 30-minute timer.
+The heartbeat timeout remains 2 minutes. Concurrent job-specific prompt
+snapshots must retain distinct artifact fingerprints while reusing one global
+policy revision when the complete tailoring-relevant profile projection,
+profile/custom controls, learned rules, prompt/schema versions, models, judge
+settings, and validation mode are identical. A tailoring-relevant profile or
+control change advances the global revision and rejects stale artifact
+persistence; an application-only compensation/authorization/defaults edit does
+not. The canonical projection/policy comparison and artifact save share one
+SQLite write transaction. The artifact audit digest
+must match the exact role/content messages for the selected candidate, including
+target-job and retry content. Canceling a real selected Tailor or Cover batch
+after its first worker wave starts must prevent later waves, fence every
+in-flight write, cancel only unfinished rows still owned by that execution, and
+preserve both successor-owned rows and artifacts committed before cancellation.
+If a blocking runner ignores the cooperative cancel token, the worker must
+record `abandoned_thread`, retire that blocking-executor generation, and prove a
+subsequent activity can execute immediately on fresh bounded capacity. The
+abandoned generation must be distinct from Temporal's synchronous-activity
+executor so capacity recovery cannot break marker or reconciliation activities.
+Tailor's inner candidate-repair attempts are audit metadata, not the durable
+stage retry counter. Each durable activity execution increments that outer
+counter exactly once; repeated failures reach non-retryable `exhausted` at the
+configured maximum and are excluded from automatic pickup until an explicit
+attempt reset. Repeated durable executions of one materials generation must
+append audit entries keyed by execution and durable attempt rather than replace
+the prior prompt/candidate/validator/judge record.
 
 The [complete matrix](complete-checklist.md#temporal-fault-injection-matrix)
 lists the exact tests for Discover, Pipeline, Preparation, Apply, Profile Import,

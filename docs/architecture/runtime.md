@@ -564,18 +564,21 @@ lives under `workers/automation/src/jobctrl/infrastructure/temporal/`:
   boundary (the sandbox proxy mechanism otherwise refuses to instantiate
   frozen dataclasses imported through `imports_passed_through()`). Activity
   execution is bounded by the `worker_activity_slots` value saved in
-  `config.json` (default `4`) and a worker-owned
-  `ThreadPoolExecutor(max_workers = slots + 2)`, so blocking stage work no
-  longer spills into the process default executor. The worker heartbeat records
-  both values, exact all-activity slot use, bounded allowlisted active detail,
+  `config.json` (default `4`) and two worker-owned
+  `ThreadPoolExecutor(max_workers = slots + 2)` pools: one for Temporal's
+  synchronous activities and one for blocking stage helpers. Cancellation
+  retires the affected blocking-pool generation before its grace wait, so an
+  immediate retry uses fresh bounded capacity without affecting Temporal's
+  synchronous pool. The worker heartbeat records the activity slots and
+  configured executor width, exact all-activity slot use, bounded active detail,
   completed-activity duration summaries, and an approximate task-queue
   observation for `GET /v1/health` and `GET /v1/pipeline/operations` (see
   [Concurrency & Fan-out](pipeline/concurrency.md)).
 - `run_in_activity.py` — shared helper for running synchronous domain work from
   async Temporal activities while heartbeating. Cancellation sets a cooperative
-  `threading.Event`, waits up to the activity's cancel deadline for the worker
-  thread to exit, and records an `abandoned_thread` operational metric if the
-  thread ignores cancellation.
+  `threading.Event`, retires that blocking executor generation before waiting up
+  to the activity's cancel deadline, and records an `abandoned_thread`
+  operational metric if the old thread ignores cancellation.
 - `task_queues.py` — single `JOBCTRL_TASK_QUEUE = "jobctrl-default"`.
 - `registry.py` — single source of truth for `WORKFLOWS` and `ACTIVITIES`.
   The CLI imports both lists and passes them to `build_worker`; new

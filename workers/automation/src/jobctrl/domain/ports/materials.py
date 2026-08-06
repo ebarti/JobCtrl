@@ -37,6 +37,7 @@ from jobctrl.domain.operations.learning import (
     LearningRecommendationDecision,
     LearningRecommendationReview,
 )
+from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import TenantId
 
 
@@ -223,6 +224,14 @@ class TailoringPolicyRepository(Protocol):
         expected_current_version: int | None = None,
     ) -> TailoringPolicy:
         """Resolve the candidate only if the pre-generation snapshot is current."""
+        ...
+
+    def assert_generation_current(
+        self,
+        policy: TailoringPolicy,
+        profile_snapshot: ProfileSnapshot,
+    ) -> None:
+        """Fence artifact persistence against profile or policy advancement."""
         ...
 
     def rollback_to(

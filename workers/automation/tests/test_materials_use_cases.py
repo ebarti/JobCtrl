@@ -32,6 +32,7 @@ from jobctrl.domain.materials import (
 )
 from jobctrl.domain.materials.adversarial import ADVERSARIAL_REVIEW_RESPONSE_SCHEMA
 from jobctrl.domain.materials.aggregate import MaterialsLifecycle
+from jobctrl.domain.materials.policy import LearnedTailoringRules, fingerprint_value
 from jobctrl.domain.materials.requirement_coverage import COVERAGE_PLANNER_RESPONSE_SCHEMA
 from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
 from jobctrl.domain.materials.use_cases import (
@@ -1360,9 +1361,111 @@ def test_tailor_use_case_routes_multiple_candidate_models_and_persists_safe_meta
     assert metadata["tailoring_policy_version"] == 1
     assert metadata["tailoring_policy"]["prompt_fingerprint"].startswith("sha256:")
     assert metadata["tailoring_policy"]["config_fingerprint"].startswith("sha256:")
+    assert metadata["tailoring_policy"]["profile_snapshot_fingerprint"].startswith(
+        "sha256:"
+    )
+    assert metadata["job_prompt_fingerprint"].startswith("sha256:")
+    assert metadata["job_prompt_fingerprint"] != metadata["tailoring_policy"][
+        "prompt_fingerprint"
+    ]
+    selected_summary = next(
+        summary
+        for summary in metadata["candidate_summaries"]
+        if summary["candidate_id"] == outcome.report["selected_candidate"]
+    )
+    assert metadata["job_prompt_fingerprint"] == selected_summary[
+        "prompt_fingerprint"
+    ]
+    assert metadata["job_prompt_fingerprint"] == fingerprint_value(
+        [
+            {"role": message.role, "content": message.content}
+            for message in llm.calls[1]
+        ]
+    )
     assert metadata["candidate_summaries"][0]["generator"] == "codex:draft-a"
     assert "api_key" not in json.dumps(metadata).lower()
     assert "platform leadership language" not in json.dumps(metadata).lower()
+
+
+def test_tailoring_policy_fails_closed_when_tailoring_profile_projection_changes(
+    snapshot: ProfileSnapshot,
+) -> None:
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=_ScriptedLlm([]),
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+    original = use_case._resolve_tailoring_policy(
+        profile_snapshot=snapshot,
+        prompt_text="stable global control prompt",
+        validation_mode="normal",
+        tenant_id=LOCAL_TENANT,
+        learned_tailoring_rules=LearnedTailoringRules(),
+        expected_current_version=0,
+    )
+    changed_profile = _profile_dict()
+    changed_profile["resume"]["tailoring_rules"]["writing_style"] = {
+        "tone": "technical"
+    }
+    changed_snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, changed_profile),
+        version=snapshot.version + 1,
+    )
+    changed = use_case._resolve_tailoring_policy(
+        profile_snapshot=changed_snapshot,
+        prompt_text="stable global control prompt",
+        validation_mode="normal",
+        tenant_id=LOCAL_TENANT,
+        learned_tailoring_rules=LearnedTailoringRules(),
+        expected_current_version=0,
+    )
+
+    assert original.prompt_fingerprint == changed.prompt_fingerprint
+    assert original.runtime_settings["profile_snapshot_fingerprint"] != (
+        changed.runtime_settings["profile_snapshot_fingerprint"]
+    )
+    assert original.config_fingerprint != changed.config_fingerprint
+
+
+def test_tailoring_policy_ignores_compensation_only_profile_update(
+    snapshot: ProfileSnapshot,
+) -> None:
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=_ScriptedLlm([]),
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+    original = use_case._resolve_tailoring_policy(
+        profile_snapshot=snapshot,
+        prompt_text="stable global control prompt",
+        validation_mode="normal",
+        tenant_id=LOCAL_TENANT,
+        learned_tailoring_rules=LearnedTailoringRules(),
+        expected_current_version=0,
+    )
+    changed_profile = _profile_dict()
+    changed_profile["compensation"] = {"salary_expectation": "125000"}
+    changed_snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, changed_profile),
+        version=snapshot.version + 1,
+    )
+    changed = use_case._resolve_tailoring_policy(
+        profile_snapshot=changed_snapshot,
+        prompt_text="stable global control prompt",
+        validation_mode="normal",
+        tenant_id=LOCAL_TENANT,
+        learned_tailoring_rules=LearnedTailoringRules(),
+        expected_current_version=0,
+    )
+
+    assert original.runtime_settings["profile_snapshot_fingerprint"] == (
+        changed.runtime_settings["profile_snapshot_fingerprint"]
+    )
+    assert original.config_fingerprint == changed.config_fingerprint
 
 
 def test_tailor_use_case_lenient_skips_judge(
@@ -1407,6 +1510,10 @@ def test_tailor_use_case_failed_validation_persists_rejected_artifact(
         job=job, profile_snapshot=snapshot, tailored_dir=tmp_path
     )
     assert outcome.status == "failed_validation"
+    audit = repo.saved[-1].metadata["tailoring_attempt_audit"]
+    assert audit["status"] == "failed_validation"
+    assert audit["attempts"] == 4
+    assert len(audit["attempt_history"]) == 4
 
 
 def test_tailor_use_case_tries_multiple_candidate_models_and_separate_judge(
@@ -1510,7 +1617,51 @@ def test_tailor_use_case_exhausted_when_no_parseable_json(
         job=job, profile_snapshot=snapshot, tailored_dir=tmp_path
     )
     assert outcome.status == "exhausted_retries"
+    audit = repo.saved[-1].metadata["tailoring_attempt_audit"]
+    assert audit["status"] == "exhausted_retries"
+    assert audit["attempts"] == 4
+    assert len(audit["attempt_history"]) == 4
+    assert audit["attempt_history"][0]["system_prompt"]
+    assert audit["attempt_history"][0]["candidates"][0]["status"] == "parse_error"
     assert any(getattr(e, "event_type", "") == "ResumeFailed" for e in publisher.events)
+
+
+def test_tailor_use_case_preserves_attempt_audit_across_durable_executions(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=_ScriptedLlm(["not json"] * 8),
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    first = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        audit_execution_id="workflow-run-one",
+        durable_attempt=1,
+    )
+    second = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        audit_execution_id="workflow-run-two",
+        durable_attempt=2,
+    )
+
+    assert first.status == second.status == "exhausted_retries"
+    history = repo.saved[-1].metadata["tailoring_attempt_audits"]
+    assert [entry["audit_key"] for entry in history] == [
+        "workflow-run-one:1",
+        "workflow-run-two:2",
+    ]
+    assert [entry["durable_attempt"] for entry in history] == [1, 2]
+    assert all(entry["report"]["attempts"] == 4 for entry in history)
+    assert all(len(entry["report"]["attempt_history"]) == 4 for entry in history)
 
 
 def test_tailor_use_case_does_not_promote_invalid_prior_output_into_retry_prompt(
