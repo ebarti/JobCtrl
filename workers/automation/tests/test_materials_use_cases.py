@@ -944,6 +944,12 @@ def test_claim_location_normalizes_summary_sentence_aliases(
     assert _canonical_claim_location(location) == expected
 
 
+def test_summary_sentence_segmentation_preserves_dotted_abbreviation() -> None:
+    summary = "U.S. backend engineer focused on Python API reliability."
+
+    assert _generated_summary_sentences(summary) == (summary,)
+
+
 def test_claim_mapping_parser_preserves_raw_fallback_while_clearing_domain_reason() -> None:
     payload = _good_json_payload_dict()
     payload["generated_claim_mappings"][0]["coverage_edge_ids"] = ["edge_req_latency"]
@@ -991,6 +997,34 @@ def test_tailor_use_case_happy_path(tmp_path: Path, snapshot: ProfileSnapshot, j
     assert outcome.materials.last_verdict.criterion_scores["fabrication_safety"] == 1.0
     assert outcome.text_path is not None and Path(outcome.text_path).exists()
     assert any(getattr(e, "event_type", "") == "ResumeApproved" for e in publisher.events)
+
+
+def test_tailor_use_case_accepts_aggregate_mapping_for_abbreviated_one_sentence_summary(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    summary = "Senior engineer focused on U.S. backend systems."
+    payload = _good_json_payload_dict()
+    payload["executive_profile"] = summary
+    payload["generated_claim_mappings"][1]["text"] = summary
+    llm = _ScriptedLlm([json.dumps(payload), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+    assert len(llm.calls) == 2
 
 
 def test_tailor_use_case_approves_generation_bound_requirement_claims(

@@ -720,12 +720,45 @@ def _claim_location_requires_exact_text(location: str) -> bool:
     )
 
 
-def _generated_summary_sentences(text: str) -> tuple[str, ...]:
-    return tuple(
-        sentence.strip()
-        for sentence in re.split(r"(?<=[.!?])\s+", text.strip())
-        if sentence.strip()
+_SUMMARY_TITLE_ABBREVIATIONS = frozenset({"dr.", "mr.", "mrs.", "ms.", "prof."})
+_SUMMARY_ALWAYS_INLINE_ABBREVIATIONS = frozenset({"e.g.", "i.e."})
+
+
+def _summary_period_is_abbreviation(text: str, boundary_end: int) -> bool:
+    prefix_match = re.search(r"([^\s]+)$", text[:boundary_end])
+    if prefix_match is None:
+        return False
+    token = prefix_match.group(1).strip("()[]{}\"'").lower()
+    if token in _SUMMARY_TITLE_ABBREVIATIONS | _SUMMARY_ALWAYS_INLINE_ABBREVIATIONS:
+        return True
+    continuation = text[boundary_end:].lstrip()
+    if not continuation or not continuation[0].islower():
+        return False
+    return bool(
+        re.fullmatch(r"(?:[a-z]\.){2,}", token)
+        or token in {"ph.d.", "u.s.", "u.k."}
     )
+
+
+def _generated_summary_sentences(text: str) -> tuple[str, ...]:
+    normalized = text.strip()
+    if not normalized:
+        return ()
+    sentences: list[str] = []
+    start = 0
+    for boundary in re.finditer(r"[.!?]+(?=\s+|$)", normalized):
+        if boundary.group().endswith(".") and _summary_period_is_abbreviation(
+            normalized, boundary.end()
+        ):
+            continue
+        sentence = normalized[start : boundary.end()].strip()
+        if sentence:
+            sentences.append(sentence)
+        start = boundary.end()
+    remainder = normalized[start:].strip()
+    if remainder:
+        sentences.append(remainder)
+    return tuple(sentences)
 
 
 def _required_claim_surface_groups(
