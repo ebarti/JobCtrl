@@ -115,12 +115,21 @@ class _CriteriaProvider:
 
 
 class _AnalyzeUseCase:
-    def __init__(self) -> None:
+    def __init__(self, *, generation: int = 1) -> None:
         self.calls: list[dict] = []
+        self.generation = generation
 
     def execute(self, *, job: dict, tenant_id=LOCAL_TENANT, force: bool = False):
         self.calls.append({"job": job, "tenant_id": tenant_id, "force": force})
-        return SimpleNamespace(analysis=_employer_analysis(str(job["url"])))
+        return SimpleNamespace(
+            analysis=_employer_analysis(
+                str(job["url"]),
+                job_id=JobId(str(job["job_id"])),
+                title=str(job.get("title") or ""),
+                description=str(job.get("full_description") or job.get("description") or ""),
+                generation=self.generation,
+            )
+        )
 
 
 class _FailingAnalyzeUseCase:
@@ -188,7 +197,14 @@ def _seed_pending_job(conn: sqlite3.Connection, url: str) -> None:
     conn.commit()
 
 
-def _employer_analysis(job_url: str) -> EmployerAnalysis:
+def _employer_analysis(
+    job_url: str,
+    *,
+    job_id: JobId | None = None,
+    title: str = "Engineer",
+    description: str = "Need Python.",
+    generation: int = 1,
+) -> EmployerAnalysis:
     canonical = JobAnalysis(
         role_framing="Platform ownership.",
         inferred_seniority="senior",
@@ -212,9 +228,9 @@ def _employer_analysis(job_url: str) -> EmployerAnalysis:
     )
     return EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
-        job_id=_job_id(job_url),
-        generation=1,
-        snapshot_hash=compute_snapshot_hash("Need Python."),
+        job_id=job_id or _job_id(job_url),
+        generation=generation,
+        snapshot_hash=compute_snapshot_hash(f"{title.strip()}\n\n{description.strip()}"),
         canonical=canonical,
         sub_analyses=(),
         failures=(),
@@ -815,6 +831,60 @@ def test_run_scoring_loads_persisted_employer_analysis_into_prompt(
     assert report.score_version == 1
     assert report.employer_analysis_generation == 1
     assert report.assessments[0].fit.kind == "missing"
+
+
+def test_run_scoring_refreshes_stale_posting_analysis_before_persisting_fit_report(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+    monkeypatch,
+) -> None:
+    url = "https://example.com/job/analysis-snapshot-refreshed"
+    _seed_pending_job(conn, url)
+    SqliteEmployerAnalysisRepository(conn).save(
+        _employer_analysis(url, description="Need Python. Previous posting snapshot.")
+    )
+    analyze = _AnalyzeUseCase(generation=2)
+    llm = _ScriptedLlm(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 7,
+            "role_fit": 8,
+            "fit_band": "strong",
+            "confidence": "high",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["Python"],
+            "missing_signals": [],
+            "transferable_signals": [],
+            "keywords": ["python"],
+            "reasoning": "ok",
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-python-platform",
+                    "requirement_text": "Own Python platform reliability.",
+                    "tier": "must_have",
+                    "weight": 0.9,
+                    "job_evidence_span": "Need Python.",
+                    "fit": {"kind": "matched", "evidence_ids": ["platform"]},
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+
+    summary = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=SqliteScoreRepository(conn),
+        llm_port=llm,
+        resume_text="Engineer with Python.",
+        analyze_use_case=analyze,
+    )
+
+    assert summary["errors"] == 0
+    assert len(analyze.calls) == 1
+    report = SqliteRequirementFitReportRepository(conn).load(LOCAL_TENANT, _job_id(url))
+    assert report is not None
+    assert report.employer_analysis_generation == 2
 
 
 def test_run_scoring_generates_employer_analysis_before_prompt(

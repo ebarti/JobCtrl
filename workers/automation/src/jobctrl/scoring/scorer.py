@@ -35,7 +35,8 @@ from jobctrl.domain.job_content_identity import (
     role_title_has_reference_suffix,
     role_titles_match_as_repost,
 )
-from jobctrl.domain.materials.analysis import EmployerAnalysis
+from jobctrl.domain.materials.analysis import EmployerAnalysis, compute_snapshot_hash
+from jobctrl.domain.materials.analyze_use_case import build_jd_snapshot
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.materials import EmployerAnalysisRepository
 from jobctrl.domain.ports.scoring import (
@@ -1094,6 +1095,17 @@ def _ensure_employer_analysis_for_job(
 ) -> EmployerAnalysis | None:
     """Resolve the canonical requirement source before a fresh score attempt."""
 
+    # ``AnalyzeJobUseCase`` owns the complete cache identity: posting snapshot,
+    # prompt version, and enabled SDK/model set.  Always ask it first when it is
+    # available.  Loading the latest row directly can return an analysis for an
+    # older posting snapshot; scoring against that row creates a requirement-fit
+    # report which Tailoring must later discard after it refreshes the analysis.
+    if analyze_use_case is not None:
+        outcome = analyze_use_case.execute(job=job, tenant_id=tenant_id)
+        analysis = getattr(outcome, "analysis", None)
+        if _is_usable_employer_analysis(analysis, job):
+            return analysis
+        raise ValueError("Employer analysis did not match the current grounded job snapshot.")
     if _is_usable_employer_analysis(existing, job):
         return existing
     if repository is not None:
@@ -1104,12 +1116,6 @@ def _ensure_employer_analysis_for_job(
         )
         if loaded is not None:
             return loaded
-    if analyze_use_case is not None:
-        outcome = analyze_use_case.execute(job=job, tenant_id=tenant_id)
-        analysis = getattr(outcome, "analysis", None)
-        if _is_usable_employer_analysis(analysis, job):
-            return analysis
-        raise ValueError("Employer analysis did not produce grounded requirements for this job.")
     if require:
         raise ValueError("Scoring requires employer analysis before a fresh score can be computed.")
     return None
@@ -1128,6 +1134,16 @@ def _is_usable_employer_analysis(
             "Ignoring employer analysis for tenant=%s job=%s while scoring tenant=%s job=%s",
             analysis.tenant_id,
             analysis.job_id,
+            tenant_id,
+            job_id,
+        )
+        return False
+    expected_snapshot_hash = compute_snapshot_hash(build_jd_snapshot(job))
+    if analysis.snapshot_hash != expected_snapshot_hash:
+        log.info(
+            "Ignoring employer analysis generation %s for tenant=%s job=%s because its "
+            "posting snapshot is stale",
+            analysis.generation,
             tenant_id,
             job_id,
         )
