@@ -84,6 +84,14 @@ attempt reset. Repeated durable executions of one materials generation must
 append audit entries keyed by execution and durable attempt rather than replace
 the prior prompt/candidate/validator/judge record.
 
+The Score-to-Tailor evidence handoff is one generation-bound contract. Change a
+posting after an earlier employer analysis, then prove Score refreshes through
+the analysis cache owner and writes fit evidence for the refreshed generation.
+Tailor must never turn a missing or mismatched fit report into a zero-edge plan:
+it blocks on Score without spending a durable attempt. The claim-mapping fixture
+also covers sentence-level summary aliases, exact rendered skill-group text,
+and mandatory coverage-edge evidence before any judge call.
+
 The [complete matrix](complete-checklist.md#temporal-fault-injection-matrix)
 lists the exact tests for Discover, Pipeline, Preparation, Apply, Profile Import,
 Compensation Refresh, and Interview Prep workflows.

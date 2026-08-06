@@ -136,7 +136,7 @@ The inputs have intentionally different authority:
 | --- | --- | --- |
 | Candidate facts and achievements | Candidate Profile snapshot | Experience, skills, metrics, dates, titles, employers, and other claims about you. |
 | Job requirements and employer wording | Enrichment snapshot plus canonical employer analysis | What the employer asks for and which language appears in the posting. It is target context, never candidate evidence. |
-| Requirement fit | Scoring | Which requirements are matched, transferable, missing, or blocked, with allowed evidence links. |
+| Requirement fit | Scoring | Which requirements are matched, transferable, missing, or blocked, with allowed evidence links. It must describe the same posting-analysis generation Tailoring uses. |
 | Tailoring and model policy | Preferences, Settings, and versioned Materials policy | What transformations and gates may run. Policy cannot create a fact. |
 | Accepted output | Materials generation and registered artifacts | The exact text/HTML/PDF selected for review or Apply, plus its audit data. |
 
@@ -145,6 +145,12 @@ canonical profile evidence. Keyword coverage is computed from the actual
 rendered, grounded text and persisted with the generation. The artifact read
 model does not infer a missing list from the job description later, and it
 reports absent audit data as unrecorded rather than as zero coverage.
+
+If requirement-fit evidence is missing or belongs to an older posting-analysis
+generation, JobCtrl shows Tailor as blocked by Score and asks you to rescore the
+job. This prerequisite block does not consume a Tailor retry. It prevents an
+empty coverage plan from being retried as though it were a model-quality
+failure.
 
 Generated files stay under the local JobCtrl workspace and are served only
 through registered artifact rows. An artifact route cannot open an arbitrary

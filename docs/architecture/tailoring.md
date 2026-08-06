@@ -112,7 +112,7 @@ Tailoring combines several inputs. Each input has a different authority.
 | Writing style | Profile writing preferences | Tone, bullet standards, verbosity, advisory keyword emphasis, first-person preference |
 | Target job | Job record | The target role, description, responsibilities, skills, and company context |
 | Employer analysis | `EmployerAnalysis` aggregate | Grounded role framing, inferred seniority, requirements, and reasoned keywords |
-| Requirement fit report | Scoring context, when available | Pre-tailoring fit by requirement, allowed evidence IDs, target keywords, prohibited claims, tailoring directives |
+| Requirement fit report | Scoring context | Pre-tailoring fit by requirement, allowed evidence IDs, target keywords, prohibited claims, tailoring directives; its employer-analysis generation must match the current posting analysis |
 | Requirement-led coverage graph | Deterministic target-profile adapter plus constrained planner | Which profile achievements can cover which target requirements, which requirements are uncovered, which achievements are unused, and what claim policy each edge requires |
 | Previous attempt outcome | Tailoring retry loop | Typed, code-owned retry reason only; free-form validator, judge, adversarial, and prior-output text remains audit data |
 
@@ -678,6 +678,13 @@ durable attempt, and recorded time, so a later retry or a rerun of the same
 durable attempt cannot overwrite earlier prompts, candidates, validation, or
 judge evidence. A fifth failed durable execution is
 stored as non-retryable `exhausted` until an explicit attempt reset.
+
+Tailoring does not silently discard a missing, cross-job, or stale-generation
+requirement-fit report. That condition blocks Tailor on Score before candidate
+generation, preserves the durable Tailor attempt count, records both generation
+identities, and asks for a fresh score. Scoring resolves employer analysis
+through its complete cache identity first, so the replacement fit report and
+the Tailoring coverage graph describe the same posting snapshot.
 
 ## How To Change Tailoring Safely
 

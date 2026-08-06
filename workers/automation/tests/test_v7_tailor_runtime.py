@@ -18,6 +18,7 @@ from jobctrl.domain.materials.analysis import (
     ReasonedKeyword,
     compute_snapshot_hash,
 )
+from jobctrl.domain.materials.use_cases import TailoringPrerequisiteError
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
@@ -220,6 +221,18 @@ def test_tailor_default_runner_fences_cancellation_before_material_or_terminal_w
     """The production runner and default shared UOW retain the cancel fence."""
 
     _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/canceled-tailor")
+    conn.execute(
+        """
+        INSERT INTO job_requirement_fit_reports (
+            tenant_id, job_id, score_version, employer_analysis_generation,
+            profile_snapshot_version, scoring_policy_version, formula_version,
+            resolved_fit_score, fit_band, confidence, summary_json, created_at
+        ) VALUES (?, ?, 1, 1, 1, 1, 'requirement-fit-v1', 8, 'strong',
+                  'high', '{}', '2026-07-31T12:00:00+00:00')
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    )
+    conn.commit()
     cancel_event = threading.Event()
     llm = _CancelingTailorLlm(cancel_event)
     monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
@@ -361,6 +374,61 @@ def test_tailor_job_by_id_terminalizes_unhandled_item_exception(
         (str(_TENANT_A), str(_JOB_ID)),
     ).fetchone()
     assert event["event_type"] == "StageFailed"
+
+
+def test_tailor_job_by_id_blocks_stale_requirement_fit_without_consuming_retry(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/stale-fit")
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(
+        tailor_module,
+        "_tailor_one_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            TailoringPrerequisiteError(
+                reason="requirement_fit_generation_mismatch",
+                job_id=str(_JOB_ID),
+                analysis_generation=2,
+                report_generation=1,
+            )
+        ),
+    )
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+        workflow_id="workflow-run-stale-fit",
+    )
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "requirement_fit_generation_mismatch"
+    state = conn.execute(
+        "SELECT state, attempt_count, error_code, retryable, blocked_by_json, next_action "
+        "FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert tuple(state) == (
+        "blocked",
+        0,
+        "REQUIREMENT_FIT_STALE",
+        1,
+        '["score"]',
+        "Rescore this job, then run Tailor again.",
+    )
+    event = conn.execute(
+        "SELECT event_type, payload_json FROM job_events "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor' "
+        "ORDER BY event_id DESC LIMIT 1",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert event["event_type"] == "StageBlocked"
+    assert json.loads(event["payload_json"])["errorCode"] == "REQUIREMENT_FIT_STALE"
 
 
 def test_tailor_job_replay_closes_running_state_from_committed_approved_resume(

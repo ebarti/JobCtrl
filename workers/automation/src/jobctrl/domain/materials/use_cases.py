@@ -113,6 +113,7 @@ from jobctrl.domain.materials.claim_grounding import (
 )
 from jobctrl.domain.materials.quality import (
     TailoringPlan,
+    TailoringPrerequisiteError,
     build_tailoring_change_annotations,
     build_tailoring_plan,
     evaluate_tailoring_quality,
@@ -175,8 +176,8 @@ from jobctrl.resume_profile import (
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v3.writer-method"
-TAILORING_SCHEMA_VERSION = "tailored-resume.v1"
+TAILORING_PROMPT_VERSION = "tailor.v4.claim-mapping"
+TAILORING_SCHEMA_VERSION = "tailored-resume.v2"
 TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v1"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
     "relevance_to_job",
@@ -250,6 +251,7 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
         },
         "generated_claim_mappings": {
             "type": "array",
+            "minItems": 1,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -266,8 +268,21 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
                 ],
                 "properties": {
                     "claim_id": {"type": "string"},
-                    "location": {"type": "string"},
-                    "text": {"type": "string"},
+                    "location": {
+                        "type": "string",
+                        "description": (
+                            "Use executive_profile or executive_profile.sentence[N] for summary "
+                            "sentences, experience.<id>.bullets[N] for bullets, and skills.<id> "
+                            "for one complete rendered skill group."
+                        ),
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": (
+                            "Exact text at location. For skills.<id>, join every selected item "
+                            "in rendered order with comma-space separators."
+                        ),
+                    },
                     "claim_label": {
                         "type": "string",
                         "enum": [
@@ -285,7 +300,11 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
                     "evidence_ids": {"type": "array", "items": {"type": "string"}},
                     "non_requirement_reason": {
                         "type": "string",
-                        "enum": ["", "pinned", "positioning", "structure"],
+                        "enum": ["pinned", "positioning", "structure"],
+                        "description": (
+                            "Required fallback classification. It is ignored when coverage_edge_ids "
+                            "is non-empty; when no edge is used it must describe the claim."
+                        ),
                     },
                     "review_required": {"type": "boolean"},
                 },
@@ -645,7 +664,13 @@ def _generated_claim_surfaces(
 
 
 def _canonical_claim_location(location: str) -> str:
-    return re.sub(r"\.bullet\[(\d+)\]$", r".bullets[\1]", str(location or "").strip())
+    normalized = str(location or "").strip()
+    if re.fullmatch(
+        r"(?:(?:profile\.)?(?:executive_profile|summary))(?:\.sentences?)?\[\d+\]",
+        normalized,
+    ):
+        return "executive_profile"
+    return re.sub(r"\.bullet\[(\d+)\]$", r".bullets[\1]", normalized)
 
 
 def _claim_text_is_bound(actual_text: str, mapped_text: str) -> bool:
@@ -1280,6 +1305,14 @@ HARD RULES:
   group, emit a generated_claim_mappings entry that references valid
   coverage_edge_ids, requirement_ids, and evidence_ids; use non_requirement_reason
   only for pinned, positioning, or structure claims
+- A summary sentence location may be executive_profile.sentence[N]; N is zero-based
+- For a skills.<category-id> mapping, text must be the exact selected items in
+  rendered order joined with ", " (comma plus one space), not the category label
+- Every achievement_evidence_id present on any COVERAGE_GRAPH edge must appear
+  in at least one bound mapping that cites that edge and its requirement_id
+- non_requirement_reason is a required fallback classification. Choose pinned,
+  positioning, or structure. When coverage_edge_ids is non-empty it is ignored;
+  when coverage_edge_ids is empty it must truthfully classify the claim
 - Adjacent or draft claims must be labeled adjacent_translation or
   draft_requires_confirmation and marked review_required unless the advanced
   auto-approval policy explicitly allows the claim label
@@ -1347,7 +1380,7 @@ OUTPUT ONLY VALID JSON:
       "coverage_edge_ids": ["edge id from COVERAGE_GRAPH"],
       "requirement_ids": ["requirement id from TARGET_PROFILE"],
       "evidence_ids": ["achievement evidence id from TARGET_PROFILE"],
-      "non_requirement_reason": "",
+      "non_requirement_reason": "positioning",
       "review_required": false
     }}
   ]
@@ -1668,6 +1701,12 @@ class TailorResumeUseCase:
             requirement_fit_report = self._requirement_fit_repository.load(
                 tenant_id,
                 job_id,
+            )
+        if self._requirement_fit_repository is not None and requirement_fit_report is None:
+            raise TailoringPrerequisiteError(
+                reason="requirement_fit_missing",
+                job_id=str(job_id),
+                analysis_generation=employer_analysis.generation,
             )
         previous = self._repository.load(tenant_id, job_id)
         created_at = _utc_now()
@@ -4059,6 +4098,7 @@ __all__ = [
     "SuppressTailoredArtifactsOutcome",
     "SuppressTailoredArtifactsUseCase",
     "TailorOutcome",
+    "TailoringPrerequisiteError",
     "TailorResumeUseCase",
     "build_cover_letter_prompt",
     "build_judge_prompt",

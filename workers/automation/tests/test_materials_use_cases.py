@@ -44,6 +44,7 @@ from jobctrl.domain.materials.use_cases import (
     TailoringLlmPolicy,
     TailorResumeUseCase,
     _bullet_limit_overflow_metadata,
+    _canonical_claim_location,
     _claim_mappings_from_payload,
     _safe_filename_prefix,
 )
@@ -51,6 +52,15 @@ from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.scoring import (
+    FitScore,
+    RequirementFitAssessment,
+    RequirementFitReport,
+    RequirementFitStatus,
+    RequirementFitSummary,
+    RequirementScoreContribution,
+    RequirementTailoringDirective,
+)
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
@@ -240,6 +250,91 @@ def _analysis_with_keywords(job: dict, keywords: list[str]):
         agreement=AnalysisAgreement(score=1.0),
         legs_attempted=1,
     )
+
+
+def _coherent_requirement_analysis_and_report(
+    job: dict,
+) -> tuple[Any, RequirementFitReport]:
+    """Build the generation-bound Score input that Tailor must consume."""
+    from jobctrl.domain.materials.analysis import (
+        AnalysisAgreement,
+        EmployerAnalysis,
+        JobAnalysis,
+        ReasonedKeyword,
+        Requirement,
+        compute_snapshot_hash,
+    )
+
+    job_id = canonical_job_id(str(job["job_id"]))
+    requirement = Requirement(
+        id="req_latency",
+        text="Own Python API reliability.",
+        tier="must_have",
+        weight=0.9,
+        evidence_span="Own Python API reliability.",
+    )
+    analysis = EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=job_id,
+        generation=2,
+        snapshot_hash=compute_snapshot_hash(str(job["full_description"])),
+        canonical=JobAnalysis(
+            role_framing="Backend ownership.",
+            inferred_seniority="senior",
+            ideal_candidate_narrative="A hands-on backend owner.",
+            requirements=[requirement],
+            keywords=[
+                ReasonedKeyword(
+                    keyword="Python API reliability",
+                    evidence_span="Own Python API reliability.",
+                    requirement_ref=requirement.id,
+                )
+            ],
+        ),
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=2,
+    )
+    report = RequirementFitReport(
+        job_id=job_id,
+        score_version=2,
+        employer_analysis_generation=analysis.generation,
+        profile_snapshot_version=1,
+        scoring_policy_version=1,
+        formula_version="requirement-fit-v1",
+        resolved_fit_score=FitScore.create(9),
+        fit_band="excellent",
+        confidence="high",
+        summary=RequirementFitSummary(weighted_fit=1.0, must_have_coverage=1.0),
+        assessments=(
+            RequirementFitAssessment(
+                requirement_id=requirement.id,
+                requirement_text=requirement.text,
+                tier=requirement.tier,
+                weight=requirement.weight,
+                job_evidence_span=requirement.evidence_span,
+                fit=RequirementFitStatus(
+                    kind="matched",
+                    evidence_ids=("ev_latency",),
+                    strength="direct",
+                ),
+                contribution=RequirementScoreContribution(
+                    max_points=1.125,
+                    awarded_points=1.125,
+                    weighted_impact=1.125,
+                ),
+                tailoring=RequirementTailoringDirective(
+                    action="double_down",
+                    priority=0.9,
+                    allowed_evidence_ids=("ev_latency",),
+                    target_keywords=("Python API reliability",),
+                    instruction="Emphasize the verified latency evidence.",
+                ),
+            ),
+        ),
+    )
+    return analysis, report
 
 
 class _FakeRepository:
@@ -521,6 +616,57 @@ def _quality_json_payload(*, metric: str = "35%") -> str:
     )
 
 
+def _coherent_requirement_payload() -> str:
+    summary = "Senior backend engineer focused on Python API reliability."
+    bullet = "Owned API latency improvements and reduced latency 35% with Python."
+    return json.dumps(
+        {
+            "executive_profile": summary,
+            "experience_updates": [
+                {"id": "acme_swe", "title": "", "bullets": [bullet]},
+            ],
+            "skill_category_updates": [
+                {"id": "languages", "items": ["Python", "Go"]},
+            ],
+            "generated_claim_mappings": [
+                {
+                    "claim_id": "claim-summary",
+                    "location": "summary.sentence[0]",
+                    "text": summary,
+                    "claim_label": "positioning",
+                    "coverage_edge_ids": [],
+                    "requirement_ids": [],
+                    "evidence_ids": [],
+                    "non_requirement_reason": "positioning",
+                    "review_required": False,
+                },
+                {
+                    "claim_id": "claim-latency",
+                    "location": "experience.acme_swe.bullets[0]",
+                    "text": bullet,
+                    "claim_label": "verified",
+                    "coverage_edge_ids": ["edge_req_latency_ev_latency_direct"],
+                    "requirement_ids": ["req_latency"],
+                    "evidence_ids": ["ev_latency"],
+                    "non_requirement_reason": "positioning",
+                    "review_required": False,
+                },
+                {
+                    "claim_id": "claim-skills",
+                    "location": "skills.languages",
+                    "text": "Python, Go",
+                    "claim_label": "structure",
+                    "coverage_edge_ids": [],
+                    "requirement_ids": [],
+                    "evidence_ids": [],
+                    "non_requirement_reason": "structure",
+                    "review_required": False,
+                },
+            ],
+        }
+    )
+
+
 def _stock_phrase_json_payload() -> str:
     return json.dumps(
         {
@@ -723,7 +869,23 @@ def test_tailored_resume_schema_constrains_non_requirement_reason_enum() -> None
         "items"
     ]["properties"]["non_requirement_reason"]
 
-    assert mapping_schema["enum"] == ["", "pinned", "positioning", "structure"]
+    assert mapping_schema["enum"] == ["pinned", "positioning", "structure"]
+    assert TAILORED_RESUME_RESPONSE_SCHEMA["properties"]["generated_claim_mappings"][
+        "minItems"
+    ] == 1
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "executive_profile.sentence[0]",
+        "summary.sentence[1]",
+        "profile.summary.sentence[2]",
+        "profile.executive_profile.sentences[3]",
+    ],
+)
+def test_claim_location_normalizes_summary_sentence_aliases(location: str) -> None:
+    assert _canonical_claim_location(location) == "executive_profile"
 
 
 def test_claim_mapping_parser_clears_redundant_non_requirement_reason() -> None:
@@ -773,6 +935,50 @@ def test_tailor_use_case_happy_path(tmp_path: Path, snapshot: ProfileSnapshot, j
     assert outcome.materials.last_verdict.criterion_scores["fabrication_safety"] == 1.0
     assert outcome.text_path is not None and Path(outcome.text_path).exists()
     assert any(getattr(e, "event_type", "") == "ResumeApproved" for e in publisher.events)
+
+
+def test_tailor_use_case_approves_generation_bound_requirement_claims(
+    tmp_path: Path, job: dict
+) -> None:
+    """Regression: coherent Score evidence reaches the judge and ships materials."""
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "Go"],
+        "full_description": "Own Python API reliability.",
+    }
+    analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([_coherent_requirement_payload(), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=analysis,
+        requirement_fit_report=requirement_fit_report,
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+    assert len(llm.calls) == 2
+    assert outcome.materials.last_verdict is not None
+    assert outcome.materials.last_verdict.approved is True
+    quality_plan = outcome.materials.tailored_resume.metadata["quality_plan"]
+    assert quality_plan["coverage_graph"]["coverage_edge_count"] == 1
+    fit_decision = outcome.report["post_generation_fit"]["revision_decision"]
+    assert fit_decision["threshold_failed"] is False
 
 
 def test_tailor_use_case_injects_quality_plan_and_persists_metadata(

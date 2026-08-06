@@ -469,6 +469,42 @@ class TailoringChangeAnnotation:
         }
 
 
+class TailoringPrerequisiteError(ValueError):
+    """Tailoring inputs are not bound to one coherent scoring generation."""
+
+    def __init__(
+        self,
+        *,
+        reason: str,
+        job_id: str,
+        analysis_generation: int,
+        report_generation: int | None = None,
+    ) -> None:
+        self.reason = reason
+        self.job_id = job_id
+        self.analysis_generation = analysis_generation
+        self.report_generation = report_generation
+        if reason == "requirement_fit_missing":
+            detail = "no requirement-fit report exists"
+        elif reason == "requirement_fit_job_mismatch":
+            detail = "the requirement-fit report belongs to a different job"
+        else:
+            detail = (
+                "requirement-fit generation "
+                f"{report_generation} does not match employer-analysis generation "
+                f"{analysis_generation}"
+            )
+        super().__init__(
+            f"Tailoring requires a fresh score for job {job_id}: {detail}."
+        )
+
+    @property
+    def error_code(self) -> str:
+        if self.reason == "requirement_fit_missing":
+            return "REQUIREMENT_FIT_MISSING"
+        return "REQUIREMENT_FIT_STALE"
+
+
 def build_tailoring_plan(
     profile: dict,
     job: dict,
@@ -499,11 +535,27 @@ def build_tailoring_plan(
         *tuple(_evidence_item(item) for item in get_achievement_evidence(profile)),
         *_education_evidence_items(profile),
     )
-    matched_requirement_fit_report = (
-        requirement_fit_report
-        if _requirement_fit_report_matches(requirement_fit_report, job, employer_analysis)
-        else None
-    )
+    if requirement_fit_report is not None and not _requirement_fit_report_matches(
+        requirement_fit_report,
+        job,
+        employer_analysis,
+    ):
+        job_id = canonical_job_id(str(job["job_id"]))
+        report_job_id = getattr(requirement_fit_report, "job_id", None)
+        report_generation = int(
+            getattr(requirement_fit_report, "employer_analysis_generation", 0) or 0
+        )
+        raise TailoringPrerequisiteError(
+            reason=(
+                "requirement_fit_job_mismatch"
+                if report_job_id != job_id
+                else "requirement_fit_generation_mismatch"
+            ),
+            job_id=str(job_id),
+            analysis_generation=employer_analysis.generation,
+            report_generation=report_generation,
+        )
+    matched_requirement_fit_report = requirement_fit_report
     requirement_directives = _requirement_directive_items(
         requirement_fit_report=matched_requirement_fit_report,
         job=job,
