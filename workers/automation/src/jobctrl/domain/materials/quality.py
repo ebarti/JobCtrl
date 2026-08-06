@@ -22,6 +22,7 @@ from jobctrl.domain.materials.requirement_coverage import (
     CoverageGraph,
     TargetProfile,
     build_target_profile,
+    resolve_requirement_coverage_scope,
     seed_coverage_graph,
 )
 from jobctrl.domain.materials.value_objects import ValidationResult
@@ -260,6 +261,7 @@ class RequirementDirectivePlanItem:
     weight: float
     fit_kind: str
     action: str
+    coverage_scope: str = "resume"
     priority: float = 0.0
     allowed_evidence_ids: tuple[str, ...] = ()
     target_keywords: tuple[str, ...] = ()
@@ -275,6 +277,7 @@ class RequirementDirectivePlanItem:
             "weight": self.weight,
             "pre_tailor_fit": self.fit_kind,
             "action": self.action,
+            "coverage_scope": self.coverage_scope,
             "priority": self.priority,
             "allowed_evidence_ids": list(self.allowed_evidence_ids),
             "target_keywords": list(self.target_keywords),
@@ -289,6 +292,7 @@ class RequirementDirectivePlanItem:
             "requirement_text": self.requirement_text,
             "fit": self.fit_kind,
             "action": self.action,
+            "coverage_scope": self.coverage_scope,
             "priority": self.priority,
             "allowed_evidence_ids": list(self.allowed_evidence_ids),
             "target_keywords": list(self.target_keywords),
@@ -348,6 +352,7 @@ class TailoringPlan:
                 "Use standard sections: EXECUTIVE PROFILE, EXPERIENCE, EDUCATION, SKILLS.",
                 "Use only verified profile metrics or evidence metrics.",
                 "Use requirement directives to decide which evidence to emphasize or bridge.",
+                "Treat context-only requirements as eligibility/apply-review facts, never resume coverage.",
                 "Do not claim prohibited missing requirements unless grounded evidence exists.",
                 "Cover relevant job keywords naturally; do not stuff repeated keywords.",
                 "Match seniority to the job title and responsibilities.",
@@ -992,15 +997,28 @@ def _requirement_directive_items(
     if not _requirement_fit_report_matches(requirement_fit_report, job, employer_analysis):
         return ()
     items: list[RequirementDirectivePlanItem] = []
+    canonical_requirements = {
+        str(getattr(requirement, "id", "") or ""): requirement
+        for requirement in employer_analysis.canonical.requirements
+    }
     for assessment in getattr(requirement_fit_report, "assessments", ()) or ():
         fit = getattr(assessment, "fit", None)
         directive = getattr(assessment, "tailoring", None)
         requirement_id = str(getattr(assessment, "requirement_id", "") or "").strip()
-        requirement_text = str(getattr(assessment, "requirement_text", "") or "").strip()
+        canonical_requirement = canonical_requirements.get(requirement_id)
+        requirement_text = str(
+            getattr(canonical_requirement, "text", "")
+            or getattr(assessment, "requirement_text", "")
+            or ""
+        ).strip()
         if not requirement_id or not requirement_text:
             continue
         fit_kind = str(getattr(fit, "kind", "not_assessed") or "not_assessed")
         action = str(getattr(directive, "action", "low_priority") or "low_priority")
+        coverage_scope = resolve_requirement_coverage_scope(
+            requirement_text,
+            getattr(canonical_requirement, "coverage_scope", None),
+        )
         allowed_evidence_ids = _merge_strings(
             tuple(getattr(fit, "evidence_ids", ()) or ()),
             tuple(getattr(directive, "allowed_evidence_ids", ()) or ()),
@@ -1010,9 +1028,22 @@ def _requirement_directive_items(
             _requirement_keywords(employer_analysis, requirement_id),
         )
         prohibited_claims = tuple(getattr(directive, "prohibited_claims", ()) or ())
+        if coverage_scope != "resume":
+            action = "context_only"
+            allowed_evidence_ids = ()
+            target_keywords = ()
+            # Use the canonical posting sentence, not a model-supplied token
+            # fragment such as "hybrid" that could reject legitimate profile
+            # evidence about hybrid-cloud or remote-team experience.
+            prohibited_claims = (requirement_text,)
         if fit_kind in {"missing", "blocked"} and not prohibited_claims:
             prohibited_claims = (requirement_text,)
         instruction = str(getattr(directive, "instruction", "") or "").strip()
+        if coverage_scope != "resume":
+            instruction = (
+                f"Keep this {coverage_scope.replace('_', ' ')} requirement in "
+                "eligibility/apply review; do not claim it as resume evidence."
+            )
         items.append(
             RequirementDirectivePlanItem(
                 requirement_id=requirement_id,
@@ -1021,6 +1052,7 @@ def _requirement_directive_items(
                 weight=float(getattr(assessment, "weight", 0.0) or 0.0),
                 fit_kind=fit_kind,
                 action=action,
+                coverage_scope=coverage_scope,
                 priority=float(getattr(directive, "priority", 0.0) or 0.0),
                 allowed_evidence_ids=allowed_evidence_ids,
                 target_keywords=target_keywords,
@@ -1076,7 +1108,7 @@ def _directive_prohibited_claims(
 ) -> tuple[str, ...]:
     claims: list[str] = []
     for directive in directives:
-        if directive.action != "avoid_claim":
+        if directive.action not in {"avoid_claim", "context_only"}:
             continue
         claims.extend(directive.prohibited_claims)
     return tuple(dict.fromkeys(_normalize_space(claim) for claim in claims if claim))

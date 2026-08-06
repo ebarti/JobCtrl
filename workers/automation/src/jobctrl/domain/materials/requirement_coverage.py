@@ -40,6 +40,134 @@ BULLET_LIMIT_OVERFLOW_REASONS = (
     "requirement_coverage",
     "enhancement_coverage",
 )
+REQUIREMENT_COVERAGE_SCOPES = (
+    "resume",
+    "eligibility",
+    "logistics",
+    "employer_condition",
+)
+
+_RESUME_SPONSORSHIP_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\b(?:executive|stakeholder|leadership|senior\s+stakeholder)\s+sponsorship\b",
+        r"\bsponsorship\s+(?:from|among)\s+(?:executives?|stakeholders?|leadership)\b",
+    )
+)
+
+_ELIGIBILITY_REQUIREMENT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\b(?:work|employment)\s+authori[sz]ation\b",
+        r"\bauthori[sz]ed\s+to\s+work\b",
+        r"\bright\s+to\s+work\b",
+        r"\bvisa(?:\s+sponsorship)?\b",
+        r"\b(?:visa|work|employment)\s+sponsorship\b",
+        r"\b(?:without|not\s+require|does\s+not\s+require|do\s+not\s+require)\s+"
+        r"(?:visa\s+|work\s+|employment\s+)?sponsorship\b",
+        r"\bsponsorship\s+(?:for|to)\s+(?:work|employment|a\s+visa)\b",
+        r"\bbackground\s+check\b",
+        r"\bsecurity\s+clearance\b",
+        r"\bdrug\s+(?:test|screen(?:ing)?)\b",
+    )
+)
+_LOGISTICS_REQUIREMENT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\b(?:hybrid|on[- ]?site|in[- ]?office|office[- ]based)\s+"
+        r"(?:work|working|role|position|schedule|setup|arrangement|model|environment)\b",
+        r"\b(?:work|working|role|position|schedule|setup|arrangement|model)\s+"
+        r"(?:is\s+|will\s+be\s+|must\s+be\s+)?"
+        r"(?:hybrid|on[- ]?site|in[- ]?office|office[- ]based|remote)\b",
+        r"\b(?:work|working)\s+remotely\b",
+        r"\b(?:requires?|required|expects?|expected|mandatory)\b.{0,40}"
+        r"\b(?:on[- ]?site|in[- ]?office|office|in[- ]?person)\s+"
+        r"(?:presence|attendance|work|schedule)\b",
+        r"\b(?:on[- ]?site|in[- ]?office|office|in[- ]?person)\s+"
+        r"(?:presence|attendance)\b",
+        r"\b(?:attend|attendance|present|presence)\b.{0,40}"
+        r"\b(?:office|on[- ]?site|in[- ]?person)\b",
+        r"\bhybrid\b[\s,:;()/-]{0,12}"
+        r"(?:one|two|three|four|five|six|seven|\d+)\s+days?\b",
+        r"\b(?:one|two|three|four|five|six|seven|\d+)\s+days?\s+"
+        r"(?:per|a|each)\s+week\b.{0,48}"
+        r"\b(?:office|on[- ]?site)\b",
+        r"\b(?:office|on[- ]?site)\b.{0,48}"
+        r"\b(?:one|two|three|four|five|six|seven|\d+)\s+days?\s+"
+        r"(?:per|a|each)\s+week\b",
+        r"\b(?:one|two|three|four|five|six|seven|\d+)\s+"
+        r"(?:office|on[- ]?site|in[- ]?office)\s+days?\b",
+        r"\b(?:office|on[- ]?site|in[- ]?office)\s+"
+        r"(?:one|two|three|four|five|six|seven|\d+)\s+days?\b",
+        r"\b(?:one|two|three|four|five|six|seven|\d+)\s+days?\s+weekly\b"
+        r".{0,48}\b(?:office|on[- ]?site|presence|attendance)\b",
+        r"\b(?:office|on[- ]?site|presence|attendance)\b.{0,48}"
+        r"\b(?:one|two|three|four|five|six|seven|\d+)\s+days?\s+weekly\b",
+        r"\b(?:must|should|able|willing|required)\s+to\s+"
+        r"(?:work\s+(?:from|in|at)\s+.{0,40}\boffice|commute|relocate|travel)\b",
+        r"\b(?:relocation|commuting|commute)\b",
+        r"\btravel\s+(?:up\s+to\s+)?\d+\s*%",
+        r"\b\d+\s*%\s+(?:of\s+)?travel\b",
+        r"\b(?:time\s*zone|working\s+hours?|night\s+shifts?|weekend\s+shifts?|"
+        r"on[- ]call\s+rotation)\b",
+        r"^\s*remote(?:\s+(?:within|from|in)\b|\s*$)",
+        r"^\s*(?:must\s+be\s+)?(?:based|located)\s+in\b",
+        r"\b(?:candidate|applicant|you)\b.{0,24}\b(?:based|located)\s+in\b",
+    )
+)
+_EMPLOYER_CONDITION_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\b(?:salary|pay|compensation)\s+(?:range|package|is|of|from|up\s+to)\b",
+        r"\b(?:benefits?|perks?)\s+(?:include|package)\b",
+        r"\b(?:stock\s+options?|equity\s+package|annual\s+bonus|paid\s+leave|"
+        r"vacation\s+allowance|probation\s+period|contract\s+duration|notice\s+period)\b",
+    )
+)
+
+
+def classify_requirement_coverage_scope(requirement_text: Any) -> str:
+    """Classify how a posting requirement may influence resume generation.
+
+    The posting remains the source of truth for every requirement. This scope
+    only decides whether absence from grounded candidate evidence is a resume
+    coverage gap. Work arrangement and employer-side conditions belong to
+    eligibility/apply review and must never force an invented resume claim.
+    """
+
+    text = " ".join(str(requirement_text or "").split())
+    if any(pattern.search(text) for pattern in _ELIGIBILITY_REQUIREMENT_PATTERNS):
+        return "eligibility"
+    if any(pattern.search(text) for pattern in _LOGISTICS_REQUIREMENT_PATTERNS):
+        return "logistics"
+    if any(pattern.search(text) for pattern in _EMPLOYER_CONDITION_PATTERNS):
+        return "employer_condition"
+    return "resume"
+
+
+def resolve_requirement_coverage_scope(
+    requirement_text: Any,
+    declared_scope: Any = None,
+) -> str:
+    """Resolve ensemble semantics with deterministic non-resume safety rules.
+
+    New employer analyses declare the scope explicitly. Existing analyses do
+    not, so deterministic classification remains the compatibility path. An
+    unmistakable non-resume pattern always wins over an erroneous `resume`
+    declaration; otherwise the reconciled ensemble declaration supplies the
+    semantic judgment for wording that a bounded classifier cannot enumerate.
+    """
+
+    text = " ".join(str(requirement_text or "").split())
+    if any(pattern.search(text) for pattern in _RESUME_SPONSORSHIP_PATTERNS):
+        return "resume"
+    deterministic_scope = classify_requirement_coverage_scope(text)
+    if deterministic_scope != "resume":
+        return deterministic_scope
+    normalized_declared_scope = str(declared_scope or "").strip()
+    if normalized_declared_scope in REQUIREMENT_COVERAGE_SCOPES:
+        return normalized_declared_scope
+    return "resume"
 
 _POLICY_RANK = {
     "verified_only": 0,
@@ -75,6 +203,7 @@ class TargetRequirement:
     keywords: tuple[str, ...] = ()
     fit_kind: str = "not_assessed"
     prohibited_claims: tuple[str, ...] = ()
+    coverage_scope: str = "resume"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "requirement_id", _required_text(self.requirement_id, "requirement_id"))
@@ -94,6 +223,17 @@ class TargetRequirement:
         object.__setattr__(self, "keywords", _clean_string_tuple(self.keywords))
         object.__setattr__(self, "fit_kind", str(self.fit_kind or "not_assessed").strip())
         object.__setattr__(self, "prohibited_claims", _clean_string_tuple(self.prohibited_claims))
+        coverage_scope = str(self.coverage_scope or "resume").strip()
+        if coverage_scope not in REQUIREMENT_COVERAGE_SCOPES:
+            raise ValueError(
+                "TargetRequirement.coverage_scope must be resume, eligibility, "
+                "logistics, or employer_condition"
+            )
+        object.__setattr__(self, "coverage_scope", coverage_scope)
+
+    @property
+    def is_resume_coverable(self) -> bool:
+        return self.coverage_scope == "resume"
 
     def to_prompt_dict(self) -> dict[str, Any]:
         return {
@@ -105,6 +245,7 @@ class TargetRequirement:
             "keywords": list(self.keywords),
             "pre_tailor_fit": self.fit_kind,
             "prohibited_claims": list(self.prohibited_claims),
+            "coverage_scope": self.coverage_scope,
         }
 
     def to_safe_metadata(self) -> dict[str, Any]:
@@ -115,6 +256,7 @@ class TargetRequirement:
             "weight": self.weight,
             "keywords": list(self.keywords),
             "pre_tailor_fit": self.fit_kind,
+            "coverage_scope": self.coverage_scope,
         }
 
 
@@ -134,6 +276,30 @@ class TargetProfile:
     @property
     def requirements(self) -> tuple[TargetRequirement, ...]:
         return (*self.must_have_requirements, *self.nice_to_have_requirements)
+
+    @property
+    def resume_requirements(self) -> tuple[TargetRequirement, ...]:
+        return tuple(
+            requirement
+            for requirement in self.requirements
+            if requirement.is_resume_coverable
+        )
+
+    @property
+    def context_only_requirements(self) -> tuple[TargetRequirement, ...]:
+        return tuple(
+            requirement
+            for requirement in self.requirements
+            if not requirement.is_resume_coverable
+        )
+
+    @property
+    def resume_must_have_requirements(self) -> tuple[TargetRequirement, ...]:
+        return tuple(
+            requirement
+            for requirement in self.must_have_requirements
+            if requirement.is_resume_coverable
+        )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_id", str(self.job_id or "").strip())
@@ -158,10 +324,24 @@ class TargetProfile:
             "target_role": self.target_role,
             "seniority": self.seniority,
             "must_have_requirements": [
-                requirement.to_prompt_dict() for requirement in self.must_have_requirements
+                requirement.to_prompt_dict()
+                for requirement in self.must_have_requirements
+                if requirement.is_resume_coverable
             ],
             "nice_to_have_requirements": [
-                requirement.to_prompt_dict() for requirement in self.nice_to_have_requirements
+                requirement.to_prompt_dict()
+                for requirement in self.nice_to_have_requirements
+                if requirement.is_resume_coverable
+            ],
+            "context_only_requirements": [
+                {
+                    **requirement.to_prompt_dict(),
+                    "instruction": (
+                        "Keep this visible for eligibility/apply review; do not represent "
+                        "it as resume evidence or requirement coverage."
+                    ),
+                }
+                for requirement in self.context_only_requirements
             ],
             "hard_skills": list(self.hard_skills),
             "ats_keywords": list(self.ats_keywords),
@@ -184,6 +364,12 @@ class TargetProfile:
             "hard_skills": list(self.hard_skills[:24]),
             "ats_keywords": list(self.ats_keywords[:32]),
             "requirements": [requirement.to_safe_metadata() for requirement in self.requirements],
+            "resume_requirement_ids": [
+                requirement.requirement_id for requirement in self.resume_requirements
+            ],
+            "context_only_requirement_ids": [
+                requirement.requirement_id for requirement in self.context_only_requirements
+            ],
             "profile_achievement_ids": [
                 achievement.achievement_evidence_id for achievement in self.profile_achievements
             ],
@@ -692,6 +878,7 @@ def build_target_profile(
     requirements: list[TargetRequirement] = []
     for requirement in source_requirements:
         requirement_id = str(getattr(requirement, "id", "") or "")
+        requirement_text = str(getattr(requirement, "text", ""))
         assessment = assessment_by_requirement.get(requirement_id)
         fit = getattr(assessment, "fit", None)
         tailoring = getattr(assessment, "tailoring", None)
@@ -707,7 +894,7 @@ def build_target_profile(
         requirements.append(
             TargetRequirement(
                 requirement_id=requirement_id,
-                text=str(getattr(requirement, "text", "")),
+                text=requirement_text,
                 tier=str(getattr(requirement, "tier", "nice_to_have")),
                 weight=float(getattr(requirement, "weight", 0.0) or 0.0),
                 source_span=str(getattr(requirement, "evidence_span", "")),
@@ -715,6 +902,10 @@ def build_target_profile(
                 fit_kind=str(getattr(fit, "kind", "not_assessed") or "not_assessed"),
                 prohibited_claims=tuple(
                     getattr(tailoring, "prohibited_claims", ()) if tailoring is not None else ()
+                ),
+                coverage_scope=resolve_requirement_coverage_scope(
+                    requirement_text,
+                    getattr(requirement, "coverage_scope", None),
                 ),
             )
         )
@@ -757,8 +948,11 @@ def seed_coverage_graph(
             keywords=requirement.keywords,
             blocker=requirement.fit_kind == "blocked",
         )
-        for requirement in target_profile.requirements
+        for requirement in target_profile.resume_requirements
     )
+    resume_requirement_ids = {
+        requirement.requirement_id for requirement in target_profile.resume_requirements
+    }
     achievements = target_profile.profile_achievements
     edges: list[CoverageEdge] = []
     fit_by_requirement: dict[str, Any] = {}
@@ -766,6 +960,8 @@ def seed_coverage_graph(
         for assessment in getattr(requirement_fit_report, "assessments", ()) or ():
             requirement_id = str(getattr(assessment, "requirement_id", "") or "")
             fit_by_requirement[requirement_id] = assessment
+            if requirement_id not in resume_requirement_ids:
+                continue
             fit = getattr(assessment, "fit", None)
             fit_kind = str(getattr(fit, "kind", "") or "")
             if fit_kind not in {"matched", "transferable"}:
@@ -790,7 +986,7 @@ def seed_coverage_graph(
                 )
     covered_requirements = {edge.requirement_id for edge in edges}
     uncovered = []
-    for requirement in target_profile.requirements:
+    for requirement in target_profile.resume_requirements:
         if requirement.requirement_id in covered_requirements:
             continue
         assessment = fit_by_requirement.get(requirement.requirement_id)
@@ -1104,7 +1300,7 @@ def score_generated_resume_against_target(
     mapping_tuple = tuple(mappings)
     covered_set = set(grounding.grounded_requirement_ids)
     claimed_only_set = set(grounding.claimed_only_requirement_ids)
-    all_requirements = target_profile.requirements
+    all_requirements = target_profile.resume_requirements
     covered = tuple(
         requirement.requirement_id
         for requirement in all_requirements
@@ -1120,7 +1316,7 @@ def score_generated_resume_against_target(
         for requirement in all_requirements
         if requirement.requirement_id not in covered_set
     )
-    must_have = target_profile.must_have_requirements
+    must_have = target_profile.resume_must_have_requirements
     covered_must_have = [
         requirement
         for requirement in must_have
@@ -1449,9 +1645,11 @@ __all__ = [
     "bullet_limit_overflows",
     "build_coverage_planner_prompt",
     "build_target_profile",
+    "classify_requirement_coverage_scope",
     "decide_score_gated_revision",
     "seed_coverage_graph",
     "score_generated_resume_against_target",
+    "resolve_requirement_coverage_scope",
     "validate_coverage_graph",
     "validate_generated_claim_mappings",
     "validate_mandatory_covered_achievements",

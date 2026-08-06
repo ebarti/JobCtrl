@@ -146,6 +146,16 @@ rendered, grounded text and persisted with the generation. The artifact read
 model does not infer a missing list from the job description later, and it
 reports absent audit data as unrecorded rather than as zero coverage.
 
+JobCtrl also records what each posting requirement is for. Technical
+qualifications and responsibilities are `resume` requirements and can enter
+the grounded coverage gate. Work arrangements such as remote/hybrid or office
+attendance are `logistics`; work authorization and screening are
+`eligibility`; salary, benefits, and other employer terms are
+`employer_condition`. Those context-only requirements remain visible for fit
+and Apply Review, but the resume is never required to claim them. An unknown
+office-attendance preference can therefore warn or ask for confirmation; it
+cannot reject a resume candidate or spend Tailor retries.
+
 Cover letters follow the same evidence boundary. They may describe employer
 priorities from the posting, but posting-only numbers and dates are omitted or
 expressed qualitatively. Only numeric/date facts already grounded in the

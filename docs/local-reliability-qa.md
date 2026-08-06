@@ -158,7 +158,15 @@ run Score and Tailor. Score must resolve the current analysis cache identity and
 persist a requirement-fit report for that exact generation. A deliberately
 missing or generation-mismatched report must block Tailor on Score before an LLM
 candidate call, preserve the Tailor attempt count, and emit an auditable
-`StageBlocked`. With coherent inputs, sentence-level executive-profile mapping
+`StageBlocked` prerequisite reason. Include a requirement-scope fixture with
+one grounded technical must-have and one missing hybrid/office-attendance
+must-have. The
+logistics item must remain present in safe plan metadata and prompt context,
+must be excluded from coverage nodes, weighted/must-have resume denominators,
+and prioritized fixes, and must not consume a Tailor retry. Pair it with
+negative controls such as “leading remote engineering teams” and “hybrid cloud
+infrastructure” so the classifier cannot become a blunt remote/hybrid keyword
+filter. With coherent inputs, sentence-level executive-profile mapping
 locations must bind to the rendered summary and skill-group mappings must use
 the exact rendered item sequence.
 The focused deterministic gate is:

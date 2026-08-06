@@ -45,7 +45,7 @@ from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 # Bump whenever the analysis system prompt changes so stale cached analyses are
 # recomputed rather than silently served (D-12). The cache key combines this
 # with the JD snapshot hash and the SDK-set version.
-PROMPT_VERSION = "employer-analysis-v1"
+PROMPT_VERSION = "employer-analysis-v2"
 
 # Identifies the default ensemble model/SDK set. Bump when the default leg set
 # or model ids change so the cache invalidates (D-12). The config.json
@@ -54,6 +54,12 @@ PROMPT_VERSION = "employer-analysis-v1"
 SDK_SET_VERSION = "claude+codex+antigravity-v2-synth-default"
 
 RequirementTier = Literal["must_have", "nice_to_have"]
+RequirementCoverageScope = Literal[
+    "resume",
+    "eligibility",
+    "logistics",
+    "employer_condition",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +112,13 @@ class Requirement(BaseModel):
     evidence_span: str = Field(
         ...,
         description="LITERAL substring of the JD snapshot supporting this requirement (D-15).",
+    )
+    coverage_scope: RequirementCoverageScope | None = Field(
+        default=None,
+        description=(
+            "How Tailoring may use this requirement: resume for candidate qualifications/"
+            "responsibilities; eligibility, logistics, or employer_condition remain context-only."
+        ),
     )
 
 
@@ -417,6 +430,7 @@ __all__ = [
     "Requirement",
     "JobAnalysis",
     "JobAnalysisDraft",
+    "RequirementCoverageScope",
     "AnalysisFailure",
     "AnalysisAgreement",
     "EeoScreenHit",

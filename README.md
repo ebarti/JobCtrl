@@ -242,6 +242,12 @@ evidence, qualifications, and the complete capability matrix.
   clears only those Tailor-owned blocks. Claimed, skipped, and canceled
   dependent work is never moved backward; an accepted new resume may invalidate
   a completed or failed Cover from the superseded material generation.
+- Keep requirement purposes separate. Technical qualifications and role
+  responsibilities may enter grounded resume coverage; work arrangements,
+  work-authorization checks, and employer-side conditions remain visible as
+  context-only eligibility/Apply facts. A hybrid or office-attendance rule can
+  warn or request confirmation, but it cannot fail resume generation or consume
+  a Tailor retry because the resume does not assert it.
 - Review privacy-bounded learning recommendations on the Dashboard. JobCtrl
   derives them only from explicit reviewed signals, requires compatible
   evidence across jobs, and changes Materials behavior only after you accept a

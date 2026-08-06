@@ -35,7 +35,7 @@ years-of-experience bands, NOT from a single salient token.
 - ideal_candidate_narrative: "what they're really looking for" — the role's \
 center of gravity and the genuinely-implied core needs.
 - requirements: each with id (stable, e.g. "r1"), text, tier, weight, \
-evidence_span.
+evidence_span, coverage_scope.
 - keywords: the genuine screened-on skills/tools/qualifications, each with \
 keyword, evidence_span, requirement_ref, rationale.
 
@@ -49,17 +49,28 @@ clearance/license/degree, a core competency the role is built on). \
 nice_to_have = "preferred", "a plus", "bonus", "ideally", "familiarity with". \
 Do NOT inflate an aspirational wishlist item to must_have; do NOT demote a true \
 gate to nice_to_have.
-3. WEIGHT (0.0-1.0): rank importance. The core competency the role is really \
+3. COVERAGE SCOPE: classify what the requirement is FOR. Use `resume` only for \
+candidate qualifications, credentials, experience, skills, and role \
+responsibilities that a resume can truthfully evidence. Use `logistics` for \
+remote/hybrid/on-site arrangements, office attendance, travel, relocation, \
+time-zone, shift, or availability constraints. Use `eligibility` for work \
+authorization, visa/work/employment sponsorship, checks, or clearance gates. \
+Executive or stakeholder sponsorship is leadership experience, not immigration \
+sponsorship, and must be `resume`. Use \
+`employer_condition` for compensation, benefits, contract, or other \
+employer-side terms. Do not label remote-team leadership or hybrid-cloud \
+experience as logistics; those are resume qualifications.
+4. WEIGHT (0.0-1.0): rank importance. The core competency the role is really \
 hired for carries the top weight; table-stakes items rank lower. Weights reflect \
 what a hiring manager screens on first, NOT word-frequency or posting order.
-4. KEYWORDS: real skills/tools/quals, deduplicated. Link each to the \
+5. KEYWORDS: real skills/tools/quals, deduplicated. Link each to the \
 requirement it supports via requirement_ref (use the matching requirement id). \
 A keyword with no clear parent requirement may set requirement_ref to null. Do \
 NOT produce a bag of every noun, near-duplicate padding, or soft-skill filler.
-5. IGNORE BOILERPLATE: "fast-paced", "rockstar/ninja", "wear many hats", \
+6. IGNORE BOILERPLATE: "fast-paced", "rockstar/ninja", "wear many hats", \
 "passionate self-starter", EEO/benefits/"about us"/legal sections are NOT \
 requirements or keywords.
-6. EEO: NEVER convert protected-class signals ("recent grad", "digital native", \
+7. EEO: NEVER convert protected-class signals ("recent grad", "digital native", \
 "young/energetic", gendered language) into a requirement, keyword, or an "ideal \
 candidate" attribute.
 
@@ -80,11 +91,16 @@ on; if a draft's span is not verbatim in the JD, do not carry it.
 trustworthy core — keep them. Where drafts disagree, use your own expert \
 judgment grounded in the JD; do not blindly union everything (that produces \
 keyword bloat).
-3. Preserve the must_have/nice_to_have tiering and 0.0-1.0 weighting discipline \
+3. Preserve or resolve each requirement's coverage_scope using the same \
+resume/eligibility/logistics/employer_condition discipline as the analysis \
+rubric. Never turn a work arrangement or employer condition into resume \
+coverage. Visa/work/employment sponsorship is eligibility; executive or \
+stakeholder sponsorship is resume-scoped leadership experience.
+4. Preserve the must_have/nice_to_have tiering and 0.0-1.0 weighting discipline \
 from the analysis rubric; re-rank if the drafts disagree.
-4. Deduplicate keywords and keep requirement_ref links consistent with your \
+5. Deduplicate keywords and keep requirement_ref links consistent with your \
 final requirement ids.
-5. Honor the same boilerplate-filtering and EEO rules as the drafts.
+6. Honor the same boilerplate-filtering and EEO rules as the drafts.
 
 Return ONLY the reconciled canonical structured analysis.\
 """

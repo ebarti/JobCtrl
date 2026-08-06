@@ -3921,6 +3921,7 @@ export interface EmployerAnalysisRequirement {
   tier: "must_have" | "nice_to_have";
   weight: number;
   evidence_span: string;
+  coverage_scope: "resume" | "eligibility" | "logistics" | "employer_condition" | null;
 }
 
 export interface EmployerAnalysisKeyword {

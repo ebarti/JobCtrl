@@ -167,6 +167,11 @@ reason to correct or investigate it.
   trace. `scoring_policies` owns rubric/policy versions and calibration anchors;
   stale markers record when an older score awaits deliberate adoption of a
   newer policy.
+- **Tailoring owns requirement use, not requirement existence.** The accepted
+  analysis and requirement-fit report retain every employer requirement.
+  Tailoring classifies whether each one is resume-coverable or context-only;
+  logistics, eligibility, and employer conditions remain available to fit and
+  Apply Review without becoming resume-coverage failures.
 - **Operations owns display projections.** Jobs reads expose persisted analysis
   and score evidence. They do not call a model or recompute a score on request.
 - **Explicit feedback remains history until an owning policy says otherwise.**

@@ -15,6 +15,7 @@ const interviewRequirements: readonly EmployerAnalysisRequirement[] = [
     tier: "must_have",
     weight: 0.9,
     evidence_span: "Own our API platform reliability program",
+    coverage_scope: "resume",
   },
 ];
 

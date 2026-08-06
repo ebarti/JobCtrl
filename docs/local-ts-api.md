@@ -68,6 +68,11 @@ On job detail, Enrich stage summaries can carry a separate, allow-listed
 application-target readiness without changing posting-content trust or stage
 success; raw browser/resolver errors are not exposed.
 
+Employer-analysis requirements on job detail expose `coverage_scope` as
+`resume`, `eligibility`, `logistics`, `employer_condition`, or `null` for
+historical analyses. Both projection builders normalize missing historical
+values to `null`, so the TypeScript and Python read models remain identical.
+
 Internal list/detail identity is the tenant-scoped stable `JobId`; posting URLs
 are locators resolved only at explicit import or API boundaries. Employer and
 Source remain independent facts. `GET /v1/scoring/keywords` aggregates indexed,

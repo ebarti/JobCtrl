@@ -39,6 +39,7 @@ export const populatedEmployerAnalysis: EmployerAnalysis = {
       tier: "must_have",
       weight: 0.9,
       evidence_span: "Lead our platform reliability initiatives across the engineering org",
+      coverage_scope: "resume",
     },
     {
       id: "req-2",
@@ -46,6 +47,7 @@ export const populatedEmployerAnalysis: EmployerAnalysis = {
       tier: "nice_to_have",
       weight: 0.55,
       evidence_span: "Familiarity with Kubernetes and internal developer platforms is a plus",
+      coverage_scope: "resume",
     },
   ],
   keywords: [

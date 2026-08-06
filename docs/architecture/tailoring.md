@@ -119,7 +119,7 @@ Tailoring combines several inputs. Each input has a different authority.
 | Target job | Job record | The target role, description, responsibilities, skills, and company context |
 | Employer analysis | `EmployerAnalysis` aggregate | Grounded role framing, inferred seniority, requirements, and reasoned keywords |
 | Requirement fit report | Scoring context | Pre-tailoring fit by requirement, allowed evidence IDs, target keywords, prohibited claims, tailoring directives; its employer-analysis generation must match the current posting analysis |
-| Requirement-led coverage graph | Deterministic target-profile adapter plus constrained planner | Which profile achievements can cover which target requirements, which requirements are uncovered, which achievements are unused, and what claim policy each edge requires |
+| Requirement-led coverage graph | Deterministic target-profile adapter plus constrained planner | Which profile achievements can cover resume-scoped target requirements, which resume requirements are uncovered, which achievements are unused, and what claim policy each edge requires. Logistics, eligibility, and employer conditions remain context-only outside the resume denominator. |
 | Previous attempt outcome | Tailoring retry loop | Typed, code-owned retry reason only; free-form validator, judge, adversarial, and prior-output text remains audit data |
 
 The rollbackable tailoring-policy revision contains only tenant-wide generation
@@ -307,8 +307,16 @@ The plan includes:
 - `requirement_led_controls`: claim policy, generation permissions, required
   pins, writing style, revision gates, and advanced auto-approval policy after
   migrating legacy Preferences values.
-- `target_profile`: must-have and nice-to-have requirements with safe excerpts,
-  weights, keywords, and profile achievement IDs.
+- `target_profile`: every must-have and nice-to-have requirement with a safe
+  excerpt and explicit `resume`, `logistics`, `eligibility`, or
+  `employer_condition` scope, plus weights, keywords, and profile achievement
+  IDs. Only `resume` requirements enter the generation/coverage lists; the
+  others remain inspectable as context-only requirements. Employer-analysis
+  prompt v2 asks every leg and the synthesizer to declare this scope. The
+  target-profile adapter uses that reconciled declaration for ambiguous wording
+  and applies deterministic non-resume safety rules plus an old-analysis
+  fallback, so an obvious office/work-authorization/employer condition cannot
+  be promoted to resume coverage by one bad declaration.
 - `coverage_graph`: requirement nodes, achievement nodes, coverage edges,
   uncovered requirements, and unused achievements. Existing
   `RequirementFitReport.fit.evidence_ids` seed direct/transferable edges before
@@ -321,6 +329,8 @@ can say, for example:
 - double down on a matched requirement,
 - bridge a transferable gap using specific evidence,
 - avoid claiming a missing or blocked requirement,
+- retain logistics, eligibility, and employer conditions as context-only facts
+  for review rather than résumé claims,
 - target specific grounded keywords.
 
 ## Attempt Loop And Candidate Selection
@@ -663,6 +673,8 @@ The current implementation can safely:
   positioning reasons,
 - score generated output against the target profile and route one gated
   revision/enhancement pass,
+- keep non-resume requirements visible without counting them in grounded resume
+  coverage or its retry gate,
 - compute post-generation provenance and requirement coverage.
 
 The current implementation cannot safely:
@@ -674,6 +686,8 @@ The current implementation cannot safely:
 - remove education or required experience,
 - treat a keyword as covered unless it appears in the generated resume text or
   generation-time provenance.
+- treat office attendance, remote/hybrid arrangements, work authorization, or
+  employer compensation/benefits as achievements the resume must cover.
 
 ## Common Failure Reasons
 
