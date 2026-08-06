@@ -144,13 +144,14 @@ def _score_by_id(
     tenant_id: TenantId,
     job_id: JobId,
     llm: _StrongLlm,
+    criteria: ScoringCriteria | None = None,
 ):
     return scorer_module.score_job_by_id(
         job_id,
         tenant_id=tenant_id,
         profile_snapshot=_profile_snapshot(tenant_id),
         resume_text="Python platform engineer.",
-        criteria=ScoringCriteria(),
+        criteria=criteria or ScoringCriteria(),
         repository=SqliteScoreRepository(conn),
         llm_port=llm,
         require_employer_analysis=False,
@@ -248,6 +249,37 @@ def test_score_by_id_blocks_downstream_stages_for_hard_blocker(
     assert state_by_stage["score"] == ("succeeded", None)
     for stage in ("tailor", "cover", "apply"):
         assert state_by_stage[stage] == ("blocked", "SCORE_ELIGIBILITY_BLOCKED")
+
+
+def test_score_by_id_persists_the_current_criteria_threshold_decision(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_target(conn, tenant_id=_TENANT_A, job_id=_JOB_ID_A)
+
+    outcome = _score_by_id(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=_JOB_ID_A,
+        llm=_StrongLlm(),
+        criteria=ScoringCriteria(min_fit_score=9),
+    )
+
+    assert outcome.ok is True
+    rows = conn.execute(
+        """
+        SELECT stage, state, error_code, error_message
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ?
+          AND stage IN ('tailor', 'cover', 'apply')
+        ORDER BY stage
+        """,
+        (str(_TENANT_A), str(_JOB_ID_A)),
+    ).fetchall()
+    assert {row["state"] for row in rows} == {"skipped"}
+    assert {row["error_code"] for row in rows} == {"MIN_SCORE"}
+    assert {row["error_message"] for row in rows} == {
+        "Fit score 8/10 is below the materials threshold 9/10."
+    }
 
 
 def test_existing_score_repairs_stage_only_when_not_stale(

@@ -167,6 +167,38 @@ describe("<StageTimeline>", () => {
     expect(screen.queryByText(/jobctrl retry enrich/i)).not.toBeInTheDocument();
   });
 
+  it("explains a score-threshold skip without presenting it as retryable work", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <StageTimeline
+        jobId="job-low-fit"
+        stages={[
+          {
+            ...makeStage("tailor", "skipped"),
+            errorCode: "MIN_SCORE",
+            errorMessage:
+              "Fit score 6/10 is below the materials threshold 7/10.",
+            retryable: false,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("skipped")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Technical details" }),
+    );
+    const diagnostics = screen.getByLabelText("tailor diagnostics");
+    expect(diagnostics).toHaveTextContent("MIN_SCORE");
+    expect(diagnostics).toHaveTextContent(
+      "Fit score 6/10 is below the materials threshold 7/10.",
+    );
+    expect(diagnostics).not.toHaveTextContent(/attempts|retry/i);
+    expect(
+      screen.getByRole("button", { name: "Tailor this job" }),
+    ).toBeInTheDocument();
+  });
+
   it.each([
     [
       "APPLY_URL_EXTERNAL_RECOVERED",

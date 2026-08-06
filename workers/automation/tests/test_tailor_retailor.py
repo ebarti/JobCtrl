@@ -479,8 +479,24 @@ def test_tailor_job_by_url_skips_score_five_by_default(tmp_path, monkeypatch):
             "url": target_url,
             "job_id": str(target_job_id),
             "status": "skipped",
-            "reason": "not_eligible",
+            "reason": "score_below_threshold",
         }
+        rows = conn.execute(
+            """
+            SELECT stage, state, error_code, error_message, retryable
+              FROM job_stage_states
+             WHERE tenant_id = ? AND job_id = ?
+               AND stage IN ('tailor', 'cover', 'apply')
+             ORDER BY stage
+            """,
+            (str(LOCAL_TENANT), str(target_job_id)),
+        ).fetchall()
+        assert {row["state"] for row in rows} == {"skipped"}
+        assert {row["error_code"] for row in rows} == {"MIN_SCORE"}
+        assert {row["error_message"] for row in rows} == {
+            "Fit score 5/10 is below the materials threshold 6/10."
+        }
+        assert {row["retryable"] for row in rows} == {0}
     finally:
         close_connection(db_path)
 

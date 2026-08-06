@@ -138,6 +138,15 @@ non-retryable `exhausted`, and a later pickup cannot restart it without an
 explicit attempt reset. Run at least two durable failures against the same
 materials generation and assert that both complete inner-attempt reports remain
 in the append-only audit history.
+For a current score below the live materials threshold, preparation must persist
+Tailor, Cover, and Apply as non-retryable `skipped` rows with `MIN_SCORE` and the
+exact score/threshold pair. No row may remain `pending` after the workflow has
+made that terminal policy decision. Repeating reconciliation must add no event;
+a hard eligibility blocker must replace the threshold skip with `blocked`; and
+lowering the threshold or using the explicit per-job low-fit override must clear
+only `MIN_SCORE` rows and restore dependency-aware stage state. The rendered Job
+Detail timeline must expose that reason while retaining **Tailor this job** and
+must not present attempts or a retry action for the skip.
 Change the enriched posting snapshot after an employer analysis exists, then
 run Score and Tailor. Score must resolve the current analysis cache identity and
 persist a requirement-fit report for that exact generation. A deliberately

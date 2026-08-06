@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Mapping, Protocol
 
 from jobctrl.config import RESUME_PATH
-from jobctrl.database import get_connection, get_jobs_by_stage
+from jobctrl.database import effective_tailoring_min_score, get_connection, get_jobs_by_stage
 from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.job_content_identity import (
@@ -47,6 +47,7 @@ from jobctrl.domain.ports.scoring import (
 )
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.scoring.aggregate import JobScore
+from jobctrl.domain.scoring.eligibility import eligibility_blocks_downstream
 from jobctrl.domain.scoring.retrieval import (
     HybridSearchIndex,
     preselect_jobs_for_scoring,
@@ -72,6 +73,7 @@ from jobctrl.infrastructure.scoring import (
 )
 from jobctrl.state import (
     ensure_job_stage_rows,
+    reconcile_score_threshold_skips,
     reconcile_score_eligibility_blockers,
     record_job_event,
     set_stage_state,
@@ -1047,6 +1049,15 @@ def _sync_score_eligibility_stage_state(
         hard_blockers=list(eligibility.hard_blockers),
         now=now,
     )
+    if not eligibility_blocks_downstream(eligibility):
+        reconcile_score_threshold_skips(
+            conn,
+            tenant_id=tenant_id,
+            job_id=job_id,
+            fit_score=score.fit_score.value,
+            min_score=effective_tailoring_min_score(score.criteria.min_fit_score),
+            now=now,
+        )
 
 
 def _has_unresolved_score_staleness(
