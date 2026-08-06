@@ -63,6 +63,11 @@ The jobs list and detail routes read stable projections. Lifecycle changes—hid
 restore, delete, score correction, stage retry, and per-job actions—are explicit
 commands. See [Jobs & Materials](api/jobs-and-materials.md).
 
+On job detail, Enrich stage summaries can carry a separate, allow-listed
+`applyUrlOutcome` (`code`, `message`, `retryable`, and `method`). It reports
+application-target readiness without changing posting-content trust or stage
+success; raw browser/resolver errors are not exposed.
+
 Internal list/detail identity is the tenant-scoped stable `JobId`; posting URLs
 are locators resolved only at explicit import or API boundaries. Employer and
 Source remain independent facts. `GET /v1/scoring/keywords` aggregates indexed,

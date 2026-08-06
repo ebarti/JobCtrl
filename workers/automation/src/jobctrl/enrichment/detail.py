@@ -719,7 +719,11 @@ def _apply_authenticated_linkedin_apply_url(
         else:
             return cascade_result
     except Exception as exc:  # noqa: BLE001 - resolver is best-effort
-        log.warning("LinkedIn apply URL resolver failed for %s: %s", url, exc)
+        log.warning(
+            "LinkedIn apply URL resolver failed for %s (%s)",
+            url,
+            type(exc).__name__,
+        )
         return {
             **cascade_result,
             "authenticated_apply_url_method": "resolver_error",
@@ -1675,10 +1679,6 @@ def scrape_site_batch(
                             stage_metadata["authenticatedApplyUrlMethod"] = cascade_result.get(
                                 "authenticated_apply_url_method"
                             )
-                        if cascade_result.get("authenticated_apply_url_error"):
-                            stage_metadata["authenticatedApplyUrlError"] = cascade_result.get(
-                                "authenticated_apply_url_error"
-                            )
                         stage_metadata.update(_authenticated_apply_url_outcome_metadata(cascade_result))
                         if activity_lease is not None:
                             stage_metadata.update(
@@ -1740,10 +1740,6 @@ def scrape_site_batch(
                         if cascade_result.get("authenticated_apply_url_method"):
                             completed_payload["authenticatedApplyUrlMethod"] = cascade_result.get(
                                 "authenticated_apply_url_method"
-                            )
-                        if cascade_result.get("authenticated_apply_url_error"):
-                            completed_payload["authenticatedApplyUrlError"] = cascade_result.get(
-                                "authenticated_apply_url_error"
                             )
                         completed_payload.update(_authenticated_apply_url_outcome_metadata(cascade_result))
                         if fallback_source:
@@ -2393,7 +2389,10 @@ def _authenticated_apply_url_recovery_error(
     """Translate resolver mechanics into one auditable application-target fact."""
 
     method_value = str(method or "external_url_missing")
-    detail = str(raw_error or "").strip()
+    # Resolver exceptions may contain browser-profile paths, signed URLs, or
+    # other local diagnostics. Stable outcome messages are code-owned and must
+    # never copy that raw detail into stage metadata or user-facing events.
+    del raw_error
     if method_value == "linkedin_onsite_apply":
         return EnrichmentError(
             code="APPLY_URL_LINKEDIN_ONSITE",
@@ -2407,17 +2406,18 @@ def _authenticated_apply_url_recovery_error(
             retryable=True,
         )
     if method_value == "unsafe_url":
-        suffix = f" {detail}" if detail else ""
         return EnrichmentError(
             code="APPLY_URL_UNSAFE_TARGET",
-            message=f"JobCtrl rejected the discovered application target as unsafe.{suffix}",
+            message=(
+                "JobCtrl rejected the discovered application target because it is not "
+                "a safe public HTTP(S) destination."
+            ),
             retryable=False,
         )
     if method_value in {"navigation_error", "resolver_error"}:
-        suffix = f" {detail}" if detail else ""
         return EnrichmentError(
             code="APPLY_URL_NAVIGATION_FAILED",
-            message=f"The authenticated LinkedIn page could not be inspected.{suffix}",
+            message="The authenticated LinkedIn page could not be inspected.",
             retryable=True,
         )
     if method_value == "external_url_missing":
@@ -2439,6 +2439,7 @@ def _authenticated_apply_url_outcome_metadata(result: dict) -> dict[str, object]
         return {}
     if result.get("application_url"):
         return {
+            "authenticatedApplyUrlMethod": str(method),
             "applyUrlOutcomeCode": "APPLY_URL_EXTERNAL_RECOVERED",
             "applyUrlOutcomeMessage": "An external application URL was recovered.",
             "applyUrlOutcomeRetryable": False,
@@ -2448,6 +2449,7 @@ def _authenticated_apply_url_outcome_metadata(result: dict) -> dict[str, object]
         raw_error=result.get("authenticated_apply_url_error"),
     )
     return {
+        "authenticatedApplyUrlMethod": str(method),
         "applyUrlOutcomeCode": error.code,
         "applyUrlOutcomeMessage": error.message,
         "applyUrlOutcomeRetryable": error.retryable,
@@ -2744,6 +2746,86 @@ def _record_missing_apply_url_content_trust_recovery(
     return True
 
 
+def _repair_legacy_missing_apply_url_content_trust_candidates(
+    conn: sqlite3.Connection,
+    *,
+    job_ids: tuple[JobId, ...] = (),
+    activity_lease: EnrichmentExecutionLease | None = None,
+    cancel_event: threading.Event | None = None,
+) -> int:
+    """Reclassify legacy readable snapshots independently of their source.
+
+    The retired confidence rule coupled a missing external application URL to
+    posting-content trust for every source. This repair is therefore a local,
+    source-agnostic migration pass. LinkedIn browser recovery remains a later,
+    separate concern and is never required to restore readable content.
+    """
+
+    where = [
+        "j.tenant_id = ?",
+        "e.current_status = 'enriched'",
+        "(e.application_url IS NULL OR e.application_url = '')",
+    ]
+    params: list[object] = [str(LOCAL_TENANT)]
+    selected_job_ids = tuple(dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids))
+    if selected_job_ids:
+        placeholders = ", ".join("?" for _ in selected_job_ids)
+        where.append(f"j.job_id IN ({placeholders})")
+        params.extend(str(job_id) for job_id in selected_job_ids)
+    rows = conn.execute(
+        f"""
+        SELECT j.tenant_id, j.job_id
+        FROM jobs j
+        JOIN job_enrichments e
+          ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+        WHERE {" AND ".join(where)}
+        ORDER BY e.updated_at DESC
+        """,
+        params,
+    ).fetchall()
+
+    from jobctrl.state import utc_now
+
+    repo = SqliteEnrichmentRepository(conn)
+    repaired_count = 0
+    for row in rows:
+        try:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TransientNetworkError("enrichment canceled")
+            tenant_id = TenantId(str(row["tenant_id"] if isinstance(row, sqlite3.Row) else row[0]))
+            job_id = canonical_job_id(str(row["job_id"] if isinstance(row, sqlite3.Row) else row[1]))
+            aggregate = repo.load(tenant_id, job_id)
+            if aggregate is None or not aggregate.is_enriched:
+                continue
+            if activity_lease is not None:
+                _fence_execution_enrichment_lease(conn, activity_lease)
+            if _record_missing_apply_url_content_trust_recovery(
+                conn,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                enrichment=aggregate,
+                captured_at=utc_now(),
+            ):
+                repaired_count += 1
+            conn.commit()
+        except StaleEnrichmentExecutionLease:
+            conn.rollback()
+            raise
+        except TransientNetworkError:
+            conn.rollback()
+            raise
+        except Exception:  # noqa: BLE001 - one legacy row must not abort the repair
+            conn.rollback()
+            log.exception("Legacy posting content-trust repair failed for a row")
+
+    if repaired_count:
+        log.info(
+            "Posting content trust reclassified for %d job(s)",
+            repaired_count,
+        )
+    return repaired_count
+
+
 def _reset_authenticated_linkedin_retry_candidates(
     conn: sqlite3.Connection,
     *,
@@ -2757,12 +2839,14 @@ def _reset_authenticated_linkedin_retry_candidates(
     workflow_id: str | None = None,
     workflow_run_id: str | None = None,
 ) -> int:
-    """Retry LinkedIn rows that need authenticated enrichment follow-up.
+    """Repair legacy content trust, then retry LinkedIn browser follow-up.
 
-    The normal enrichment queue excludes failed aggregates and already
-    enriched rows. LinkedIn is the exception because a logged-in browser can
-    expose data hidden from the first unauthenticated pass, especially the
-    external apply target. Two disjoint groups are handled:
+    The source-independent local repair runs first because the retired
+    missing-URL confidence rule affected every source. The normal enrichment
+    queue then excludes failed aggregates and already enriched rows. LinkedIn
+    is the browser-recovery exception because a logged-in session can expose
+    data hidden from the first unauthenticated pass, especially the external
+    apply target. Two disjoint LinkedIn groups are handled:
 
       * **Enriched but missing the apply URL** — resolved non-destructively.
         Only ``application_url`` is backfilled; the canonical
@@ -2780,6 +2864,13 @@ def _reset_authenticated_linkedin_retry_candidates(
     never-resolving posting) when the profile is not logged in or the posting
     has no external apply target. Returns the number of rows reset (re-queued).
     """
+    selected_job_ids = tuple(dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids))
+    _repair_legacy_missing_apply_url_content_trust_candidates(
+        conn,
+        job_ids=selected_job_ids,
+        activity_lease=activity_lease,
+        cancel_event=cancel_event,
+    )
     resolver_enabled = linkedin_apply_resolver_enabled()
 
     if session is None and resolver_enabled:
@@ -2804,7 +2895,6 @@ def _reset_authenticated_linkedin_retry_candidates(
         "(e.current_status = 'failed' OR e.application_url IS NULL OR e.application_url = '')",
     ]
     params: list[object] = []
-    selected_job_ids = tuple(dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids))
     if selected_job_ids:
         placeholders = ", ".join("?" for _ in selected_job_ids)
         where.append(f"j.tenant_id = ? AND j.job_id IN ({placeholders})")
@@ -2834,7 +2924,6 @@ def _reset_authenticated_linkedin_retry_candidates(
     reset_count = 0
     recovery_count = 0
     backfill_count = 0
-    trust_reclassification_count = 0
     resolver: object | None = None
     try:
         for row in rows:
@@ -2859,20 +2948,10 @@ def _reset_authenticated_linkedin_retry_candidates(
                 if aggregate.is_enriched:
                     if activity_lease is not None:
                         _fence_execution_enrichment_lease(conn, activity_lease)
-                    trust_reclassified = _record_missing_apply_url_content_trust_recovery(
-                        conn,
-                        tenant_id=tenant_id,
-                        job_id=job_id,
-                        enrichment=aggregate,
-                        captured_at=now,
-                    )
-                    if trust_reclassified:
-                        trust_reclassification_count += 1
-                    # The lease fence and any legacy trust repair must be
-                    # durable before browser navigation. Holding their SQLite
-                    # write transaction across a potentially slow resolver
-                    # would prevent cancellation reconciliation from
-                    # terminalizing this workflow's owned cohort.
+                    # The lease fence must be durable before browser navigation.
+                    # Holding its SQLite write transaction across a potentially
+                    # slow resolver would prevent cancellation reconciliation
+                    # from terminalizing this workflow's owned cohort.
                     conn.commit()
                     if attempt_count >= _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS:
                         continue
@@ -2969,7 +3048,6 @@ def _reset_authenticated_linkedin_retry_candidates(
                             "reason": "linkedin_authenticated_apply_url",
                             "applicationUrlFound": recovered is not None,
                             "authenticatedApplyUrlMethod": resolved.get("authenticated_apply_url_method"),
-                            "authenticatedApplyUrlError": resolved.get("authenticated_apply_url_error"),
                             **outcome_metadata,
                             "retryable": recovery_error.retryable if recovery_error else False,
                             "automated": True,
@@ -3095,7 +3173,7 @@ def _reset_authenticated_linkedin_retry_candidates(
             except Exception:
                 log.debug("LinkedIn apply resolver close failed", exc_info=True)
 
-    if reset_count or recovery_count or trust_reclassification_count:
+    if reset_count or recovery_count:
         conn.commit()
         if reset_count:
             log.info(
@@ -3106,11 +3184,6 @@ def _reset_authenticated_linkedin_retry_candidates(
             log.info(
                 "LinkedIn authenticated apply URL backfilled for %d job(s)",
                 backfill_count,
-            )
-        if trust_reclassification_count:
-            log.info(
-                "LinkedIn posting content trust reclassified for %d job(s)",
-                trust_reclassification_count,
             )
     return reset_count
 

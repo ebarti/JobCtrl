@@ -832,6 +832,108 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it.each([
+    [
+      "APPLY_URL_EXTERNAL_RECOVERED",
+      "An external application URL was recovered.",
+      false,
+      "click",
+    ],
+    [
+      "APPLY_URL_LINKEDIN_ONSITE",
+      "LinkedIn uses an on-site application flow for this posting; no external application URL exists.",
+      false,
+      "linkedin_onsite_apply",
+    ],
+    [
+      "APPLY_URL_CONTROL_MISSING",
+      "No application control was visible on the authenticated LinkedIn page.",
+      true,
+      "apply_button_missing",
+    ],
+    [
+      "APPLY_URL_EXTERNAL_TARGET_MISSING",
+      "An application control was visible, but no external application URL could be verified.",
+      true,
+      "external_url_missing",
+    ],
+    [
+      "APPLY_URL_NAVIGATION_FAILED",
+      "The authenticated LinkedIn page could not be inspected.",
+      true,
+      "navigation_error",
+    ],
+    [
+      "APPLY_URL_UNSAFE_TARGET",
+      "JobCtrl rejected the discovered application target because it is not a safe public HTTP(S) destination.",
+      false,
+      "unsafe_url",
+    ],
+  ])(
+    "projects allow-listed outcome %s independently of Enrich success",
+    async (code, message, retryable, method) => {
+      const { dbPath, cleanup } = withTempDb();
+      try {
+        seedSchema(dbPath);
+        const db = new Database(dbPath);
+        db.prepare(
+          `INSERT INTO job_stage_states (
+             tenant_id, job_id, stage, state, updated_at, finished_at, metadata_json
+           ) VALUES ('local', ?, 'enrich', 'succeeded', ?, ?, ?)
+           ON CONFLICT(tenant_id, job_id, stage) DO UPDATE SET
+             state = excluded.state,
+             updated_at = excluded.updated_at,
+             finished_at = excluded.finished_at,
+             metadata_json = excluded.metadata_json`,
+        ).run(
+          EVENT_JOB_ID,
+          "2026-05-04T13:05:00+00:00",
+          "2026-05-04T13:05:00+00:00",
+          JSON.stringify({
+            authenticatedApplyUrlMethod: method,
+            authenticatedApplyUrlError: "/private/path/must-not-project",
+            applyUrlOutcomeCode: code,
+            applyUrlOutcomeMessage: `${message} /private/path/must-not-project`,
+            applyUrlOutcomeRetryable: !retryable,
+          }),
+        );
+        db.close();
+
+        const app = buildApp({
+          dbPath,
+          configPath: path.join(path.dirname(dbPath), "config.json"),
+        });
+        try {
+          const response = await app.inject({
+            method: "GET",
+            url: `/v1/jobs/${encodeURIComponent(EVENT_JOB_URL)}`,
+          });
+          expect(response.statusCode, response.body).toBe(200);
+          const enrich = response
+            .json()
+            .stages.find((stage: { stage: string }) => stage.stage === "enrich");
+          expect(enrich).toMatchObject({
+            state: "succeeded",
+            applyUrlOutcome: {
+              code,
+              message,
+              retryable,
+              method,
+            },
+          });
+          expect(JSON.stringify(enrich)).not.toContain("/private/path");
+          expect(JSON.stringify(enrich)).not.toContain(
+            "authenticatedApplyUrlError",
+          );
+        } finally {
+          await app.close();
+        }
+      } finally {
+        cleanup();
+      }
+    },
+  );
+
   it("refreshes stale stage projections after workflow-scoped stage events", async () => {
     const { dbPath, cleanup } = withTempDb();
     const jobUrl = "https://example.com/jobs/event-driven";

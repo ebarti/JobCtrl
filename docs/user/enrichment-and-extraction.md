@@ -53,6 +53,26 @@ A failed fetch or exhausted cascade records a retryable attempt without
 manufacturing a snapshot. Failure remains isolated to that job, so useful
 results from the rest of the source batch survive.
 
+Application-target discovery has its own explicit outcome and retry policy:
+
+| Outcome | What it means | Automatic retry |
+| --- | --- | --- |
+| External URL recovered | A public external application destination was verified and stored. | No |
+| LinkedIn on-site apply | LinkedIn owns the application flow, so no external ATS URL exists. | No |
+| Application control missing | No visible application control was found on the authenticated posting page. | Yes |
+| External target missing | An application control was visible, but no external destination could be verified. | Yes |
+| Navigation failed | The authenticated posting page could not be inspected. | Yes |
+| Unsafe target rejected | The discovered destination failed the public-URL safety check. | No |
+
+These outcomes describe application readiness; they do not change the posting
+snapshot's content confidence. LinkedIn on-site apply is a successful terminal
+discovery, while transient inspection failures remain eligible for recovery.
+When an older snapshot was quarantined only because it lacked an application
+URL, the next Enrich maintenance pass appends a corrected snapshot for any
+source and resumes Tailor without requiring browser access. Resolver exception
+details remain local diagnostics; the product surfaces only the stable outcome
+code, message, method, and retry policy.
+
 ## What You Can See And Control
 
 Enrichment is internal work under the user-facing **Discover** stage, not a
@@ -62,7 +82,8 @@ separate primary page or pipeline stage. Its results remain inspectable:
   active, closed, failed, or awaiting further work.
 - `/jobs/:jobId` opens the Job Detail route workspace with the full posting,
   source and enrichment evidence, snapshot confidence or quarantine state,
-  application URL, and allow-listed audit history.
+  application URL, an explicit application-target outcome even when Enrich
+  succeeded, and allow-listed audit history.
 - `/discovery` owns source review, quarantined leads, locator candidates, and
   manual-capture decisions.
 - `/runs` shows the durable Discover and preparation workflows. A failed

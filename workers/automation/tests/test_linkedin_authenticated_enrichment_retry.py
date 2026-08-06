@@ -25,6 +25,7 @@ from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.enrichment.detail import (
     _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS,
     _apply_authenticated_linkedin_apply_url,
+    _authenticated_apply_url_outcome_metadata,
     _authenticated_apply_url_recovery_error,
     _is_linkedin_job,
     _record_posting_snapshot_from_cascade,
@@ -308,28 +309,42 @@ def test_enriched_missing_apply_url_preserves_description_on_failed_recovery(
 
 
 @pytest.mark.parametrize(
-    ("method", "expected_code", "retryable"),
+    ("method", "application_url", "expected_code", "retryable"),
     [
-        ("linkedin_onsite_apply", "APPLY_URL_LINKEDIN_ONSITE", False),
-        ("apply_button_missing", "APPLY_URL_CONTROL_MISSING", True),
-        ("external_url_missing", "APPLY_URL_EXTERNAL_TARGET_MISSING", True),
-        ("navigation_error", "APPLY_URL_NAVIGATION_FAILED", True),
-        ("unsafe_url", "APPLY_URL_UNSAFE_TARGET", False),
+        ("click", "https://apply.example/jobs/1", "APPLY_URL_EXTERNAL_RECOVERED", False),
+        ("linkedin_onsite_apply", None, "APPLY_URL_LINKEDIN_ONSITE", False),
+        ("apply_button_missing", None, "APPLY_URL_CONTROL_MISSING", True),
+        ("external_url_missing", None, "APPLY_URL_EXTERNAL_TARGET_MISSING", True),
+        ("navigation_error", None, "APPLY_URL_NAVIGATION_FAILED", True),
+        ("unsafe_url", None, "APPLY_URL_UNSAFE_TARGET", False),
     ],
 )
 def test_apply_url_recovery_outcomes_are_explicit(
     method: str,
+    application_url: str | None,
     expected_code: str,
     retryable: bool,
 ) -> None:
-    error = _authenticated_apply_url_recovery_error(
-        method=method,
-        raw_error="resolver detail",
+    private_detail = "/Users/private/LinkedIn/Profile/Default?token=secret"
+    metadata = _authenticated_apply_url_outcome_metadata(
+        {
+            "authenticated_apply_url_method": method,
+            "authenticated_apply_url_error": private_detail,
+            "application_url": application_url,
+        }
     )
 
-    assert error.code == expected_code
-    assert error.message
-    assert error.retryable is retryable
+    assert metadata["authenticatedApplyUrlMethod"] == method
+    assert metadata["applyUrlOutcomeCode"] == expected_code
+    assert metadata["applyUrlOutcomeRetryable"] is retryable
+    assert private_detail not in json.dumps(metadata)
+    if application_url is None:
+        error = _authenticated_apply_url_recovery_error(
+            method=method,
+            raw_error=private_detail,
+        )
+        assert error.code == expected_code
+        assert error.message == metadata["applyUrlOutcomeMessage"]
 
 
 def test_linkedin_onsite_apply_is_audited_and_not_retried(
@@ -374,6 +389,7 @@ def test_linkedin_onsite_apply_is_audited_and_not_retried(
     assert stage is not None
     assert stage["state"] == "succeeded"
     metadata = json.loads(stage["metadata_json"])
+    assert metadata["authenticatedApplyUrlMethod"] == "linkedin_onsite_apply"
     assert metadata["applyUrlOutcomeCode"] == "APPLY_URL_LINKEDIN_ONSITE"
     assert "no external application URL exists" in metadata["applyUrlOutcomeMessage"]
     events = conn.execute(
@@ -390,9 +406,21 @@ def test_enriched_missing_apply_url_preserves_description_when_resolver_raises(
     conn: sqlite3.Connection,
 ) -> None:
     url = "https://www.linkedin.com/jobs/view/raise"
+    private_detail = "/Users/private/LinkedIn/Profile/Default?token=secret"
     _seed_discovered(conn, url, "linkedin")
     _save_enriched(conn, url, application_url=None)
-    resolver = _RecoveryResolver(RuntimeError("login wall"))
+    job_id = _job_id(conn, url)
+    ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+    set_stage_state(
+        conn,
+        job_id,
+        "enrich",
+        "succeeded",
+        tenant_id=LOCAL_TENANT,
+        validate_transition=False,
+    )
+    conn.commit()
+    resolver = _RecoveryResolver(RuntimeError(private_detail))
 
     reset_count = _reset_authenticated_linkedin_retry_candidates(
         conn,
@@ -402,12 +430,26 @@ def test_enriched_missing_apply_url_preserves_description_when_resolver_raises(
 
     assert reset_count == 0
     repo = SqliteEnrichmentRepository(conn)
-    aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
+    aggregate = repo.load(LOCAL_TENANT, job_id)
     assert aggregate is not None
     assert aggregate.is_enriched
     assert aggregate.full_description is not None
     assert aggregate.full_description.text == "A complete LinkedIn description"
     assert aggregate.application_url is None
+    assert aggregate.last_attempt is not None
+    assert aggregate.last_attempt.error is not None
+    assert private_detail not in aggregate.last_attempt.error.message
+    stage = conn.execute(
+        "SELECT metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert stage is not None
+    assert private_detail not in (stage["metadata_json"] or "")
+    events = conn.execute(
+        "SELECT payload_json FROM job_events WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchall()
+    assert private_detail not in json.dumps([row["payload_json"] for row in events])
 
 
 def test_enriched_missing_apply_url_backfills_on_successful_recovery(
@@ -491,13 +533,21 @@ def test_enriched_missing_apply_url_backfills_on_successful_recovery(
     assert dict(tailor_state) == {"state": "pending", "error_code": None}
 
 
-def test_legacy_missing_apply_url_snapshot_is_reclassified_without_browser_retry(
+@pytest.mark.parametrize(
+    ("site", "url"),
+    [
+        ("linkedin", "https://www.linkedin.com/jobs/view/legacy-content-trust"),
+        ("remoteok", "https://remoteok.com/remote-jobs/legacy-content-trust"),
+    ],
+)
+def test_legacy_missing_apply_url_snapshot_is_reclassified_for_every_source_without_browser_retry(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
+    site: str,
+    url: str,
 ) -> None:
-    url = "https://www.linkedin.com/jobs/view/legacy-content-trust"
     description = " ".join(["Senior platform engineering responsibilities with Python and distributed systems"] * 20)
-    _seed_discovered(conn, url, "linkedin")
+    _seed_discovered(conn, url, site)
     _save_enriched(conn, url, application_url=None, description=description)
     job_id = _job_id(conn, url)
     snapshot_set = PostingSnapshotSet.empty(
@@ -506,7 +556,7 @@ def test_legacy_missing_apply_url_snapshot_is_reclassified_without_browser_retry
         updated_at="2026-01-01T00:00:00+00:00",
     )
     snapshot_set, _ = snapshot_set.record_snapshot(
-        source_id="jobspy:linkedin",
+        source_id=f"jobspy:{site}",
         extraction_tier=ExtractionTier.LLM_ASSISTED.value,
         description_hash=SnapshotDescriptionHash.from_text(description),
         apply_url=None,

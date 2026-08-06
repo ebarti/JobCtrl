@@ -22,6 +22,7 @@ import type {
   ActivityEventSummary,
   ActivityListQuery,
   ActiveState,
+  ApplyUrlOutcomeCode,
   ArtifactDetail,
   ArtifactListQuery,
   ArtifactSummary,
@@ -66,6 +67,7 @@ import type {
   WorkflowRunsListQuery,
 } from "./contracts.js";
 import {
+  APPLY_URL_OUTCOME_CODES,
   DIGEST_DAY_BOUNDARY,
   DIGEST_FOLLOW_UP_THRESHOLD_DAYS,
   PIPELINE_RUN_STAGES,
@@ -88,6 +90,7 @@ import { readWorkerHealth } from "./worker-health.js";
 import { readJobCtrlSettings } from "./settings-config.js";
 
 const DEFAULT_TENANT = "local";
+const APPLY_URL_OUTCOME_CODE_SET = new Set<string>(APPLY_URL_OUTCOME_CODES);
 const DEFAULT_PROFILE_ID = "default";
 const CANONICAL_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"] as const satisfies readonly ActiveState[];
@@ -4521,9 +4524,26 @@ function parseStages(stagesJson: string | undefined): StageSummary[] {
       retryable: item.retryable === undefined || item.retryable === null ? true : Boolean(item.retryable),
       blockedBy: Array.isArray(item.blocked_by) ? item.blocked_by.map((it) => String(it)) : [],
       nextAction: nullableString(item.next_action),
+      applyUrlOutcome: parseApplyUrlOutcome(item.apply_url_outcome),
     });
   }
   return STAGES.map((stage) => byStage.get(stage) ?? defaultStage(stage, "pending"));
+}
+
+function parseApplyUrlOutcome(
+  value: unknown,
+): NonNullable<StageSummary["applyUrlOutcome"]> | null {
+  if (!isRecord(value)) return null;
+  const codeValue = nullableString(value.code);
+  const message = nullableString(value.message);
+  if (!codeValue || !APPLY_URL_OUTCOME_CODE_SET.has(codeValue) || !message) return null;
+  const code = codeValue as ApplyUrlOutcomeCode;
+  return {
+    code,
+    message,
+    retryable: value.retryable === true,
+    method: nullableString(value.method),
+  };
 }
 
 function reconcileStageRetryability(
@@ -4583,6 +4603,7 @@ function defaultStage(stage: Stage, state: StageState, errorMessage = ""): Stage
     retryable: state !== "blocked",
     blockedBy: [],
     nextAction: null,
+    applyUrlOutcome: null,
   };
 }
 
