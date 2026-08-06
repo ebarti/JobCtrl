@@ -260,6 +260,8 @@ apply, and that its technical details expose only the allow-listed outcome
 rather than raw resolver metadata. The regression fixtures must cover every
 application-target outcome, redact a resolver error containing a private local
 path, and repair a legacy non-LinkedIn snapshot without browser navigation.
+A targeted workflow run must also identify its selected stage scope in the run
+heading and details.
 
 The browser-local public demo may cover realtime state preservation, but its
 learning capabilities are intentionally unavailable. Recommendation review,

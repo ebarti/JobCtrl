@@ -226,6 +226,9 @@ evidence, qualifications, and the complete capability matrix.
   requests are harmless, the requester/source remains in the run timeline, and
   an already-terminal result remains inspectable. Canceling Enrich terminalizes
   only that run's unfinished selected jobs; unrelated pending work is untouched.
+  Run detail names the selected stage scope from the workflow input, so a
+  cover-only maintenance run is labeled **Cover letter run** instead of the
+  generic pipeline workflow name.
 - Review privacy-bounded learning recommendations on the Dashboard. JobCtrl
   derives them only from explicit reviewed signals, requires compatible
   evidence across jobs, and changes Materials behavior only after you accept a

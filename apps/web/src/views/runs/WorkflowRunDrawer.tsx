@@ -45,8 +45,34 @@ function humanizeIdentifier(value: string): string {
 }
 
 function workflowTitle(run: WorkflowRunDetail): string {
+  const stages = selectedStageLabels(run);
+  if (run.workflowType === "JobPipelineWorkflow" && stages.length > 0) {
+    return `${stages.join(" → ")} run`;
+  }
   const title = run.title || run.workflowType || "Workflow run";
   return title === run.workflowType ? humanizeIdentifier(title) : title;
+}
+
+const PIPELINE_STAGE_LABELS: Readonly<Record<string, string>> = {
+  discover: "Discover",
+  enrich: "Enrich",
+  score: "Score",
+  tailor: "Tailor",
+  cover: "Cover letter",
+  apply: "Apply",
+};
+
+function selectedStageLabels(run: WorkflowRunDetail): string[] {
+  const stages = run.inputSummary.stages;
+  if (!Array.isArray(stages)) return [];
+  const labels: string[] = [];
+  for (const stage of stages) {
+    if (typeof stage !== "string" || !stage.trim()) continue;
+    const normalized = stage.trim().toLowerCase();
+    const label = PIPELINE_STAGE_LABELS[normalized] ?? humanizeIdentifier(stage);
+    if (!labels.includes(label)) labels.push(label);
+  }
+  return labels;
 }
 
 function formatDuration(value: number | null): string {
@@ -206,6 +232,7 @@ function RunActions({ run }: { readonly run: WorkflowRunDetail }) {
 }
 
 function RunMetadata({ run }: { readonly run: WorkflowRunDetail }) {
+  const selectedStages = selectedStageLabels(run);
   return (
     <RunSection id="workflow-run-details-title" title="Run details">
       <dl className="workflow-run-metadata">
@@ -241,6 +268,12 @@ function RunMetadata({ run }: { readonly run: WorkflowRunDetail }) {
           <dt data-typography="label">Workflow type</dt>
           <dd data-typography="code">{run.workflowType || "Not available"}</dd>
         </div>
+        {selectedStages.length > 0 ? (
+          <div>
+            <dt data-typography="label">Selected stages</dt>
+            <dd data-typography="body">{selectedStages.join(" → ")}</dd>
+          </div>
+        ) : null}
         {run.jobKey ? (
           <div>
             <dt data-typography="label">Job</dt>
