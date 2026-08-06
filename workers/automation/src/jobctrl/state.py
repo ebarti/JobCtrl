@@ -70,6 +70,9 @@ _DEPENDENCY_BLOCKER_MESSAGES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]]
         ("apply", ("Materials are not ready.",)),
     ),
 }
+_DEPENDENCY_TERMINAL_ERROR_CODES: dict[str, tuple[str, ...]] = {
+    "tailor": ("UPSTREAM_TAILOR_FAILED", "UPSTREAM_TAILOR_EXHAUSTED"),
+}
 SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE = "SCORE_ELIGIBILITY_BLOCKED"
 SCORE_ELIGIBILITY_BLOCKED_MESSAGE_PREFIX = "Score eligibility blocks tailoring"
 SCORE_THRESHOLD_SKIPPED_ERROR_CODE = "MIN_SCORE"
@@ -415,6 +418,13 @@ def set_stage_state(
             completed_stage=stage,
             now=now,
         )
+    elif stage == "tailor" and state in {"failed", "exhausted"}:
+        reconcile_tailor_terminal_dependents(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+            now=now,
+        )
 
 
 def reconcile_dependency_blockers(
@@ -443,7 +453,14 @@ def reconcile_dependency_blockers(
     for upstream in completed_stages:
         for downstream, messages in _DEPENDENCY_BLOCKER_MESSAGES[upstream]:
             message_placeholders = ", ".join("?" for _ in messages)
+            terminal_codes = _DEPENDENCY_TERMINAL_ERROR_CODES.get(upstream, ())
+            terminal_clause = ""
             params: list[Any] = [str(tenant_id), downstream, *messages]
+            if terminal_codes:
+                terminal_clause = (
+                    f" OR downstream.error_code IN ({', '.join('?' for _ in terminal_codes)})"
+                )
+                params.extend(terminal_codes)
             job_filter = ""
             if stable_job_id is not None:
                 job_filter = "AND downstream.job_id = ?"
@@ -456,8 +473,13 @@ def reconcile_dependency_blockers(
                  WHERE downstream.tenant_id = ?
                    AND downstream.stage = ?
                    AND downstream.state = 'blocked'
-                   AND downstream.error_code = 'BLOCKED'
-                   AND downstream.error_message IN ({message_placeholders})
+                   AND (
+                       (
+                           downstream.error_code = 'BLOCKED'
+                           AND downstream.error_message IN ({message_placeholders})
+                       )
+                       {terminal_clause}
+                   )
                    {job_filter}
                    AND EXISTS (
                        SELECT 1
@@ -496,6 +518,138 @@ def reconcile_dependency_blockers(
                 )
                 repaired += 1
     return repaired
+
+
+def reconcile_tailor_terminal_dependents(
+    conn,
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
+    job_id: JobId | None = None,
+    now: str | None = None,
+) -> int:
+    """Block unstarted Cover and Apply rows behind failed terminal Tailor state.
+
+    ``pending`` means runnable work with no known prerequisite failure. A
+    failed or exhausted Tailor cannot leave its dependents in that state. The
+    guarded writes preserve any stage another owner already queued, started,
+    completed, skipped, canceled, or exhausted.
+    """
+
+    stable_job_id = canonical_job_id(str(job_id)) if job_id is not None else None
+    job_filter = ""
+    params: list[Any] = [str(tenant_id)]
+    if stable_job_id is not None:
+        job_filter = "AND job_id = ?"
+        params.append(str(stable_job_id))
+    terminal_rows = conn.execute(
+        f"""
+        SELECT job_id, state, error_code
+          FROM job_stage_states
+         WHERE tenant_id = ?
+           AND stage = 'tailor'
+           AND state IN ('failed', 'exhausted')
+           {job_filter}
+        """,
+        params,
+    ).fetchall()
+
+    updated_at = now or utc_now()
+    changed = 0
+    for terminal in terminal_rows:
+        blocked_job_id = canonical_job_id(str(terminal["job_id"]))
+        upstream_state = str(terminal["state"])
+        upstream_error_code = str(terminal["error_code"] or "") or None
+        error_code = f"UPSTREAM_TAILOR_{upstream_state.upper()}"
+        next_action = (
+            "Reset Tailor's attempt budget and retry Tailor."
+            if upstream_state == "exhausted"
+            else "Retry Tailor."
+        )
+        for downstream in ("cover", "apply"):
+            display_name = "Cover letter" if downstream == "cover" else "Apply"
+            message = (
+                f"{display_name} cannot start because Tailor is {upstream_state}."
+            )
+            metadata_json = _json_dumps(
+                {
+                    "reason": "upstream_tailor_terminal",
+                    "upstreamStage": "tailor",
+                    "upstreamState": upstream_state,
+                    "upstreamErrorCode": upstream_error_code,
+                }
+            )
+            transition = conn.execute(
+                """
+                /* tailor_terminal_dependent_block */
+                UPDATE job_stage_states
+                   SET state = 'blocked',
+                       updated_at = ?,
+                       error_code = ?,
+                       error_message = ?,
+                       retryable = 0,
+                       blocked_by_json = '["tailor"]',
+                       next_action = ?,
+                       metadata_json = ?
+                 WHERE tenant_id = ?
+                   AND job_id = ?
+                   AND stage = ?
+                   AND (
+                       state = 'pending'
+                       OR (
+                           state = 'blocked'
+                           AND error_code IN (
+                               'BLOCKED',
+                               'UPSTREAM_TAILOR_FAILED',
+                               'UPSTREAM_TAILOR_EXHAUSTED'
+                           )
+                       )
+                   )
+                   AND NOT (
+                       state = 'blocked'
+                       AND error_code = ?
+                       AND error_message = ?
+                       AND retryable = 0
+                       AND blocked_by_json = '["tailor"]'
+                       AND next_action = ?
+                       AND metadata_json = ?
+                   )
+                """,
+                (
+                    updated_at,
+                    error_code,
+                    message,
+                    next_action,
+                    metadata_json,
+                    str(tenant_id),
+                    str(blocked_job_id),
+                    downstream,
+                    error_code,
+                    message,
+                    next_action,
+                    metadata_json,
+                ),
+            )
+            if transition.rowcount != 1:
+                continue
+            record_job_event(
+                conn,
+                blocked_job_id,
+                downstream,
+                "StageBlocked",
+                tenant_id=tenant_id,
+                level="warning",
+                message=message,
+                occurred_at=updated_at,
+                payload={
+                    "reason": "upstream_tailor_terminal",
+                    "upstreamStage": "tailor",
+                    "upstreamState": upstream_state,
+                    "upstreamErrorCode": upstream_error_code,
+                    "downstreamStage": downstream,
+                },
+            )
+            changed += 1
+    return changed
 
 
 def reconcile_score_eligibility_blockers(

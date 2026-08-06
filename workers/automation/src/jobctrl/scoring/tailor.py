@@ -299,7 +299,7 @@ def _mark_cover_pending_after_tailor_success_by_id(
     *,
     tenant_id: TenantId,
     reason: str,
-) -> None:
+) -> bool:
     """Invalidate downstream cover readiness after a new resume generation.
 
     A stale ``cover=succeeded`` row is unsafe after re-tailoring because it can
@@ -312,8 +312,9 @@ def _mark_cover_pending_after_tailor_success_by_id(
         {"invalidated_at": now, "reason": reason},
         sort_keys=True,
     )
-    conn.execute(
+    transition = conn.execute(
         """
+        /* cover_invalidation_after_tailor_success */
         UPDATE job_stage_states
         SET state = 'pending',
             attempt_count = 0,
@@ -329,9 +330,12 @@ def _mark_cover_pending_after_tailor_success_by_id(
             next_action = NULL,
             metadata_json = ?
         WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
+          AND state IN ('succeeded', 'failed', 'exhausted')
         """,
         (now, metadata, str(tenant_id), str(canonical_job_id(str(job_id)))),
     )
+    if transition.rowcount != 1:
+        return False
     record_job_event(
         conn,
         job_id,
@@ -341,6 +345,7 @@ def _mark_cover_pending_after_tailor_success_by_id(
         message="Cover stage reset after tailored resume generation",
         payload={"reason": reason},
     )
+    return True
 
 
 # ---------------------------------------------------------------------------

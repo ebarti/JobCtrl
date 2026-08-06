@@ -165,6 +165,16 @@ Lowering the threshold or recording a qualifying current score restores only
 these threshold-owned skips. The per-job **Tailor this job** action is an
 explicit low-fit override and does not weaken score hard blockers.
 
+Tailor failures also own their downstream state. If Tailor is retryably failed
+or has exhausted its durable attempt budget, Cover and Apply show `blocked`
+with the exact Tailor failure/exhaustion reason instead of implying pending
+work. Retry or reset Tailor first. Once Tailor succeeds, JobCtrl restores only
+those Tailor-owned dependency blocks and does not disturb a Cover another
+worker already queued or claimed, or a skipped/canceled decision. When an
+accepted replacement resume supersedes the material input, JobCtrl may reset a
+completed, failed, or exhausted Cover so it can generate against the current
+resume; the older artifact remains in its audit history.
+
 Generated files stay under the local JobCtrl workspace and are served only
 through registered artifact rows. An artifact route cannot open an arbitrary
 filesystem path. See [Data, Privacy & Safety](data-and-safety.md#local-data) for

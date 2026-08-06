@@ -286,6 +286,16 @@ def test_tailor_job_by_id_is_tenant_scoped_and_writes_canonical_state(
 ) -> None:
     _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/a")
     _seed_job(conn, tenant_id=_TENANT_B, url="https://example.com/b")
+    conn.execute(
+        """
+        UPDATE job_stage_states
+           SET state = 'running', attempt_count = 2,
+               metadata_json = '{"activityOwner":"cover-run-2"}'
+         WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    )
+    conn.commit()
     calls: list[tuple[str, str]] = []
 
     def fake_tailor(job: dict, *_args, **_kwargs) -> dict:
@@ -314,6 +324,27 @@ def test_tailor_job_by_id_is_tenant_scoped_and_writes_canonical_state(
         (str(_TENANT_A), str(_JOB_ID)),
     ).fetchone()
     assert state["state"] == "succeeded"
+    cover_state = conn.execute(
+        """
+        SELECT state, attempt_count, metadata_json
+          FROM job_stage_states
+         WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert tuple(cover_state) == (
+        "running",
+        2,
+        '{"activityOwner":"cover-run-2"}',
+    )
+    assert conn.execute(
+        """
+        SELECT COUNT(*) FROM job_events
+         WHERE tenant_id = ? AND job_id = ?
+           AND stage = 'cover' AND event_type = 'StageReset'
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()[0] == 0
     other_tenant_state = conn.execute(
         """
         SELECT state FROM job_stage_states
@@ -335,6 +366,64 @@ def test_tailor_job_by_id_is_tenant_scoped_and_writes_canonical_state(
         "job_id": str(_JOB_ID),
         "event_type": "StageCompleted",
     }
+
+
+def test_tailor_job_by_id_resets_tailor_owned_cover_block_exactly_once(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/recovered-tailor")
+    tailor_module.set_stage_state(
+        conn,
+        _JOB_ID,
+        "tailor",
+        "failed",
+        tenant_id=_TENANT_A,
+        attempt_count=1,
+        error_code="FAILED_VALIDATION",
+        validate_transition=False,
+    )
+    conn.commit()
+    assert conn.execute(
+        "SELECT state FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()[0] == "blocked"
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(
+        tailor_module,
+        "_tailor_one_job",
+        lambda job, *_args, **_kwargs: _fake_approved_result(job),
+    )
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+    )
+
+    assert result["status"] == "approved"
+    cover_state = conn.execute(
+        "SELECT state, error_code FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert tuple(cover_state) == ("pending", None)
+    reset_events = conn.execute(
+        """
+        SELECT payload_json FROM job_events
+         WHERE tenant_id = ? AND job_id = ?
+           AND stage = 'cover' AND event_type = 'StageReset'
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchall()
+    assert len(reset_events) == 1
+    assert json.loads(reset_events[0]["payload_json"])["reason"] == "upstream_completed"
 
 
 def test_tailor_job_by_id_terminalizes_unhandled_item_exception(

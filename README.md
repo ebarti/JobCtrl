@@ -235,6 +235,13 @@ evidence, qualifications, and the complete capability matrix.
   A score hard blocker remains **blocked**. Lowering the threshold, recording a
   higher score, or deliberately choosing **Tailor this job** clears only that
   threshold-owned skip; it does not consume a failed-generation retry.
+- Treat dependency failures just as explicitly. If Tailor fails or exhausts
+  its durable attempt budget, unstarted Cover and Apply rows show **blocked**
+  with `UPSTREAM_TAILOR_FAILED` or `UPSTREAM_TAILOR_EXHAUSTED`, the Tailor
+  dependency, and the required retry/reset action. A later Tailor success
+  clears only those Tailor-owned blocks. Claimed, skipped, and canceled
+  dependent work is never moved backward; an accepted new resume may invalidate
+  a completed or failed Cover from the superseded material generation.
 - Review privacy-bounded learning recommendations on the Dashboard. JobCtrl
   derives them only from explicit reviewed signals, requires compatible
   evidence across jobs, and changes Materials behavior only after you accept a

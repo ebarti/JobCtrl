@@ -623,9 +623,13 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     # directive, the read-side projection refreshers (TS + Python) must
     # NOT carry a "derive stage state from legacy columns" compat shim
     # — the canonical source has to be ``job_stage_states``.  This
-    from jobctrl.state import reconcile_dependency_blockers
+    from jobctrl.state import (
+        reconcile_dependency_blockers,
+        reconcile_tailor_terminal_dependents,
+    )
 
     reconcile_dependency_blockers(conn)
+    reconcile_tailor_terminal_dependents(conn)
     conn.commit()
     return ["job_stage_states", "job_events", "job_artifacts", "event_watermarks", "digest_state"]
 
