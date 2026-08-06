@@ -348,8 +348,19 @@ def _coverage_planner_response() -> str:
     )
 
 
-def _claim_mapping(bullet: str) -> list[dict[str, object]]:
+def _claim_mapping(bullet: str, *, summary: str) -> list[dict[str, object]]:
     return [
+        {
+            "claim_id": "claim_summary",
+            "location": "executive_profile.sentence[0]",
+            "text": summary,
+            "claim_label": "positioning",
+            "coverage_edge_ids": [],
+            "requirement_ids": [],
+            "evidence_ids": [],
+            "non_requirement_reason": "positioning",
+            "review_required": False,
+        },
         {
             "claim_id": "claim_latency",
             "location": "experience.acme_swe.bullets[0]",
@@ -358,6 +369,18 @@ def _claim_mapping(bullet: str) -> list[dict[str, object]]:
             "coverage_edge_ids": ["edge_req_latency_ev_latency_direct"],
             "requirement_ids": ["req_latency"],
             "evidence_ids": ["ev_latency"],
+            "non_requirement_reason": "positioning",
+            "review_required": False,
+        },
+        {
+            "claim_id": "claim_skills",
+            "location": "skills.languages",
+            "text": "Python, Go",
+            "claim_label": "structure",
+            "coverage_edge_ids": [],
+            "requirement_ids": [],
+            "evidence_ids": [],
+            "non_requirement_reason": "structure",
             "review_required": False,
         }
     ]
@@ -369,7 +392,7 @@ def _payload(bullet: str, *, summary: str) -> str:
             "executive_profile": summary,
             "experience_updates": [{"id": "acme_swe", "title": "", "bullets": [bullet]}],
             "skill_category_updates": [{"id": "languages", "items": ["Python", "Go"]}],
-            "generated_claim_mappings": _claim_mapping(bullet),
+            "generated_claim_mappings": _claim_mapping(bullet, summary=summary),
         }
     )
 

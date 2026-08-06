@@ -526,7 +526,6 @@ def _claim_mappings_from_payload(
             )
             non_requirement_reason = str(raw.get("non_requirement_reason") or "")
             if coverage_edge_ids and non_requirement_reason:
-                raw["non_requirement_reason"] = ""
                 non_requirement_reason = ""
             mappings.append(
                 GeneratedClaimMapping(
@@ -553,7 +552,9 @@ def _claim_mapping_binding_errors(
     tailoring_plan: TailoringPlan | None = None,
 ) -> tuple[str, ...]:
     surfaces = _generated_claim_surfaces(payload, tailoring_plan=tailoring_plan)
+    mappings = tuple(mappings)
     errors: list[str] = []
+    bound_locations: list[str] = []
     for mapping in mappings:
         location = _canonical_claim_location(mapping.location)
         actual_text = surfaces.get(location)
@@ -563,19 +564,29 @@ def _claim_mapping_binding_errors(
                 "does not exist in the generated payload."
             )
             continue
-        if _skill_group_claim_location(location):
+        if _claim_location_requires_exact_text(location):
             text_is_bound = actual_text == mapping.text
         else:
             text_is_bound = _claim_text_is_bound(actual_text, mapping.text)
         if not text_is_bound:
             relationship = (
                 "does not exactly match"
-                if _skill_group_claim_location(location)
+                if _claim_location_requires_exact_text(location)
                 else "is not present at"
             )
             errors.append(
                 f"Generated claim {mapping.claim_id} text {relationship} "
                 f"generated payload location {mapping.location!r}."
+            )
+            continue
+        bound_locations.append(location)
+    for label, locations in _required_claim_surface_groups(payload):
+        count = sum(location in locations for location in bound_locations)
+        if count == 0:
+            errors.append(f"Generated claim mapping is missing for {label}.")
+        elif count > 1:
+            errors.append(
+                f"Generated claim surface {label} has {count} mappings; expected exactly one."
             )
     return tuple(errors)
 
@@ -590,6 +601,8 @@ def _generated_claim_surfaces(
     if executive_profile:
         for location in ("executive_profile", "summary", "resume.executive_profile"):
             surfaces[location] = executive_profile
+        for index, sentence in enumerate(_generated_summary_sentences(executive_profile)):
+            surfaces[f"executive_profile.sentence[{index}]"] = sentence
     updates = payload.get("experience_updates")
     for update_index, update in enumerate(updates if isinstance(updates, list) else ()):
         if not isinstance(update, dict):
@@ -674,11 +687,12 @@ def _generated_claim_surfaces(
 
 def _canonical_claim_location(location: str) -> str:
     normalized = str(location or "").strip()
-    if re.fullmatch(
-        r"(?:(?:profile\.)?(?:executive_profile|summary))(?:\.sentences?)?\[\d+\]",
+    sentence_match = re.fullmatch(
+        r"(?:(?:profile\.)?(?:executive_profile|summary))(?:\.sentences?)?\[(\d+)\]",
         normalized,
-    ):
-        return "executive_profile"
+    )
+    if sentence_match:
+        return f"executive_profile.sentence[{sentence_match.group(1)}]"
     return re.sub(r"\.bullet\[(\d+)\]$", r".bullets[\1]", normalized)
 
 
@@ -691,6 +705,98 @@ def _skill_group_claim_location(location: str) -> bool:
         )
         or re.fullmatch(r"skill_category_updates\[\d+\]", location)
     )
+
+
+def _claim_location_requires_exact_text(location: str) -> bool:
+    return bool(
+        location in {"executive_profile", "summary", "resume.executive_profile"}
+        or re.fullmatch(r"executive_profile\.sentence\[\d+\]", location)
+        or _skill_group_claim_location(location)
+    )
+
+
+def _generated_summary_sentences(text: str) -> tuple[str, ...]:
+    return tuple(
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", text.strip())
+        if sentence.strip()
+    )
+
+
+def _required_claim_surface_groups(
+    payload: dict,
+) -> tuple[tuple[str, frozenset[str]], ...]:
+    """Return every generated surface that must have exactly one bound mapping."""
+
+    groups: list[tuple[str, frozenset[str]]] = []
+    executive_profile = str(payload.get("executive_profile") or "").strip()
+    for index, _sentence in enumerate(_generated_summary_sentences(executive_profile)):
+        groups.append(
+            (
+                f"executive profile sentence {index}",
+                frozenset(
+                    {
+                        "executive_profile",
+                        "summary",
+                        "resume.executive_profile",
+                        f"executive_profile.sentence[{index}]",
+                    }
+                ),
+            )
+        )
+
+    updates = payload.get("experience_updates")
+    for update_index, update in enumerate(updates if isinstance(updates, list) else ()):
+        if not isinstance(update, dict):
+            continue
+        entry_id = str(update.get("id") or "").strip()
+        if not entry_id:
+            continue
+        bullets = update.get("bullets")
+        for bullet_index, bullet in enumerate(bullets if isinstance(bullets, list) else ()):
+            if not str(bullet or "").strip():
+                continue
+            groups.append(
+                (
+                    f"experience {entry_id} bullet {bullet_index}",
+                    frozenset(
+                        {
+                            f"experience.{entry_id}.bullets[{bullet_index}]",
+                            f"experience_updates.{entry_id}.bullets[{bullet_index}]",
+                            f"experience_updates[{update_index}].bullets[{bullet_index}]",
+                        }
+                    ),
+                )
+            )
+
+    skill_updates = payload.get("skill_category_updates")
+    for update_index, update in enumerate(
+        skill_updates if isinstance(skill_updates, list) else ()
+    ):
+        if not isinstance(update, dict):
+            continue
+        category_id = str(update.get("id") or "").strip()
+        items = [
+            str(item or "").strip()
+            for item in update.get("items") or []
+            if str(item or "").strip()
+        ]
+        if not category_id or not items:
+            continue
+        groups.append(
+            (
+                f"skill group {category_id}",
+                frozenset(
+                    {
+                        f"skills.{category_id}",
+                        f"skill_categories.{category_id}",
+                        f"skill_category_updates.{category_id}",
+                        f"skill_category_updates[{update_index}]",
+                    }
+                ),
+            )
+        )
+    return tuple(groups)
 
 
 def _claim_text_is_bound(actual_text: str, mapped_text: str) -> bool:

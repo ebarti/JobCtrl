@@ -63,7 +63,8 @@ mapping:
 - skill_category_updates for existing profile skill category IDs
 - generated_claim_mappings that link each generated claim to coverage edges,
   requirement IDs, evidence IDs, or a non-requirement reason such as pinned or
-  positioning content
+  positioning content; exactly one bound mapping is required for every summary
+  sentence, generated experience bullet, and complete rendered skill group
 ```
 
 The target job and employer analysis decide what to emphasize. The existing
@@ -200,12 +201,12 @@ The generator must return JSON matching `TAILORED_RESUME_RESPONSE_SCHEMA`:
 
 ```json
 {
-  "executive_profile": "2-4 sentences tailored to the target role.",
+  "executive_profile": "Grounded executive profile.",
   "experience_updates": [
     {
       "id": "existing_profile_experience_id",
       "title": "",
-      "bullets": ["bullet 1", "bullet 2"]
+      "bullets": ["Generated bullet text."]
     }
   ],
   "skill_category_updates": [
@@ -216,6 +217,17 @@ The generator must return JSON matching `TAILORED_RESUME_RESPONSE_SCHEMA`:
   ],
   "generated_claim_mappings": [
     {
+      "claim_id": "claim_summary_1",
+      "location": "executive_profile.sentence[0]",
+      "text": "Grounded executive profile.",
+      "claim_label": "positioning",
+      "coverage_edge_ids": [],
+      "requirement_ids": [],
+      "evidence_ids": [],
+      "non_requirement_reason": "positioning",
+      "review_required": false
+    },
+    {
       "claim_id": "claim_1",
       "location": "experience.existing_profile_experience_id.bullets[0]",
       "text": "Generated bullet text.",
@@ -223,7 +235,18 @@ The generator must return JSON matching `TAILORED_RESUME_RESPONSE_SCHEMA`:
       "coverage_edge_ids": ["edge_req_1_ev_1_direct"],
       "requirement_ids": ["req_1"],
       "evidence_ids": ["ev_1"],
-      "non_requirement_reason": "",
+      "non_requirement_reason": "positioning",
+      "review_required": false
+    },
+    {
+      "claim_id": "claim_skills_1",
+      "location": "skills.existing_profile_skill_category_id",
+      "text": "existing skill 1, existing skill 2",
+      "claim_label": "structure",
+      "coverage_edge_ids": [],
+      "requirement_ids": [],
+      "evidence_ids": [],
+      "non_requirement_reason": "structure",
       "review_required": false
     }
   ]
@@ -232,7 +255,9 @@ The generator must return JSON matching `TAILORED_RESUME_RESPONSE_SCHEMA`:
 
 The model cannot return contact info, education rows, new sections, comments,
 warnings, or PDFs. The claim map is a sidecar audit contract; code still owns
-assembly, provenance rows, final artifact metadata, and read models.
+assembly, provenance rows, final artifact metadata, and read models. Mapping
+locations are range-checked, complete rendered skill groups bind by exact text,
+and the schema-valid raw response is retained unchanged in attempt audit.
 
 ## What "Profile-Row Based" Means
 
