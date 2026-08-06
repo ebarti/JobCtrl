@@ -271,9 +271,10 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
                     "location": {
                         "type": "string",
                         "description": (
-                            "Use executive_profile or executive_profile.sentence[N] for summary "
-                            "sentences, experience.<id>.bullets[N] for bullets, and skills.<id> "
-                            "for one complete rendered skill group."
+                            "Use executive_profile only for a one-sentence summary; otherwise use "
+                            "executive_profile.sentence[N] for each summary sentence. Use "
+                            "experience.<id>.bullets[N] for bullets and skills.<id> for one "
+                            "complete rendered skill group."
                         ),
                     },
                     "text": {
@@ -730,18 +731,21 @@ def _required_claim_surface_groups(
 
     groups: list[tuple[str, frozenset[str]]] = []
     executive_profile = str(payload.get("executive_profile") or "").strip()
-    for index, _sentence in enumerate(_generated_summary_sentences(executive_profile)):
+    summary_sentences = _generated_summary_sentences(executive_profile)
+    for index, _sentence in enumerate(summary_sentences):
+        locations = {f"executive_profile.sentence[{index}]"}
+        if len(summary_sentences) == 1:
+            locations.update(
+                {
+                    "executive_profile",
+                    "summary",
+                    "resume.executive_profile",
+                }
+            )
         groups.append(
             (
                 f"executive profile sentence {index}",
-                frozenset(
-                    {
-                        "executive_profile",
-                        "summary",
-                        "resume.executive_profile",
-                        f"executive_profile.sentence[{index}]",
-                    }
-                ),
+                frozenset(locations),
             )
         )
 
@@ -1431,7 +1435,8 @@ HARD RULES:
   group, emit a generated_claim_mappings entry that references valid
   coverage_edge_ids, requirement_ids, and evidence_ids; use non_requirement_reason
   only for pinned, positioning, or structure claims
-- A summary sentence location may be executive_profile.sentence[N]; N is zero-based
+- Use executive_profile only when the generated summary has exactly one sentence;
+  otherwise map every sentence with executive_profile.sentence[N], where N is zero-based
 - For a skills.<category-id> mapping, text must be the exact selected items in
   rendered order joined with ", " (comma plus one space), not the category label
 - Every achievement_evidence_id present on any COVERAGE_GRAPH edge must appear

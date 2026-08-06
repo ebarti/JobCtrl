@@ -46,6 +46,7 @@ from jobctrl.domain.materials.use_cases import (
     _bullet_limit_overflow_metadata,
     _canonical_claim_location,
     _claim_mappings_from_payload,
+    _generated_summary_sentences,
     _safe_filename_prefix,
 )
 from jobctrl.domain.ports.events import EventPublisher
@@ -573,19 +574,25 @@ def _positioning_claim_mappings(
             }
         )
     if include_summary:
-        mappings.append(
-            {
-                "claim_id": "claim-summary-1",
-                "location": "executive_profile",
-                "text": summary,
-                "claim_label": "positioning",
-                "coverage_edge_ids": [],
-                "requirement_ids": [],
-                "evidence_ids": [],
-                "non_requirement_reason": "positioning",
-                "review_required": False,
-            }
-        )
+        summary_sentences = _generated_summary_sentences(summary)
+        for index, sentence in enumerate(summary_sentences):
+            mappings.append(
+                {
+                    "claim_id": f"claim-summary-{index + 1}",
+                    "location": (
+                        "executive_profile"
+                        if len(summary_sentences) == 1
+                        else f"executive_profile.sentence[{index}]"
+                    ),
+                    "text": sentence,
+                    "claim_label": "positioning",
+                    "coverage_edge_ids": [],
+                    "requirement_ids": [],
+                    "evidence_ids": [],
+                    "non_requirement_reason": "positioning",
+                    "review_required": False,
+                }
+            )
     if include_skills:
         mappings.append(
             {
@@ -1066,6 +1073,53 @@ def test_tailor_use_case_rejects_partial_skill_group_claim_mapping(
     assert outcome.report["judge"] is None
     errors = outcome.report["candidate_summaries"][0]["validation"]["errors"]
     assert any("does not exactly match" in error for error in errors)
+
+
+def test_tailor_use_case_rejects_one_whole_profile_mapping_for_multiple_sentences(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "Go"],
+        "full_description": "Own Python API reliability.",
+    }
+    analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
+    payload = json.loads(_coherent_requirement_payload())
+    summary = (
+        "Senior backend engineer focused on Python API reliability. "
+        "Reduced API latency 35% with Python."
+    )
+    payload["executive_profile"] = summary
+    payload["generated_claim_mappings"][0].update(
+        location="executive_profile",
+        text=summary,
+    )
+    llm = _ScriptedLlm([json.dumps(payload)])
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=analysis,
+        requirement_fit_report=requirement_fit_report,
+    )
+
+    assert outcome.status == "failed_validation"
+    assert outcome.report["judge"] is None
+    errors = outcome.report["candidate_summaries"][0]["validation"]["errors"]
+    assert "Generated claim mapping is missing for executive profile sentence 0." in errors
+    assert "Generated claim mapping is missing for executive profile sentence 1." in errors
 
 
 @pytest.mark.parametrize(

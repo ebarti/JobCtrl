@@ -64,7 +64,9 @@ mapping:
 - generated_claim_mappings that link each generated claim to coverage edges,
   requirement IDs, evidence IDs, or a non-requirement reason such as pinned or
   positioning content; exactly one bound mapping is required for every summary
-  sentence, generated experience bullet, and complete rendered skill group
+  sentence, generated experience bullet, and complete rendered skill group;
+  executive_profile is valid only for a one-sentence summary, while multi-sentence
+  summaries use executive_profile.sentence[N] for every sentence
 ```
 
 The target job and employer analysis decide what to emphasize. The existing
