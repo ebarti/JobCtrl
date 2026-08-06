@@ -944,9 +944,15 @@ def test_claim_location_normalizes_summary_sentence_aliases(
     assert _canonical_claim_location(location) == expected
 
 
-def test_summary_sentence_segmentation_preserves_dotted_abbreviation() -> None:
-    summary = "U.S. backend engineer focused on Python API reliability."
-
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "U.S. backend engineer focused on Python API reliability.",
+        "Senior engineer focused on U.S. API systems.",
+        "U.S. Python backend engineer focused on API reliability.",
+    ],
+)
+def test_summary_sentence_segmentation_preserves_dotted_abbreviation(summary: str) -> None:
     assert _generated_summary_sentences(summary) == (summary,)
 
 
@@ -1002,7 +1008,7 @@ def test_tailor_use_case_happy_path(tmp_path: Path, snapshot: ProfileSnapshot, j
 def test_tailor_use_case_accepts_aggregate_mapping_for_abbreviated_one_sentence_summary(
     tmp_path: Path, snapshot: ProfileSnapshot, job: dict
 ) -> None:
-    summary = "Senior engineer focused on U.S. backend systems."
+    summary = "U.S. Python backend engineer focused on API reliability."
     payload = _good_json_payload_dict()
     payload["executive_profile"] = summary
     payload["generated_claim_mappings"][1]["text"] = summary
@@ -1162,7 +1168,7 @@ def test_tailor_use_case_rejects_one_whole_profile_mapping_for_multiple_sentence
     analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
     payload = json.loads(_coherent_requirement_payload())
     summary = (
-        "Senior backend engineer focused on Python API reliability. "
+        'Senior backend engineer known for "reliable APIs." '
         "Reduced API latency 35% with Python."
     )
     payload["executive_profile"] = summary
@@ -1192,6 +1198,57 @@ def test_tailor_use_case_rejects_one_whole_profile_mapping_for_multiple_sentence
     errors = outcome.report["candidate_summaries"][0]["validation"]["errors"]
     assert "Generated claim mapping is missing for executive profile sentence 0." in errors
     assert "Generated claim mapping is missing for executive profile sentence 1." in errors
+
+
+def test_tailor_use_case_accepts_indexed_mappings_for_quoted_multiple_sentences(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "Go"],
+        "full_description": "Own Python API reliability.",
+    }
+    analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
+    payload = json.loads(_coherent_requirement_payload())
+    first_sentence = 'Senior backend engineer known for "reliable APIs."'
+    second_sentence = "Reduced API latency 35% with Python."
+    payload["executive_profile"] = f"{first_sentence} {second_sentence}"
+    payload["generated_claim_mappings"][0].update(
+        location="executive_profile.sentence[0]",
+        text=first_sentence,
+    )
+    second_mapping = dict(
+        payload["generated_claim_mappings"][1],
+        claim_id="claim-summary-latency",
+        location="executive_profile.sentence[1]",
+        text=second_sentence,
+    )
+    payload["generated_claim_mappings"].insert(1, second_mapping)
+    llm = _ScriptedLlm([json.dumps(payload), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=analysis,
+        requirement_fit_report=requirement_fit_report,
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+    assert len(llm.calls) == 2
 
 
 @pytest.mark.parametrize(

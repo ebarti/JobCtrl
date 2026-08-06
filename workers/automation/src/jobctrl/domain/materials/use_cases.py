@@ -729,13 +729,12 @@ def _summary_period_is_abbreviation(text: str, boundary_end: int) -> bool:
     if prefix_match is None:
         return False
     token = prefix_match.group(1).strip("()[]{}\"'").lower()
-    if token in _SUMMARY_TITLE_ABBREVIATIONS | _SUMMARY_ALWAYS_INLINE_ABBREVIATIONS:
-        return True
     continuation = text[boundary_end:].lstrip()
-    if not continuation or not continuation[0].islower():
+    if not continuation:
         return False
     return bool(
-        re.fullmatch(r"(?:[a-z]\.){2,}", token)
+        token in _SUMMARY_TITLE_ABBREVIATIONS | _SUMMARY_ALWAYS_INLINE_ABBREVIATIONS
+        or re.fullmatch(r"(?:[a-z]\.){2,}", token)
         or token in {"ph.d.", "u.s.", "u.k."}
     )
 
@@ -746,9 +745,12 @@ def _generated_summary_sentences(text: str) -> tuple[str, ...]:
         return ()
     sentences: list[str] = []
     start = 0
-    for boundary in re.finditer(r"[.!?]+(?=\s+|$)", normalized):
-        if boundary.group().endswith(".") and _summary_period_is_abbreviation(
-            normalized, boundary.end()
+    for boundary in re.finditer(r"[.!?]+(?:[\"')\]}]+)?(?=\s+|$)", normalized):
+        punctuation = re.match(r"[.!?]+", boundary.group())
+        if (
+            punctuation is not None
+            and punctuation.group().endswith(".")
+            and _summary_period_is_abbreviation(normalized, boundary.end())
         ):
             continue
         sentence = normalized[start : boundary.end()].strip()
