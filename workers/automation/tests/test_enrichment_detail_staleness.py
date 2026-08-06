@@ -625,7 +625,7 @@ def test_inactive_cascade_snapshot_uses_current_job_id_and_keeps_url_as_locator(
 
         quarantine = conn.execute(
             """
-            SELECT job_id, posting_url
+            SELECT job_id, posting_url, reason
             FROM discovery_quarantine_entries
             WHERE tenant_id = 'local' AND job_id = ?
             """,
@@ -642,6 +642,7 @@ def test_inactive_cascade_snapshot_uses_current_job_id_and_keeps_url_as_locator(
         assert quarantine is not None
         assert quarantine["job_id"] == str(job_id)
         assert quarantine["posting_url"] == url
+        assert quarantine["reason"] == "posting_inactive"
         assert "job_url" not in {row["name"] for row in conn.execute("PRAGMA table_info(posting_snapshot_sets)")}
         assert "job_key" not in {row["name"] for row in conn.execute("PRAGMA table_info(discovery_quarantine_entries)")}
     finally:

@@ -236,8 +236,10 @@ def judge_snapshot_confidence(
     """Heuristic three-bucket judgement consistent with the RFC schema.
 
     JSON-LD with apply URL and a long description is HIGH; CSS without
-    apply URL is MEDIUM; LLM fallback or short descriptions are LOW
-    unless an apply URL is also present.
+    apply URL is MEDIUM; a sufficiently complete LLM-assisted description
+    is MEDIUM whether or not an application URL was recovered. Application
+    target readiness is a separate fact and must not downgrade readable
+    posting content.
     """
     length = len(description.text)
     if tier is ExtractionTier.JSON_LD and apply_url_present and length >= _MEDIUM_CONFIDENCE_MIN_LEN:
@@ -249,7 +251,7 @@ def judge_snapshot_confidence(
             return SnapshotConfidence.MEDIUM
         return SnapshotConfidence.LOW
     if tier is ExtractionTier.LLM_ASSISTED:
-        if length >= _HIGH_CONFIDENCE_MIN_LEN and apply_url_present:
+        if length >= _HIGH_CONFIDENCE_MIN_LEN:
             return SnapshotConfidence.MEDIUM
         return SnapshotConfidence.LOW
     if length < _MEDIUM_CONFIDENCE_MIN_LEN:
@@ -451,14 +453,16 @@ def _quarantine_for_capture(
       * LOW confidence WITH an explicit filter override → admit; the
         override audit will be persisted on the snapshot, and the
         admission is logged via ``FilterOverrideLogger``.
+      * Missing application URL → does not change description trust;
+        application-target readiness is tracked separately.
       * Otherwise NONE.
     """
     if active_state is ActiveState.UNKNOWN:
         return QuarantineReason.UNKNOWN_ACTIVE_STATE
     if confidence is SnapshotConfidence.LOW and filter_override is None:
         return QuarantineReason.LOW_CONFIDENCE_EXTRACTION
-    if not has_apply_url and active_state is ActiveState.ACTIVE and filter_override is None:
-        return QuarantineReason.LOW_CONFIDENCE_EXTRACTION
+    if not has_apply_url:
+        return QuarantineReason.NONE
     return QuarantineReason.NONE
 
 

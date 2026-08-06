@@ -92,6 +92,7 @@ class QuarantineReason(str, Enum):
     POLICY_OVERRIDE_PENDING = "policy_override_pending"
     DUPLICATE_CANDIDATE = "duplicate_candidate"
     SHORT_DESCRIPTION = "short_description"
+    POSTING_INACTIVE = "posting_inactive"
 
     @classmethod
     def from_optional(cls, value: object) -> "QuarantineReason | None":

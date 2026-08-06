@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,20 +15,26 @@ from jobctrl.domain.enrichment import (
     ExtractionTier,
     FullDescription,
     JobEnrichment,
+    PostingSnapshotSet,
     QuarantineReason,
     SnapshotConfidence,
+    SnapshotDescriptionHash,
 )
 from jobctrl.domain.identifiers import JobId, generate_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.enrichment.detail import (
     _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS,
     _apply_authenticated_linkedin_apply_url,
+    _authenticated_apply_url_recovery_error,
     _is_linkedin_job,
     _record_posting_snapshot_from_cascade,
     _reset_authenticated_linkedin_retry_candidates,
 )
 from jobctrl.enrichment import detail
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
+from jobctrl.infrastructure.enrichment.sqlite_repository import (
+    SqlitePostingSnapshotSetRepository,
+)
 from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
     LinkedInApplyResolution,
 )
@@ -295,6 +302,88 @@ def test_enriched_missing_apply_url_preserves_description_on_failed_recovery(
     # A bounding attempt is recorded so a never-resolving row cannot be
     # re-driven through the authenticated browser forever.
     assert aggregate.attempt_count == 2
+    assert aggregate.last_attempt is not None
+    assert aggregate.last_attempt.error is not None
+    assert aggregate.last_attempt.error.code == "APPLY_URL_EXTERNAL_TARGET_MISSING"
+
+
+@pytest.mark.parametrize(
+    ("method", "expected_code", "retryable"),
+    [
+        ("linkedin_onsite_apply", "APPLY_URL_LINKEDIN_ONSITE", False),
+        ("apply_button_missing", "APPLY_URL_CONTROL_MISSING", True),
+        ("external_url_missing", "APPLY_URL_EXTERNAL_TARGET_MISSING", True),
+        ("navigation_error", "APPLY_URL_NAVIGATION_FAILED", True),
+        ("unsafe_url", "APPLY_URL_UNSAFE_TARGET", False),
+    ],
+)
+def test_apply_url_recovery_outcomes_are_explicit(
+    method: str,
+    expected_code: str,
+    retryable: bool,
+) -> None:
+    error = _authenticated_apply_url_recovery_error(
+        method=method,
+        raw_error="resolver detail",
+    )
+
+    assert error.code == expected_code
+    assert error.message
+    assert error.retryable is retryable
+
+
+def test_linkedin_onsite_apply_is_audited_and_not_retried(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://www.linkedin.com/jobs/view/4448147529"
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(conn, url, application_url=None)
+    job_id = _job_id(conn, url)
+    ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+    set_stage_state(
+        conn,
+        job_id,
+        "enrich",
+        "succeeded",
+        tenant_id=LOCAL_TENANT,
+        validate_transition=False,
+    )
+    conn.commit()
+    resolver = _RecoveryResolver(LinkedInApplyResolution(None, "linkedin_onsite_apply"))
+
+    for _ in range(2):
+        _reset_authenticated_linkedin_retry_candidates(
+            conn,
+            job_ids=(job_id,),
+            resolver_factory=lambda: resolver,
+            session=offline_session(conn, site="linkedin"),
+        )
+
+    assert resolver.calls == [url]
+    aggregate = SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, job_id)
+    assert aggregate is not None
+    assert aggregate.is_enriched
+    assert aggregate.last_attempt is not None
+    assert aggregate.last_attempt.error is not None
+    assert aggregate.last_attempt.error.code == "APPLY_URL_LINKEDIN_ONSITE"
+    assert aggregate.last_attempt.error.retryable is False
+    stage = conn.execute(
+        "SELECT state, metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert stage is not None
+    assert stage["state"] == "succeeded"
+    metadata = json.loads(stage["metadata_json"])
+    assert metadata["applyUrlOutcomeCode"] == "APPLY_URL_LINKEDIN_ONSITE"
+    assert "no external application URL exists" in metadata["applyUrlOutcomeMessage"]
+    events = conn.execute(
+        "SELECT message, payload_json FROM job_events "
+        "WHERE tenant_id = ? AND job_id = ? AND event_type = 'StageProgress'",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchall()
+    assert len(events) == 1
+    assert "no external application URL exists" in events[0]["message"]
+    assert json.loads(events[0]["payload_json"])["applyUrlOutcomeCode"] == ("APPLY_URL_LINKEDIN_ONSITE")
 
 
 def test_enriched_missing_apply_url_preserves_description_when_resolver_raises(
@@ -351,8 +440,8 @@ def test_enriched_missing_apply_url_backfills_on_successful_recovery(
         (str(LOCAL_TENANT), str(job_id)),
     ).fetchone()
     assert before is not None
-    assert before["latest_confidence"] == SnapshotConfidence.LOW.value
-    assert before["latest_quarantine_reason"] == QuarantineReason.LOW_CONFIDENCE_EXTRACTION.value
+    assert before["latest_confidence"] == SnapshotConfidence.MEDIUM.value
+    assert before["latest_quarantine_reason"] == QuarantineReason.NONE.value
     ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
     set_stage_state(
         conn,
@@ -400,6 +489,93 @@ def test_enriched_missing_apply_url_backfills_on_successful_recovery(
     ).fetchone()
     assert tailor_state is not None
     assert dict(tailor_state) == {"state": "pending", "error_code": None}
+
+
+def test_legacy_missing_apply_url_snapshot_is_reclassified_without_browser_retry(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://www.linkedin.com/jobs/view/legacy-content-trust"
+    description = " ".join(["Senior platform engineering responsibilities with Python and distributed systems"] * 20)
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(conn, url, application_url=None, description=description)
+    job_id = _job_id(conn, url)
+    snapshot_set = PostingSnapshotSet.empty(
+        tenant_id=LOCAL_TENANT,
+        job_id=job_id,
+        updated_at="2026-01-01T00:00:00+00:00",
+    )
+    snapshot_set, _ = snapshot_set.record_snapshot(
+        source_id="jobspy:linkedin",
+        extraction_tier=ExtractionTier.LLM_ASSISTED.value,
+        description_hash=SnapshotDescriptionHash.from_text(description),
+        apply_url=None,
+        active_state=ActiveState.ACTIVE,
+        confidence=SnapshotConfidence.LOW,
+        quarantine_reason=QuarantineReason.LOW_CONFIDENCE_EXTRACTION,
+        captured_at="2026-01-01T00:00:00+00:00",
+    )
+    SqlitePostingSnapshotSetRepository(conn).save(snapshot_set)
+    ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+    set_stage_state(
+        conn,
+        job_id,
+        "enrich",
+        "succeeded",
+        tenant_id=LOCAL_TENANT,
+        validate_transition=False,
+    )
+    set_stage_state(
+        conn,
+        job_id,
+        "tailor",
+        "blocked",
+        tenant_id=LOCAL_TENANT,
+        error_code="ENRICHMENT_QUARANTINED",
+        error_message="Tailoring is waiting for a trustworthy posting snapshot.",
+        retryable=True,
+        blocked_by=["enrich"],
+        validate_transition=False,
+    )
+    conn.commit()
+    monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: False)
+
+    def unexpected_resolver() -> object:
+        raise AssertionError("content-trust repair must not require browser navigation")
+
+    for _ in range(2):
+        _reset_authenticated_linkedin_retry_candidates(
+            conn,
+            job_ids=(job_id,),
+            resolver_factory=unexpected_resolver,
+        )
+
+    repaired = SqlitePostingSnapshotSetRepository(conn).load(LOCAL_TENANT, job_id)
+    assert repaired is not None
+    assert repaired.latest_snapshot is not None
+    assert repaired.latest_snapshot.snapshot_version == 2
+    assert repaired.latest_snapshot.confidence is SnapshotConfidence.MEDIUM
+    assert repaired.latest_snapshot.quarantine_reason is QuarantineReason.NONE
+    assert "content_trust_reclassified:apply_url_independent" in (repaired.latest_snapshot.evidence)
+    tailor_state = conn.execute(
+        "SELECT state, error_code, error_message FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert tailor_state is not None
+    assert dict(tailor_state) == {
+        "state": "pending",
+        "error_code": None,
+        "error_message": None,
+    }
+    events = conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? "
+        "AND event_type = 'PostingContentSnapshotCaptured' "
+        "AND json_extract(payload_json, '$.reason') = 'missing_apply_url_content_trust_recovery'",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert events is not None
+    assert events[0] == 1
 
 
 def test_enriched_missing_apply_url_recovery_is_bounded_across_runs(

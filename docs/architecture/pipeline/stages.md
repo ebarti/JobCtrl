@@ -158,7 +158,7 @@ sequenceDiagram
     Run->>Fetch: fetch posting detail pages
     Fetch->>DB: full description, apply URL, attempts/errors
     Run->>Chrome: LinkedIn misses -> authenticated pass
-    Chrome->>DB: external company apply URL (stops before submission)
+    Chrome->>DB: external URL or explicit no-external-URL outcome
     Enr->>DB: StageCompleted/StageFailed + PostingContentSnapshotCaptured, projections refresh
 ```
 
@@ -180,7 +180,12 @@ For LinkedIn rows that are failed or enriched without an application URL, a
 bounded authenticated Chrome pass may click the LinkedIn apply control to
 capture an external company URL **only when the separately enabled, explicitly
 consented authenticated-LinkedIn browser capability is ready** — and it **stops
-before any form or submission**.
+before any form or submission**. A LinkedIn on-site application control is a
+terminal, non-retryable result: the application flow exists, but there is no
+external ATS URL to capture. Missing controls, missing external targets,
+navigation failures, and unsafe targets retain separate auditable codes and
+retry policies. These application-target outcomes do not determine description
+confidence and cannot quarantine otherwise trustworthy posting content.
 Detail enrichment isolates faults at two levels. A crash while processing one
 site's batch is recorded in `site_errors`, healthy sites keep running, and the
 enrichment run ends `partial` rather than `failed`. Within a site, a single

@@ -12,7 +12,12 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import set_tracer_provider
 
 from jobctrl.domain.discovery.source_registry import ContentFilterOverridePolicy
-from jobctrl.domain.enrichment import DetailPage, ExtractionTier, JobEnrichment
+from jobctrl.domain.enrichment import (
+    DetailPage,
+    ExtractionTier,
+    JobEnrichment,
+    SnapshotConfidence,
+)
 from jobctrl.domain.enrichment.filter_override import FilterOverrideError, FilterOverrideLogger
 from jobctrl.domain.enrichment.services import ExtractionResult, JsonLdExtractor
 from jobctrl.domain.enrichment.snapshot_services import (
@@ -20,6 +25,7 @@ from jobctrl.domain.enrichment.snapshot_services import (
     ContentAcquisitionService,
     DedupeIndexEntry,
     TierExtractor,
+    judge_snapshot_confidence,
 )
 from jobctrl.domain.enrichment.snapshot_set import PostingSnapshotSet
 from jobctrl.domain.enrichment.snapshot_use_case import CapturePostingSnapshotUseCase
@@ -126,6 +132,27 @@ class _StaticExtractor:
 
 def _long_description() -> str:
     return "Build distributed recruiting systems with Python, Postgres, and TypeScript. " * 8
+
+
+def test_llm_description_trust_does_not_depend_on_application_url() -> None:
+    description = FullDescription(text=_long_description())
+
+    assert (
+        judge_snapshot_confidence(
+            tier=ExtractionTier.LLM_ASSISTED,
+            description=description,
+            apply_url_present=False,
+        )
+        is SnapshotConfidence.MEDIUM
+    )
+    assert (
+        judge_snapshot_confidence(
+            tier=ExtractionTier.LLM_ASSISTED,
+            description=FullDescription(text="Short but non-empty description"),
+            apply_url_present=True,
+        )
+        is SnapshotConfidence.LOW
+    )
 
 
 def _json_ld_page(

@@ -177,9 +177,11 @@ evidence, qualifications, and the complete capability matrix.
   gateway that honors `robots.txt`, paces each host, bounds each run's request
   budget, and sends an honest `User-Agent` that never impersonates a browser.
   A separately enabled, explicitly consented authenticated LinkedIn profile may
-  recover the full posting and external application URL without applying the
-  anonymous robots verdict; public-destination checks, host pacing, run budgets,
-  audit history, and the no-submission boundary still apply (details in
+  recover the full posting and inspect its application target without applying
+  the anonymous robots verdict. An external URL is stored when one exists;
+  LinkedIn on-site apply and other unresolved-target cases receive distinct,
+  auditable reasons. Public-destination checks, host pacing, run budgets, audit
+  history, and the no-submission boundary still apply (details in
   [Local Data And Safety](#local-data-and-safety)).
 - Capture a current browser job page through the optional local browser
   extension, which feeds the existing manual-capture import path.
@@ -454,9 +456,13 @@ before content extraction or LLM enrichment. JobCtrl does not evade login,
 paywall, CAPTCHA, rate-limit, or bot-control gates. The one explicit carve-out
 is owner-authenticated LinkedIn recovery: after the capability is enabled and a
 profile copy is separately consented, JobCtrl may use that existing session to
-recover the full posting and external application URL without applying the
-anonymous robots verdict. It retains public-route validation, pacing, request
-budgets, and audit history, and it cannot submit an application.
+recover the full posting and inspect its application target without applying
+the anonymous robots verdict. It records whether an external URL was recovered,
+LinkedIn owns the application flow, the control or external target was missing,
+navigation failed, or the target was unsafe. Missing an external URL does not
+downgrade a readable posting or block Tailor. The recovery retains public-route
+validation, pacing, request budgets, and audit history, and it cannot submit an
+application.
 
 ### Back Up And Restore
 
