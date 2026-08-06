@@ -60,7 +60,8 @@
         "error_message": null,
         "retryable": 1,
         "blocked_by_json": null,
-        "next_action": null
+        "next_action": null,
+        "metadata_json": "{\"applyUrlOutcomeCode\":\"APPLY_URL_LINKEDIN_ONSITE\",\"applyUrlOutcomeMessage\":\"untrusted raw message\",\"applyUrlOutcomeRetryable\":true,\"authenticatedApplyUrlMethod\":\"linkedin_onsite_apply\"}"
       },
       {
         "stage": "score",
@@ -796,6 +797,7 @@
       "scored_at": "2026-06-08T12:05:00+00:00",
       "stages_json": [
         {
+          "apply_url_outcome": null,
           "attempt_count": 1,
           "blocked_by": [],
           "duration_ms": 5000,
@@ -811,6 +813,12 @@
           "updated_at": "2026-06-08T10:00:05+00:00"
         },
         {
+          "apply_url_outcome": {
+            "code": "APPLY_URL_LINKEDIN_ONSITE",
+            "message": "LinkedIn uses an on-site application flow for this posting; no external application URL exists.",
+            "method": "linkedin_onsite_apply",
+            "retryable": false
+          },
           "attempt_count": 1,
           "blocked_by": [],
           "duration_ms": 10000,
@@ -826,6 +834,7 @@
           "updated_at": "2026-06-08T10:01:10+00:00"
         },
         {
+          "apply_url_outcome": null,
           "attempt_count": 1,
           "blocked_by": [],
           "duration_ms": 30000,
@@ -841,6 +850,7 @@
           "updated_at": "2026-06-08T12:05:30+00:00"
         },
         {
+          "apply_url_outcome": null,
           "attempt_count": 2,
           "blocked_by": [],
           "duration_ms": 120000,
@@ -856,6 +866,7 @@
           "updated_at": "2026-06-08T12:12:00+00:00"
         },
         {
+          "apply_url_outcome": null,
           "attempt_count": 1,
           "blocked_by": [],
           "duration_ms": 60000,
@@ -871,6 +882,7 @@
           "updated_at": "2026-06-08T12:16:00+00:00"
         },
         {
+          "apply_url_outcome": null,
           "attempt_count": 1,
           "blocked_by": [],
           "duration_ms": 30000,
