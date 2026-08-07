@@ -136,7 +136,11 @@ async def enrich_activity(payload: EnrichActivityInput) -> EnrichActivityOutput:
     try:
         info = activity.info()
         activity_attempt = info.attempt
-        activity_owner_token = f"{info.activity_id}:{info.activity_run_id}:{info.attempt}"
+        # Info.activity_run_id is documented None for workflow activities, so
+        # it adds no entropy here. The scheduling workflow execution's run id
+        # is the real disambiguator: it fences a zombie attempt scheduled by a
+        # different execution writing into the same lease lane.
+        activity_owner_token = f"{info.activity_id}:{info.workflow_run_id}:{info.attempt}"
     except RuntimeError:
         # Direct unit calls have no Temporal activity context.
         activity_attempt = 1

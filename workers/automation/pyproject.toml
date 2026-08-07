@@ -29,7 +29,9 @@ dependencies = [
     "pypdf>=6.14.2",
     "pyyaml>=6.0",
     "pandas>=2.0",
-    "temporalio>=1.6",
+    # Floor provides activity.cancellation_details() and Info.activity_run_id,
+    # which the enrichment/discovery ownership fencing reads.
+    "temporalio>=1.26",
     "opentelemetry-api>=1.27",
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp-proto-http>=1.27",
