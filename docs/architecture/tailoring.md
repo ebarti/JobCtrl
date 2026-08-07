@@ -673,9 +673,10 @@ repair-loop history.
 acceptable candidate within its retry budget. The durable preparation queue has
 its own retry budget outside this inner loop. The stage `attempt_count` advances
 once per durable Tailor execution, not once per candidate-repair call; inner
-attempts remain in an append-only generation audit keyed by workflow execution
-and durable attempt, so a later retry cannot overwrite earlier prompts,
-candidates, validation, or judge evidence. A fifth failed durable execution is
+attempts remain in an append-only generation audit keyed by workflow execution,
+durable attempt, and recorded time, so a later retry or a rerun of the same
+durable attempt cannot overwrite earlier prompts, candidates, validation, or
+judge evidence. A fifth failed durable execution is
 stored as non-retryable `exhausted` until an explicit attempt reset.
 
 ## How To Change Tailoring Safely

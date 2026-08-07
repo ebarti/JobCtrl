@@ -1656,12 +1656,54 @@ def test_tailor_use_case_preserves_attempt_audit_across_durable_executions(
     assert first.status == second.status == "exhausted_retries"
     history = repo.saved[-1].metadata["tailoring_attempt_audits"]
     assert [entry["audit_key"] for entry in history] == [
-        "workflow-run-one:1",
-        "workflow-run-two:2",
+        f"workflow-run-one:1:{history[0]['recorded_at']}",
+        f"workflow-run-two:2:{history[1]['recorded_at']}",
     ]
     assert [entry["durable_attempt"] for entry in history] == [1, 2]
     assert all(entry["report"]["attempts"] == 4 for entry in history)
     assert all(len(entry["report"]["attempt_history"]) == 4 for entry in history)
+
+
+def test_tailor_use_case_appends_rerun_of_same_durable_attempt(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """A rerun of the same durable attempt must append, not drop, its report.
+
+    Reachable via a post-``--reset-attempts`` CLI execution (execution id and
+    durable attempt both repeat) or an activity retry after a crash between the
+    materials save and the stage-count increment (same run id, same attempt).
+    """
+
+    repo = _FakeRepository()
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=_ScriptedLlm(["not json"] * 8),
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    first = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        audit_execution_id="workflow-run-one",
+        durable_attempt=1,
+    )
+    second = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        audit_execution_id="workflow-run-one",
+        durable_attempt=1,
+    )
+
+    assert first.status == second.status == "exhausted_retries"
+    history = repo.saved[-1].metadata["tailoring_attempt_audits"]
+    assert [entry["durable_attempt"] for entry in history] == [1, 1]
+    assert len({entry["audit_key"] for entry in history}) == 2
+    # The singular latest-record field stays consistent with the history tail.
+    assert repo.saved[-1].metadata["tailoring_attempt_audit"] == history[-1]["report"]
 
 
 def test_tailor_use_case_does_not_promote_invalid_prior_output_into_retry_prompt(

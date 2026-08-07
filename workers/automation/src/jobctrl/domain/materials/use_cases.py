@@ -1013,8 +1013,16 @@ def _with_tailoring_attempt_audit(
         )
 
     normalized_execution_id = str(execution_id or "local")
-    attempt_key = str(durable_attempt) if durable_attempt is not None else recorded_at
-    audit_key = f"{normalized_execution_id}:{attempt_key}"
+    # The key is unique per recorded execution: a rerun of the same durable
+    # attempt (a post-``--reset-attempts`` CLI execution, or an activity retry
+    # after a crash between the materials save and the stage-count increment)
+    # must append its own report rather than silently dropping the newer one.
+    # Re-merging already persisted metadata stays idempotent because an
+    # identical ``recorded_at`` can only come from the same recorded execution.
+    if durable_attempt is not None:
+        audit_key = f"{normalized_execution_id}:{durable_attempt}:{recorded_at}"
+    else:
+        audit_key = f"{normalized_execution_id}:{recorded_at}"
     if not any(str(entry.get("audit_key") or "") == audit_key for entry in history):
         history.append(
             {
