@@ -7,7 +7,7 @@ const workflowPath = new URL("../../../.github/workflows/typescript.yml", import
 /**
  * Collects the `paths` filter of a single `on:` trigger without a YAML parser,
  * which `apps/api` does not depend on. Returns an empty list when the trigger is
- * absent or carries no filter, so a bare `pull_request:` fails the contract.
+ * absent or carries no filter.
  */
 function triggerPaths(onBlock: string, trigger: string): string[] {
   const triggerStart = onBlock.indexOf(`\n  ${trigger}:`);
@@ -38,24 +38,28 @@ describe("TypeScript CI trigger contract", () => {
     return workflow.slice(workflow.indexOf("\non:"), workflow.indexOf("\njobs:"));
   };
 
-  it("filters pull requests to the same paths as pushes", () => {
+  it("leaves pull requests entirely unfiltered", () => {
     const block = onBlock();
-    const pullRequestPaths = triggerPaths(block, "pull_request");
+    const pullRequest = block.slice(block.indexOf("\n  pull_request:"));
 
-    // A bare `pull_request:` trigger ran the full suite - Playwright E2E and
-    // Storybook included - on documentation-only pull requests, exposing them to
-    // failures they could not have caused.
-    expect(pullRequestPaths).not.toHaveLength(0);
-    expect(pullRequestPaths).toEqual(triggerPaths(block, "push"));
+    // Every layer of a GitHub stack must instantiate this workflow so that layer
+    // gets a check record; a filtered-out workflow reports nothing at all rather
+    // than reporting a skip. Cost belongs at the job level, on the trusted
+    // cumulative-head `if:`, which is the pattern GitHub documents for stacks.
+    // scripts/stacked-ci-workflows.test.mjs asserts the same invariant by
+    // parsing the YAML; this keeps it visible to the suite that owns the file.
+    expect(pullRequest).not.toContain("branches:");
+    expect(triggerPaths(block, "pull_request")).toHaveLength(0);
   });
 
-  it("runs whenever a file the suite reads can change", () => {
-    const pullRequestPaths = triggerPaths(onBlock(), "pull_request");
+  it("pushes run whenever a file the suite reads can change", () => {
+    const pushPaths = triggerPaths(onBlock(), "push");
 
     // `workers/**` supplies schema_v7.sql, schema_manifest.py, and config.py to
     // the cross-runtime parity and schema-guard tests; `scripts/**` supplies the
-    // install script the install contract test executes. Dropping either would
-    // let a change that breaks this suite merge without ever running it.
+    // install script the install contract test executes. Both sit outside apps/
+    // and packages/, so without them a push that breaks this suite would land on
+    // main without ever running it.
     for (const required of [
       "apps/**",
       "packages/**",
@@ -63,17 +67,8 @@ describe("TypeScript CI trigger contract", () => {
       "scripts/**",
       ".github/workflows/typescript.yml",
     ]) {
-      expect(pullRequestPaths).toContain(required);
+      expect(pushPaths).toContain(required);
     }
-  });
-
-  it("does not restrict pull requests to a base branch", () => {
-    const block = onBlock();
-    const pullRequest = block.slice(block.indexOf("\n  pull_request:"));
-
-    // Stacked pull requests target their parent branch rather than main, so a
-    // `branches` filter here would silently skip every stacked layer.
-    expect(pullRequest).not.toContain("branches:");
   });
 });
 

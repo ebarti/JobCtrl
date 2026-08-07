@@ -1,12 +1,18 @@
 name: TypeScript CI
 
-# The TypeScript suite reads real files from outside apps/ and packages/:
-# `workers/**` supplies schema_v7.sql, schema_manifest.py, and config.py to the
-# cross-runtime parity and schema-guard tests, and `scripts/**` supplies the
-# install script executed by the install contract test. Both lists must stay in
-# sync and must keep those directories, or a change that breaks TypeScript CI
-# could merge without ever running it. No `branches` filter on `pull_request`:
-# stacked PRs target their parent branch, not main.
+# `push` is filtered to the files this suite actually reads. Beyond apps/ and
+# packages/, `workers/**` supplies schema_v7.sql, schema_manifest.py, and
+# config.py to the cross-runtime parity and schema-guard tests, and `scripts/**`
+# supplies the install script the install contract test executes. A push that
+# changed either without those entries would skip the suite covering it.
+#
+# `pull_request` deliberately takes no filter at all — no `branches`, no
+# `paths`. Every layer of a GitHub stack must instantiate this workflow so it
+# produces a check record for that layer; a filtered-out workflow reports
+# nothing rather than reporting a skip. Cost is controlled at the job level
+# instead, by the `if:` below that admits only a trusted cumulative head, which
+# is the pattern GitHub documents for stacked pull requests. Enforced by
+# scripts/stacked-ci-workflows.test.mjs — do not add a filter here.
 on:
   push:
     branches: ["main"]
@@ -20,15 +26,6 @@ on:
       - "pnpm-workspace.yaml"
       - ".github/workflows/typescript.yml"
   pull_request:
-    paths:
-      - "apps/**"
-      - "packages/**"
-      - "workers/**"
-      - "scripts/**"
-      - "pnpm-lock.yaml"
-      - "package.json"
-      - "pnpm-workspace.yaml"
-      - ".github/workflows/typescript.yml"
   workflow_dispatch:
 
 jobs:
