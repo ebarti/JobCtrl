@@ -40,7 +40,15 @@ describe("TypeScript CI trigger contract", () => {
 
   it("leaves pull requests entirely unfiltered", () => {
     const block = onBlock();
-    const pullRequest = block.slice(block.indexOf("\n  pull_request:"));
+    const triggerStart = block.indexOf("\n  pull_request:");
+
+    // Deleting the trigger outright is the strongest violation of this
+    // invariant — the workflow would stop instantiating for pull requests
+    // altogether — so an absent trigger must fail here, not pass vacuously
+    // (indexOf would return -1, slicing the block's last character, and
+    // triggerPaths would report an absent trigger as "no filter").
+    expect(triggerStart).toBeGreaterThanOrEqual(0);
+    const pullRequest = block.slice(triggerStart);
 
     // Every layer of a GitHub stack must instantiate this workflow so that layer
     // gets a check record; a filtered-out workflow reports nothing at all rather
