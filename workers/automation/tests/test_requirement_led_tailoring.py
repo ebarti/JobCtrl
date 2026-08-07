@@ -481,6 +481,61 @@ def test_requirement_coverage_scope_combines_ensemble_semantics_with_safety_over
     )
 
 
+@pytest.mark.parametrize(
+    ("requirement_text", "undeclared_scope"),
+    (
+        (
+            "Deep experience with Visa and Mastercard payment network integrations.",
+            "eligibility",
+        ),
+        ("Experience with card scheme rules (Visa, Mastercard).", "eligibility"),
+        (
+            "Experience running a healthy on-call rotation and incident response program.",
+            "logistics",
+        ),
+        ("Experience with high-throughput drug screening assays.", "eligibility"),
+        (
+            "Manage employee relocation programs for our global mobility team.",
+            "logistics",
+        ),
+        ("Own background check vendor integrations for our HR platform.", "eligibility"),
+    ),
+)
+def test_declared_resume_scope_survives_ambiguous_keyword_patterns(
+    requirement_text: str,
+    undeclared_scope: str,
+) -> None:
+    """A bare keyword match must not override the ensemble's resume judgment."""
+
+    assert resolve_requirement_coverage_scope(requirement_text, "resume") == "resume"
+    # Without an ensemble declaration the conservative keyword reading stands
+    # (compatibility path for historical analyses).
+    assert resolve_requirement_coverage_scope(requirement_text, None) == undeclared_scope
+    assert classify_requirement_coverage_scope(requirement_text) == undeclared_scope
+
+
+@pytest.mark.parametrize(
+    ("requirement_text", "expected_scope"),
+    (
+        ("Must pass a background check before starting.", "eligibility"),
+        ("Employment is contingent on completing a background check.", "eligibility"),
+        ("This role requires a drug screening.", "eligibility"),
+        ("Candidates need a valid work visa; visa sponsorship is not available.", "eligibility"),
+        ("Participate in the on-call rotation, including weekends.", "logistics"),
+        ("Must be willing to relocate to Berlin.", "logistics"),
+    ),
+)
+def test_unmistakable_conditions_override_erroneous_resume_declaration(
+    requirement_text: str,
+    expected_scope: str,
+) -> None:
+    """Condition-context phrasing stays non-resume even against a bad declaration."""
+
+    assert resolve_requirement_coverage_scope(requirement_text, "resume") == expected_scope
+    assert resolve_requirement_coverage_scope(requirement_text, None) == expected_scope
+    assert classify_requirement_coverage_scope(requirement_text) == expected_scope
+
+
 def test_logistics_requirement_stays_auditable_but_cannot_fail_resume_coverage() -> None:
     logistics_text = "This position requires on-site presence three days weekly."
     canonical = JobAnalysis(
@@ -613,8 +668,10 @@ def test_logistics_requirement_stays_auditable_but_cannot_fail_resume_coverage()
     assert hybrid_directive.action == "context_only"
     assert hybrid_directive.allowed_evidence_ids == ()
     assert hybrid_directive.target_keywords == ()
-    assert hybrid_directive.prohibited_claims == (logistics_text,)
-    assert plan.prohibited_claims == (logistics_text,)
+    # The canonical sentence is always prohibited; the model fragment "hybrid"
+    # survives because this profile carries no hybrid evidence it could reject.
+    assert hybrid_directive.prohibited_claims == (logistics_text, "hybrid")
+    assert plan.prohibited_claims == (logistics_text, "hybrid")
 
     prompt_target = target_profile.to_prompt_dict()
     assert [item["requirement_id"] for item in prompt_target["must_have_requirements"]] == [
@@ -691,6 +748,195 @@ def test_logistics_requirement_stays_auditable_but_cannot_fail_resume_coverage()
     assert fit_gate["fit_score"]["score"] == 10
     assert fit_gate["revision_decision"]["threshold_failed"] is False
     assert fit_gate["revision_decision"]["should_revise"] is False
+
+
+def _logistics_analysis_and_report(
+    logistics_text: str,
+    *,
+    model_prohibited_claims: tuple[str, ...],
+) -> tuple[EmployerAnalysis, RequirementFitReport]:
+    canonical = JobAnalysis(
+        role_framing="Backend ownership.",
+        inferred_seniority="senior",
+        ideal_candidate_narrative="A hands-on backend owner.",
+        requirements=[
+            Requirement(
+                id="req_python",
+                text="Own Python API reliability.",
+                tier="must_have",
+                weight=0.9,
+                evidence_span="Own Python API reliability.",
+            ),
+            Requirement(
+                id="req_hybrid",
+                text=logistics_text,
+                tier="must_have",
+                weight=1.0,
+                evidence_span=logistics_text,
+            ),
+        ],
+        keywords=[
+            ReasonedKeyword(
+                keyword="Python API reliability",
+                evidence_span="Python API reliability",
+                requirement_ref="req_python",
+            )
+        ],
+    )
+    analysis = EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=_JOB_ID,
+        generation=1,
+        snapshot_hash=compute_snapshot_hash(logistics_text),
+        canonical=canonical,
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=1,
+    )
+    report = RequirementFitReport(
+        job_id=_JOB_ID,
+        score_version=1,
+        employer_analysis_generation=1,
+        profile_snapshot_version=1,
+        scoring_policy_version=1,
+        formula_version="requirement-fit-v1",
+        resolved_fit_score=FitScore.create(7),
+        fit_band="strong",
+        confidence="high",
+        summary=RequirementFitSummary(weighted_fit=0.5, must_have_coverage=0.5),
+        assessments=(
+            RequirementFitAssessment(
+                requirement_id="req_python",
+                requirement_text="Own Python API reliability.",
+                tier="must_have",
+                weight=0.9,
+                job_evidence_span="Own Python API reliability.",
+                fit=RequirementFitStatus(
+                    kind="matched",
+                    evidence_ids=("ev_latency",),
+                    strength="direct",
+                ),
+                contribution=RequirementScoreContribution(
+                    max_points=1.0,
+                    awarded_points=1.0,
+                    weighted_impact=1.0,
+                ),
+                tailoring=RequirementTailoringDirective(
+                    action="double_down",
+                    priority=0.9,
+                    allowed_evidence_ids=("ev_latency",),
+                    target_keywords=("Python API reliability",),
+                ),
+            ),
+            RequirementFitAssessment(
+                requirement_id="req_hybrid",
+                requirement_text=logistics_text,
+                tier="must_have",
+                weight=1.0,
+                job_evidence_span=logistics_text,
+                fit=RequirementFitStatus(
+                    kind="missing",
+                    reason="No grounded profile evidence for office attendance.",
+                ),
+                contribution=RequirementScoreContribution(
+                    max_points=1.0,
+                    awarded_points=0.0,
+                    weighted_impact=0.0,
+                ),
+                tailoring=RequirementTailoringDirective(
+                    action="avoid_claim",
+                    priority=1.0,
+                    prohibited_claims=model_prohibited_claims,
+                ),
+            ),
+        ),
+    )
+    return analysis, report
+
+
+def test_context_only_directive_keeps_fragment_that_catches_ungrounded_onsite_claim() -> None:
+    logistics_text = "Able to work a hybrid setup with on-site presence three days a week."
+    analysis, report = _logistics_analysis_and_report(
+        logistics_text,
+        model_prohibited_claims=("hybrid", "on-site three days a week"),
+    )
+
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=analysis,
+        requirement_fit_report=report,
+    )
+
+    hybrid_directive = next(
+        item for item in plan.requirement_directives if item.requirement_id == "req_hybrid"
+    )
+    assert hybrid_directive.action == "context_only"
+    assert hybrid_directive.prohibited_claims == (
+        logistics_text,
+        "hybrid",
+        "on-site three days a week",
+    )
+    # The deterministic net still fires on an ungrounded work-arrangement claim.
+    caught = validate_prohibited_claims(
+        "Senior engineer available on-site three days a week for the platform team.",
+        plan.prohibited_claims,
+    )
+    assert caught == ("on-site three days a week",)
+
+
+def test_context_only_directive_drops_fragment_colliding_with_hybrid_cloud_evidence() -> None:
+    logistics_text = "Able to work a hybrid setup with on-site presence three days a week."
+    analysis, report = _logistics_analysis_and_report(
+        logistics_text,
+        model_prohibited_claims=("hybrid", "on-site three days a week"),
+    )
+    profile = _profile()
+    profile["resume"]["experience_entries"][0]["achievement_evidence"].append(
+        {
+            "id": "ev_hybrid_cloud",
+            "source_text": "Designed hybrid cloud infrastructure spanning AWS and on-prem clusters.",
+            "scope": "platform team",
+            "action": "designed hybrid cloud infrastructure",
+            "tools": ["AWS", "Kubernetes"],
+            "metrics": [],
+            "outcome": "portable workloads",
+            "seniority_signal": "",
+            "evidence_strength": "verified",
+            "claim_confidence": 0.9,
+            "user_confirmed": True,
+            "tags": ["hybrid cloud", "infrastructure"],
+        }
+    )
+
+    plan = build_tailoring_plan(
+        profile,
+        _senior_job(),
+        employer_analysis=analysis,
+        requirement_fit_report=report,
+    )
+
+    hybrid_directive = next(
+        item for item in plan.requirement_directives if item.requirement_id == "req_hybrid"
+    )
+    # The bare token collides with grounded hybrid-cloud evidence and is dropped;
+    # the canonical sentence and the arrangement-specific fragment stay armed.
+    assert hybrid_directive.prohibited_claims == (
+        logistics_text,
+        "on-site three days a week",
+    )
+    assert (
+        validate_prohibited_claims(
+            "Designed hybrid cloud infrastructure spanning AWS and on-prem clusters.",
+            plan.prohibited_claims,
+        )
+        == ()
+    )
+    assert validate_prohibited_claims(
+        "Available on-site three days a week.",
+        plan.prohibited_claims,
+    ) == ("on-site three days a week",)
 
 
 def test_stakeholder_sponsorship_remains_resume_scoped_end_to_end() -> None:
@@ -989,7 +1235,21 @@ def test_build_coverage_planner_prompt_constrains_ids_and_output() -> None:
     )
 
     assert "Return ONLY JSON" in prompt
-    assert "Use only requirement_id values present in TARGET_PROFILE" in prompt
+    # The planner's id universe is scoped to the resume-coverable lists so a
+    # compliant response never references context-only ids absent from the
+    # seeded graph.
+    assert (
+        "Use only requirement_id values from must_have_requirements or "
+        "nice_to_have_requirements in TARGET_PROFILE" in prompt
+    )
+    assert (
+        "never propose edges for them and never list them in "
+        "uncovered_requirements" in prompt
+    )
+    assert (
+        "If a must_have or nice_to_have requirement has no safe edge, list it in "
+        "uncovered_requirements" in prompt
+    )
     assert "Use only achievement_evidence_id values present in TARGET_PROFILE" in prompt
     assert "Do not invent tools, metrics, titles" in prompt
     assert "req_python" in prompt

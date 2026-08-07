@@ -55,23 +55,51 @@ _RESUME_SPONSORSHIP_PATTERNS = tuple(
     )
 )
 
-_ELIGIBILITY_REQUIREMENT_PATTERNS = tuple(
+# Unmistakable eligibility phrasing: authorization/immigration/screening
+# condition context accompanies the keyword, so a match may override even a
+# declared `resume` scope from the ensemble.
+_ELIGIBILITY_CONDITION_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
         r"\b(?:work|employment)\s+authori[sz]ation\b",
         r"\bauthori[sz]ed\s+to\s+work\b",
         r"\bright\s+to\s+work\b",
-        r"\bvisa(?:\s+sponsorship)?\b",
+        r"\b(?:work|employment|immigration)\s+visa\b",
+        r"\bvisa\s+(?:sponsorship|status|holders?|permits?|requirements?)\b",
         r"\b(?:visa|work|employment)\s+sponsorship\b",
         r"\b(?:without|not\s+require|does\s+not\s+require|do\s+not\s+require)\s+"
         r"(?:visa\s+|work\s+|employment\s+)?sponsorship\b",
         r"\bsponsorship\s+(?:for|to)\s+(?:work|employment|a\s+visa)\b",
-        r"\bbackground\s+check\b",
         r"\bsecurity\s+clearance\b",
+        r"\b(?:pass|passes|passing|complete|completes|completing|completion\s+of|"
+        r"undergo|undergoes|undergoing|subject\s+to|contingent\s+(?:up)?on|"
+        r"consent\s+to|clear|clears|clearing)\b.{0,32}"
+        r"\b(?:background\s+check|drug\s+(?:test|screen(?:ing)?))\b",
+        r"\b(?:require|requires|required|requiring)\b.{0,32}"
+        r"\b(?:background\s+check|drug\s+(?:test|screen(?:ing)?))\b",
+        r"\b(?:background\s+check|drug\s+(?:test|screen(?:ing)?))s?\b.{0,24}"
+        r"\b(?:required|mandatory|will\s+be\s+conducted)\b",
+    )
+)
+# Ambiguous bare keywords: legitimate resume evidence can contain them (Visa
+# the payment network, background-check tooling, drug-screening assays), so a
+# reconciled ensemble `resume` declaration wins over these matches alone.
+_ELIGIBILITY_KEYWORD_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bvisa(?:\s+sponsorship)?\b",
+        r"\bbackground\s+check\b",
         r"\bdrug\s+(?:test|screen(?:ing)?)\b",
     )
 )
-_LOGISTICS_REQUIREMENT_PATTERNS = tuple(
+_ELIGIBILITY_REQUIREMENT_PATTERNS = (
+    *_ELIGIBILITY_CONDITION_PATTERNS,
+    *_ELIGIBILITY_KEYWORD_PATTERNS,
+)
+# Unmistakable logistics phrasing: work-arrangement or willingness/condition
+# context accompanies the keyword, so a match may override even a declared
+# `resume` scope from the ensemble.
+_LOGISTICS_CONDITION_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
         r"\b(?:hybrid|on[- ]?site|in[- ]?office|office[- ]based)\s+"
@@ -105,15 +133,36 @@ _LOGISTICS_REQUIREMENT_PATTERNS = tuple(
         r"\b(?:one|two|three|four|five|six|seven|\d+)\s+days?\s+weekly\b",
         r"\b(?:must|should|able|willing|required)\s+to\s+"
         r"(?:work\s+(?:from|in|at)\s+.{0,40}\boffice|commute|relocate|travel)\b",
-        r"\b(?:relocation|commuting|commute)\b",
+        r"\b(?:relocation|commuting|commute)\s+(?:is\s+)?"
+        r"(?:required|mandatory|expected)\b",
+        r"\b(?:participate|participates|participating|participation|join|joins|"
+        r"joining|share|shares|sharing|available|availability|willing|"
+        r"willingness)\b.{0,32}\bon[- ]call\s+rotation\b",
+        r"\bon[- ]call\s+rotation\s+(?:is\s+)?(?:required|mandatory|expected)\b",
+        r"\b(?:work|works|working|willing\s+to\s+work)\b.{0,24}"
+        r"\b(?:night|weekend)\s+shifts?\b",
         r"\btravel\s+(?:up\s+to\s+)?\d+\s*%",
         r"\b\d+\s*%\s+(?:of\s+)?travel\b",
-        r"\b(?:time\s*zone|working\s+hours?|night\s+shifts?|weekend\s+shifts?|"
-        r"on[- ]call\s+rotation)\b",
         r"^\s*remote(?:\s+(?:within|from|in)\b|\s*$)",
         r"^\s*(?:must\s+be\s+)?(?:based|located)\s+in\b",
         r"\b(?:candidate|applicant|you)\b.{0,24}\b(?:based|located)\s+in\b",
     )
+)
+# Ambiguous bare keywords: legitimate resume evidence can contain them (running
+# an on-call rotation, managing relocation programs, coordinating shift
+# coverage), so a reconciled ensemble `resume` declaration wins over these
+# matches alone.
+_LOGISTICS_KEYWORD_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\b(?:relocation|commuting|commute)\b",
+        r"\b(?:time\s*zone|working\s+hours?|night\s+shifts?|weekend\s+shifts?|"
+        r"on[- ]call\s+rotation)\b",
+    )
+)
+_LOGISTICS_REQUIREMENT_PATTERNS = (
+    *_LOGISTICS_CONDITION_PATTERNS,
+    *_LOGISTICS_KEYWORD_PATTERNS,
 )
 _EMPLOYER_CONDITION_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
@@ -153,20 +202,47 @@ def resolve_requirement_coverage_scope(
 
     New employer analyses declare the scope explicitly. Existing analyses do
     not, so deterministic classification remains the compatibility path. An
-    unmistakable non-resume pattern always wins over an erroneous `resume`
-    declaration; otherwise the reconciled ensemble declaration supplies the
-    semantic judgment for wording that a bounded classifier cannot enumerate.
+    unmistakable non-resume pattern (keyword plus condition/arrangement
+    context) always wins over an erroneous `resume` declaration. An ambiguous
+    bare-keyword match alone (Visa the payment network, on-call rotation
+    ownership, drug-screening assays, relocation programs, background-check
+    tooling) defers to a declared `resume` scope: there the reconciled
+    ensemble declaration supplies the semantic judgment a bounded keyword
+    classifier cannot.
     """
 
     text = " ".join(str(requirement_text or "").split())
     if any(pattern.search(text) for pattern in _RESUME_SPONSORSHIP_PATTERNS):
         return "resume"
+    normalized_declared_scope = str(declared_scope or "").strip()
+    if normalized_declared_scope not in REQUIREMENT_COVERAGE_SCOPES:
+        normalized_declared_scope = ""
+    unmistakable_scope = _classify_unmistakable_non_resume_scope(text)
+    if unmistakable_scope != "resume":
+        return unmistakable_scope
     deterministic_scope = classify_requirement_coverage_scope(text)
     if deterministic_scope != "resume":
+        if normalized_declared_scope == "resume":
+            return "resume"
         return deterministic_scope
-    normalized_declared_scope = str(declared_scope or "").strip()
-    if normalized_declared_scope in REQUIREMENT_COVERAGE_SCOPES:
+    if normalized_declared_scope:
         return normalized_declared_scope
+    return "resume"
+
+
+def _classify_unmistakable_non_resume_scope(text: str) -> str:
+    """Classify with the high-precision condition patterns only.
+
+    These matches are strong enough to override an erroneous ensemble `resume`
+    declaration; the ambiguous bare-keyword patterns are deliberately excluded.
+    """
+
+    if any(pattern.search(text) for pattern in _ELIGIBILITY_CONDITION_PATTERNS):
+        return "eligibility"
+    if any(pattern.search(text) for pattern in _LOGISTICS_CONDITION_PATTERNS):
+        return "logistics"
+    if any(pattern.search(text) for pattern in _EMPLOYER_CONDITION_PATTERNS):
+        return "employer_condition"
     return "resume"
 
 _POLICY_RANK = {
@@ -1033,11 +1109,16 @@ def build_coverage_planner_prompt(
         "Task: propose additional coverage edges between existing job requirement IDs "
         "and existing profile achievement evidence IDs.\n\n"
         "Hard constraints:\n"
-        "- Use only requirement_id values present in TARGET_PROFILE.\n"
+        "- Use only requirement_id values from must_have_requirements or "
+        "nice_to_have_requirements in TARGET_PROFILE.\n"
+        "- context_only_requirements are eligibility/apply-review background, not "
+        "coverage targets: never propose edges for them and never list them in "
+        "uncovered_requirements.\n"
         "- Use only achievement_evidence_id values present in TARGET_PROFILE.\n"
         "- Do not invent tools, metrics, titles, credentials, dates, employers, or direct experience.\n"
         "- Classify direct evidence as direct, adjacent support as adjacent, and transferable experience as transferable.\n"
-        "- If a requirement has no safe edge, list it in uncovered_requirements with prohibited claims.\n"
+        "- If a must_have or nice_to_have requirement has no safe edge, list it in "
+        "uncovered_requirements with prohibited claims.\n"
         "- If an achievement covers no target requirement, list it in unused_achievements.\n"
         "- Keep rationale concise and evidence-grounded.\n\n"
         "TARGET_PROFILE:\n"
