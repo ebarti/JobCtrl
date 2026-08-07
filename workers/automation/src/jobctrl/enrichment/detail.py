@@ -2842,11 +2842,14 @@ def _reset_authenticated_linkedin_retry_candidates(
     """Repair legacy content trust, then retry LinkedIn browser follow-up.
 
     The source-independent local repair runs first because the retired
-    missing-URL confidence rule affected every source. The normal enrichment
-    queue then excludes failed aggregates and already enriched rows. LinkedIn
-    is the browser-recovery exception because a logged-in session can expose
-    data hidden from the first unauthenticated pass, especially the external
-    apply target. Two disjoint LinkedIn groups are handled:
+    missing-URL confidence rule affected every source; it is the only part of
+    this pass that runs while the authenticated-LinkedIn capability is not
+    ready, so a disabled capability can never burn the bounded authenticated
+    retry budgets with anonymous retries. The normal enrichment queue then
+    excludes failed aggregates and already enriched rows. LinkedIn is the
+    browser-recovery exception because a logged-in session can expose data
+    hidden from the first unauthenticated pass, especially the external apply
+    target. Two disjoint LinkedIn groups are handled:
 
       * **Enriched but missing the apply URL** — resolved non-destructively.
         Only ``application_url`` is backfilled; the canonical
@@ -2871,9 +2874,18 @@ def _reset_authenticated_linkedin_retry_candidates(
         activity_lease=activity_lease,
         cancel_event=cancel_event,
     )
-    resolver_enabled = linkedin_apply_resolver_enabled()
+    if not linkedin_apply_resolver_enabled():
+        # Only the source-agnostic content-trust repair above is
+        # capability-independent. Both LinkedIn groups below exist to re-drive
+        # rows through the owner-authenticated browser, so with the capability
+        # not ready nothing may be recovered or reset: resetting a failed row
+        # here would retry it anonymously on every run and, because ``reset()``
+        # preserves attempt history, consume the bounded attempt budget the
+        # authenticated recovery needs once the capability is enabled —
+        # permanently skipping the row.
+        return 0
 
-    if session is None and resolver_enabled:
+    if session is None:
         # Owner-authenticated recovery navigations are robots-off (D1/D3), but the
         # shared per-host limiter + the run's request budget still pace and bound
         # them, exactly like the batch path — so build (or reuse) an
@@ -2956,8 +2968,6 @@ def _reset_authenticated_linkedin_retry_candidates(
                     if attempt_count >= _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS:
                         continue
                     if not _last_authenticated_apply_url_recovery_retryable(attempts_json):
-                        continue
-                    if not resolver_enabled:
                         continue
                     if cancel_event is not None and cancel_event.is_set():
                         raise TransientNetworkError("enrichment canceled")

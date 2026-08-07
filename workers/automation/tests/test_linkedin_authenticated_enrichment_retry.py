@@ -589,17 +589,26 @@ def test_legacy_missing_apply_url_snapshot_is_reclassified_for_every_source_with
     )
     conn.commit()
     monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: False)
+    # Production wraps ``resolver_factory()`` in ``except Exception``, so a
+    # raising factory would be swallowed and could never fail this test.
+    # Record construction and navigation instead, and assert below that the
+    # content-trust repair never touched the browser resolver.
+    resolver = _RecoveryResolver(LinkedInApplyResolution("https://apply.example/unexpected", "click"))
+    resolver_factory_calls: list[str] = []
 
-    def unexpected_resolver() -> object:
-        raise AssertionError("content-trust repair must not require browser navigation")
+    def recording_resolver_factory() -> object:
+        resolver_factory_calls.append("built")
+        return resolver
 
     for _ in range(2):
         _reset_authenticated_linkedin_retry_candidates(
             conn,
             job_ids=(job_id,),
-            resolver_factory=unexpected_resolver,
+            resolver_factory=recording_resolver_factory,
         )
 
+    assert resolver_factory_calls == []
+    assert resolver.calls == []
     repaired = SqlitePostingSnapshotSetRepository(conn).load(LOCAL_TENANT, job_id)
     assert repaired is not None
     assert repaired.latest_snapshot is not None
@@ -703,6 +712,51 @@ def test_failed_row_still_reset_for_authenticated_retry(
     # Non-enriched rows never touch the apply-URL resolver.
     assert resolver.calls == []
     repo = SqliteEnrichmentRepository(conn)
+    aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
+    assert aggregate is not None
+    assert aggregate.is_pending
+
+
+def test_failed_rows_are_not_reset_while_authenticated_capability_is_disabled(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Out-of-box state: no capability, no anonymous budget-burning retries.
+
+    Resetting a failed LinkedIn row exists solely to re-scrape it under the
+    owner-authenticated browser. While the capability is disabled, repeated
+    enrichment runs must leave failed rows untouched — anonymous retries
+    would consume the shared bounded attempt budget and permanently skip the
+    row once the user enables the capability.
+    """
+    url = "https://www.linkedin.com/jobs/view/capability-disabled"
+    _seed_discovered(conn, url, "linkedin")
+    _save_failed(conn, url, retryable=True)
+    monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: False)
+    resolver_factory_calls: list[str] = []
+
+    def recording_resolver_factory() -> object:
+        resolver_factory_calls.append("built")
+        return _RecoveryResolver(LinkedInApplyResolution("https://apply.example/x", "click"))
+
+    for _ in range(_MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS + 1):
+        reset_count = _reset_authenticated_linkedin_retry_candidates(
+            conn,
+            resolver_factory=recording_resolver_factory,
+        )
+        assert reset_count == 0
+
+    assert resolver_factory_calls == []
+    repo = SqliteEnrichmentRepository(conn)
+    aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
+    assert aggregate is not None
+    assert aggregate.is_failed
+    assert aggregate.attempt_count == 1
+
+    # Enabling the capability later still finds the row eligible: no attempt
+    # budget was consumed while the capability was off.
+    monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: True)
+    assert _reset_authenticated_linkedin_retry_candidates(conn) == 1
     aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
     assert aggregate is not None
     assert aggregate.is_pending
