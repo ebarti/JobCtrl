@@ -56,6 +56,7 @@ class StartedWorkflowResult:
 def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = _tenant_id(params)
     stages = _stage_list(params)
+    params = _scope_global_material_batch(params, stages=stages, tenant_id=tenant_id)
     apply_selector = _apply_selector(params) if "apply" in stages else None
     if "apply" in stages:
         _require_auto_apply_browser_capability()
@@ -118,6 +119,43 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
         workflow_id=workflow_id,
         id_reuse_policy=id_reuse_policy,
     )
+
+
+def _scope_global_material_batch(
+    params: dict[str, Any],
+    *,
+    stages: list[str],
+    tenant_id: str,
+) -> dict[str, Any]:
+    """Freeze a global Tailor/Cover pickup into the workflow input.
+
+    Material activities need an exact cohort so their bounded per-job fan-out,
+    cancellation fence, and scaled timeout apply. Leaving ``jobIds`` empty
+    selects the legacy global runner, whose blocking work can outlive a Temporal
+    timeout and write after a newer owner has taken over.
+    """
+
+    if not stages or stages[0] not in {"tailor", "cover"}:
+        return params
+    if params.get("jobId") or params.get("jobIds"):
+        return params
+
+    from jobctrl.database import get_connection, get_jobs_by_stage
+
+    first_stage = stages[0]
+    jobs = get_jobs_by_stage(
+        conn=get_connection(),
+        stage="pending_tailor" if first_stage == "tailor" else "pending_cover",
+        min_score=int(params.get("minScore", 7)),
+        limit=int(params.get("limit", 0)),
+        retailor=bool(params.get("retailor", False)) if first_stage == "tailor" else False,
+    )
+    job_ids = [
+        str(canonical_job_id(str(job["job_id"])))
+        for job in jobs
+        if str(job.get("tenant_id") or tenant_id) == tenant_id
+    ]
+    return {**params, "jobIds": list(dict.fromkeys(job_ids))}
 
 
 def build_pipeline_workflow_spec(

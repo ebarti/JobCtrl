@@ -133,6 +133,54 @@ def test_selected_batch_timeout_scales_by_worker_waves_and_is_capped() -> None:
         patched.assert_called_once_with(_SELECTED_BATCH_TIMEOUT_PATCH)
 
 
+@pytest.mark.parametrize(
+    ("stage", "queue_stage", "retailor"),
+    [
+        ("tailor", "pending_tailor", True),
+        ("cover", "pending_cover", False),
+    ],
+)
+def test_global_material_run_freezes_exact_selected_cohort(
+    stage: str,
+    queue_stage: str,
+    retailor: bool,
+) -> None:
+    job_ids = [
+        f"21000000-0000-4000-8000-{index:012d}"
+        for index in range(3)
+    ]
+    rows = [
+        {"tenant_id": "local", "job_id": job_id}
+        for job_id in job_ids
+    ]
+
+    with (
+        patch("jobctrl.database.get_connection", return_value=object()) as connection,
+        patch("jobctrl.database.get_jobs_by_stage", return_value=rows) as selector,
+    ):
+        spec = build_run_stage_workflow_spec(
+            {
+                "tenantId": "local",
+                "stage": stage,
+                "limit": 25,
+                "workers": 2,
+                "minScore": 8,
+                "retailor": True,
+            }
+        )
+
+    payload = spec.args[0]
+    assert payload.job_ids == tuple(JobId(job_id) for job_id in job_ids)
+    connection.assert_called_once_with()
+    selector.assert_called_once_with(
+        conn=connection.return_value,
+        stage=queue_stage,
+        min_score=8,
+        limit=25,
+        retailor=retailor,
+    )
+
+
 @pytest.fixture(autouse=True)
 def permit_browser_for_existing_pipeline_workflow_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pipeline workflow tests exercise child-workflow behavior after policy validation."""

@@ -105,7 +105,10 @@ accepted artifact without another model call. Profile and browser-setting
 continuations must also survive an API stop after their durable write and
 before dispatch. A selected batch must honor its bounded worker count; item
 failures remain attached to their own rows while the approved Tailor subset
-continues to Cover. An activity timeout or worker shutdown is retryable and
+continues to Cover. A global Tailor or Cover command must freeze its eligible
+JobIds before Temporal starts, so it uses the same bounded per-job fan-out,
+ownership fence, and worker-wave deadline instead of the legacy unscoped batch
+runner. An activity timeout or worker shutdown is retryable and
 must not be projected as user cancellation. For an explicitly selected batch,
 the replay-versioned activity deadline is 30 minutes per worker wave, capped at
 6 hours; the 2-minute heartbeat still detects a dead worker promptly. Parallel
