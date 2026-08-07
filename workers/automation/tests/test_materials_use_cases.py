@@ -3500,6 +3500,50 @@ def test_cover_letter_retries_posting_only_number_with_qualitative_guidance(
     assert cover.metadata["fabrication_audit"]["findings"] == []
 
 
+def test_cover_letter_retries_target_only_skill_with_grounded_guidance(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """A target-only skill gets typed, code-owned retry guidance.
+
+    The rejected output is not echoed back into the prompt, and the strict
+    fabrication gate remains unchanged.
+    """
+    repo = _FakeRepository()
+    _seed_approved_cover_materials(repo, job, tmp_path)
+    llm = _ScriptedLlm([
+        _cover_letter_text("I automated backend deployments with Kubernetes."),
+        _cover_letter_text("I automated backend delivery with Python."),
+    ])
+    use_case = GenerateCoverLetterUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        analysis_repository=_FakeAnalysisRepository(
+            _analysis_with_keywords(job, ["python", "backend", "Kubernetes"])
+        ),
+        max_retries=1,
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        job_id=job["job_id"],
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
+    )
+
+    assert outcome.status == "ok"
+    assert len(llm.calls) == 2
+    retry_system = llm.calls[1][0].content
+    assert "cover_letter_skill_grounding_failed" in retry_system
+    assert "appears only in the target job" in retry_system
+    assert "Kubernetes" not in retry_system
+    assert outcome.materials is not None
+    cover = outcome.materials.cover_letter
+    assert cover is not None
+    assert cover.status is ArtifactStatus.APPROVED
+    assert cover.metadata["fabrication_audit"]["findings"] == []
+
+
 def test_cover_letter_use_case_rejects_fabricated_employer(
     tmp_path: Path, snapshot: ProfileSnapshot, job: dict
 ) -> None:
