@@ -1198,6 +1198,27 @@ def test_release_privacy_workflow_enforces_strict_prompt_gate() -> None:
     assert "python3 scripts/release_check.py --strict-prompt" in workflow
 
 
+def test_release_privacy_workflow_scans_every_pull_request() -> None:
+    """The privacy gate must not be narrowed by base branch or by path.
+
+    A ``branches: ["main"]`` filter skipped the scan on every stacked pull
+    request, because a stacked layer targets its parent branch rather than
+    main. A ``paths`` filter would be self-defeating: any file in the
+    repository can carry owner PII or a secret, so every excluded path is a
+    path a leak can land in unscanned.
+    """
+    workflow = (
+        release_check.ROOT / ".github/workflows/release-check.yml"
+    ).read_text(encoding="utf-8")
+    on_block = workflow[workflow.index("\non:") : workflow.index("\njobs:")]
+    pull_request = on_block[
+        on_block.index("  pull_request:") : on_block.index("  workflow_dispatch:")
+    ]
+
+    assert "branches:" not in pull_request
+    assert "paths:" not in pull_request
+
+
 def test_old_product_name_gate_blocks_shipping_surfaces(tmp_path: Path) -> None:
     old_names = ("Job" + "Hunter", "Job" + "Ctl")
     _write(

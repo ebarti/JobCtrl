@@ -1,10 +1,15 @@
 name: Release Privacy Gate
 
+# This is the privacy gate for a public repository: any file anywhere can carry
+# owner PII or a secret, so `pull_request` deliberately takes no `paths` filter.
+# It takes no `branches` filter either — stacked pull requests target their
+# parent branch rather than main, and restricting to main skipped the scan on
+# every stacked layer. `push` stays scoped to main, where it backstops the
+# merged result.
 on:
   push:
     branches: ["main"]
   pull_request:
-    branches: ["main"]
   workflow_dispatch:
 
 jobs:
