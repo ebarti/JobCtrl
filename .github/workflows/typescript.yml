@@ -1,11 +1,26 @@
 name: TypeScript CI
 
+# `push` is filtered to the files this suite actually reads. Beyond apps/ and
+# packages/, `workers/**` supplies schema_v7.sql, schema_manifest.py, and
+# config.py to the cross-runtime parity and schema-guard tests, and `scripts/**`
+# supplies the install script the install contract test executes. A push that
+# changed either without those entries would skip the suite covering it.
+#
+# `pull_request` deliberately takes no filter at all — no `branches`, no
+# `paths`. Every layer of a GitHub stack must instantiate this workflow so it
+# produces a check record for that layer; a filtered-out workflow reports
+# nothing rather than reporting a skip. Cost is controlled at the job level
+# instead, by the `if:` below that admits only a trusted cumulative head, which
+# is the pattern GitHub documents for stacked pull requests. Enforced by
+# scripts/stacked-ci-workflows.test.mjs — do not add a filter here.
 on:
   push:
     branches: ["main"]
     paths:
       - "apps/**"
       - "packages/**"
+      - "workers/**"
+      - "scripts/**"
       - "pnpm-lock.yaml"
       - "package.json"
       - "pnpm-workspace.yaml"
