@@ -3492,7 +3492,7 @@ def test_cover_letter_retries_posting_only_number_with_qualitative_guidance(
     assert "Use numbers." not in first_system
     assert "cover_letter_numeric_grounding_failed" in retry_system
     assert "describe target-job timelines" in retry_system
-    assert "Your 60-day goals" not in retry_system
+    assert all("Your 60-day goals" not in message.content for message in llm.calls[1])
     assert outcome.materials is not None
     cover = outcome.materials.cover_letter
     assert cover is not None
