@@ -26,17 +26,32 @@ describe("DemoScenarioEngine", () => {
       status: "queued",
       jobKey: "job-fabrikam-systems",
     });
-    expect((await fixture.repository.snapshot()).state.readModel.runs.list.items[0]).toMatchObject({
+    let snapshot = await fixture.repository.snapshot();
+    expect(snapshot.state.readModel.runs.list.items[0]).toMatchObject({
       status: "starting",
     });
+    const workflowId = snapshot.state.readModel.runs.list.items[0]!.workflowId;
+    expect(
+      snapshot.state.readModel.dashboard.activity.items.filter(
+        (event) => event.workflowId === workflowId,
+      ),
+    ).toEqual([
+      expect.objectContaining({ eventType: "WorkflowQueued", workflowId }),
+    ]);
 
     await fixture.advance(150);
-    expect((await fixture.repository.snapshot()).state.readModel.jobs.details["job-fabrikam-systems"]!.stages).toContainEqual(
+    snapshot = await fixture.repository.snapshot();
+    expect(snapshot.state.readModel.jobs.details["job-fabrikam-systems"]!.stages).toContainEqual(
       expect.objectContaining({ stage: "score", state: "running" }),
     );
+    expect(
+      snapshot.state.readModel.dashboard.activity.items
+        .filter((event) => event.workflowId === workflowId)
+        .map((event) => event.eventType),
+    ).toEqual(["WorkflowStarted", "WorkflowQueued"]);
     await fixture.advance(550);
 
-    const snapshot = await fixture.repository.snapshot();
+    snapshot = await fixture.repository.snapshot();
     const job = snapshot.state.readModel.jobs.details["job-fabrikam-systems"]!.job;
     expect(job.scoreVersion).toBe(oldVersion + 1);
     expect(job.scoreStaleness).toMatchObject({ isStale: false, pendingExplicitRescore: false });
@@ -46,6 +61,19 @@ describe("DemoScenarioEngine", () => {
       version: job.scoreVersion,
     });
     expect(snapshot.state.readModel.runs.list.items[0]).toMatchObject({ status: "succeeded", result: "scored" });
+    const workflowActivity = snapshot.state.readModel.dashboard.activity.items.filter(
+      (event) => event.workflowId === workflowId,
+    );
+    expect(workflowActivity.map((event) => event.eventType)).toEqual([
+      "WorkflowCompleted",
+      "WorkflowStarted",
+      "WorkflowQueued",
+    ]);
+    expect(
+      workflowActivity.every(
+        (event) => snapshot.state.readModel.dashboard.activityEvents[event.eventId]?.event === event,
+      ),
+    ).toBe(true);
     fixture.dispose();
   });
 

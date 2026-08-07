@@ -1376,11 +1376,15 @@ a JSON-RPC error response.)
 
 `GET /v1/dashboard/summary` includes a bounded recent `activity[]` slice with
 `activity[].eventType` so the web app can render started, completed, and failed
-stage states from backend events instead of local button state alone. The
+stage states from backend events instead of local button state alone.
+`activity[].workflowId` is nullable and comes from canonical workflow ownership
+in the event payload; it is not inferred from the job. The
 Dashboard renders a bounded subset of those events alongside active runs from
 the unified `/v1/workflow-runs` read model. The top-level Debug tab uses
 `GET /v1/debug/activity` for the full activity log as a paginated, sortable
-table; this keeps Dashboard lightweight without imposing an event-history cap.
+table; its free-text `q` filter also searches the canonical workflow ID. This
+keeps Dashboard lightweight without imposing an event-history cap and lets a
+run link to its exact activity stream.
 
 ## Settings And Credentials
 

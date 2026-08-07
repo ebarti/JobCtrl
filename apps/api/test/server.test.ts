@@ -2164,6 +2164,56 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("finds workflow activity by its canonical workflow id and exposes that run reference", async () => {
+    const workflowId = "run-activity-search-regression";
+    const db = new Database(options.dbPath);
+    let eventId = "";
+    try {
+      insertPipelineWorkflowEvent(db, {
+        eventType: "WorkflowStarted",
+        occurredAt: "2026-04-29T11:30:00+00:00",
+        workflowId,
+        temporalRunId: "temporal-activity-search-regression",
+        startedAt: "2026-04-29T11:30:00+00:00",
+      });
+      const row = db
+        .prepare(
+          `SELECT event_id
+             FROM job_events
+            WHERE json_extract(payload_json, '$.workflowId') = ?`,
+        )
+        .get(workflowId) as { event_id: number };
+      eventId = String(row.event_id);
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const activity = await app.inject({
+        method: "GET",
+        url: `/v1/debug/activity?q=${workflowId}`,
+      });
+      expect(activity.statusCode, activity.body).toBe(200);
+      expect(activity.json().items).toEqual([
+        expect.objectContaining({
+          eventId,
+          eventType: "WorkflowStarted",
+          workflowId,
+        }),
+      ]);
+
+      const detail = await app.inject({
+        method: "GET",
+        url: `/v1/debug/activity/${eventId}`,
+      });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json().event).toMatchObject({ eventId, workflowId });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("does not expose dashboard activity links for events whose job no longer exists", async () => {
     const db = new Database(options.dbPath);
     db.pragma("foreign_keys = OFF");
@@ -6215,7 +6265,7 @@ describe("local TypeScript API", () => {
     }
   });
 
-  it("enriches preparation workflow list and detail from its canonical tenant-scoped JobId", async () => {
+  it("enriches job-scoped preparation and pipeline runs from their canonical tenant-scoped JobId", async () => {
     const jobId = jobIdFor("https://example.com/jobs/ready");
     const db = new Database(options.dbPath);
     db.prepare(
@@ -6254,6 +6304,14 @@ describe("local TypeScript API", () => {
       startedAt: "2026-04-29T10:25:00+00:00",
     });
     insertDiscoverWorkflowRunRow(db, {
+      workflowId: "pipeline-job-local",
+      workflowType: "JobPipelineWorkflow",
+      status: "in_progress",
+      inputSummary: { jobId, stages: ["tailor", "cover"] },
+      startedAt: "2026-04-29T10:25:30+00:00",
+      temporalRunId: "temporal-pipeline-job-run",
+    });
+    insertDiscoverWorkflowRunRow(db, {
       workflowId: "discover-with-job-id",
       status: "queued",
       inputSummary: { jobId },
@@ -6285,6 +6343,16 @@ describe("local TypeScript API", () => {
         title: "JobPreparationWorkflow",
         company: "",
       });
+      const pipelineSummary = listResponse
+        .json()
+        .items.find((item: { workflowId: string }) => item.workflowId === "pipeline-job-local");
+      expect(pipelineSummary).toMatchObject({
+        workflowId: "pipeline-job-local",
+        workflowType: "JobPipelineWorkflow",
+        jobKey: jobId,
+        title: "Platform Engineer",
+        company: "ExampleCo",
+      });
       const discoverSummary = listResponse
         .json()
         .items.find((item: { workflowId: string }) => item.workflowId === "discover-with-job-id");
@@ -6307,6 +6375,20 @@ describe("local TypeScript API", () => {
           { eventType: "WorkflowStarted", status: "in_progress" },
           { eventType: "WorkflowCompleted", status: "succeeded" },
         ],
+      });
+
+      const pipelineDetail = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs/pipeline-job-local",
+      });
+      expect(pipelineDetail.statusCode, pipelineDetail.body).toBe(200);
+      expect(pipelineDetail.json()).toMatchObject({
+        workflowId: "pipeline-job-local",
+        workflowType: "JobPipelineWorkflow",
+        jobKey: jobId,
+        title: "Platform Engineer",
+        company: "ExampleCo",
+        inputSummary: { jobId, stages: ["tailor", "cover"] },
       });
     } finally {
       await app.close();

@@ -53,6 +53,11 @@ function workflowTitle(run: WorkflowRunDetail): string {
   return title === run.workflowType ? humanizeIdentifier(title) : title;
 }
 
+function runJobLabel(run: WorkflowRunDetail): string {
+  const title = run.title || run.jobKey;
+  return run.company ? `${title} at ${run.company}` : title;
+}
+
 const PIPELINE_STAGE_LABELS: Readonly<Record<string, string>> = {
   discover: "Discover",
   enrich: "Enrich",
@@ -218,7 +223,7 @@ function RunActions({ run }: { readonly run: WorkflowRunDetail }) {
           level: "",
           page: 1,
           pageSize: 50,
-          q: run.jobKey || run.workflowId,
+          q: run.workflowId,
           sort: "occurred_at",
           stage: "",
         }}
@@ -278,8 +283,14 @@ function RunMetadata({ run }: { readonly run: WorkflowRunDetail }) {
           <div>
             <dt data-typography="label">Job</dt>
             <dd data-typography="body">
-              {run.title || run.jobKey}
-              {run.company ? ` · ${run.company}` : ""}
+              <Link
+                aria-label={`Open job ${runJobLabel(run)}`}
+                params={{ jobId: run.jobKey }}
+                to="/jobs/$jobId"
+              >
+                {run.title || run.jobKey}
+                {run.company ? ` · ${run.company}` : ""}
+              </Link>
             </dd>
           </div>
         ) : null}
@@ -467,6 +478,17 @@ export function WorkflowRunDrawer({ runId }: WorkflowRunDrawerProps) {
                 <div className="workflow-run-workspace__title">
                   <small data-typography="metadata">Workflow run</small>
                   <h1 data-typography="page-title">{workflowTitle(run)}</h1>
+                  {run.jobKey ? (
+                    <p data-typography="body">
+                      <Link
+                        aria-label={`View job: ${runJobLabel(run)}`}
+                        params={{ jobId: run.jobKey }}
+                        to="/jobs/$jobId"
+                      >
+                        {runJobLabel(run)}
+                      </Link>
+                    </p>
+                  ) : null}
                   <p data-typography="body">
                     {run.dryRun ? "Dry run" : "Live"} · Started{" "}
                     {formatDateTime(run.startedAt)}

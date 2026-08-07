@@ -85,9 +85,18 @@ describe("purgeDemoJobProjections", () => {
       rejection: 1,
     });
 
-    expect(model.dashboard.summary.activity).toEqual([]);
-    expect(model.dashboard.activity.items).toEqual([]);
-    expect(model.dashboard.activityEvents).toEqual({});
+    expect(model.dashboard.summary.activity).toEqual(
+      model.dashboard.activity.items,
+    );
+    expect(model.dashboard.activity.items).toHaveLength(2);
+    expect(
+      model.dashboard.activity.items.every(
+        (event) => event.jobKey === "job-fabrikam-systems",
+      ),
+    ).toBe(true);
+    expect(Object.keys(model.dashboard.activityEvents)).toEqual(
+      model.dashboard.activity.items.map((event) => event.eventId),
+    );
     expect(model.dashboard.summary.progress).toEqual([]);
     expect(model.dashboard.summary.applyRuns).toEqual([]);
     expect(model.evidence.entries[0]?.requirementUsages).toEqual([]);

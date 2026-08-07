@@ -279,6 +279,9 @@ function assertDemoReadModelInvariants(seed: DemoSeed): void {
   for (const run of runs) {
     const runId = readString(run, "runId", "workflow run");
     requireDetail(model.runs.details, runId, "workflow run", { envelope: false });
+    if (!activityItems.some((item) => asRecord(item, "activity item").workflowId === runId)) {
+      throw new TypeError(`Demo workflow run ${runId} is missing its reviewable activity.`);
+    }
     const jobId = readString(run, "jobKey", `workflow run ${runId}`);
     if (jobId && !jobIds.includes(jobId)) {
       throw new TypeError(`Demo workflow run ${runId} references a missing job.`);

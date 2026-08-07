@@ -649,9 +649,19 @@ describe("DemoApiClientAdapter", () => {
       items: [{ eventId: "event-demo-score" }],
     });
     await expect(adapter.activity({ stage: "apply" })).resolves.toMatchObject({
-      pagination: { page: 1, total: 0, pages: 1 },
-      items: [],
+      pagination: { page: 1, total: 1, pages: 1 },
+      items: [{ workflowId: "run-application-rehearsal" }],
     });
+
+    const visibleRuns = await adapter.workflowRuns();
+    for (const run of visibleRuns.items) {
+      await expect(
+        adapter.activity({ q: run.workflowId }),
+      ).resolves.toMatchObject({
+        pagination: { total: 1 },
+        items: [{ workflowId: run.workflowId }],
+      });
+    }
 
     const artifacts = await adapter.artifacts({
       q: "Platform systems lead",

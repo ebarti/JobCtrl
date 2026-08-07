@@ -194,6 +194,11 @@ vocabulary, ordered lifecycle timeline, terminal-state interpretation, and
 cancellation boundary. Product views may present different workflow details,
 but they do not maintain separate run-state rules.
 
+When a `JobPreparationWorkflow` or `JobPipelineWorkflow` input contains one
+canonical `jobId`, the list and detail responses resolve `jobKey`, `title`, and
+`company` from the tenant-scoped job projection. The Runs workspace keeps the
+workflow as the page identity and exposes that related job as a separate link.
+
 The list accepts an exact `workflowType`, inclusive UTC `startedSince`, and
 exclusive UTC `startedBefore` in addition to status, sorting, and pagination.
 Filtering happens after lifecycle folding and before pagination, so restarted
@@ -217,6 +222,18 @@ outside JobCtrl are backfilled from Temporal's requester identity (for example,
 after the dev namespace retention window has purged that execution, the audit
 uses the distinct `recovered_temporal_history` evidence kind and says so in the
 timeline; it is never presented as a fresh history read or a JobCtrl request.
+
+## Debug Activity
+
+`GET /v1/debug/activity` and `GET /v1/debug/activity/:eventId` expose a nullable
+`workflowId` derived from the canonical event payload. Free-text `q` search
+includes that workflow ID, so a run's **Review activity** action returns the
+events for that exact workflow instead of broad job history or an empty result.
+
+The activity detail route always preserves the selected event as its page
+identity. When the projection has related job or workflow identity, the page
+renders explicit **Open related job** and **Open related run** links; activating
+an event row never silently replaces the event view with a job redirect.
 
 ## Health And JSON-RPC
 
