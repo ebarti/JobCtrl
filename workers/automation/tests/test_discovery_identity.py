@@ -12,7 +12,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import set_tracer_provider
 
-from jobctrl.database import init_db
+from jobctrl.database import ensure_source_observation_tables, init_db
 from jobctrl.domain.discovery import (
     AtsKind,
     CanonicalJobIdentity,
@@ -137,6 +137,48 @@ def _seed_jobspy_job(
             run_id="run-jobspy",
             observed_at=discovered_at,
         ),
+    )
+
+
+def test_source_observation_bootstrap_backfills_exact_v7_job_identity(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://example.com/exact-v7-observation-backfill"
+    job_id = _job_id(url)
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, company, site, strategy, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(LOCAL_TENANT),
+            str(job_id),
+            url,
+            "Platform Engineer",
+            "Acme",
+            "greenhouse",
+            "workday_api",
+            "2026-05-12T00:00:00Z",
+        ),
+    )
+    conn.commit()
+
+    ensure_source_observation_tables(conn)
+
+    row = conn.execute(
+        """
+        SELECT tenant_id, job_id, observed_url, run_id
+        FROM job_source_observations
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert tuple(row) == (
+        str(LOCAL_TENANT),
+        str(job_id),
+        url,
+        "backfill",
     )
 
 

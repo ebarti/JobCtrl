@@ -25,6 +25,95 @@ afterEach(() => {
 });
 
 describe("exact-v7 write-model stage state", () => {
+  it("persists exact workflow ownership when an Enrich retry is queued", () => {
+    const fixture = createFixture();
+    fixture.db.prepare(
+      `INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+       VALUES ('local', ?, ?, 'Platform Engineer', ?)`,
+    ).run(JOB_ID, JOB_URL, "2026-07-31T09:00:00.000Z");
+    fixture.db.prepare(
+      `INSERT INTO job_stage_states (
+         tenant_id, job_id, stage, state, attempt_count, max_attempts, updated_at, retryable
+       ) VALUES ('local', ?, 'enrich', 'pending', 0, 3, ?, 1)`,
+    ).run(JOB_ID, "2026-07-31T09:00:00.000Z");
+
+    queueRetriedJobsForWorkflow(
+      fixture.db,
+      [{ jobUrl: JOB_URL, stage: "enrich" }],
+      { workflowId: "workflow-enrich-1", temporalRunId: "run-enrich-1" },
+    );
+
+    const row = fixture.db.prepare(
+      `SELECT state, metadata_json FROM job_stage_states
+       WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
+    ).get(JOB_ID) as { state: string; metadata_json: string };
+    expect(row.state).toBe("queued");
+    expect(JSON.parse(row.metadata_json)).toEqual({
+      workflowId: "workflow-enrich-1",
+      temporalRunId: "run-enrich-1",
+    });
+  });
+
+  it("does not invent Enrich execution ownership from a workflow handle", () => {
+    const fixture = createFixture();
+    fixture.db.prepare(
+      `INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+       VALUES ('local', ?, ?, 'Platform Engineer', ?)`,
+    ).run(JOB_ID, JOB_URL, "2026-07-31T09:00:00.000Z");
+    fixture.db.prepare(
+      `INSERT INTO job_stage_states (
+         tenant_id, job_id, stage, state, attempt_count, max_attempts, updated_at, retryable
+       ) VALUES ('local', ?, 'enrich', 'pending', 0, 3, ?, 1)`,
+    ).run(JOB_ID, "2026-07-31T09:00:00.000Z");
+
+    queueRetriedJobsForWorkflow(
+      fixture.db,
+      [{ jobUrl: JOB_URL, stage: "enrich" }],
+      { workflowId: "workflow-enrich-without-execution" },
+    );
+
+    const row = fixture.db.prepare(
+      `SELECT state, metadata_json FROM job_stage_states
+       WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
+    ).get(JOB_ID) as { state: string; metadata_json: string | null };
+    expect(row).toEqual({ state: "pending", metadata_json: null });
+  });
+
+  it("clears canceled Enrich execution ownership on an admin reset", () => {
+    const fixture = createFixture();
+    fixture.db.prepare(
+      `INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+       VALUES ('local', ?, ?, 'Platform Engineer', ?)`,
+    ).run(JOB_ID, JOB_URL, "2026-07-31T09:00:00.000Z");
+    fixture.db.prepare(
+      `INSERT INTO job_stage_states (
+         tenant_id, job_id, stage, state, attempt_count, max_attempts,
+         updated_at, retryable, metadata_json
+       ) VALUES ('local', ?, 'enrich', 'canceled', 1, 3, ?, 1, ?)`,
+    ).run(
+      JOB_ID,
+      "2026-07-31T09:00:00.000Z",
+      JSON.stringify({
+        workflowId: "workflow-canceled",
+        temporalRunId: "run-canceled",
+      }),
+    );
+
+    const reset = resetJobStage(fixture.db, JOB_ID, "enrich", {
+      resetAttempts: false,
+    });
+    const row = fixture.db.prepare(
+      `SELECT state, metadata_json FROM job_stage_states
+       WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
+    ).get(JOB_ID) as { state: string; metadata_json: string | null };
+
+    expect(reset).toMatchObject({
+      jobUrl: JOB_URL,
+      stage: { state: "pending", attemptCount: 1 },
+    });
+    expect(row).toEqual({ state: "pending", metadata_json: null });
+  });
+
   it("resets and queues failed stages by tenant and JobId while retaining URL responses", () => {
     const fixture = createFixture();
     fixture.db.prepare(
@@ -57,7 +146,7 @@ describe("exact-v7 write-model stage state", () => {
 
     queueRetriedJobsForWorkflow(fixture.db, retried.targets, {
       workflowId: "workflow-score-1",
-      runId: "run-score-1",
+      temporalRunId: "run-score-1",
     });
     expect(stageRow(fixture.db)).toMatchObject({ state: "queued", job_id: JOB_ID });
 

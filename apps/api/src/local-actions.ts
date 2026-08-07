@@ -611,7 +611,13 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
     if (!command.runId) return null;
     return {
       method: "cancel_run",
-      params: { tenantId: "local", runId: command.runId },
+      params: {
+        tenantId: "local",
+        runId: command.runId,
+        requestedBy: "local_operator",
+        source: "jobctrl_api",
+        reason: "Canceled from JobCtrl.",
+      },
     };
   }
   return null;

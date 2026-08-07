@@ -25,6 +25,7 @@ _UNSAFE_REQUEST_HEADERS = {
     "proxy-authorization",
     "proxy-connection",
 }
+_IGNORABLE_BROWSER_LOCAL_SCHEMES = {"chrome-extension"}
 _HOP_BY_HOP_RESPONSE_HEADERS = {
     "connection",
     "content-length",
@@ -148,6 +149,14 @@ class PublicHttpUrlRouteGuard:
 
         def handler(playwright_route: Any, request: Any) -> None:
             request_url = str(getattr(request, "url", ""))
+            request_scheme = urlsplit(request_url).scheme.lower()
+            if request_scheme in _IGNORABLE_BROWSER_LOCAL_SCHEMES:
+                # Adopted Chrome profiles may start installed extensions while
+                # the job page loads. Keep local extension resources blocked,
+                # but do not misattribute that browser-owned noise to the
+                # remote posting as a fatal unsafe redirect.
+                playwright_route.abort("blockedbyclient")
+                return
             decision = validate_public_http_url(request_url, resolver=self._resolver)
             if not decision.allowed:
                 self.blocked_url = request_url

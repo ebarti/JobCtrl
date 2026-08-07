@@ -7563,6 +7563,18 @@ describe("local TypeScript API", () => {
     });
     insertStage(seedDb, pendingEnrichUrl, "discover", "succeeded");
     insertStage(seedDb, pendingEnrichUrl, "enrich", "pending");
+    seedDb.prepare(
+      "UPDATE jobs SET full_description = ? WHERE tenant_id = 'local' AND job_id = ?",
+    ).run(
+      "Stale legacy description that must not override the canonical pending aggregate.",
+      jobIdFor(pendingEnrichUrl),
+    );
+    seedDb.prepare(
+      `INSERT INTO job_enrichments (
+         tenant_id, job_id, current_status, full_description, application_url,
+         enriched_at, extraction_tier, attempts_json, updated_at
+       ) VALUES ('local', ?, 'pending', NULL, NULL, NULL, NULL, '[]', ?)`,
+    ).run(jobIdFor(pendingEnrichUrl), "2026-08-05T23:15:00.000Z");
     insertJob(seedDb, {
       url: pendingScoreUrl,
       title: "Pending Score",
@@ -7573,6 +7585,7 @@ describe("local TypeScript API", () => {
     insertStage(seedDb, pendingScoreUrl, "discover", "succeeded");
     insertStage(seedDb, pendingScoreUrl, "enrich", "succeeded");
     insertStage(seedDb, pendingScoreUrl, "score", "pending");
+    insertEnrichment(seedDb, pendingScoreUrl);
     insertJob(seedDb, {
       url: pendingTailorUrl,
       title: "Pending Tailor",
@@ -7584,6 +7597,7 @@ describe("local TypeScript API", () => {
     insertStage(seedDb, pendingTailorUrl, "enrich", "succeeded");
     insertStage(seedDb, pendingTailorUrl, "score", "succeeded");
     insertStage(seedDb, pendingTailorUrl, "tailor", "pending");
+    insertEnrichment(seedDb, pendingTailorUrl);
     insertJob(seedDb, {
       url: lowFitTailorUrl,
       title: "Low Fit Pending Tailor",
@@ -7595,6 +7609,7 @@ describe("local TypeScript API", () => {
     insertStage(seedDb, lowFitTailorUrl, "enrich", "succeeded");
     insertStage(seedDb, lowFitTailorUrl, "score", "succeeded");
     insertStage(seedDb, lowFitTailorUrl, "tailor", "pending");
+    insertEnrichment(seedDb, lowFitTailorUrl);
     insertJob(seedDb, {
       url: pendingApplyUrl,
       title: "Pending Apply",
@@ -7609,11 +7624,13 @@ describe("local TypeScript API", () => {
     insertStage(seedDb, pendingApplyUrl, "tailor", "succeeded");
     insertStage(seedDb, pendingApplyUrl, "cover", "succeeded");
     insertStage(seedDb, pendingApplyUrl, "apply", "pending");
+    insertEnrichment(seedDb, pendingApplyUrl);
     seedDb.close();
     const dispatch = vi.fn(async (command: ActionCommandPayload): Promise<ActionDispatchResult> => ({
       status: "queued",
       workflowId: `pending-${command.stage}-workflow`,
-      runId: `pending-${command.stage}-run`,
+      runId: `pending-${command.stage}-workflow`,
+      firstExecutionRunId: `pending-${command.stage}-execution`,
     }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
 
@@ -7701,6 +7718,12 @@ describe("local TypeScript API", () => {
     const queuedEvent = db
       .prepare("SELECT payload_json FROM job_events WHERE tenant_id = 'local' AND event_type = 'StageQueued' AND job_id = ?")
       .get(jobIdFor(pendingScoreUrl)) as { payload_json: string };
+    const enrichOwner = db
+      .prepare(
+        `SELECT metadata_json FROM job_stage_states
+         WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
+      )
+      .get(jobIdFor(pendingEnrichUrl)) as { metadata_json: string };
     db.close();
 
     expect(queuedStates).toEqual([
@@ -7713,8 +7736,52 @@ describe("local TypeScript API", () => {
     expect(JSON.parse(queuedEvent.payload_json)).toMatchObject({
       source: "bulk_run_pending_preparation",
       workflowId: "pending-score-workflow",
+      runId: "pending-score-execution",
       requestedWorkers: 14,
     });
+    expect(JSON.parse(enrichOwner.metadata_json)).toEqual({
+      workflowId: "pending-enrich-workflow",
+      temporalRunId: "pending-enrich-execution",
+    });
+
+    const repeatedResponse = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-run-pending-preparation",
+      payload: {
+        allMatching: false,
+        jobKeys: [pendingEnrichUrl],
+        workers: 14,
+        minScore: 7,
+        validationMode: "normal",
+        dryRun: false,
+      },
+    });
+    expect(repeatedResponse.statusCode, repeatedResponse.body).toBe(200);
+    expect(repeatedResponse.json()).toMatchObject({
+      ok: true,
+      count: 0,
+      jobKeys: [],
+      stageCounts: {},
+      status: "accepted",
+      actions: [],
+    });
+    expect(dispatch).toHaveBeenCalledTimes(3);
+
+    const repeatedDb = new Database(options.dbPath);
+    const repeatedStates = repeatedDb
+      .prepare(
+        `SELECT
+           (SELECT state FROM job_stage_states
+             WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich') AS enrich_state,
+           COALESCE((SELECT state FROM job_stage_states
+             WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'), 'pending') AS score_state`,
+      )
+      .get(jobIdFor(pendingEnrichUrl), jobIdFor(pendingEnrichUrl)) as {
+      enrich_state: string;
+      score_state: string;
+    };
+    repeatedDb.close();
+    expect(repeatedStates).toEqual({ enrich_state: "queued", score_state: "pending" });
 
     await app.close();
   });
@@ -7855,6 +7922,17 @@ describe("local TypeScript API", () => {
         + '"started_at":"t0","finished_at":"t1","error":null}]',
       "2026-04-29T10:01:00+00:00",
     );
+    seedDb.prepare(
+      `UPDATE job_stage_states
+          SET state = 'canceled', metadata_json = ?
+        WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
+    ).run(
+      JSON.stringify({
+        workflowId: "workflow-canceled-enrich",
+        temporalRunId: "run-canceled-enrich",
+      }),
+      jobIdFor("https://example.com/jobs/failed-score"),
+    );
     seedDb.close();
 
     const app = buildApp(options);
@@ -7880,6 +7958,15 @@ describe("local TypeScript API", () => {
       enriched_at: string | null;
       extraction_tier: string | null;
     };
+    const stage = db
+      .prepare(
+        `SELECT state, metadata_json FROM job_stage_states
+          WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
+      )
+      .get(jobIdFor("https://example.com/jobs/failed-score")) as {
+      state: string;
+      metadata_json: string | null;
+    };
     // Retired wide columns remain untouched; exact-v7 state lives in the
     // canonical enrichment aggregate and stage rows.
     const legacyJob = db
@@ -7897,6 +7984,7 @@ describe("local TypeScript API", () => {
     expect(enrichment.application_url).toBeNull();
     expect(enrichment.enriched_at).toBeNull();
     expect(enrichment.extraction_tier).toBeNull();
+    expect(stage).toEqual({ state: "pending", metadata_json: null });
     expect(legacyJob.detail_scraped_at).toBe("2026-04-29T10:01:00+00:00");
     expect(legacyJob.detail_error).toBeNull();
 
@@ -7994,6 +8082,7 @@ describe("local TypeScript API", () => {
     insertStage(db, "https://example.com/jobs/pending-score", "discover", "succeeded");
     insertStage(db, "https://example.com/jobs/pending-score", "enrich", "succeeded");
     insertStage(db, "https://example.com/jobs/pending-score", "score", "pending");
+    insertEnrichment(db, "https://example.com/jobs/pending-score");
     db.close();
     const jobKey = encodeURIComponent("https://example.com/jobs/pending-score");
 
@@ -8035,6 +8124,7 @@ describe("local TypeScript API", () => {
     insertStage(db, "https://example.com/jobs/low-fit-tailor", "enrich", "succeeded");
     insertStage(db, "https://example.com/jobs/low-fit-tailor", "score", "succeeded");
     insertStage(db, "https://example.com/jobs/low-fit-tailor", "tailor", "pending");
+    insertEnrichment(db, "https://example.com/jobs/low-fit-tailor");
     db.close();
     const jobKey = encodeURIComponent("https://example.com/jobs/low-fit-tailor");
 
@@ -8948,6 +9038,21 @@ describe("local TypeScript API", () => {
       expect.objectContaining({ action: "run_stage", stage: "score", jobKey: "pipeline" }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
+
+    const db = new Database(options.dbPath);
+    const started = db
+      .prepare(
+        `SELECT payload_json FROM job_events
+         WHERE tenant_id = 'local' AND event_type = 'StageStarted'
+           AND json_extract(payload_json, '$.workflowId') = 'pipeline-wf'
+         ORDER BY event_id DESC LIMIT 1`,
+      )
+      .get() as { payload_json: string };
+    db.close();
+    expect(JSON.parse(started.payload_json)).toMatchObject({
+      workflowId: "pipeline-wf",
+      runId: "first-exec-run-id",
+    });
 
     await app.close();
   });
@@ -12114,6 +12219,25 @@ function insertJob(
 function jobIdFor(jobUrl: string): string {
   const digest = createHash("sha256").update(jobUrl).digest("hex");
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+
+function insertEnrichment(
+  db: Database.Database,
+  jobUrl: string,
+  fullDescription = "Canonical enriched description",
+): void {
+  db.prepare(
+    `INSERT INTO job_enrichments (
+       tenant_id, job_id, current_status, full_description, application_url,
+       enriched_at, extraction_tier, attempts_json, updated_at
+     ) VALUES ('local', ?, 'enriched', ?, ?, ?, 'css_selectors', '[]', ?)`,
+  ).run(
+    jobIdFor(jobUrl),
+    fullDescription,
+    jobUrl,
+    "2026-04-29T10:01:00+00:00",
+    "2026-04-29T10:01:00+00:00",
+  );
 }
 
 function insertPostedCompensationFact(db: Database.Database, jobUrl: string): void {

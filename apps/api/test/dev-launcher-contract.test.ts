@@ -122,7 +122,12 @@ function processExists(pid: number): boolean {
   }
   try {
     process.kill(pid, 0);
-    return true;
+    const stat = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], {
+      encoding: "utf8",
+    }).trim();
+    // Match scripts/dev: a zombie has exited and is no longer a live process
+    // tree member even though kill(pid, 0) still succeeds until it is reaped.
+    return !stat.includes("Z");
   } catch {
     return false;
   }

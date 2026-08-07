@@ -18,6 +18,8 @@ seconds while waiting. Cancellation propagates: workflow ``cancel``
 sets the supplied cooperative cancel hook, gives the function a bounded
 window to stop, records ignored cancellation, then re-raises
 ``asyncio.CancelledError`` so the activity's caller can decide what to do.
+The blocking executor generation is retired before that grace window so a
+server-dispatched retry cannot queue behind the provider call being cancelled.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import logging
+import threading
 from typing import Callable, TypeVar
 
 from temporalio import activity
@@ -32,12 +35,63 @@ from temporalio import activity
 _T = TypeVar("_T")
 log = logging.getLogger(__name__)
 _ACTIVITY_EXECUTOR: ThreadPoolExecutor | None = None
+_RETIRED_ACTIVITY_EXECUTORS: list[ThreadPoolExecutor] = []
+_ACTIVITY_EXECUTOR_LOCK = threading.Lock()
 
 
 def set_activity_executor(executor: ThreadPoolExecutor | None) -> None:
     """Set the bounded executor owned by the Temporal worker."""
     global _ACTIVITY_EXECUTOR
-    _ACTIVITY_EXECUTOR = executor
+    with _ACTIVITY_EXECUTOR_LOCK:
+        _ACTIVITY_EXECUTOR = executor
+
+
+def shutdown_activity_executors() -> None:
+    """Stop accepting work on current and retired blocking executors."""
+
+    global _ACTIVITY_EXECUTOR
+    with _ACTIVITY_EXECUTOR_LOCK:
+        executors = [
+            executor
+            for executor in [
+                _ACTIVITY_EXECUTOR,
+                *_RETIRED_ACTIVITY_EXECUTORS,
+            ]
+            if executor is not None
+        ]
+        _ACTIVITY_EXECUTOR = None
+        _RETIRED_ACTIVITY_EXECUTORS.clear()
+    for executor in dict.fromkeys(executors):
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _activity_executor() -> ThreadPoolExecutor | None:
+    with _ACTIVITY_EXECUTOR_LOCK:
+        return _ACTIVITY_EXECUTOR
+
+
+def _rotate_abandoned_activity_executor(
+    abandoned_executor: ThreadPoolExecutor | None,
+) -> bool:
+    """Move future blocking work off an executor containing a stuck thread."""
+
+    global _ACTIVITY_EXECUTOR
+    if abandoned_executor is None:
+        return False
+    with _ACTIVITY_EXECUTOR_LOCK:
+        if _ACTIVITY_EXECUTOR is not abandoned_executor:
+            return False
+        max_workers = int(getattr(abandoned_executor, "_max_workers", 1))
+        replacement = ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="jobctrl-blocking-activity-recovery",
+        )
+        _ACTIVITY_EXECUTOR = replacement
+        _RETIRED_ACTIVITY_EXECUTORS.append(abandoned_executor)
+    # The retired generation is dedicated to blocking activity helpers. Let its
+    # already-submitted functions wind down, but never route new work to it.
+    abandoned_executor.shutdown(wait=False, cancel_futures=False)
+    return True
 
 
 async def run_blocking_with_heartbeat(
@@ -58,7 +112,8 @@ async def run_blocking_with_heartbeat(
     """
     activity.heartbeat(starting_message)
     loop = asyncio.get_running_loop()
-    task = loop.run_in_executor(_ACTIVITY_EXECUTOR, fn)
+    blocking_executor = _activity_executor()
+    task = loop.run_in_executor(blocking_executor, fn)
     activity_label = activity_name or activity.info().activity_type
     try:
         while True:
@@ -70,6 +125,15 @@ async def run_blocking_with_heartbeat(
     except asyncio.CancelledError:
         if on_cancel is not None:
             on_cancel()
+        # Temporal records StartToClose timeout before the SDK finishes local
+        # cancellation cleanup. Retire this generation synchronously, before
+        # the first await below, so an immediate retry cannot queue behind the
+        # provider call whose thread may ignore cooperative cancellation.
+        executor_rotated = (
+            _rotate_abandoned_activity_executor(blocking_executor)
+            if not task.done()
+            else False
+        )
         if cancel_wait_seconds > 0:
             try:
                 done, _pending = await asyncio.wait({task}, timeout=cancel_wait_seconds)
@@ -83,6 +147,7 @@ async def run_blocking_with_heartbeat(
                     extra={
                         "activity_name": activity_label,
                         "job_context": job_context or {},
+                        "activity_executor_rotated": executor_rotated,
                     },
                 )
                 _record_abandoned_thread_metric(activity_label, job_context or {})
@@ -119,4 +184,8 @@ def _record_abandoned_thread_metric(activity_name: str, job_context: dict[str, o
         log.debug("failed to record abandoned_thread metric", exc_info=True)
 
 
-__all__ = ["run_blocking_with_heartbeat", "set_activity_executor"]
+__all__ = [
+    "run_blocking_with_heartbeat",
+    "set_activity_executor",
+    "shutdown_activity_executors",
+]

@@ -30,7 +30,12 @@ from jobctrl.domain.discovery.scheduler import (
 )
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
-from jobctrl.domain.errors import LlmTransientError, SourceUnavailableError, TransientNetworkError
+from jobctrl.domain.errors import (
+    AttemptBudgetExhaustedError,
+    LlmTransientError,
+    SourceUnavailableError,
+    TransientNetworkError,
+)
 from jobctrl.domain.enrichment import (
     EnrichmentExecutionLease,
     StaleEnrichmentExecutionLease,
@@ -2406,6 +2411,8 @@ def _run_enrich(
     on_job_enriched: Callable[[JobId], None] | None = None,
     recovery_key: str | None = None,
     activity_lease: EnrichmentExecutionLease | None = None,
+    workflow_id: str | None = None,
+    workflow_run_id: str | None = None,
 ) -> dict:
     """Stage: Detail enrichment — scrape full descriptions and apply URLs."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2423,6 +2430,10 @@ def _run_enrich(
         enrich_kwargs["recovery_key"] = recovery_key
     if activity_lease is not None:
         enrich_kwargs["activity_lease"] = activity_lease
+    if workflow_id:
+        enrich_kwargs["workflow_id"] = workflow_id
+    if workflow_run_id:
+        enrich_kwargs["workflow_run_id"] = workflow_run_id
     if cancel_event is None:
         stats = run_enrichment(**enrich_kwargs)
     else:
@@ -2494,6 +2505,11 @@ def _run_tailor(
         raise LlmTransientError("tailoring canceled")
     failed = int(result.get("failed") or 0)
     errors = int(result.get("errors") or 0)
+    exhausted = int(result.get("exhausted") or 0)
+    if exhausted:
+        raise AttemptBudgetExhaustedError(
+            f"{exhausted} tailored resume(s) exhausted the durable attempt budget"
+        )
     if errors:
         raise LlmTransientError(
             f"{errors} tailoring error(s), {failed} failed quality gate(s)"

@@ -52,10 +52,7 @@ def test_external_apply_url_accepts_company_hosts() -> None:
 
 def test_extract_external_url_from_linkedin_redirect_query() -> None:
     original = "https://www.linkedin.com/jobs/view/123"
-    redirect = (
-        "https://www.linkedin.com/jobs/apply/123?"
-        "url=https%3A%2F%2Fjobs.ashbyhq.com%2Facme%2Frole"
-    )
+    redirect = "https://www.linkedin.com/jobs/apply/123?url=https%3A%2F%2Fjobs.ashbyhq.com%2Facme%2Frole"
 
     assert (
         _extract_external_from_redirect_url(
@@ -69,20 +66,14 @@ def test_extract_external_url_from_linkedin_redirect_query() -> None:
 
 def test_extract_external_url_ignores_linkedin_redirect_target() -> None:
     original = "https://www.linkedin.com/jobs/view/123"
-    redirect = (
-        "https://www.linkedin.com/jobs/apply/123?"
-        "url=https%3A%2F%2Fwww.linkedin.com%2Fjobs%2Fview%2F123"
-    )
+    redirect = "https://www.linkedin.com/jobs/apply/123?url=https%3A%2F%2Fwww.linkedin.com%2Fjobs%2Fview%2F123"
 
     assert _extract_external_from_redirect_url(redirect, original) is None
 
 
 def test_extract_external_url_rejects_non_public_redirect_target() -> None:
     original = "https://www.linkedin.com/jobs/view/123"
-    redirect = (
-        "https://www.linkedin.com/jobs/apply/123?"
-        "url=http%3A%2F%2F127.0.0.1%3A8766%2Fv1%2Fprofile"
-    )
+    redirect = "https://www.linkedin.com/jobs/apply/123?url=http%3A%2F%2F127.0.0.1%3A8766%2Fv1%2Fprofile"
 
     assert (
         _extract_external_from_redirect_url(
@@ -148,6 +139,49 @@ class _RouteBlockedPage:
         self.closed = True
 
 
+class _NeverVisibleLocator:
+    def wait_for(self, *_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("not visible")
+
+
+class _ExtensionNoisePage:
+    url = "https://www.linkedin.com/jobs/view/123"
+
+    def __init__(self) -> None:
+        self._handler = None
+        self.extension_request_aborted = False
+        self.unrouted = False
+        self.closed = False
+        self._locator = _NeverVisibleLocator()
+
+    def route(self, _pattern: str, handler) -> None:  # noqa: ANN001
+        self._handler = handler
+
+    def unroute(self, _pattern: str, _handler) -> None:  # noqa: ANN001
+        self.unrouted = True
+
+    def goto(self, _url: str, **_kwargs: object) -> None:
+        assert self._handler is not None
+        route = _AbortRoute()
+        self._handler(
+            route,
+            SimpleNamespace(url="chrome-extension://example/background.html"),
+        )
+        self.extension_request_aborted = route.aborted
+
+    def wait_for_load_state(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def locator(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(first=self._locator)
+
+    def get_by_role(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(first=self._locator)
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def test_resolve_installs_public_route_guard_before_navigation() -> None:
     page = _RouteBlockedPage()
     resolver = LinkedInApplyUrlResolver(url_safety_checker=_allow_public_url)
@@ -158,6 +192,20 @@ def test_resolve_installs_public_route_guard_before_navigation() -> None:
     assert result.application_url is None
     assert result.method == "unsafe_url"
     assert "public" in str(result.error)
+    assert page.unrouted is True
+    assert page.closed is True
+
+
+def test_resolve_ignores_blocked_extension_noise_without_weakening_guard() -> None:
+    page = _ExtensionNoisePage()
+    resolver = LinkedInApplyUrlResolver(url_safety_checker=_allow_public_url)
+    resolver._context = SimpleNamespace(new_page=lambda: page)
+
+    result = resolver.resolve("https://www.linkedin.com/jobs/view/123")
+
+    assert result.application_url is None
+    assert result.method == "apply_button_missing"
+    assert page.extension_request_aborted is True
     assert page.unrouted is True
     assert page.closed is True
 

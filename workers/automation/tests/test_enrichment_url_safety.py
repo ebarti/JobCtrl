@@ -198,6 +198,24 @@ def test_public_route_guard_aborts_public_write_without_poisoning_page() -> None
     assert guard.blocked_reason is None
 
 
+def test_public_route_guard_aborts_chrome_extension_without_poisoning_page() -> None:
+    page = _RouteOnlyPage()
+    guard = PublicHttpUrlRouteGuard(page).install()
+    route = _AbortRoute()
+
+    assert page.handler is not None
+    page.handler(
+        route,
+        SimpleNamespace(url="chrome-extension://example/background.html"),
+    )
+
+    assert route.aborted
+    assert not route.continued
+    assert not guard.blocked
+    assert guard.blocked_url is None
+    assert guard.blocked_reason is None
+
+
 def test_public_route_guard_aborts_when_pinned_fetch_rejects_rebound_dns() -> None:
     page = _RouteOnlyPage()
 

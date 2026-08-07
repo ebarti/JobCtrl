@@ -2346,9 +2346,14 @@ def worker(
         try:
             await worker.run()
         finally:
+            from jobctrl.infrastructure.temporal.run_in_activity import (
+                shutdown_activity_executors,
+            )
+
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
+            shutdown_activity_executors()
 
     from jobctrl.infrastructure.observability import shutdown_otel
 
@@ -2397,7 +2402,9 @@ async def _worker_heartbeat_loop(
                 log.warning("Workflow-run reconciler iteration failed; will retry", exc_info=True)
             else:
                 if reconciled:
-                    console.print(f"[yellow]Reconciler updated {reconciled} workflow run(s).[/yellow]")
+                    console.print(
+                        f"[yellow]Workflow reconciler applied {reconciled} durable change(s).[/yellow]"
+                    )
             try:
                 from jobctrl.infrastructure.temporal.cancellation_audit import (
                     reconcile_cancellation_audit,
@@ -2693,7 +2700,11 @@ async def _reconcile_workflow_runs(temporal_client: Any, *, tenant_id: str | Non
     tenant = tenant_id or LOCAL_TENANT
     conn = get_connection()
     try:
-        open_runs = SqliteProjectionStore(conn).open_workflow_runs(str(tenant))
+        store = SqliteProjectionStore(conn)
+        open_runs = store.open_workflow_runs(str(tenant))
+        cancellation_audit_runs = store.workflow_runs_missing_cancellation_audit(
+            str(tenant)
+        )
     except sqlite3.OperationalError:
         return 0
 
@@ -2701,7 +2712,130 @@ async def _reconcile_workflow_runs(temporal_client: Any, *, tenant_id: str | Non
     for run in open_runs:
         if await _reconcile_one_workflow_run(temporal_client, conn, run):
             changed += 1
+    for run in cancellation_audit_runs:
+        if await _reconcile_cancellation_audit(temporal_client, conn, run):
+            changed += 1
+    changed += _reconcile_canceled_enrichment_cohorts(conn, tenant_id=str(tenant))
     return changed
+
+
+def _reconcile_canceled_enrichment_cohorts(conn, *, tenant_id: str) -> int:
+    """Terminalize unfinished Enrich rows still owned by a canceled run."""
+
+    from collections import defaultdict
+
+    from jobctrl.domain.identifiers import JobId
+    from jobctrl.domain.tenant import TenantId
+    from jobctrl.enrichment.detail import cancel_enrichment_cohort
+
+    canceled_execution_rows = conn.execute(
+        """
+        SELECT run.workflow_id, run.temporal_run_id
+        FROM workflow_run_projections AS run
+        WHERE run.tenant_id = ?
+          AND run.status = 'canceled'
+          AND run.temporal_run_id IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM job_events AS lease
+            WHERE lease.tenant_id = run.tenant_id
+              AND lease.event_type = 'EnrichmentLeaseClaimed'
+              AND lease.payload_json IS NOT NULL
+              AND json_valid(lease.payload_json)
+              AND json_extract(lease.payload_json, '$.execution.workflowId') = run.workflow_id
+              AND json_extract(lease.payload_json, '$.execution.runId') = run.temporal_run_id
+          )
+        ORDER BY run.workflow_id, run.temporal_run_id
+        """,
+        (tenant_id,),
+    ).fetchall()
+    rows = conn.execute(
+        """
+        SELECT stage.job_id,
+               json_extract(stage.metadata_json, '$.workflowId') AS workflow_id,
+               json_extract(stage.metadata_json, '$.temporalRunId') AS temporal_run_id
+        FROM job_stage_states AS stage
+        JOIN workflow_run_projections AS run
+          ON run.tenant_id = stage.tenant_id
+         AND run.workflow_id = json_extract(stage.metadata_json, '$.workflowId')
+         AND (
+           json_extract(stage.metadata_json, '$.temporalRunId') IS NULL
+           OR run.temporal_run_id = json_extract(stage.metadata_json, '$.temporalRunId')
+         )
+        WHERE stage.tenant_id = ?
+          AND stage.stage = 'enrich'
+          AND stage.state IN ('pending', 'queued', 'running')
+          AND stage.metadata_json IS NOT NULL
+          AND json_valid(stage.metadata_json)
+          AND run.status = 'canceled'
+        ORDER BY workflow_id, temporal_run_id, stage.job_id
+        """,
+        (tenant_id,),
+    ).fetchall()
+    cohorts: dict[tuple[str, str | None], list[JobId]] = defaultdict(list)
+    for row in canceled_execution_rows:
+        cohorts[(str(row[0]), str(row[1]))]
+    for row in rows:
+        workflow_id = str(row[1] or "")
+        if not workflow_id:
+            continue
+        run_id = str(row[2] or "") or None
+        cohorts[(workflow_id, run_id)].append(JobId(str(row[0])))
+
+    changed = 0
+    for (workflow_id, run_id), job_ids in cohorts.items():
+        changed += cancel_enrichment_cohort(
+            conn,
+            tuple(job_ids),
+            tenant_id=TenantId(tenant_id),
+            workflow_id=workflow_id,
+            workflow_run_id=run_id,
+        )
+    return changed
+
+
+async def _reconcile_cancellation_audit(
+    temporal_client: Any,
+    conn,
+    run: dict,
+) -> bool:
+    """Backfill requester/source from the exact Temporal cancel history event."""
+
+    from jobctrl.infrastructure.temporal.cancellation_audit import (
+        cancellation_request_from_history,
+        record_workflow_cancellation_requested,
+    )
+
+    workflow_id = str(run.get("workflow_id") or "")
+    temporal_run_id = str(run.get("temporal_run_id") or "")
+    if not workflow_id or not temporal_run_id:
+        return False
+    try:
+        handle = temporal_client.get_workflow_handle(
+            workflow_id,
+            run_id=temporal_run_id,
+        )
+        observed = await cancellation_request_from_history(handle)
+    except Exception:  # noqa: BLE001 - history may be transiently unavailable
+        log.warning(
+            "cancel history unavailable for %s; will retry",
+            workflow_id,
+            exc_info=True,
+        )
+        return False
+    if observed is None:
+        return False
+    return record_workflow_cancellation_requested(
+        conn,
+        workflow_id=workflow_id,
+        workflow_type=str(run.get("workflow_type") or ""),
+        temporal_run_id=temporal_run_id,
+        requested_by=observed.requested_by,
+        source=observed.source,
+        requested_at=observed.requested_at,
+        evidence_kind="temporal_history",
+        reason=observed.reason,
+        tenant_id=str(run.get("tenant_id") or "local"),
+    )
 
 
 async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> bool:

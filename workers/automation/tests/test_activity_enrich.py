@@ -191,26 +191,39 @@ def test_selected_enrichment_uses_only_the_requested_v7_job_id_at_fetch_boundary
 
     assert fetched_urls == [local_url]
     assert result["stages"][0]["selected"] == 1
-    assert conn.execute(
-        "SELECT current_status FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?",
-        (job_id,),
-    ).fetchone()[0] == "enriched"
-    assert conn.execute(
-        "SELECT COUNT(*) FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?",
-        (unrelated_job_id,),
-    ).fetchone()[0] == 0
+    assert result["stages"][0]["enrichedJobIds"] == [str(job_id)]
+    assert (
+        conn.execute(
+            "SELECT current_status FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?",
+            (job_id,),
+        ).fetchone()[0]
+        == "enriched"
+    )
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?",
+            (unrelated_job_id,),
+        ).fetchone()[0]
+        == 0
+    )
 
     missing_job_id = JobId("60000000-0000-4000-8000-000000000003")
     missing_result = enrichment_activities_mod._run_selected_enrichment(
         EnrichActivityInput(tenant_id="local", job_ids=(missing_job_id,))
     )
 
+    assert missing_result["status"] == "partial"
+    assert missing_result["errors"] == {}
+    assert missing_result["stages"][0]["enrichedJobIds"] == []
     assert missing_result["stages"][0]["processed"] == 0
     assert fetched_urls == [local_url]
-    assert conn.execute(
-        "SELECT COUNT(*) FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?",
-        (unrelated_job_id,),
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?",
+            (unrelated_job_id,),
+        ).fetchone()[0]
+        == 0
+    )
     close_connection(db_path)
 
 

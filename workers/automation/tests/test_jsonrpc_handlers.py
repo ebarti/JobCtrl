@@ -162,19 +162,13 @@ def test_provider_status_and_verify_are_secret_free(monkeypatch) -> None:
             "message": "ready" if provider == "codex" else "not configured",
         },
     )
-    reuse_and_verify = Mock(
-        return_value=(True, "connected", "Codex CLI authentication verified")
-    )
+    reuse_and_verify = Mock(return_value=(True, "connected", "Codex CLI authentication verified"))
     monkeypatch.setattr(setup_probes, "reuse_and_verify_codex_connection", reuse_and_verify)
     server = _server()
 
-    status = server.dispatch(
-        JsonRpcRequest(method="provider_status", params={"provider": "codex"}, id=1)
-    )
+    status = server.dispatch(JsonRpcRequest(method="provider_status", params={"provider": "codex"}, id=1))
     reuse_and_verify.assert_not_called()
-    verify = server.dispatch(
-        JsonRpcRequest(method="provider_verify", params={"provider": "codex"}, id=2)
-    )
+    verify = server.dispatch(JsonRpcRequest(method="provider_verify", params={"provider": "codex"}, id=2))
 
     assert status is not None
     assert status.to_dict()["result"] == {
@@ -201,9 +195,7 @@ def test_provider_status_and_verify_are_secret_free(monkeypatch) -> None:
 
 def test_provider_verify_rejects_non_codex() -> None:
     server = _server()
-    response = server.dispatch(
-        JsonRpcRequest(method="provider_verify", params={"provider": "claude"}, id=1)
-    )
+    response = server.dispatch(JsonRpcRequest(method="provider_verify", params={"provider": "claude"}, id=1))
     assert response is not None
     assert response.to_dict()["error"]["code"] == INVALID_PARAMS
 
@@ -447,12 +439,7 @@ def test_interview_prep_has_no_live_assistance_surface() -> None:
         "real_time",
         "realtime",
     )
-    offenders = [
-        value
-        for value in public_surface
-        for token in forbidden_tokens
-        if token in value.lower()
-    ]
+    offenders = [value for value in public_surface for token in forbidden_tokens if token in value.lower()]
     assert offenders == []
 
 
@@ -1006,9 +993,7 @@ def test_missing_tenant_id_falls_back_to_local(tmp_db: Path, caplog) -> None:
     server = JsonRpcServer(workflow_starter=starter)
     register_default_handlers(server, canceler=_stub_canceler)
     with caplog.at_level("WARNING"):
-        response = server.dispatch(
-            JsonRpcRequest(method="refresh_compensation", params={"allJobs": True}, id=1)
-        )
+        response = server.dispatch(JsonRpcRequest(method="refresh_compensation", params={"allJobs": True}, id=1))
     assert response is not None
     assert "tenantid" in caplog.text.lower() or "local_tenant" in caplog.text.lower()
     assert started_workflows
@@ -1698,23 +1683,15 @@ def test_v7_apply_preserves_global_and_explicit_job_semantics(
         lambda _capability_id: None,
     )
 
-    explicit = handlers_mod.apply_action(
-        {"tenantId": "local", "jobId": str(job_id), "dryRun": True}
-    )
-    global_selection = handlers_mod.apply_action(
-        {"tenantId": "local", "dryRun": True}
-    )
+    explicit = handlers_mod.apply_action({"tenantId": "local", "jobId": str(job_id), "dryRun": True})
+    global_selection = handlers_mod.apply_action({"tenantId": "local", "dryRun": True})
 
     assert explicit.workflow is ApplyWorkflow
     assert explicit.workflow_id == f"apply-local-{job_id}"
-    assert explicit.args == (
-        ApplyWorkflowInput(tenant_id="local", job_id=job_id, dry_run=True),
-    )
+    assert explicit.args == (ApplyWorkflowInput(tenant_id="local", job_id=job_id, dry_run=True),)
     assert global_selection.workflow is ApplyWorkflow
     assert global_selection.workflow_id is None
-    assert global_selection.args == (
-        ApplyWorkflowInput(tenant_id="local", job_id=None, dry_run=True),
-    )
+    assert global_selection.args == (ApplyWorkflowInput(tenant_id="local", job_id=None, dry_run=True),)
 
 
 @pytest.mark.parametrize(
@@ -1925,6 +1902,7 @@ async def test_pipeline_workflow_preserves_selected_job_ids_in_activity_inputs(m
 
     monkeypatch.setattr(workflow_mod.workflow, "execute_activity", fake_execute_activity)
     monkeypatch.setattr(workflow_mod.workflow, "execute_child_workflow", fake_execute_child_workflow)
+    monkeypatch.setattr(workflow_mod.workflow, "patched", lambda _patch_id: True)
     monkeypatch.setattr(
         workflow_mod.workflow,
         "info",
@@ -2256,6 +2234,100 @@ def test_selected_tailor_activity_accepts_committed_acknowledgement_replay(monke
     assert result["status"] == "ok"
     assert result["errors"] == {}
     assert result["stages"][0]["approvedJobIds"] == [job_id]
+
+
+def test_selected_tailor_activity_uses_bounded_requested_workers(monkeypatch) -> None:
+    job_ids = (
+        JobId("50000000-0000-4000-8000-000000000011"),
+        JobId("50000000-0000-4000-8000-000000000012"),
+        JobId("50000000-0000-4000-8000-000000000013"),
+    )
+    real_executor = materials_activities_mod.ThreadPoolExecutor
+    observed_workers: list[int] = []
+
+    def recording_executor(*, max_workers: int, thread_name_prefix: str):
+        observed_workers.append(max_workers)
+        return real_executor(
+            max_workers=max_workers,
+            thread_name_prefix=thread_name_prefix,
+        )
+
+    monkeypatch.setattr(materials_activities_mod, "ThreadPoolExecutor", recording_executor)
+    monkeypatch.setattr(
+        "jobctrl.scoring.tailor.tailor_job_by_id",
+        lambda _job_id, **_kwargs: {"status": "approved"},
+    )
+
+    result = materials_activities_mod._run_selected_tailoring(
+        TailorActivityInput(
+            tenant_id="local",
+            job_ids=job_ids,
+            workers=2,
+        )
+    )
+
+    assert observed_workers == [2]
+    assert result["stages"][0]["approved"] == 3
+    assert result["stages"][0]["approvedJobIds"] == list(job_ids)
+
+
+def test_selected_cover_activity_uses_bounded_requested_workers(monkeypatch) -> None:
+    job_ids = (
+        JobId("50000000-0000-4000-8000-000000000021"),
+        JobId("50000000-0000-4000-8000-000000000022"),
+        JobId("50000000-0000-4000-8000-000000000023"),
+    )
+    real_executor = materials_activities_mod.ThreadPoolExecutor
+    observed_workers: list[int] = []
+
+    def recording_executor(*, max_workers: int, thread_name_prefix: str):
+        observed_workers.append(max_workers)
+        return real_executor(
+            max_workers=max_workers,
+            thread_name_prefix=thread_name_prefix,
+        )
+
+    monkeypatch.setattr(materials_activities_mod, "ThreadPoolExecutor", recording_executor)
+    monkeypatch.setattr(
+        "jobctrl.scoring.cover_letter.cover_letter_by_id",
+        lambda _job_id, **_kwargs: {"status": "ok", "generated": 1},
+    )
+
+    result = materials_activities_mod._run_selected_cover(
+        CoverActivityInput(
+            tenant_id="local",
+            job_ids=job_ids,
+            workers=2,
+        )
+    )
+
+    assert observed_workers == [2]
+    assert result["stages"][0]["generated"] == 3
+
+
+def test_selected_tailor_activity_keeps_item_failures_partial(monkeypatch) -> None:
+    approved_job_id = JobId("50000000-0000-4000-8000-000000000031")
+    failed_job_id = JobId("50000000-0000-4000-8000-000000000032")
+
+    def fake_tailor(job_id: JobId, **_kwargs: object) -> dict[str, object]:
+        if job_id == approved_job_id:
+            return {"status": "approved"}
+        return {"status": "error", "error": "validation exhausted"}
+
+    monkeypatch.setattr("jobctrl.scoring.tailor.tailor_job_by_id", fake_tailor)
+
+    result = materials_activities_mod._run_selected_tailoring(
+        TailorActivityInput(
+            tenant_id="local",
+            job_ids=(approved_job_id, failed_job_id),
+        )
+    )
+
+    assert result["status"] == "partial"
+    assert result["errors"] == {}
+    assert result["stages"][0]["approvedJobIds"] == [approved_job_id]
+    assert result["stages"][0]["failed"] == 1
+    assert result["stages"][0]["itemErrors"] == {str(failed_job_id): "validation exhausted"}
 
 
 def test_current_policy_tailor_activity_skips_current_policy_artifacts(

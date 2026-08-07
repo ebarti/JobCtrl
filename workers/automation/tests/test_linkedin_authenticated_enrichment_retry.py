@@ -127,9 +127,7 @@ def _save_enriched(
             started_at=now,
         ).succeed_attempt(
             full_description=FullDescription(text=description),
-            application_url=(
-                ApplicationUrl(value=application_url) if application_url else None
-            ),
+            application_url=(ApplicationUrl(value=application_url) if application_url else None),
             extraction_tier=ExtractionTier.JSON_LD,
             finished_at=now,
         )
@@ -179,9 +177,7 @@ def _save_failed(
         ("LinkedIn", "https://ca.linkedin.com/jobs/apply/123"),
     ],
 )
-def test_linkedin_job_classifier_accepts_linkedin_job_hosts(
-    site: str | None, url: str
-) -> None:
+def test_linkedin_job_classifier_accepts_linkedin_job_hosts(site: str | None, url: str) -> None:
     assert _is_linkedin_job(site, url)
 
 
@@ -197,9 +193,7 @@ def test_linkedin_job_classifier_accepts_linkedin_job_hosts(
         ("linkedin", "not a url linkedin.com/jobs/123"),
     ],
 )
-def test_linkedin_job_classifier_rejects_non_linkedin_hosts(
-    site: str | None, url: str
-) -> None:
+def test_linkedin_job_classifier_rejects_non_linkedin_hosts(site: str | None, url: str) -> None:
     assert not _is_linkedin_job(site, url)
 
 
@@ -401,8 +395,7 @@ def test_enriched_missing_apply_url_backfills_on_successful_recovery(
     assert after["latest_quarantine_reason"] == QuarantineReason.NONE.value
     assert "apply_url_recovered:authenticated_browser" in after["snapshot_set_json"]
     tailor_state = conn.execute(
-        "SELECT state, error_code FROM job_stage_states "
-        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        "SELECT state, error_code FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
         (str(LOCAL_TENANT), str(job_id)),
     ).fetchone()
     assert tailor_state is not None
@@ -425,17 +418,44 @@ def test_enriched_missing_apply_url_recovery_is_bounded_across_runs(
             session=offline_session(conn, site="linkedin"),
         )
 
-    # The authenticated browser is driven only until the attempt-count bound is
-    # reached (initial enrichment attempt + N-1 recovery passes), never forever.
-    assert len(resolver.calls) == _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS - 1
+    # The authenticated browser is driven only until its own recovery bound is
+    # reached, never forever. The initial extraction attempt is independent.
+    assert len(resolver.calls) == _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS
     repo = SqliteEnrichmentRepository(conn)
     aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
     assert aggregate is not None
-    assert aggregate.attempt_count == _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS
+    assert aggregate.attempt_count == _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS + 1
     # Description preserved intact across every run.
     assert aggregate.is_enriched
     assert aggregate.full_description is not None
     assert aggregate.full_description.text == "A complete LinkedIn description"
+    assert aggregate.application_url is None
+
+
+def test_ordinary_attempts_do_not_consume_authenticated_recovery_budget(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://www.linkedin.com/jobs/view/ordinary-attempts"
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(
+        conn,
+        url,
+        application_url=None,
+        attempts=_MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS,
+    )
+    resolver = _RecoveryResolver(LinkedInApplyResolution(None, "external_url_missing"))
+
+    _reset_authenticated_linkedin_retry_candidates(
+        conn,
+        resolver_factory=lambda: resolver,
+        session=offline_session(conn, site="linkedin"),
+    )
+
+    assert resolver.calls == [url]
+    repo = SqliteEnrichmentRepository(conn)
+    aggregate = repo.load(LOCAL_TENANT, _job_id(conn, url))
+    assert aggregate is not None
+    assert aggregate.attempt_count == _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS + 1
     assert aggregate.application_url is None
 
 
@@ -481,9 +501,7 @@ def test_legacy_public_write_guard_failure_is_reset_despite_nonretryable_flag(
     )
 
     assert reset_count == 1
-    aggregate = SqliteEnrichmentRepository(conn).load(
-        LOCAL_TENANT, _job_id(conn, url)
-    )
+    aggregate = SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, _job_id(conn, url))
     assert aggregate is not None
     assert aggregate.is_pending
 
@@ -580,9 +598,7 @@ def test_recovery_pass_navigation_consumes_run_budget(
     resolver = _RecoveryResolver(LinkedInApplyResolution("https://apply.example/x", "click"))
     session = offline_session(conn, budget=5, site="linkedin")
 
-    _reset_authenticated_linkedin_retry_candidates(
-        conn, resolver_factory=lambda: resolver, session=session
-    )
+    _reset_authenticated_linkedin_retry_candidates(conn, resolver_factory=lambda: resolver, session=session)
 
     # The navigation happened AND went through the gate: exactly one budget unit
     # was consumed for the single authenticated goto.

@@ -72,6 +72,7 @@ from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
 from jobctrl.infrastructure.enrichment.execution_lease import (
+    claim_enrichment_execution_lease_for_run,
     fence_enrichment_execution_lease,
 )
 from jobctrl.infrastructure.discovery.sqlite_identity_resolver import SqliteJobIdentityResolver
@@ -176,6 +177,7 @@ def _default_enrichment_session(
     """A self-provisioned enrichment session for standalone/one-off callers."""
     return _enrichment_session(PolitenessGateway(), _new_enrichment_budget(), conn, site=site)
 
+
 # Sites that block scraping -- skip detail extraction entirely
 SKIP_DETAIL_SITES = {"glassdoor", "google", "Workopolis"}
 
@@ -217,9 +219,11 @@ def _is_linkedin_job(site: str | None, url: str) -> bool:
 
 # -- URL resolution ----------------------------------------------------------
 
+
 def _load_base_urls() -> dict[str, str | None]:
     """Load site base URLs from config/sites.yaml."""
     from jobctrl.config import load_base_urls
+
     return load_base_urls()
 
 
@@ -291,17 +295,12 @@ def resolve_wttj_urls(conn: sqlite3.Connection) -> int:
 
     Returns count of URLs updated.
     """
-    wttj_jobs = conn.execute(
-        "SELECT url, title FROM jobs WHERE site = 'WelcomeToTheJungle'"
-    ).fetchall()
+    wttj_jobs = conn.execute("SELECT url, title FROM jobs WHERE site = 'WelcomeToTheJungle'").fetchall()
 
     if not wttj_jobs:
         return 0
 
-    listing_url = (
-        "https://www.welcometothejungle.com/en/jobs"
-        "?query=developer&refinementList%5Bremote%5D%5B%5D=fulltime"
-    )
+    listing_url = "https://www.welcometothejungle.com/en/jobs?query=developer&refinementList%5Bremote%5D%5B%5D=fulltime"
 
     algolia_data: dict = {}
 
@@ -619,13 +618,9 @@ def _discovery_description_fallback(
     if row is None:
         return None, None
 
-    full_description = (
-        row["full_description"] if isinstance(row, sqlite3.Row) else row[0]
-    )
+    full_description = row["full_description"] if isinstance(row, sqlite3.Row) else row[0]
     description = row["description"] if isinstance(row, sqlite3.Row) else row[1]
-    application_url = (
-        row["application_url"] if isinstance(row, sqlite3.Row) else row[2]
-    )
+    application_url = row["application_url"] if isinstance(row, sqlite3.Row) else row[2]
 
     for candidate in (full_description, description):
         text = str(candidate or "").strip()
@@ -794,11 +789,11 @@ def _claim_enrich_job_for_activity(
 
     _fence_execution_enrichment_lease(conn, activity_lease)
     metadata = json.dumps(
-        {
-            "activityOwner": activity_lease.owner_token,
-            "activityAttempt": activity_lease.activity_attempt,
-            "leaseEpoch": activity_lease.epoch,
-        },
+        _activity_ownership_metadata(
+            activity_lease,
+            activity_lease.workflow_id,
+            activity_lease.run_id,
+        ),
         sort_keys=True,
     )
     row = conn.execute(
@@ -808,7 +803,16 @@ def _claim_enrich_job_for_activity(
         "blocked_by_json = NULL, next_action = NULL, metadata_json = ?, "
         "version = version + 1 "
         "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich' "
-        "AND state = 'pending' "
+        "AND ((state = 'pending' AND (metadata_json IS NULL "
+        "OR NOT json_valid(metadata_json) "
+        "OR json_extract(metadata_json, '$.workflowId') IS NULL "
+        "OR (json_extract(metadata_json, '$.workflowId') = ? "
+        "AND (json_extract(metadata_json, '$.temporalRunId') IS NULL "
+        "OR json_extract(metadata_json, '$.temporalRunId') = ?)))) "
+        "OR (state = 'queued' "
+        "AND json_valid(metadata_json) "
+        "AND json_extract(metadata_json, '$.workflowId') = ? "
+        "AND json_extract(metadata_json, '$.temporalRunId') = ?)) "
         "RETURNING version",
         (
             started_at,
@@ -816,13 +820,15 @@ def _claim_enrich_job_for_activity(
             metadata,
             str(tenant_id),
             str(job_id),
+            activity_lease.workflow_id,
+            activity_lease.run_id,
+            activity_lease.workflow_id,
+            activity_lease.run_id,
         ),
     ).fetchone()
     if row is None:
         conn.rollback()
-        raise StaleEnrichmentExecutionLease(
-            f"enrichment job {job_id} is no longer pending for this activity"
-        )
+        raise StaleEnrichmentExecutionLease(f"enrichment job {job_id} is no longer pending for this activity")
     return int(row[0])
 
 
@@ -853,9 +859,7 @@ def _fence_enrich_job_write(
     )
     if fenced.rowcount != 1:
         conn.rollback()
-        raise StaleEnrichmentExecutionLease(
-            f"enrichment job {job_id} is owned by a newer activity"
-        )
+        raise StaleEnrichmentExecutionLease(f"enrichment job {job_id} is owned by a newer activity")
 
 
 def _record_enrich_robots_blocked(
@@ -891,11 +895,7 @@ def _record_enrich_robots_blocked(
     if activity_lease is not None:
         _fence_execution_enrichment_lease(conn, activity_lease)
     ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
-    blocked_conditions = (
-        ["authenticated_linkedin_browser_unavailable"]
-        if _is_linkedin_job(site, url)
-        else []
-    )
+    blocked_conditions = ["authenticated_linkedin_browser_unavailable"] if _is_linkedin_job(site, url) else []
     set_stage_state(
         conn,
         job_id,
@@ -910,11 +910,7 @@ def _record_enrich_robots_blocked(
             "reason": "robots_disallowed",
             "politenessOutcome": decision.outcome.value,
             "blockedConditions": blocked_conditions,
-            **(
-                {"lastRobotsRetryWorkflow": recovery_key}
-                if recovery_key
-                else {}
-            ),
+            **({"lastRobotsRetryWorkflow": recovery_key} if recovery_key else {}),
         },
         validate_transition=False,
         tenant_id=tenant_id,
@@ -989,6 +985,8 @@ def _reset_interrupted_enrich_stage(
     tenant_id: TenantId = LOCAL_TENANT,
     activity_lease: EnrichmentExecutionLease | None = None,
     claim_version: int | None = None,
+    workflow_id: str | None = None,
+    workflow_run_id: str | None = None,
 ) -> None:
     """Make a transiently interrupted job selectable by the next activity.
 
@@ -1014,12 +1012,19 @@ def _reset_interrupted_enrich_stage(
             return
 
     row = conn.execute(
-        "SELECT state, attempt_count FROM job_stage_states "
+        "SELECT state, attempt_count, metadata_json FROM job_stage_states "
         "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
         (str(tenant_id), str(job_id)),
     ).fetchone()
     if row is None or str(row[0]) != "running":
         return
+    try:
+        existing_metadata = json.loads(row[2] or "{}")
+    except (TypeError, ValueError):
+        existing_metadata = {}
+    if not isinstance(existing_metadata, dict):
+        existing_metadata = {}
+    ownership_metadata = _workflow_ownership_metadata(workflow_id, workflow_run_id)
     set_stage_state(
         conn,
         job_id,
@@ -1028,7 +1033,11 @@ def _reset_interrupted_enrich_stage(
         tenant_id=tenant_id,
         attempt_count=int(row[1] or 0),
         retryable=True,
-        metadata={"recoveryReason": "transient_interruption"},
+        metadata={
+            **existing_metadata,
+            **ownership_metadata,
+            "recoveryReason": "transient_interruption",
+        },
         validate_transition=False,
         expected_version=claim_version,
     )
@@ -1045,6 +1054,40 @@ def _reset_interrupted_enrich_stage(
         tenant_id=tenant_id,
     )
     conn.commit()
+
+
+def _workflow_ownership_metadata(
+    workflow_id: str | None,
+    workflow_run_id: str | None,
+) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    if workflow_id:
+        metadata["workflowId"] = workflow_id
+    if workflow_run_id:
+        metadata["temporalRunId"] = workflow_run_id
+    return metadata
+
+
+def _activity_ownership_metadata(
+    activity_lease: EnrichmentExecutionLease | None,
+    workflow_id: str | None,
+    workflow_run_id: str | None,
+) -> dict[str, object]:
+    """Build stage metadata that preserves workflow and activity ownership."""
+
+    metadata: dict[str, object] = _workflow_ownership_metadata(
+        workflow_id or (activity_lease.workflow_id if activity_lease else None),
+        workflow_run_id or (activity_lease.run_id if activity_lease else None),
+    )
+    if activity_lease is not None:
+        metadata.update(
+            {
+                "activityOwner": activity_lease.owner_token,
+                "activityAttempt": activity_lease.activity_attempt,
+                "leaseEpoch": activity_lease.epoch,
+            }
+        )
+    return metadata
 
 
 def _claim_robots_retry_for_workflow(
@@ -1303,6 +1346,8 @@ def scrape_site_batch(
     on_job_enriched: Callable[[JobId], None] | None = None,
     recovery_key: str | None = None,
     activity_lease: EnrichmentExecutionLease | None = None,
+    workflow_id: str | None = None,
+    workflow_run_id: str | None = None,
 ) -> dict:
     """Process all jobs for one site using a shared browser context.
 
@@ -1385,11 +1430,7 @@ def scrape_site_batch(
 
             def _page_and_session_for(url: str) -> tuple[object, PolitenessSession, object | None]:
                 nonlocal resolver, authenticated_page, owner_authenticated_session
-                if (
-                    resolver is None
-                    and linkedin_apply_resolver_enabled()
-                    and _is_linkedin_job(site, url)
-                ):
+                if resolver is None and linkedin_apply_resolver_enabled() and _is_linkedin_job(site, url):
                     candidate = LinkedInApplyUrlResolver(
                         proxy=_PROXY_CONFIG,
                         user_agent=None,
@@ -1508,12 +1549,17 @@ def scrape_site_batch(
                     # otherwise strand the job as ENRICH_INTERNAL_ERROR.
                     _unblock_enrich_stage_if_blocked(conn, job_id, tenant_id=tenant_id)
                     if activity_lease is None:
+                        ownership_metadata = _workflow_ownership_metadata(
+                            workflow_id,
+                            workflow_run_id,
+                        )
                         set_stage_state(
                             conn,
                             job_id,
                             "enrich",
                             "running",
                             started_at=started_at,
+                            metadata=ownership_metadata or None,
                             tenant_id=tenant_id,
                         )
                     else:
@@ -1577,6 +1623,8 @@ def scrape_site_batch(
                         resolver=active_resolver,
                         page=page,
                     )
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise TransientNetworkError("enrichment canceled")
                     stats["processed"] += 1
 
                     tier = cascade_result.get("tier_used")
@@ -1589,11 +1637,7 @@ def scrape_site_batch(
                     tier_str = f"T{tier}" if tier else "--"
                     desc_len = len(cascade_result.get("full_description") or "")
                     apply_str = "yes" if cascade_result.get("application_url") else "no"
-                    err_str = (
-                        f" | err={cascade_result.get('error')}"
-                        if cascade_result.get("error")
-                        else ""
-                    )
+                    err_str = f" | err={cascade_result.get('error')}" if cascade_result.get("error") else ""
                     log.info(
                         "  %s | %s | desc=%s chars | apply=%s | %.1fs%s",
                         status,
@@ -1627,12 +1671,12 @@ def scrape_site_batch(
                                 }
                             )
                         if cascade_result.get("authenticated_apply_url_method"):
-                            stage_metadata["authenticatedApplyUrlMethod"] = (
-                                cascade_result.get("authenticated_apply_url_method")
+                            stage_metadata["authenticatedApplyUrlMethod"] = cascade_result.get(
+                                "authenticated_apply_url_method"
                             )
                         if cascade_result.get("authenticated_apply_url_error"):
-                            stage_metadata["authenticatedApplyUrlError"] = (
-                                cascade_result.get("authenticated_apply_url_error")
+                            stage_metadata["authenticatedApplyUrlError"] = cascade_result.get(
+                                "authenticated_apply_url_error"
                             )
                         if activity_lease is not None:
                             stage_metadata.update(
@@ -1642,9 +1686,14 @@ def scrape_site_batch(
                                     "leaseEpoch": activity_lease.epoch,
                                 }
                             )
-                        full_desc = FullDescription(
-                            text=cascade_result["full_description"] or ""
-                        )
+                        else:
+                            stage_metadata.update(
+                                _workflow_ownership_metadata(
+                                    workflow_id,
+                                    workflow_run_id,
+                                )
+                            )
+                        full_desc = FullDescription(text=cascade_result["full_description"] or "")
                         apply_url = (
                             ApplicationUrl(value=cascade_result["application_url"])
                             if cascade_result.get("application_url")
@@ -1684,17 +1733,15 @@ def scrape_site_batch(
                             "tier": tier,
                             "elapsed": elapsed,
                             "descriptionChars": desc_len,
-                            "applicationUrlFound": bool(
-                                cascade_result.get("application_url")
-                            ),
+                            "applicationUrlFound": bool(cascade_result.get("application_url")),
                         }
                         if cascade_result.get("authenticated_apply_url_method"):
-                            completed_payload["authenticatedApplyUrlMethod"] = (
-                                cascade_result.get("authenticated_apply_url_method")
+                            completed_payload["authenticatedApplyUrlMethod"] = cascade_result.get(
+                                "authenticated_apply_url_method"
                             )
                         if cascade_result.get("authenticated_apply_url_error"):
-                            completed_payload["authenticatedApplyUrlError"] = (
-                                cascade_result.get("authenticated_apply_url_error")
+                            completed_payload["authenticatedApplyUrlError"] = cascade_result.get(
+                                "authenticated_apply_url_error"
                             )
                         if fallback_source:
                             completed_payload.update(
@@ -1731,9 +1778,7 @@ def scrape_site_batch(
                             message=str(cascade_result.get("error") or "posting inactive")[:500],
                             retryable=False,
                         )
-                        failed = aggregate.fail_attempt(
-                            error=err, finished_at=finished_at
-                        )
+                        failed = aggregate.fail_attempt(error=err, finished_at=finished_at)
                         repo.save(failed, commit=activity_lease is None)
                         set_stage_state(
                             conn,
@@ -1766,17 +1811,11 @@ def scrape_site_batch(
                                 "elapsed": elapsed,
                                 "durationMs": int(elapsed * 1000) if elapsed else None,
                                 "descriptionChars": desc_len,
-                                "applicationUrlFound": bool(
-                                    cascade_result.get("application_url")
-                                ),
+                                "applicationUrlFound": bool(cascade_result.get("application_url")),
                                 "activeState": cascade_result.get("active_state"),
                                 "active_state": cascade_result.get("active_state"),
-                                "verificationMethod": cascade_result.get(
-                                    "verification_method"
-                                ),
-                                "verification_method": cascade_result.get(
-                                    "verification_method"
-                                ),
+                                "verificationMethod": cascade_result.get("verification_method"),
+                                "verification_method": cascade_result.get("verification_method"),
                                 "httpStatus": cascade_result.get("http_status"),
                                 "http_status": cascade_result.get("http_status"),
                             },
@@ -1795,9 +1834,7 @@ def scrape_site_batch(
                             message=str(cascade_result.get("error") or "unknown")[:500],
                             retryable=retryable,
                         )
-                        failed = aggregate.fail_attempt(
-                            error=err, finished_at=finished_at
-                        )
+                        failed = aggregate.fail_attempt(error=err, finished_at=finished_at)
                         repo.save(failed, commit=activity_lease is None)
                         set_stage_state(
                             conn,
@@ -1833,17 +1870,11 @@ def scrape_site_batch(
                                 "elapsed": elapsed,
                                 "durationMs": int(elapsed * 1000) if elapsed else None,
                                 "descriptionChars": desc_len,
-                                "applicationUrlFound": bool(
-                                    cascade_result.get("application_url")
-                                ),
+                                "applicationUrlFound": bool(cascade_result.get("application_url")),
                                 "activeState": cascade_result.get("active_state"),
                                 "active_state": cascade_result.get("active_state"),
-                                "verificationMethod": cascade_result.get(
-                                    "verification_method"
-                                ),
-                                "verification_method": cascade_result.get(
-                                    "verification_method"
-                                ),
+                                "verificationMethod": cascade_result.get("verification_method"),
+                                "verification_method": cascade_result.get("verification_method"),
                                 "httpStatus": cascade_result.get("http_status"),
                                 "http_status": cascade_result.get("http_status"),
                             },
@@ -1866,17 +1897,11 @@ def scrape_site_batch(
                     # description), so hand it off for preparation immediately.
                     # Best-effort and isolated: a handoff error must never be
                     # mistaken for an enrichment failure below.
-                    if (
-                        on_job_enriched is not None
-                        and status in ("ok", "partial")
-                        and desc_len > 0
-                    ):
+                    if on_job_enriched is not None and status in ("ok", "partial") and desc_len > 0:
                         try:
                             on_job_enriched(job_id)
                         except Exception:  # noqa: BLE001 - handoff is best-effort
-                            log.warning(
-                                "Per-job preparation handoff failed for %s", url, exc_info=True
-                            )
+                            log.warning("Per-job preparation handoff failed for %s", url, exc_info=True)
                 except StaleEnrichmentExecutionLease as exc:
                     conn.rollback()
                     raise TransientNetworkError(str(exc)) from exc
@@ -1887,6 +1912,8 @@ def scrape_site_batch(
                         tenant_id=tenant_id,
                         activity_lease=activity_lease,
                         claim_version=claim_version,
+                        workflow_id=workflow_id,
+                        workflow_run_id=workflow_run_id,
                     )
                     raise
                 except Exception as exc:
@@ -1927,6 +1954,63 @@ def _tier_from_legacy(tier_num: int | None) -> ExtractionTier:
     return ExtractionTier.LLM_ASSISTED
 
 
+def _resume_tailoring_after_trustworthy_snapshot(
+    conn: sqlite3.Connection,
+    *,
+    job_id: JobId,
+    snapshot_version: int,
+    tenant_id: TenantId,
+    resolved_at: str,
+) -> None:
+    """Release the stale quarantine blocker after canonical trust recovers."""
+
+    from jobctrl.state import record_job_event, set_stage_state
+
+    conn.execute(
+        "UPDATE discovery_quarantine_entries "
+        "SET status = 'resolved', decision_reason = ?, decided_at = ? "
+        "WHERE tenant_id = ? AND job_id = ? AND status = 'pending'",
+        (
+            "trustworthy_snapshot_captured",
+            resolved_at,
+            str(tenant_id),
+            str(job_id),
+        ),
+    )
+    tailor_state = conn.execute(
+        "SELECT state, error_code, attempt_count FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if (
+        tailor_state is None
+        or str(tailor_state[0]) != "blocked"
+        or str(tailor_state[1] or "") != "ENRICHMENT_QUARANTINED"
+    ):
+        return
+    set_stage_state(
+        conn,
+        job_id,
+        "tailor",
+        "pending",
+        tenant_id=tenant_id,
+        attempt_count=int(tailor_state[2] or 0),
+    )
+    record_job_event(
+        conn,
+        job_id,
+        "tailor",
+        "StageReset",
+        tenant_id=tenant_id,
+        message="Tailoring resumed after posting confidence recovered.",
+        payload={
+            "reason": "enrichment_quarantine_resolved",
+            "snapshotVersion": snapshot_version,
+            "automated": True,
+        },
+    )
+
+
 def _record_posting_snapshot_from_cascade(
     conn: sqlite3.Connection,
     *,
@@ -1951,6 +2035,8 @@ def _record_posting_snapshot_from_cascade(
         tenant_id=tenant_id,
     )
     try:
+        if commit:
+            ensure_discovery_control_tables(conn)
         repo = SqlitePostingSnapshotSetRepository(conn)
         snapshot_set = repo.load(tenant_id, stable_job_id) or PostingSnapshotSet.empty(
             tenant_id=tenant_id,
@@ -1958,13 +2044,8 @@ def _record_posting_snapshot_from_cascade(
             updated_at=captured_at,
         )
         previous_active = snapshot_set.latest_active_state
-        active_state = (
-            ActiveState.from_optional(cascade_result.get("active_state"))
-            or ActiveState.ACTIVE
-        )
-        verification_method = str(
-            cascade_result.get("verification_method") or "enrichment_success"
-        )
+        active_state = ActiveState.from_optional(cascade_result.get("active_state")) or ActiveState.ACTIVE
+        verification_method = str(cascade_result.get("verification_method") or "enrichment_success")
         tier = _tier_from_legacy(cascade_result.get("tier_used"))
         apply_url = (
             SnapshotApplyUrl(value=str(cascade_result["application_url"]))
@@ -1996,7 +2077,19 @@ def _record_posting_snapshot_from_cascade(
                 f"apply_url_present:{str(apply_url is not None).lower()}",
             ),
         )
-        repo.save(snapshot_set, commit=commit)
+        # Snapshot trust, quarantine resolution, downstream release, and their
+        # audit events are one durable fact. Never expose the snapshot before
+        # Tailor has been released from the blocker it resolves.
+        repo.save(snapshot_set, commit=False)
+
+        if quarantine_reason is QuarantineReason.NONE:
+            _resume_tailoring_after_trustworthy_snapshot(
+                conn,
+                job_id=stable_job_id,
+                snapshot_version=snapshot.snapshot_version,
+                tenant_id=tenant_id,
+                resolved_at=captured_at,
+            )
 
         from jobctrl.state import record_job_event
 
@@ -2050,8 +2143,6 @@ def _record_posting_snapshot_from_cascade(
                 tenant_id=tenant_id,
             )
         if quarantine_reason is not QuarantineReason.NONE:
-            if commit:
-                ensure_discovery_control_tables(conn)
             conn.execute(
                 """
                 INSERT INTO discovery_quarantine_entries (
@@ -2086,6 +2177,8 @@ def _record_posting_snapshot_from_cascade(
         if commit:
             conn.commit()
     except Exception:
+        if commit:
+            conn.rollback()
         log.exception("Failed to persist PostingSnapshotSet for %s", url)
         if not commit:
             raise
@@ -2155,13 +2248,9 @@ def _record_posting_snapshot_failure_from_cascade(
                 "tier": cascade_result.get("tier_used"),
                 "elapsed": cascade_result.get("elapsed"),
                 "durationMs": (
-                    int(float(cascade_result.get("elapsed")) * 1000)
-                    if cascade_result.get("elapsed")
-                    else None
+                    int(float(cascade_result.get("elapsed")) * 1000) if cascade_result.get("elapsed") else None
                 ),
-                "descriptionChars": len(
-                    str(cascade_result.get("full_description") or "")
-                ),
+                "descriptionChars": len(str(cascade_result.get("full_description") or "")),
                 "applicationUrlFound": bool(cascade_result.get("application_url")),
                 "active_state": active_state.value,
                 "activeState": active_state.value,
@@ -2236,6 +2325,35 @@ def _attempt_count_from_json(attempts_json: str | None) -> int:
     return len(attempts) if isinstance(attempts, list) else 0
 
 
+def _authenticated_apply_url_recovery_attempt_count(
+    attempts_json: str | None,
+) -> int:
+    """Count only authenticated apply-URL recovery passes.
+
+    Ordinary extraction-cascade history must not consume this independent
+    retry budget.  Unresolved recovery passes are the only terminal attempts
+    that remain eligible for another pass; successful recoveries attach an
+    application URL and therefore leave the candidate query automatically.
+    """
+
+    if not attempts_json:
+        return 0
+    try:
+        attempts = json.loads(attempts_json)
+    except Exception:
+        return 0
+    if not isinstance(attempts, list):
+        return 0
+    count = 0
+    for attempt in attempts:
+        if not isinstance(attempt, dict):
+            continue
+        error = attempt.get("error")
+        if isinstance(error, dict) and error.get("code") == "APPLY_URL_UNRESOLVED":
+            count += 1
+    return count
+
+
 def _last_failed_attempt_retryable(attempts_json: str | None) -> bool:
     if not attempts_json:
         return True
@@ -2278,9 +2396,7 @@ def _last_failed_attempt_is_legacy_public_write_guard(
         error = attempt.get("error")
         if not isinstance(error, dict):
             return False
-        return str(error.get("message") or "").startswith(
-            _LEGACY_PUBLIC_WRITE_GUARD_ERROR_PREFIX
-        )
+        return str(error.get("message") or "").startswith(_LEGACY_PUBLIC_WRITE_GUARD_ERROR_PREFIX)
     return False
 
 
@@ -2306,6 +2422,8 @@ def _record_authenticated_apply_url_snapshot_recovery(
     captured_at: str,
 ) -> bool:
     """Append a truthful snapshot version after authenticated URL recovery."""
+
+    from jobctrl.state import record_job_event
 
     if enrichment.full_description is None:
         return False
@@ -2345,43 +2463,13 @@ def _record_authenticated_apply_url_snapshot_recovery(
     )
     repo.save(snapshot_set, commit=False)
 
-    from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state
-
-    tailor_state = conn.execute(
-        """
-        SELECT state, error_code
-        FROM job_stage_states
-        WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
-        """,
-        (str(tenant_id), str(job_id)),
-    ).fetchone()
-    if (
-        quarantine_reason is QuarantineReason.NONE
-        and tailor_state is not None
-        and str(tailor_state["state"]) == "blocked"
-        and str(tailor_state["error_code"] or "") == "ENRICHMENT_QUARANTINED"
-    ):
-        ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
-        set_stage_state(
+    if quarantine_reason is QuarantineReason.NONE:
+        _resume_tailoring_after_trustworthy_snapshot(
             conn,
-            job_id,
-            "tailor",
-            "pending",
+            job_id=job_id,
+            snapshot_version=snapshot.snapshot_version,
             tenant_id=tenant_id,
-            validate_transition=False,
-        )
-        record_job_event(
-            conn,
-            job_id,
-            "tailor",
-            "StageReset",
-            tenant_id=tenant_id,
-            message="Tailoring resumed after posting confidence recovered.",
-            payload={
-                "reason": "enrichment_quarantine_resolved",
-                "snapshotVersion": snapshot.snapshot_version,
-                "automated": True,
-            },
+            resolved_at=captured_at,
         )
 
     record_job_event(
@@ -2411,6 +2499,9 @@ def _reset_authenticated_linkedin_retry_candidates(
     run_budget: RunBudgetCounter | None = None,
     session: PolitenessSession | None = None,
     activity_lease: EnrichmentExecutionLease | None = None,
+    cancel_event: threading.Event | None = None,
+    workflow_id: str | None = None,
+    workflow_run_id: str | None = None,
 ) -> int:
     """Retry LinkedIn rows that need authenticated enrichment follow-up.
 
@@ -2423,8 +2514,9 @@ def _reset_authenticated_linkedin_retry_candidates(
         Only ``application_url`` is backfilled; the canonical
         ``full_description`` and the ``enriched`` status are preserved, so a
         failed or empty authenticated resolution can never destroy reviewable
-        material. Each authenticated pass records an ``EnrichmentAttempt`` so
-        this path shares the same attempt-count bound as the cascade.
+        material. Each authenticated pass records an ``EnrichmentAttempt`` and
+        has its own bounded retry budget, independent from ordinary extraction
+        attempts.
       * **Failed / non-enriched** — reset back to ``pending`` so the normal
         cascade re-scrapes them under an authenticated browser. These rows
         hold no enriched description to lose.
@@ -2459,9 +2551,7 @@ def _reset_authenticated_linkedin_retry_candidates(
         "(e.current_status = 'failed' OR e.application_url IS NULL OR e.application_url = '')",
     ]
     params: list[object] = []
-    selected_job_ids = tuple(
-        dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids)
-    )
+    selected_job_ids = tuple(dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids))
     if selected_job_ids:
         placeholders = ", ".join("?" for _ in selected_job_ids)
         where.append(f"j.tenant_id = ? AND j.job_id IN ({placeholders})")
@@ -2474,7 +2564,7 @@ def _reset_authenticated_linkedin_retry_candidates(
         FROM jobs j
         JOIN job_enrichments e
           ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
-        WHERE {' AND '.join(where)}
+        WHERE {" AND ".join(where)}
         ORDER BY e.updated_at DESC
         """,
         params,
@@ -2495,24 +2585,25 @@ def _reset_authenticated_linkedin_retry_candidates(
     try:
         for row in rows:
             try:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise TransientNetworkError("enrichment canceled")
                 attempts_json = row["attempts_json"] if isinstance(row, sqlite3.Row) else row[5]
-                if _attempt_count_from_json(attempts_json) >= _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS:
-                    continue
                 current_status = row["current_status"] if isinstance(row, sqlite3.Row) else row[3]
+                attempt_count = (
+                    _authenticated_apply_url_recovery_attempt_count(attempts_json)
+                    if str(current_status) == "enriched"
+                    else _attempt_count_from_json(attempts_json)
+                )
+                if attempt_count >= _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS:
+                    continue
                 if (
                     str(current_status) == "failed"
                     and not _last_failed_attempt_retryable(attempts_json)
-                    and not _last_failed_attempt_is_legacy_public_write_guard(
-                        attempts_json
-                    )
+                    and not _last_failed_attempt_is_legacy_public_write_guard(attempts_json)
                 ):
                     continue
-                tenant_id = TenantId(
-                    str(row["tenant_id"] if isinstance(row, sqlite3.Row) else row[0])
-                )
-                job_id = canonical_job_id(
-                    str(row["job_id"] if isinstance(row, sqlite3.Row) else row[1])
-                )
+                tenant_id = TenantId(str(row["tenant_id"] if isinstance(row, sqlite3.Row) else row[0]))
+                job_id = canonical_job_id(str(row["job_id"] if isinstance(row, sqlite3.Row) else row[1]))
                 url = str(row["url"] if isinstance(row, sqlite3.Row) else row[2])
                 now = utc_now()
                 aggregate = repo.load(tenant_id, job_id)
@@ -2520,6 +2611,8 @@ def _reset_authenticated_linkedin_retry_candidates(
                     continue
 
                 if aggregate.is_enriched:
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise TransientNetworkError("enrichment canceled")
                     if resolver is None and resolver_factory is not None:
                         try:
                             resolver = resolver_factory()
@@ -2536,11 +2629,7 @@ def _reset_authenticated_linkedin_retry_candidates(
                         url=url,
                         cascade_result={
                             "status": "ok",
-                            "full_description": (
-                                aggregate.full_description.text
-                                if aggregate.full_description
-                                else ""
-                            ),
+                            "full_description": (aggregate.full_description.text if aggregate.full_description else ""),
                             "application_url": None,
                         },
                         resolver=resolver,
@@ -2554,10 +2643,10 @@ def _reset_authenticated_linkedin_retry_candidates(
                         # retry attempt — the navigation never happened, and the
                         # gate already recorded the budget/rate outcome.
                         continue
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise TransientNetworkError("enrichment canceled")
                     apply_url_value = resolved.get("application_url")
-                    recovered = (
-                        ApplicationUrl(value=str(apply_url_value)) if apply_url_value else None
-                    )
+                    recovered = ApplicationUrl(value=str(apply_url_value)) if apply_url_value else None
                     # Every authenticated pass records an attempt so a
                     # never-resolving row is bounded by attempt count exactly
                     # like the extraction cascade; the description is never
@@ -2565,10 +2654,10 @@ def _reset_authenticated_linkedin_retry_candidates(
                     if activity_lease is not None:
                         _fence_execution_enrichment_lease(conn, activity_lease)
                     updated_aggregate = aggregate.record_apply_url_recovery(
-                            application_url=recovered,
-                            extraction_tier=ExtractionTier.CSS_SELECTORS,
-                            started_at=now,
-                            finished_at=utc_now(),
+                        application_url=recovered,
+                        extraction_tier=ExtractionTier.CSS_SELECTORS,
+                        started_at=now,
+                        finished_at=utc_now(),
                     )
                     repo.save(updated_aggregate, commit=False)
                     if recovered is not None:
@@ -2594,12 +2683,8 @@ def _reset_authenticated_linkedin_retry_candidates(
                         payload={
                             "reason": "linkedin_authenticated_apply_url",
                             "applicationUrlFound": recovered is not None,
-                            "authenticatedApplyUrlMethod": resolved.get(
-                                "authenticated_apply_url_method"
-                            ),
-                            "authenticatedApplyUrlError": resolved.get(
-                                "authenticated_apply_url_error"
-                            ),
+                            "authenticatedApplyUrlMethod": resolved.get("authenticated_apply_url_method"),
+                            "authenticatedApplyUrlError": resolved.get("authenticated_apply_url_error"),
                             "automated": True,
                         },
                     )
@@ -2611,20 +2696,48 @@ def _reset_authenticated_linkedin_retry_candidates(
                         break
                     continue
 
+                ownership = _activity_ownership_metadata(
+                    activity_lease,
+                    workflow_id,
+                    workflow_run_id,
+                )
+                stage_row = conn.execute(
+                    "SELECT state, attempt_count, metadata_json FROM job_stage_states "
+                    "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+                    (str(tenant_id), str(job_id)),
+                ).fetchone()
+                if stage_row is not None and str(stage_row[0]) in {"queued", "running"}:
+                    try:
+                        current_owner = json.loads(stage_row[2] or "{}")
+                    except (TypeError, ValueError):
+                        current_owner = {}
+                    if not isinstance(current_owner, dict):
+                        current_owner = {}
+                    if (
+                        workflow_id
+                        and current_owner.get("workflowId")
+                        and current_owner.get("workflowId") != workflow_id
+                    ) or (
+                        workflow_run_id
+                        and current_owner.get("temporalRunId")
+                        and current_owner.get("temporalRunId") != workflow_run_id
+                    ):
+                        continue
                 if activity_lease is not None:
                     _fence_execution_enrichment_lease(conn, activity_lease)
                 repo.save(
                     aggregate.reset(reset_at=now),
-                    commit=activity_lease is None,
+                    commit=False,
                 )
                 ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
                 set_stage_state(
                     conn,
                     job_id,
                     "enrich",
-                    "pending",
+                    "queued" if workflow_id else "pending",
                     tenant_id=tenant_id,
                     validate_transition=False,
+                    metadata=ownership or None,
                 )
                 record_job_event(
                     conn,
@@ -2638,15 +2751,41 @@ def _reset_authenticated_linkedin_retry_candidates(
                         "previousStatus": str(current_status or ""),
                         "automated": True,
                         "resetAt": now,
+                        "workflowId": workflow_id,
+                        "temporalRunId": workflow_run_id,
                     },
                 )
+                if workflow_id:
+                    record_job_event(
+                        conn,
+                        job_id,
+                        "enrich",
+                        "StageQueued",
+                        tenant_id=tenant_id,
+                        message="LinkedIn authenticated retry selected by workflow.",
+                        payload={
+                            "source": "linkedin_authenticated_retry",
+                            "workflowId": workflow_id,
+                            "temporalRunId": workflow_run_id,
+                        },
+                        entity_kind="workflow_run",
+                        entity_ref=workflow_id,
+                        idempotency_key=(
+                            f"enrich-linkedin-retry-selected:{tenant_id}:"
+                            f"{workflow_id}:{workflow_run_id or 'unknown'}:{job_id}"
+                        ),
+                    )
                 reset_count += 1
-                if activity_lease is not None:
-                    conn.commit()
+                conn.commit()
                 if limit and limit > 0 and (reset_count + recovery_count) >= limit:
                     break
             except StaleEnrichmentExecutionLease:
                 conn.rollback()
+                raise
+            except TransientNetworkError:
+                conn.rollback()
+                if cancel_event is not None and cancel_event.is_set():
+                    raise
                 raise
             except Exception:  # noqa: BLE001 - one bad row must not abort the scan
                 conn.rollback()
@@ -2710,12 +2849,480 @@ def _systemic_enrichment_error(site_errors: dict[str, dict[str, str]]) -> Except
     )
     message = f"All enrichment sites failed: {summary}"
     broken_env = bool(site_errors) and all(
-        _looks_like_broken_browser_env(info.get("error_message"))
-        for info in site_errors.values()
+        _looks_like_broken_browser_env(info.get("error_message")) for info in site_errors.values()
     )
     if broken_env:
         return ConfigurationError(message)
     return TransientNetworkError(message)
+
+
+def _queue_enrichment_cohort(
+    conn: sqlite3.Connection,
+    job_ids: tuple[JobId, ...],
+    *,
+    tenant_id: TenantId,
+    workflow_id: str,
+    workflow_run_id: str | None,
+    activity_lease: EnrichmentExecutionLease | None = None,
+) -> None:
+    """Durably bind the exact selected cohort to its owning workflow run."""
+
+    from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state
+
+    ownership = _activity_ownership_metadata(
+        activity_lease,
+        workflow_id,
+        workflow_run_id,
+    )
+    if activity_lease is not None:
+        _fence_execution_enrichment_lease(conn, activity_lease)
+    for job_id in job_ids:
+        ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
+        row = conn.execute(
+            "SELECT stage.state, stage.attempt_count, stage.metadata_json, "
+            "stage.error_code, "
+            "COALESCE(enrichment.current_status, 'pending') "
+            "FROM job_stage_states AS stage "
+            "LEFT JOIN job_enrichments AS enrichment "
+            "ON enrichment.tenant_id = stage.tenant_id "
+            "AND enrichment.job_id = stage.job_id "
+            "WHERE stage.tenant_id = ? AND stage.job_id = ? "
+            "AND stage.stage = 'enrich'",
+            (str(tenant_id), str(job_id)),
+        ).fetchone()
+        if row is None or str(row[4]) != "pending":
+            continue
+        state = str(row[0])
+        try:
+            metadata = json.loads(row[2] or "{}")
+        except (TypeError, ValueError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        existing_workflow_id = str(metadata.get("workflowId") or "")
+        existing_run_id = str(metadata.get("temporalRunId") or "")
+        if existing_workflow_id and existing_workflow_id != workflow_id:
+            continue
+        if workflow_run_id and existing_run_id and existing_run_id != workflow_run_id:
+            continue
+        if state == "blocked" and str(row[3] or "") == "ENRICH_ROBOTS_DISALLOWED":
+            set_stage_state(
+                conn,
+                job_id,
+                "enrich",
+                "pending",
+                tenant_id=tenant_id,
+                attempt_count=int(row[1] or 0),
+                retryable=True,
+                metadata={**metadata, **ownership},
+            )
+            record_job_event(
+                conn,
+                job_id,
+                "enrich",
+                "StageReset",
+                tenant_id=tenant_id,
+                message="Enrichment blocker cleared for the selected retry.",
+                payload={
+                    "reason": "workflow_selected_retry",
+                    "workflowId": workflow_id,
+                    "temporalRunId": workflow_run_id,
+                },
+            )
+            state = "pending"
+        if state == "pending":
+            set_stage_state(
+                conn,
+                job_id,
+                "enrich",
+                "queued",
+                tenant_id=tenant_id,
+                attempt_count=int(row[1] or 0),
+                retryable=True,
+                metadata={**metadata, **ownership},
+            )
+        elif state == "queued":
+            conn.execute(
+                "UPDATE job_stage_states SET metadata_json = ?, updated_at = ? "
+                "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich' "
+                "AND state = 'queued'",
+                (
+                    json.dumps({**metadata, **ownership}, sort_keys=True),
+                    datetime.now(timezone.utc).isoformat(),
+                    str(tenant_id),
+                    str(job_id),
+                ),
+            )
+        else:
+            continue
+        record_job_event(
+            conn,
+            job_id,
+            "enrich",
+            "StageQueued",
+            tenant_id=tenant_id,
+            message="Enrichment selected by workflow.",
+            payload={
+                "source": "enrichment_selection",
+                "workflowId": workflow_id,
+                "temporalRunId": workflow_run_id,
+            },
+            entity_kind="workflow_run",
+            entity_ref=workflow_id,
+            idempotency_key=(
+                f"enrich-cohort-selected:{tenant_id}:{workflow_id}:{workflow_run_id or 'unknown'}:{job_id}"
+            ),
+        )
+    conn.commit()
+
+
+def _release_unstarted_enrichment_cohort(
+    conn: sqlite3.Connection,
+    job_ids: tuple[JobId, ...],
+    *,
+    tenant_id: TenantId,
+    workflow_id: str | None,
+    workflow_run_id: str | None,
+    activity_lease: EnrichmentExecutionLease | None = None,
+) -> None:
+    """Return owned-but-unstarted rows to pending after a non-cancel exit."""
+
+    if not workflow_id:
+        return
+    from jobctrl.state import record_job_event, set_stage_state
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if activity_lease is not None:
+            try:
+                _fence_execution_enrichment_lease(conn, activity_lease)
+            except StaleEnrichmentExecutionLease:
+                conn.rollback()
+                return
+        for job_id in job_ids:
+            row = conn.execute(
+                "SELECT state, attempt_count, metadata_json, version "
+                "FROM job_stage_states WHERE tenant_id = ? AND job_id = ? "
+                "AND stage = 'enrich'",
+                (str(tenant_id), str(job_id)),
+            ).fetchone()
+            if row is None or str(row[0]) != "queued":
+                continue
+            try:
+                metadata = json.loads(row[2] or "{}")
+            except (TypeError, ValueError):
+                metadata = {}
+            if not isinstance(metadata, dict) or metadata.get("workflowId") != workflow_id:
+                continue
+            if workflow_run_id and metadata.get("temporalRunId") != workflow_run_id:
+                continue
+            if activity_lease is not None and (
+                metadata.get("activityOwner") != activity_lease.owner_token
+                or metadata.get("activityAttempt") != activity_lease.activity_attempt
+                or metadata.get("leaseEpoch") != activity_lease.epoch
+            ):
+                continue
+            set_stage_state(
+                conn,
+                job_id,
+                "enrich",
+                "pending",
+                tenant_id=tenant_id,
+                attempt_count=int(row[1] or 0),
+                retryable=True,
+                metadata={"recoveryReason": "workflow_selection_unprocessed"},
+                validate_transition=False,
+                expected_version=int(row[3] or 0),
+            )
+            record_job_event(
+                conn,
+                job_id,
+                "enrich",
+                "StageReset",
+                tenant_id=tenant_id,
+                message="Enrichment selection released without starting.",
+                payload={
+                    "reason": "workflow_selection_unprocessed",
+                    "previousState": "queued",
+                    "workflowId": workflow_id,
+                    "temporalRunId": workflow_run_id,
+                },
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _settle_interrupted_enrichment_cohort(
+    conn: sqlite3.Connection,
+    job_ids: tuple[JobId, ...],
+    *,
+    tenant_id: TenantId,
+    workflow_id: str | None,
+    workflow_run_id: str | None,
+    cancel_event: threading.Event | None,
+    activity_lease: EnrichmentExecutionLease | None = None,
+) -> None:
+    """Persist an interruption according to its actual Temporal cause.
+
+    Plain ``threading.Event`` callers retain the historical explicit-cancel
+    behavior.  Temporal activities attach
+    ``terminal_cancellation_requested`` to distinguish a user/workflow cancel
+    from an attempt timeout, worker shutdown, reset, or stale task token.  The
+    latter cases release unstarted work for redelivery instead of falsely
+    labeling it canceled.
+    """
+
+    terminal_requested = bool(
+        cancel_event is not None
+        and cancel_event.is_set()
+        and getattr(cancel_event, "terminal_cancellation_requested", True)
+    )
+    if terminal_requested:
+        cancel_enrichment_cohort(
+            conn,
+            job_ids,
+            tenant_id=tenant_id,
+            workflow_id=workflow_id,
+            workflow_run_id=workflow_run_id,
+        )
+        return
+    _release_unstarted_enrichment_cohort(
+        conn,
+        job_ids,
+        tenant_id=tenant_id,
+        workflow_id=workflow_id,
+        workflow_run_id=workflow_run_id,
+        activity_lease=activity_lease,
+    )
+
+
+def cancel_enrichment_cohort(
+    conn: sqlite3.Connection,
+    job_ids: tuple[JobId, ...],
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
+    workflow_id: str | None = None,
+    workflow_run_id: str | None = None,
+) -> int:
+    """Terminalize only unfinished members of one exact Enrich cohort."""
+
+    from jobctrl.state import record_job_event, set_stage_state, utc_now
+
+    canceled = 0
+    ownership = _workflow_ownership_metadata(workflow_id, workflow_run_id)
+    finished_at = utc_now()
+    repo = SqliteEnrichmentRepository(conn)
+    if workflow_id and workflow_run_id:
+        claim_enrichment_execution_lease_for_run(
+            conn,
+            tenant_id=tenant_id,
+            workflow_id=workflow_id,
+            run_id=workflow_run_id,
+            owner_token=f"cancellation:{workflow_id}:{workflow_run_id}",
+            activity_phase=3,
+            activity_attempt=1,
+        )
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for job_id in tuple(dict.fromkeys(job_ids)):
+            row = conn.execute(
+                "SELECT state, attempt_count, metadata_json, version "
+                "FROM job_stage_states WHERE tenant_id = ? AND job_id = ? "
+                "AND stage = 'enrich'",
+                (str(tenant_id), str(job_id)),
+            ).fetchone()
+            if row is None:
+                continue
+            state = str(row[0])
+            attempt_count = int(row[1] or 0)
+            version = int(row[3] or 0)
+            try:
+                metadata = json.loads(row[2] or "{}")
+            except (TypeError, ValueError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            if workflow_id and metadata.get("workflowId") != workflow_id:
+                continue
+            if workflow_run_id and metadata.get("temporalRunId") != workflow_run_id:
+                continue
+            if state not in {"pending", "queued", "running"}:
+                continue
+            terminal_metadata = {**metadata, **ownership}
+            aggregate = repo.load(tenant_id, job_id)
+            if aggregate is not None and aggregate.is_enriched:
+                set_stage_state(
+                    conn,
+                    job_id,
+                    "enrich",
+                    "succeeded",
+                    tenant_id=tenant_id,
+                    attempt_count=aggregate.attempt_count,
+                    finished_at=aggregate.enriched_at or aggregate.updated_at or finished_at,
+                    retryable=True,
+                    metadata={
+                        **terminal_metadata,
+                        "recoveryReason": "committed_before_cancellation",
+                    },
+                    validate_transition=False,
+                    expected_version=version,
+                )
+                record_job_event(
+                    conn,
+                    job_id,
+                    "enrich",
+                    "StageCompleted",
+                    tenant_id=tenant_id,
+                    message="Enrichment committed before workflow cancellation.",
+                    payload={
+                        "reason": "committed_before_cancellation",
+                        "workflowId": workflow_id,
+                        "temporalRunId": workflow_run_id,
+                    },
+                    entity_kind="workflow_run" if workflow_id else None,
+                    entity_ref=workflow_id,
+                    idempotency_key=(
+                        f"enrich-cohort-committed:{tenant_id}:"
+                        f"{workflow_id or 'unknown'}:{workflow_run_id or 'unknown'}:{job_id}"
+                    ),
+                )
+                continue
+            if aggregate is not None and aggregate.is_failed:
+                last_error = aggregate.last_attempt.error if aggregate.last_attempt else None
+                set_stage_state(
+                    conn,
+                    job_id,
+                    "enrich",
+                    "failed",
+                    tenant_id=tenant_id,
+                    attempt_count=aggregate.attempt_count,
+                    finished_at=(
+                        aggregate.last_attempt.finished_at
+                        if aggregate.last_attempt and aggregate.last_attempt.finished_at
+                        else aggregate.updated_at or finished_at
+                    ),
+                    error_code=last_error.code if last_error else "DETAIL_ERROR",
+                    error_message=(last_error.message if last_error else "Enrichment failed before cancellation."),
+                    retryable=last_error.retryable if last_error else True,
+                    metadata={
+                        **terminal_metadata,
+                        "recoveryReason": "failure_committed_before_cancellation",
+                    },
+                    validate_transition=False,
+                    expected_version=version,
+                )
+                record_job_event(
+                    conn,
+                    job_id,
+                    "enrich",
+                    "StageFailed",
+                    tenant_id=tenant_id,
+                    level="warning",
+                    message="Enrichment failure committed before workflow cancellation.",
+                    payload={
+                        "reason": "failure_committed_before_cancellation",
+                        "workflowId": workflow_id,
+                        "temporalRunId": workflow_run_id,
+                    },
+                    entity_kind="workflow_run" if workflow_id else None,
+                    entity_ref=workflow_id,
+                    idempotency_key=(
+                        f"enrich-cohort-failed:{tenant_id}:"
+                        f"{workflow_id or 'unknown'}:{workflow_run_id or 'unknown'}:{job_id}"
+                    ),
+                )
+                continue
+            if aggregate is not None and aggregate.is_running:
+                interrupted = aggregate.fail_attempt(
+                    error=EnrichmentError(
+                        code="WORKFLOW_CANCELED",
+                        message="Enrichment attempt interrupted by workflow cancellation.",
+                        retryable=True,
+                    ),
+                    finished_at=finished_at,
+                )
+                repo.save(interrupted, commit=False)
+                attempt_count = interrupted.attempt_count
+            if state == "pending":
+                set_stage_state(
+                    conn,
+                    job_id,
+                    "enrich",
+                    "queued",
+                    tenant_id=tenant_id,
+                    attempt_count=attempt_count,
+                    retryable=True,
+                    metadata=terminal_metadata or None,
+                    validate_transition=False,
+                    expected_version=version,
+                )
+                version += 1
+                record_job_event(
+                    conn,
+                    job_id,
+                    "enrich",
+                    "StageQueued",
+                    tenant_id=tenant_id,
+                    message="Enrichment ownership confirmed for cancellation.",
+                    payload={
+                        "source": "cancellation_reconciliation",
+                        "workflowId": workflow_id,
+                        "temporalRunId": workflow_run_id,
+                    },
+                    idempotency_key=(
+                        f"enrich-cohort-cancel-queue:{tenant_id}:"
+                        f"{workflow_id or 'unknown'}:{workflow_run_id or 'unknown'}:{job_id}"
+                    ),
+                )
+                state = "queued"
+            if state not in {"queued", "running"}:
+                continue
+            set_stage_state(
+                conn,
+                job_id,
+                "enrich",
+                "canceled",
+                tenant_id=tenant_id,
+                attempt_count=attempt_count,
+                finished_at=finished_at,
+                retryable=True,
+                metadata={
+                    **terminal_metadata,
+                    "cancellationReason": "workflow_canceled",
+                },
+                validate_transition=False,
+                expected_version=version,
+            )
+            record_job_event(
+                conn,
+                job_id,
+                "enrich",
+                "StageCanceled",
+                tenant_id=tenant_id,
+                level="warning",
+                message="Enrichment canceled with its owning workflow.",
+                payload={
+                    "reason": "workflow_canceled",
+                    "canceledAt": finished_at,
+                    "workflowId": workflow_id,
+                    "temporalRunId": workflow_run_id,
+                },
+                entity_kind="workflow_run" if workflow_id else None,
+                entity_ref=workflow_id,
+                idempotency_key=(
+                    f"enrich-cohort-canceled:{tenant_id}:"
+                    f"{workflow_id or 'unknown'}:{workflow_run_id or 'unknown'}:{job_id}"
+                ),
+            )
+            canceled += 1
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return canceled
 
 
 def _run_detail_scraper(
@@ -2730,6 +3337,8 @@ def _run_detail_scraper(
     on_job_enriched: Callable[[JobId], None] | None = None,
     recovery_key: str | None = None,
     activity_lease: EnrichmentExecutionLease | None = None,
+    workflow_id: str | None = None,
+    workflow_run_id: str | None = None,
 ) -> dict:
     """Group pending jobs by site and process each batch.
 
@@ -2751,16 +3360,31 @@ def _run_detail_scraper(
     # A later enrichment workflow must reconsider robots-blocked rows, but only
     # on its first pass.  Keeping them out of the steady-state pending selector
     # prevents a still-disallowed URL from looping within the same workflow.
-    enrichment_selector = (
-        db_module._ENRICHMENT_RUNNABLE
-        if reset_linkedin_candidates
-        else db_module._ENRICHMENT_PENDING
-    )
+    selected_job_ids = tuple(dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids))
+    if workflow_id:
+        enrichment_selector = (
+            db_module._ENRICHMENT_SELECTED_RUNNABLE
+            if reset_linkedin_candidates
+            else db_module._ENRICHMENT_SELECTED_PENDING
+        )
+    else:
+        enrichment_selector = (
+            db_module._ENRICHMENT_RUNNABLE if reset_linkedin_candidates else db_module._ENRICHMENT_PENDING
+        )
     where_parts = [enrichment_selector, skip_filter]
     params: list[object] = []
-    selected_job_ids = tuple(
-        dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids)
-    )
+    if workflow_id:
+        queued_owner = (
+            "(COALESCE(jss_enrich.state, 'pending') != 'queued' OR ("
+            "jss_enrich.metadata_json IS NOT NULL "
+            "AND json_valid(jss_enrich.metadata_json) "
+            "AND json_extract(jss_enrich.metadata_json, '$.workflowId') = ?"
+        )
+        params.append(workflow_id)
+        if workflow_run_id:
+            queued_owner += " AND json_extract(jss_enrich.metadata_json, '$.temporalRunId') = ?"
+            params.append(workflow_run_id)
+        where_parts.append(f"{queued_owner}))")
     if selected_job_ids:
         placeholders = ", ".join("?" for _ in selected_job_ids)
         where_parts.append("jobs.tenant_id = ?")
@@ -2773,28 +3397,101 @@ def _run_detail_scraper(
     # navigation budget bounds them all together.
     run_budget = _new_enrichment_budget()
 
-    if reset_linkedin_candidates:
-        _reset_authenticated_linkedin_retry_candidates(
+    def _load_candidate_rows() -> list[sqlite3.Row | tuple]:
+        return conn.execute(
+            f"SELECT jobs.job_id, jobs.title, jobs.site, "
+            "jss_enrich.state, jss_enrich.error_code, jss_enrich.metadata_json "
+            f"FROM jobs {db_module._ENRICHMENT_JOIN} {db_module._ACTIVE_STATE_JOIN} "
+            f"WHERE {' AND '.join(where_parts)} "
+            f"AND {db_module._NOT_CLOSED_ACTIVE_STATE} "
+            "ORDER BY jobs.site, "
+            "CASE WHEN jss_enrich.state = 'blocked' "
+            "AND jss_enrich.error_code = 'ENRICH_ROBOTS_DISALLOWED' THEN 0 ELSE 1 END, "
+            "jobs.job_id",
+            params,
+        ).fetchall()
+
+    def _owned_workflow_job_ids() -> tuple[JobId, ...]:
+        if not workflow_id:
+            return ()
+        owner_params: list[object] = [str(stable_tenant_id), workflow_id]
+        run_clause = ""
+        if workflow_run_id:
+            run_clause = "AND json_extract(metadata_json, '$.temporalRunId') = ? "
+            owner_params.append(workflow_run_id)
+        owner_rows = conn.execute(
+            "SELECT job_id FROM job_stage_states "
+            "WHERE tenant_id = ? AND stage = 'enrich' "
+            "AND state IN ('pending', 'queued', 'running') "
+            "AND metadata_json IS NOT NULL AND json_valid(metadata_json) "
+            "AND json_extract(metadata_json, '$.workflowId') = ? "
+            f"{run_clause}ORDER BY job_id",
+            owner_params,
+        ).fetchall()
+        return tuple(canonical_job_id(str(row[0])) for row in owner_rows)
+
+    # Persist the normal selected cohort before the authenticated recovery
+    # pre-pass performs any navigation. A worker loss during that pre-pass can
+    # therefore be reconciled from exact workflow/run ownership.
+    initial_rows = _load_candidate_rows()
+    if workflow_id and initial_rows:
+        initial_by_site: dict[str, list[tuple[JobId, str]]] = {}
+        for row in initial_rows:
+            initial_job_id = canonical_job_id(str(row[0]))
+            initial_site = str(row[2] or "")
+            if sites and initial_site not in sites:
+                continue
+            if row[3] == "blocked" and row[4] == "ENRICH_ROBOTS_DISALLOWED":
+                if not recovery_key or not _claim_robots_retry_for_workflow(
+                    conn,
+                    initial_job_id,
+                    recovery_key,
+                    tenant_id=stable_tenant_id,
+                    activity_lease=activity_lease,
+                ):
+                    continue
+            initial_by_site.setdefault(initial_site, []).append((initial_job_id, str(row[1] or "")))
+        initial_job_ids = tuple(
+            job_id
+            for site_jobs in initial_by_site.values()
+            for job_id, _title in (site_jobs[:max_per_site] if max_per_site and max_per_site > 0 else site_jobs)
+        )
+        _queue_enrichment_cohort(
             conn,
-            limit=max_per_site,
-            job_ids=selected_job_ids,
-            resolver_factory=_default_linkedin_apply_resolver_factory,
-            run_budget=run_budget,
+            initial_job_ids,
+            tenant_id=stable_tenant_id,
+            workflow_id=workflow_id,
+            workflow_run_id=workflow_run_id,
             activity_lease=activity_lease,
         )
 
-    rows = conn.execute(
-        f"SELECT jobs.job_id, jobs.title, jobs.site, "
-        "jss_enrich.state, jss_enrich.error_code, jss_enrich.metadata_json "
-        f"FROM jobs {db_module._ENRICHMENT_JOIN} {db_module._ACTIVE_STATE_JOIN} "
-        f"WHERE {' AND '.join(where_parts)} "
-        f"AND {db_module._NOT_CLOSED_ACTIVE_STATE} "
-        "ORDER BY jobs.site, "
-        "CASE WHEN jss_enrich.state = 'blocked' "
-        "AND jss_enrich.error_code = 'ENRICH_ROBOTS_DISALLOWED' THEN 0 ELSE 1 END, "
-        "jobs.job_id",
-        params,
-    ).fetchall()
+    if reset_linkedin_candidates:
+        try:
+            _reset_authenticated_linkedin_retry_candidates(
+                conn,
+                limit=max_per_site,
+                job_ids=selected_job_ids,
+                resolver_factory=_default_linkedin_apply_resolver_factory,
+                run_budget=run_budget,
+                activity_lease=activity_lease,
+                cancel_event=cancel_event,
+                workflow_id=workflow_id,
+                workflow_run_id=workflow_run_id,
+            )
+        except TransientNetworkError:
+            if cancel_event is not None and cancel_event.is_set():
+                _settle_interrupted_enrichment_cohort(
+                    conn,
+                    _owned_workflow_job_ids(),
+                    tenant_id=stable_tenant_id,
+                    workflow_id=workflow_id,
+                    workflow_run_id=workflow_run_id,
+                    cancel_event=cancel_event,
+                    activity_lease=activity_lease,
+                )
+            raise
+
+    rows = _load_candidate_rows()
 
     if not rows:
         log.info("No pending jobs to scrape.")
@@ -2810,11 +3507,7 @@ def _run_detail_scraper(
                 metadata = json.loads(row[5] or "{}")
             except (TypeError, ValueError):
                 metadata = {}
-            if (
-                recovery_key
-                and isinstance(metadata, dict)
-                and metadata.get("lastRobotsRetryWorkflow") == recovery_key
-            ):
+            if recovery_key and isinstance(metadata, dict) and metadata.get("lastRobotsRetryWorkflow") == recovery_key:
                 continue
         site_jobs.setdefault(site, []).append((job_id, title))
 
@@ -2881,11 +3574,26 @@ def _run_detail_scraper(
             )
         ]
 
+    # Resolve the per-site limit and robots-retry claims before any outbound
+    # work. This is the exact cohort that cancellation is allowed to mutate.
+    planned_site_jobs = {site: _jobs_for_site(site, conn) for site in order}
+    planned_job_ids = tuple(
+        canonical_job_id(str(job_id)) for site in order for job_id, _title in planned_site_jobs[site]
+    )
+    if workflow_id:
+        _queue_enrichment_cohort(
+            conn,
+            planned_job_ids,
+            tenant_id=stable_tenant_id,
+            workflow_id=workflow_id,
+            workflow_run_id=workflow_run_id,
+            activity_lease=activity_lease,
+        )
+    owned_job_ids = _owned_workflow_job_ids() if workflow_id else planned_job_ids
+
     if workers > 1 and len(order) > 1:
         database_path = next(
-            str(row[2])
-            for row in conn.execute("PRAGMA database_list").fetchall()
-            if str(row[1]) == "main"
+            str(row[2]) for row in conn.execute("PRAGMA database_list").fetchall() if str(row[1]) == "main"
         )
 
         def _scrape_site(site: str) -> dict:
@@ -2893,7 +3601,7 @@ def _run_detail_scraper(
                 raise TransientNetworkError("enrichment canceled")
             thread_conn = db_module.get_connection(database_path)
             try:
-                jobs = _jobs_for_site(site, thread_conn)
+                jobs = planned_site_jobs[site]
                 log.info("%s -- %d jobs", site, len(jobs))
                 if cancel_event is None:
                     stats = scrape_site_batch(
@@ -2907,6 +3615,8 @@ def _run_detail_scraper(
                         on_job_enriched=on_job_enriched,
                         recovery_key=recovery_key,
                         activity_lease=activity_lease,
+                        workflow_id=workflow_id,
+                        workflow_run_id=workflow_run_id,
                     )
                 else:
                     stats = scrape_site_batch(
@@ -2921,6 +3631,8 @@ def _run_detail_scraper(
                         on_job_enriched=on_job_enriched,
                         recovery_key=recovery_key,
                         activity_lease=activity_lease,
+                        workflow_id=workflow_id,
+                        workflow_run_id=workflow_run_id,
                     )
             finally:
                 db_module.close_connection(database_path)
@@ -2936,26 +3648,57 @@ def _run_detail_scraper(
             )
             return stats
 
+        transient_error: TransientNetworkError | None = None
         with ThreadPoolExecutor(max_workers=min(workers, len(order))) as pool:
             futures = {pool.submit(_scrape_site, site): site for site in order}
             for future in as_completed(futures):
-                if cancel_event is not None and cancel_event.is_set():
-                    raise TransientNetworkError("enrichment canceled")
                 site = futures[future]
                 try:
                     stats = future.result()
-                except TransientNetworkError:
-                    raise
+                except TransientNetworkError as exc:
+                    transient_error = transient_error or exc
+                    continue
                 except Exception as exc:  # noqa: BLE001 - one broken site must not abort the rest
                     _record_site_error(site, exc)
                     continue
                 any_site_succeeded = True
                 _merge_stats(stats)
+        if transient_error is not None or (cancel_event is not None and cancel_event.is_set()):
+            if cancel_event is not None and cancel_event.is_set():
+                _settle_interrupted_enrichment_cohort(
+                    conn,
+                    owned_job_ids,
+                    tenant_id=stable_tenant_id,
+                    workflow_id=workflow_id,
+                    workflow_run_id=workflow_run_id,
+                    cancel_event=cancel_event,
+                    activity_lease=activity_lease,
+                )
+                raise TransientNetworkError("enrichment canceled")
+            _release_unstarted_enrichment_cohort(
+                conn,
+                owned_job_ids,
+                tenant_id=stable_tenant_id,
+                workflow_id=workflow_id,
+                workflow_run_id=workflow_run_id,
+                activity_lease=activity_lease,
+            )
+            assert transient_error is not None
+            raise transient_error
     else:
         for site in order:
             if cancel_event is not None and cancel_event.is_set():
+                _settle_interrupted_enrichment_cohort(
+                    conn,
+                    owned_job_ids,
+                    tenant_id=stable_tenant_id,
+                    workflow_id=workflow_id,
+                    workflow_run_id=workflow_run_id,
+                    cancel_event=cancel_event,
+                    activity_lease=activity_lease,
+                )
                 raise TransientNetworkError("enrichment canceled")
-            jobs = _jobs_for_site(site, conn)
+            jobs = planned_site_jobs[site]
             log.info("%s -- %d jobs", site, len(jobs))
             try:
                 if cancel_event is None:
@@ -2970,6 +3713,8 @@ def _run_detail_scraper(
                         on_job_enriched=on_job_enriched,
                         recovery_key=recovery_key,
                         activity_lease=activity_lease,
+                        workflow_id=workflow_id,
+                        workflow_run_id=workflow_run_id,
                     )
                 else:
                     stats = scrape_site_batch(
@@ -2984,8 +3729,29 @@ def _run_detail_scraper(
                         on_job_enriched=on_job_enriched,
                         recovery_key=recovery_key,
                         activity_lease=activity_lease,
+                        workflow_id=workflow_id,
+                        workflow_run_id=workflow_run_id,
                     )
             except TransientNetworkError:
+                if cancel_event is not None and cancel_event.is_set():
+                    _settle_interrupted_enrichment_cohort(
+                        conn,
+                        owned_job_ids,
+                        tenant_id=stable_tenant_id,
+                        workflow_id=workflow_id,
+                        workflow_run_id=workflow_run_id,
+                        cancel_event=cancel_event,
+                        activity_lease=activity_lease,
+                    )
+                else:
+                    _release_unstarted_enrichment_cohort(
+                        conn,
+                        owned_job_ids,
+                        tenant_id=stable_tenant_id,
+                        workflow_id=workflow_id,
+                        workflow_run_id=workflow_run_id,
+                        activity_lease=activity_lease,
+                    )
                 raise
             except Exception as exc:  # noqa: BLE001 - one broken site must not abort the rest
                 _record_site_error(site, exc)
@@ -3001,6 +3767,15 @@ def _run_detail_scraper(
                 stats["tiers"].get(2, 0),
                 stats["tiers"].get(3, 0),
             )
+
+    _release_unstarted_enrichment_cohort(
+        conn,
+        owned_job_ids,
+        tenant_id=stable_tenant_id,
+        workflow_id=workflow_id,
+        workflow_run_id=workflow_run_id,
+        activity_lease=activity_lease,
+    )
 
     if site_errors and total_stats["processed"] == 0 and not any_site_succeeded:
         raise _systemic_enrichment_error(site_errors)
@@ -3092,9 +3867,7 @@ def stream_detail(
                 for site, jobs in site_jobs.items():
                     log.info("%s: %d jobs", site, len(jobs))
                     try:
-                        stats = scrape_site_batch(
-                            conn, site, jobs, gateway=gateway, run_budget=run_budget
-                        )
+                        stats = scrape_site_batch(conn, site, jobs, gateway=gateway, run_budget=run_budget)
                         total_ok += stats["ok"] + stats["partial"]
                         total_err += stats["error"]
                         log.info(
@@ -3134,6 +3907,8 @@ def run_enrichment(
     on_job_enriched: Callable[[JobId], None] | None = None,
     recovery_key: str | None = None,
     activity_lease: EnrichmentExecutionLease | None = None,
+    workflow_id: str | None = None,
+    workflow_run_id: str | None = None,
 ) -> dict:
     """Main entry point for detail page enrichment.
 
@@ -3161,13 +3936,9 @@ def run_enrichment(
         url_stats["failed"],
     )
 
-    wttj_count = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE site = 'WelcomeToTheJungle'"
-    ).fetchone()[0]
+    wttj_count = conn.execute("SELECT COUNT(*) FROM jobs WHERE site = 'WelcomeToTheJungle'").fetchone()[0]
     if wttj_count > 0:
-        sample = conn.execute(
-            "SELECT url FROM jobs WHERE site = 'WelcomeToTheJungle' LIMIT 1"
-        ).fetchone()
+        sample = conn.execute("SELECT url FROM jobs WHERE site = 'WelcomeToTheJungle' LIMIT 1").fetchone()
         if sample and not sample[0].startswith("http"):
             updated = resolve_wttj_urls(conn)
             log.info("WTTJ: %d URLs updated", updated)
@@ -3183,6 +3954,8 @@ def run_enrichment(
             on_job_enriched=on_job_enriched,
             recovery_key=recovery_key,
             activity_lease=activity_lease,
+            workflow_id=workflow_id,
+            workflow_run_id=workflow_run_id,
         )
     return _run_detail_scraper(
         conn,
@@ -3193,6 +3966,8 @@ def run_enrichment(
         reset_linkedin_candidates=reset_linkedin_candidates,
         on_job_enriched=on_job_enriched,
         activity_lease=activity_lease,
+        workflow_id=workflow_id,
+        workflow_run_id=workflow_run_id,
     )
 
 
