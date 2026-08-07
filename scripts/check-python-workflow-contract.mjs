@@ -33,24 +33,29 @@ function triggerPaths(trigger) {
   return entries;
 }
 
-const pullRequestPaths = triggerPaths("pull_request");
-
-// A bare `pull_request:` trigger ran all three matrix lanes on every pull
-// request, including ones that changed no Python at all.
-assert.ok(
-  pullRequestPaths.length > 0,
-  "Python CI must filter pull requests by path, not run on every pull request.",
+// Every layer of a GitHub stack must instantiate this workflow so that layer
+// gets a check record; a filtered-out workflow reports nothing at all rather
+// than reporting a skip. Cost belongs on the job-level trusted-cumulative-head
+// `if:`, which is the pattern GitHub documents for stacks.
+// scripts/stacked-ci-workflows.test.mjs asserts the same invariant by parsing
+// the YAML; this keeps it enforced by the workflow's own contract step too.
+assert.equal(
+  triggerPaths("pull_request").length,
+  0,
+  "Python CI must not filter pull requests by path; every stack layer needs a check record.",
 );
-assert.deepEqual(
-  pullRequestPaths,
-  triggerPaths("push"),
-  "Python CI must filter pull requests and pushes by the same paths.",
+assert.doesNotMatch(
+  onBlock.slice(onBlock.indexOf("\n  pull_request:")),
+  /branches:/,
+  "Python CI must not restrict pull requests to a base branch.",
 );
 
 // `packages/**` holds the shared cross-runtime parity fixtures and the
 // domain-event sources; `packaging/**` holds provider-packs.lock.json and
-// capability-policy.json; the release-scan tests read workflow files. Dropping
-// any of these would let a change that breaks Python CI merge without running it.
+// capability-policy.json; the release-scan tests read workflow files. All sit
+// outside workers/ and scripts/, so dropping any of them would let a push that
+// breaks Python CI land on main without ever running it.
+const pushPaths = triggerPaths("push");
 for (const required of [
   "workers/**",
   "scripts/**",
@@ -59,18 +64,10 @@ for (const required of [
   ".github/workflows/**",
 ]) {
   assert.ok(
-    pullRequestPaths.includes(required),
-    `Python CI must run when ${required} changes; the suite reads files from it.`,
+    pushPaths.includes(required),
+    `Python CI must run when a push changes ${required}; the suite reads files from it.`,
   );
 }
-
-// Stacked pull requests target their parent branch rather than main, so a
-// `branches` filter here would silently skip every stacked layer.
-assert.doesNotMatch(
-  onBlock.slice(onBlock.indexOf("\n  pull_request:")),
-  /branches:/,
-  "Python CI must not restrict pull requests to a base branch; stacked PRs target their parent.",
-);
 
 assert.doesNotMatch(
   workflow,

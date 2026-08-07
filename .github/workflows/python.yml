@@ -1,13 +1,19 @@
 name: Python CI
 
-# The Python suite reads real files from outside workers/ and scripts/:
-# `packages/**` holds the shared cross-runtime parity fixtures and the
+# `push` is filtered to the files this suite actually reads. Beyond workers/ and
+# scripts/, `packages/**` holds the shared cross-runtime parity fixtures and the
 # domain-event sources, `packaging/**` holds provider-packs.lock.json and
 # capability-policy.json, and the release-scan tests read workflow files under
-# `.github/workflows/**`. Both lists must stay in sync and must keep those
-# directories, or a change that breaks Python CI could merge without ever
-# running it. No `branches` filter on `pull_request`: stacked PRs target their
-# parent branch, not main.
+# `.github/workflows/**`. A push that changed any of those without these entries
+# would skip the suite covering it.
+#
+# `pull_request` deliberately takes no filter at all — no `branches`, no
+# `paths`. Every layer of a GitHub stack must instantiate this workflow so it
+# produces a check record for that layer; a filtered-out workflow reports
+# nothing rather than reporting a skip. Cost is controlled at the job level
+# instead, by the `if:` below that admits only a trusted cumulative head, which
+# is the pattern GitHub documents for stacked pull requests. Enforced by
+# scripts/stacked-ci-workflows.test.mjs — do not add a filter here.
 on:
   push:
     branches: ["main"]
@@ -19,13 +25,6 @@ on:
       - "pyproject.toml"
       - ".github/workflows/**"
   pull_request:
-    paths:
-      - "workers/**"
-      - "scripts/**"
-      - "packages/**"
-      - "packaging/**"
-      - "pyproject.toml"
-      - ".github/workflows/**"
   workflow_dispatch:
 
 jobs:
