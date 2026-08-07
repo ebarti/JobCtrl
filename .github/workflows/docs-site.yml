@@ -1,19 +1,32 @@
 name: Docs Site
 
+# This workflow exists to build the published site and gate its dead links, so
+# it should run exactly when the published site can change. The directories
+# negated below are listed in the `srcExclude` of docs/.vitepress/config.ts:
+# VitePress never builds a page from them, links into them are rewritten to
+# absolute GitHub URLs, and check-docs-site-links.mjs only walks the emitted
+# dist and skips absolute URLs. Nothing under them can reach the artifact, so
+# building for them is pure cost. Both lists must stay in sync, and the
+# negations must stay in step with `srcExclude` — the workflow contract check
+# below enforces both. No `branches` filter on `pull_request`: stacked PRs
+# target their parent branch, not main, and would otherwise skip this gate.
 on:
   push:
     branches: ["main"]
     paths:
       - "docs/**"
+      - "!docs/plans/**"
+      - "!docs/incidents/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "scripts/check-install-asset.mjs"
       - "scripts/get"
       - ".github/workflows/docs-site.yml"
   pull_request:
-    branches: ["main"]
     paths:
       - "docs/**"
+      - "!docs/plans/**"
+      - "!docs/incidents/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "scripts/check-install-asset.mjs"
@@ -45,6 +58,9 @@ jobs:
         with:
           node-version: "20.19"
           cache: pnpm
+
+      - name: Validate docs workflow contract
+        run: node scripts/check-docs-workflow-contract.mjs
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
