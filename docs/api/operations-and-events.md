@@ -229,6 +229,11 @@ timeline; it is never presented as a fresh history read or a JobCtrl request.
 `workflowId` derived from the canonical event payload. Free-text `q` search
 includes that workflow ID, so a run's **Review activity** action returns the
 events for that exact workflow instead of broad job history or an empty result.
+Worker stage runners stamp that ownership at the source: pipeline-level stage
+events and per-job stage events recorded while a Temporal run executes carry
+the run's canonical workflow ID in their payload, across the activity's
+blocking executor and per-stage thread fan-out. Events recorded outside a run
+(CLI one-offs) carry no workflow ID and stay job-scoped only.
 
 The activity detail route always preserves the selected event as its page
 identity. When the projection has related job or workflow identity, the page

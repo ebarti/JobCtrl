@@ -694,6 +694,11 @@ def _run_selected_material_jobs(
         return results
 
     ensure_active()
+    # Pool threads lose the activity's run context; re-bind it so per-job
+    # stage events emitted inside the material runners keep run ownership.
+    from jobctrl.infrastructure.workflow_run_context import carry_workflow_run_context
+
+    run_one_owned = carry_workflow_run_context(run_one)
     executor = ThreadPoolExecutor(
         max_workers=worker_count,
         thread_name_prefix=f"selected-{stage}",
@@ -708,7 +713,7 @@ def _run_selected_material_jobs(
             ensure_active()
             job_id = job_ids[next_index]
             next_index += 1
-            in_flight[executor.submit(run_one, job_id)] = job_id
+            in_flight[executor.submit(run_one_owned, job_id)] = job_id
 
     try:
         fill_worker_slots()

@@ -620,11 +620,16 @@ def run_tailoring(
             message="Tailoring started",
         )
 
+    # Pool threads lose the activity's run context; re-bind it so events the
+    # per-job tailoring worker records keep run ownership.
+    from jobctrl.infrastructure.workflow_run_context import carry_workflow_run_context
+
+    tailor_one_owned = carry_workflow_run_context(_tailor_one_job)
     future_to_job: dict = {}
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         for job in jobs:
             future = executor.submit(
-                _tailor_one_job,
+                tailor_one_owned,
                 job,
                 "",  # legacy resume_text param — unused
                 snapshot,

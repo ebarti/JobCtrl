@@ -29,6 +29,7 @@ from jobctrl.domain.scoring.eligibility import (
 from jobctrl.domain.scoring.value_objects import EligibilityAssessment
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.domain.pipeline_types import deserialize_stage_state_kind
+from jobctrl.infrastructure.workflow_run_context import current_workflow_id
 
 log = logging.getLogger(__name__)
 
@@ -1223,6 +1224,14 @@ def record_job_event(
     )
     if stable_job_id is not None:
         current_payload["jobId"] = str(stable_job_id)
+    # Stamp canonical run ownership so run-scoped activity review can find the
+    # per-job and pipeline-stage events a workflow actually produced. Callers
+    # that already declare ownership (Workflow* lifecycle events, discovery
+    # runs) keep their explicit value.
+    if "workflowId" not in current_payload and "workflow_id" not in current_payload:
+        ambient_workflow_id = current_workflow_id()
+        if ambient_workflow_id:
+            current_payload["workflowId"] = ambient_workflow_id
     ts = occurred_at or utc_now()
     cursor = conn.execute(
         """

@@ -2166,8 +2166,10 @@ describe("local TypeScript API", () => {
 
   it("finds workflow activity by its canonical workflow id and exposes that run reference", async () => {
     const workflowId = "run-activity-search-regression";
+    const jobKey = jobIdFor("https://example.com/jobs/ready");
     const db = new Database(options.dbPath);
     let eventId = "";
+    let stageEventId = "";
     try {
       insertPipelineWorkflowEvent(db, {
         eventType: "WorkflowStarted",
@@ -2176,11 +2178,25 @@ describe("local TypeScript API", () => {
         temporalRunId: "temporal-activity-search-regression",
         startedAt: "2026-04-29T11:30:00+00:00",
       });
+      // Worker stage runners stamp the owning run into per-job stage events
+      // (jobctrl.infrastructure.workflow_run_context), so run-scoped review
+      // returns the run's actual work — not only lifecycle markers.
+      const stageRow = db
+        .prepare(
+          `INSERT INTO job_events (
+             tenant_id, job_id, identity_version, stage, event_type, level,
+             message, occurred_at, payload_json
+           ) VALUES ('local', ?, 1, 'score', 'StageCompleted', 'info',
+                     'Fit score 9/10', '2026-04-29T11:31:00+00:00', ?)`,
+        )
+        .run(jobKey, JSON.stringify({ workflowId, jobId: jobKey, stage: "score" }));
+      stageEventId = String(stageRow.lastInsertRowid);
       const row = db
         .prepare(
           `SELECT event_id
              FROM job_events
-            WHERE json_extract(payload_json, '$.workflowId') = ?`,
+            WHERE json_extract(payload_json, '$.workflowId') = ?
+              AND event_type = 'WorkflowStarted'`,
         )
         .get(workflowId) as { event_id: number };
       eventId = String(row.event_id);
@@ -2196,6 +2212,14 @@ describe("local TypeScript API", () => {
       });
       expect(activity.statusCode, activity.body).toBe(200);
       expect(activity.json().items).toEqual([
+        expect.objectContaining({
+          eventId: stageEventId,
+          eventType: "StageCompleted",
+          workflowId,
+          jobKey,
+          title: "Platform Engineer",
+          company: "ExampleCo",
+        }),
         expect.objectContaining({
           eventId,
           eventType: "WorkflowStarted",

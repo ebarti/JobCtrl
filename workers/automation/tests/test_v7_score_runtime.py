@@ -375,6 +375,44 @@ def test_score_by_id_rejects_url_shaped_identity_before_llm(
     assert llm.calls == 0
 
 
+def test_score_stage_events_carry_owning_workflow_id_under_a_run(
+    conn: sqlite3.Connection,
+) -> None:
+    """Per-job stage events emitted during a pipeline run carry the workflow id.
+
+    Regression for run-scoped activity review (PR #764): the run drawer's
+    "Review activity" queries by the exact canonical workflow id, so scoring
+    events produced under a run must stamp that ownership into their payload.
+    """
+    from jobctrl.infrastructure.workflow_run_context import workflow_run_context
+
+    _seed_target(conn, tenant_id=_TENANT_A, job_id=_JOB_ID_A)
+
+    with workflow_run_context("pipeline-run-ownership-regression"):
+        outcome = _score_by_id(
+            conn,
+            tenant_id=_TENANT_A,
+            job_id=_JOB_ID_A,
+            llm=_StrongLlm(),
+        )
+
+    assert outcome.ok is True
+    rows = conn.execute(
+        """
+        SELECT event_type, json_extract(payload_json, '$.workflowId') AS workflow_id
+        FROM job_events
+        WHERE tenant_id = ? AND job_id = ? AND stage = 'score'
+          AND event_type IN ('StageStarted', 'StageCompleted')
+        ORDER BY event_id
+        """,
+        (str(_TENANT_A), str(_JOB_ID_A)),
+    ).fetchall()
+    assert [(row["event_type"], row["workflow_id"]) for row in rows] == [
+        ("StageStarted", "pipeline-run-ownership-regression"),
+        ("StageCompleted", "pipeline-run-ownership-regression"),
+    ]
+
+
 def test_employer_analysis_event_preserves_tenant_and_job_id(
     conn: sqlite3.Connection,
 ) -> None:
