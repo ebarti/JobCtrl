@@ -104,6 +104,7 @@ from jobctrl.domain.materials.voice import (
     VoiceResult,
     apply_voice_to_payload,
     build_voice_request,
+    summary_voice_rejection_reason,
 )
 from jobctrl.domain.materials.voice_metrics import measure_voice_delta
 from jobctrl.domain.materials.claim_grounding import (
@@ -712,10 +713,15 @@ def _canonical_claim_location(location: str) -> str:
 
 
 def _skill_group_claim_location(location: str) -> bool:
-    """Return whether a mapping targets one complete rendered skill group."""
+    """Return whether a mapping targets one complete rendered skill group.
+
+    Ids may contain dots ("node.js"): any bracket-free remainder after the
+    section prefix is the category id, while item locations always carry an
+    ``.items[N]`` bracket suffix and therefore never match.
+    """
     return bool(
         re.fullmatch(
-            r"(?:skills|skill_categories|skill_category_updates)\.[^.\[]+",
+            r"(?:skills|skill_categories|skill_category_updates)\.[^\[\]]+",
             location,
         )
         or re.fullmatch(r"skill_category_updates\[\d+\]", location)
@@ -723,11 +729,13 @@ def _skill_group_claim_location(location: str) -> bool:
 
 
 def _claim_location_requires_exact_text(location: str) -> bool:
+    # Entry ids may contain dots ("acme.co"); the trailing ".bullets[N]"
+    # component is unambiguous, so backtracking splits the id correctly.
     return bool(
         location in {"executive_profile", "summary", "resume.executive_profile"}
         or re.fullmatch(r"executive_profile\.sentence\[\d+\]", location)
         or re.fullmatch(
-            r"(?:experience|experience_updates)(?:\.[^.\[]+|\[\d+\])\.bullets\[\d+\]",
+            r"(?:experience|experience_updates)(?:\.[^\[\]]+|\[\d+\])\.bullets\[\d+\]",
             location,
         )
         or _skill_group_claim_location(location)
@@ -3502,6 +3510,7 @@ class TailorResumeUseCase:
                 model=voice_record.model,
                 proxy_delta=voice_record.proxy_delta,
                 reason=f"voice_introduced_fabrication: {voiced_error}",
+                summary_rejection_reason=voice_record.summary_rejection_reason,
             )
             coverage = self._coverage_for(base_rows, employer_analysis, None, corpus)
             return tailored_payload, base_rows, coverage, rejected, None, base_grounding
@@ -3543,6 +3552,14 @@ class TailorResumeUseCase:
             )
 
         voiced_payload = apply_voice_to_payload(tailored_payload, result)
+        # Sentence-identity gate audit: when the voiced summary broke identity the
+        # last accepted summary shipped instead — record why, never drop silently.
+        summary_rejection = summary_voice_rejection_reason(tailored_payload, result)
+        if summary_rejection:
+            log.warning(
+                "Voice pass summary rejected (%s); keeping the pre-voice summary.",
+                summary_rejection,
+            )
         # Deterministic acceptance gate (VOICE-01): voice must MEASURABLY reduce
         # buzzword density OR raise structural variety over the bullets that ship.
         before_bullets = [row.generated_text for row in base_rows if row.section == "experience"]
@@ -3557,6 +3574,7 @@ class TailorResumeUseCase:
             model=self._voice.model_id,
             proxy_delta=delta.to_dict(),
             reason="" if delta.improved else "voice_did_not_improve_proxies",
+            summary_rejection_reason=summary_rejection,
         )
         if not delta.improved:
             return None, record

@@ -133,12 +133,17 @@ async def test_passes_voice_schema_empty_tools_and_no_turn_cap() -> None:
     assert opts["extra_args"] == {"bare": None}
     assert opts["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == ""
     # The schema is the VoicePayload schema (summary sentences + experience prose).
-    props = opts["output_format"]["schema"]["properties"]
+    schema = opts["output_format"]["schema"]
+    props = schema["properties"]
     assert {
         "executive_profile",
         "executive_profile_sentences",
         "experience_updates",
     }.issubset(props)
+    # The sentence array is REQUIRED with at least one item: a voice model that
+    # omitted it would otherwise silently disable summary voicing forever.
+    assert "executive_profile_sentences" in schema["required"]
+    assert props["executive_profile_sentences"]["minItems"] == 1
 
 
 @pytest.mark.asyncio

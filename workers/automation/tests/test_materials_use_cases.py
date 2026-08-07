@@ -33,7 +33,10 @@ from jobctrl.domain.materials import (
 from jobctrl.domain.materials.adversarial import ADVERSARIAL_REVIEW_RESPONSE_SCHEMA
 from jobctrl.domain.materials.aggregate import MaterialsLifecycle
 from jobctrl.domain.materials.policy import LearnedTailoringRules, fingerprint_value
-from jobctrl.domain.materials.requirement_coverage import COVERAGE_PLANNER_RESPONSE_SCHEMA
+from jobctrl.domain.materials.requirement_coverage import (
+    COVERAGE_PLANNER_RESPONSE_SCHEMA,
+    GeneratedClaimMapping,
+)
 from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
 from jobctrl.domain.materials.use_cases import (
     COVER_LETTER_COMPLETION_MARKER,
@@ -45,6 +48,7 @@ from jobctrl.domain.materials.use_cases import (
     TailorResumeUseCase,
     _bullet_limit_overflow_metadata,
     _canonical_claim_location,
+    _claim_mapping_binding_errors,
     _claim_mappings_from_payload,
     _safe_filename_prefix,
 )
@@ -954,6 +958,61 @@ def test_claim_location_normalizes_summary_sentence_aliases(
     location: str, expected: str
 ) -> None:
     assert _canonical_claim_location(location) == expected
+
+
+def test_claim_binding_requires_exact_text_for_dotted_ids() -> None:
+    """Dotted profile ids ("node.js", "acme.co") keep the exact-binding contract.
+
+    Regression: the exact-text location regexes rejected ids containing dots, so
+    those surfaces silently downgraded to substring matching and a partial item
+    list could pass binding while satisfying the one-mapping-per-group count.
+    """
+    payload = {
+        "executive_profile": "Backend engineer.",
+        "executive_profile_sentences": ["Backend engineer."],
+        "experience_updates": [{"id": "acme.co", "bullets": ["Cut latency 40% with Python."]}],
+        "skill_category_updates": [{"id": "node.js", "items": ["Node.js", "Express"]}],
+    }
+
+    def _mappings(bullet_text: str, skill_text: str) -> tuple[GeneratedClaimMapping, ...]:
+        return (
+            GeneratedClaimMapping(
+                claim_id="claim-summary",
+                location="executive_profile",
+                text="Backend engineer.",
+                claim_label="evidence_reframed",
+            ),
+            GeneratedClaimMapping(
+                claim_id="claim-bullet",
+                location="experience.acme.co.bullets[0]",
+                text=bullet_text,
+                claim_label="evidence_reframed",
+            ),
+            GeneratedClaimMapping(
+                claim_id="claim-skills",
+                location="skills.node.js",
+                text=skill_text,
+                claim_label="evidence_reframed",
+            ),
+        )
+
+    assert (
+        _claim_mapping_binding_errors(
+            payload=payload,
+            mappings=_mappings("Cut latency 40% with Python.", "Node.js, Express"),
+        )
+        == ()
+    )
+
+    errors = _claim_mapping_binding_errors(
+        payload=payload, mappings=_mappings("Cut latency 40%", "Node.js")
+    )
+    assert any(
+        "claim-bullet text does not exactly match" in error for error in errors
+    )
+    assert any(
+        "claim-skills text does not exactly match" in error for error in errors
+    )
 
 
 def test_claim_mapping_parser_preserves_raw_fallback_while_clearing_domain_reason() -> None:

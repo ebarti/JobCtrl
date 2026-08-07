@@ -72,7 +72,8 @@ class VoicePayload(BaseModel):
         description="The voiced executive profile — de-buzzworded, same facts.",
     )
     executive_profile_sentences: list[str] = Field(
-        default_factory=list,
+        ...,
+        min_length=1,
         description=(
             "The voiced executive profile's ordered sentences; the one-space join must equal "
             "executive_profile and the item count must match the input."
@@ -159,38 +160,55 @@ def build_voice_request(
     )
 
 
+def summary_voice_rejection_reason(tailored_payload: dict, result: VoiceResult) -> str:
+    """Why the voiced summary cannot replace the source summary, or "" when it can.
+
+    This is the sentence-identity gate ``apply_voice_to_payload`` applies before
+    adopting the voiced executive profile. A non-empty reason means the original
+    (last accepted) summary is preserved and only bullets may be voiced — callers
+    must record that reason on the voice audit trail so the drop is inspectable
+    rather than silent.
+    """
+    source_summary_sentences = tuple(
+        str(sentence)
+        for sentence in tailored_payload.get("executive_profile_sentences") or ()
+        if str(sentence).strip()
+    )
+    voiced_summary_sentences = tuple(
+        str(sentence) for sentence in result.executive_profile_sentences
+    )
+    if not result.executive_profile:
+        return "voiced_summary_missing"
+    if not all(
+        sentence and sentence == sentence.strip() for sentence in voiced_summary_sentences
+    ):
+        return "voiced_summary_sentence_outer_whitespace"
+    if len(voiced_summary_sentences) != len(source_summary_sentences):
+        return "voiced_summary_sentence_count_mismatch"
+    if " ".join(voiced_summary_sentences) != result.executive_profile:
+        return "voiced_summary_sentence_join_mismatch"
+    return ""
+
+
 def apply_voice_to_payload(tailored_payload: dict, result: VoiceResult) -> dict:
     """Fold the voiced prose back onto the SELECTED payload (deterministic).
 
     Produces a NEW payload (a deep copy — the input is never mutated) whose
     executive profile and experience bullets are the voiced versions, and whose
     skills + structure are unchanged. The voiced executive profile is applied only
-    when non-empty; an experience entry's bullets are replaced ONLY when the voice
-    result supplies a matching id with a bullet count equal to the source's — a
-    mismatched/partial voice response leaves that entry's original bullets intact
-    so the audit's per-bullet identity is never silently corrupted.
+    when it passes the sentence-identity gate (``summary_voice_rejection_reason``);
+    an experience entry's bullets are replaced ONLY when the voice result supplies
+    a matching id with a bullet count equal to the source's — a mismatched/partial
+    voice response leaves that entry's original bullets intact so the audit's
+    per-bullet identity is never silently corrupted.
     """
     voiced = copy.deepcopy(tailored_payload)
 
-    source_summary_sentences = tuple(
-        str(sentence)
-        for sentence in voiced.get("executive_profile_sentences") or ()
-        if str(sentence).strip()
-    )
-    voiced_summary_sentences = tuple(
-        str(sentence) for sentence in result.executive_profile_sentences
-    )
-    if (
-        result.executive_profile
-        and all(
-            sentence and sentence == sentence.strip()
-            for sentence in voiced_summary_sentences
-        )
-        and len(voiced_summary_sentences) == len(source_summary_sentences)
-        and " ".join(voiced_summary_sentences) == result.executive_profile
-    ):
+    if not summary_voice_rejection_reason(tailored_payload, result):
         voiced["executive_profile"] = result.executive_profile
-        voiced["executive_profile_sentences"] = list(voiced_summary_sentences)
+        voiced["executive_profile_sentences"] = [
+            str(sentence) for sentence in result.executive_profile_sentences
+        ]
 
     voiced_by_id = {entry_id: bullets for entry_id, bullets in result.experience_bullets}
     for update in voiced.get("experience_updates") or []:
@@ -219,7 +237,11 @@ class VoicePassRecord:
     and the deterministic proxy delta (buzzword density / structural variety) that
     justified accepting the voiced payload. ``accepted`` records whether the voiced
     payload was kept (the proxies improved AND grounding re-validated) or rolled
-    back to the pre-voice candidate.
+    back to the pre-voice candidate. ``summary_rejection_reason`` labels the
+    post-generation sentence-identity gate: when non-empty, the voiced summary was
+    dropped for that reason and the last accepted summary shipped, even though
+    voiced bullets may still have been adopted (``accepted`` alone reflects the
+    bullet proxies, not the summary).
     """
 
     ran: bool
@@ -228,6 +250,7 @@ class VoicePassRecord:
     prompt_version: str = VOICE_PROMPT_VERSION
     proxy_delta: dict[str, Any] = field(default_factory=dict)
     reason: str = ""
+    summary_rejection_reason: str = ""
 
     @classmethod
     def skipped(cls, reason: str) -> VoicePassRecord:
@@ -241,6 +264,7 @@ class VoicePassRecord:
             "prompt_version": self.prompt_version,
             "proxy_delta": dict(self.proxy_delta),
             "reason": self.reason,
+            "summary_rejection_reason": self.summary_rejection_reason,
         }
 
     @classmethod
@@ -256,6 +280,7 @@ class VoicePassRecord:
             prompt_version=str(data.get("prompt_version") or VOICE_PROMPT_VERSION),
             proxy_delta=dict(proxy_delta) if isinstance(proxy_delta, dict) else {},
             reason=str(data.get("reason") or ""),
+            summary_rejection_reason=str(data.get("summary_rejection_reason") or ""),
         )
 
 
@@ -268,4 +293,5 @@ __all__ = [
     "VoicedExperience",
     "apply_voice_to_payload",
     "build_voice_request",
+    "summary_voice_rejection_reason",
 ]
