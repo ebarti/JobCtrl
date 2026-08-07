@@ -462,6 +462,73 @@ async def test_start_to_close_timeout_rotates_capacity_for_next_activity() -> No
     assert result == "next activity ran"
 
 
+@pytest.mark.asyncio
+async def test_rotation_prunes_retired_executors_whose_tasks_finished() -> None:
+    """Retired generations must not accumulate for the worker's lifetime."""
+
+    from jobctrl.infrastructure.temporal import run_in_activity as ria
+
+    loop = asyncio.get_running_loop()
+    first = ThreadPoolExecutor(max_workers=2)
+    finished_task: asyncio.Future = loop.create_future()
+    stuck_task: asyncio.Future = loop.create_future()
+    try:
+        ria.set_activity_executor(first)
+        assert ria._rotate_abandoned_activity_executor(first, finished_task)
+        assert [
+            executor for executor, _task in ria._RETIRED_ACTIVITY_EXECUTORS
+        ] == [first]
+        replacement = ria._activity_executor()
+        assert replacement is not first
+        assert replacement._max_workers == 2
+
+        finished_task.set_result(None)
+        assert ria._rotate_abandoned_activity_executor(replacement, stuck_task)
+        assert [
+            executor for executor, _task in ria._RETIRED_ACTIVITY_EXECUTORS
+        ] == [replacement]
+    finally:
+        if not stuck_task.done():
+            stuck_task.set_result(None)
+        ria.shutdown_activity_executors()
+        first.shutdown(wait=False, cancel_futures=True)
+
+
+def test_rotation_replacement_sizing_survives_missing_private_attr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without ThreadPoolExecutor._max_workers, use the worker sizing rule, not 1."""
+
+    from jobctrl.infrastructure.temporal import concurrency
+    from jobctrl.infrastructure.temporal import run_in_activity as ria
+
+    class _OpaqueExecutor:
+        def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+            return None
+
+    monkeypatch.setattr(
+        concurrency,
+        "resolve_max_concurrent_activities",
+        lambda config_path=None: concurrency.ResolvedActivityConcurrency(
+            value=4,
+            source="default",
+        ),
+    )
+    opaque = _OpaqueExecutor()
+    done_task = SimpleNamespace(done=lambda: True)
+    try:
+        ria.set_activity_executor(opaque)
+        assert ria._rotate_abandoned_activity_executor(opaque, done_task)
+        replacement = ria._activity_executor()
+        assert replacement is not opaque
+        assert (
+            replacement._max_workers
+            == concurrency.activity_executor_max_workers(4)
+        )
+    finally:
+        ria.shutdown_activity_executors()
+
+
 def test_run_stage_observed_reraises_after_stage_failed_event(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[tuple[str, str, str, dict[str, Any]]] = []
     monkeypatch.setattr(

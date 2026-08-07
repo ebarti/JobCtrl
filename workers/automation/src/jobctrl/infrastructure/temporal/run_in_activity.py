@@ -35,7 +35,11 @@ from temporalio import activity
 _T = TypeVar("_T")
 log = logging.getLogger(__name__)
 _ACTIVITY_EXECUTOR: ThreadPoolExecutor | None = None
-_RETIRED_ACTIVITY_EXECUTORS: list[ThreadPoolExecutor] = []
+# One (executor, abandoned task) pair per rotation. The task is the future of
+# the blocking call that ignored cancellation; once it finishes, the retired
+# generation has served its purpose and the entry is pruned on the next
+# rotation instead of accumulating until worker shutdown.
+_RETIRED_ACTIVITY_EXECUTORS: list[tuple[ThreadPoolExecutor, asyncio.Future]] = []
 _ACTIVITY_EXECUTOR_LOCK = threading.Lock()
 
 
@@ -55,7 +59,7 @@ def shutdown_activity_executors() -> None:
             executor
             for executor in [
                 _ACTIVITY_EXECUTOR,
-                *_RETIRED_ACTIVITY_EXECUTORS,
+                *(executor for executor, _task in _RETIRED_ACTIVITY_EXECUTORS),
             ]
             if executor is not None
         ]
@@ -70,8 +74,44 @@ def _activity_executor() -> ThreadPoolExecutor | None:
         return _ACTIVITY_EXECUTOR
 
 
+def _prune_retired_activity_executors_locked() -> None:
+    """Drop retired generations whose abandoned task has since finished.
+
+    Callers must hold ``_ACTIVITY_EXECUTOR_LOCK``. A finished task means the
+    stuck blocking call returned, so the shut-down executor only has winding
+    threads left; releasing our reference lets it be collected instead of
+    growing one entry per cancellation until worker shutdown.
+    """
+
+    _RETIRED_ACTIVITY_EXECUTORS[:] = [
+        (executor, task)
+        for executor, task in _RETIRED_ACTIVITY_EXECUTORS
+        if not task.done()
+    ]
+
+
+def _replacement_max_workers(abandoned_executor: ThreadPoolExecutor) -> int:
+    """Size the replacement like the generation it replaces.
+
+    ``ThreadPoolExecutor._max_workers`` is a private attribute; if a future
+    Python release drops it, fall back to the worker's own executor sizing
+    rule instead of silently collapsing blocking concurrency to one thread.
+    """
+
+    raw = getattr(abandoned_executor, "_max_workers", None)
+    if isinstance(raw, int) and raw > 0:
+        return raw
+    from jobctrl.infrastructure.temporal.concurrency import (
+        activity_executor_max_workers,
+        resolve_max_concurrent_activities,
+    )
+
+    return activity_executor_max_workers(resolve_max_concurrent_activities().value)
+
+
 def _rotate_abandoned_activity_executor(
     abandoned_executor: ThreadPoolExecutor | None,
+    abandoned_task: asyncio.Future,
 ) -> bool:
     """Move future blocking work off an executor containing a stuck thread."""
 
@@ -79,15 +119,15 @@ def _rotate_abandoned_activity_executor(
     if abandoned_executor is None:
         return False
     with _ACTIVITY_EXECUTOR_LOCK:
+        _prune_retired_activity_executors_locked()
         if _ACTIVITY_EXECUTOR is not abandoned_executor:
             return False
-        max_workers = int(getattr(abandoned_executor, "_max_workers", 1))
         replacement = ThreadPoolExecutor(
-            max_workers=max_workers,
+            max_workers=_replacement_max_workers(abandoned_executor),
             thread_name_prefix="jobctrl-blocking-activity-recovery",
         )
         _ACTIVITY_EXECUTOR = replacement
-        _RETIRED_ACTIVITY_EXECUTORS.append(abandoned_executor)
+        _RETIRED_ACTIVITY_EXECUTORS.append((abandoned_executor, abandoned_task))
     # The retired generation is dedicated to blocking activity helpers. Let its
     # already-submitted functions wind down, but never route new work to it.
     abandoned_executor.shutdown(wait=False, cancel_futures=False)
@@ -130,7 +170,7 @@ async def run_blocking_with_heartbeat(
         # the first await below, so an immediate retry cannot queue behind the
         # provider call whose thread may ignore cooperative cancellation.
         executor_rotated = (
-            _rotate_abandoned_activity_executor(blocking_executor)
+            _rotate_abandoned_activity_executor(blocking_executor, task)
             if not task.done()
             else False
         )
