@@ -45,12 +45,6 @@ export class DemoFeatureFlagAdapter implements FeatureFlagPort {
     if (key === "demoMode" && typeof defaultValue === "boolean") {
       return true as T;
     }
-    if (
-      key === "activityDetailDirectLoad" &&
-      typeof defaultValue === "boolean"
-    ) {
-      return true as T;
-    }
     for (const operation of Object.keys(
       DEMO_CAPABILITY_MANIFEST,
     ) as (keyof typeof DEMO_CAPABILITY_MANIFEST)[]) {
