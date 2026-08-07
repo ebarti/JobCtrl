@@ -363,10 +363,11 @@ async def test_reconciler_maps_canceled_execution_to_workflow_canceled() -> None
         requested_at="2026-08-04T21:04:07+00:00",
         evidence_kind="request_intent",
     )
-    # The first pass terminalizes the formerly-open run; the next heartbeat
-    # sees the canceled row and backfills its exact Temporal requester even
-    # though a distinct local delivery intent already exists.
-    assert await _reconcile_workflow_runs(client) >= 1
+    # The closure pass above already terminalized the run AND recorded the
+    # exact Temporal requester from its history (evidence_kind
+    # ``temporal_history``); settled runs are excluded from rework, so the
+    # next heartbeat makes no further durable changes.
+    assert await _reconcile_workflow_runs(client) == 0
 
     assert _status(conn, canceled_id) == "canceled"
     assert "WorkflowCanceled" in _events(conn, canceled_id)
@@ -383,20 +384,6 @@ async def test_reconciler_maps_canceled_execution_to_workflow_canceled() -> None
     ]
     assert audit_payloads == [
         {
-            "evidenceKind": "request_intent",
-            "level": "info",
-            "message": "Cancellation requested by local_operator via jobctrl_api.",
-            "reason": None,
-            "requestedAt": "2026-08-04T21:04:07+00:00",
-            "requestedBy": "local_operator",
-            "source": "jobctrl_api",
-            "stage": "workflow",
-            "temporalRunId": "temporal-run",
-            "tenantId": "local",
-            "workflowId": canceled_id,
-            "workflowType": "ApplyWorkflow",
-        },
-        {
             "evidenceKind": "temporal_history",
             "level": "info",
             "message": (
@@ -411,7 +398,21 @@ async def test_reconciler_maps_canceled_execution_to_workflow_canceled() -> None
             "tenantId": "local",
             "workflowId": canceled_id,
             "workflowType": "ApplyWorkflow",
-        }
+        },
+        {
+            "evidenceKind": "request_intent",
+            "level": "info",
+            "message": "Cancellation requested by local_operator via jobctrl_api.",
+            "reason": None,
+            "requestedAt": "2026-08-04T21:04:07+00:00",
+            "requestedBy": "local_operator",
+            "source": "jobctrl_api",
+            "stage": "workflow",
+            "temporalRunId": "temporal-run",
+            "tenantId": "local",
+            "workflowId": canceled_id,
+            "workflowType": "ApplyWorkflow",
+        },
     ]
     await _reconcile_workflow_runs(client)
     assert len(
