@@ -1,14 +1,31 @@
 name: Python CI
 
+# The Python suite reads real files from outside workers/ and scripts/:
+# `packages/**` holds the shared cross-runtime parity fixtures and the
+# domain-event sources, `packaging/**` holds provider-packs.lock.json and
+# capability-policy.json, and the release-scan tests read workflow files under
+# `.github/workflows/**`. Both lists must stay in sync and must keep those
+# directories, or a change that breaks Python CI could merge without ever
+# running it. No `branches` filter on `pull_request`: stacked PRs target their
+# parent branch, not main.
 on:
   push:
     branches: ["main"]
     paths:
       - "workers/**"
       - "scripts/**"
+      - "packages/**"
+      - "packaging/**"
       - "pyproject.toml"
-      - ".github/workflows/python.yml"
+      - ".github/workflows/**"
   pull_request:
+    paths:
+      - "workers/**"
+      - "scripts/**"
+      - "packages/**"
+      - "packaging/**"
+      - "pyproject.toml"
+      - ".github/workflows/**"
   workflow_dispatch:
 
 jobs:
