@@ -1,13 +1,39 @@
 name: Python CI
 
+# `push` is filtered to the files this suite actually reads. Beyond workers/ and
+# scripts/, `packages/**` holds the shared cross-runtime parity fixtures and the
+# domain-event sources, `packaging/**` holds provider-packs.lock.json and
+# capability-policy.json, the INV-1 no-send-transport guard
+# (test_outreach_no_send_transport.py) scans the TypeScript outreach sources
+# under apps/, the byline/attribution tests read root package.json, README.md,
+# LICENSE, and NOTICE, and the release-scan tests read workflow files under
+# `.github/workflows/**`. A push that changed any of those without these entries
+# would skip the suite covering it.
+#
+# `pull_request` deliberately takes no filter at all — no `branches`, no
+# `paths`. Every layer of a GitHub stack must instantiate this workflow so it
+# produces a check record for that layer; a filtered-out workflow reports
+# nothing rather than reporting a skip. Cost is controlled at the job level
+# instead, by the `if:` below that admits only a trusted cumulative head, which
+# is the pattern GitHub documents for stacked pull requests. Enforced by
+# scripts/stacked-ci-workflows.test.mjs — do not add a filter here.
 on:
   push:
     branches: ["main"]
     paths:
       - "workers/**"
       - "scripts/**"
+      - "packages/**"
+      - "packaging/**"
+      - "apps/web/src/contexts/outreach/**"
+      - "apps/web/src/views/outreach/**"
+      - "apps/api/src/outreach.ts"
+      - "package.json"
+      - "README.md"
+      - "LICENSE"
+      - "NOTICE"
       - "pyproject.toml"
-      - ".github/workflows/python.yml"
+      - ".github/workflows/**"
   pull_request:
   workflow_dispatch:
 
