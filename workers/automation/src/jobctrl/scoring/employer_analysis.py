@@ -20,14 +20,26 @@ from jobctrl.state import record_job_event
 class EmployerAnalyzedEventRecorder:
     """Persist ``EmployerAnalyzed`` domain events into ``job_events``."""
 
-    def __init__(self, conn: sqlite3.Connection, *, stage: str) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        stage: str,
+        record_cached_hits: bool = True,
+    ) -> None:
         self._conn = conn
         self._stage = stage
+        self._record_cached_hits = record_cached_hits
 
     def publish(self, event) -> None:  # noqa: ANN001 -- DomainEvent (duck-typed)
         if getattr(event, "event_type", None) != "EmployerAnalyzed":
             return
         payload = dict(getattr(event, "payload", {}) or {})
+        if not self._record_cached_hits and bool(payload.get("cached")):
+            # A cache hit re-confirms an already-recorded generation; recording
+            # it again would append a duplicate timeline row on every pass that
+            # resolves the analysis (score retries, rescore batches, ...).
+            return
         raw_job_id = str(payload.get("job_id") or "")
         if not raw_job_id:
             return
@@ -54,8 +66,15 @@ def build_analyze_use_case(
     conn: sqlite3.Connection,
     publisher: EventPublisher | None = None,
     event_stage: str,
+    record_cached_hits: bool = True,
 ):
-    """Construct the canonical employer-analysis use case for local mode."""
+    """Construct the canonical employer-analysis use case for local mode.
+
+    ``record_cached_hits=False`` keeps the default ``job_events`` recorder from
+    appending a timeline row for cache hits — callers that resolve the analysis
+    on every pass (the score stage) opt out so retries and rescore batches do
+    not duplicate the "Employer analysis generation N" row.
+    """
 
     from jobctrl.domain.materials.analyze_use_case import AnalyzeJobUseCase
     from jobctrl.infrastructure.analysis import (
@@ -111,7 +130,8 @@ def build_analyze_use_case(
         repository=SqliteEmployerAnalysisRepository(conn),
         adapters=tuple(adapters),
         synthesizer=synthesizer,
-        publisher=publisher or EmployerAnalyzedEventRecorder(conn, stage=event_stage),
+        publisher=publisher
+        or EmployerAnalyzedEventRecorder(conn, stage=event_stage, record_cached_hits=record_cached_hits),
         sdk_set_version=analysis_sdk_set_version(
             enabled_legs,
             synthesizer_provider=llm.provider_id,

@@ -374,3 +374,47 @@ def test_employer_analysis_event_preserves_tenant_and_job_id(
         "score",
         "EmployerAnalyzed",
     )
+
+
+def _employer_analyzed_event(*, cached: bool):
+    return create_employer_analyzed(
+        _TENANT_B,
+        EmployerAnalyzedPayload(
+            job_id=str(_JOB_ID_B),
+            generation=2,
+            snapshot_hash="snapshot",
+            cache_key="cache-key",
+            legs_attempted=3,
+            legs_succeeded=2,
+            analyzed_at="2026-07-30T10:00:00+00:00",
+            cached=cached,
+        ),
+    )
+
+
+def test_employer_analysis_recorder_skips_cache_hits_when_opted_out(
+    conn: sqlite3.Connection,
+) -> None:
+    """``record_cached_hits=False`` records fresh analyses but never cache
+    hits — the score stage resolves the analysis on every pass and must not
+    duplicate the timeline row per retry/rescore."""
+    recorder = EmployerAnalyzedEventRecorder(conn, stage="score", record_cached_hits=False)
+
+    recorder.publish(_employer_analyzed_event(cached=True))
+    count = conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type = 'EmployerAnalyzed'").fetchone()
+    assert count[0] == 0
+
+    recorder.publish(_employer_analyzed_event(cached=False))
+    recorder.publish(_employer_analyzed_event(cached=True))
+    count = conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type = 'EmployerAnalyzed'").fetchone()
+    assert count[0] == 1
+
+
+def test_employer_analysis_recorder_records_cache_hits_by_default(
+    conn: sqlite3.Connection,
+) -> None:
+    """The default recorder (tailor path) keeps recording cache hits."""
+    EmployerAnalyzedEventRecorder(conn, stage="tailor").publish(_employer_analyzed_event(cached=True))
+
+    count = conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type = 'EmployerAnalyzed'").fetchone()
+    assert count[0] == 1

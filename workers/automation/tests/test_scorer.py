@@ -153,7 +153,7 @@ def _stub_default_analyzer(monkeypatch) -> None:
     monkeypatch.setattr(
         scorer_module,
         "build_analyze_use_case",
-        lambda *, conn, publisher=None, event_stage: _AnalyzeUseCase(),
+        lambda *, conn, publisher=None, event_stage, record_cached_hits=True: _AnalyzeUseCase(),
     )
 
 
@@ -782,9 +782,20 @@ def test_run_scoring_loads_persisted_employer_analysis_into_prompt(
     profile_snapshot,
     monkeypatch,
 ) -> None:
+    """The repository fallback's success path (``_load_employer_analysis_for_job``).
+
+    With ``require_employer_analysis=False`` and no analyze use case, scoring
+    must read the persisted analysis row — the guard patch below fails the test
+    if a reordering routes this scenario through a built analyzer instead.
+    """
     url = "https://example.com/job/analysis-loaded"
     _seed_pending_job(conn, url)
     SqliteEmployerAnalysisRepository(conn).save(_employer_analysis(url))
+    monkeypatch.setattr(
+        scorer_module,
+        "build_analyze_use_case",
+        lambda **_kwargs: pytest.fail("must not build an analyzer when require_employer_analysis=False"),
+    )
     repo = SqliteScoreRepository(conn)
     llm = _ScriptedLlm(
         {
@@ -819,6 +830,7 @@ def test_run_scoring_loads_persisted_employer_analysis_into_prompt(
         repository=repo,
         llm_port=llm,
         resume_text="Engineer with Python.",
+        require_employer_analysis=False,
     )
 
     assert summary["errors"] == 0
@@ -831,6 +843,142 @@ def test_run_scoring_loads_persisted_employer_analysis_into_prompt(
     assert report.score_version == 1
     assert report.employer_analysis_generation == 1
     assert report.assessments[0].fit.kind == "missing"
+
+
+def test_run_scoring_falls_back_to_persisted_analysis_when_refresh_fails(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+    monkeypatch,
+) -> None:
+    """An ensemble outage must not fail the stage when a persisted analysis
+    for the CURRENT posting snapshot exists — scoring degrades to that row."""
+    url = "https://example.com/job/analysis-refresh-outage"
+    _seed_pending_job(conn, url)
+    SqliteEmployerAnalysisRepository(conn).save(_employer_analysis(url))
+    analyze = _FailingAnalyzeUseCase(RuntimeError("provider outage"))
+    llm = _ScriptedLlm(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 7,
+            "role_fit": 8,
+            "fit_band": "strong",
+            "confidence": "high",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["Python"],
+            "missing_signals": [],
+            "transferable_signals": [],
+            "keywords": ["python"],
+            "reasoning": "ok",
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-python-platform",
+                    "requirement_text": "Own Python platform reliability.",
+                    "tier": "must_have",
+                    "weight": 0.9,
+                    "job_evidence_span": "Need Python.",
+                    "fit": {"kind": "missing", "reason": "No profile evidence."},
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+
+    summary = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=SqliteScoreRepository(conn),
+        llm_port=llm,
+        resume_text="Engineer with Python.",
+        analyze_use_case=analyze,
+    )
+
+    assert summary["scored"] == 1
+    assert summary["errors"] == 0
+    assert analyze.calls == 1
+    prompt_payload = llm.messages[0][1].content
+    assert '"id": "req-python-platform"' in prompt_payload
+    report = SqliteRequirementFitReportRepository(conn).load(LOCAL_TENANT, _job_id(url))
+    assert report is not None
+    assert report.employer_analysis_generation == 1
+
+
+def test_run_scoring_fails_when_refresh_fails_and_persisted_analysis_is_stale(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+    monkeypatch,
+) -> None:
+    """The outage fallback must never cross posting snapshots: with only a
+    stale-snapshot row persisted, the refresh failure still fails the stage."""
+    url = "https://example.com/job/analysis-refresh-outage-stale"
+    _seed_pending_job(conn, url)
+    SqliteEmployerAnalysisRepository(conn).save(
+        _employer_analysis(url, description="Need Python. Previous posting snapshot.")
+    )
+    analyze = _FailingAnalyzeUseCase(RuntimeError("provider outage"))
+    llm = _ScriptedLlm({"score": 9, "keywords": [], "reasoning": "should not be called"})
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+
+    summary = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=SqliteScoreRepository(conn),
+        llm_port=llm,
+        resume_text="Engineer with Python.",
+        analyze_use_case=analyze,
+    )
+
+    assert summary["scored"] == 0
+    assert summary["errors"] == 1
+    assert analyze.calls == 1
+    assert llm.calls == 0
+    stage_row = _stage_row(conn, url, "score")
+    assert stage_row["state"] == "failed"
+    assert "provider outage" in stage_row["error_message"]
+
+
+def test_run_scoring_builds_score_stage_analyzer_without_cached_event_rows(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+    monkeypatch,
+) -> None:
+    """The score stage resolves the analysis on every pass, so its default
+    recorder must opt out of cache-hit rows (no duplicate timeline entries)."""
+    url = "https://example.com/job/analysis-cached-event-suppressed"
+    _seed_pending_job(conn, url)
+    captured: dict[str, Any] = {}
+
+    def _capture_build(*, conn, publisher=None, event_stage, record_cached_hits=True):
+        captured["event_stage"] = event_stage
+        captured["record_cached_hits"] = record_cached_hits
+        return _AnalyzeUseCase()
+
+    monkeypatch.setattr(scorer_module, "build_analyze_use_case", _capture_build)
+    llm = _ScriptedLlm(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 7,
+            "role_fit": 8,
+            "fit_band": "strong",
+            "confidence": "high",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["Python"],
+            "missing_signals": [],
+            "transferable_signals": [],
+            "keywords": ["python"],
+            "reasoning": "ok",
+        }
+    )
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+
+    summary = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=SqliteScoreRepository(conn),
+        llm_port=llm,
+        resume_text="Engineer with Python.",
+    )
+
+    assert summary["errors"] == 0
+    assert captured == {"event_stage": "score", "record_cached_hits": False}
 
 
 def test_run_scoring_refreshes_stale_posting_analysis_before_persisting_fit_report(
