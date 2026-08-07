@@ -108,7 +108,10 @@ failures remain attached to their own rows while the approved Tailor subset
 continues to Cover. A global Tailor or Cover command must freeze its eligible
 JobIds before Temporal starts, so it uses the same bounded per-job fan-out,
 ownership fence, and worker-wave deadline instead of the legacy unscoped batch
-runner. An activity timeout or worker shutdown is retryable and
+runner. Prove the zero-row selection is an explicit no-op rather than an
+unscoped fallback, a mixed Tailor/Cover/Apply request retains batch-Apply
+semantics, and global current-policy re-tailoring freezes the policy-aware
+cohort before dispatch. An activity timeout or worker shutdown is retryable and
 must not be projected as user cancellation. For an explicitly selected batch,
 the replay-versioned activity deadline is 30 minutes per worker wave, capped at
 6 hours; the 2-minute heartbeat still detects a dead worker promptly. Parallel

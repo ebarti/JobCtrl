@@ -77,6 +77,7 @@ class JobPipelineWorkflowInput:
     source_ids: tuple[str, ...] = ()
     score_current_policy_only: bool = False
     tailor_current_policy_only: bool = False
+    material_selection_resolved: bool = False
     suppress_existing_artifacts: bool = False
     allow_low_fit_override: bool = False
     headless: bool = False
@@ -224,6 +225,13 @@ class JobPipelineWorkflow:
 
         for stage in payload.stages:
             stage_payload = payload
+            if (
+                stage in {"tailor", "cover"}
+                and payload.material_selection_resolved
+                and not _selected_job_ids(payload)
+            ):
+                completed.append(stage)
+                continue
             if stage in {"score", "tailor", "cover"} and derived_preparation_job_ids is not None:
                 if not derived_preparation_job_ids:
                     completed.append(stage)
@@ -405,7 +413,10 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 dry_run=payload.dry_run,
                 retailor=payload.retailor,
                 job_ids=_selected_job_ids(payload),
-                current_policy_only=payload.tailor_current_policy_only,
+                current_policy_only=(
+                    payload.tailor_current_policy_only
+                    and not payload.material_selection_resolved
+                ),
                 suppress_existing_artifacts=payload.suppress_existing_artifacts,
                 allow_low_fit_override=payload.allow_low_fit_override,
                 tailor_models=payload.tailor_models,
@@ -522,7 +533,15 @@ async def _cancel_owned_enrichment(payload: JobPipelineWorkflowInput) -> None:
 
 
 def _pipeline_spends(payload: JobPipelineWorkflowInput) -> bool:
-    return any(stage in _SPENDFUL_STAGES for stage in payload.stages)
+    return any(
+        stage in _SPENDFUL_STAGES
+        and not (
+            stage in {"tailor", "cover"}
+            and payload.material_selection_resolved
+            and not _selected_job_ids(payload)
+        )
+        for stage in payload.stages
+    )
 
 
 def _pipeline_input_summary(payload: JobPipelineWorkflowInput) -> dict[str, Any]:
@@ -576,6 +595,8 @@ def _apply_child_job_id(payload: JobPipelineWorkflowInput) -> JobId | None:
 
     selector_keys = tuple(payload.apply_selector_keys)
     if not selector_keys:
+        if payload.material_selection_resolved:
+            return None
         if payload.job_id is None and not payload.job_ids:
             return None
     elif selector_keys == ("jobId",):

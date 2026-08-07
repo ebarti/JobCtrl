@@ -7,7 +7,7 @@ import uuid
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from temporalio.common import WorkflowIDConflictPolicy
@@ -1415,6 +1415,39 @@ def test_current_policy_maintenance_methods_start_pipeline_workflows(
     for name, value in expected_payload.items():
         assert getattr(payload, name) == value
     assert payload.tenant_id == "local"
+
+
+def test_global_retailor_current_policy_freezes_policy_selected_cohort(monkeypatch) -> None:
+    connection = object()
+    selected_job_ids = (
+        JobId("23000000-0000-4000-8000-000000000001"),
+        JobId("23000000-0000-4000-8000-000000000002"),
+    )
+    monkeypatch.setattr(handlers_mod, "get_connection", lambda: connection)
+
+    with patch(
+        "jobctrl.pipeline.current_policy_selectors.tailoring_current_policy_job_ids",
+        return_value=selected_job_ids,
+    ) as selector:
+        spec = handlers_mod.retailor_current_policy(
+            {
+                "tenantId": "local",
+                "jobIds": [],
+                "limit": 12,
+                "minScore": 8,
+            }
+        )
+
+    payload = spec.args[0]
+    assert payload.job_ids == selected_job_ids
+    assert payload.material_selection_resolved is True
+    assert payload.tailor_current_policy_only is True
+    selector.assert_called_once_with(
+        connection,
+        tenant_id="local",
+        min_score=8,
+        limit=12,
+    )
 
 
 def test_v7_canonical_job_ids_disambiguate_the_same_url_by_tenant(

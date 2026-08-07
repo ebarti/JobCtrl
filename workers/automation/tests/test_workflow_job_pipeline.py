@@ -56,8 +56,10 @@ from jobctrl.pipeline.workflow import (
     _SCORE_RETRY,
     _TAILOR_RETRY,
     _activity_timeout,
+    _apply_child_job_id,
     _cancel_material_stage_state,
     _cancel_owned_enrichment,
+    _pipeline_spends,
     _selected_batch_timeout,
     JobPipelineWorkflow,
     JobPipelineWorkflowInput,
@@ -171,6 +173,7 @@ def test_global_material_run_freezes_exact_selected_cohort(
 
     payload = spec.args[0]
     assert payload.job_ids == tuple(JobId(job_id) for job_id in job_ids)
+    assert payload.material_selection_resolved is True
     connection.assert_called_once_with()
     selector.assert_called_once_with(
         conn=connection.return_value,
@@ -179,6 +182,52 @@ def test_global_material_run_freezes_exact_selected_cohort(
         limit=25,
         retailor=retailor,
     )
+
+
+@pytest.mark.parametrize("stage", ["tailor", "cover"])
+@pytest.mark.asyncio
+async def test_resolved_empty_material_batch_is_a_no_op(stage: str) -> None:
+    payload = JobPipelineWorkflowInput(
+        tenant_id="local",
+        stages=[stage],
+        material_selection_resolved=True,
+    )
+
+    with patch(
+        "jobctrl.pipeline.workflow._execute_stage",
+        side_effect=AssertionError("an empty frozen cohort must not dispatch an activity"),
+    ):
+        result = await JobPipelineWorkflow()._execute_stages(payload)
+
+    assert result.stages_completed == [stage]
+    assert result.stages_failed == []
+    assert _pipeline_spends(payload) is False
+
+
+def test_global_material_run_preserves_batch_apply_selector() -> None:
+    job_ids = [
+        "22000000-0000-4000-8000-000000000001",
+        "22000000-0000-4000-8000-000000000002",
+    ]
+    rows = [{"tenant_id": "local", "job_id": job_id} for job_id in job_ids]
+
+    with (
+        patch("jobctrl.database.get_connection", return_value=object()),
+        patch("jobctrl.database.get_jobs_by_stage", return_value=rows),
+    ):
+        spec = build_run_stage_workflow_spec(
+            {
+                "tenantId": "local",
+                "stages": ["tailor", "cover", "apply"],
+                "dryRun": True,
+            }
+        )
+
+    payload = spec.args[0]
+    assert payload.job_ids == tuple(JobId(job_id) for job_id in job_ids)
+    assert payload.material_selection_resolved is True
+    assert payload.apply_selector_keys == ()
+    assert _apply_child_job_id(payload) is None
 
 
 @pytest.fixture(autouse=True)
@@ -902,6 +951,50 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
     assert result.stages_failed == []
     assert tailored_job_ids == [selected_job_id]
     assert cover_job_ids == [selected_job_id]
+
+
+@pytest.mark.asyncio
+async def test_frozen_current_policy_cohort_uses_selected_tailor_path():
+    queue = f"pipeline-frozen-current-policy-{uuid.uuid4()}"
+    selected_job_id = JobId("10000000-0000-4000-8000-000000000004")
+    tailored_job_ids: list[JobId] = []
+
+    def fake_tailor_job_by_id(job_id: JobId, **_kwargs):
+        tailored_job_ids.append(job_id)
+        return {"status": "approved"}
+
+    with (
+        patch(
+            "jobctrl.pipeline.current_policy_selectors.tailoring_current_policy_job_ids",
+            side_effect=AssertionError("a frozen policy cohort must not be selected again"),
+        ),
+        patch("jobctrl.scoring.tailor.tailor_job_by_id", side_effect=fake_tailor_job_by_id),
+    ):
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow, DiscoverWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await env.client.execute_workflow(
+                    JobPipelineWorkflow.run,
+                    JobPipelineWorkflowInput(
+                        tenant_id="local",
+                        stages=["tailor"],
+                        job_ids=(selected_job_id,),
+                        retailor=True,
+                        tailor_current_policy_only=True,
+                        material_selection_resolved=True,
+                    ),
+                    id=f"pipeline-frozen-current-policy-wf-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+
+    assert result.stages_completed == ["tailor"]
+    assert result.stages_failed == []
+    assert tailored_job_ids == [selected_job_id]
 
 
 @pytest.mark.asyncio

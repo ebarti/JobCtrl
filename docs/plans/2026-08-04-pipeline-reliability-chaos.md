@@ -200,7 +200,10 @@ The campaign reproduced independent reliability defects:
     material starts now freeze the eligible canonical JobIds before Temporal
     starts. They therefore use the existing bounded per-job fan-out, scaled
     worker-wave deadline, cooperative cancellation token, and exact ownership
-    fence.
+    fence. The frozen-selection marker distinguishes a resolved empty cohort
+    from an unscoped legacy batch, preserves independent batch-Apply semantics
+    in mixed requests, and makes the global current-policy maintenance action
+    resolve its policy-aware cohort before workflow dispatch.
 
 No timer or second scheduler was added. Recovery is one idempotent step in the
 workflow that owns the work, plus a durable event dispatch when a setting

@@ -56,10 +56,14 @@ class StartedWorkflowResult:
 def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = _tenant_id(params)
     stages = _stage_list(params)
-    params = _scope_global_material_batch(params, stages=stages, tenant_id=tenant_id)
     apply_selector = _apply_selector(params) if "apply" in stages else None
     if "apply" in stages:
         _require_auto_apply_browser_capability()
+    params, material_selection_resolved = _scope_global_material_batch(
+        params,
+        stages=stages,
+        tenant_id=tenant_id,
+    )
     raw_judge_min_score = params.get("tailorJudgeMinScore")
     if stages == ["discover"]:
         payload = DiscoverWorkflowInput(
@@ -101,11 +105,16 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
         ),
         job_id=(
             apply_selector.job_id
-            if apply_selector is not None
+            if apply_selector is not None and apply_selector.job_id is not None
             else _optional_job_id(params, "jobId")
         ),
-        job_ids=() if apply_selector is not None else _job_ids(params),
+        job_ids=(
+            ()
+            if apply_selector is not None and apply_selector.job_id is not None
+            else _job_ids(params)
+        ),
         apply_selector_keys=apply_selector.keys if apply_selector else (),
+        material_selection_resolved=material_selection_resolved,
         source_ids=_source_ids(params),
         headless=bool(params.get("headless", False)),
         model=str(params.get("model", "default")),
@@ -126,7 +135,7 @@ def _scope_global_material_batch(
     *,
     stages: list[str],
     tenant_id: str,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], bool]:
     """Freeze a global Tailor/Cover pickup into the workflow input.
 
     Material activities need an exact cohort so their bounded per-job fan-out,
@@ -136,9 +145,9 @@ def _scope_global_material_batch(
     """
 
     if not stages or stages[0] not in {"tailor", "cover"}:
-        return params
+        return params, False
     if params.get("jobId") or params.get("jobIds"):
-        return params
+        return params, False
 
     from jobctrl.database import get_connection, get_jobs_by_stage
 
@@ -155,7 +164,7 @@ def _scope_global_material_batch(
         for job in jobs
         if str(job.get("tenant_id") or tenant_id) == tenant_id
     ]
-    return {**params, "jobIds": list(dict.fromkeys(job_ids))}
+    return {**params, "jobIds": list(dict.fromkeys(job_ids))}, True
 
 
 def build_pipeline_workflow_spec(
@@ -169,6 +178,7 @@ def build_pipeline_workflow_spec(
     job_ids: tuple[JobId, ...] = (),
     score_current_policy_only: bool = False,
     tailor_current_policy_only: bool = False,
+    material_selection_resolved: bool = False,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
@@ -204,6 +214,7 @@ def build_pipeline_workflow_spec(
         apply_selector_keys=apply_selector.keys if apply_selector else (),
         score_current_policy_only=score_current_policy_only,
         tailor_current_policy_only=tailor_current_policy_only,
+        material_selection_resolved=material_selection_resolved,
         suppress_existing_artifacts=suppress_existing_artifacts,
         allow_low_fit_override=allow_low_fit_override,
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
