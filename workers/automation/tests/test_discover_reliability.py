@@ -1012,6 +1012,112 @@ def test_linkedin_prepass_persists_owner_before_navigation_and_restart_cancels_i
     close_connection(db_path)
 
 
+def test_reconcile_settled_canceled_cohort_performs_no_further_writes(
+    tmp_path: Path,
+) -> None:
+    """A settled canceled cohort must stop costing write transactions.
+
+    The reconciler runs on the 15s worker heartbeat; once a canceled run's
+    cohort is terminal and its phase-3 cancellation lease is claimed, later
+    passes must be read-only or the single-writer database pays two write
+    locks per historical canceled run forever.
+    """
+
+    from jobctrl.cli import _reconcile_canceled_enrichment_cohorts
+    from jobctrl.infrastructure.enrichment.execution_lease import (
+        claim_enrichment_execution_lease_for_run,
+    )
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        job_id = _seed_pending(
+            conn, "https://remoteok.com/settled-cohort", "RemoteOK"
+        )
+        ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+        workflow_id = "workflow-settled-cohort"
+        run_id = "run-settled-cohort"
+        set_stage_state(
+            conn,
+            job_id,
+            "enrich",
+            "queued",
+            tenant_id=LOCAL_TENANT,
+            metadata={"workflowId": workflow_id, "temporalRunId": run_id},
+        )
+        conn.commit()
+        claim_enrichment_execution_lease_for_run(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            owner_token="activity-settled:attempt-1",
+            activity_phase=1,
+            activity_attempt=1,
+        )
+        conn.execute(
+            "INSERT INTO workflow_run_projections ("
+            "workflow_id, tenant_id, workflow_type, status, input_summary_json, "
+            "retryable, started_at, finished_at, temporal_run_id, events_json) "
+            "VALUES (?, 'local', 'JobPipelineWorkflow', 'canceled', '{}', 0, ?, ?, ?, '[]')",
+            (
+                workflow_id,
+                "2026-08-06T00:00:00+00:00",
+                "2026-08-06T00:01:00+00:00",
+                run_id,
+            ),
+        )
+        conn.commit()
+
+        assert _reconcile_canceled_enrichment_cohorts(conn, tenant_id="local") == 1
+        state = conn.execute(
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()[0]
+        assert state == "canceled"
+
+        statements: list[str] = []
+        conn.set_trace_callback(statements.append)
+        try:
+            assert (
+                _reconcile_canceled_enrichment_cohorts(conn, tenant_id="local") == 0
+            )
+        finally:
+            conn.set_trace_callback(None)
+        writes = [
+            statement
+            for statement in statements
+            if statement.strip().upper().startswith(
+                ("BEGIN", "INSERT", "UPDATE", "DELETE", "REPLACE")
+            )
+        ]
+        assert writes == []
+
+        # The settled marker is the phase-3 lease, not a permanent tombstone:
+        # a live row re-bound to the same canceled run must still recover.
+        set_stage_state(
+            conn,
+            job_id,
+            "enrich",
+            "queued",
+            tenant_id=LOCAL_TENANT,
+            metadata={"workflowId": workflow_id, "temporalRunId": run_id},
+            validate_transition=False,
+        )
+        conn.commit()
+        assert _reconcile_canceled_enrichment_cohorts(conn, tenant_id="local") == 1
+        state = conn.execute(
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()[0]
+        assert state == "canceled"
+    finally:
+        close_connection(db_path)
+
+
 def test_cancel_enrich_cohort_preserves_committed_outcomes(
     tmp_path: Path,
 ) -> None:

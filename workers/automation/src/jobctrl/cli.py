@@ -2720,7 +2720,17 @@ async def _reconcile_workflow_runs(temporal_client: Any, *, tenant_id: str | Non
 
 
 def _reconcile_canceled_enrichment_cohorts(conn, *, tenant_id: str) -> int:
-    """Terminalize unfinished Enrich rows still owned by a canceled run."""
+    """Terminalize unfinished Enrich rows still owned by a canceled run.
+
+    Runs whose lease lane already carries the terminal phase-3
+    ``cancellation:`` claim are settled: the first successful pass wrote that
+    claim, so re-selecting them here would cost two write transactions per
+    canceled run on every heartbeat forever. They are excluded below. A
+    settled run that still (or again) owns live rows keeps recovering through
+    the stage-row query, which resurfaces its cohort until every member is
+    terminal, so a crash between the lease claim and the row transaction
+    cannot strand work.
+    """
 
     from collections import defaultdict
 
@@ -2743,6 +2753,16 @@ def _reconcile_canceled_enrichment_cohorts(conn, *, tenant_id: str) -> int:
               AND json_valid(lease.payload_json)
               AND json_extract(lease.payload_json, '$.execution.workflowId') = run.workflow_id
               AND json_extract(lease.payload_json, '$.execution.runId') = run.temporal_run_id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM job_events AS settled
+            WHERE settled.tenant_id = run.tenant_id
+              AND settled.event_type = 'EnrichmentLeaseClaimed'
+              AND settled.payload_json IS NOT NULL
+              AND json_valid(settled.payload_json)
+              AND json_extract(settled.payload_json, '$.execution.workflowId') = run.workflow_id
+              AND json_extract(settled.payload_json, '$.execution.runId') = run.temporal_run_id
+              AND COALESCE(CAST(json_extract(settled.payload_json, '$.activityPhase') AS INTEGER), 1) >= 3
           )
         ORDER BY run.workflow_id, run.temporal_run_id
         """,
