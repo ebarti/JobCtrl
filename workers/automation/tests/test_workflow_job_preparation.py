@@ -98,6 +98,40 @@ async def test_preparation_workflow_treats_already_done_step_as_complete(
 
 
 @pytest.mark.asyncio
+async def test_preparation_material_cancel_activity_retries_are_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A persistently failing cancel-cohort activity must not hang cancellation."""
+
+    captured: dict[str, object] = {}
+
+    async def fake_execute_activity(_activity_fn, _payload, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(prep_workflow_mod.workflow, "patched", lambda _patch_id: True)
+    monkeypatch.setattr(
+        prep_workflow_mod.workflow,
+        "info",
+        lambda: SimpleNamespace(run_id="run-cancel"),
+    )
+    monkeypatch.setattr(prep_workflow_mod.workflow, "execute_activity", fake_execute_activity)
+
+    await prep_workflow_mod._cancel_material_stage_state(
+        "tailor",
+        JobPreparationInput(
+            tenant_id="local",
+            job_id=_JOB_ID,
+            steps=["tailor"],
+            target_version="1",
+            idempotency_key="preparation:cancel-bound",
+        ),
+    )
+
+    retry_policy = captured["retry_policy"]
+    assert retry_policy.maximum_attempts == 5
+
+
+@pytest.mark.asyncio
 async def test_preparation_workflow_stops_dependents_when_tailor_is_skipped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

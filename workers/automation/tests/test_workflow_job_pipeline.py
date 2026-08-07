@@ -12,7 +12,7 @@ import uuid
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from temporalio import activity, workflow
@@ -56,6 +56,8 @@ from jobctrl.pipeline.workflow import (
     _SCORE_RETRY,
     _TAILOR_RETRY,
     _activity_timeout,
+    _cancel_material_stage_state,
+    _cancel_owned_enrichment,
     _selected_batch_timeout,
     JobPipelineWorkflow,
     JobPipelineWorkflowInput,
@@ -159,6 +161,72 @@ def test_stage_retry_policies_are_stage_specific():
     assert _COVER_RETRY.initial_interval == timedelta(seconds=10)
     assert _TAILOR_RETRY.maximum_interval == timedelta(seconds=120)
     assert _COVER_RETRY.maximum_interval == timedelta(seconds=120)
+
+
+@pytest.mark.asyncio
+async def test_cancel_owned_enrichment_is_patch_gated_for_replay_safety() -> None:
+    """A cancellation recorded pre-patch must not schedule the cancel activity on replay."""
+
+    payload = JobPipelineWorkflowInput(
+        tenant_id="local",
+        stages=["enrich"],
+        job_ids=(JobId("20000000-0000-4000-8000-000000000001"),),
+        workers=1,
+    )
+    with (
+        patch(
+            "jobctrl.pipeline.workflow.workflow.patched", return_value=False
+        ) as patched,
+        patch(
+            "jobctrl.pipeline.workflow.workflow.execute_activity",
+            side_effect=AssertionError(
+                "unpatched replay must not schedule cancel_enrichment_cohort"
+            ),
+        ),
+    ):
+        await _cancel_owned_enrichment(payload)
+    patched.assert_called_once_with("pipeline-enrich-cancellation-v1")
+
+    with (
+        patch("jobctrl.pipeline.workflow.workflow.patched", return_value=True),
+        patch(
+            "jobctrl.pipeline.workflow.workflow.info",
+            return_value=SimpleNamespace(workflow_id="wf-cancel", run_id="run-cancel"),
+        ),
+        patch(
+            "jobctrl.pipeline.workflow.workflow.execute_activity",
+            new=AsyncMock(),
+        ) as execute_activity,
+    ):
+        await _cancel_owned_enrichment(payload)
+    assert execute_activity.await_count == 1
+    assert execute_activity.call_args.kwargs["retry_policy"].maximum_attempts == 5
+
+
+@pytest.mark.asyncio
+async def test_pipeline_material_cancel_activity_retries_are_bounded() -> None:
+    """A persistently failing cancel-cohort activity must not hang cancellation."""
+
+    payload = JobPipelineWorkflowInput(
+        tenant_id="local",
+        stages=["tailor"],
+        job_ids=(JobId("20000000-0000-4000-8000-000000000002"),),
+        workers=1,
+    )
+    with (
+        patch("jobctrl.pipeline.workflow.workflow.patched", return_value=True),
+        patch(
+            "jobctrl.pipeline.workflow.workflow.info",
+            return_value=SimpleNamespace(run_id="run-cancel"),
+        ),
+        patch(
+            "jobctrl.pipeline.workflow.workflow.execute_activity",
+            new=AsyncMock(),
+        ) as execute_activity,
+    ):
+        await _cancel_material_stage_state("tailor", payload)
+    assert execute_activity.await_count == 1
+    assert execute_activity.call_args.kwargs["retry_policy"].maximum_attempts == 5
 
 
 def _all_activities():

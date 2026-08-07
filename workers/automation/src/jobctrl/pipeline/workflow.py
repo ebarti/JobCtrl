@@ -317,7 +317,14 @@ async def _cancel_material_stage_state(
             expected_db_path=payload.expected_db_path,
         ),
         start_to_close_timeout=timedelta(seconds=30),
-        retry_policy=RetryPolicy(maximum_attempts=0),
+        # Bounded like ``_cancel_owned_enrichment``: cancellation liveness beats
+        # at-all-costs terminalization — rows left running by an exhausted
+        # cancel are still recoverable via ``recover_preparation_state``.
+        retry_policy=RetryPolicy(
+            initial_interval=timedelta(seconds=1),
+            maximum_interval=timedelta(seconds=10),
+            maximum_attempts=5,
+        ),
         cancellation_type=workflow.ActivityCancellationType.ABANDON,
     )
 
@@ -488,6 +495,10 @@ async def _cancel_owned_enrichment(payload: JobPipelineWorkflowInput) -> None:
     """Durably close the exact Enrich cohort before a canceled workflow exits."""
 
     if "enrich" not in payload.stages:
+        return
+    if not workflow.patched("pipeline-enrich-cancellation-v1"):
+        # Replay safety: a cancellation recorded by a pre-patch release has no
+        # cancel-cohort activity ahead of ``emit_workflow_outcome``.
         return
     info = workflow.info()
     await workflow.execute_activity(

@@ -240,7 +240,15 @@ async def _cancel_material_stage_state(
             expected_db_path=payload.expected_db_path,
         ),
         start_to_close_timeout=timedelta(seconds=30),
-        retry_policy=RetryPolicy(maximum_attempts=0),
+        # Bounded like the pipeline cancel activities: cancellation liveness
+        # beats at-all-costs terminalization — rows left running by an
+        # exhausted cancel are still recoverable via
+        # ``recover_preparation_state``.
+        retry_policy=RetryPolicy(
+            initial_interval=timedelta(seconds=1),
+            maximum_interval=timedelta(seconds=10),
+            maximum_attempts=5,
+        ),
         cancellation_type=workflow.ActivityCancellationType.ABANDON,
     )
 
