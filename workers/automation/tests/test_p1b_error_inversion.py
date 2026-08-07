@@ -32,6 +32,7 @@ from jobctrl.database import init_db
 from jobctrl.discovery import smartextract, workday
 from jobctrl.discovery.jobspy import DiscoveryCancelled, run_discovery
 from jobctrl.domain.errors import (
+    AttemptBudgetExhaustedError,
     AuthenticationError,
     BrowserTransientError,
     ConfigurationError,
@@ -42,6 +43,7 @@ from jobctrl.domain.errors import (
     TransientNetworkError,
     to_application_error,
 )
+from jobctrl.domain.identifiers import JobId
 from jobctrl.enrichment.activities import EnrichActivityInput, EnrichActivityOutput, enrich_activity
 from jobctrl.infrastructure.discovery import production_wiring
 from jobctrl.infrastructure.temporal.run_in_activity import (
@@ -222,6 +224,7 @@ _ACTIVITY_CASES = (
 
 def test_error_taxonomy_maps_to_temporal_application_errors() -> None:
     cases: tuple[tuple[type[JobCtrlError], str, bool], ...] = (
+        (AttemptBudgetExhaustedError, "attempt_budget_exhausted", True),
         (ConfigurationError, "configuration", True),
         (AuthenticationError, "authentication", True),
         (MissingInputError, "missing_input", True),
@@ -248,6 +251,46 @@ def _application_error_from_failure(exc: WorkflowFailureError) -> ApplicationErr
     if isinstance(cause, ApplicationError):
         return cause
     raise AssertionError(f"Expected ApplicationError cause, got {cause!r}")
+
+
+@pytest.mark.asyncio
+async def test_tailor_job_durable_attempt_exhaustion_is_non_retryable() -> None:
+    attempts = 0
+
+    def _exhausted(*_args, **_kwargs) -> dict[str, str]:
+        nonlocal attempts
+        attempts += 1
+        return {
+            "status": "exhausted",
+            "error": "Tailor durable attempt budget exhausted",
+        }
+
+    queue = f"p1b-tailor-job-exhausted-{uuid.uuid4()}"
+    payload = TailorJobActivityInput(
+        tenant_id="local",
+        job_id=JobId("00000000-0000-4000-8000-000000000001"),
+    )
+    with patch("jobctrl.materials.activities._tailor_one_job", side_effect=_exhausted):
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[_P1bTailorJobHarness],
+                activities=[tailor_job_activity],
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                with pytest.raises(WorkflowFailureError) as exc_info:
+                    await env.client.execute_workflow(
+                        _P1bTailorJobHarness.run,
+                        payload,
+                        id=f"p1b-tailor-job-exhausted-wf-{uuid.uuid4()}",
+                        task_queue=queue,
+                    )
+
+    app_error = _application_error_from_failure(exc_info.value)
+    assert attempts == 1
+    assert app_error.type == "attempt_budget_exhausted"
+    assert app_error.non_retryable is True
 
 
 @pytest.mark.asyncio
