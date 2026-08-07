@@ -988,3 +988,189 @@ def test_late_terminal_from_superseded_run_does_not_clobber_live_run(
     ).fetchone()
     assert _row_value(row, "status") == "succeeded"
     assert _row_value(row, "finished_at") == "2026-07-04T12:30:00+00:00"
+
+
+def test_cancellation_audit_only_group_preserves_stored_rows(
+    conn: sqlite3.Connection,
+) -> None:
+    """Regression (PR #750 review, reproduced): a cancellation-audit fact for a
+    run with no state-bearing ``Workflow*`` events must never rebuild the row.
+
+    Before the fix, recording ``WorkflowCancellationRequested`` for a legacy
+    canceled run (whose lifecycle predates the event log) fed an audit-only
+    event group into the fold, which returned the ``in_progress`` seed state
+    and full-row-overwrote the stored projection: the canceled run flipped to
+    ``in_progress`` and permanently lost ``started_at`` / ``finished_at`` /
+    ``input_summary``. This is exactly the population the
+    ``workflow_runs_missing_cancellation_audit`` backfill targets, so the fix
+    is what makes that backfill safe to run at all.
+    """
+    from jobctrl.infrastructure.temporal.cancellation_audit import (
+        record_workflow_cancellation_requested,
+    )
+
+    seed = (
+        "INSERT INTO workflow_run_projections ("
+        " workflow_id, tenant_id, workflow_type, status, input_summary_json,"
+        " error_code, error_message, retryable, started_at, finished_at,"
+        " duration_ms, temporal_run_id, events_json"
+        ") VALUES (?, 'local', ?, ?, ?, NULL, NULL, 0, ?, ?, NULL, ?, '[]')"
+    )
+    conn.execute(
+        seed,
+        (
+            "run-legacy-canceled",
+            "JobPipelineWorkflow",
+            "canceled",
+            json.dumps({"jobId": "job-2"}),
+            "2026-08-01T09:00:00Z",
+            "2026-08-01T09:30:00Z",
+            "temporal-legacy-canceled",
+        ),
+    )
+    conn.execute(
+        seed,
+        (
+            "run-legacy-live",
+            "JobPipelineWorkflow",
+            "in_progress",
+            json.dumps({"jobId": "job-1"}),
+            "2026-08-01T10:00:00Z",
+            None,
+            "temporal-legacy-live",
+        ),
+    )
+    conn.commit()
+
+    changed = record_workflow_cancellation_requested(
+        conn,
+        workflow_id="run-legacy-canceled",
+        requested_by="temporal-cli:tester@local",
+        source="temporal_cli",
+        requested_at="2026-08-04T21:04:08+00:00",
+        evidence_kind="recovered_temporal_history",
+        tenant_id=LOCAL_TENANT,
+        refresh_projection=False,
+    )
+    assert changed is True
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    canceled = conn.execute(
+        "SELECT * FROM workflow_run_projections WHERE workflow_id = ?",
+        ("run-legacy-canceled",),
+    ).fetchone()
+    assert _row_value(canceled, "status") == "canceled"
+    assert _row_value(canceled, "started_at") == "2026-08-01T09:00:00Z"
+    assert _row_value(canceled, "finished_at") == "2026-08-01T09:30:00Z"
+    assert json.loads(_row_value(canceled, "input_summary_json", "{}")) == {
+        "jobId": "job-2"
+    }
+    assert _row_value(canceled, "temporal_run_id") == "temporal-legacy-canceled"
+
+    live = conn.execute(
+        "SELECT * FROM workflow_run_projections WHERE workflow_id = ?",
+        ("run-legacy-live",),
+    ).fetchone()
+    assert _row_value(live, "status") == "in_progress"
+    assert _row_value(live, "started_at") == "2026-08-01T10:00:00Z"
+    assert _row_value(live, "finished_at") is None
+    assert json.loads(_row_value(live, "input_summary_json", "{}")) == {
+        "jobId": "job-1"
+    }
+
+    # The audit fact itself stays durable in the canonical stream.
+    fact = conn.execute(
+        "SELECT payload_json FROM job_events"
+        " WHERE event_type = 'WorkflowCancellationRequested'"
+        " ORDER BY event_id DESC LIMIT 1"
+    ).fetchone()
+    assert fact is not None
+    payload = json.loads(fact["payload_json"])
+    assert payload["workflowId"] == "run-legacy-canceled"
+    assert payload["evidenceKind"] == "recovered_temporal_history"
+    assert payload["requestedBy"] == "temporal-cli:tester@local"
+    assert payload["temporalRunId"] == "temporal-legacy-canceled"
+
+
+def test_cancellation_request_enriches_timeline_without_driving_fold(
+    conn: sqlite3.Connection,
+) -> None:
+    """The audit fact is timeline-only for real runs: the fold's verdict and
+    timestamps come solely from state-bearing events, while the projected
+    timeline gains the requester/source entry."""
+    from jobctrl.domain.events import create_workflow_cancellation_requested
+    from jobctrl.domain.events.workflow import WorkflowCancellationRequestedPayload
+
+    _record(
+        conn,
+        create_workflow_started(
+            LOCAL_TENANT,
+            WorkflowStartedPayload(
+                workflow_id="run-cancel-audit",
+                workflow_type="JobPipelineWorkflow",
+                input_summary={"stages": ["score"]},
+                started_at="2026-08-04T21:00:00+00:00",
+                temporal_run_id="temporal-cancel-1",
+            ),
+        ),
+        occurred_at="2026-08-04T21:00:00+00:00",
+    )
+    cancellation_event = create_workflow_cancellation_requested(
+        LOCAL_TENANT,
+        WorkflowCancellationRequestedPayload(
+            workflow_id="run-cancel-audit",
+            workflow_type="JobPipelineWorkflow",
+            requested_by="temporal-cli:tester@local",
+            source="temporal_cli",
+            requested_at="2026-08-04T21:04:08+00:00",
+            evidence_kind="temporal_history",
+            temporal_run_id="temporal-cancel-1",
+        ),
+    )
+    # Mirror the production writer: ``record_job_event`` replaces the stored
+    # payload's ``message`` with its message argument, so the audit writer
+    # always passes the payload message through explicitly.
+    record_job_event(
+        conn,
+        None,
+        "workflow",
+        cancellation_event.event_type,
+        message=str(cancellation_event.payload.get("message") or ""),
+        payload=dict(cancellation_event.payload),
+        occurred_at="2026-08-04T21:04:08+00:00",
+    )
+    _record(
+        conn,
+        create_workflow_canceled(
+            LOCAL_TENANT,
+            WorkflowCanceledPayload(
+                workflow_id="run-cancel-audit",
+                workflow_type="JobPipelineWorkflow",
+                error_code="",
+                error_message="Workflow canceled.",
+                finished_at="2026-08-04T21:04:09+00:00",
+                temporal_run_id="temporal-cancel-1",
+            ),
+        ),
+        occurred_at="2026-08-04T21:04:09+00:00",
+    )
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    row = conn.execute(
+        "SELECT * FROM workflow_run_projections WHERE workflow_id = ?",
+        ("run-cancel-audit",),
+    ).fetchone()
+    assert _row_value(row, "status") == "canceled"
+    assert _row_value(row, "started_at") == "2026-08-04T21:00:00+00:00"
+    assert _row_value(row, "finished_at") == "2026-08-04T21:04:09+00:00"
+    timeline = json.loads(_row_value(row, "events_json", "[]"))
+    assert [event["eventType"] for event in timeline] == [
+        "WorkflowStarted",
+        "WorkflowCancellationRequested",
+        "WorkflowCanceled",
+    ]
+    request_entry = timeline[1]
+    assert "temporal-cli:tester@local" in str(request_entry["message"])
+    assert "temporal_cli" in str(request_entry["message"])

@@ -86,6 +86,45 @@ def test_cancel_run_delivery_failure_does_not_record_request_intent() -> None:
     assert count == 0
 
 
+def test_cancel_run_audit_write_failure_still_reports_canceling(
+    monkeypatch,
+) -> None:
+    """PR #750 review (Low): once Temporal accepted the cancel, the run IS
+    canceling — a failed audit write must degrade to a logged warning, never
+    surface as a failed cancel to the client."""
+    import jobctrl.infrastructure.temporal.cancellation_audit as cancellation_audit
+
+    run_id = f"wf-{uuid.uuid4().hex}"
+    cancelled: list[str] = []
+
+    async def canceler(requested_run_id: str) -> None:
+        cancelled.append(requested_run_id)
+
+    def failing_record(*_args, **_kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(
+        cancellation_audit,
+        "record_workflow_cancellation_requested",
+        failing_record,
+    )
+
+    server = JsonRpcServer(workflow_starter=_stub_starter)
+    register_default_handlers(server, canceler=canceler)
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="cancel_run",
+            params={"tenantId": "local", "runId": run_id},
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert body["result"] == {"runId": run_id, "status": "canceling"}
+    assert cancelled == [run_id]
+
+
 def test_cancel_run_missing_run_id_returns_invalid_params() -> None:
     async def canceler(_run_id: str) -> None:  # pragma: no cover — not reached
         return None

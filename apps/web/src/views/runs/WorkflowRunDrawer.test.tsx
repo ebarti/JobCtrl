@@ -255,7 +255,10 @@ describe("<WorkflowRunDrawer>", () => {
           {
             eventType: "WorkflowCancellationRequested",
             occurredAt: "2026-08-04T21:04:08Z",
-            status: "in_progress",
+            // The real Python-built timeline carries no status for the
+            // audit-only fact (the payload has no `status` key), so the
+            // fixture must match: null, not "in_progress".
+            status: null,
             message:
               "Cancellation requested by temporal-cli:tester@local via temporal_cli.",
           },

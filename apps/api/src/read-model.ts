@@ -5721,6 +5721,11 @@ function activityRowToSummary(row: Record<string, unknown>): ActivityEventSummar
  */
 const WORKFLOW_LIFECYCLE_EVENT_TYPES = [
   "WorkflowStarted",
+  // Audit-only fact (requester/source provenance). It never advances the fold
+  // below; it is loaded only so this list mirrors the canonical per-run stream
+  // the Python builder consumes. A stream containing nothing but audit facts
+  // produces no fold at all (see foldWorkflowRunEvents), preserving the
+  // documented legacy-seed fallback to the stored row.
   "WorkflowCancellationRequested",
   "WorkflowCompleted",
   "WorkflowFailed",
@@ -5779,7 +5784,10 @@ function loadWorkflowRunLifecycleFolds(db: SqliteDatabase): Map<string, Workflow
     byWorkflow.set(workflowId, events);
   }
   for (const [workflowId, events] of byWorkflow) {
-    folds.set(workflowId, foldWorkflowRunEvents(events));
+    const fold = foldWorkflowRunEvents(events);
+    if (fold !== null) {
+      folds.set(workflowId, fold);
+    }
   }
   return folds;
 }
@@ -5812,7 +5820,7 @@ function startsNewWorkflowExecution(args: {
   return started > finished;
 }
 
-function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): WorkflowLifecycleFold {
+function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): WorkflowLifecycleFold | null {
   let phase: "none" | "in_progress" | "terminal" = "none";
   let status: WorkflowRunStatus = "in_progress";
   let errorCode: string | null = null;
@@ -5890,6 +5898,15 @@ function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): Workf
     errorMessage = nullableString(payload.errorMessage ?? payload.message) ?? errorMessage;
     retryable = "retryable" in payload ? Boolean(payload.retryable) : retryable;
     runId = terminalRunId ?? runId;
+  }
+  if (phase === "none") {
+    // Audit-only stream (e.g. a lone WorkflowCancellationRequested recorded
+    // for a legacy run): no state-bearing Workflow* event ever folded, so
+    // there is no lifecycle verdict here. Returning null keeps the stored row
+    // authoritative instead of overwriting a canceled/succeeded run with the
+    // degenerate in_progress seed (PR #750 review, reproduced on the Python
+    // twin of this fold).
+    return null;
   }
   return { status, errorCode, errorMessage, retryable, startedAt, finishedAt, durationMs };
 }

@@ -857,16 +857,29 @@ def make_cancel_run(canceler: WorkflowCanceler):
         # accepts delivery. The immutable history requester is reconciled as a
         # separate evidence fact, so neither source can suppress the other.
         asyncio.run(canceler(run_id))
-        record_workflow_cancellation_requested(
-            get_connection(),
-            workflow_id=run_id,
-            requested_by=requested_by,
-            source=source,
-            requested_at=utc_now(),
-            evidence_kind="request_intent",
-            reason=reason,
-            tenant_id=tenant_id,
-        )
+        try:
+            record_workflow_cancellation_requested(
+                get_connection(),
+                workflow_id=run_id,
+                requested_by=requested_by,
+                source=source,
+                requested_at=utc_now(),
+                evidence_kind="request_intent",
+                reason=reason,
+                tenant_id=tenant_id,
+            )
+        except Exception:
+            # Temporal already accepted the cancel: the run IS canceling, so
+            # the RPC must report success. A failed intent write degrades to a
+            # logged warning; the reconciler's temporal_history /
+            # recovered_temporal_history facts still capture the immutable
+            # requester from the execution's history.
+            logger.warning(
+                "cancel_run: recording the request_intent audit fact failed for %s; "
+                "the cancel was delivered and history-evidence reconciliation will still run",
+                run_id,
+                exc_info=True,
+            )
         return {"runId": run_id, "status": "canceling"}
 
     return cancel_run

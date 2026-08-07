@@ -6686,6 +6686,66 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("keeps the stored canceled run when its only lifecycle stream entry is a cancellation-audit fact", async () => {
+    // Regression (PR #750 review, reproduced on the Python twin): a legacy
+    // canceled run has no state-bearing Workflow* job_events. Recording the
+    // WorkflowCancellationRequested audit fact (which the cancellation-audit
+    // backfill does for exactly this population) must not create a degenerate
+    // fold that serves the stored canceled run as in_progress with null
+    // startedAt/finishedAt — the documented legacy-seed fallback ("Runs with
+    // no Workflow* events fall back to the stored row") must keep holding.
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        workflowId: "discover-legacy-canceled",
+        status: "canceled",
+        startedAt: "2026-08-01T09:00:00+00:00",
+        finishedAt: "2026-08-01T09:30:00+00:00",
+        temporalRunId: "temporal-legacy-canceled",
+        inputSummary: { jobId: "job-2" },
+      });
+      insertPipelineWorkflowEvent(db, {
+        eventType: "WorkflowCancellationRequested",
+        occurredAt: "2026-08-04T21:04:08+00:00",
+        workflowId: "discover-legacy-canceled",
+        temporalRunId: "temporal-legacy-canceled",
+        message: "Cancellation requested by temporal-cli:tester@local via temporal_cli.",
+      });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const list = await app.inject({ method: "GET", url: "/v1/workflow-runs?status=canceled" });
+      expect(list.statusCode, list.body).toBe(200);
+      const run = list
+        .json()
+        .items.find((r: { workflowId: string }) => r.workflowId === "discover-legacy-canceled");
+      expect(run).toMatchObject({
+        workflowId: "discover-legacy-canceled",
+        status: "canceled",
+        startedAt: "2026-08-01T09:00:00+00:00",
+        finishedAt: "2026-08-01T09:30:00+00:00",
+      });
+
+      const detail = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs/discover-legacy-canceled",
+      });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json()).toMatchObject({
+        workflowId: "discover-legacy-canceled",
+        status: "canceled",
+        startedAt: "2026-08-01T09:00:00+00:00",
+        finishedAt: "2026-08-01T09:30:00+00:00",
+        inputSummary: { jobId: "job-2" },
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("reopens the same Temporal run only for an explicit missing-history recovery", async () => {
     const recoveredRunId = "temporal-recovered-same-run";
     const originalStart = "2026-07-13T18:49:49.146Z";
