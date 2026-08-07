@@ -30,12 +30,7 @@ from jobctrl.domain.discovery.scheduler import (
 )
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
-from jobctrl.domain.errors import (
-    AttemptBudgetExhaustedError,
-    LlmTransientError,
-    SourceUnavailableError,
-    TransientNetworkError,
-)
+from jobctrl.domain.errors import LlmTransientError, SourceUnavailableError, TransientNetworkError
 from jobctrl.domain.enrichment import (
     EnrichmentExecutionLease,
     StaleEnrichmentExecutionLease,
@@ -2505,11 +2500,6 @@ def _run_tailor(
         raise LlmTransientError("tailoring canceled")
     failed = int(result.get("failed") or 0)
     errors = int(result.get("errors") or 0)
-    exhausted = int(result.get("exhausted") or 0)
-    if exhausted:
-        raise AttemptBudgetExhaustedError(
-            f"{exhausted} tailored resume(s) exhausted the durable attempt budget"
-        )
     if errors:
         raise LlmTransientError(
             f"{errors} tailoring error(s), {failed} failed quality gate(s)"

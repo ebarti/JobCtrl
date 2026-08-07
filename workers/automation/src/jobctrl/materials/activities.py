@@ -10,12 +10,7 @@ from typing import Any
 from temporalio import activity
 
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
-from jobctrl.domain.errors import (
-    AttemptBudgetExhaustedError,
-    JobCtrlError,
-    LlmTransientError,
-    to_application_error,
-)
+from jobctrl.domain.errors import JobCtrlError, LlmTransientError, to_application_error
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.infrastructure.temporal.pipeline_step_lifecycle import (
     PipelineStepScope,
@@ -347,10 +342,6 @@ async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActiv
             activity_name="tailor_job",
         )
         status = str(result.get("status") or "error")
-        if status in {"exhausted", "exhausted_retries"}:
-            raise AttemptBudgetExhaustedError(
-                str(result.get("error") or "Tailor durable attempt budget exhausted")
-            )
         if status not in {"approved", "skipped", "not_eligible", "already_done"}:
             raise LlmTransientError(str(result.get("error") or f"Tailoring ended with status {status}"))
         materials = result.get("materials")
