@@ -73,6 +73,11 @@ class JobPipelineWorkflowInput:
     tailor_judge_min_score: float | None = None
     job_id: JobId | None = None
     job_ids: tuple[JobId, ...] = ()
+    # Independently frozen ``pending_cover`` backlog for a resolved global
+    # material run whose stages also include Tailor. ``job_ids`` carries the
+    # frozen Tailor backlog there, so Cover keeps its own cohort and unions it
+    # with the subset Tailor approves during the run.
+    cover_job_ids: tuple[JobId, ...] = ()
     apply_selector_keys: tuple[str, ...] = ()
     source_ids: tuple[str, ...] = ()
     score_current_policy_only: bool = False
@@ -89,6 +94,7 @@ class JobPipelineWorkflowInput:
         if self.job_id is not None:
             object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
         object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
+        object.__setattr__(self, "cover_job_ids", _canonical_job_ids(self.cover_job_ids))
 
 
 @dataclass(frozen=True)
@@ -222,17 +228,32 @@ class JobPipelineWorkflow:
         failure: str | None = None
         error_code: str | None = None
         derived_preparation_job_ids: tuple[JobId, ...] | None = None
+        scored_job_ids: tuple[JobId, ...] = ()
 
         for stage in payload.stages:
             stage_payload = payload
-            if (
-                stage in {"tailor", "cover"}
-                and payload.material_selection_resolved
-                and not _selected_job_ids(payload)
-            ):
-                completed.append(stage)
-                continue
-            if stage in {"score", "tailor", "cover"} and derived_preparation_job_ids is not None:
+            if stage in {"tailor", "cover"} and payload.material_selection_resolved:
+                dispatch_job_ids = _resolved_material_dispatch_job_ids(
+                    stage,
+                    payload,
+                    derived_preparation_job_ids=derived_preparation_job_ids,
+                    scored_job_ids=scored_job_ids,
+                )
+                if not dispatch_job_ids:
+                    completed.append(stage)
+                    continue
+                stage_payload = replace(
+                    payload,
+                    job_id=None,
+                    job_ids=dispatch_job_ids,
+                    limit=_resolved_material_limit(stage, payload),
+                )
+            elif stage == "score" and payload.material_selection_resolved:
+                # ``job_ids`` carries a frozen material cohort in resolved
+                # runs; Score is not a material stage and keeps its legacy
+                # global sweep with an unscoped selection.
+                stage_payload = replace(payload, job_id=None, job_ids=())
+            elif stage in {"score", "tailor", "cover"} and derived_preparation_job_ids is not None:
                 if not derived_preparation_job_ids:
                     completed.append(stage)
                     continue
@@ -273,6 +294,10 @@ class JobPipelineWorkflow:
                 enriched_job_ids = _enriched_job_ids(result)
                 if enriched_job_ids is not None:
                     derived_preparation_job_ids = enriched_job_ids
+            elif stage == "score":
+                run_scored_job_ids = _scored_job_ids(result)
+                if run_scored_job_ids is not None:
+                    scored_job_ids = run_scored_job_ids
             elif stage == "tailor":
                 approved_job_ids = _approved_tailor_job_ids(result)
                 if approved_job_ids is not None:
@@ -284,6 +309,51 @@ class JobPipelineWorkflow:
             failure=failure,
             error_code=error_code,
         )
+
+
+def _resolved_material_dispatch_job_ids(
+    stage: str,
+    payload: JobPipelineWorkflowInput,
+    *,
+    derived_preparation_job_ids: tuple[JobId, ...] | None,
+    scored_job_ids: tuple[JobId, ...],
+) -> tuple[JobId, ...]:
+    """Dispatch set for one material stage of a resolved global run.
+
+    Each material stage owns an independently frozen backlog cohort, so an
+    empty Tailor cohort must not skip a non-empty Cover backlog. Within the
+    run, a queue only grows through upstream stage output: Score's
+    ``scoredJobIds`` feed Tailor and Tailor's ``approvedJobIds`` feed Cover,
+    so each stage dispatches the union of its frozen backlog and the upstream
+    subset this run produced. An empty union is an explicit no-op.
+    """
+
+    if stage == "tailor":
+        return _canonical_job_ids((*_selected_job_ids(payload), *scored_job_ids))
+    if "tailor" in payload.stages:
+        # ``job_ids`` holds the frozen Tailor backlog in these runs; Cover
+        # unions its own frozen backlog with the subset Tailor approved. A
+        # ``None`` derived value means Tailor no-opped on an empty cohort.
+        return _canonical_job_ids(
+            (*payload.cover_job_ids, *(derived_preparation_job_ids or ()))
+        )
+    # Cover is the only requested material stage: its frozen backlog rides in
+    # ``job_ids`` like any other single-cohort selection.
+    return _canonical_job_ids((*payload.cover_job_ids, *_selected_job_ids(payload)))
+
+
+def _resolved_material_limit(stage: str, payload: JobPipelineWorkflowInput) -> int:
+    """Keep the request limit on frozen single-queue cohorts only.
+
+    A frozen backlog was already limit-capped by its selection query, so
+    re-applying ``limit`` there is a no-op that preserves the pre-union
+    activity inputs. A Cover union that follows Tailor mirrors the derived
+    approved-subset handoff, which never re-truncates.
+    """
+
+    if stage == "cover" and "tailor" in payload.stages:
+        return 0
+    return payload.limit
 
 
 async def _recover_stage_state(
@@ -539,6 +609,7 @@ def _pipeline_spends(payload: JobPipelineWorkflowInput) -> bool:
             stage in {"tailor", "cover"}
             and payload.material_selection_resolved
             and not _selected_job_ids(payload)
+            and not payload.cover_job_ids
         )
         for stage in payload.stages
     )
@@ -621,6 +692,31 @@ def _approved_tailor_job_ids(result: Any) -> tuple[JobId, ...] | None:
         if "approvedJobIds" not in stage_result:
             return None
         raw_job_ids = stage_result.get("approvedJobIds")
+        if not isinstance(raw_job_ids, list):
+            return ()
+        return _canonical_job_ids(tuple(canonical_job_id(str(job_id)) for job_id in raw_job_ids))
+    return None
+
+
+def _scored_job_ids(result: Any) -> tuple[JobId, ...] | None:
+    """Read the canonical job ids Score persisted during this run.
+
+    Only the legacy global Score sweep reports ``scoredJobIds``; a resolved
+    material run unions them into the frozen Tailor cohort so jobs the run
+    itself qualifies are not stranded until the next command.
+    """
+
+    stages = _result_value(result, "stages")
+    if not isinstance(stages, list):
+        return None
+    for stage_result in stages:
+        if not isinstance(stage_result, dict):
+            continue
+        if stage_result.get("stage") != "score":
+            continue
+        if "scoredJobIds" not in stage_result:
+            return None
+        raw_job_ids = stage_result.get("scoredJobIds")
         if not isinstance(raw_job_ids, list):
             return ()
         return _canonical_job_ids(tuple(canonical_job_id(str(job_id)) for job_id in raw_job_ids))

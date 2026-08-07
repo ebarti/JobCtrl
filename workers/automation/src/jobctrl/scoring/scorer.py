@@ -290,7 +290,7 @@ def run_scoring(
 
     if not jobs:
         log.info("No unscored jobs with descriptions found.")
-        return {"scored": 0, "errors": 0, "elapsed": 0.0, "distribution": []}
+        return {"scored": 0, "errors": 0, "elapsed": 0.0, "distribution": [], "scoredJobIds": []}
 
     jobs = [
         dict(job)
@@ -315,7 +315,7 @@ def run_scoring(
             )
         ]
     if not jobs:
-        return {"scored": 0, "errors": 0, "elapsed": 0.0, "distribution": []}
+        return {"scored": 0, "errors": 0, "elapsed": 0.0, "distribution": [], "scoredJobIds": []}
 
     worker_count = max(1, workers)
     log.info("Scoring %d jobs with %d worker(s)...", len(jobs), worker_count)
@@ -624,11 +624,23 @@ def run_scoring(
     )
 
     distribution = _score_distribution(repository, tenant_id)
+    # Canonical ids this run persisted a score for (computed, reused, and
+    # duplicate-propagated outcomes). A resolved global material run unions
+    # them into its frozen Tailor cohort so newly qualified jobs are tailored
+    # in the same command instead of stranding until the next pickup.
+    scored_job_ids = list(
+        dict.fromkeys(
+            str(canonical_job_id(str(job["job_id"])))
+            for job, outcome in results
+            if outcome.ok and outcome.score is not None
+        )
+    )
     return {
         "scored": scored_count,
         "errors": errors,
         "elapsed": elapsed,
         "distribution": distribution,
+        "scoredJobIds": scored_job_ids,
     }
 
 

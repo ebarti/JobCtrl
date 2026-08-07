@@ -197,13 +197,19 @@ The campaign reproduced independent reliability defects:
     the selected-batch safeguards. A global Tailor/Cover command left
     `jobIds` empty, so a 30-minute activity timeout could abandon the unscoped
     batch and allow its late result to race a newer selected owner. Global
-    material starts now freeze the eligible canonical JobIds before Temporal
-    starts. They therefore use the existing bounded per-job fan-out, scaled
-    worker-wave deadline, cooperative cancellation token, and exact ownership
-    fence. The frozen-selection marker distinguishes a resolved empty cohort
-    from an unscoped legacy batch, preserves independent batch-Apply semantics
-    in mixed requests, and makes the global current-policy maintenance action
-    resolve its policy-aware cohort before workflow dispatch.
+    material starts now freeze each requested material stage's eligible
+    canonical JobIds before Temporal starts — the `pending_cover` backlog is
+    frozen independently of `pending_tailor`, and score-led maintenance runs
+    freeze their material cohorts too, with Score's newly scored jobs joining
+    the frozen Tailor cohort and Tailor's approved subset joining the frozen
+    Cover cohort inside the run. Material stages therefore use the existing
+    bounded per-job fan-out, scaled worker-wave deadline, cooperative
+    cancellation token, and exact ownership fence. The frozen-selection marker
+    distinguishes a resolved empty cohort from an unscoped legacy batch — one
+    empty material queue no-ops only its own stage — preserves independent
+    batch-Apply semantics in mixed requests, and makes the global
+    current-policy maintenance action resolve its policy-aware cohort before
+    workflow dispatch.
 
 No timer or second scheduler was added. Recovery is one idempotent step in the
 workflow that owns the work, plus a durable event dispatch when a setting

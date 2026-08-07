@@ -105,13 +105,18 @@ accepted artifact without another model call. Profile and browser-setting
 continuations must also survive an API stop after their durable write and
 before dispatch. A selected batch must honor its bounded worker count; item
 failures remain attached to their own rows while the approved Tailor subset
-continues to Cover. A global Tailor or Cover command must freeze its eligible
-JobIds before Temporal starts, so it uses the same bounded per-job fan-out,
-ownership fence, and worker-wave deadline instead of the legacy unscoped batch
-runner. Prove the zero-row selection is an explicit no-op rather than an
-unscoped fallback, a mixed Tailor/Cover/Apply request retains batch-Apply
-semantics, and global current-policy re-tailoring freezes the policy-aware
-cohort before dispatch. An activity timeout or worker shutdown is retryable and
+continues to Cover. A global command that includes Tailor or Cover — including
+score-led maintenance runs such as `run score tailor cover` — must freeze each
+requested material stage's backlog into exact JobIds before Temporal starts,
+so material stages use the same bounded per-job fan-out, ownership fence, and
+worker-wave deadline instead of the legacy unscoped batch runner. Inside the
+run, Score's newly scored jobs join the frozen Tailor cohort and Tailor's
+approved subset joins the frozen Cover cohort. Prove each zero-row cohort is
+an explicit per-stage no-op rather than an unscoped fallback — an empty Tailor
+cohort must not skip a non-empty Cover backlog — that a mixed
+Tailor/Cover/Apply request retains batch-Apply semantics, and that global
+current-policy re-tailoring freezes the policy-aware cohort before dispatch.
+An activity timeout or worker shutdown is retryable and
 must not be projected as user cancellation. For an explicitly selected batch,
 the replay-versioned activity deadline is 30 minutes per worker wave, capped at
 6 hours; the 2-minute heartbeat still detects a dead worker promptly. Parallel

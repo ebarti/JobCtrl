@@ -2460,7 +2460,7 @@ def _run_score(
     if cancel_event is not None and cancel_event.is_set():
         raise LlmTransientError("scoring canceled before start")
     from jobctrl.scoring.scorer import run_scoring
-    run_scoring(
+    result = run_scoring(
         limit=limit,
         rescore=rescore,
         workers=workers,
@@ -2469,7 +2469,10 @@ def _run_score(
     )
     if cancel_event is not None and cancel_event.is_set():
         raise LlmTransientError("scoring canceled")
-    return {"status": "ok"}
+    # ``scoredJobIds`` reaches the pipeline workflow through the score stage
+    # result so a resolved global material run can union this run's newly
+    # scored jobs into its frozen Tailor cohort.
+    return {"status": "ok", "scoredJobIds": list(result.get("scoredJobIds") or [])}
 
 
 def _run_tailor(
