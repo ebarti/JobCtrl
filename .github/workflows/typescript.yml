@@ -1,16 +1,34 @@
 name: TypeScript CI
 
+# The TypeScript suite reads real files from outside apps/ and packages/:
+# `workers/**` supplies schema_v7.sql, schema_manifest.py, and config.py to the
+# cross-runtime parity and schema-guard tests, and `scripts/**` supplies the
+# install script executed by the install contract test. Both lists must stay in
+# sync and must keep those directories, or a change that breaks TypeScript CI
+# could merge without ever running it. No `branches` filter on `pull_request`:
+# stacked PRs target their parent branch, not main.
 on:
   push:
     branches: ["main"]
     paths:
       - "apps/**"
       - "packages/**"
+      - "workers/**"
+      - "scripts/**"
       - "pnpm-lock.yaml"
       - "package.json"
       - "pnpm-workspace.yaml"
       - ".github/workflows/typescript.yml"
   pull_request:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "workers/**"
+      - "scripts/**"
+      - "pnpm-lock.yaml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/typescript.yml"
   workflow_dispatch:
 
 jobs:
