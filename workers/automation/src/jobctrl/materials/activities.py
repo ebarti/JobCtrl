@@ -347,7 +347,7 @@ async def tailor_job_activity(payload: TailorJobActivityInput) -> TailorJobActiv
             activity_name="tailor_job",
         )
         status = str(result.get("status") or "error")
-        if status == "exhausted":
+        if status in {"exhausted", "exhausted_retries"}:
             raise AttemptBudgetExhaustedError(
                 str(result.get("error") or "Tailor durable attempt budget exhausted")
             )

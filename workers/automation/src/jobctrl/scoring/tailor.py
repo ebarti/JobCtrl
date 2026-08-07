@@ -627,6 +627,7 @@ def run_tailoring(
     # those columns are read-only fallbacks now.
     finished_at = utc_now()
     _success_statuses = {"approved"}
+    durable_exhausted = 0
     for r in results:
         url = r["url"]
         attempts = r.get("attempts") or 1
@@ -656,6 +657,7 @@ def run_tailoring(
             )
         else:
             exhausted = attempts >= config.DEFAULTS["max_tailor_attempts"] or r.get("status") == "exhausted_retries"
+            durable_exhausted += int(exhausted)
             set_stage_state(
                 conn,
                 url,
@@ -667,7 +669,7 @@ def run_tailoring(
                 finished_at=finished_at,
                 error_code=str(r.get("status", "error")).upper(),
                 error_message=f"Tailoring ended with status {r.get('status', 'error')}",
-                retryable=True,
+                retryable=not exhausted,
                 next_action=(
                     f"jobctrl retry tailor {url} --reset-attempts" if exhausted else f"jobctrl retry tailor {url}"
                 ),
@@ -696,6 +698,7 @@ def run_tailoring(
         "approved": stats.get("approved", 0),
         "failed": stats.get("failed_validation", 0) + stats.get("failed_judge", 0),
         "errors": stats.get("error", 0),
+        "exhausted": durable_exhausted,
         "elapsed": elapsed,
     }
 

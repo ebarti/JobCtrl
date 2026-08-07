@@ -261,7 +261,7 @@ async def test_tailor_job_durable_attempt_exhaustion_is_non_retryable() -> None:
         nonlocal attempts
         attempts += 1
         return {
-            "status": "exhausted",
+            "status": "exhausted_retries",
             "error": "Tailor durable attempt budget exhausted",
         }
 
@@ -291,6 +291,21 @@ async def test_tailor_job_durable_attempt_exhaustion_is_non_retryable() -> None:
     assert attempts == 1
     assert app_error.type == "attempt_budget_exhausted"
     assert app_error.non_retryable is True
+
+
+def test_tailor_batch_exhaustion_count_is_non_retryable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "jobctrl.scoring.tailor.run_tailoring",
+        lambda **_kwargs: {
+            "approved": 0,
+            "failed": 1,
+            "errors": 0,
+            "exhausted": 1,
+        },
+    )
+
+    with pytest.raises(AttemptBudgetExhaustedError):
+        pipeline_runner._run_tailor()
 
 
 @pytest.mark.asyncio
