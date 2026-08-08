@@ -443,7 +443,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const manualCaptureImporter =
     options.manualCaptureImporter ?? createWorkerManualCaptureImporter({ pythonRuntime });
   const gmailFeedbackScanner =
-    options.gmailFeedbackScanner ?? createWorkerGmailFeedbackScanner({ pythonRuntime });
+    options.gmailFeedbackScanner ?? createWorkerGmailFeedbackScanner(providerDispatcher);
   const profileImporter = options.profileImporter ?? createProfileImporter(pythonRuntime);
   const profilePreviewRenderer = options.profilePreviewRenderer ?? createProfilePreviewRenderer(pythonRuntime);
   const resumePdfRenderer = options.resumePdfRenderer ?? createResumeHtmlPdfRenderer(providerDispatcher);
