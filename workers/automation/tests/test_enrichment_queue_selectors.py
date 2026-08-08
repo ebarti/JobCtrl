@@ -217,7 +217,6 @@ def test_pending_detail_excludes_jobs_with_enrichment_row(conn: sqlite3.Connecti
 def test_closed_postings_are_excluded_from_enrichment_queues(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from jobctrl import pipeline
     from jobctrl.pipeline import runner as pipeline_runner
 
     pending_url = "https://example.com/jobs/closed-pending-detail"
@@ -232,8 +231,8 @@ def test_closed_postings_are_excluded_from_enrichment_queues(
     assert {row["url"] for row in get_jobs_by_stage(conn, "pending_detail")} == set()
     assert {row["url"] for row in get_jobs_by_stage(conn, "enriched")} == set()
     assert {row["url"] for row in get_jobs_by_stage(conn, "pending_score")} == set()
-    assert pipeline._count_pending("enrich") == 0
-    assert pipeline._count_pending("score") == 0
+    assert pipeline_runner._count_pending("enrich") == 0
+    assert pipeline_runner._count_pending("score") == 0
 
 
 def test_pending_score_includes_jobs_enriched_via_repository(conn: sqlite3.Connection) -> None:
@@ -510,7 +509,7 @@ def test_pending_sql_enrich_excludes_new_path_enriched_jobs(
     """``pipeline._PENDING_SQL['enrich']`` must read through
     ``_ENRICHMENT_JOIN`` so jobs enriched via the repository drop out
     of the count."""
-    from jobctrl.pipeline import _PENDING_SQL
+    from jobctrl.pipeline.runner import _PENDING_SQL
 
     enriched_job_id = _seed_discovered(conn, "https://example.com/jobs/A")
     _seed_discovered(conn, "https://example.com/jobs/B")
@@ -526,7 +525,7 @@ def test_pending_detail_excludes_legacy_stage_succeeded_without_aggregate(
     """Live local DBs may have canonical succeeded stage rows before a
     ``job_enrichments`` aggregate exists. Those rows must not be
     re-enriched unless the stage is reset to pending."""
-    from jobctrl.pipeline import _PENDING_SQL
+    from jobctrl.pipeline.runner import _PENDING_SQL
     from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
     legacy_url = "https://example.com/jobs/LEGACY"
@@ -625,7 +624,7 @@ def test_pending_sql_score_includes_new_path_enriched_jobs(
     ``_EFFECTIVE_FULL_DESCRIPTION`` so newly-enriched jobs surface as
     scorable. Pre-fix the bare ``full_description`` column is NULL on
     the new path and the count stays at 0 forever."""
-    from jobctrl.pipeline import _PENDING_SQL
+    from jobctrl.pipeline.runner import _PENDING_SQL
 
     job_id = _seed_discovered(conn, "https://example.com/jobs/A")
     _save_enriched(conn, job_id)
@@ -640,7 +639,7 @@ def test_pending_sql_tailor_sees_new_path_enriched_scored_jobs(
     """The ``tailor`` predicate also reads
     ``_EFFECTIVE_FULL_DESCRIPTION`` — a job enriched via the repository
     AND scored via the canonical aggregate should surface for tailoring."""
-    from jobctrl.pipeline import _PENDING_SQL
+    from jobctrl.pipeline.runner import _PENDING_SQL
 
     job_id = _seed_discovered(conn, "https://example.com/jobs/A")
     _save_enriched(conn, job_id)
