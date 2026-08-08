@@ -3444,6 +3444,62 @@ def test_cover_letter_use_case_rejects_fabricated_metric(
     assert any(item["kind"] == "numeric" for item in cover.metadata["fabrication_audit"]["findings"])
 
 
+def test_cover_letter_retries_posting_only_number_with_qualitative_guidance(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    """A posting timeline is never promoted into candidate evidence.
+
+    Regression: Cover repeatedly copied a target-job ``60-day`` timeline, then
+    exhausted because the strict candidate-evidence detector correctly rejected
+    it. The base contract now prohibits posting-only numbers and the bounded retry
+    receives code-owned qualitative guidance without seeing the rejected output.
+    """
+    job = {
+        **job,
+        "full_description": (
+            "The first 60 days focus on incident response and observability."
+        ),
+    }
+    repo = _FakeRepository()
+    _seed_approved_cover_materials(repo, job, tmp_path)
+    llm = _ScriptedLlm([
+        _cover_letter_text(
+            "Your 60-day goals focus on incident response and observability."
+        ),
+        _cover_letter_text(
+            "Your early priorities focus on incident response and observability."
+        ),
+    ])
+    use_case = GenerateCoverLetterUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        max_retries=1,
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        job_id=job["job_id"],
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
+    )
+
+    assert outcome.status == "ok"
+    assert len(llm.calls) == 2
+    first_system = llm.calls[0][0].content
+    retry_system = llm.calls[1][0].content
+    assert "Do NOT copy any number or date" in first_system
+    assert "Use numbers." not in first_system
+    assert "cover_letter_numeric_grounding_failed" in retry_system
+    assert "describe target-job timelines" in retry_system
+    assert all("Your 60-day goals" not in message.content for message in llm.calls[1])
+    assert outcome.materials is not None
+    cover = outcome.materials.cover_letter
+    assert cover is not None
+    assert cover.status is ArtifactStatus.APPROVED
+    assert cover.metadata["fabrication_audit"]["findings"] == []
+
+
 def test_cover_letter_use_case_rejects_fabricated_employer(
     tmp_path: Path, snapshot: ProfileSnapshot, job: dict
 ) -> None:
