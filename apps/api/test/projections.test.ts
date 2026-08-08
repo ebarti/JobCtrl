@@ -15,6 +15,8 @@ import Database from "better-sqlite3";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
 import { initializeExactV7Database } from "./v7-schema.js";
+import { REFRESH_EVENT_BATCH_LIMIT, refreshProjections, setWatermark } from "../src/projections.js";
+import { PROJECTION_WATERMARK_NAME } from "../src/contracts.js";
 
 const EVENT_JOB_URL = "https://example.com/jobs/event-driven";
 const EVENT_JOB_ID = "00000000-0000-4000-8000-000000000001";
@@ -3802,6 +3804,81 @@ describe("outcome analytics read-only guard", () => {
       expect(text, file).not.toContain("buildOutcomeAnalyticsSummary");
       expect(text, file).not.toContain("/v1/analytics/outcomes");
       expect(text, file).not.toContain("OutcomeAnalyticsSummary");
+    }
+  });
+});
+
+describe("shared watermark discipline", () => {
+  function readWatermarkRow(
+    db: InstanceType<typeof Database>,
+  ): { last_event_id: number; updated_at: string } | undefined {
+    return db
+      .prepare("SELECT last_event_id, updated_at FROM event_watermarks WHERE projection_name = ?")
+      .get(PROJECTION_WATERMARK_NAME) as { last_event_id: number; updated_at: string } | undefined;
+  }
+
+  it("never rewinds the watermark and keeps updated_at on a stale write", () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      setWatermark(db, PROJECTION_WATERMARK_NAME, 10);
+      const afterAdvance = readWatermarkRow(db)!;
+      expect(afterAdvance.last_event_id).toBe(10);
+
+      setWatermark(db, PROJECTION_WATERMARK_NAME, 5);
+      const afterStaleWrite = readWatermarkRow(db)!;
+      expect(afterStaleWrite.last_event_id).toBe(10);
+      expect(afterStaleWrite.updated_at).toBe(afterAdvance.updated_at);
+
+      setWatermark(db, PROJECTION_WATERMARK_NAME, 15);
+      expect(readWatermarkRow(db)!.last_event_id).toBe(15);
+      db.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("folds a bounded batch per refresh and resumes on the next call", () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      refreshProjections(db);
+      const start = readWatermarkRow(db)?.last_event_id ?? 0;
+
+      const insert = db.prepare(
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) VALUES ('local', ?, 1, 'discover', 'JobDiscovered', 'info', 'batch', ?, '{}')",
+      );
+      const total = REFRESH_EVENT_BATCH_LIMIT + 2;
+      const bulk = db.transaction(() => {
+        for (let i = 0; i < total; i += 1) {
+          insert.run(EVENT_JOB_ID, `2026-08-08T00:00:${String(i % 60).padStart(2, "0")}Z`);
+        }
+      });
+      bulk();
+      const maxEventId = Number(
+        (db.prepare("SELECT MAX(event_id) AS m FROM job_events").get() as { m: number }).m,
+      );
+      const expectedFirstStop = Number(
+        (
+          db
+            .prepare(
+              "SELECT event_id FROM job_events WHERE event_id > ? ORDER BY event_id ASC LIMIT 1 OFFSET ?",
+            )
+            .get(start, REFRESH_EVENT_BATCH_LIMIT - 1) as { event_id: number }
+        ).event_id,
+      );
+
+      refreshProjections(db);
+      expect(readWatermarkRow(db)!.last_event_id).toBe(expectedFirstStop);
+      expect(readWatermarkRow(db)!.last_event_id).toBeLessThan(maxEventId);
+
+      refreshProjections(db);
+      expect(readWatermarkRow(db)!.last_event_id).toBe(maxEventId);
+      db.close();
+    } finally {
+      cleanup();
     }
   });
 });
