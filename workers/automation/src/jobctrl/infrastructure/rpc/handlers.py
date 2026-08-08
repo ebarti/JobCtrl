@@ -926,6 +926,36 @@ def render_resume_pdf(params: dict[str, Any]) -> dict[str, Any]:
     return {"status": "succeeded", "pdfPath": pdf_path}
 
 
+def gmail_feedback_scan(params: dict[str, Any]) -> dict[str, Any]:
+    """Run the bounded Gmail outcome scan for the TS API.
+
+    The result dict passes through verbatim - auth failures travel as
+    ``{"ok": False, "message": ...}`` so the API's status mapping keeps the
+    same behavior it had over the old one-shot subprocess protocol.
+    """
+
+    assert_expected_runtime(
+        expected_app_dir=params.get("expectedAppDir"),
+        expected_db_path=params.get("expectedDbPath"),
+    )
+    from jobctrl.config import DB_PATH
+    from jobctrl.infrastructure.gmail.feedback import scan_gmail_feedback
+
+    kwargs: dict[str, Any] = {}
+    recipient = str(params.get("recipientEmail") or "").strip()
+    if recipient:
+        kwargs["recipient_email"] = recipient
+    for param_name, kwarg_name in (
+        ("limit", "limit"),
+        ("maxResultsPerAnchor", "max_results_per_anchor"),
+        ("windowDays", "window_days"),
+    ):
+        value = params.get(param_name)
+        if value is not None:
+            kwargs[kwarg_name] = int(value)
+    return scan_gmail_feedback(db_path=DB_PATH, **kwargs)
+
+
 def rederive_learning_recommendations(params: dict[str, Any]) -> dict[str, Any]:
     """Refresh pending Materials proposals after an explicit signal review."""
 
@@ -1067,6 +1097,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     )
     server.register("rollback_tailoring_policy", rollback_tailoring_policy, mode="sync")
     server.register("render_resume_pdf", render_resume_pdf, mode="sync")
+    server.register("gmail_feedback_scan", gmail_feedback_scan, mode="sync")
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
     server.register("generate_interview_prep", generate_interview_prep, mode="workflow")
     server.register("run_contact_research", run_contact_research, mode="workflow")

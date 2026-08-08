@@ -93,6 +93,7 @@ export const RpcMethods = {
   ReviewLearningRecommendation: "review_learning_recommendation",
   RollbackTailoringPolicy: "rollback_tailoring_policy",
   RenderResumePdf: "render_resume_pdf",
+  GmailFeedbackScan: "gmail_feedback_scan",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
 
@@ -634,6 +635,25 @@ export const RenderResumePdfResultSchema = z
   })
   .strict();
 export type RenderResumePdfResult = z.infer<typeof RenderResumePdfResultSchema>;
+
+export const GmailFeedbackScanParamsSchema = z
+  .object({
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
+    recipientEmail: z.string().trim().min(1).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+    maxResultsPerAnchor: z.number().int().min(1).max(20).optional(),
+    windowDays: z.number().int().min(1).max(180).optional(),
+  })
+  .strict();
+export type GmailFeedbackScanParams = z.infer<typeof GmailFeedbackScanParamsSchema>;
+
+// The scan result deliberately passes through: the TS caller sanitizes the
+// payload field-by-field, and auth failures travel as { ok: false, message }
+// so the route's status mapping stays behavior-identical to the old
+// subprocess protocol.
+export const GmailFeedbackScanResultSchema = z.object({ ok: z.boolean() }).passthrough();
+export type GmailFeedbackScanResult = z.infer<typeof GmailFeedbackScanResultSchema>;
 
 export const ProfileImportParamsSchema = z
   .object({
