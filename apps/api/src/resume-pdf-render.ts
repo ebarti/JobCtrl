@@ -14,15 +14,28 @@ export type ResumeHtmlPdfRenderer = (input: ResumeHtmlPdfRenderInput) => Promise
 // worker child rather than a synchronous subprocess, so the API's event loop
 // keeps serving during Chromium renders. Callers persist database rows only
 // after the awaited render returns, never around it.
+export class ResumeRenderError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ResumeRenderError";
+  }
+}
+
 export function createResumeHtmlPdfRenderer(dispatcher: JsonRpcDispatcher): ResumeHtmlPdfRenderer {
   return async ({ htmlPath, pdfPath }) => {
     const response = await dispatcher.call(RpcMethods.RenderResumePdf, { htmlPath, pdfPath });
     if (response.error) {
-      throw new Error(`Resume HTML-to-PDF render failed: ${response.error.message}`);
+      // The RPC server wraps handler exceptions as a generic "Internal
+      // error" message and puts the real cause in error.data.
+      const detail =
+        typeof response.error.data === "string" && response.error.data.trim()
+          ? response.error.data
+          : response.error.message;
+      throw new ResumeRenderError(`Resume HTML-to-PDF render failed: ${detail}`);
     }
     const parsed = RenderResumePdfResultSchema.safeParse(response.result);
     if (!parsed.success) {
-      throw new Error("Resume HTML-to-PDF render returned an invalid result.");
+      throw new ResumeRenderError("Resume HTML-to-PDF render returned an invalid result.");
     }
   };
 }

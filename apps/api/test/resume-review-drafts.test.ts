@@ -4,6 +4,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ResumeRenderError } from "../src/resume-pdf-render.js";
 import type { ResumeHtmlPdfRenderInput, ResumeHtmlPdfRenderer } from "../src/resume-pdf-render.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
@@ -1259,7 +1260,7 @@ describe("resume review draft API", () => {
     const app = buildApp({
       ...options,
       resumePdfRenderer: () => {
-        throw new Error("chromium unavailable");
+        throw new ResumeRenderError("Resume HTML-to-PDF render failed: chromium unavailable");
       },
     });
     const createResponse = await app.inject({
@@ -1286,7 +1287,14 @@ describe("resume review draft API", () => {
       url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
       payload: { draftRevisionId: revisionId },
     });
-    expect(renderResponse.statusCode).toBe(500);
+    expect(renderResponse.statusCode).toBe(502);
+    expect(renderResponse.json().error).toBe("resume_render_failed");
+    expect(renderResponse.json().message).toContain("chromium unavailable");
+
+    const strays = fs
+      .readdirSync(path.dirname(options.dbPath), { recursive: true })
+      .filter((entry) => String(entry).includes("resume-review-"));
+    expect(strays).toEqual([]);
 
     const db = new Database(options.dbPath);
     try {
@@ -1306,6 +1314,69 @@ describe("resume review draft API", () => {
     } finally {
       db.close();
     }
+
+    await app.close();
+  });
+
+  it("returns a retryable 409 when materials change while rendering", async () => {
+    let conflictInjected = false;
+    const app = buildApp({
+      ...options,
+      resumePdfRenderer: async ({ htmlPath, pdfPath }) => {
+        if (!conflictInjected) {
+          conflictInjected = true;
+          const db = new Database(options.dbPath);
+          try {
+            const jobId = db
+              .prepare("SELECT job_id FROM resume_review_drafts LIMIT 1")
+              .get() as { job_id: string };
+            db.prepare(
+              `INSERT INTO job_materials (
+                 tenant_id, job_id, generation, status, created_at, updated_at,
+                 last_validation_json, last_verdict_json, metadata_json
+               ) SELECT tenant_id, job_id, MAX(generation) + 1, 'resume_approved', ?, ?, '{}', '{}', '{}'
+               FROM job_materials WHERE job_id = ? GROUP BY tenant_id, job_id`,
+            ).run(new Date().toISOString(), new Date().toISOString(), jobId.job_id);
+          } finally {
+            db.close();
+          }
+        }
+        fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);
+      },
+    });
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+    const draftId = createResponse.json().draft.draftId as string;
+    const saveResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
+      payload: { editedText: "Jordan Example\nExperience\n- Led work.", editDeltas: [] },
+    });
+    const revisionId = saveResponse.json().revision.revisionId as string;
+
+    const conflicted = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
+      payload: { draftRevisionId: revisionId },
+    });
+    expect(conflicted.statusCode, conflicted.body).toBe(409);
+    expect(conflicted.json().error).toBe("resume_render_conflict");
+
+    const straysAfterConflict = fs
+      .readdirSync(path.dirname(options.dbPath), { recursive: true })
+      .filter((entry) => String(entry).includes("resume-review-"));
+    expect(straysAfterConflict).toEqual([]);
+
+    const retry = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
+      payload: { draftRevisionId: revisionId },
+    });
+    expect(retry.statusCode, retry.body).toBe(200);
+    expect(retry.json().ok).toBe(true);
 
     await app.close();
   });

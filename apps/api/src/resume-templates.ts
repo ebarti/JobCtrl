@@ -935,7 +935,18 @@ async function persistRenderOnlyRefresh(
 
   fs.writeFileSync(textPath, text, "utf8");
   fs.writeFileSync(htmlPath, htmlForTemplateRefresh(text, effective), "utf8");
-  await renderPdf({ htmlPath, pdfPath });
+  try {
+    await renderPdf({ htmlPath, pdfPath });
+  } catch (error) {
+    for (const orphan of [textPath, htmlPath, pdfPath]) {
+      try {
+        fs.rmSync(orphan, { force: true });
+      } catch {
+        // Best-effort cleanup only; the render error is what matters.
+      }
+    }
+    throw error;
+  }
 
   db.prepare(
     `INSERT INTO job_materials (

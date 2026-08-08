@@ -488,6 +488,13 @@ export function seedResumeReviewCommentThreads(
   return tx();
 }
 
+export class DraftRenderConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DraftRenderConflictError";
+  }
+}
+
 export async function renderResumeReviewDraft(
   db: SqliteDatabase,
   draftId: string,
@@ -523,10 +530,10 @@ export async function renderResumeReviewDraft(
         current.state !== draft.state ||
         current.current_revision_id !== draft.current_revision_id
       ) {
-        throw new InputError("Resume review draft changed while rendering; retry the render.");
+        throw new DraftRenderConflictError("Resume review draft changed while rendering; retry the render.");
       }
       if (nextMaterialGeneration(db, draft.job_id) !== rendered.generation) {
-        throw new InputError("Job materials changed while rendering; retry the render.");
+        throw new DraftRenderConflictError("Job materials changed while rendering; retry the render.");
       }
       insertRenderedDraftArtifacts(db, draft, revision, validation, rendered);
       const now = new Date().toISOString();
@@ -1155,7 +1162,18 @@ async function renderDraftArtifactFiles(
 
   fs.writeFileSync(textPath, editedText, "utf8");
   fs.writeFileSync(htmlPath, htmlForEditedResume(editedText, parseJson(revision.plate_document_json)), "utf8");
-  await renderPdf({ htmlPath, pdfPath });
+  try {
+    await renderPdf({ htmlPath, pdfPath });
+  } catch (error) {
+    for (const orphan of [textPath, htmlPath, pdfPath]) {
+      try {
+        fs.rmSync(orphan, { force: true });
+      } catch {
+        // Best-effort cleanup only; the render error is what matters.
+      }
+    }
+    throw error;
+  }
   return {
     generation,
     resumeTextArtifactId,
