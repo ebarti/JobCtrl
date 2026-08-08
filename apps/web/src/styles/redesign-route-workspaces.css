@@ -90,7 +90,7 @@
 }
 
 .job-detail-workspace__header {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .job-detail-workspace__header > .workspace-back,
@@ -100,6 +100,21 @@
 .workflow-run-workspace__header > .workspace-back,
 .job-run-workspace__header > .workspace-back {
   grid-column: 1 / -1;
+}
+
+.job-detail-workspace__header > .workspace-back {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.job-detail-workspace__header > .job-overview {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.job-detail-workspace__header > .job-detail-top-actions {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .job-overview {
@@ -142,13 +157,14 @@
 }
 
 .job-detail-top-actions {
-  align-self: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  align-self: start;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--jh-surface-gap);
+  justify-content: flex-end;
+  gap: calc(var(--jh-surface-gap) * 0.7);
   border: 0;
-  border-top: 1px solid var(--border);
-  padding: var(--jh-surface-gap) 0 0;
+  padding: 0;
 }
 
 .job-detail-top-actions .action-panel {
@@ -178,6 +194,29 @@
 
 .job-detail-handoff-actions {
   flex: 0 0 auto;
+}
+
+.job-detail-workspace__inspector .job-artifact-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px 10px;
+}
+
+.job-detail-workspace__inspector .job-artifact-row > :nth-child(2) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.job-detail-workspace__inspector
+  .job-artifact-row
+  > [data-slot="button"] {
+  min-width: max-content;
+}
+
+.job-detail-workspace__inspector
+  .job-artifact-row
+  > .job-artifact-technical-details {
+  grid-column: 1 / -1;
+  min-width: 0;
 }
 
 .job-detail-workspace > .route-workspace__grid,
@@ -375,8 +414,17 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .job-detail-workspace__header > .workspace-back,
+  .job-detail-workspace__header > .job-overview,
+  .job-detail-workspace__header > .job-detail-top-actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
   .job-detail-top-actions {
     justify-content: flex-start;
+    border-top: 1px solid var(--border);
+    padding-top: var(--jh-surface-gap);
   }
 
   .job-detail-top-actions .action-panel,

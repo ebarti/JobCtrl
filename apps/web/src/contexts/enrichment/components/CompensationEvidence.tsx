@@ -17,7 +17,11 @@ import type {
 
 import { Empty } from "../../../shared/ui/empty.js";
 import { Button } from "../../../shared/ui/button.js";
-import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import {
+  Field,
+  FieldDescription,
+  FieldLabel,
+} from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
 import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { useRefreshCompensationMutation } from "../hooks/useRefreshCompensationMutation.js";
@@ -560,18 +564,22 @@ function CompensationRefreshControl({ jobId }: { readonly jobId: string }) {
     <form className="compensation-refresh-control" onSubmit={submit}>
       <Field className="compensation-refresh-path">
         <FieldLabel htmlFor="compensation-observations-json-path">
-          Observation JSON path
+          Observation JSON path (optional)
         </FieldLabel>
         <Input
+          aria-describedby="compensation-observations-json-path-help"
           id="compensation-observations-json-path"
           value={observationsJsonPath}
           placeholder="/path/to/reported-compensation.json"
           onChange={(event) => setObservationsJsonPath(event.currentTarget.value)}
         />
+        <FieldDescription id="compensation-observations-json-path-help">
+          Used only when refreshing this job.
+        </FieldDescription>
       </Field>
-      <Button aria-label="Refresh compensation" className="tab" disabled={disabled} type="submit">
+      <Button disabled={disabled} size="sm" type="submit" variant="outline">
         <IconRefresh aria-hidden="true" size={14} />
-        <span>{disabled ? "Refreshing" : "Refresh compensation"}</span>
+        <span>{disabled ? "Refreshing this job" : "Refresh this job"}</span>
       </Button>
       <span className="compensation-refresh-status" aria-live="polite">
         {mutation.isSuccess ? "refreshed" : null}

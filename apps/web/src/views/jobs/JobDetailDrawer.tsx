@@ -28,6 +28,11 @@ import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.
 import { RescoreJobButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
 import { Empty } from "../../shared/ui/empty.js";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../../shared/ui/popover.js";
 import { RouteWorkspace } from "../../shared/ui/route-workspace.js";
 import { Section } from "../../shared/ui/section.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
@@ -236,27 +241,27 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                     Evidence map
                   </Link>
                 </nav>
-                <div className="job-detail-command-disclosure">
-                  <Button
-                    aria-controls="job-detail-workflow-commands"
-                    aria-expanded={commandsOpen}
-                    className="job-detail-command-trigger"
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                    onClick={() => setCommandsOpen((open) => !open)}
-                  >
-                    More job actions
-                    <IconChevronDown
-                      aria-hidden="true"
-                      data-icon="inline-end"
-                    />
-                  </Button>
-                  <section
-                    className="job-detail-workflow-actions"
+                <Popover open={commandsOpen} onOpenChange={setCommandsOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      className="job-detail-command-trigger"
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      More job actions
+                      <IconChevronDown
+                        aria-hidden="true"
+                        data-icon="inline-end"
+                      />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="end"
                     aria-label="Job workflow actions"
-                    data-mobile-open={commandsOpen ? "true" : "false"}
+                    className="job-detail-workflow-actions"
                     id="job-detail-workflow-commands"
+                    sideOffset={8}
                   >
                     <JobActions
                       jobId={detail.job.jobKey}
@@ -270,8 +275,8 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                         detail.job.applyStatus?.toLowerCase() === "applied"
                       }
                     />
-                  </section>
-                </div>
+                  </PopoverContent>
+                </Popover>
               </div>
             </div>
           }
@@ -293,11 +298,18 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
               <Section title="Active artifacts">
                 {detail.artifacts.length ? (
                   detail.artifacts.map((artifact) => (
-                    <div className="mini-row" key={artifact.artifactId}>
+                    <div
+                      className="mini-row job-artifact-row"
+                      key={artifact.artifactId}
+                    >
                       <ArtifactStatusBadge status={artifact.status} />
                       <span>{artifact.type}</span>
                       <OpenArtifactButton
                         artifactId={artifact.artifactId}
+                        className={buttonVariants({
+                          size: "sm",
+                          variant: "outline",
+                        })}
                         disabled={artifact.status === "missing"}
                       />
                       <details className="job-artifact-technical-details">

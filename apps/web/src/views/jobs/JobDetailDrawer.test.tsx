@@ -283,8 +283,11 @@ describe("<JobDetailDrawer>", () => {
 
     renderJobDetailDrawer("https://example.com/jobs/1");
 
+    expect(
+      await screen.findByText("Used only when refreshing this job."),
+    ).toBeInTheDocument();
     await user.click(
-      await screen.findByRole("button", { name: "Refresh compensation" }),
+      await screen.findByRole("button", { name: "Refresh this job" }),
     );
 
     await waitFor(() => expect(calls).toEqual([{}]));
@@ -388,19 +391,10 @@ describe("<JobDetailDrawer>", () => {
       name: "Job audit triage",
     });
     const workspace = screen.getByRole("article", { name: "Job details" });
-    const toolbar = within(workspace).getByRole("toolbar", {
-      name: "Job actions",
-    });
     expect(
       within(workspace).getByRole("navigation", {
         name: "Related job workspaces",
       }),
-    ).toBeInTheDocument();
-    expect(
-      within(toolbar).getByRole("button", { name: "Stop current stage" }),
-    ).toBeInTheDocument();
-    expect(
-      within(toolbar).getByRole("button", { name: "Mark as applied" }),
     ).toBeInTheDocument();
     expect(workspace).toHaveClass("route-workspace", "job-detail-workspace");
     expect(
@@ -429,14 +423,21 @@ describe("<JobDetailDrawer>", () => {
     ).toHaveAttribute("data-mobile-active", "true");
     const commandTrigger = within(workspace).getByRole("button", {
       name: "More job actions",
-      hidden: true,
     });
     expect(commandTrigger).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(commandTrigger);
     expect(commandTrigger).toHaveAttribute("aria-expanded", "true");
+    const toolbar = screen.getByRole("toolbar", { name: "Job actions" });
     expect(
-      workspace.querySelector("#job-detail-workflow-commands"),
-    ).toHaveAttribute("data-mobile-open", "true");
+      within(toolbar).getByRole("button", { name: "Stop current stage" }),
+    ).toBeInTheDocument();
+    expect(
+      within(toolbar).getByRole("button", { name: "Mark as applied" }),
+    ).toBeInTheDocument();
+    expect(
+      document.querySelector("#job-detail-workflow-commands"),
+    ).toBeInTheDocument();
+    expect(workspace.querySelector(".job-artifact-row")).not.toBeNull();
     expect(
       within(workspace).queryByText("Audit triage"),
     ).not.toBeInTheDocument();
@@ -444,7 +445,7 @@ describe("<JobDetailDrawer>", () => {
       within(workspace).queryByText("Why this job is here"),
     ).not.toBeInTheDocument();
     expect(
-      toolbar.compareDocumentPosition(triage) &
+      commandTrigger.compareDocumentPosition(triage) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(within(triage).getByText("8/10")).toBeInTheDocument();
@@ -870,6 +871,7 @@ describe("<JobDetailDrawer>", () => {
     await screen.findByText(sampleJob.title);
     const workspace = screen.getByRole("article", { name: "Job details" });
     expect(workspace).not.toHaveTextContent("jobctrl retry enrich");
+    fireEvent.click(screen.getByRole("button", { name: "More job actions" }));
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
@@ -928,6 +930,9 @@ describe("<JobDetailDrawer>", () => {
 
     renderJobDetailDrawer("https://example.com/jobs/1");
 
+    await user.click(
+      await screen.findByRole("button", { name: "More job actions" }),
+    );
     await user.click(await screen.findByRole("button", { name: "Retry" }));
 
     await waitFor(() =>
