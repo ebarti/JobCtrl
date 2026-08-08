@@ -64,7 +64,7 @@ _P1B_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=1),
     maximum_interval=timedelta(seconds=1),
     maximum_attempts=3,
-    non_retryable_error_types=["configuration", "authentication", "missing_input"],
+    non_retryable_error_types=["configuration", "missing_input"],
 )
 _OK_OBSERVED = ({"status": "ok"}, 0.0, "ok")
 
