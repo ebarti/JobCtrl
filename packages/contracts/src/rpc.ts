@@ -92,6 +92,7 @@ export const RpcMethods = {
   RederiveLearningRecommendations: "rederive_learning_recommendations",
   ReviewLearningRecommendation: "review_learning_recommendation",
   RollbackTailoringPolicy: "rollback_tailoring_policy",
+  RenderResumePdf: "render_resume_pdf",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
 
@@ -617,6 +618,22 @@ export const RollbackTailoringPolicyResultSchema = z
 export type RollbackTailoringPolicyResult = z.infer<
   typeof RollbackTailoringPolicyResultSchema
 >;
+
+export const RenderResumePdfParamsSchema = z
+  .object({
+    htmlPath: z.string().trim().min(1),
+    pdfPath: z.string().trim().min(1),
+  })
+  .strict();
+export type RenderResumePdfParams = z.infer<typeof RenderResumePdfParamsSchema>;
+
+export const RenderResumePdfResultSchema = z
+  .object({
+    status: z.literal("succeeded"),
+    pdfPath: z.string().min(1),
+  })
+  .strict();
+export type RenderResumePdfResult = z.infer<typeof RenderResumePdfResultSchema>;
 
 export const ProfileImportParamsSchema = z
   .object({

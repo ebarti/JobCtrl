@@ -21,7 +21,7 @@ let renderedPdfInputs: ResumeHtmlPdfRenderInput[] = [];
 // Stand-in for the Playwright HTML-to-PDF subprocess: records the render inputs
 // and writes the exact HTML the flow built so tests inspect the full resume
 // content instead of spawning a browser.
-const resumePdfRenderer: ResumeHtmlPdfRenderer = (input) => {
+const resumePdfRenderer: ResumeHtmlPdfRenderer = async (input) => {
   renderedPdfInputs.push(input);
   fs.writeFileSync(input.pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(input.htmlPath, "utf8")}`);
 };

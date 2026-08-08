@@ -446,7 +446,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     options.gmailFeedbackScanner ?? createWorkerGmailFeedbackScanner({ pythonRuntime });
   const profileImporter = options.profileImporter ?? createProfileImporter(pythonRuntime);
   const profilePreviewRenderer = options.profilePreviewRenderer ?? createProfilePreviewRenderer(pythonRuntime);
-  const resumePdfRenderer = options.resumePdfRenderer ?? createResumeHtmlPdfRenderer(pythonRuntime, appDir);
+  const resumePdfRenderer = options.resumePdfRenderer ?? createResumeHtmlPdfRenderer(providerDispatcher);
   const requireHealthyWorkerForActions =
     options.requireHealthyWorkerForActions ?? !options.actionDispatcher;
   ensureLocalCapabilityToken(appDir);
@@ -1345,8 +1345,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) {
         return undefined;
       }
-      return withWritableDb(reply, options.dbPath, (db) => {
-        const result = renderResumeReviewDraft(db, decodeRouteParam(request.params.draftId), body, resumePdfRenderer);
+      return withWritableDb(reply, options.dbPath, async (db) => {
+        const result = await renderResumeReviewDraft(db, decodeRouteParam(request.params.draftId), body, resumePdfRenderer);
         if (result.ok) {
           refreshProjections(db);
         }

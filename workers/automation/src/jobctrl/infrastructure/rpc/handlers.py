@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 import logging
+from pathlib import Path
 from typing import Any
 
 from jobctrl.database import get_connection
@@ -902,6 +903,29 @@ def make_cancel_run(canceler: WorkflowCanceler):
     return cancel_run
 
 
+def render_resume_pdf(params: dict[str, Any]) -> dict[str, Any]:
+    """Render pre-built resume HTML to a paginated PDF for the TS API.
+
+    Runs inside the long-lived rpc child so the API's event loop keeps
+    serving during Chromium renders; the API persists database rows only
+    after this returns.
+    """
+
+    html_path_raw = str(_require(params, "htmlPath")).strip()
+    pdf_path = str(_require(params, "pdfPath")).strip()
+    if not pdf_path:
+        raise invalid_params("pdfPath must be non-empty")
+    html_path = Path(html_path_raw)
+    if not html_path.is_file():
+        raise invalid_params(f"htmlPath does not exist: {html_path_raw}")
+    from jobctrl.infrastructure.materials.html_resume_pdf import (
+        render_resume_html_to_pdf,
+    )
+
+    render_resume_html_to_pdf(html_path.read_text(encoding="utf-8"), pdf_path)
+    return {"status": "succeeded", "pdfPath": pdf_path}
+
+
 def rederive_learning_recommendations(params: dict[str, Any]) -> dict[str, Any]:
     """Refresh pending Materials proposals after an explicit signal review."""
 
@@ -1042,6 +1066,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
         mode="sync",
     )
     server.register("rollback_tailoring_policy", rollback_tailoring_policy, mode="sync")
+    server.register("render_resume_pdf", render_resume_pdf, mode="sync")
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
     server.register("generate_interview_prep", generate_interview_prep, mode="workflow")
     server.register("run_contact_research", run_contact_research, mode="workflow")
