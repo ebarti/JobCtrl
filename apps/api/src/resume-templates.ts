@@ -376,12 +376,12 @@ export function templateMetadataPayload(metadata: ResumeTemplateMetadata): Recor
   };
 }
 
-export function ensureCurrentResumeTemplateMaterials(
+export async function ensureCurrentResumeTemplateMaterials(
   db: SqliteDatabase,
   jobId: string,
   options: { force?: boolean } = {},
   renderPdf: ResumeHtmlPdfRenderer = defaultResumeHtmlPdfRenderer,
-): EnsureCurrentResumeMaterialsResponse {
+): Promise<EnsureCurrentResumeMaterialsResponse> {
   const stableJobId = requireJobId(jobId);
   assertJobExists(db, stableJobId);
 
@@ -440,7 +440,7 @@ export function ensureCurrentResumeTemplateMaterials(
   });
 
   try {
-    const refreshed = persistRenderOnlyRefresh(db, stableJobId, reusableMaterial, initialState.effective, renderPdf);
+    const refreshed = await persistRenderOnlyRefresh(db, stableJobId, reusableMaterial, initialState.effective, renderPdf);
     const attempt = recordRefreshAttempt(db, {
       jobId: stableJobId,
       status: "completed",
@@ -505,11 +505,11 @@ export function ensureCurrentResumeTemplateMaterials(
   }
 }
 
-export function resolveCurrentResumeArtifactIdForOpen(
+export async function resolveCurrentResumeArtifactIdForOpen(
   db: SqliteDatabase,
   artifactId: string,
   renderPdf: ResumeHtmlPdfRenderer = defaultResumeHtmlPdfRenderer,
-): string {
+): Promise<string> {
   const row = getRow<{
     job_id: string;
     artifact_type: string;
@@ -526,7 +526,7 @@ export function resolveCurrentResumeArtifactIdForOpen(
   }
 
   const jobId = requireJobId(row.job_id);
-  const refresh = ensureCurrentResumeTemplateMaterials(db, jobId, {}, renderPdf);
+  const refresh = await ensureCurrentResumeTemplateMaterials(db, jobId, {}, renderPdf);
   if (refresh.status !== "completed" && refresh.status !== "not_required") {
     return artifactId;
   }
@@ -904,13 +904,13 @@ function refreshAttemptFromRow(row: RefreshAttemptRow, jobId: JobId): ResumeTemp
   };
 }
 
-function persistRenderOnlyRefresh(
+async function persistRenderOnlyRefresh(
   db: SqliteDatabase,
   jobId: JobId,
   material: { generation: number; text: MaterialArtifactRow; pdf: MaterialArtifactRow | null },
   effective: ResumeTemplateMetadata,
   renderPdf: ResumeHtmlPdfRenderer,
-): { generation: number } {
+): Promise<{ generation: number }> {
   if (!material.text.path || !fs.existsSync(material.text.path) || !fs.statSync(material.text.path).isFile()) {
     throw new ResumeTemplateInputError("Latest accepted resume text artifact is not readable.");
   }
@@ -935,7 +935,7 @@ function persistRenderOnlyRefresh(
 
   fs.writeFileSync(textPath, text, "utf8");
   fs.writeFileSync(htmlPath, htmlForTemplateRefresh(text, effective), "utf8");
-  renderPdf({ htmlPath, pdfPath });
+  await renderPdf({ htmlPath, pdfPath });
 
   db.prepare(
     `INSERT INTO job_materials (
