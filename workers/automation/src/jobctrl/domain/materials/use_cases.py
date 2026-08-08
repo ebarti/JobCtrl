@@ -1070,6 +1070,11 @@ _RETRY_GUIDANCE: dict[str, str] = {
         "resume; describe target-job timelines, team sizes, goals, and requirements "
         "qualitatively."
     ),
+    "cover_letter_skill_grounding_failed": (
+        "Remove every named skill or tool that appears only in the target job. Use "
+        "a named skill or tool only when it appears in the provided resume; otherwise "
+        "describe grounded work without naming that target-only technology."
+    ),
     "fabrication_detected": (
         "Remove unsupported claims and use only metrics, tools, roles, employers, "
         "and dates present in canonical profile evidence."
@@ -4105,6 +4110,8 @@ class GenerateCoverLetterUseCase:
                 return letter, validation, findings
             if any(finding.kind in {"numeric", "date"} for finding in findings):
                 retry_reasons.append("cover_letter_numeric_grounding_failed")
+            if any(finding.kind == "skill" for finding in findings):
+                retry_reasons.append("cover_letter_skill_grounding_failed")
             retry_reasons.append("cover_letter_validation_failed")
             log.debug(
                 "Cover letter attempt %d/%d failed: %s",
