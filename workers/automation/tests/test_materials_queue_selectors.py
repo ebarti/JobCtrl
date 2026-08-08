@@ -418,7 +418,6 @@ def test_pipeline_count_pending_cover_excludes_text_only_tailored_materials(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from jobctrl import pipeline
     from jobctrl.pipeline import runner as pipeline_runner
 
     text_only_job_id = _seed_selector_job(conn, "text-only")
@@ -453,7 +452,7 @@ def test_pipeline_count_pending_cover_excludes_text_only_tailored_materials(
     )
     monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
 
-    assert pipeline._count_pending("cover", min_score=7) == 1
+    assert pipeline_runner._count_pending("cover", min_score=7) == 1
 
 
 def test_get_stats_untailored_eligible_excludes_materials_tailored(
