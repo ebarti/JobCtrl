@@ -13,10 +13,10 @@
  * case-insensitive ORDER BY collation for text sort fields.
  */
 
-import type { JobCompensationSummary, JobListQuery, JobSummary, PaginatedResponse } from "./schemas.js";
+import type { JobCompensationSummary, JobListQuery, JobSummary, PaginatedResponse, StageState } from "./schemas.js";
 
 /** Terminal-first ranking used by the current_state sort arm. */
-export const STATE_RANK: Readonly<Record<string, number>> = {
+export const STATE_RANK: Readonly<Record<StageState, number>> = {
   failed: 0,
   exhausted: 1,
   needs_verification: 2,
