@@ -148,6 +148,55 @@ describe("discovery product controls API", () => {
     }
   });
 
+  it("preserves posting-inactive as an explicit quarantine reason", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const app = buildApp(options(dbPath, dir));
+    try {
+      const db = new Database(dbPath);
+      insertExactV7Job(
+        db,
+        QUARANTINE_JOB_ID,
+        "https://example.com/jobs/inactive",
+        "Inactive Lead",
+      );
+      db.prepare(
+        `INSERT INTO discovery_quarantine_entries (
+           tenant_id, job_id, title, company, source_id, posting_url,
+           reason, confidence, snapshot_version, captured_at, notice_text, status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        QUARANTINE_JOB_ID,
+        "Inactive Lead",
+        "ExampleCo",
+        "example:inactive",
+        "https://example.com/jobs/inactive",
+        "posting_inactive",
+        0.7,
+        1,
+        "2026-05-12T09:00:00+00:00",
+        null,
+        "pending",
+      );
+      db.close();
+
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/discovery/quarantine",
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().entries).toEqual([
+        expect.objectContaining({
+          jobId: QUARANTINE_JOB_ID,
+          reason: "posting_inactive",
+        }),
+      ]);
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("upserts source registry entries and emits source registry events", async () => {
     const { dbPath, dir, cleanup } = withTempDb();
     const app = buildApp(options(dbPath, dir));

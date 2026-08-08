@@ -48,6 +48,7 @@ from typing import Any, Callable
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.operations.projections import (
+    ApplyUrlOutcomeProjection,
     ApplyRunProjection,
     ArtifactListProjection,
     ContactProjection,
@@ -105,6 +106,80 @@ PROJECTION_NAME = "operations_projections"
 # targeted rebuild of those rows, independent of column creation.
 SCORE_AUDIT_BACKFILL = "score_audit_columns_v1"
 COMPENSATION_PROJECTION_VERSION = 1
+
+_APPLY_URL_OUTCOME_DETAILS: dict[str, tuple[str, bool]] = {
+    "APPLY_URL_EXTERNAL_RECOVERED": (
+        "An external application URL was recovered.",
+        False,
+    ),
+    "APPLY_URL_LINKEDIN_ONSITE": (
+        "LinkedIn uses an on-site application flow for this posting; "
+        "no external application URL exists.",
+        False,
+    ),
+    "APPLY_URL_CONTROL_MISSING": (
+        "No application control was visible on the authenticated LinkedIn page.",
+        True,
+    ),
+    "APPLY_URL_EXTERNAL_TARGET_MISSING": (
+        "An application control was visible, but no external application URL "
+        "could be verified.",
+        True,
+    ),
+    "APPLY_URL_NAVIGATION_FAILED": (
+        "The authenticated LinkedIn page could not be inspected.",
+        True,
+    ),
+    "APPLY_URL_UNSAFE_TARGET": (
+        "JobCtrl rejected the discovered application target because it is not "
+        "a safe public HTTP(S) destination.",
+        False,
+    ),
+}
+_APPLY_URL_OUTCOME_METHODS = frozenset(
+    {
+        "authenticated_browser",
+        "current_url",
+        "href_redirect",
+        "href",
+        "click",
+        "linkedin_onsite_apply",
+        "apply_button_missing",
+        "external_url_missing",
+        "navigation_error",
+        "resolver_error",
+        "unsafe_url",
+    }
+)
+
+
+def _apply_url_outcome_from_stage_metadata(
+    value: str | None,
+) -> ApplyUrlOutcomeProjection | None:
+    """Project only stable, code-owned application-target diagnostics."""
+
+    if not value:
+        return None
+    try:
+        metadata = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(metadata, dict):
+        return None
+    code_value = metadata.get("applyUrlOutcomeCode")
+    code = code_value.strip() if isinstance(code_value, str) else ""
+    details = _APPLY_URL_OUTCOME_DETAILS.get(code)
+    if details is None:
+        return None
+    method_value = metadata.get("authenticatedApplyUrlMethod")
+    method = method_value.strip() if isinstance(method_value, str) else ""
+    message, retryable = details
+    return ApplyUrlOutcomeProjection(
+        code=code,
+        message=message,
+        retryable=retryable,
+        method=method if method in _APPLY_URL_OUTCOME_METHODS else None,
+    )
 
 # State-bearing workflow lifecycle events fold into
 # ``workflow_run_projections`` keyed by ``workflowId``. The ``WorkflowStarted``
@@ -2193,6 +2268,9 @@ class ProjectionBuilder:
                     if isinstance(blocked_by, list)
                     else (),
                     next_action=_row_nullable_str(row, "next_action"),
+                    apply_url_outcome=_apply_url_outcome_from_stage_metadata(
+                        _row_nullable_str(row, "metadata_json")
+                    ),
                 )
             )
         return result

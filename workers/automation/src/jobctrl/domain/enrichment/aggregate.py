@@ -291,7 +291,7 @@ class JobEnrichment:
     def record_apply_url_recovery(
         self,
         *,
-        application_url: ApplicationUrl | None,
+        result: ApplicationUrl | EnrichmentError,
         extraction_tier: ExtractionTier,
         started_at: str,
         finished_at: str,
@@ -300,10 +300,12 @@ class JobEnrichment:
 
         A terminal ``EnrichmentAttempt`` is appended for every authenticated
         pass, so repeated recoveries stay bounded by attempt count exactly
-        like the extraction cascade. The ``enriched`` status,
-        ``full_description``, ``enriched_at``, and top-level extraction tier
-        are always preserved — a recovery that finds an external apply target
-        attaches it and records a succeeded attempt, one that finds none
+        like the extraction cascade. ``result`` is an explicit sum type: either
+        the recovered ``ApplicationUrl`` or the precise ``EnrichmentError``
+        explaining why no external target was recovered. The ``enriched``
+        status, ``full_description``, ``enriched_at``, and top-level extraction
+        tier are always preserved — a recovery that finds an external apply
+        target attaches it and records a succeeded attempt, one that finds none
         records a failed attempt but leaves the reviewable material intact.
         The aggregate never transitions to ``failed``: a missing external
         apply URL is not an enrichment failure.
@@ -312,27 +314,19 @@ class JobEnrichment:
             raise ValueError(
                 "record_apply_url_recovery requires an enriched aggregate"
             )
-        resolved = application_url is not None
+        resolved = isinstance(result, ApplicationUrl)
         attempt = EnrichmentAttempt(
             attempt_number=len(self.attempts) + 1,
             extraction_tier=extraction_tier,
             status=AttemptStatus.SUCCEEDED if resolved else AttemptStatus.FAILED,
             started_at=started_at,
             finished_at=finished_at,
-            error=(
-                None
-                if resolved
-                else EnrichmentError(
-                    code="APPLY_URL_UNRESOLVED",
-                    message="authenticated apply URL not found",
-                    retryable=True,
-                )
-            ),
+            error=None if resolved else result,
         )
         return replace(
             self,
             attempts=self.attempts + (attempt,),
-            application_url=application_url if resolved else self.application_url,
+            application_url=result if resolved else self.application_url,
             updated_at=finished_at,
         )
 

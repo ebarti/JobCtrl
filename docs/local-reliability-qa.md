@@ -254,6 +254,13 @@ The gate must also prove that no feedback decision or restore automatically
 starts scoring, tailoring, Apply, or artifact work. Do not perform a real
 application submission or mutate a real user database during this QA.
 
+The same product path must prove that a successful Enrich row can display an
+explicit non-blocking application-target outcome, including LinkedIn on-site
+apply, and that its technical details expose only the allow-listed outcome
+rather than raw resolver metadata. The regression fixtures must cover every
+application-target outcome, redact a resolver error containing a private local
+path, and repair a legacy non-LinkedIn snapshot without browser navigation.
+
 The browser-local public demo may cover realtime state preservation, but its
 learning capabilities are intentionally unavailable. Recommendation review,
 policy acceptance/rejection, and rollback must therefore run through the seeded

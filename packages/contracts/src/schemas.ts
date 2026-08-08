@@ -2634,6 +2634,16 @@ export interface WorkflowRunDetail {
   readonly events: readonly WorkflowRunTimelineEvent[];
 }
 
+export const APPLY_URL_OUTCOME_CODES = [
+  "APPLY_URL_EXTERNAL_RECOVERED",
+  "APPLY_URL_LINKEDIN_ONSITE",
+  "APPLY_URL_CONTROL_MISSING",
+  "APPLY_URL_EXTERNAL_TARGET_MISSING",
+  "APPLY_URL_NAVIGATION_FAILED",
+  "APPLY_URL_UNSAFE_TARGET",
+] as const;
+export type ApplyUrlOutcomeCode = (typeof APPLY_URL_OUTCOME_CODES)[number];
+
 export interface StageSummary {
   stage: Stage;
   state: StageState;
@@ -2648,6 +2658,17 @@ export interface StageSummary {
   retryable: boolean;
   blockedBy: string[];
   nextAction: string | null;
+  /**
+   * Allow-listed application-target readiness fact captured by Enrichment.
+   * This stays separate from stage failure state because LinkedIn on-site
+   * apply is a successful terminal discovery, not an Enrich failure.
+  */
+  applyUrlOutcome?: {
+    code: ApplyUrlOutcomeCode;
+    message: string;
+    retryable: boolean;
+    method: string | null;
+  } | null;
 }
 
 export interface ScoreBreakdown {
@@ -5149,6 +5170,7 @@ export const QUARANTINE_REASONS = [
   "policy_overridden",
   "broad_board_only",
   "unknown_active_state",
+  "posting_inactive",
   "user_review_requested",
 ] as const;
 export type QuarantineReason = (typeof QUARANTINE_REASONS)[number];

@@ -692,6 +692,17 @@
   margin-top: 1px;
 }
 
+:is(.job-detail-drawer, .job-detail-workspace) .stage-timeline__apply-outcome {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+:is(.job-detail-drawer, .job-detail-workspace)
+  .stage-timeline__apply-outcome
+  strong {
+  color: var(--foreground);
+}
+
 :is(.job-detail-drawer, .job-detail-workspace)
   .stage-timeline__diagnostic-disclosure {
   min-width: 0;

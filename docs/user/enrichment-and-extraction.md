@@ -24,22 +24,26 @@ posting detail to use it.” The current decision path is:
 2. **Verify active state independently.** Extraction quality and whether the job
    still appears active are separate findings, so a well-extracted but
    unverifiable posting is not silently treated as active.
-3. **Assign confidence from the extraction evidence.** Description length,
-   extraction tier, and presence of an application URL determine the current
-   bucket:
+3. **Assign confidence from the posting-content evidence.** Description length
+   and extraction tier determine whether the posting text is trustworthy. An
+   application URL can strengthen structured extraction, but its absence never
+   downgrades an otherwise complete description:
 
    | Extraction result | High | Medium | Low |
    | --- | --- | --- | --- |
    | JSON-LD | Application URL and at least 200 characters | At least 200 characters without the URL | Fewer than 200 characters |
    | CSS selectors | Application URL and at least 400 characters | At least 200 characters | Fewer than 200 characters |
-   | LLM-assisted | — | Application URL and at least 400 characters | Every other result |
+   | LLM-assisted | — | At least 400 characters, with or without an application URL | Fewer than 400 characters |
    | Other configured tier | — | At least 200 characters | Fewer than 200 characters |
 
-4. **Quarantine instead of guessing.** Unknown active state, low confidence
-   without an override, or an active posting with no application URL is held for
-   review. An explicit operator override can admit a low-confidence or
-   URL-missing snapshot and is persisted with the audit trail; unknown active
-   state remains quarantined.
+4. **Quarantine instead of guessing.** Unknown active state or low content
+   confidence without an override is held for review. An explicit operator
+   override can admit a low-confidence snapshot and is persisted with the audit
+   trail; unknown active state remains quarantined. Application-target readiness
+   is a separate fact, so a missing external application URL cannot quarantine
+   readable posting content or block Tailor. A posting verified as closed,
+   expired, or removed is recorded separately as `posting_inactive` rather than
+   mislabeled as a low-confidence extraction.
 5. **Surface duplicate candidates from content evidence.** An exact description
    hash is a `1.0` signal, the same normalized application URL is `0.95`, and
    token-Jaccard content similarity must reach `0.85`. These signals propose a
@@ -48,6 +52,26 @@ posting detail to use it.” The current decision path is:
 A failed fetch or exhausted cascade records a retryable attempt without
 manufacturing a snapshot. Failure remains isolated to that job, so useful
 results from the rest of the source batch survive.
+
+Application-target discovery has its own explicit outcome and retry policy:
+
+| Outcome | What it means | Automatic retry |
+| --- | --- | --- |
+| External URL recovered | A public external application destination was verified and stored. | No |
+| LinkedIn on-site apply | LinkedIn owns the application flow, so no external ATS URL exists. | No |
+| Application control missing | No visible application control was found on the authenticated posting page. | Yes |
+| External target missing | An application control was visible, but no external destination could be verified. | Yes |
+| Navigation failed | The authenticated posting page could not be inspected. | Yes |
+| Unsafe target rejected | The discovered destination failed the public-URL safety check. | No |
+
+These outcomes describe application readiness; they do not change the posting
+snapshot's content confidence. LinkedIn on-site apply is a successful terminal
+discovery, while transient inspection failures remain eligible for recovery.
+When an older snapshot was quarantined only because it lacked an application
+URL, the next Enrich maintenance pass appends a corrected snapshot for any
+source and resumes Tailor without requiring browser access. Resolver exception
+details remain local diagnostics; the product surfaces only the stable outcome
+code, message, method, and retry policy.
 
 ## What You Can See And Control
 
@@ -58,7 +82,8 @@ separate primary page or pipeline stage. Its results remain inspectable:
   active, closed, failed, or awaiting further work.
 - `/jobs/:jobId` opens the Job Detail route workspace with the full posting,
   source and enrichment evidence, snapshot confidence or quarantine state,
-  application URL, and allow-listed audit history.
+  application URL, an explicit application-target outcome even when Enrich
+  succeeded, and allow-listed audit history.
 - `/discovery` owns source review, quarantined leads, locator candidates, and
   manual-capture decisions.
 - `/runs` shows the durable Discover and preparation workflows. A failed
@@ -87,9 +112,30 @@ and consent ownership remains documented under
 When that capability becomes fully ready, JobCtrl immediately continues the
 browser-conditioned Enrich → Score → Tailor → Cover path for the affected
 LinkedIn jobs only; unrelated robots blocks and ordinary pending jobs are not
-retriggered, and another Discover run is not required. A successfully recovered apply URL creates a new immutable posting
-snapshot version, recomputes confidence, and clears a low-confidence quarantine
-only when the new evidence passes the same quality policy.
+retriggered, and another Discover run is not required. Legacy snapshots that
+coupled readable content to a missing application URL are repaired by appending
+a new immutable snapshot version and releasing only the stale
+`ENRICHMENT_QUARANTINED` Tailor blocker. This content-trust repair does not need
+a browser navigation and does not invent an application URL. A successfully
+recovered external URL also creates a new immutable snapshot version.
+
+Authenticated Apply-URL inspection records one explicit outcome instead of a
+generic “unresolved” message:
+
+| Outcome | Meaning | Automatic retry |
+| --- | --- | --- |
+| External URL recovered | LinkedIn points to a verified public company or ATS URL. | No further lookup needed |
+| LinkedIn on-site apply | LinkedIn owns the application flow, so no external URL exists. | No |
+| Apply control missing | The authenticated page did not expose an application control. | Yes, within the bounded recovery budget |
+| External target missing | A control was visible, but no external URL could be verified. | Yes, within the bounded recovery budget |
+| Navigation failed | The authenticated page could not be inspected. | Yes, within the bounded recovery budget |
+| Unsafe target | The discovered target failed JobCtrl's public-URL safety policy. | No |
+
+The outcome code, plain-language reason, resolver method, and retryability are
+kept in Enrich stage metadata and append-only job events. “LinkedIn on-site
+apply” is a successful terminal discovery about target readiness, not an
+Enrichment or Tailor failure. JobCtrl still stops before any application form or
+submission.
 
 ## Source Of Truth And Ownership
 

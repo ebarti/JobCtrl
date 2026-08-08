@@ -344,3 +344,54 @@ def test_resolve_loaded_page_rejects_unsafe_href_before_returning_it() -> None:
 
     assert result.application_url is None
     assert result.method == "external_url_missing"
+
+
+class _LinkedInOnsiteApplyLocator:
+    clicked = False
+
+    def wait_for(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def get_attribute(self, attribute: str) -> str | None:
+        if attribute == "data-tracking-control-name":
+            return "public_jobs_apply-link-onsite"
+        return None
+
+    def inner_text(self) -> str:
+        return "Apply"
+
+    def click(self, *_args: object, **_kwargs: object) -> None:
+        self.clicked = True
+
+
+class _LoadedPageWithLinkedInOnsiteApply:
+    url = "https://www.linkedin.com/jobs/view/4448147529"
+
+    def __init__(self) -> None:
+        self.apply = _LinkedInOnsiteApplyLocator()
+
+    def route(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def unroute(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def locator(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(first=self.apply)
+
+    def get_by_role(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(first=self.apply)
+
+
+def test_resolve_loaded_page_reports_linkedin_onsite_apply_without_clicking() -> None:
+    page = _LoadedPageWithLinkedInOnsiteApply()
+    resolver = LinkedInApplyUrlResolver(url_safety_checker=_allow_public_url)
+
+    result = resolver.resolve_loaded_page(
+        page,
+        "https://www.linkedin.com/jobs/view/4448147529",
+    )
+
+    assert result.application_url is None
+    assert result.method == "linkedin_onsite_apply"
+    assert page.apply.clicked is False

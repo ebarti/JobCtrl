@@ -13,6 +13,7 @@ types — never in raw rows.
 """
 
 from jobctrl.domain.operations.projections import (
+    ApplyUrlOutcomeProjection,
     ApplyRunProjection,
     ArtifactListProjection,
     DashboardFunnelStage,
@@ -57,6 +58,7 @@ from jobctrl.domain.operations.learning import (
 )
 
 __all__ = [
+    "ApplyUrlOutcomeProjection",
     "ApplyRunProjection",
     "ArtifactListProjection",
     "DashboardFunnelStage",

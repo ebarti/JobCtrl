@@ -20,8 +20,9 @@
  * refresher reads the projection table directly and no longer
  * materialises it.
  */
-import { PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
+import { APPLY_URL_OUTCOME_CODES, PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
 import type {
+  ApplyUrlOutcomeCode,
   JobCompensationAuditMarketResponse,
   JobCompensationAuditPostedResponse,
   MarketCompensationEstimateResponse,
@@ -2366,6 +2367,14 @@ interface StageRow extends Record<string, unknown> {
   retryable: number | null;
   blocked_by_json: string | null;
   next_action: string | null;
+  metadata_json: string | null;
+}
+
+interface NormalizedApplyUrlOutcome {
+  code: ApplyUrlOutcomeCode;
+  message: string;
+  retryable: boolean;
+  method: string | null;
 }
 
 interface NormalizedStage {
@@ -2382,6 +2391,79 @@ interface NormalizedStage {
   retryable: boolean;
   blocked_by: string[];
   next_action: string | null;
+  apply_url_outcome: NormalizedApplyUrlOutcome | null;
+}
+
+const APPLY_URL_OUTCOME_DETAILS: Readonly<
+  Record<ApplyUrlOutcomeCode, { message: string; retryable: boolean }>
+> = {
+  APPLY_URL_EXTERNAL_RECOVERED: {
+    message: "An external application URL was recovered.",
+    retryable: false,
+  },
+  APPLY_URL_LINKEDIN_ONSITE: {
+    message:
+      "LinkedIn uses an on-site application flow for this posting; no external application URL exists.",
+    retryable: false,
+  },
+  APPLY_URL_CONTROL_MISSING: {
+    message: "No application control was visible on the authenticated LinkedIn page.",
+    retryable: true,
+  },
+  APPLY_URL_EXTERNAL_TARGET_MISSING: {
+    message: "An application control was visible, but no external application URL could be verified.",
+    retryable: true,
+  },
+  APPLY_URL_NAVIGATION_FAILED: {
+    message: "The authenticated LinkedIn page could not be inspected.",
+    retryable: true,
+  },
+  APPLY_URL_UNSAFE_TARGET: {
+    message:
+      "JobCtrl rejected the discovered application target because it is not a safe public HTTP(S) destination.",
+    retryable: false,
+  },
+};
+const APPLY_URL_OUTCOME_CODE_SET = new Set<string>(APPLY_URL_OUTCOME_CODES);
+const APPLY_URL_OUTCOME_METHODS = new Set([
+  "authenticated_browser",
+  "current_url",
+  "href_redirect",
+  "href",
+  "click",
+  "linkedin_onsite_apply",
+  "apply_button_missing",
+  "external_url_missing",
+  "navigation_error",
+  "resolver_error",
+  "unsafe_url",
+]);
+
+function applyUrlOutcomeFromStageMetadata(value: string | null): NormalizedApplyUrlOutcome | null {
+  if (!value) return null;
+  let metadata: unknown;
+  try {
+    metadata = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const record = metadata as Record<string, unknown>;
+  const codeValue =
+    typeof record.applyUrlOutcomeCode === "string" ? record.applyUrlOutcomeCode.trim() : "";
+  if (!APPLY_URL_OUTCOME_CODE_SET.has(codeValue)) return null;
+  const code = codeValue as ApplyUrlOutcomeCode;
+  const details = APPLY_URL_OUTCOME_DETAILS[code];
+  const methodValue =
+    typeof record.authenticatedApplyUrlMethod === "string"
+      ? record.authenticatedApplyUrlMethod.trim()
+      : "";
+  return {
+    code,
+    message: details.message,
+    retryable: details.retryable,
+    method: APPLY_URL_OUTCOME_METHODS.has(methodValue) ? methodValue : null,
+  };
 }
 
 function loadStages(db: SqliteDatabase, tenantId: string, jobId: string): NormalizedStage[] {
@@ -2412,6 +2494,7 @@ function loadStages(db: SqliteDatabase, tenantId: string, jobId: string): Normal
         retryable: true,
         blocked_by: [],
         next_action: null,
+        apply_url_outcome: null,
       };
     }
     let blockedBy: string[] = [];
@@ -2440,6 +2523,7 @@ function loadStages(db: SqliteDatabase, tenantId: string, jobId: string): Normal
       retryable: row.retryable === null || row.retryable === undefined ? true : Boolean(row.retryable),
       blocked_by: blockedBy,
       next_action: nullableString(row.next_action),
+      apply_url_outcome: applyUrlOutcomeFromStageMetadata(row.metadata_json),
     };
   });
 }

@@ -21,6 +21,14 @@ For field-level schemas and every route variant, use the
 List and detail endpoints read projection rows. They do not recompute scores,
 parse salary text, or replay events during a request.
 
+Each job-detail stage may include an optional `applyUrlOutcome` object with the
+allow-listed `code`, user-facing `message`, `retryable`, and resolver `method`
+fields. It is populated on Enrich when application-target discovery has an
+auditable result. The object is independent of the Enrich stage state: a
+LinkedIn on-site application flow is a successful terminal outcome even though
+there is no external URL. Raw resolver errors and browser-local paths are not
+projected.
+
 `jobKey` resolves at the browser API boundary to the tenant-scoped stable
 `JobId`. Canonical clients send that ID; the explicit API/import boundary may
 also accept a posting or application URL as an external locator and resolve it

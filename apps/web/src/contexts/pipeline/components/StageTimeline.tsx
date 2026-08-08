@@ -54,6 +54,15 @@ export function StageTimeline({
               </span>
               <StageBadge state={stage.state} />
             </div>
+            {stage.stage === "enrich" && stage.applyUrlOutcome ? (
+              <p
+                className="stage-timeline__apply-outcome"
+                data-typography="body"
+              >
+                <strong>Application target:</strong>{" "}
+                {stage.applyUrlOutcome.message}
+              </p>
+            ) : null}
             {guidance ? (
               <Alert className="stage-timeline__guidance">
                 <IconAlertTriangle aria-hidden="true" />
@@ -257,26 +266,37 @@ function stageLabel(stage: StageSummary["stage"]): string {
 }
 
 function stageDiagnostics(stage: StageSummary): Array<[string, string]> {
-  if (!["failed", "exhausted", "blocked"].includes(stage.state)) return [];
   const diagnostics: Array<[string, string]> = [];
-  if (stage.errorCode) diagnostics.push(["code", stage.errorCode]);
-  if (stage.errorMessage) diagnostics.push(["message", stage.errorMessage]);
-  if (stage.attemptCount || stage.maxAttempts) {
+  if (["failed", "exhausted", "blocked"].includes(stage.state)) {
+    if (stage.errorCode) diagnostics.push(["code", stage.errorCode]);
+    if (stage.errorMessage) diagnostics.push(["message", stage.errorMessage]);
+    if (stage.attemptCount || stage.maxAttempts) {
+      diagnostics.push([
+        "attempts",
+        `${stage.attemptCount}/${stage.maxAttempts}`,
+      ]);
+    }
+    if (stage.durationMs !== null) {
+      diagnostics.push(["duration", formatDuration(stage.durationMs)]);
+    }
+    if (stage.blockedBy.length) {
+      diagnostics.push(["blocked by", stage.blockedBy.join(", ")]);
+    }
+    if (["failed", "exhausted"].includes(stage.state)) {
+      diagnostics.push([
+        "retry",
+        stage.retryable ? "available" : "not automatic",
+      ]);
+    }
+  }
+  if (stage.stage === "enrich" && stage.applyUrlOutcome) {
+    diagnostics.push(["application target code", stage.applyUrlOutcome.code]);
+    if (stage.applyUrlOutcome.method) {
+      diagnostics.push(["recovery method", stage.applyUrlOutcome.method]);
+    }
     diagnostics.push([
-      "attempts",
-      `${stage.attemptCount}/${stage.maxAttempts}`,
-    ]);
-  }
-  if (stage.durationMs !== null) {
-    diagnostics.push(["duration", formatDuration(stage.durationMs)]);
-  }
-  if (stage.blockedBy.length) {
-    diagnostics.push(["blocked by", stage.blockedBy.join(", ")]);
-  }
-  if (["failed", "exhausted"].includes(stage.state)) {
-    diagnostics.push([
-      "retry",
-      stage.retryable ? "available" : "not automatic",
+      "automatic retry",
+      stage.applyUrlOutcome.retryable ? "available" : "not automatic",
     ]);
   }
   return diagnostics;

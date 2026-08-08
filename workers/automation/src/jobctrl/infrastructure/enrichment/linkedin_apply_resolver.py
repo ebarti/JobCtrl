@@ -282,6 +282,9 @@ class LinkedInApplyUrlResolver:
         if locator is None:
             return LinkedInApplyResolution(None, "apply_button_missing")
 
+        if _locator_indicates_linkedin_onsite_apply(locator):
+            return LinkedInApplyResolution(None, "linkedin_onsite_apply")
+
         href = _locator_href(locator, getattr(page, "url", "") or job_url)
         if href:
             direct = _extract_external_from_redirect_url(
@@ -324,6 +327,36 @@ def _first_visible_apply_locator(page: Any) -> Any | None:
         except Exception:
             continue
     return None
+
+
+def _locator_indicates_linkedin_onsite_apply(locator: Any) -> bool:
+    """Return whether LinkedIn explicitly owns the application flow.
+
+    LinkedIn's public job page identifies its on-site apply control with a
+    stable tracking attribute such as ``public_jobs_apply-link-onsite``.
+    Authenticated Easy Apply controls use an equivalent ``inapply`` marker or
+    an explicit accessible label. These are successful terminal discoveries:
+    no external ATS URL exists to recover, so the resolver must not click the
+    control repeatedly and report a generic failure.
+    """
+
+    for attribute in (
+        "data-tracking-control-name",
+        "data-control-name",
+        "aria-label",
+    ):
+        try:
+            value = locator.get_attribute(attribute)
+        except Exception:
+            value = None
+        normalized = str(value or "").strip().lower()
+        if "onsite" in normalized or "inapply" in normalized or "easy apply" in normalized:
+            return True
+    try:
+        text = str(locator.inner_text() or "").strip().lower()
+    except Exception:
+        text = ""
+    return "easy apply" in text
 
 
 def _install_public_route_guard(page: Any, *, context: Any | None = None) -> PublicHttpUrlRouteGuard:

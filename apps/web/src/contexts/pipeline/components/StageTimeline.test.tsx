@@ -167,6 +167,75 @@ describe("<StageTimeline>", () => {
     expect(screen.queryByText(/jobctrl retry enrich/i)).not.toBeInTheDocument();
   });
 
+  it.each([
+    [
+      "APPLY_URL_EXTERNAL_RECOVERED",
+      "An external application URL was recovered.",
+      false,
+      "click",
+    ],
+    [
+      "APPLY_URL_LINKEDIN_ONSITE",
+      "LinkedIn uses an on-site application flow for this posting; no external application URL exists.",
+      false,
+      "linkedin_onsite_apply",
+    ],
+    [
+      "APPLY_URL_CONTROL_MISSING",
+      "No application control was visible on the authenticated LinkedIn page.",
+      true,
+      "apply_button_missing",
+    ],
+    [
+      "APPLY_URL_EXTERNAL_TARGET_MISSING",
+      "An application control was visible, but no external application URL could be verified.",
+      true,
+      "external_url_missing",
+    ],
+    [
+      "APPLY_URL_NAVIGATION_FAILED",
+      "The authenticated LinkedIn page could not be inspected.",
+      true,
+      "navigation_error",
+    ],
+    [
+      "APPLY_URL_UNSAFE_TARGET",
+      "JobCtrl rejected the discovered application target because it is not a safe public HTTP(S) destination.",
+      false,
+      "unsafe_url",
+    ],
+  ] as const)(
+    "shows %s as an explicit non-blocking Enrich outcome",
+    async (code, message, retryable, method) => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <StageTimeline
+          stages={[
+            {
+              ...makeStage("enrich", "succeeded"),
+              applyUrlOutcome: { code, message, retryable, method },
+            },
+          ]}
+        />,
+      );
+
+      expect(screen.getByText("succeeded", { exact: true })).toBeInTheDocument();
+      const applicationTarget = screen.getByText(message).closest("p");
+      expect(applicationTarget).not.toBeNull();
+      expect(applicationTarget!).toHaveTextContent("Application target:");
+      expect(screen.queryByText("blocked", { exact: true })).not.toBeInTheDocument();
+      await user.click(
+        screen.getByRole("button", { name: "Technical details" }),
+      );
+      const diagnostics = screen.getByLabelText("enrich diagnostics");
+      expect(diagnostics).toHaveTextContent(code);
+      expect(diagnostics).toHaveTextContent(method);
+      expect(diagnostics).toHaveTextContent(
+        retryable ? /automatic retry\s*available/ : /automatic retry\s*not automatic/,
+      );
+    },
+  );
+
   it("explains a robots block and offers audited manual capture for the posting", async () => {
     const user = userEvent.setup();
     const postingUrl = "https://www.linkedin.com/jobs/view/123";

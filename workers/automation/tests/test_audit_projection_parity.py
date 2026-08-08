@@ -202,8 +202,8 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
             INSERT INTO job_stage_states (
                 tenant_id, job_id, stage, state, attempt_count, max_attempts, started_at,
                 updated_at, finished_at, duration_ms, error_code, error_message,
-                retryable, blocked_by_json, next_action
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                retryable, blocked_by_json, next_action, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 LOCAL_TENANT,
@@ -221,6 +221,7 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 stage["retryable"],
                 stage["blocked_by_json"],
                 stage["next_action"],
+                stage.get("metadata_json"),
             ),
         )
 

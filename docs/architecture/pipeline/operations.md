@@ -223,9 +223,13 @@ concurrent trigger attaches to the active execution, while a later resolution
 episode may reuse the identity after it closes. These continuations use the
 normal idempotent workflow path and do not rerun Discover.
 A low-confidence posting keeps Tailor explicitly `blocked` by Enrich rather
-than leaving it as unexplained `pending`; when authenticated apply-URL recovery
-produces a trustworthy snapshot, Enrich resets that exact condition-blocked
-Tailor row to `pending` before the continuation reaches it.
+than leaving it as unexplained `pending`. Description trust and application-
+target readiness are independent: a missing external application URL alone
+cannot create this blocker. For legacy rows where it did, Enrich appends a
+corrected immutable snapshot and resets that exact condition-blocked Tailor row
+to `pending` before any optional authenticated URL lookup. LinkedIn on-site
+apply is persisted as a terminal target-readiness outcome rather than retried as
+a generic unresolved URL.
 
 Score, Tailor, and Cover stage rows record the Temporal run ID that owns every
 `running` write. Rescore/retailor rows also preserve the score version or

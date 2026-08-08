@@ -291,7 +291,7 @@ def _enriched_without_apply_url() -> JobEnrichment:
 def test_record_apply_url_recovery_attaches_url_and_preserves_description() -> None:
     agg = _enriched_without_apply_url()
     recovered = agg.record_apply_url_recovery(
-        application_url=ApplicationUrl(value="https://apply.example/role"),
+        result=ApplicationUrl(value="https://apply.example/role"),
         extraction_tier=ExtractionTier.CSS_SELECTORS,
         started_at="t2",
         finished_at="t3",
@@ -311,7 +311,11 @@ def test_record_apply_url_recovery_attaches_url_and_preserves_description() -> N
 def test_record_apply_url_recovery_missing_url_bounds_without_failing_row() -> None:
     agg = _enriched_without_apply_url()
     recovered = agg.record_apply_url_recovery(
-        application_url=None,
+        result=EnrichmentError(
+            code="APPLY_URL_LINKEDIN_ONSITE",
+            message="LinkedIn uses an on-site application flow.",
+            retryable=False,
+        ),
         extraction_tier=ExtractionTier.CSS_SELECTORS,
         started_at="t2",
         finished_at="t3",
@@ -325,13 +329,14 @@ def test_record_apply_url_recovery_missing_url_bounds_without_failing_row() -> N
     assert recovered.last_attempt is not None
     assert recovered.last_attempt.failed
     assert recovered.last_attempt.error is not None
-    assert recovered.last_attempt.error.code == "APPLY_URL_UNRESOLVED"
+    assert recovered.last_attempt.error.code == "APPLY_URL_LINKEDIN_ONSITE"
+    assert recovered.last_attempt.error.retryable is False
 
 
 def test_record_apply_url_recovery_requires_enriched_aggregate() -> None:
     with pytest.raises(ValueError, match="requires an enriched aggregate"):
         _empty().record_apply_url_recovery(
-            application_url=ApplicationUrl(value="https://apply.example/role"),
+            result=ApplicationUrl(value="https://apply.example/role"),
             extraction_tier=ExtractionTier.CSS_SELECTORS,
             started_at="t0",
             finished_at="t1",

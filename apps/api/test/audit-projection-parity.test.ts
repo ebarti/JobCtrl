@@ -228,12 +228,14 @@ function seedRows(dbPath: string): void {
     `INSERT INTO job_stage_states (
        job_id, stage, state, attempt_count, max_attempts, started_at, updated_at,
        finished_at, duration_ms, error_code, error_message, retryable,
-       blocked_by_json, next_action
+       blocked_by_json, next_action, metadata_json
      ) VALUES (@job_id, @stage, @state, @attempt_count, @max_attempts, @started_at, @updated_at,
        @finished_at, @duration_ms, @error_code, @error_message, @retryable,
-       @blocked_by_json, @next_action)`,
+       @blocked_by_json, @next_action, @metadata_json)`,
   );
-  for (const stage of fixture.rows.jobStageStates) insertStage.run({ job_id: jobId, ...stage });
+  for (const stage of fixture.rows.jobStageStates) {
+    insertStage.run({ job_id: jobId, metadata_json: null, ...stage });
+  }
 
   const insertAnalysis = db.prepare(
     `INSERT INTO job_employer_analysis (

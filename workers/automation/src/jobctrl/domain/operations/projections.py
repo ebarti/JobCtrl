@@ -35,6 +35,16 @@ from jobctrl.domain.tenant import TenantId
 
 
 @dataclass(frozen=True)
+class ApplyUrlOutcomeProjection:
+    """Allow-listed application-target readiness fact captured by Enrichment."""
+
+    code: str
+    message: str
+    retryable: bool
+    method: str | None = None
+
+
+@dataclass(frozen=True)
 class StageProjection:
     """Denormalised stage row inside a ``JobDetailProjection.stages`` list."""
 
@@ -51,6 +61,7 @@ class StageProjection:
     retryable: bool = True
     blocked_by: tuple[str, ...] = ()
     next_action: str | None = None
+    apply_url_outcome: ApplyUrlOutcomeProjection | None = None
 
 
 @dataclass(frozen=True)
