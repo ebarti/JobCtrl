@@ -953,7 +953,14 @@ def gmail_feedback_scan(params: dict[str, Any]) -> dict[str, Any]:
         value = params.get(param_name)
         if value is not None:
             kwargs[kwarg_name] = int(value)
-    return scan_gmail_feedback(db_path=DB_PATH, **kwargs)
+    try:
+        return scan_gmail_feedback(db_path=DB_PATH, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - protocol boundary, see docstring
+        # scan_gmail_feedback raises on failure; only the deleted CLI main()
+        # converted exceptions into the ok:false envelope. Without this the
+        # RPC server flattens every failure to a generic "Internal error"
+        # and the API's message-based 400/503 mapping goes dead.
+        return {"ok": False, "message": str(exc)}
 
 
 def rederive_learning_recommendations(params: dict[str, Any]) -> dict[str, Any]:

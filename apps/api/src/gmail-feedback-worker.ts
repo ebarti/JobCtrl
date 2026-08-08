@@ -43,7 +43,11 @@ export function createWorkerGmailFeedbackScanner(dispatcher: JsonRpcDispatcher):
       ...(input.windowDays !== undefined ? { windowDays: Number(input.windowDays) } : {}),
     });
     if (response.error) {
-      const message = response.error.message || "Gmail feedback scan failed.";
+      // The RPC server hides handler exceptions behind a generic "Internal
+      // error" message with the cause in error.data; the handler converts
+      // scan failures to ok:false, so this path is dispatch-level only.
+      const message =
+        optionalText(response.error.data) ?? optionalText(response.error.message) ?? "Gmail feedback scan failed.";
       throw new GmailFeedbackScanError(message, gmailFeedbackErrorStatus(message));
     }
     const parsed = response.result;
