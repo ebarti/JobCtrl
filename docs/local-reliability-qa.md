@@ -138,6 +138,12 @@ non-retryable `exhausted`, and a later pickup cannot restart it without an
 explicit attempt reset. Run at least two durable failures against the same
 materials generation and assert that both complete inner-attempt reports remain
 in the append-only audit history.
+When Tailor fails or reaches that exhausted boundary, assert that unstarted
+Cover and Apply rows become non-retryable `blocked` dependencies with the exact
+`UPSTREAM_TAILOR_FAILED` or `UPSTREAM_TAILOR_EXHAUSTED` code and a Tailor-owned
+next action. Repeat reconciliation to prove idempotence, interleave a dependent
+claim immediately before the guarded update to prove ownership preservation,
+and then complete Tailor to prove only the Tailor-owned blocks reset.
 For a current score below the live materials threshold, preparation must persist
 Tailor, Cover, and Apply as non-retryable `skipped` rows with `MIN_SCORE` and the
 exact score/threshold pair. No row may remain `pending` after the workflow has

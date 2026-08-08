@@ -518,6 +518,60 @@ def test_save_blocked_state_round_trip(db):
     assert ("StageBlocked", "enrich", "warn") in events
 
 
+def test_save_blocks_tailor_terminal_dependents_regardless_of_stage_order(db):
+    """Terminal Tailor blocks unstarted dependents even when Tailor saves first.
+
+    load() selects rows without ORDER BY, and the PK index happens to return
+    stages alphabetically (Tailor last), which incidentally protects the
+    mid-loop dependency blocks written by set_stage_state's tailor-terminal
+    hook from being overwritten by this same aggregate's still-pending
+    Cover/Apply upserts.  This regression forces the opposite iteration order
+    — Tailor persisted before its dependents, as new_for_job()'s Stage-enum
+    order does — so it fails if save() ever relies on that ordering accident
+    instead of reconciling after the loop.
+    """
+    repo = SqlitePipelineStateRepository(db)
+    agg = repo.load(LOCAL_TENANT, JOB_ID)
+    assert agg is not None
+    agg.set_stage_state(
+        Stage.Tailor,
+        Failed(
+            attempt_count=1,
+            max_attempts=5,
+            error_code="FAILED_VALIDATION",
+            error_message="Tailoring ended with status failed_validation",
+            retryable=True,
+        ),
+    )
+    reordered = {Stage.Tailor: agg.stages[Stage.Tailor]}
+    for stage, stage_state in agg.stages.items():
+        reordered.setdefault(stage, stage_state)
+    agg.stages = reordered
+    assert list(agg.stages)[0] is Stage.Tailor
+    assert {Stage.Cover, Stage.Apply} <= set(list(agg.stages)[1:])
+
+    repo.save(agg)
+
+    rows = db.execute(
+        "SELECT stage, state, error_code, retryable, blocked_by_json "
+        "FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage IN ('cover', 'apply') "
+        "ORDER BY stage",
+        (str(LOCAL_TENANT), str(JOB_ID)),
+    ).fetchall()
+    assert [(row["stage"], row["state"], row["error_code"]) for row in rows] == [
+        ("apply", "blocked", "UPSTREAM_TAILOR_FAILED"),
+        ("cover", "blocked", "UPSTREAM_TAILOR_FAILED"),
+    ]
+    assert {row["retryable"] for row in rows} == {0}
+    assert {row["blocked_by_json"] for row in rows} == {'["tailor"]'}
+
+    reloaded = repo.load(LOCAL_TENANT, JOB_ID)
+    assert reloaded is not None
+    assert isinstance(reloaded.get_stage_state(Stage.Cover), Blocked)
+    assert isinstance(reloaded.get_stage_state(Stage.Apply), Blocked)
+
+
 def test_save_skipped_state_emits_stage_skipped(db):
     repo = SqlitePipelineStateRepository(db)
     db.execute("DELETE FROM job_events")

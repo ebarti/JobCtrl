@@ -10,6 +10,7 @@ from jobctrl.state import (
     ensure_job_stage_rows,
     get_job_stage_states,
     reconcile_dependency_blockers,
+    reconcile_tailor_terminal_dependents,
     set_stage_state,
 )
 
@@ -620,5 +621,233 @@ def test_dependency_reconciliation_repairs_existing_apply_material_blocker(tmp_p
         assert repaired == 1
         assert row["state"] == "pending"
         assert row["error_message"] is None
+    finally:
+        close_connection(db_path)
+
+
+def test_tailor_exhaustion_blocks_unstarted_dependents_with_exact_reason(tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    try:
+        job = _insert_job(conn)
+        ensure_job_stage_rows(
+            conn,
+            job["job_id"],
+            tenant_id=job["tenant_id"],
+            discovered_at=job["discovered_at"],
+        )
+
+        set_stage_state(
+            conn,
+            job["job_id"],
+            "tailor",
+            "exhausted",
+            tenant_id=job["tenant_id"],
+            attempt_count=5,
+            error_code="FAILED_VALIDATION",
+            error_message="Tailoring ended with status failed_validation",
+            retryable=False,
+            validate_transition=False,
+        )
+        conn.commit()
+
+        rows = conn.execute(
+            "SELECT stage, state, error_code, error_message, retryable, "
+            "blocked_by_json, next_action FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage IN ('cover', 'apply') "
+            "ORDER BY stage",
+            (job["tenant_id"], job["job_id"]),
+        ).fetchall()
+        assert [(row["stage"], row["state"]) for row in rows] == [
+            ("apply", "blocked"),
+            ("cover", "blocked"),
+        ]
+        assert {row["error_code"] for row in rows} == {
+            "UPSTREAM_TAILOR_EXHAUSTED"
+        }
+        assert {row["retryable"] for row in rows} == {0}
+        assert {row["blocked_by_json"] for row in rows} == {'["tailor"]'}
+        assert all("Tailor is exhausted" in row["error_message"] for row in rows)
+        assert {row["next_action"] for row in rows} == {
+            "Reset Tailor's attempt budget and retry Tailor."
+        }
+        events = conn.execute(
+            "SELECT stage, event_type FROM job_events "
+            "WHERE tenant_id = ? AND job_id = ? AND event_type = 'StageBlocked' "
+            "ORDER BY stage",
+            (job["tenant_id"], job["job_id"]),
+        ).fetchall()
+        assert [(row["stage"], row["event_type"]) for row in events] == [
+            ("apply", "StageBlocked"),
+            ("cover", "StageBlocked"),
+        ]
+    finally:
+        close_connection(db_path)
+
+
+def test_tailor_success_clears_only_tailor_owned_terminal_blocks(tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    try:
+        job = _insert_job(conn)
+        ensure_job_stage_rows(
+            conn,
+            job["job_id"],
+            tenant_id=job["tenant_id"],
+            discovered_at=job["discovered_at"],
+        )
+        set_stage_state(
+            conn,
+            job["job_id"],
+            "tailor",
+            "failed",
+            tenant_id=job["tenant_id"],
+            error_code="FAILED_VALIDATION",
+            validate_transition=False,
+        )
+        set_stage_state(
+            conn,
+            job["job_id"],
+            "tailor",
+            "succeeded",
+            tenant_id=job["tenant_id"],
+            validate_transition=False,
+        )
+        conn.commit()
+
+        rows = conn.execute(
+            "SELECT stage, state, error_code FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage IN ('cover', 'apply') "
+            "ORDER BY stage",
+            (job["tenant_id"], job["job_id"]),
+        ).fetchall()
+        assert [(row["stage"], row["state"], row["error_code"]) for row in rows] == [
+            ("apply", "pending", None),
+            ("cover", "pending", None),
+        ]
+    finally:
+        close_connection(db_path)
+
+
+def test_terminal_dependency_reconciliation_preserves_claimed_and_terminal_rows(tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    try:
+        job = _insert_job(conn)
+        ensure_job_stage_rows(
+            conn,
+            job["job_id"],
+            tenant_id=job["tenant_id"],
+            discovered_at=job["discovered_at"],
+        )
+        conn.execute(
+            "UPDATE job_stage_states SET state = 'exhausted', "
+            "error_code = 'FAILED_VALIDATION' "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+            (job["tenant_id"], job["job_id"]),
+        )
+        set_stage_state(
+            conn,
+            job["job_id"],
+            "cover",
+            "running",
+            tenant_id=job["tenant_id"],
+            validate_transition=False,
+        )
+        set_stage_state(
+            conn,
+            job["job_id"],
+            "apply",
+            "canceled",
+            tenant_id=job["tenant_id"],
+            validate_transition=False,
+        )
+
+        assert (
+            reconcile_tailor_terminal_dependents(
+                conn,
+                tenant_id=job["tenant_id"],
+                job_id=job["job_id"],
+            )
+            == 0
+        )
+        rows = conn.execute(
+            "SELECT stage, state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage IN ('cover', 'apply') "
+            "ORDER BY stage",
+            (job["tenant_id"], job["job_id"]),
+        ).fetchall()
+        assert [(row["stage"], row["state"]) for row in rows] == [
+            ("apply", "canceled"),
+            ("cover", "running"),
+        ]
+    finally:
+        close_connection(db_path)
+
+
+def test_terminal_dependency_reconciliation_does_not_overwrite_concurrent_claim(tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    try:
+        job = _insert_job(conn)
+        ensure_job_stage_rows(
+            conn,
+            job["job_id"],
+            tenant_id=job["tenant_id"],
+            discovered_at=job["discovered_at"],
+        )
+        conn.execute(
+            "UPDATE job_stage_states SET state = 'exhausted', "
+            "error_code = 'FAILED_VALIDATION' "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+            (job["tenant_id"], job["job_id"]),
+        )
+
+        class ClaimBeforeDependentBlock:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+                self.injected = False
+
+            def execute(self, sql, parameters=()):
+                if "tailor_terminal_dependent_block" in sql and not self.injected:
+                    self.injected = True
+                    self.wrapped.execute(
+                        "UPDATE job_stage_states SET state = 'running', "
+                        "metadata_json = '{\"claim\":\"cover-worker\"}' "
+                        "WHERE tenant_id = ? AND job_id = ? AND stage = 'cover'",
+                        (job["tenant_id"], job["job_id"]),
+                    )
+                return self.wrapped.execute(sql, parameters)
+
+        interleaved = ClaimBeforeDependentBlock(conn)
+        assert (
+            reconcile_tailor_terminal_dependents(
+                interleaved,
+                tenant_id=job["tenant_id"],
+                job_id=job["job_id"],
+            )
+            == 1
+        )
+        rows = conn.execute(
+            "SELECT stage, state, metadata_json FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage IN ('cover', 'apply') "
+            "ORDER BY stage",
+            (job["tenant_id"], job["job_id"]),
+        ).fetchall()
+        assert [(row["stage"], row["state"]) for row in rows] == [
+            ("apply", "blocked"),
+            ("cover", "running"),
+        ]
+        assert rows[1]["metadata_json"] == '{"claim":"cover-worker"}'
+        cover_events = conn.execute(
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? "
+            "AND stage = 'cover' AND event_type = 'StageBlocked'",
+            (job["tenant_id"], job["job_id"]),
+        ).fetchone()[0]
+        assert cover_events == 0
     finally:
         close_connection(db_path)

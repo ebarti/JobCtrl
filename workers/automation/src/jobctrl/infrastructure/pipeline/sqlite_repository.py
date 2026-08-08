@@ -34,7 +34,12 @@ from jobctrl.domain.pipeline_types import (
     serialize_stage_state,
 )
 from jobctrl.domain.tenant import TenantId
-from jobctrl.state import reconcile_dependency_blockers, record_job_event, set_stage_state
+from jobctrl.state import (
+    reconcile_dependency_blockers,
+    reconcile_tailor_terminal_dependents,
+    record_job_event,
+    set_stage_state,
+)
 
 
 def _json_loads(value: str | None, default: Any) -> Any:
@@ -283,6 +288,7 @@ class SqlitePipelineStateRepository:
         )
 
         completed_stages: list[str] = []
+        tailor_terminal = False
         for stage, stage_state in state.stages.items():
             stage_str = serialize_stage(stage)
             new_state_str = serialize_stage_state(stage_state)
@@ -297,6 +303,9 @@ class SqlitePipelineStateRepository:
                 validate_transition=False,
                 **_stage_state_to_kwargs(stage_state),
             )
+
+            if stage_str == "tailor" and new_state_str in ("failed", "exhausted"):
+                tailor_terminal = True
 
             if existing_states.get(stage_str) == new_state_str:
                 continue
@@ -319,6 +328,18 @@ class SqlitePipelineStateRepository:
                 tenant_id=state.tenant_id,
                 job_id=stable_job_id,
                 completed_stage=stage_str,
+            )
+        if tailor_terminal:
+            # set_stage_state's tailor-terminal hook fires mid-loop, so this
+            # aggregate's own still-pending cover/apply upserts later in the
+            # same loop can overwrite the dependency blocks it just wrote.
+            # Re-run the reconcile after the loop (mirroring the
+            # reconcile_dependency_blockers pass above) so the persisted
+            # outcome never depends on stage iteration order.
+            reconcile_tailor_terminal_dependents(
+                self._conn,
+                tenant_id=state.tenant_id,
+                job_id=stable_job_id,
             )
         state.version = state.version + 1
 

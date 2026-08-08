@@ -266,6 +266,15 @@ Behavior notes:
   are preserved. A score hard blocker takes precedence and remains `blocked`.
 - There is no local preparation reaper. Rows already claimed by a fast worker are
   not moved backward; Temporal owns in-flight recovery.
+- A failed or exhausted Tailor is also canonical dependency state, not pending
+  downstream work. Unstarted Cover and Apply rows become non-retryable
+  `blocked` rows owned by `tailor`, with `UPSTREAM_TAILOR_FAILED` or
+  `UPSTREAM_TAILOR_EXHAUSTED` and the required retry/reset action. The guarded
+  reconciliation never overwrites queued, running, succeeded, skipped,
+  or canceled dependents while establishing the block. Tailor success resets
+  only Tailor-owned blocks; after a new resume is accepted it may also reset a
+  completed, failed, or exhausted Cover tied to the superseded material
+  generation, but never a queued/running claim or a skipped/canceled decision.
 
 ## Score
 
@@ -341,7 +350,9 @@ Tailoring is where the fabrication gate and per-bullet claim grounding live.
 adversarial personas, and repair loop — see [Resume Tailoring Logic](../tailoring.md).**
 The Tailor stage emits `EmployerAnalyzed` (shared with scoring), `ResumeApproved`
 / `ResumeFailed`, and `BulletProvenanceRecorded`; successful tailoring proceeds
-into the Cover step.
+into the Cover step. A terminal Tailor failure instead blocks unstarted Cover
+and Apply rows with the exact upstream state; they cannot remain ownerless
+`pending`.
 
 ## Cover
 
