@@ -17,11 +17,6 @@ class ConfigurationError(JobCtrlError):
     code = "configuration"
 
 
-class AuthenticationError(JobCtrlError):
-    retryable = False
-    code = "authentication"
-
-
 class MissingInputError(JobCtrlError):
     retryable = False
     code = "missing_input"
@@ -29,10 +24,6 @@ class MissingInputError(JobCtrlError):
 
 class TransientNetworkError(JobCtrlError):
     code = "transient_network"
-
-
-class BrowserTransientError(JobCtrlError):
-    code = "browser_transient"
 
 
 class LlmTransientError(JobCtrlError):
@@ -68,8 +59,6 @@ def to_application_error(exc: Exception) -> ApplicationError:
 
 __all__ = [
     "AttemptBudgetExhaustedError",
-    "AuthenticationError",
-    "BrowserTransientError",
     "BudgetExceededError",
     "ConfigurationError",
     "JobCtrlError",

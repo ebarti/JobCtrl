@@ -71,7 +71,7 @@ def discover_workflow_id(tenant_id: str) -> str:
     return f"discover-{tenant_id}"
 
 
-_NON_RETRYABLE_ERROR_TYPES = ["configuration", "authentication", "missing_input", "budget_exceeded"]
+_NON_RETRYABLE_ERROR_TYPES = ["configuration", "missing_input", "budget_exceeded"]
 _SOURCE_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=5),
     backoff_coefficient=2.0,

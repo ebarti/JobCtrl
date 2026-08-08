@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.preparation import (
     PreparationWorkItemKind,
-    PreparationWorkItemState,
     make_preparation_idempotency_key,
 )
 from jobctrl.domain.tenant import TenantId
@@ -254,7 +253,7 @@ def _copy_preparation_work_items(
                 kind.value,
                 target_version,
                 source_event_id,
-                state.value,
+                state,
                 make_preparation_idempotency_key(
                     tenant_id=TenantId(tenant_id),
                     job_id=JobId(job_id),
@@ -351,11 +350,14 @@ def _work_item_kind(value: object) -> PreparationWorkItemKind:
         raise CandidateWorkItemsCopyError("preparation work item has invalid kind") from error
 
 
-def _work_item_state(value: object) -> PreparationWorkItemState:
-    try:
-        return PreparationWorkItemState(_required_text(value, "state"))
-    except ValueError as error:
-        raise CandidateWorkItemsCopyError("preparation work item has invalid state") from error
+_VALID_WORK_ITEM_STATES = frozenset({"queued", "running", "completed", "failed"})
+
+
+def _work_item_state(value: object) -> str:
+    state = _required_text(value, "state")
+    if state not in _VALID_WORK_ITEM_STATES:
+        raise CandidateWorkItemsCopyError("preparation work item has invalid state")
+    return state
 
 
 def _nonnegative_integer(value: object, column: str) -> int:
