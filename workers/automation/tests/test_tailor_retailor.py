@@ -19,12 +19,14 @@ from jobctrl.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
-from jobctrl.domain.materials.policy import LearnedTailoringRules
+from jobctrl.domain.materials.policy import LearnedTailoringRules, TailoringPolicy
 from jobctrl.domain.materials.use_cases import TailorOutcome, build_master_tailor_prompt
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.materials import SqliteTailoringPolicyRepository
 from jobctrl.pipeline import _count_pending
+from jobctrl.pipeline.current_policy_selectors import tailoring_current_policy_job_ids
 from jobctrl.state import ensure_job_stage_rows, set_stage_state
 from jobctrl.scoring.tailor import (
     _build_pdf_renderer,
@@ -48,6 +50,7 @@ def _insert_job(
     url: str,
     fit_score: int = 9,
     material_path: str | None = None,
+    material_metadata: dict | None = None,
 ):
     job_id = _job_id_for_url(url)
     timestamp = "2026-06-01T00:00:00+00:00"
@@ -110,19 +113,43 @@ def _insert_job(
             """
             INSERT INTO job_materials_artifacts (
                 tenant_id, job_id, generation, artifact_type, artifact_id,
-                status, path, render_format, created_at
-            ) VALUES (?, ?, 1, 'tailored_resume', ?, 'approved', ?, 'text', ?)
+                status, path, render_format, metadata_json, created_at
+            ) VALUES (?, ?, 1, 'tailored_resume', ?, 'approved', ?, 'text', ?, ?)
             """,
             (
                 str(LOCAL_TENANT),
                 str(job_id),
                 f"{job_id}:tailored_resume",
                 material_path,
+                json.dumps(material_metadata or {}, sort_keys=True),
                 timestamp,
             ),
         )
     conn.commit()
     return job_id
+
+
+def _tailoring_policy(
+    *,
+    profile_snapshot_fingerprint: str = "sha256:profile-v1",
+) -> TailoringPolicy:
+    return TailoringPolicy.from_runtime(
+        tenant_id=LOCAL_TENANT,
+        version=1,
+        prompt_version="tailor.v2.quality-gated",
+        schema_version="tailored-resume.v1",
+        judge_schema_version="tailor-judge.v1",
+        prompt_text="stable global control prompt",
+        profile_policy={"claim_mode": "verified_only"},
+        custom_prompt="",
+        generator_settings={"candidate_models": ["local:draft"]},
+        judge_settings={"judge_model": "local:judge", "min_score": 0.82},
+        runtime_settings={
+            "validation_mode": "normal",
+            "profile_snapshot_fingerprint": profile_snapshot_fingerprint,
+        },
+        created_at="2026-06-01T00:00:00+00:00",
+    )
 
 
 def _insert_blocked_score(conn, *, url: str, blocker: str = "No sponsorship.") -> None:
@@ -194,6 +221,52 @@ def test_get_jobs_by_stage_retailor_includes_already_tailored_jobs(tmp_path):
             str(new_job_id),
             str(existing_job_id),
         }
+    finally:
+        close_connection(db_path)
+
+
+def test_parallel_job_prompts_share_global_policy_until_profile_revision(tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    try:
+        policy_repository = SqliteTailoringPolicyRepository(conn)
+        current = policy_repository.resolve_current(_tailoring_policy())
+        first_job_id = _insert_job(
+            conn,
+            url="https://example.com/policy-job-a",
+            material_path="/tmp/policy-job-a.txt",
+            material_metadata={
+                "tailoring_policy_version": current.version,
+                "job_prompt_fingerprint": "sha256:job-a-prompt",
+            },
+        )
+        second_job_id = _insert_job(
+            conn,
+            url="https://example.com/policy-job-b",
+            material_path="/tmp/policy-job-b.txt",
+            material_metadata={
+                "tailoring_policy_version": current.version,
+                "job_prompt_fingerprint": "sha256:job-b-prompt",
+            },
+        )
+
+        assert tailoring_current_policy_job_ids(
+            conn,
+            tenant_id=str(LOCAL_TENANT),
+        ) == ()
+
+        revised = policy_repository.resolve_current(
+            _tailoring_policy(profile_snapshot_fingerprint="sha256:profile-v2"),
+            expected_current_version=current.version,
+        )
+        assert revised.version == current.version + 1
+        assert set(
+            tailoring_current_policy_job_ids(
+                conn,
+                tenant_id=str(LOCAL_TENANT),
+            )
+        ) == {first_job_id, second_job_id}
     finally:
         close_connection(db_path)
 

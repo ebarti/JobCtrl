@@ -622,6 +622,9 @@ class TailoringPolicy:
             "prompt_fingerprint": self.prompt_fingerprint,
             "config_fingerprint": self.config_fingerprint,
             "profile_policy_fingerprint": self.profile_policy_fingerprint,
+            "profile_snapshot_fingerprint": str(
+                self.runtime_settings.get("profile_snapshot_fingerprint") or ""
+            ),
             "custom_prompt_fingerprint": self.custom_prompt_fingerprint,
             "learned_tailoring_rules": self.learned_tailoring_rules.to_dict(),
         }
@@ -657,6 +660,56 @@ def _configuration_fingerprint(
 def fingerprint_value(value: Any) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
     return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+_TAILORING_PERSONAL_FIELDS = (
+    "full_name",
+    "preferred_name",
+    "email",
+    "phone",
+    "address",
+    "city",
+    "province_state",
+    "country",
+    "postal_code",
+    "linkedin_url",
+    "github_url",
+    "portfolio_url",
+    "website_url",
+)
+
+
+def tailoring_profile_projection(snapshot: Any) -> dict[str, Any]:
+    """Return every canonical profile field that can affect Materials output.
+
+    The projection deliberately excludes profile sections used only for job
+    selection or application submission (for example compensation, work
+    authorization, availability, EEO answers, application preferences, and the
+    stored application password). Those edits must not invalidate an otherwise
+    current tailored resume or cover letter.
+    """
+
+    data = snapshot.as_dict()
+    personal = data.get("personal")
+    if not isinstance(personal, MappingABC):
+        personal = {}
+    return {
+        "tenant_id": str(snapshot.tenant_id),
+        "profile_id": str(snapshot.profile_id),
+        "personal": {
+            field_name: personal.get(field_name)
+            for field_name in _TAILORING_PERSONAL_FIELDS
+        },
+        "experience": _clean_mapping(data.get("experience")),
+        "resume": _clean_mapping(data.get("resume")),
+        "resume_constraints": _clean_mapping(data.get("resume_constraints")),
+    }
+
+
+def fingerprint_profile_snapshot(snapshot: Any) -> str:
+    """Fingerprint the complete tailoring-relevant profile projection."""
+
+    return fingerprint_value(tailoring_profile_projection(snapshot))
 
 
 def _clean_mapping(value: Any) -> dict[str, Any]:
@@ -701,5 +754,7 @@ __all__ = [
     "TailoringPolicyRollbackReason",
     "WritingStylePolicy",
     "adapt_requirement_led_controls",
+    "fingerprint_profile_snapshot",
     "fingerprint_value",
+    "tailoring_profile_projection",
 ]

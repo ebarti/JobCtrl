@@ -32,6 +32,7 @@ from jobctrl.domain.materials.policy import (
     TailoringPolicy,
     TailoringPolicyChangedError,
     TailoringPolicyRollbackReason,
+    fingerprint_profile_snapshot,
 )
 from jobctrl.domain.operations.learning import (
     LearningRecommendationDecision,
@@ -46,6 +47,7 @@ from jobctrl.domain.materials.value_objects import (
     ValidationResult,
 )
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.infrastructure.materials.unit_of_work import SqliteUnitOfWork
 from jobctrl.scoring.eligibility_sql import (
     register_score_eligibility_sql,
@@ -1108,8 +1110,14 @@ class SqliteLearningRecommendationReviewRepository:
 class SqliteTailoringPolicyRepository:
     """SQLite-backed current policy adapter for the Materials context."""
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        unit_of_work: SqliteUnitOfWork | None = None,
+    ) -> None:
         self._conn = conn
+        self._unit_of_work = unit_of_work
         ensure_tailoring_policy_tables(conn)
 
     def get_current(self, tenant_id: TenantId) -> TailoringPolicy | None:
@@ -1217,13 +1225,21 @@ class SqliteTailoringPolicyRepository:
         *,
         expected_current_version: int | None = None,
     ) -> TailoringPolicy:
-        self._conn.execute("BEGIN IMMEDIATE")
+        owns_transaction = not (
+            self._unit_of_work is not None and self._unit_of_work.active
+        )
+        if owns_transaction:
+            self._conn.execute("BEGIN IMMEDIATE")
         try:
             current = self.get_current(candidate.tenant_id)
             actual_current_version = 0 if current is None else current.version
             if (
                 expected_current_version is not None
                 and actual_current_version != expected_current_version
+                and (
+                    current is None
+                    or not current.same_config_as(candidate)
+                )
             ):
                 raise TailoringPolicyChangedError(
                     "tailoring policy advanced before artifact persistence"
@@ -1234,7 +1250,8 @@ class SqliteTailoringPolicyRepository:
                     created_at=candidate.created_at,
                 )
             if current is not None and current.same_config_as(candidate):
-                self._conn.commit()
+                if owns_transaction:
+                    self._conn.commit()
                 return current
 
             next_version = 1 if current is None else current.version + 1
@@ -1257,11 +1274,62 @@ class SqliteTailoringPolicyRepository:
                 created_from_event_id=candidate.created_from_event_id,
             )
             self._insert(policy)
-            self._conn.commit()
+            if owns_transaction:
+                self._conn.commit()
             return policy
         except Exception:
-            self._conn.rollback()
+            if owns_transaction:
+                self._conn.rollback()
             raise
+
+    def assert_generation_current(
+        self,
+        policy: TailoringPolicy,
+        profile_snapshot: ProfileSnapshot,
+    ) -> None:
+        """Assert tailoring-relevant profile and policy identity atomically."""
+
+        if self._unit_of_work is None or not self._unit_of_work.active:
+            raise RuntimeError(
+                "tailoring generation fence requires an active unit of work"
+            )
+        if policy.runtime_settings.get(
+            "profile_snapshot_fingerprint"
+        ) != fingerprint_profile_snapshot(profile_snapshot):
+            raise TailoringPolicyChangedError(
+                "tailoring profile snapshot changed before artifact persistence"
+            )
+        from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
+        from jobctrl.infrastructure.profile.sqlite_repository import (
+            SqliteProfileRepository,
+        )
+
+        try:
+            current_profile_snapshot = SqliteProfileRepository(
+                self._conn,
+                publisher=InProcessEventBus(),
+                profile_id=str(profile_snapshot.profile_id),
+                initialize_schema=False,
+            ).load_snapshot(profile_snapshot.tenant_id)
+        except FileNotFoundError as exc:
+            raise TailoringPolicyChangedError(
+                "tailoring profile disappeared before artifact persistence"
+            ) from exc
+        if fingerprint_profile_snapshot(
+            current_profile_snapshot
+        ) != fingerprint_profile_snapshot(profile_snapshot):
+            raise TailoringPolicyChangedError(
+                "tailoring-relevant profile data changed before artifact persistence"
+            )
+        current = self.get_current(policy.tenant_id)
+        if (
+            current is None
+            or current.version != policy.version
+            or not current.same_config_as(policy)
+        ):
+            raise TailoringPolicyChangedError(
+                "tailoring policy advanced before artifact persistence"
+            )
 
     def rollback_to(
         self,

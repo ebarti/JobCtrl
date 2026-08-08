@@ -43,6 +43,36 @@ cancellation reaches a terminal observable state, an unavailable Temporal path
 fails clearly at start, and a lost dev-server history is reconciled rather than
 left open forever.
 
+Batch Enrich adds a cohort-level cancellation assertion: cancel a real
+`JobPipelineWorkflow` after its activity starts, then prove all and only its
+selected unfinished rows are `canceled`, the request identity is in the Runs
+timeline, and a fresh reconciler closes persisted ownership left by a stopped
+worker. The focused gate is:
+
+```bash
+uv --project workers/automation run python -m pytest -q \
+  workers/automation/tests/test_workflow_job_pipeline.py::test_pipeline_enrich_cancel_terminalizes_exact_selected_cohort \
+  workers/automation/tests/test_worker_reconciler.py::test_reconciler_maps_canceled_execution_to_workflow_canceled \
+  workers/automation/tests/test_worker_reconciler.py::test_reconciler_cancels_persisted_enrich_ownership_after_worker_restart
+```
+
+Restart pickup is a separate regression boundary. An Enrich reset must clear
+the predecessor owner and set the canonical enrichment aggregate to `pending`.
+Bulk pickup must ignore stale projected descriptions, must not skip an active
+Enrich owner to start Score, and must persist `firstExecutionRunId` rather than
+the workflow-handle compatibility ID. The selected worker may process a queued
+row only when both identifiers match; a foreign execution must leave it alone.
+The focused gate is:
+
+```bash
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/server.test.ts \
+  test/write-model-state.test.ts
+uv --project workers/automation run --extra dev python -m pytest -q \
+  workers/automation/tests/test_discover_reliability.py \
+  -k 'selected_enrich_workflow_picks_up_api_prequeued_job or selected_enrich_workflow_does_not_steal_another_queued_owner'
+```
+
 Use the workflow-by-workflow matrix in the
 [Regression Catalog](developer/qa/regression-catalog.md#temporal-fault-injection)
 or the [complete checklist](developer/qa/complete-checklist.md#temporal-fault-injection-matrix).
@@ -73,12 +103,57 @@ an interrupted activity before persistence leaves one retryable owned row, and
 an interrupted acknowledgement after persistence reuses the committed score or
 accepted artifact without another model call. Profile and browser-setting
 continuations must also survive an API stop after their durable write and
-before dispatch. The focused deterministic gate is:
+before dispatch. A selected batch must honor its bounded worker count; item
+failures remain attached to their own rows while the approved Tailor subset
+continues to Cover. An activity timeout or worker shutdown is retryable and
+must not be projected as user cancellation. For an explicitly selected batch,
+the replay-versioned activity deadline is 30 minutes per worker wave, capped at
+6 hours; the 2-minute heartbeat still detects a dead worker promptly. Parallel
+Tailor jobs generated from identical safety controls must persist distinct
+job-prompt fingerprints under the same global policy revision. Changing the
+complete tailoring-relevant profile projection, learned rules, model, judge,
+schema, or validation mode must advance that global revision and fail stale
+artifact persistence closed. A compensation-, authorization-, availability-,
+EEO-, or application-preference-only profile edit must not advance the global
+tailoring policy or reject an otherwise current artifact.
+Cancel a real selected Tailor and Cover workflow after the first worker wave
+starts. No later wave may start; in-flight jobs must receive the cooperative
+cancel token; the final artifact and stage-state writes must be fenced inside
+their SQLite transactions; and the exact unfinished cohort must become
+`canceled` without overwriting a successor owner. A result committed before the
+cancel boundary remains `succeeded`. Also pause a generation after it reads the
+profile, save a new profile revision, and prove the stale generation cannot
+commit. The selected artifact's prompt fingerprint must equal a digest of the
+exact selected candidate message list. Exercise the production single-job
+Tailor and Cover runners with their default SQLite repositories as well as the
+batch workflow: cancellation during generation must leave no artifact and no
+false completed/failed terminal event for the interrupted owner. Also hold a
+blocking activity thread past its cancellation grace window: the abandoned
+generation must be recorded and fenced, and the next activity must run on fresh
+bounded executor capacity without restarting the worker.
+Repeated Tailor validation/model-repair failures must also keep the inner LLM
+attempt count separate from the durable stage execution count. Each activity
+execution advances the durable count once; the fifth durable failure becomes
+non-retryable `exhausted`, and a later pickup cannot restart it without an
+explicit attempt reset. Run at least two durable failures against the same
+materials generation and assert that both complete inner-attempt reports remain
+in the append-only audit history.
+The focused deterministic gate is:
 
 ```bash
 uv --project workers/automation run pytest -q \
   workers/automation/tests/test_score_activity_recovery.py \
   workers/automation/tests/test_material_activity_recovery.py \
+  workers/automation/tests/test_materials_unit_of_work.py \
+  workers/automation/tests/test_materials_use_cases.py \
+  workers/automation/tests/test_linkedin_authenticated_enrichment_retry.py \
+  workers/automation/tests/test_linkedin_apply_resolver.py \
+  workers/automation/tests/test_enrichment_url_safety.py \
+  workers/automation/tests/test_materials_repository.py \
+  workers/automation/tests/test_v7_tailor_runtime.py \
+  workers/automation/tests/test_v7_cover_runtime.py \
+  workers/automation/tests/test_p1b_error_inversion.py \
+  workers/automation/tests/test_temporal_worker.py \
   workers/automation/tests/test_workflow_job_preparation.py \
   workers/automation/tests/test_workflow_job_pipeline.py
 corepack pnpm --filter @jobctrl/api exec vitest run \
@@ -102,7 +177,7 @@ JOBCTRL_RELIABILITY_TEMPORAL_FIRST=1 \
 
 Both passes must retain the original Temporal run ID, complete it exactly once,
 and converge in Temporal history, the SQLite read model, API health, and the
-web-origin proxy. The complete R01-R22 scenario definitions and stop conditions
+web-origin proxy. The complete R01-R25 scenario definitions and stop conditions
 live in
 [`plans/2026-08-04-pipeline-reliability-chaos.md`](plans/2026-08-04-pipeline-reliability-chaos.md).
 

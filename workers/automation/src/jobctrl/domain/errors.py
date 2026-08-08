@@ -39,6 +39,13 @@ class LlmTransientError(JobCtrlError):
     code = "llm_transient"
 
 
+class AttemptBudgetExhaustedError(JobCtrlError):
+    """A durable stage used every configured execution attempt."""
+
+    retryable = False
+    code = "attempt_budget_exhausted"
+
+
 class BudgetExceededError(JobCtrlError):
     retryable = False
     code = "budget_exceeded"
@@ -60,6 +67,7 @@ def to_application_error(exc: Exception) -> ApplicationError:
 
 
 __all__ = [
+    "AttemptBudgetExhaustedError",
     "AuthenticationError",
     "BrowserTransientError",
     "BudgetExceededError",

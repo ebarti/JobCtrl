@@ -2236,6 +2236,100 @@ def test_selected_tailor_activity_accepts_committed_acknowledgement_replay(monke
     assert result["stages"][0]["approvedJobIds"] == [job_id]
 
 
+def test_selected_tailor_activity_uses_bounded_requested_workers(monkeypatch) -> None:
+    job_ids = (
+        JobId("50000000-0000-4000-8000-000000000011"),
+        JobId("50000000-0000-4000-8000-000000000012"),
+        JobId("50000000-0000-4000-8000-000000000013"),
+    )
+    real_executor = materials_activities_mod.ThreadPoolExecutor
+    observed_workers: list[int] = []
+
+    def recording_executor(*, max_workers: int, thread_name_prefix: str):
+        observed_workers.append(max_workers)
+        return real_executor(
+            max_workers=max_workers,
+            thread_name_prefix=thread_name_prefix,
+        )
+
+    monkeypatch.setattr(materials_activities_mod, "ThreadPoolExecutor", recording_executor)
+    monkeypatch.setattr(
+        "jobctrl.scoring.tailor.tailor_job_by_id",
+        lambda _job_id, **_kwargs: {"status": "approved"},
+    )
+
+    result = materials_activities_mod._run_selected_tailoring(
+        TailorActivityInput(
+            tenant_id="local",
+            job_ids=job_ids,
+            workers=2,
+        )
+    )
+
+    assert observed_workers == [2]
+    assert result["stages"][0]["approved"] == 3
+    assert result["stages"][0]["approvedJobIds"] == list(job_ids)
+
+
+def test_selected_cover_activity_uses_bounded_requested_workers(monkeypatch) -> None:
+    job_ids = (
+        JobId("50000000-0000-4000-8000-000000000021"),
+        JobId("50000000-0000-4000-8000-000000000022"),
+        JobId("50000000-0000-4000-8000-000000000023"),
+    )
+    real_executor = materials_activities_mod.ThreadPoolExecutor
+    observed_workers: list[int] = []
+
+    def recording_executor(*, max_workers: int, thread_name_prefix: str):
+        observed_workers.append(max_workers)
+        return real_executor(
+            max_workers=max_workers,
+            thread_name_prefix=thread_name_prefix,
+        )
+
+    monkeypatch.setattr(materials_activities_mod, "ThreadPoolExecutor", recording_executor)
+    monkeypatch.setattr(
+        "jobctrl.scoring.cover_letter.cover_letter_by_id",
+        lambda _job_id, **_kwargs: {"status": "ok", "generated": 1},
+    )
+
+    result = materials_activities_mod._run_selected_cover(
+        CoverActivityInput(
+            tenant_id="local",
+            job_ids=job_ids,
+            workers=2,
+        )
+    )
+
+    assert observed_workers == [2]
+    assert result["stages"][0]["generated"] == 3
+
+
+def test_selected_tailor_activity_keeps_item_failures_partial(monkeypatch) -> None:
+    approved_job_id = JobId("50000000-0000-4000-8000-000000000031")
+    failed_job_id = JobId("50000000-0000-4000-8000-000000000032")
+
+    def fake_tailor(job_id: JobId, **_kwargs: object) -> dict[str, object]:
+        if job_id == approved_job_id:
+            return {"status": "approved"}
+        return {"status": "error", "error": "validation exhausted"}
+
+    monkeypatch.setattr("jobctrl.scoring.tailor.tailor_job_by_id", fake_tailor)
+
+    result = materials_activities_mod._run_selected_tailoring(
+        TailorActivityInput(
+            tenant_id="local",
+            job_ids=(approved_job_id, failed_job_id),
+        )
+    )
+
+    assert result["status"] == "partial"
+    assert result["errors"] == {}
+    assert result["stages"][0]["approvedJobIds"] == [approved_job_id]
+    assert result["stages"][0]["failed"] == 1
+    assert result["stages"][0]["itemErrors"] == {str(failed_job_id): "validation exhausted"}
+
+
 def test_current_policy_tailor_activity_skips_current_policy_artifacts(
     tmp_db: Path,
     monkeypatch,

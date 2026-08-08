@@ -831,7 +831,12 @@ def test_suppress_active_artifacts_removes_canonical_paths_from_selectors(
 # ---------------------------------------------------------------------------
 
 
-def _policy(*, fingerprint: str = "sha256:a", version: int = 1) -> TailoringPolicy:
+def _policy(
+    *,
+    fingerprint: str = "sha256:a",
+    version: int = 1,
+    profile_fingerprint: str = "sha256:profile",
+) -> TailoringPolicy:
     return TailoringPolicy(
         tenant_id=LOCAL_TENANT,
         version=version,
@@ -840,7 +845,7 @@ def _policy(*, fingerprint: str = "sha256:a", version: int = 1) -> TailoringPoli
         judge_schema_version="tailor-judge.v1",
         prompt_fingerprint=fingerprint,
         config_fingerprint=fingerprint,
-        profile_policy_fingerprint="sha256:profile",
+        profile_policy_fingerprint=profile_fingerprint,
         custom_prompt_fingerprint="sha256:custom",
         generator_settings={"candidate_models": ["local:draft"]},
         judge_settings={"judge_model": "local:judge", "min_score": 0.82},
@@ -906,11 +911,100 @@ def test_tailoring_policy_repository_carries_learned_rules_forward(
 
     assert second.version == first.version + 1
     assert second.learned_tailoring_rules == learned
+
     with pytest.raises(TailoringPolicyChangedError):
         repo.resolve_current(
-            _policy(fingerprint="sha256:stale"),
+            _policy(
+                fingerprint="sha256:changed-controls",
+                profile_fingerprint="sha256:changed-profile-policy",
+            ).with_learned_tailoring_rules(learned),
             expected_current_version=first.version,
         )
+
+
+def test_tailoring_policy_repository_reuses_global_revision_for_concurrent_job_prompts(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    setup_conn = init_db(db_path)
+    baseline = SqliteTailoringPolicyRepository(setup_conn).resolve_current(
+        _policy(fingerprint="sha256:baseline-prompt")
+    )
+    close_connection(db_path)
+    start = threading.Event()
+
+    def resolve(job_prompt_fingerprint: str) -> tuple[TailoringPolicy, str]:
+        conn = get_connection(db_path)
+        try:
+            repository = SqliteTailoringPolicyRepository(conn)
+            start.wait(timeout=5)
+            return (
+                repository.resolve_current(
+                    _policy(fingerprint="sha256:stable-generation-controls"),
+                    expected_current_version=baseline.version,
+                ),
+                job_prompt_fingerprint,
+            )
+        finally:
+            close_connection(db_path)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(resolve, "sha256:job-a-prompt"),
+            executor.submit(resolve, "sha256:job-b-prompt"),
+        ]
+        start.set()
+        resolved = [future.result(timeout=10) for future in futures]
+
+    assert [policy.version for policy, _ in resolved] == [2, 2]
+    assert {policy.prompt_fingerprint for policy, _ in resolved} == {
+        "sha256:stable-generation-controls"
+    }
+    assert {job_prompt_fingerprint for _, job_prompt_fingerprint in resolved} == {
+        "sha256:job-a-prompt",
+        "sha256:job-b-prompt",
+    }
+    check_conn = get_connection(db_path)
+    try:
+        count = check_conn.execute("SELECT COUNT(*) FROM tailoring_policies").fetchone()[0]
+        assert count == 2
+    finally:
+        close_connection(db_path)
+
+
+def test_tailoring_policy_profile_snapshot_fingerprint_is_generation_control() -> None:
+    common = {
+        "tenant_id": LOCAL_TENANT,
+        "version": 1,
+        "prompt_version": "tailor.v2.quality-gated",
+        "schema_version": "tailored-resume.v1",
+        "judge_schema_version": "tailor-judge.v1",
+        "prompt_text": "stable global control prompt",
+        "profile_policy": {"claim_mode": "verified_only"},
+        "custom_prompt": "",
+        "generator_settings": {"candidate_models": ["local:draft"]},
+        "judge_settings": {"judge_model": "local:judge", "min_score": 0.82},
+        "created_at": "2026-05-26T00:00:00+00:00",
+    }
+    first = TailoringPolicy.from_runtime(
+        **common,
+        runtime_settings={
+            "validation_mode": "normal",
+            "profile_snapshot_fingerprint": "sha256:profile-v1",
+        },
+    )
+    second = TailoringPolicy.from_runtime(
+        **common,
+        runtime_settings={
+            "validation_mode": "normal",
+            "profile_snapshot_fingerprint": "sha256:profile-v2",
+        },
+    )
+
+    assert first.config_fingerprint != second.config_fingerprint
+    assert first.as_artifact_metadata()["profile_snapshot_fingerprint"] == (
+        "sha256:profile-v1"
+    )
 
 
 def test_tailoring_policy_repository_reuses_same_config(conn: sqlite3.Connection) -> None:

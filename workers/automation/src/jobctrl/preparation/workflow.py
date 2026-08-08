@@ -38,7 +38,9 @@ with workflow.unsafe.imports_passed_through():
     )
     from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
     from jobctrl.infrastructure.preparation_recovery import (
+        CancelPreparationStateInput,
         RecoverPreparationStateInput,
+        cancel_preparation_state_activity,
         recover_preparation_state_activity,
     )
     from jobctrl.scoring.activities import ScoreJobActivityInput, score_job_activity
@@ -166,8 +168,14 @@ class JobPreparationWorkflow:
         for step in _ordered_steps(payload.steps):
             try:
                 output = await _execute_step(step, payload)
+            except CancelledError:
+                if step in {"tailor", "cover"}:
+                    await _cancel_material_stage_state(step, payload)
+                raise
             except ActivityError as exc:
                 if _activity_error_was_cancelled(exc):
+                    if step in {"tailor", "cover"}:
+                        await _cancel_material_stage_state(step, payload)
                     raise CancelledError("Workflow canceled by request.") from exc
                 if step in {"score", "tailor", "cover"}:
                     await _recover_stage_state(step, payload)
@@ -211,6 +219,36 @@ async def _recover_stage_state(
         ),
         start_to_close_timeout=timedelta(seconds=30),
         retry_policy=RetryPolicy(maximum_attempts=0),
+        cancellation_type=workflow.ActivityCancellationType.ABANDON,
+    )
+
+
+async def _cancel_material_stage_state(
+    stage: str,
+    payload: JobPreparationInput,
+) -> None:
+    if not workflow.patched("preparation-material-cancellation-v1"):
+        return
+    await workflow.execute_activity(
+        cancel_preparation_state_activity,
+        CancelPreparationStateInput(
+            tenant_id=payload.tenant_id,
+            workflow_id=workflow.info().run_id,
+            stage=stage,
+            job_ids=(str(payload.job_id),),
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        ),
+        start_to_close_timeout=timedelta(seconds=30),
+        # Bounded like the pipeline cancel activities: cancellation liveness
+        # beats at-all-costs terminalization — rows left running by an
+        # exhausted cancel are still recoverable via
+        # ``recover_preparation_state``.
+        retry_policy=RetryPolicy(
+            initial_interval=timedelta(seconds=1),
+            maximum_interval=timedelta(seconds=10),
+            maximum_attempts=5,
+        ),
         cancellation_type=workflow.ActivityCancellationType.ABANDON,
     )
 

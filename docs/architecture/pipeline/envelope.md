@@ -22,7 +22,13 @@ The helpers live in
    [Spend Ceiling](operations.md#spend-ceiling)). It runs with `maximum_attempts=1`, so a
    depleted budget fails the run before any paid work.
 3. **Business activities** run (stages, per-job steps, apply, import, refresh).
-4. **`record_workflow_outcome`** emits exactly one terminal event on every exit
+4. **`WorkflowCancellationRequested`** records requester, source, optional
+   reason, exact Temporal run, and whether the evidence is delivered
+   `request_intent`, immutable `temporal_history`, or explicitly labeled
+   `recovered_temporal_history`. It is an audit fact, not a
+   terminal outcome. Local intent is appended only after Temporal accepts the
+   request; exact execution history is always reconciled as distinct evidence.
+5. **`record_workflow_outcome`** emits exactly one terminal event on every exit
    path — `WorkflowCompleted`, `WorkflowFailed`, `WorkflowCanceled`,
    `WorkflowTimedOut`, or `WorkflowTerminated`. On the cancel path the finalize
    activity uses `ActivityCancellationType.ABANDON` so the tiny SQLite write can
@@ -150,6 +156,13 @@ incompatibility is terminal and explicit. Cooperative cancellation interrupts
 the provider and terminalizes unfinished units; it is never treated as a
 resumable crash.
 
+For batch Enrich, selection is a durable `StageQueued` ownership fact carrying
+the workflow and Temporal run IDs. Cooperative cancellation terminalizes only
+unfinished members of that exact cohort. If the worker disappears before its
+cleanup finishes, the restarted reconciler uses the persisted owner metadata to
+perform the same idempotent `StageCanceled` transition. Accepted enrichment and
+unrelated pending jobs are never overwritten.
+
 ### Pipeline-Step Lifecycle Envelope
 
 Execution-owned orchestration uses a narrower lifecycle envelope alongside the
@@ -238,16 +251,30 @@ stage — defeating heartbeats and starving every other activity on the worker.
 `infrastructure/temporal/run_in_activity.py` solves this with
 `run_blocking_with_heartbeat`, which every long-running activity uses:
 
-- It offloads the synchronous function to a **bounded, worker-owned
-  `ThreadPoolExecutor`** and emits a heartbeat every `poll_interval` (default
-  **15 s**) while waiting.
+- It offloads the synchronous function to a **bounded, worker-owned blocking
+  `ThreadPoolExecutor`**, separate from Temporal's synchronous-activity
+  executor, and emits a heartbeat every `poll_interval` (default **15 s**)
+  while waiting.
 - On `asyncio.CancelledError` (a Temporal cancel) it invokes the supplied
-  cooperative `on_cancel` hook, waits up to `cancel_wait_seconds` (default
-  **30 s**) for the thread to stop, and re-raises.
+  cooperative `on_cancel` hook, immediately retires that blocking-executor
+  generation so a server-dispatched retry cannot enter it during cleanup,
+  waits up to `cancel_wait_seconds` (default **30 s**) for the thread to stop,
+  and re-raises.
 - If the thread ignores cancellation past that grace window, it logs
   `abandoned_thread` and records an `operational_attempt_metric`
   (`stage="operations"`, `attempt_kind="temporal_activity_thread"`,
-  `error_class="abandoned_thread"`) so a wedged thread is observable.
+  `error_class="abandoned_thread"`) so a wedged thread is observable. The
+  log marks the already-retired executor generation as abandoned. A fresh
+  bounded generation has already taken over before the grace wait, while the
+  old thread remains fenced by its cancel token and exact activity ownership;
+  the old call cannot consume the capacity needed for Temporal retry and owner
+  reconciliation.
+
+Explicitly selected pipeline batches use a replay-versioned activity deadline:
+30 minutes per bounded worker wave, capped at 6 hours. The separate 2-minute
+heartbeat timeout remains fixed, so more legitimate batch work does not delay
+dead-worker detection. Histories created before the Temporal patch marker retain
+their recorded 30-minute timer when replayed.
 
 This is why the discovery source-family and enrichment activities (and the apply
 activity) accept a `threading.Event` cancel token: the workflow-level cancel

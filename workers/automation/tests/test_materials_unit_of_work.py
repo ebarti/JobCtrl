@@ -21,7 +21,10 @@ incidental.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -39,13 +42,22 @@ from jobctrl.domain.materials import (
     ValidationResult,
 )
 from jobctrl.domain.materials.provenance import BulletProvenance, BulletProvenanceSet
+from jobctrl.domain.materials.policy import (
+    TailoringPolicy,
+    TailoringPolicyChangedError,
+    fingerprint_profile_snapshot,
+)
 from jobctrl.domain.materials.value_objects import ControlRule, TransformType
+from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
 from jobctrl.infrastructure.materials import (
     SqliteBulletProvenanceRepository,
     SqliteMaterialsRepository,
+    SqliteTailoringPolicyRepository,
     SqliteUnitOfWork,
 )
+from jobctrl.infrastructure.profile.sqlite_repository import SqliteProfileRepository
 
 JOB_URL = "https://example.com/job/uow"
 JOB_ID = JobId("00000000-0000-4000-8000-000000000044")
@@ -300,6 +312,305 @@ def test_flip_holds_one_explicit_transaction_and_locks_out_competitors(
     current = materials.load_current_approved(LOCAL_TENANT, JOB_ID)
     assert current is not None and current.generation == 2 and current.is_resume_approved
     assert provenance.load(LOCAL_TENANT, JOB_ID, generation=2) is not None
+
+
+def test_profile_update_during_generation_rejects_stale_artifact_commit(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    """A profile save after generation starts must win before artifact commit."""
+
+    profile_data = {
+        "personal": {"full_name": "Jordan Candidate", "email": "j@example.com"},
+        "resume": {
+            "executive_profile": {"baseline_text": "Backend engineer."},
+            "experience_entries": [
+                {
+                    "id": "role_1",
+                    "title": "Engineer",
+                    "company": "Acme",
+                    "date_range": "2022 -- Present",
+                    "location": "Remote",
+                    "bullets": ["Built APIs."],
+                }
+            ],
+            "education_entries": [],
+            "skill_categories": [
+                {"id": "skills", "label": "Skills", "items": ["Python"]}
+            ],
+            "tailoring_rules": {
+                "required_experience_entry_ids": ["role_1"],
+                "required_skill_category_ids": ["skills"],
+                "writing_style": {"tone": "direct"},
+            },
+        },
+        "resume_constraints": {"real_metrics": []},
+    }
+    bus = InProcessEventBus()
+    profile_repository = SqliteProfileRepository(conn, publisher=bus)
+    profile_repository.save(
+        LOCAL_TENANT,
+        Profile.from_dict(LOCAL_TENANT, profile_data),
+    )
+    db_path = tmp_path / "jobctrl.db"
+    generation_loaded = threading.Event()
+    allow_persist = threading.Event()
+
+    def generate_from_loaded_snapshot() -> str:
+        worker_conn = sqlite3.connect(db_path, timeout=5)
+        worker_conn.row_factory = sqlite3.Row
+        worker_uow = SqliteUnitOfWork(worker_conn)
+        worker_profiles = SqliteProfileRepository(
+            worker_conn,
+            publisher=InProcessEventBus(),
+        )
+        snapshot = worker_profiles.load_snapshot(LOCAL_TENANT)
+        policy_repository = SqliteTailoringPolicyRepository(
+            worker_conn,
+            unit_of_work=worker_uow,
+        )
+        policy = policy_repository.resolve_current(
+            TailoringPolicy.from_runtime(
+                tenant_id=LOCAL_TENANT,
+                version=1,
+                prompt_version="tailor.v2.quality-gated",
+                schema_version="tailored-resume.v1",
+                judge_schema_version="tailor-judge.v1",
+                prompt_text="stable global control prompt",
+                profile_policy={},
+                custom_prompt="",
+                generator_settings={"candidate_models": ["local:draft"]},
+                judge_settings={"judge_model": "local:judge"},
+                runtime_settings={
+                    "validation_mode": "normal",
+                    "profile_snapshot_fingerprint": fingerprint_profile_snapshot(
+                        snapshot
+                    ),
+                },
+                created_at="2026-08-06T00:00:00+00:00",
+            )
+        )
+        generation_loaded.set()
+        assert allow_persist.wait(timeout=5)
+        try:
+            with worker_uow:
+                policy_repository.assert_generation_current(policy, snapshot)
+                SqliteMaterialsRepository(
+                    worker_conn,
+                    unit_of_work=worker_uow,
+                ).save(_gen1_approved())
+        except TailoringPolicyChangedError as exc:
+            return str(exc)
+        finally:
+            worker_conn.close()
+        return "committed"
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(generate_from_loaded_snapshot)
+        assert generation_loaded.wait(timeout=5)
+        changed_profile = deepcopy(profile_data)
+        changed_profile["resume"]["tailoring_rules"] = {
+            **profile_data["resume"]["tailoring_rules"],
+            "writing_style": {"tone": "technical"},
+        }
+        profile_repository.save(
+            LOCAL_TENANT,
+            Profile.from_dict(LOCAL_TENANT, changed_profile),
+        )
+        allow_persist.set()
+        result = future.result(timeout=10)
+
+    assert result == "tailoring-relevant profile data changed before artifact persistence"
+    assert conn.execute(
+        "SELECT COUNT(*) FROM job_materials WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), str(JOB_ID)),
+    ).fetchone()[0] == 0
+
+
+def test_compensation_only_profile_update_does_not_reject_tailoring_commit(
+    conn: sqlite3.Connection,
+) -> None:
+    """An application-only edit must not invalidate generated Materials."""
+
+    profile_data = {
+        "personal": {"full_name": "Jordan Candidate", "email": "j@example.com"},
+        "compensation": {"salary_expectation": "100000"},
+        "experience": {"years_of_experience_total": 8},
+        "resume": {
+            "executive_profile": {"baseline_text": "Backend engineer."},
+            "experience_entries": [
+                {
+                    "id": "role_1",
+                    "title": "Engineer",
+                    "company": "Acme",
+                    "date_range": "2022 -- Present",
+                    "location": "Remote",
+                    "bullets": ["Built APIs."],
+                }
+            ],
+            "education_entries": [],
+            "skill_categories": [
+                {"id": "skills", "label": "Skills", "items": ["Python"]}
+            ],
+            "tailoring_rules": {
+                "required_experience_entry_ids": ["role_1"],
+                "required_skill_category_ids": ["skills"],
+            },
+        },
+        "resume_constraints": {"real_metrics": []},
+    }
+    profiles = SqliteProfileRepository(conn, publisher=InProcessEventBus())
+    profiles.save(
+        LOCAL_TENANT,
+        Profile.from_dict(LOCAL_TENANT, profile_data),
+    )
+    generation_snapshot = profiles.load_snapshot(LOCAL_TENANT)
+    uow = SqliteUnitOfWork(conn)
+    policies = SqliteTailoringPolicyRepository(conn, unit_of_work=uow)
+    policy = policies.resolve_current(
+        TailoringPolicy.from_runtime(
+            tenant_id=LOCAL_TENANT,
+            version=1,
+            prompt_version="tailor.v2.quality-gated",
+            schema_version="tailored-resume.v1",
+            judge_schema_version="tailor-judge.v1",
+            prompt_text="stable global control prompt",
+            profile_policy={},
+            custom_prompt="",
+            generator_settings={"candidate_models": ["local:draft"]},
+            judge_settings={"judge_model": "local:judge"},
+            runtime_settings={
+                "validation_mode": "normal",
+                "profile_snapshot_fingerprint": fingerprint_profile_snapshot(
+                    generation_snapshot
+                ),
+            },
+            created_at="2026-08-06T00:00:00+00:00",
+        )
+    )
+
+    compensation_update = deepcopy(profile_data)
+    compensation_update["compensation"] = {"salary_expectation": "125000"}
+    profiles.save(
+        LOCAL_TENANT,
+        Profile.from_dict(LOCAL_TENANT, compensation_update),
+    )
+    updated_snapshot = profiles.load_snapshot(LOCAL_TENANT)
+    assert updated_snapshot.version == generation_snapshot.version + 1
+    assert fingerprint_profile_snapshot(updated_snapshot) == fingerprint_profile_snapshot(
+        generation_snapshot
+    )
+
+    with uow:
+        policies.assert_generation_current(policy, generation_snapshot)
+        assert conn.in_transaction is True
+        SqliteMaterialsRepository(conn, unit_of_work=uow).save(_gen1_approved())
+
+    committed = SqliteMaterialsRepository(conn).load_current_approved(
+        LOCAL_TENANT,
+        JOB_ID,
+    )
+    assert committed is not None
+    assert committed.generation == 1
+
+
+def test_profile_comparison_holds_write_lock_through_artifact_commit(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    """A profile writer cannot enter after the fence and before artifact save."""
+
+    profile_data = {
+        "personal": {"full_name": "Jordan Candidate", "email": "j@example.com"},
+        "resume": {
+            "executive_profile": {"baseline_text": "Backend engineer."},
+            "experience_entries": [
+                {
+                    "id": "role_1",
+                    "title": "Engineer",
+                    "company": "Acme",
+                    "date_range": "2022 -- Present",
+                    "location": "Remote",
+                    "bullets": ["Built APIs."],
+                }
+            ],
+            "education_entries": [],
+            "skill_categories": [
+                {"id": "skills", "label": "Skills", "items": ["Python"]}
+            ],
+            "tailoring_rules": {
+                "required_experience_entry_ids": ["role_1"],
+                "required_skill_category_ids": ["skills"],
+                "writing_style": {"tone": "direct"},
+            },
+        },
+        "resume_constraints": {"real_metrics": []},
+    }
+    profiles = SqliteProfileRepository(conn, publisher=InProcessEventBus())
+    profiles.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, profile_data))
+    generation_snapshot = profiles.load_snapshot(LOCAL_TENANT)
+    uow = SqliteUnitOfWork(conn)
+    policies = SqliteTailoringPolicyRepository(conn, unit_of_work=uow)
+    policy = policies.resolve_current(
+        TailoringPolicy.from_runtime(
+            tenant_id=LOCAL_TENANT,
+            version=1,
+            prompt_version="tailor.v2.quality-gated",
+            schema_version="tailored-resume.v1",
+            judge_schema_version="tailor-judge.v1",
+            prompt_text="stable global control prompt",
+            profile_policy={},
+            custom_prompt="",
+            generator_settings={"candidate_models": ["local:draft"]},
+            judge_settings={"judge_model": "local:judge"},
+            runtime_settings={
+                "validation_mode": "normal",
+                "profile_snapshot_fingerprint": fingerprint_profile_snapshot(
+                    generation_snapshot
+                ),
+            },
+            created_at="2026-08-06T00:00:00+00:00",
+        )
+    )
+    changed_profile = deepcopy(profile_data)
+    changed_profile["resume"]["tailoring_rules"]["writing_style"] = {
+        "tone": "technical"
+    }
+
+    competitor = sqlite3.connect(tmp_path / "jobctrl.db", timeout=0.2)
+    competitor.row_factory = sqlite3.Row
+    competitor_profiles = SqliteProfileRepository(
+        competitor,
+        publisher=InProcessEventBus(),
+    )
+    try:
+        with uow:
+            policies.assert_generation_current(policy, generation_snapshot)
+            assert conn.in_transaction is True
+            with pytest.raises(sqlite3.OperationalError, match="lock"):
+                competitor_profiles.save(
+                    LOCAL_TENANT,
+                    Profile.from_dict(LOCAL_TENANT, changed_profile),
+                )
+            assert conn.in_transaction is True
+            SqliteMaterialsRepository(conn, unit_of_work=uow).save(_gen1_approved())
+
+        competitor_profiles.save(
+            LOCAL_TENANT,
+            Profile.from_dict(LOCAL_TENANT, changed_profile),
+        )
+    finally:
+        competitor.close()
+
+    committed = SqliteMaterialsRepository(conn).load_current_approved(
+        LOCAL_TENANT,
+        JOB_ID,
+    )
+    assert committed is not None
+    assert committed.generation == 1
+    assert profiles.load_snapshot(LOCAL_TENANT).version == (
+        generation_snapshot.version + 1
+    )
 
 
 # ---------------------------------------------------------------------------

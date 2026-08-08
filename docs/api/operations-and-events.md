@@ -26,6 +26,30 @@ reset (`runAfter: false`) is local and synchronous. A reset-and-run
 (`runAfter: true`) checks worker readiness before the reset; on
 `503 worker_runtime_unavailable`, the failed/blocked stage and its event history
 are preserved exactly so a dispatch precondition cannot erase retry evidence.
+An accepted reset clears prior execution-owner metadata before returning the
+stage to `pending`, so a canceled predecessor cannot reclaim explicitly retried
+work before its replacement workflow is queued. Pending Enrich pickup reads the
+canonical `job_enrichments.current_status`; a stale legacy or list-projection
+description cannot falsely classify a reset aggregate as already enriched. A
+repeated pickup cannot skip a queued or running upstream preparation stage to
+start a downstream stage concurrently. Score, Tailor, and Cover pickup also
+require the canonical enrichment aggregate to be `enriched` with a non-empty
+canonical description; projected legacy text cannot unlock downstream work.
+The compatibility `runId` returned by workflow-start RPC remains the workflow
+handle ID. Durable stage ownership and workflow audit use
+`firstExecutionRunId`, the exact Temporal execution ID; they never substitute
+the compatibility handle for execution identity. If a legacy dispatcher omits
+an exact execution ID, the API leaves Enrich pending for the selected worker
+activity to claim with its runtime identity instead of persisting a fake owner.
+Activity timeout, worker shutdown, and workflow cancellation are not synonyms:
+the first two release unfinished Enrich ownership for Temporal retry, while an
+explicit cancellation terminalizes only the exact owned cohort. Each selected
+stage passes only its canonical successful JobIds downstream. Selected Tailor
+and Cover batches honor the requested bounded worker count; durable item
+failures remain on their rows while the approved subset continues. Explicitly
+selected batches receive a replay-versioned activity deadline of 30 minutes per
+worker wave, capped at 6 hours, while the separate 2-minute heartbeat timeout
+continues to detect worker loss.
 
 ## Pipeline Operations Snapshot
 
@@ -181,6 +205,18 @@ is not the same thing as observing terminal `canceled`, and repeating the
 request cannot overwrite an already-terminal result or emit duplicate
 cancellation transitions. Terminal results remain inspectable through the same
 run detail after cancellation wins or loses the race with completion.
+`WorkflowCancellationRequested` is a separate timeline fact containing the
+requester, source boundary, optional reason, request time, and exact Temporal
+run. A delivered JobCtrl request is recorded as `request_intent`; the immutable
+Temporal history requester is recorded separately as `temporal_history`, so a
+failed local delivery can neither masquerade as the cancellation nor suppress
+the authoritative requester. Local mode records `local_operator` through
+`jobctrl_api`; it does not invent an authenticated account. Cancellations issued
+outside JobCtrl are backfilled from Temporal's requester identity (for example,
+`temporal_cli`). If a previously observed Temporal requester must be restored
+after the dev namespace retention window has purged that execution, the audit
+uses the distinct `recovered_temporal_history` evidence kind and says so in the
+timeline; it is never presented as a fresh history read or a JobCtrl request.
 
 ## Health And JSON-RPC
 
