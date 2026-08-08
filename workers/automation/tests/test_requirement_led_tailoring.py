@@ -529,7 +529,20 @@ def test_education_requirement_fit_evidence_is_claimable_in_coverage_graph() -> 
     assert (
         _claim_mapping_validation_errors(
             payload={
+                "executive_profile": "Engineering leader.",
+                "executive_profile_sentences": ["Engineering leader."],
                 "generated_claim_mappings": [
+                    {
+                        "claim_id": "summary_claim",
+                        "location": "executive_profile",
+                        "text": "Engineering leader.",
+                        "claim_label": "positioning",
+                        "coverage_edge_ids": (),
+                        "requirement_ids": (),
+                        "evidence_ids": (),
+                        "non_requirement_reason": "positioning",
+                        "review_required": False,
+                    },
                     {
                         "claim_id": "degree_claim",
                         "location": "education_updates[0]",
@@ -550,7 +563,20 @@ def test_education_requirement_fit_evidence_is_claimable_in_coverage_graph() -> 
     assert (
         _claim_mapping_validation_errors(
             payload={
+                "executive_profile": "Engineering leader.",
+                "executive_profile_sentences": ["Engineering leader."],
                 "generated_claim_mappings": [
+                    {
+                        "claim_id": "summary_claim",
+                        "location": "executive_profile",
+                        "text": "Engineering leader.",
+                        "claim_label": "positioning",
+                        "coverage_edge_ids": (),
+                        "requirement_ids": (),
+                        "evidence_ids": (),
+                        "non_requirement_reason": "positioning",
+                        "review_required": False,
+                    },
                     {
                         "claim_id": "degree_section_claim",
                         "location": "education",

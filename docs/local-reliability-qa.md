@@ -138,6 +138,14 @@ non-retryable `exhausted`, and a later pickup cannot restart it without an
 explicit attempt reset. Run at least two durable failures against the same
 materials generation and assert that both complete inner-attempt reports remain
 in the append-only audit history.
+Change the enriched posting snapshot after an employer analysis exists, then
+run Score and Tailor. Score must resolve the current analysis cache identity and
+persist a requirement-fit report for that exact generation. A deliberately
+missing or generation-mismatched report must block Tailor on Score before an LLM
+candidate call, preserve the Tailor attempt count, and emit an auditable
+`StageBlocked`. With coherent inputs, sentence-level executive-profile mapping
+locations must bind to the rendered summary and skill-group mappings must use
+the exact rendered item sequence.
 The focused deterministic gate is:
 
 ```bash

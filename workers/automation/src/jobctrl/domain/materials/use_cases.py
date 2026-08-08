@@ -104,6 +104,7 @@ from jobctrl.domain.materials.voice import (
     VoiceResult,
     apply_voice_to_payload,
     build_voice_request,
+    summary_voice_rejection_reason,
 )
 from jobctrl.domain.materials.voice_metrics import measure_voice_delta
 from jobctrl.domain.materials.claim_grounding import (
@@ -113,6 +114,7 @@ from jobctrl.domain.materials.claim_grounding import (
 )
 from jobctrl.domain.materials.quality import (
     TailoringPlan,
+    TailoringPrerequisiteError,
     build_tailoring_change_annotations,
     build_tailoring_plan,
     evaluate_tailoring_quality,
@@ -175,8 +177,8 @@ from jobctrl.resume_profile import (
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v3.writer-method"
-TAILORING_SCHEMA_VERSION = "tailored-resume.v1"
+TAILORING_PROMPT_VERSION = "tailor.v5.explicit-summary-sentences"
+TAILORING_SCHEMA_VERSION = "tailored-resume.v3"
 TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v1"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
     "relevance_to_job",
@@ -207,12 +209,23 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "required": [
         "executive_profile",
+        "executive_profile_sentences",
         "experience_updates",
         "skill_category_updates",
         "generated_claim_mappings",
     ],
     "properties": {
         "executive_profile": {"type": "string"},
+        "executive_profile_sentences": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "description": (
+                "The ordered grammatical sentences that form executive_profile. Joining these "
+                "items with one space must reproduce executive_profile exactly."
+            ),
+            "items": {"type": "string"},
+        },
         "experience_updates": {
             "type": "array",
             "minItems": 1,
@@ -250,6 +263,7 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
         },
         "generated_claim_mappings": {
             "type": "array",
+            "minItems": 1,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -266,8 +280,22 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
                 ],
                 "properties": {
                     "claim_id": {"type": "string"},
-                    "location": {"type": "string"},
-                    "text": {"type": "string"},
+                    "location": {
+                        "type": "string",
+                        "description": (
+                            "Use executive_profile only when executive_profile_sentences has one "
+                            "item; otherwise use executive_profile.sentence[N] for each explicit "
+                            "sentence. Use experience.<id>.bullets[N] for bullets and skills.<id> "
+                            "for one complete rendered skill group."
+                        ),
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": (
+                            "Exact text at location. For skills.<id>, join every selected item "
+                            "in rendered order with comma-space separators."
+                        ),
+                    },
                     "claim_label": {
                         "type": "string",
                         "enum": [
@@ -285,7 +313,11 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
                     "evidence_ids": {"type": "array", "items": {"type": "string"}},
                     "non_requirement_reason": {
                         "type": "string",
-                        "enum": ["", "pinned", "positioning", "structure"],
+                        "enum": ["pinned", "positioning", "structure"],
+                        "description": (
+                            "Required fallback classification. It is ignored when coverage_edge_ids "
+                            "is non-empty; when no edge is used it must describe the claim."
+                        ),
                     },
                     "review_required": {"type": "boolean"},
                 },
@@ -507,7 +539,6 @@ def _claim_mappings_from_payload(
             )
             non_requirement_reason = str(raw.get("non_requirement_reason") or "")
             if coverage_edge_ids and non_requirement_reason:
-                raw["non_requirement_reason"] = ""
                 non_requirement_reason = ""
             mappings.append(
                 GeneratedClaimMapping(
@@ -534,7 +565,10 @@ def _claim_mapping_binding_errors(
     tailoring_plan: TailoringPlan | None = None,
 ) -> tuple[str, ...]:
     surfaces = _generated_claim_surfaces(payload, tailoring_plan=tailoring_plan)
-    errors: list[str] = []
+    mappings = tuple(mappings)
+    _summary_sentences, summary_contract_errors = _generated_summary_sentence_contract(payload)
+    errors = list(summary_contract_errors)
+    bound_locations: list[str] = []
     for mapping in mappings:
         location = _canonical_claim_location(mapping.location)
         actual_text = surfaces.get(location)
@@ -544,10 +578,29 @@ def _claim_mapping_binding_errors(
                 "does not exist in the generated payload."
             )
             continue
-        if not _claim_text_is_bound(actual_text, mapping.text):
+        if _claim_location_requires_exact_text(location):
+            text_is_bound = actual_text == mapping.text
+        else:
+            text_is_bound = _claim_text_is_bound(actual_text, mapping.text)
+        if not text_is_bound:
+            relationship = (
+                "does not exactly match"
+                if _claim_location_requires_exact_text(location)
+                else "is not present at"
+            )
             errors.append(
-                f"Generated claim {mapping.claim_id} text is not present at "
+                f"Generated claim {mapping.claim_id} text {relationship} "
                 f"generated payload location {mapping.location!r}."
+            )
+            continue
+        bound_locations.append(location)
+    for label, locations in _required_claim_surface_groups(payload):
+        count = sum(location in locations for location in bound_locations)
+        if count == 0:
+            errors.append(f"Generated claim mapping is missing for {label}.")
+        elif count > 1:
+            errors.append(
+                f"Generated claim surface {label} has {count} mappings; expected exactly one."
             )
     return tuple(errors)
 
@@ -558,10 +611,14 @@ def _generated_claim_surfaces(
     tailoring_plan: TailoringPlan | None = None,
 ) -> dict[str, str]:
     surfaces: dict[str, str] = {}
-    executive_profile = str(payload.get("executive_profile") or "").strip()
+    executive_profile = str(payload.get("executive_profile") or "")
     if executive_profile:
-        for location in ("executive_profile", "summary", "resume.executive_profile"):
-            surfaces[location] = executive_profile
+        summary_sentences, _errors = _generated_summary_sentence_contract(payload)
+        if len(summary_sentences) == 1:
+            for location in ("executive_profile", "summary", "resume.executive_profile"):
+                surfaces[location] = executive_profile
+        for index, sentence in enumerate(summary_sentences):
+            surfaces[f"executive_profile.sentence[{index}]"] = sentence
     updates = payload.get("experience_updates")
     for update_index, update in enumerate(updates if isinstance(updates, list) else ()):
         if not isinstance(update, dict):
@@ -645,7 +702,152 @@ def _generated_claim_surfaces(
 
 
 def _canonical_claim_location(location: str) -> str:
-    return re.sub(r"\.bullet\[(\d+)\]$", r".bullets[\1]", str(location or "").strip())
+    normalized = str(location or "").strip()
+    sentence_match = re.fullmatch(
+        r"(?:(?:profile\.)?(?:executive_profile|summary))(?:\.sentences?)?\[(\d+)\]",
+        normalized,
+    )
+    if sentence_match:
+        return f"executive_profile.sentence[{sentence_match.group(1)}]"
+    return re.sub(r"\.bullet\[(\d+)\]$", r".bullets[\1]", normalized)
+
+
+def _skill_group_claim_location(location: str) -> bool:
+    """Return whether a mapping targets one complete rendered skill group.
+
+    Ids may contain dots ("node.js"): any bracket-free remainder after the
+    section prefix is the category id, while item locations always carry an
+    ``.items[N]`` bracket suffix and therefore never match.
+    """
+    return bool(
+        re.fullmatch(
+            r"(?:skills|skill_categories|skill_category_updates)\.[^\[\]]+",
+            location,
+        )
+        or re.fullmatch(r"skill_category_updates\[\d+\]", location)
+    )
+
+
+def _claim_location_requires_exact_text(location: str) -> bool:
+    # Entry ids may contain dots ("acme.co"); the trailing ".bullets[N]"
+    # component is unambiguous, so backtracking splits the id correctly.
+    return bool(
+        location in {"executive_profile", "summary", "resume.executive_profile"}
+        or re.fullmatch(r"executive_profile\.sentence\[\d+\]", location)
+        or re.fullmatch(
+            r"(?:experience|experience_updates)(?:\.[^\[\]]+|\[\d+\])\.bullets\[\d+\]",
+            location,
+        )
+        or _skill_group_claim_location(location)
+    )
+
+
+def _generated_summary_sentence_contract(
+    payload: dict,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    raw_sentences = payload.get("executive_profile_sentences")
+    if not isinstance(raw_sentences, list):
+        return (), ("executive_profile_sentences must be an ordered array.",)
+    errors: list[str] = []
+    if not 1 <= len(raw_sentences) <= 4:
+        errors.append("executive_profile_sentences must contain between 1 and 4 items.")
+    sentences: list[str] = []
+    for index, value in enumerate(raw_sentences):
+        if not isinstance(value, str) or not value.strip():
+            errors.append(
+                f"executive_profile_sentences[{index}] must be a non-empty string."
+            )
+            continue
+        if value != value.strip():
+            errors.append(
+                f"executive_profile_sentences[{index}] must not contain outer whitespace."
+            )
+        sentences.append(value.strip())
+    executive_profile = str(payload.get("executive_profile") or "")
+    if sentences and " ".join(sentences) != executive_profile:
+        errors.append(
+            "Joining executive_profile_sentences with one space must reproduce "
+            "executive_profile exactly."
+        )
+    return tuple(sentences), tuple(errors)
+
+
+def _required_claim_surface_groups(
+    payload: dict,
+) -> tuple[tuple[str, frozenset[str]], ...]:
+    """Return every generated surface that must have exactly one bound mapping."""
+
+    groups: list[tuple[str, frozenset[str]]] = []
+    summary_sentences, _errors = _generated_summary_sentence_contract(payload)
+    for index, _sentence in enumerate(summary_sentences):
+        locations = {f"executive_profile.sentence[{index}]"}
+        if len(summary_sentences) == 1:
+            locations.update(
+                {
+                    "executive_profile",
+                    "summary",
+                    "resume.executive_profile",
+                }
+            )
+        groups.append(
+            (
+                f"executive profile sentence {index}",
+                frozenset(locations),
+            )
+        )
+
+    updates = payload.get("experience_updates")
+    for update_index, update in enumerate(updates if isinstance(updates, list) else ()):
+        if not isinstance(update, dict):
+            continue
+        entry_id = str(update.get("id") or "").strip()
+        if not entry_id:
+            continue
+        bullets = update.get("bullets")
+        for bullet_index, bullet in enumerate(bullets if isinstance(bullets, list) else ()):
+            if not str(bullet or "").strip():
+                continue
+            groups.append(
+                (
+                    f"experience {entry_id} bullet {bullet_index}",
+                    frozenset(
+                        {
+                            f"experience.{entry_id}.bullets[{bullet_index}]",
+                            f"experience_updates.{entry_id}.bullets[{bullet_index}]",
+                            f"experience_updates[{update_index}].bullets[{bullet_index}]",
+                        }
+                    ),
+                )
+            )
+
+    skill_updates = payload.get("skill_category_updates")
+    for update_index, update in enumerate(
+        skill_updates if isinstance(skill_updates, list) else ()
+    ):
+        if not isinstance(update, dict):
+            continue
+        category_id = str(update.get("id") or "").strip()
+        items = [
+            str(item or "").strip()
+            for item in update.get("items") or []
+            if str(item or "").strip()
+        ]
+        if not category_id or not items:
+            continue
+        groups.append(
+            (
+                f"skill group {category_id}",
+                frozenset(
+                    {
+                        f"skills.{category_id}",
+                        f"skill_categories.{category_id}",
+                        f"skill_category_updates.{category_id}",
+                        f"skill_category_updates[{update_index}]",
+                    }
+                ),
+            )
+        )
+    return tuple(groups)
 
 
 def _claim_text_is_bound(actual_text: str, mapped_text: str) -> bool:
@@ -1280,6 +1482,18 @@ HARD RULES:
   group, emit a generated_claim_mappings entry that references valid
   coverage_edge_ids, requirement_ids, and evidence_ids; use non_requirement_reason
   only for pinned, positioning, or structure claims
+- Return executive_profile_sentences as the ordered 1-4 grammatical sentences
+  that form executive_profile; joining them with one space must reproduce
+  executive_profile exactly
+- Use executive_profile only when executive_profile_sentences has exactly one item;
+  otherwise map every explicit item with executive_profile.sentence[N], where N is zero-based
+- For a skills.<category-id> mapping, text must be the exact selected items in
+  rendered order joined with ", " (comma plus one space), not the category label
+- Every achievement_evidence_id present on any COVERAGE_GRAPH edge must appear
+  in at least one bound mapping that cites that edge and its requirement_id
+- non_requirement_reason is a required fallback classification. Choose pinned,
+  positioning, or structure. When coverage_edge_ids is non-empty it is ignored;
+  when coverage_edge_ids is empty it must truthfully classify the claim
 - Adjacent or draft claims must be labeled adjacent_translation or
   draft_requires_confirmation and marked review_required unless the advanced
   auto-approval policy explicitly allows the claim label
@@ -1332,6 +1546,7 @@ REQUIRED BULLETS BY EXPERIENCE ID:
 OUTPUT ONLY VALID JSON:
 {{
   "executive_profile": "2-4 sentences tailored to the target role.",
+  "executive_profile_sentences": ["Sentence 1.", "Sentence 2."],
   "experience_updates": [
     {{"id": "{required_experience_ids[0] if required_experience_ids else 'experience_entry_id'}", "title": "", "bullets": ["bullet 1", "bullet 2"]}}
   ],
@@ -1347,7 +1562,7 @@ OUTPUT ONLY VALID JSON:
       "coverage_edge_ids": ["edge id from COVERAGE_GRAPH"],
       "requirement_ids": ["requirement id from TARGET_PROFILE"],
       "evidence_ids": ["achievement evidence id from TARGET_PROFILE"],
-      "non_requirement_reason": "",
+      "non_requirement_reason": "positioning",
       "review_required": false
     }}
   ]
@@ -1668,6 +1883,12 @@ class TailorResumeUseCase:
             requirement_fit_report = self._requirement_fit_repository.load(
                 tenant_id,
                 job_id,
+            )
+        if self._requirement_fit_repository is not None and requirement_fit_report is None:
+            raise TailoringPrerequisiteError(
+                reason="requirement_fit_missing",
+                job_id=str(job_id),
+                analysis_generation=employer_analysis.generation,
             )
         previous = self._repository.load(tenant_id, job_id)
         created_at = _utc_now()
@@ -3289,6 +3510,7 @@ class TailorResumeUseCase:
                 model=voice_record.model,
                 proxy_delta=voice_record.proxy_delta,
                 reason=f"voice_introduced_fabrication: {voiced_error}",
+                summary_rejection_reason=voice_record.summary_rejection_reason,
             )
             coverage = self._coverage_for(base_rows, employer_analysis, None, corpus)
             return tailored_payload, base_rows, coverage, rejected, None, base_grounding
@@ -3330,6 +3552,14 @@ class TailorResumeUseCase:
             )
 
         voiced_payload = apply_voice_to_payload(tailored_payload, result)
+        # Sentence-identity gate audit: when the voiced summary broke identity the
+        # last accepted summary shipped instead — record why, never drop silently.
+        summary_rejection = summary_voice_rejection_reason(tailored_payload, result)
+        if summary_rejection:
+            log.warning(
+                "Voice pass summary rejected (%s); keeping the pre-voice summary.",
+                summary_rejection,
+            )
         # Deterministic acceptance gate (VOICE-01): voice must MEASURABLY reduce
         # buzzword density OR raise structural variety over the bullets that ship.
         before_bullets = [row.generated_text for row in base_rows if row.section == "experience"]
@@ -3344,6 +3574,7 @@ class TailorResumeUseCase:
             model=self._voice.model_id,
             proxy_delta=delta.to_dict(),
             reason="" if delta.improved else "voice_did_not_improve_proxies",
+            summary_rejection_reason=summary_rejection,
         )
         if not delta.improved:
             return None, record
@@ -4059,6 +4290,7 @@ __all__ = [
     "SuppressTailoredArtifactsOutcome",
     "SuppressTailoredArtifactsUseCase",
     "TailorOutcome",
+    "TailoringPrerequisiteError",
     "TailorResumeUseCase",
     "build_cover_letter_prompt",
     "build_judge_prompt",

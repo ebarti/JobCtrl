@@ -68,6 +68,60 @@ def test_location_maps_every_payload_surface_alias_to_a_bullet_id() -> None:
     assert bullet_id_for_claim_location("unknown.surface") is None
 
 
+def test_location_maps_summary_sentence_aliases_to_the_profile_line() -> None:
+    """Sentence-indexed summary locations mirror the surface validator's aliases."""
+    assert bullet_id_for_claim_location("executive_profile.sentence[0]") == "executive_profile#0"
+    assert bullet_id_for_claim_location("executive_profile.sentences[1]") == "executive_profile#0"
+    assert bullet_id_for_claim_location("summary.sentence[2]") == "executive_profile#0"
+    assert bullet_id_for_claim_location("profile.summary[3]") == "executive_profile#0"
+    assert (
+        bullet_id_for_claim_location("profile.executive_profile.sentence[1]")
+        == "executive_profile#0"
+    )
+
+
+def test_location_maps_dotted_profile_ids() -> None:
+    """Ids containing dots ("node.js", "acme.co") still resolve by location."""
+    assert bullet_id_for_claim_location("skills.node.js") == "skills:node.js#0"
+    assert bullet_id_for_claim_location("skill_categories.node.js.items[1]") == "skills:node.js#0"
+    assert bullet_id_for_claim_location("experience.acme.co.bullets[2]") == "experience:acme.co#2"
+
+
+def test_summary_sentence_claim_grounds_via_location_without_cross_binding() -> None:
+    """A sentence-indexed summary claim binds the shipped profile line via its
+    location — never through the text_scan drift fallback that would multi-bind
+    an unrelated experience row carrying the same sentence and let enrichment
+    stamp summary requirement chips onto that row."""
+    sentence = "Owned Python API reliability."
+    rows = (
+        _row("executive_profile#0", f"Backend engineer. {sentence}"),
+        _row("experience:acme#0", f"{sentence} Cut p99 latency 40%."),
+    )
+    grounding = ground_claim_mappings(
+        (_mapping(location="executive_profile.sentence[1]", text=sentence),),
+        tuple((row.bullet_id, row.generated_text) for row in rows),
+    )
+
+    assert grounding.grounded_requirement_ids == ("r1",)
+    assert grounding.bindings[0].via == "location"
+    assert grounding.bindings[0].bullet_ids == ("executive_profile#0",)
+
+    enriched = enrich_provenance_requirements(rows, grounding)
+    assert enriched[0].requirement_ids == ("r1",)
+    assert enriched[1].requirement_ids == ()
+
+
+def test_dotted_skill_category_claim_grounds_via_location() -> None:
+    grounding = ground_claim_mappings(
+        (_mapping(location="skills.node.js", text="Node.js, Express"),),
+        (("skills:node.js#0", "Node.js, Express"),),
+    )
+
+    assert grounding.grounded_requirement_ids == ("r1",)
+    assert grounding.bindings[0].via == "location"
+    assert grounding.bindings[0].bullet_ids == ("skills:node.js#0",)
+
+
 def test_claim_grounds_via_location_when_shipped_line_carries_its_text() -> None:
     grounding = ground_claim_mappings(
         (_mapping(),),

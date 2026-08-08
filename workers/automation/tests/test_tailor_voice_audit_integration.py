@@ -348,8 +348,19 @@ def _coverage_planner_response() -> str:
     )
 
 
-def _claim_mapping(bullet: str) -> list[dict[str, object]]:
+def _claim_mapping(bullet: str, *, summary: str) -> list[dict[str, object]]:
     return [
+        {
+            "claim_id": "claim_summary",
+            "location": "executive_profile.sentence[0]",
+            "text": summary,
+            "claim_label": "positioning",
+            "coverage_edge_ids": [],
+            "requirement_ids": [],
+            "evidence_ids": [],
+            "non_requirement_reason": "positioning",
+            "review_required": False,
+        },
         {
             "claim_id": "claim_latency",
             "location": "experience.acme_swe.bullets[0]",
@@ -358,6 +369,18 @@ def _claim_mapping(bullet: str) -> list[dict[str, object]]:
             "coverage_edge_ids": ["edge_req_latency_ev_latency_direct"],
             "requirement_ids": ["req_latency"],
             "evidence_ids": ["ev_latency"],
+            "non_requirement_reason": "positioning",
+            "review_required": False,
+        },
+        {
+            "claim_id": "claim_skills",
+            "location": "skills.languages",
+            "text": "Python, Go",
+            "claim_label": "structure",
+            "coverage_edge_ids": [],
+            "requirement_ids": [],
+            "evidence_ids": [],
+            "non_requirement_reason": "structure",
             "review_required": False,
         }
     ]
@@ -367,9 +390,10 @@ def _payload(bullet: str, *, summary: str) -> str:
     return json.dumps(
         {
             "executive_profile": summary,
+            "executive_profile_sentences": [summary],
             "experience_updates": [{"id": "acme_swe", "title": "", "bullets": [bullet]}],
             "skill_category_updates": [{"id": "languages", "items": ["Python", "Go"]}],
-            "generated_claim_mappings": _claim_mapping(bullet),
+            "generated_claim_mappings": _claim_mapping(bullet, summary=summary),
         }
     )
 
@@ -428,6 +452,9 @@ def test_voice_runs_before_audit_and_provenance_anchors_to_voiced_text(tmp_path:
         # De-buzzword: keep the grounded "40%"/"Python", drop "spearheaded/robust".
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=(
+                "Backend engineer who cut API latency with Python.",
+            ),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
             ),
@@ -465,6 +492,9 @@ def test_gate_grounding_and_shipped_fit_persist_with_lifecycle_labels(tmp_path: 
     def voice_fn(request: VoiceRequest) -> VoiceResult:
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=(
+                "Backend engineer who cut API latency with Python.",
+            ),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
             ),
@@ -513,6 +543,9 @@ def test_voiced_bullet_is_recorded_as_voice_transform(tmp_path: Path) -> None:
     def voice_fn(request: VoiceRequest) -> VoiceResult:
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=(
+                "Backend engineer who cut API latency with Python.",
+            ),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
             ),
@@ -534,6 +567,43 @@ def test_voiced_bullet_is_recorded_as_voice_transform(tmp_path: Path) -> None:
     # The voice audit record is persisted on the set and marked accepted.
     assert saved.voice is not None and saved.voice.ran and saved.voice.accepted
     assert saved.voice.model == "fake-voice-model"
+    assert saved.voice.summary_rejection_reason == ""
+
+
+def test_summary_identity_break_is_recorded_on_the_voice_audit(tmp_path: Path) -> None:
+    """A voiced summary that breaks sentence identity ships the last accepted
+    summary — and the drop is labeled on the voice audit record, never silent,
+    even while the voiced bullets are adopted and the pass reads accepted."""
+
+    def voice_fn(request: VoiceRequest) -> VoiceResult:
+        # Bullets improve the proxies, but the result omits the sentence array,
+        # so the voiced summary cannot prove sentence identity.
+        return VoiceResult(
+            executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=(),
+            experience_bullets=(
+                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
+            ),
+        )
+
+    materials_repo = _FakeMaterialsRepo()
+    provenance_repo = _FakeProvenanceRepo()
+    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass()] * 4)
+    outcome = _use_case(
+        materials_repo, provenance_repo, llm, _RecordingPublisher(), _FunctionVoice(voice_fn)
+    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
+    assert saved is not None
+    assert saved.voice is not None and saved.voice.ran and saved.voice.accepted
+    assert saved.voice.summary_rejection_reason == "voiced_summary_sentence_count_mismatch"
+    # The last accepted (pre-voice) summary shipped; the bullets are the voiced ones.
+    profile_row = next(row for row in saved.bullets if row.bullet_id == "executive_profile#0")
+    assert "Results-driven" in profile_row.generated_text
+    assert "Backend engineer who cut API latency" not in profile_row.generated_text
+    experience = next(row for row in saved.bullets if row.section == "experience")
+    assert experience.generated_text == "Owned the API and cut latency 40% with Python."
 
 
 def test_voice_introduced_fabrication_is_rejected_and_pre_voice_ships(tmp_path: Path) -> None:
@@ -545,6 +615,7 @@ def test_voice_introduced_fabrication_is_rejected_and_pre_voice_ships(tmp_path: 
         # The voice pass invents "10M users" — unsourced; the profile has no such number.
         return VoiceResult(
             executive_profile="Backend engineer who scaled to 10M users.",
+            executive_profile_sentences=("Backend engineer who scaled to 10M users.",),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40%, scaling to 10M users.",)),
             ),
@@ -582,6 +653,7 @@ def test_coverage_is_computed_against_rendered_text_and_provenance_backed(tmp_pa
         # Voiced bullet keeps "latency" + "Python" (both analysis keywords).
         return VoiceResult(
             executive_profile="Backend engineer focused on API latency.",
+            executive_profile_sentences=("Backend engineer focused on API latency.",),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
             ),
@@ -613,6 +685,9 @@ def test_round_trip_audited_bullet_text_equals_rendered_text(tmp_path: Path) -> 
     def voice_fn(request: VoiceRequest) -> VoiceResult:
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=(
+                "Backend engineer who cut API latency with Python.",
+            ),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
             ),
@@ -658,6 +733,9 @@ def test_round_trip_audited_bullet_text_equals_rendered_html_resume(tmp_path: Pa
     def voice_fn(request: VoiceRequest) -> VoiceResult:
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=(
+                "Backend engineer who cut API latency with Python.",
+            ),
             experience_bullets=(
                 ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
             ),

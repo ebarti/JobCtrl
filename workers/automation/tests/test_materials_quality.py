@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
@@ -12,6 +16,7 @@ from jobctrl.domain.materials.analysis import (
     compute_snapshot_hash,
 )
 from jobctrl.domain.materials.quality import (
+    TailoringPrerequisiteError,
     build_tailoring_change_annotations,
     build_tailoring_plan,
     evaluate_tailoring_quality,
@@ -519,25 +524,39 @@ def test_build_tailoring_plan_uses_requirement_fit_directives() -> None:
     ]
 
 
-def test_build_tailoring_plan_ignores_stale_requirement_fit_report_for_coverage() -> None:
+def test_build_tailoring_plan_rejects_cross_job_requirement_fit_report() -> None:
     analysis = _requirement_analysis()
     stale_report = _requirement_fit_report(_OTHER_JOB_ID)
 
-    plan = build_tailoring_plan(
-        _profile(),
-        _senior_job(),
-        employer_analysis=analysis,
-        requirement_fit_report=stale_report,
+    with pytest.raises(TailoringPrerequisiteError) as raised:
+        build_tailoring_plan(
+            _profile(),
+            _senior_job(),
+            employer_analysis=analysis,
+            requirement_fit_report=stale_report,
+        )
+
+    assert raised.value.reason == "requirement_fit_job_mismatch"
+    assert raised.value.error_code == "REQUIREMENT_FIT_STALE"
+
+
+def test_build_tailoring_plan_rejects_stale_requirement_fit_generation() -> None:
+    analysis = _requirement_analysis()
+    stale_report = replace(
+        _requirement_fit_report(),
+        employer_analysis_generation=analysis.generation + 1,
     )
 
-    assert plan.requirement_directives == ()
-    assert plan.target_profile is not None
-    assert [requirement.requirement_id for requirement in plan.target_profile.requirements] == [
-        "req_latency",
-        "req_salesforce",
-    ]
-    assert plan.coverage_graph is not None
-    assert plan.coverage_graph.coverage_edges == ()
+    with pytest.raises(TailoringPrerequisiteError) as raised:
+        build_tailoring_plan(
+            _profile(),
+            _senior_job(),
+            employer_analysis=analysis,
+            requirement_fit_report=stale_report,
+        )
+
+    assert raised.value.reason == "requirement_fit_generation_mismatch"
+    assert raised.value.report_generation == 2
 
 
 def test_quality_rejects_prohibited_missing_requirement_claim() -> None:

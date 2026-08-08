@@ -33,7 +33,10 @@ from jobctrl.domain.materials import (
 from jobctrl.domain.materials.adversarial import ADVERSARIAL_REVIEW_RESPONSE_SCHEMA
 from jobctrl.domain.materials.aggregate import MaterialsLifecycle
 from jobctrl.domain.materials.policy import LearnedTailoringRules, fingerprint_value
-from jobctrl.domain.materials.requirement_coverage import COVERAGE_PLANNER_RESPONSE_SCHEMA
+from jobctrl.domain.materials.requirement_coverage import (
+    COVERAGE_PLANNER_RESPONSE_SCHEMA,
+    GeneratedClaimMapping,
+)
 from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
 from jobctrl.domain.materials.use_cases import (
     COVER_LETTER_COMPLETION_MARKER,
@@ -44,6 +47,8 @@ from jobctrl.domain.materials.use_cases import (
     TailoringLlmPolicy,
     TailorResumeUseCase,
     _bullet_limit_overflow_metadata,
+    _canonical_claim_location,
+    _claim_mapping_binding_errors,
     _claim_mappings_from_payload,
     _safe_filename_prefix,
 )
@@ -51,6 +56,15 @@ from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.scoring import (
+    FitScore,
+    RequirementFitAssessment,
+    RequirementFitReport,
+    RequirementFitStatus,
+    RequirementFitSummary,
+    RequirementScoreContribution,
+    RequirementTailoringDirective,
+)
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
@@ -242,6 +256,91 @@ def _analysis_with_keywords(job: dict, keywords: list[str]):
     )
 
 
+def _coherent_requirement_analysis_and_report(
+    job: dict,
+) -> tuple[Any, RequirementFitReport]:
+    """Build the generation-bound Score input that Tailor must consume."""
+    from jobctrl.domain.materials.analysis import (
+        AnalysisAgreement,
+        EmployerAnalysis,
+        JobAnalysis,
+        ReasonedKeyword,
+        Requirement,
+        compute_snapshot_hash,
+    )
+
+    job_id = canonical_job_id(str(job["job_id"]))
+    requirement = Requirement(
+        id="req_latency",
+        text="Own Python API reliability.",
+        tier="must_have",
+        weight=0.9,
+        evidence_span="Own Python API reliability.",
+    )
+    analysis = EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=job_id,
+        generation=2,
+        snapshot_hash=compute_snapshot_hash(str(job["full_description"])),
+        canonical=JobAnalysis(
+            role_framing="Backend ownership.",
+            inferred_seniority="senior",
+            ideal_candidate_narrative="A hands-on backend owner.",
+            requirements=[requirement],
+            keywords=[
+                ReasonedKeyword(
+                    keyword="Python API reliability",
+                    evidence_span="Own Python API reliability.",
+                    requirement_ref=requirement.id,
+                )
+            ],
+        ),
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=2,
+    )
+    report = RequirementFitReport(
+        job_id=job_id,
+        score_version=2,
+        employer_analysis_generation=analysis.generation,
+        profile_snapshot_version=1,
+        scoring_policy_version=1,
+        formula_version="requirement-fit-v1",
+        resolved_fit_score=FitScore.create(9),
+        fit_band="excellent",
+        confidence="high",
+        summary=RequirementFitSummary(weighted_fit=1.0, must_have_coverage=1.0),
+        assessments=(
+            RequirementFitAssessment(
+                requirement_id=requirement.id,
+                requirement_text=requirement.text,
+                tier=requirement.tier,
+                weight=requirement.weight,
+                job_evidence_span=requirement.evidence_span,
+                fit=RequirementFitStatus(
+                    kind="matched",
+                    evidence_ids=("ev_latency",),
+                    strength="direct",
+                ),
+                contribution=RequirementScoreContribution(
+                    max_points=1.125,
+                    awarded_points=1.125,
+                    weighted_impact=1.125,
+                ),
+                tailoring=RequirementTailoringDirective(
+                    action="double_down",
+                    priority=0.9,
+                    allowed_evidence_ids=("ev_latency",),
+                    target_keywords=("Python API reliability",),
+                    instruction="Emphasize the verified latency evidence.",
+                ),
+            ),
+        ),
+    )
+    return analysis, report
+
+
 class _FakeRepository:
     def __init__(self) -> None:
         self.saved: list[MaterialsSet] = []
@@ -403,6 +502,7 @@ def _good_json_payload() -> str:
     return json.dumps(
         {
             "executive_profile": "Senior engineer focused on systems.",
+            "executive_profile_sentences": ["Senior engineer focused on systems."],
             "experience_updates": [
                 {"id": "acme_swe", "title": "", "bullets": ["Cut latency 40%."]},
             ],
@@ -435,6 +535,9 @@ def _unbound_claim_mapping_payload() -> str:
 def _review_required_claim_payload() -> str:
     payload = json.loads(_quality_json_payload())
     payload["executive_profile"] = "Draft developer-experience translation requires confirmation."
+    payload["executive_profile_sentences"] = [
+        "Draft developer-experience translation requires confirmation."
+    ]
     bullet = payload["experience_updates"][0]["bullets"][0]
     payload["generated_claim_mappings"] = [
         {
@@ -448,25 +551,70 @@ def _review_required_claim_payload() -> str:
             "non_requirement_reason": "positioning",
             "review_required": True,
         },
-        *_positioning_claim_mappings(bullet),
+        *_positioning_claim_mappings(bullet, include_summary=False),
     ]
     return json.dumps(payload)
 
 
-def _positioning_claim_mappings(text: str) -> list[dict[str, Any]]:
-    return [
-        {
-            "claim_id": "claim-positioning-1",
-            "location": "experience.acme_swe.bullets[0]",
-            "text": text,
-            "claim_label": "positioning",
-            "coverage_edge_ids": [],
-            "requirement_ids": [],
-            "evidence_ids": [],
-            "non_requirement_reason": "positioning",
-            "review_required": False,
-        }
-    ]
+def _positioning_claim_mappings(
+    text: str,
+    *,
+    summary: str = "Senior engineer focused on systems.",
+    skill_items: tuple[str, ...] = ("Python", "Go"),
+    include_bullet: bool = True,
+    include_summary: bool = True,
+    include_skills: bool = True,
+) -> list[dict[str, Any]]:
+    mappings: list[dict[str, Any]] = []
+    if include_bullet:
+        mappings.append(
+            {
+                "claim_id": "claim-positioning-1",
+                "location": "experience.acme_swe.bullets[0]",
+                "text": text,
+                "claim_label": "positioning",
+                "coverage_edge_ids": [],
+                "requirement_ids": [],
+                "evidence_ids": [],
+                "non_requirement_reason": "positioning",
+                "review_required": False,
+            }
+        )
+    if include_summary:
+        summary_sentences = (summary,)
+        for index, sentence in enumerate(summary_sentences):
+            mappings.append(
+                {
+                    "claim_id": f"claim-summary-{index + 1}",
+                    "location": (
+                        "executive_profile"
+                        if len(summary_sentences) == 1
+                        else f"executive_profile.sentence[{index}]"
+                    ),
+                    "text": sentence,
+                    "claim_label": "positioning",
+                    "coverage_edge_ids": [],
+                    "requirement_ids": [],
+                    "evidence_ids": [],
+                    "non_requirement_reason": "positioning",
+                    "review_required": False,
+                }
+            )
+    if include_skills:
+        mappings.append(
+            {
+                "claim_id": "claim-skills-1",
+                "location": "skills.languages",
+                "text": ", ".join(skill_items),
+                "claim_label": "structure",
+                "coverage_edge_ids": [],
+                "requirement_ids": [],
+                "evidence_ids": [],
+                "non_requirement_reason": "structure",
+                "review_required": False,
+            }
+        )
+    return mappings
 
 
 def _payload_with_bullet(bullet: str, *, summary: str = "Senior engineer focused on systems.") -> str:
@@ -475,9 +623,13 @@ def _payload_with_bullet(bullet: str, *, summary: str = "Senior engineer focused
     return json.dumps(
         {
             "executive_profile": summary,
+            "executive_profile_sentences": [summary],
             "experience_updates": [{"id": "acme_swe", "title": "", "bullets": [bullet]}],
             "skill_category_updates": [{"id": "languages", "items": ["Python", "Go"]}],
-            "generated_claim_mappings": _positioning_claim_mappings(bullet),
+            "generated_claim_mappings": _positioning_claim_mappings(
+                bullet,
+                summary=summary,
+            ),
         }
     )
 
@@ -487,13 +639,17 @@ def _keyword_stuffed_json_payload() -> str:
     return json.dumps(
         {
             "executive_profile": f"Senior engineer focused on {stuffed}.",
+            "executive_profile_sentences": [f"Senior engineer focused on {stuffed}."],
             "experience_updates": [
                 {"id": "acme_swe", "title": "", "bullets": [f"Built {stuffed}."]},
             ],
             "skill_category_updates": [
                 {"id": "languages", "items": ["Python", "Go"]},
             ],
-            "generated_claim_mappings": _positioning_claim_mappings(f"Built {stuffed}."),
+            "generated_claim_mappings": _positioning_claim_mappings(
+                f"Built {stuffed}.",
+                summary=f"Senior engineer focused on {stuffed}.",
+            ),
         }
     )
 
@@ -502,6 +658,9 @@ def _quality_json_payload(*, metric: str = "35%") -> str:
     return json.dumps(
         {
             "executive_profile": "Senior backend engineer focused on Python API reliability.",
+            "executive_profile_sentences": [
+                "Senior backend engineer focused on Python API reliability."
+            ],
             "experience_updates": [
                 {
                     "id": "acme_swe",
@@ -515,8 +674,61 @@ def _quality_json_payload(*, metric: str = "35%") -> str:
                 {"id": "languages", "items": ["Python", "Go"]},
             ],
             "generated_claim_mappings": _positioning_claim_mappings(
-                f"Owned API latency improvements and reduced latency {metric} with Python."
+                f"Owned API latency improvements and reduced latency {metric} with Python.",
+                summary="Senior backend engineer focused on Python API reliability.",
             ),
+        }
+    )
+
+
+def _coherent_requirement_payload() -> str:
+    summary = "Senior backend engineer focused on Python API reliability."
+    bullet = "Owned API latency improvements and reduced latency 35% with Python."
+    return json.dumps(
+        {
+            "executive_profile": summary,
+            "executive_profile_sentences": [summary],
+            "experience_updates": [
+                {"id": "acme_swe", "title": "", "bullets": [bullet]},
+            ],
+            "skill_category_updates": [
+                {"id": "languages", "items": ["Python", "Go"]},
+            ],
+            "generated_claim_mappings": [
+                {
+                    "claim_id": "claim-summary",
+                    "location": "summary.sentence[0]",
+                    "text": summary,
+                    "claim_label": "positioning",
+                    "coverage_edge_ids": [],
+                    "requirement_ids": [],
+                    "evidence_ids": [],
+                    "non_requirement_reason": "positioning",
+                    "review_required": False,
+                },
+                {
+                    "claim_id": "claim-latency",
+                    "location": "experience.acme_swe.bullets[0]",
+                    "text": bullet,
+                    "claim_label": "verified",
+                    "coverage_edge_ids": ["edge_req_latency_ev_latency_direct"],
+                    "requirement_ids": ["req_latency"],
+                    "evidence_ids": ["ev_latency"],
+                    "non_requirement_reason": "positioning",
+                    "review_required": False,
+                },
+                {
+                    "claim_id": "claim-skills",
+                    "location": "skills.languages",
+                    "text": "Python, Go",
+                    "claim_label": "structure",
+                    "coverage_edge_ids": [],
+                    "requirement_ids": [],
+                    "evidence_ids": [],
+                    "non_requirement_reason": "structure",
+                    "review_required": False,
+                },
+            ],
         }
     )
 
@@ -525,6 +737,9 @@ def _stock_phrase_json_payload() -> str:
     return json.dumps(
         {
             "executive_profile": "Senior backend engineer focused on Python API reliability.",
+            "executive_profile_sentences": [
+                "Senior backend engineer focused on Python API reliability."
+            ],
             "experience_updates": [
                 {
                     "id": "acme_swe",
@@ -542,7 +757,8 @@ def _stock_phrase_json_payload() -> str:
                 {"id": "languages", "items": ["Python", "Go"]},
             ],
             "generated_claim_mappings": _positioning_claim_mappings(
-                "Owned results-driven backend initiatives, leveraged dynamic professional impactful solutions to drive value while reducing API latency 35% with Python."
+                "Owned results-driven backend initiatives, leveraged dynamic professional impactful solutions to drive value while reducing API latency 35% with Python.",
+                summary="Senior backend engineer focused on Python API reliability.",
             ),
         }
     )
@@ -723,10 +939,83 @@ def test_tailored_resume_schema_constrains_non_requirement_reason_enum() -> None
         "items"
     ]["properties"]["non_requirement_reason"]
 
-    assert mapping_schema["enum"] == ["", "pinned", "positioning", "structure"]
+    assert mapping_schema["enum"] == ["pinned", "positioning", "structure"]
+    assert TAILORED_RESUME_RESPONSE_SCHEMA["properties"]["generated_claim_mappings"][
+        "minItems"
+    ] == 1
 
 
-def test_claim_mapping_parser_clears_redundant_non_requirement_reason() -> None:
+@pytest.mark.parametrize(
+    ("location", "expected"),
+    [
+        ("executive_profile.sentence[0]", "executive_profile.sentence[0]"),
+        ("summary.sentence[1]", "executive_profile.sentence[1]"),
+        ("profile.summary.sentence[2]", "executive_profile.sentence[2]"),
+        ("profile.executive_profile.sentences[3]", "executive_profile.sentence[3]"),
+    ],
+)
+def test_claim_location_normalizes_summary_sentence_aliases(
+    location: str, expected: str
+) -> None:
+    assert _canonical_claim_location(location) == expected
+
+
+def test_claim_binding_requires_exact_text_for_dotted_ids() -> None:
+    """Dotted profile ids ("node.js", "acme.co") keep the exact-binding contract.
+
+    Regression: the exact-text location regexes rejected ids containing dots, so
+    those surfaces silently downgraded to substring matching and a partial item
+    list could pass binding while satisfying the one-mapping-per-group count.
+    """
+    payload = {
+        "executive_profile": "Backend engineer.",
+        "executive_profile_sentences": ["Backend engineer."],
+        "experience_updates": [{"id": "acme.co", "bullets": ["Cut latency 40% with Python."]}],
+        "skill_category_updates": [{"id": "node.js", "items": ["Node.js", "Express"]}],
+    }
+
+    def _mappings(bullet_text: str, skill_text: str) -> tuple[GeneratedClaimMapping, ...]:
+        return (
+            GeneratedClaimMapping(
+                claim_id="claim-summary",
+                location="executive_profile",
+                text="Backend engineer.",
+                claim_label="evidence_reframed",
+            ),
+            GeneratedClaimMapping(
+                claim_id="claim-bullet",
+                location="experience.acme.co.bullets[0]",
+                text=bullet_text,
+                claim_label="evidence_reframed",
+            ),
+            GeneratedClaimMapping(
+                claim_id="claim-skills",
+                location="skills.node.js",
+                text=skill_text,
+                claim_label="evidence_reframed",
+            ),
+        )
+
+    assert (
+        _claim_mapping_binding_errors(
+            payload=payload,
+            mappings=_mappings("Cut latency 40% with Python.", "Node.js, Express"),
+        )
+        == ()
+    )
+
+    errors = _claim_mapping_binding_errors(
+        payload=payload, mappings=_mappings("Cut latency 40%", "Node.js")
+    )
+    assert any(
+        "claim-bullet text does not exactly match" in error for error in errors
+    )
+    assert any(
+        "claim-skills text does not exactly match" in error for error in errors
+    )
+
+
+def test_claim_mapping_parser_preserves_raw_fallback_while_clearing_domain_reason() -> None:
     payload = _good_json_payload_dict()
     payload["generated_claim_mappings"][0]["coverage_edge_ids"] = ["edge_req_latency"]
     payload["generated_claim_mappings"][0]["requirement_ids"] = ["req_latency"]
@@ -738,7 +1027,7 @@ def test_claim_mapping_parser_clears_redundant_non_requirement_reason() -> None:
     assert errors == ()
     assert mappings[0].coverage_edge_ids == ("edge_req_latency",)
     assert mappings[0].non_requirement_reason == ""
-    assert payload["generated_claim_mappings"][0]["non_requirement_reason"] == ""
+    assert payload["generated_claim_mappings"][0]["non_requirement_reason"] == "positioning"
 
 
 def test_tailoring_policy_defaults_to_pipeline_gemini_flash() -> None:
@@ -773,6 +1062,408 @@ def test_tailor_use_case_happy_path(tmp_path: Path, snapshot: ProfileSnapshot, j
     assert outcome.materials.last_verdict.criterion_scores["fabrication_safety"] == 1.0
     assert outcome.text_path is not None and Path(outcome.text_path).exists()
     assert any(getattr(e, "event_type", "") == "ResumeApproved" for e in publisher.events)
+
+
+def test_tailor_use_case_accepts_aggregate_mapping_for_abbreviated_one_sentence_summary(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    summary = "U.S. Python backend engineer focused on API reliability."
+    payload = _good_json_payload_dict()
+    payload["executive_profile"] = summary
+    payload["executive_profile_sentences"] = [summary]
+    payload["generated_claim_mappings"][1]["text"] = summary
+    llm = _ScriptedLlm([json.dumps(payload), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+    assert len(llm.calls) == 2
+
+
+def test_tailor_use_case_approves_generation_bound_requirement_claims(
+    tmp_path: Path, job: dict
+) -> None:
+    """Regression: coherent Score evidence reaches the judge and ships materials."""
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "Go"],
+        "full_description": "Own Python API reliability.",
+    }
+    analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([_coherent_requirement_payload(), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=analysis,
+        requirement_fit_report=requirement_fit_report,
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+    assert len(llm.calls) == 2
+    assert outcome.materials.last_verdict is not None
+    assert outcome.materials.last_verdict.approved is True
+    quality_plan = outcome.materials.tailored_resume.metadata["quality_plan"]
+    assert quality_plan["coverage_graph"]["coverage_edge_count"] == 1
+    fit_decision = outcome.report["post_generation_fit"]["revision_decision"]
+    assert fit_decision["threshold_failed"] is False
+
+
+def test_tailor_use_case_rejects_partial_skill_group_claim_mapping(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "Go"],
+        "full_description": "Own Python API reliability.",
+    }
+    analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
+    payload = json.loads(_coherent_requirement_payload())
+    payload["generated_claim_mappings"][2]["text"] = "Python"
+    llm = _ScriptedLlm([json.dumps(payload)])
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=analysis,
+        requirement_fit_report=requirement_fit_report,
+    )
+
+    assert outcome.status == "failed_validation"
+    assert outcome.report["judge"] is None
+    errors = outcome.report["candidate_summaries"][0]["validation"]["errors"]
+    assert any("does not exactly match" in error for error in errors)
+
+
+def test_tailor_use_case_rejects_partial_experience_bullet_claim_mapping(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "Go"],
+        "full_description": "Own Python API reliability.",
+    }
+    analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
+    payload = json.loads(_coherent_requirement_payload())
+    payload["generated_claim_mappings"][1]["text"] = "Reduced latency 35%"
+    llm = _ScriptedLlm([json.dumps(payload)])
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=analysis,
+        requirement_fit_report=requirement_fit_report,
+    )
+
+    assert outcome.status == "failed_validation"
+    assert outcome.report["judge"] is None
+    errors = outcome.report["candidate_summaries"][0]["validation"]["errors"]
+    assert any("does not exactly match" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "first_sentence",
+    [
+        'Senior backend engineer known for "reliable APIs."',
+        "Senior backend engineer based in the U.S.",
+    ],
+)
+def test_tailor_use_case_rejects_one_whole_profile_mapping_for_multiple_sentences(
+    tmp_path: Path, job: dict, first_sentence: str
+) -> None:
+    profile = _profile_with_evidence_dict()
+    profile["resume"]["experience_entries"][0]["location"] = "U.S."
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "Go"],
+        "full_description": "Own Python API reliability.",
+    }
+    analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
+    payload = json.loads(_coherent_requirement_payload())
+    second_sentence = "Reduced API latency 35% with Python."
+    summary = f"{first_sentence} {second_sentence}"
+    payload["executive_profile"] = summary
+    payload["executive_profile_sentences"] = [first_sentence, second_sentence]
+    payload["generated_claim_mappings"][0].update(
+        location="executive_profile",
+        text=summary,
+    )
+    llm = _ScriptedLlm([json.dumps(payload)])
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=analysis,
+        requirement_fit_report=requirement_fit_report,
+    )
+
+    assert outcome.status == "failed_validation"
+    assert outcome.report["judge"] is None
+    errors = outcome.report["candidate_summaries"][0]["validation"]["errors"]
+    assert "Generated claim mapping is missing for executive profile sentence 0." in errors
+    assert "Generated claim mapping is missing for executive profile sentence 1." in errors
+
+
+@pytest.mark.parametrize(
+    "first_sentence",
+    [
+        'Senior backend engineer known for "reliable APIs."',
+        "Senior backend engineer based in the U.S.",
+    ],
+)
+def test_tailor_use_case_accepts_indexed_mappings_for_explicit_multiple_sentences(
+    tmp_path: Path, job: dict, first_sentence: str
+) -> None:
+    profile = _profile_with_evidence_dict()
+    profile["resume"]["experience_entries"][0]["location"] = "U.S."
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "Go"],
+        "full_description": "Own Python API reliability.",
+    }
+    analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
+    payload = json.loads(_coherent_requirement_payload())
+    second_sentence = "Reduced API latency 35% with Python."
+    payload["executive_profile"] = f"{first_sentence} {second_sentence}"
+    payload["executive_profile_sentences"] = [first_sentence, second_sentence]
+    payload["generated_claim_mappings"][0].update(
+        location="executive_profile.sentence[0]",
+        text=first_sentence,
+    )
+    second_mapping = dict(
+        payload["generated_claim_mappings"][1],
+        claim_id="claim-summary-latency",
+        location="executive_profile.sentence[1]",
+        text=second_sentence,
+    )
+    payload["generated_claim_mappings"].insert(1, second_mapping)
+    llm = _ScriptedLlm([json.dumps(payload), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=analysis,
+        requirement_fit_report=requirement_fit_report,
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+    assert len(llm.calls) == 2
+
+
+def test_tailor_use_case_rejects_coverage_bearing_aggregate_mapping_for_multiple_sentences(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "Go"],
+        "full_description": "Own Python API reliability.",
+    }
+    analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
+    payload = json.loads(_coherent_requirement_payload())
+    first_sentence = 'Senior backend engineer known for "reliable APIs."'
+    second_sentence = "Reduced API latency 35% with Python."
+    summary = f"{first_sentence} {second_sentence}"
+    payload["executive_profile"] = summary
+    payload["executive_profile_sentences"] = [first_sentence, second_sentence]
+    payload["generated_claim_mappings"][0].update(
+        location="executive_profile.sentence[0]",
+        text=first_sentence,
+    )
+    payload["generated_claim_mappings"].insert(
+        1,
+        {
+            **payload["generated_claim_mappings"][0],
+            "claim_id": "claim-summary-second",
+            "location": "executive_profile.sentence[1]",
+            "text": second_sentence,
+        },
+    )
+    payload["generated_claim_mappings"][2].update(
+        claim_label="positioning",
+        coverage_edge_ids=[],
+        requirement_ids=[],
+        evidence_ids=[],
+        non_requirement_reason="positioning",
+    )
+    payload["generated_claim_mappings"].append(
+        {
+            "claim_id": "claim-summary-aggregate",
+            "location": "executive_profile",
+            "text": summary,
+            "claim_label": "verified",
+            "coverage_edge_ids": ["edge_req_latency_ev_latency_direct"],
+            "requirement_ids": ["req_latency"],
+            "evidence_ids": ["ev_latency"],
+            "non_requirement_reason": "",
+            "review_required": False,
+        }
+    )
+    llm = _ScriptedLlm([json.dumps(payload)])
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=analysis,
+        requirement_fit_report=requirement_fit_report,
+    )
+
+    assert outcome.status == "failed_validation"
+    assert outcome.report["judge"] is None
+    errors = outcome.report["candidate_summaries"][0]["validation"]["errors"]
+    assert any(
+        "location 'executive_profile' does not exist" in error for error in errors
+    )
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_error"),
+    [
+        ("wrong_summary_index", "does not exist in the generated payload"),
+        ("missing_summary_sentences", "must be an ordered array"),
+        ("mismatched_summary_sentences", "must reproduce executive_profile exactly"),
+        ("outer_whitespace_summary", "must reproduce executive_profile exactly"),
+        ("missing_skill_group", "mapping is missing for skill group languages"),
+        ("duplicate_skill_group", "has 2 mappings; expected exactly one"),
+    ],
+)
+def test_tailor_use_case_rejects_incomplete_or_ambiguous_claim_surfaces(
+    tmp_path: Path,
+    job: dict,
+    case: str,
+    expected_error: str,
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "Go"],
+        "full_description": "Own Python API reliability.",
+    }
+    analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(job)
+    payload = json.loads(_coherent_requirement_payload())
+    if case == "wrong_summary_index":
+        payload["generated_claim_mappings"][0]["location"] = "summary.sentence[999]"
+    elif case == "missing_summary_sentences":
+        payload.pop("executive_profile_sentences")
+    elif case == "mismatched_summary_sentences":
+        payload["executive_profile_sentences"] = ["Different summary."]
+    elif case == "outer_whitespace_summary":
+        payload["executive_profile"] = f" {payload['executive_profile']} "
+    elif case == "missing_skill_group":
+        payload["generated_claim_mappings"].pop(2)
+    else:
+        payload["generated_claim_mappings"].append(
+            dict(payload["generated_claim_mappings"][2], claim_id="claim-skills-copy")
+        )
+    llm = _ScriptedLlm([json.dumps(payload)])
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=analysis,
+        requirement_fit_report=requirement_fit_report,
+    )
+
+    assert outcome.status == "failed_validation"
+    assert outcome.report["judge"] is None
+    errors = outcome.report["candidate_summaries"][0]["validation"]["errors"]
+    assert any(expected_error in error for error in errors)
 
 
 def test_tailor_use_case_injects_quality_plan_and_persists_metadata(
@@ -946,7 +1637,10 @@ def test_bullet_limit_overflow_metadata_matches_index_based_claim_locations(
             "review_required": False,
         }
         for index, bullet in enumerate(payload["experience_updates"][0]["bullets"])
-    ]
+    ] + _positioning_claim_mappings(
+        "",
+        include_bullet=False,
+    )
 
     metadata = _bullet_limit_overflow_metadata(
         payload=payload,
@@ -2103,11 +2797,16 @@ def test_tailor_use_case_allows_versioned_declared_skill(tmp_path: Path, job: di
     payload = json.dumps(
         {
             "executive_profile": "Senior engineer.",
+            "executive_profile_sentences": ["Senior engineer."],
             "experience_updates": [
                 {"id": "acme_swe", "title": "", "bullets": ["Cut API latency 40% with Python."]}
             ],
             "skill_category_updates": [{"id": "languages", "items": ["Python", "Java 17"]}],
-            "generated_claim_mappings": _positioning_claim_mappings("Cut API latency 40% with Python."),
+            "generated_claim_mappings": _positioning_claim_mappings(
+                "Cut API latency 40% with Python.",
+                summary="Senior engineer.",
+                skill_items=("Python", "Java 17"),
+            ),
         }
     )
     llm = _ScriptedLlm([payload, _judge_pass()])

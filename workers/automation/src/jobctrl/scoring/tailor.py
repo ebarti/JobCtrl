@@ -41,6 +41,7 @@ from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
 from jobctrl.domain.materials.use_cases import (
     TailorOutcome,
     TailoringLlmPolicy,
+    TailoringPrerequisiteError,
     TailorResumeUseCase,
     build_master_tailor_prompt,
 )
@@ -642,6 +643,19 @@ def run_tailoring(
             job = future_to_job[future]
             try:
                 result = future.result()
+            except TailoringPrerequisiteError as error:
+                result = {
+                    "job_id": str(canonical_job_id(str(job["job_id"]))),
+                    "url": job["url"],
+                    "title": job["title"],
+                    "site": job.get("site"),
+                    "status": "blocked_prerequisite",
+                    "attempts": 0,
+                    "path": None,
+                    "pdf_path": None,
+                    "materials": None,
+                    "prerequisite_error": error,
+                }
             except Exception as e:
                 result = {
                     "job_id": str(canonical_job_id(str(job["job_id"]))),
@@ -686,7 +700,17 @@ def run_tailoring(
         url = r["url"]
         current_attempt = stage_attempts[stage_key]
         generation_attempts = r.get("attempts") or 1
-        if r.get("status") in _success_statuses:
+        prerequisite_error = r.get("prerequisite_error")
+        if isinstance(prerequisite_error, TailoringPrerequisiteError):
+            _record_tailor_requirement_fit_block(
+                conn,
+                job_id=stable_job_id,
+                tenant_id=tenant_id,
+                error=prerequisite_error,
+                attempt_count=current_attempt - 1,
+                metadata=activity_metadata.get(stage_key) or None,
+            )
+        elif r.get("status") in _success_statuses:
             set_stage_state(
                 conn,
                 stable_job_id,
@@ -768,10 +792,11 @@ def run_tailoring(
     failed = sum(
         count
         for status, count in stats.items()
-        if status not in {"approved", "error"}
+        if status not in {"approved", "blocked_prerequisite", "error"}
     )
     return {
         "approved": stats.get("approved", 0),
+        "blocked": stats.get("blocked_prerequisite", 0),
         "failed": failed,
         "errors": errors,
         "exhausted": durable_exhausted,
@@ -1033,6 +1058,24 @@ def tailor_job_by_id(
             durable_attempt=current_attempt,
         )
         commit_guard()
+    except TailoringPrerequisiteError as exc:
+        with SqliteUnitOfWork(conn):
+            commit_guard()
+            _record_tailor_requirement_fit_block(
+                conn,
+                job_id=stable_job_id,
+                tenant_id=tenant_id,
+                error=exc,
+                attempt_count=prior_attempts,
+                metadata=metadata,
+            )
+        return {
+            "url": target["url"],
+            "job_id": str(stable_job_id),
+            "status": "skipped",
+            "reason": exc.reason,
+            "error": str(exc),
+        }
     except Exception as exc:  # noqa: BLE001 - one item must terminalize its stage
         # A cancellation/successor fence must escape this item runner. Turning
         # it into an ordinary generation failure would let this stale owner
@@ -1368,6 +1411,60 @@ def _record_tailor_enrichment_block(
         payload={"reason": "enrichment_quarantined", "condition": quarantine_reason},
     )
     return True
+
+
+def _record_tailor_requirement_fit_block(
+    conn: sqlite3.Connection,
+    *,
+    job_id: JobId,
+    tenant_id: TenantId,
+    error: TailoringPrerequisiteError,
+    attempt_count: int,
+    metadata: dict[str, object] | None,
+) -> None:
+    """Block Tailor on incoherent Score evidence without consuming a retry."""
+
+    message = (
+        "Tailoring is waiting for Scoring to refresh requirement-fit evidence "
+        "for the current posting analysis."
+    )
+    block_metadata = {
+        **(metadata or {}),
+        "condition": error.reason,
+        "employerAnalysisGeneration": error.analysis_generation,
+        "requirementFitGeneration": error.report_generation,
+    }
+    set_stage_state(
+        conn,
+        job_id,
+        "tailor",
+        "blocked",
+        tenant_id=tenant_id,
+        attempt_count=attempt_count,
+        max_attempts=MAX_ATTEMPTS,
+        error_code=error.error_code,
+        error_message=message,
+        retryable=True,
+        blocked_by=["score"],
+        next_action="Rescore this job, then run Tailor again.",
+        metadata=block_metadata,
+        validate_transition=False,
+    )
+    record_job_event(
+        conn,
+        job_id,
+        "tailor",
+        "StageBlocked",
+        tenant_id=tenant_id,
+        level="warning",
+        message=message,
+        payload={
+            "reason": error.reason,
+            "errorCode": error.error_code,
+            "employerAnalysisGeneration": error.analysis_generation,
+            "requirementFitGeneration": error.report_generation,
+        },
+    )
 
 
 def _record_tailor_skip(

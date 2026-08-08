@@ -59,11 +59,17 @@ profile evidence, allowed skills, verified metrics, and the quality plan.
 Rewrite only these mutable resume fields and return JSON plus generated claim
 mapping:
 - executive_profile
+- executive_profile_sentences (ordered explicit sentence boundaries whose
+  one-space join exactly equals executive_profile)
 - experience_updates for existing profile experience IDs
 - skill_category_updates for existing profile skill category IDs
 - generated_claim_mappings that link each generated claim to coverage edges,
   requirement IDs, evidence IDs, or a non-requirement reason such as pinned or
-  positioning content
+  positioning content; exactly one bound mapping is required for every summary
+  sentence, generated experience bullet, and complete rendered skill group;
+  executive_profile is valid only when executive_profile_sentences contains one
+  item, while multi-sentence summaries use executive_profile.sentence[N] for every
+  explicit item
 ```
 
 The target job and employer analysis decide what to emphasize. The existing
@@ -112,7 +118,7 @@ Tailoring combines several inputs. Each input has a different authority.
 | Writing style | Profile writing preferences | Tone, bullet standards, verbosity, advisory keyword emphasis, first-person preference |
 | Target job | Job record | The target role, description, responsibilities, skills, and company context |
 | Employer analysis | `EmployerAnalysis` aggregate | Grounded role framing, inferred seniority, requirements, and reasoned keywords |
-| Requirement fit report | Scoring context, when available | Pre-tailoring fit by requirement, allowed evidence IDs, target keywords, prohibited claims, tailoring directives |
+| Requirement fit report | Scoring context | Pre-tailoring fit by requirement, allowed evidence IDs, target keywords, prohibited claims, tailoring directives; its employer-analysis generation must match the current posting analysis |
 | Requirement-led coverage graph | Deterministic target-profile adapter plus constrained planner | Which profile achievements can cover which target requirements, which requirements are uncovered, which achievements are unused, and what claim policy each edge requires |
 | Previous attempt outcome | Tailoring retry loop | Typed, code-owned retry reason only; free-form validator, judge, adversarial, and prior-output text remains audit data |
 
@@ -200,12 +206,13 @@ The generator must return JSON matching `TAILORED_RESUME_RESPONSE_SCHEMA`:
 
 ```json
 {
-  "executive_profile": "2-4 sentences tailored to the target role.",
+  "executive_profile": "Grounded executive profile.",
+  "executive_profile_sentences": ["Grounded executive profile."],
   "experience_updates": [
     {
       "id": "existing_profile_experience_id",
       "title": "",
-      "bullets": ["bullet 1", "bullet 2"]
+      "bullets": ["Generated bullet text."]
     }
   ],
   "skill_category_updates": [
@@ -216,6 +223,17 @@ The generator must return JSON matching `TAILORED_RESUME_RESPONSE_SCHEMA`:
   ],
   "generated_claim_mappings": [
     {
+      "claim_id": "claim_summary_1",
+      "location": "executive_profile.sentence[0]",
+      "text": "Grounded executive profile.",
+      "claim_label": "positioning",
+      "coverage_edge_ids": [],
+      "requirement_ids": [],
+      "evidence_ids": [],
+      "non_requirement_reason": "positioning",
+      "review_required": false
+    },
+    {
       "claim_id": "claim_1",
       "location": "experience.existing_profile_experience_id.bullets[0]",
       "text": "Generated bullet text.",
@@ -223,7 +241,18 @@ The generator must return JSON matching `TAILORED_RESUME_RESPONSE_SCHEMA`:
       "coverage_edge_ids": ["edge_req_1_ev_1_direct"],
       "requirement_ids": ["req_1"],
       "evidence_ids": ["ev_1"],
-      "non_requirement_reason": "",
+      "non_requirement_reason": "positioning",
+      "review_required": false
+    },
+    {
+      "claim_id": "claim_skills_1",
+      "location": "skills.existing_profile_skill_category_id",
+      "text": "existing skill 1, existing skill 2",
+      "claim_label": "structure",
+      "coverage_edge_ids": [],
+      "requirement_ids": [],
+      "evidence_ids": [],
+      "non_requirement_reason": "structure",
       "review_required": false
     }
   ]
@@ -232,7 +261,9 @@ The generator must return JSON matching `TAILORED_RESUME_RESPONSE_SCHEMA`:
 
 The model cannot return contact info, education rows, new sections, comments,
 warnings, or PDFs. The claim map is a sidecar audit contract; code still owns
-assembly, provenance rows, final artifact metadata, and read models.
+assembly, provenance rows, final artifact metadata, and read models. Mapping
+locations are range-checked, complete rendered skill groups bind by exact text,
+and the schema-valid raw response is retained unchanged in attempt audit.
 
 ## What "Profile-Row Based" Means
 
@@ -678,6 +709,13 @@ durable attempt, and recorded time, so a later retry or a rerun of the same
 durable attempt cannot overwrite earlier prompts, candidates, validation, or
 judge evidence. A fifth failed durable execution is
 stored as non-retryable `exhausted` until an explicit attempt reset.
+
+Tailoring does not silently discard a missing, cross-job, or stale-generation
+requirement-fit report. That condition blocks Tailor on Score before candidate
+generation, preserves the durable Tailor attempt count, records both generation
+identities, and asks for a fresh score. Scoring resolves employer analysis
+through its complete cache identity first, so the replacement fit report and
+the Tailoring coverage graph describe the same posting snapshot.
 
 ## How To Change Tailoring Safely
 

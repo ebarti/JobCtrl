@@ -44,14 +44,22 @@ from jobctrl.domain.materials.services import sanitize_text
 
 GROUNDED_COVERAGE_BASIS = "grounded_shipped_text_v1"
 
+# Ids may contain dots ("node.js", "acme.co"); the trailing component shapes
+# (".bullets[N]", ".items[N]") are unambiguous, so backtracking splits correctly.
 _EXPERIENCE_LOCATION_RE = re.compile(
-    r"^(?:experience|experience_updates)\.(?P<entry_id>[^.\[\]]+)\.bullets\[(?P<index>\d+)\]$"
+    r"^(?:experience|experience_updates)\.(?P<entry_id>[^\[\]]+)\.bullets\[(?P<index>\d+)\]$"
 )
 _SKILLS_LOCATION_RE = re.compile(
-    r"^(?:skills|skill_categories|skill_category_updates)\.(?P<category_id>[^.\[\]]+)"
+    r"^(?:skills|skill_categories|skill_category_updates)\.(?P<category_id>[^\[\]]+)"
     r"(?:\.items\[\d+\])?$"
 )
 _SUMMARY_LOCATIONS = frozenset({"executive_profile", "summary", "resume.executive_profile"})
+# Mirrors the sentence-indexed alias spellings the payload-surface validator
+# canonicalises (``_canonical_claim_location``): "executive_profile.sentence[N]"
+# plus the "summary"/"profile."-prefixed and bare-index variants.
+_SUMMARY_SENTENCE_LOCATION_RE = re.compile(
+    r"^(?:(?:profile\.)?(?:executive_profile|summary))(?:\.sentences?)?\[\d+\]$"
+)
 
 
 @dataclass(frozen=True)
@@ -147,10 +155,12 @@ def bullet_id_for_claim_location(location: str) -> str | None:
     Mirrors the alias forms accepted by the payload-surface validator
     (``_generated_claim_surfaces``) and the bullet ids minted by
     ``build_bullet_provenance``. Skill item locations map to the category line —
-    provenance audits skills one row per rendered category.
+    provenance audits skills one row per rendered category — and summary
+    sentence locations (``executive_profile.sentence[N]`` and its aliases) map
+    to the single shipped executive-profile line.
     """
     canonical = re.sub(r"\.bullet\[(\d+)\]$", r".bullets[\1]", str(location or "").strip())
-    if canonical in _SUMMARY_LOCATIONS:
+    if canonical in _SUMMARY_LOCATIONS or _SUMMARY_SENTENCE_LOCATION_RE.match(canonical):
         return "executive_profile#0"
     match = _EXPERIENCE_LOCATION_RE.match(canonical)
     if match:

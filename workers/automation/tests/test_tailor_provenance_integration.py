@@ -486,10 +486,22 @@ def _coverage_planner_response(
 def _claim_mapping(
     bullet: str,
     *,
+    summary: str = "Senior backend engineer focused on Python API reliability.",
     requirement_ids: tuple[str, ...] = ("req_latency",),
     coverage_edge_ids: tuple[str, ...] = ("edge_req_latency_ev_latency_direct",),
 ) -> list[dict[str, object]]:
     return [
+        {
+            "claim_id": "claim_summary",
+            "location": "executive_profile.sentence[0]",
+            "text": summary,
+            "claim_label": "positioning",
+            "coverage_edge_ids": [],
+            "requirement_ids": [],
+            "evidence_ids": [],
+            "non_requirement_reason": "positioning",
+            "review_required": False,
+        },
         {
             "claim_id": "claim_latency",
             "location": "experience.acme_swe.bullets[0]",
@@ -498,6 +510,18 @@ def _claim_mapping(
             "coverage_edge_ids": list(coverage_edge_ids),
             "requirement_ids": list(requirement_ids),
             "evidence_ids": ["ev_latency"],
+            "non_requirement_reason": "positioning",
+            "review_required": False,
+        },
+        {
+            "claim_id": "claim_skills",
+            "location": "skills.languages",
+            "text": "Python, Go",
+            "claim_label": "structure",
+            "coverage_edge_ids": [],
+            "requirement_ids": [],
+            "evidence_ids": [],
+            "non_requirement_reason": "structure",
             "review_required": False,
         }
     ]
@@ -512,10 +536,14 @@ def _payload(
     return json.dumps(
         {
             "executive_profile": "Senior backend engineer focused on Python API reliability.",
+            "executive_profile_sentences": [
+                "Senior backend engineer focused on Python API reliability."
+            ],
             "experience_updates": [{"id": "acme_swe", "title": "", "bullets": [bullet]}],
             "skill_category_updates": [{"id": "languages", "items": ["Python", "Go"]}],
             "generated_claim_mappings": _claim_mapping(
                 bullet,
+                summary="Senior backend engineer focused on Python API reliability.",
                 requirement_ids=requirement_ids,
                 coverage_edge_ids=coverage_edge_ids,
             ),
