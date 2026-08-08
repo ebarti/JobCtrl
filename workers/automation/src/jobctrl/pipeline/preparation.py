@@ -49,7 +49,7 @@ from jobctrl.scoring.eligibility_sql import (
     register_score_eligibility_sql,
     score_eligible_for_downstream_sql,
 )
-from jobctrl.state import utc_now
+from jobctrl.state import reconcile_all_score_threshold_skips, utc_now
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +119,12 @@ def derive_preparation_targets(payload: DerivePreparationTargetsInput) -> list[P
     conn = get_connection()
     tenant_id = TenantId(payload.tenant_id)
     min_score = db_module.effective_tailoring_min_score(payload.min_score)
+    if reconcile_all_score_threshold_skips(
+        conn,
+        tenant_id=tenant_id,
+        min_score=min_score,
+    ):
+        conn.commit()
     _suppress_ineligible_artifacts(conn, tenant_id=tenant_id, min_score=min_score)
     targets = _derive_targets(
         conn,

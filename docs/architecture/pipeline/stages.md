@@ -257,6 +257,13 @@ Behavior notes:
   the scoring LLM. Scoring-policy and tailoring-policy changes never silently
   rescore or regenerate — that is what the explicit `rescore_*` / `retailor_*`
   actions are for.
+- A current score below the live threshold transitions Tailor, Cover, and Apply
+  to terminal `skipped` rows owned by `MIN_SCORE`, with the score and threshold
+  persisted in diagnostic metadata. This is a policy exclusion, not a blocked
+  dependency and not pending work. Reconciliation is idempotent and clears only
+  `MIN_SCORE` skips when the threshold or score later permits work; accepted or
+  in-flight stages, unrelated failures/blocks, and skips owned by another reason
+  are preserved. A score hard blocker takes precedence and remains `blocked`.
 - There is no local preparation reaper. Rows already claimed by a fast worker are
   not moved backward; Temporal owns in-flight recovery.
 

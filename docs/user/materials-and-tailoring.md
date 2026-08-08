@@ -157,6 +157,14 @@ job. This prerequisite block does not consume a Tailor retry. It prevents an
 empty coverage plan from being retried as though it were a model-quality
 failure.
 
+The minimum-fit policy is a different terminal decision. When the current
+score is below the live materials threshold, Tailor, Cover, and Apply are
+persisted as `skipped` with the `MIN_SCORE` code and the exact score/threshold
+pair. They do not remain `pending`, because no automatic work owns them.
+Lowering the threshold or recording a qualifying current score restores only
+these threshold-owned skips. The per-job **Tailor this job** action is an
+explicit low-fit override and does not weaken score hard blockers.
+
 Generated files stay under the local JobCtrl workspace and are served only
 through registered artifact rows. An artifact route cannot open an arbitrary
 filesystem path. See [Data, Privacy & Safety](data-and-safety.md#local-data) for

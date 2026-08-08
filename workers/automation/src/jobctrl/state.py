@@ -72,6 +72,7 @@ _DEPENDENCY_BLOCKER_MESSAGES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]]
 }
 SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE = "SCORE_ELIGIBILITY_BLOCKED"
 SCORE_ELIGIBILITY_BLOCKED_MESSAGE_PREFIX = "Score eligibility blocks tailoring"
+SCORE_THRESHOLD_SKIPPED_ERROR_CODE = "MIN_SCORE"
 _SCORE_ELIGIBILITY_DOWNSTREAM_STAGES: tuple[str, ...] = ("tailor", "cover", "apply")
 _TERMINAL_DOWNSTREAM_STATES: frozenset[str] = frozenset({"succeeded", "skipped", "exhausted", "canceled"})
 
@@ -532,7 +533,7 @@ def reconcile_score_eligibility_blockers(
     changed = 0
     rows = conn.execute(
         f"""
-        SELECT stage, state, attempt_count
+        SELECT stage, state, attempt_count, error_code
           FROM job_stage_states
          WHERE tenant_id = ?
            AND job_id = ?
@@ -543,7 +544,11 @@ def reconcile_score_eligibility_blockers(
     for row in rows:
         stage = str(row["stage"])
         state = str(row["state"])
-        if state in _TERMINAL_DOWNSTREAM_STATES:
+        if state in _TERMINAL_DOWNSTREAM_STATES and not (
+            state == "skipped"
+            and str(row["error_code"] or "")
+            == SCORE_THRESHOLD_SKIPPED_ERROR_CODE
+        ):
             continue
         attempt_count = int(row["attempt_count"] or 0)
         set_stage_state(
@@ -584,6 +589,280 @@ def reconcile_score_eligibility_blockers(
     return changed
 
 
+def reconcile_score_threshold_skips(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    fit_score: int,
+    min_score: int,
+    now: str | None = None,
+) -> int:
+    """Persist or clear the downstream decision made by the fit threshold.
+
+    A score below the active materials threshold is a terminal policy decision,
+    not pending work and not a retryable generation failure. Only skips owned by
+    this policy are cleared when a later threshold or score admits the job.
+    """
+
+    stable_job_id = canonical_job_id(str(job_id))
+    normalized_fit_score = int(fit_score)
+    normalized_min_score = int(min_score)
+    updated_at = now or utc_now()
+    if normalized_fit_score >= normalized_min_score:
+        return _clear_score_threshold_skips(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+            now=updated_at,
+        )
+
+    message = (
+        f"Fit score {normalized_fit_score}/10 is below the materials threshold "
+        f"{normalized_min_score}/10."
+    )
+    next_action = "Lower the materials threshold or record a higher current score."
+    metadata = {
+        "reason": "score_below_threshold",
+        "fitScore": normalized_fit_score,
+        "minScore": normalized_min_score,
+        "upstreamStage": "score",
+    }
+    metadata_json = _json_dumps(metadata)
+    changed = 0
+    for stage in _SCORE_ELIGIBILITY_DOWNSTREAM_STAGES:
+        transition = conn.execute(
+            """
+            /* score_threshold_skip */
+            UPDATE job_stage_states
+               SET state = 'skipped',
+                   updated_at = ?,
+                   error_code = ?,
+                   error_message = ?,
+                   retryable = 0,
+                   blocked_by_json = NULL,
+                   next_action = ?,
+                   metadata_json = ?
+             WHERE tenant_id = ?
+               AND job_id = ?
+               AND stage = ?
+               AND (
+                   state = 'pending'
+                   OR (
+                       state = 'blocked'
+                       AND error_code IN ('BLOCKED', ?)
+                   )
+                   OR (
+                       state = 'skipped'
+                       AND error_code = ?
+                   )
+               )
+               AND NOT (
+                   state = 'skipped'
+                   AND error_code = ?
+                   AND error_message = ?
+                   AND retryable = 0
+                   AND blocked_by_json IS NULL
+                   AND next_action = ?
+                   AND metadata_json = ?
+               )
+            """,
+            (
+                updated_at,
+                SCORE_THRESHOLD_SKIPPED_ERROR_CODE,
+                message,
+                next_action,
+                metadata_json,
+                str(tenant_id),
+                str(stable_job_id),
+                stage,
+                SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE,
+                SCORE_THRESHOLD_SKIPPED_ERROR_CODE,
+                SCORE_THRESHOLD_SKIPPED_ERROR_CODE,
+                message,
+                next_action,
+                metadata_json,
+            ),
+        )
+        if transition.rowcount != 1:
+            continue
+        record_job_event(
+            conn,
+            stable_job_id,
+            stage,
+            "StageSkipped",
+            tenant_id=tenant_id,
+            level="info",
+            message=message,
+            occurred_at=updated_at,
+            payload={
+                "reason": "score_below_threshold",
+                "fitScore": normalized_fit_score,
+                "minScore": normalized_min_score,
+                "upstreamStage": "score",
+                "downstreamStage": stage,
+            },
+        )
+        changed += 1
+    return changed
+
+
+def reconcile_all_score_threshold_skips(
+    conn,
+    *,
+    tenant_id: TenantId,
+    min_score: int,
+    now: str | None = None,
+) -> int:
+    """Reconcile every current, non-stale score against one live threshold."""
+
+    rows = conn.execute(
+        """
+        SELECT scores.job_id, scores.fit_score, scores.breakdown_json
+          FROM job_scores scores
+          INNER JOIN jobs
+            ON jobs.tenant_id = scores.tenant_id
+           AND jobs.job_id = scores.job_id
+          INNER JOIN (
+              SELECT tenant_id, job_id, MAX(version) AS version
+                FROM job_scores
+               WHERE tenant_id = ?
+               GROUP BY tenant_id, job_id
+          ) latest
+            ON latest.tenant_id = scores.tenant_id
+           AND latest.job_id = scores.job_id
+           AND latest.version = scores.version
+          INNER JOIN job_stage_states score_stage
+            ON score_stage.tenant_id = scores.tenant_id
+           AND score_stage.job_id = scores.job_id
+           AND score_stage.stage = 'score'
+           AND score_stage.state = 'succeeded'
+          LEFT JOIN posting_snapshot_sets snapshots
+            ON snapshots.tenant_id = scores.tenant_id
+           AND snapshots.job_id = scores.job_id
+         WHERE scores.tenant_id = ?
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM jobctrl_deleted_jobs deleted
+                WHERE deleted.tenant_id = scores.tenant_id
+                  AND deleted.job_id = scores.job_id
+                  AND (
+                      deleted.restored_at IS NULL
+                      OR julianday(deleted.restored_at) <= julianday(deleted.deleted_at)
+                  )
+           )
+           AND (
+               snapshots.latest_active_state IS NULL
+               OR snapshots.latest_active_state NOT IN (
+                   'closed', 'expired', 'removed', 'location_incompatible'
+               )
+           )
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM job_score_staleness stale
+                WHERE stale.tenant_id = scores.tenant_id
+                  AND stale.job_id = scores.job_id
+                  AND stale.resolved = 0
+           )
+        """,
+        (str(tenant_id), str(tenant_id)),
+    ).fetchall()
+    changed = 0
+    for row in rows:
+        breakdown = _json_loads(row["breakdown_json"], {})
+        eligibility_payload = breakdown.get("eligibility") if isinstance(breakdown, dict) else None
+        eligibility = EligibilityAssessment.from_dict(
+            eligibility_payload if isinstance(eligibility_payload, dict) else None
+        )
+        if eligibility_blocks_downstream(eligibility):
+            continue
+        changed += reconcile_score_threshold_skips(
+            conn,
+            tenant_id=tenant_id,
+            job_id=canonical_job_id(str(row["job_id"])),
+            fit_score=int(row["fit_score"]),
+            min_score=int(min_score),
+            now=now,
+        )
+    return changed
+
+
+def _clear_score_threshold_skips(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    now: str,
+) -> int:
+    rows = conn.execute(
+        """
+        SELECT stage
+          FROM job_stage_states
+         WHERE tenant_id = ?
+           AND job_id = ?
+           AND state = 'skipped'
+           AND error_code = ?
+        """,
+        (str(tenant_id), str(job_id), SCORE_THRESHOLD_SKIPPED_ERROR_CODE),
+    ).fetchall()
+    cleared = 0
+    for row in rows:
+        stage = str(row["stage"])
+        restored = _restored_state_after_score_gate_cleared(
+            conn,
+            tenant_id=tenant_id,
+            job_id=job_id,
+            stage=stage,
+        )
+        transition = conn.execute(
+            """
+            /* score_threshold_clear */
+            UPDATE job_stage_states
+               SET state = ?,
+                   updated_at = ?,
+                   error_code = ?,
+                   error_message = ?,
+                   retryable = 1,
+                   blocked_by_json = NULL,
+                   next_action = NULL,
+                   metadata_json = NULL
+             WHERE tenant_id = ?
+               AND job_id = ?
+               AND stage = ?
+               AND state = 'skipped'
+               AND error_code = ?
+            """,
+            (
+                str(restored["state"]),
+                now,
+                restored.get("error_code"),
+                restored.get("error_message"),
+                str(tenant_id),
+                str(job_id),
+                stage,
+                SCORE_THRESHOLD_SKIPPED_ERROR_CODE,
+            ),
+        )
+        if transition.rowcount != 1:
+            continue
+        record_job_event(
+            conn,
+            job_id,
+            stage,
+            "StageReset",
+            tenant_id=tenant_id,
+            message=f"{stage} restored after the score threshold allowed materials.",
+            occurred_at=now,
+            payload={
+                "reason": "score_threshold_cleared",
+                "upstreamStage": "score",
+                "downstreamStage": stage,
+            },
+        )
+        cleared += 1
+    return cleared
+
+
 def _clear_score_eligibility_blockers(
     conn,
     *,
@@ -606,7 +885,7 @@ def _clear_score_eligibility_blockers(
     for row in rows:
         stage = str(row["stage"])
         attempt_count = int(row["attempt_count"] or 0)
-        restored = _restored_state_after_score_eligibility_cleared(
+        restored = _restored_state_after_score_gate_cleared(
             conn,
             tenant_id=tenant_id,
             job_id=job_id,
@@ -639,7 +918,7 @@ def _clear_score_eligibility_blockers(
     return cleared
 
 
-def _restored_state_after_score_eligibility_cleared(
+def _restored_state_after_score_gate_cleared(
     conn,
     *,
     tenant_id: TenantId,

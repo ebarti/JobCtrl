@@ -267,10 +267,10 @@ function stageLabel(stage: StageSummary["stage"]): string {
 
 function stageDiagnostics(stage: StageSummary): Array<[string, string]> {
   const diagnostics: Array<[string, string]> = [];
-  if (["failed", "exhausted", "blocked"].includes(stage.state)) {
+  if (["failed", "exhausted", "blocked", "skipped"].includes(stage.state)) {
     if (stage.errorCode) diagnostics.push(["code", stage.errorCode]);
     if (stage.errorMessage) diagnostics.push(["message", stage.errorMessage]);
-    if (stage.attemptCount || stage.maxAttempts) {
+    if (stage.state !== "skipped" && (stage.attemptCount || stage.maxAttempts)) {
       diagnostics.push([
         "attempts",
         `${stage.attemptCount}/${stage.maxAttempts}`,

@@ -1,6 +1,6 @@
 # Pipeline Reliability Chaos Campaign
 
-- **Status:** R01-R24 campaign completed; R25 and live incident recovery are under final cumulative verification
+- **Status:** R01-R25 campaign completed; R26 code and fixture verification passed, with live read-model reconciliation pending
 - **Authored:** 2026-08-04
 - **Environment:** Production-shaped local stack with disposable non-production data
 - **Safety boundary:** Never use `~/.jobctrl/jobctrl.db`, real applications, or real submission targets
@@ -18,8 +18,13 @@ Reliability remains simple when ownership is explicit:
    member of its exact selected cohort without mutating unrelated pending work.
 7. Inner model-repair attempts and durable stage executions have separate,
    bounded counters; retrying a failed stage must converge to `exhausted`.
+8. A workflow's terminal policy exclusion must be persisted as an explicit,
+   reversible `skipped` stage decision; it cannot remain ownerless `pending`.
 
-Every scenario below must prove those seven invariants through the database, Temporal history, API operations snapshot, and rendered Pipelines UI. A scenario fails if it needs a manual retry button unless the terminal condition is explicitly non-retryable.
+Every scenario below must prove those eight invariants through the database,
+Temporal history, API operations snapshot, and rendered Pipelines UI. A
+scenario fails if it needs a manual retry button unless the terminal condition
+is explicitly non-retryable.
 
 ## Test Topology
 
@@ -54,6 +59,7 @@ The campaign owns an isolated `JOBCTRL_DIR`, SQLite database, Temporal data dire
 | R23 | Global or explicitly selected Enrich cohort running | Request cancellation through JobCtrl or Temporal, then restart the worker before/after cooperative cleanup | Requester/source is auditable; the workflow is canceled; every unfinished owned row is canceled; accepted and unrelated pending jobs are untouched; no row remains falsely pending with zero live owner. |
 | R24 | Blocking activity call ignores cancellation after its Temporal attempt ends | Hold the provider seam past the cooperative grace window while another activity waits | The late writer remains fenced; the abandoned executor generation is observable and retired; fresh bounded capacity runs the next retry/reconciliation activity without a worker restart. |
 | R25 | Tailor repeatedly fails after using its inner model-repair budget | Redeliver the activity and start a later retry workflow | Each durable execution advances the outer counter exactly once, inner attempts remain separately auditable, the fifth durable failure becomes non-retryable `exhausted`, and later pickup does not create an infinite retry/spend loop. |
+| R26 | Current score is below the live materials threshold | Complete or replay preparation, then lower the threshold or request an explicit per-job low-fit override | Tailor, Cover, and Apply persist non-retryable `skipped` rows with `MIN_SCORE` and the exact score/threshold pair; replay is idempotent; hard blockers take precedence; only threshold-owned skips reset when policy permits work; no Apply attempt starts. |
 
 ## Execution Order
 
@@ -64,7 +70,8 @@ The campaign owns an isolated `JOBCTRL_DIR`, SQLite database, Temporal data dire
 5. Run persistence/supervisor/restart-order faults R19-R21.
 6. Finish with mixed-state streaming scenario R22, explicit Enrich cancellation
    R23, abandoned-thread capacity recovery R24, retry-budget convergence R25,
-   and rerun every previously failing scenario.
+   threshold-state convergence R26, and rerun every previously failing
+   scenario.
 
 ## Evidence Per Scenario
 
@@ -178,6 +185,14 @@ The campaign reproduced independent reliability defects:
     generation attempts in an append-only audit keyed by execution and durable
     attempt, and becomes non-retryable `exhausted` on the fifth durable failure,
     matching the established Cover contract.
+19. The recovered cohort exposed a terminal policy decision that existed only
+    in workflow history. A below-threshold Tailor returned `skipped` and emitted
+    `StageSkipped`, but the canonical Tailor, Cover, and Apply rows stayed
+    `pending`, so the UI advertised work with no possible owner. Score and
+    preparation now reconcile the current non-stale score into explicit
+    `MIN_SCORE` skips, preserve in-flight and accepted work, let score hard
+    blockers take precedence, and reset only threshold-owned skips when a later
+    score, threshold, or explicit low-fit override permits work.
 
 No timer or second scheduler was added. Recovery is one idempotent step in the
 workflow that owns the work, plus a durable event dispatch when a setting
@@ -197,9 +212,10 @@ is already canceled; it never mutates ownerless or unrelated pending work.
 | R14, R20 | SSE reconnect, operations/projection telemetry, launcher conflict, stale-process, and heartbeat coverage | Pass |
 | R16 | LLM retry, timeout, malformed-output, budget, and spend-limit coverage | Pass |
 | R18 | Renderer-unavailable retry and hard process-loss seam | Pass |
-| R23 | Real Enrich/Tailor/Cover `JobPipelineWorkflow` cancellation; exact selected/unrelated assertions; authenticated pre-pass child-process kill; abandoned-producer and successor-owner races; mixed local/Temporal requester audit; atomic snapshot/Tailor release; canonical restart pickup and exact execution-ID handoff; activity-timeout retry; successful-subset handoff; authenticated-recovery budget and extension-noise guard; selected-material incremental fan-out, cooperative commit fencing, committed-fact preservation, partial continuation, replay-versioned worker-wave deadline, atomic profile/policy comparison, and exact selected-message artifact fingerprints | Final verification in progress: focused automated regressions pass; authorized live recovery is still running; final independent review/QA and refreshed UI proof remain |
+| R23 | Real Enrich/Tailor/Cover `JobPipelineWorkflow` cancellation; exact selected/unrelated assertions; authenticated pre-pass child-process kill; abandoned-producer and successor-owner races; mixed local/Temporal requester audit; atomic snapshot/Tailor release; canonical restart pickup and exact execution-ID handoff; activity-timeout retry; successful-subset handoff; authenticated-recovery budget and extension-noise guard; selected-material incremental fan-out, cooperative commit fencing, committed-fact preservation, partial continuation, replay-versioned worker-wave deadline, atomic profile/policy comparison, and exact selected-message artifact fingerprints | PASS: focused and cumulative regressions, authorized live recovery, independent review/QA, and refreshed UI proof completed. |
 | R24 | Ignored-cancellation thread held past the grace window; distinct Temporal-sync and blocking executors; executor-generation rotation; immediate subsequent activity | Pass: focused abandoned-thread and worker-construction regressions; live recovery exposed and reproduced the zero-dispatch backlog before the fix |
-| R25 | Inner Tailor retry exhaustion followed by repeated durable executions, including the fifth-failure boundary | Focused proof passes: inner exhaustion leaves outer attempt 1 retryable; two executions retain both complete audit reports; retry re-entry advances cumulatively; durable attempt 5 is `exhausted` and non-retryable. Final cumulative gates remain. |
+| R25 | Inner Tailor retry exhaustion followed by repeated durable executions, including the fifth-failure boundary | PASS: inner exhaustion leaves outer attempt 1 retryable; two executions retain both complete audit reports; retry re-entry advances cumulatively; durable attempt 5 is `exhausted` and non-retryable; cumulative gates passed. |
+| R26 | Below-threshold workflow completion, repeated reconciliation, hard-blocker precedence, threshold lowering, explicit low-fit override, guarded concurrent claim races, and rendered diagnostics | Automated verification PASS: 3,389 Python tests, 2 skipped; 2,005 web tests; web/type/lint/docs checks; deterministic creation and reversal race fixtures; independent review and QA. Live read-model reconciliation remains. |
 | Worker composition | Clean import of the complete Temporal workflow/activity registry | Pass: 10 workflows and 23 activities compose without an import cycle |
 | API cumulative | Server, profile-event, and JSON-RPC adapter suites, including loopback SSE and startup recovery | Pass: 263 tests |
 | Live Pipelines UI | Browser DOM, console, screenshot, and disclosure interaction against the running app | Pass: Enrich precedes Enrichment reconciliation; Render PDF follows Cover letter; no relevant console warning/error |

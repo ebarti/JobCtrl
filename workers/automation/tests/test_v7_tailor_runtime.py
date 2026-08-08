@@ -537,6 +537,23 @@ def test_tailor_job_by_id_enforces_score_boundary_before_generation(
         snapshot=SimpleNamespace(),
         llm_model=None,
     )
+
+    assert skipped["reason"] == "score_below_threshold"
+    skipped_rows = conn.execute(
+        """
+        SELECT stage, state, error_code, error_message, retryable
+          FROM job_stage_states
+         WHERE tenant_id = ? AND job_id = ?
+           AND stage IN ('tailor', 'cover', 'apply')
+         ORDER BY stage
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchall()
+    assert {row["state"] for row in skipped_rows} == {"skipped"}
+    assert {row["error_code"] for row in skipped_rows} == {"MIN_SCORE"}
+    assert all("6/10" in row["error_message"] for row in skipped_rows)
+    assert {row["retryable"] for row in skipped_rows} == {0}
+
     approved = tailor_module.tailor_job_by_id(
         _JOB_ID,
         tenant_id=_TENANT_A,
@@ -546,9 +563,24 @@ def test_tailor_job_by_id_enforces_score_boundary_before_generation(
         llm_model=None,
     )
 
-    assert skipped["reason"] == "not_eligible"
     assert approved["status"] == "approved"
     assert calls == [str(_JOB_ID)]
+    restored_rows = conn.execute(
+        """
+        SELECT stage, state, error_code
+          FROM job_stage_states
+         WHERE tenant_id = ? AND job_id = ?
+           AND stage IN ('tailor', 'cover', 'apply')
+         ORDER BY stage
+        """,
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchall()
+    assert {row["stage"]: row["state"] for row in restored_rows} == {
+        "apply": "pending",
+        "cover": "pending",
+        "tailor": "succeeded",
+    }
+    assert {row["error_code"] for row in restored_rows} == {None}
 
 
 def test_tailor_job_by_id_skips_blocked_scores_without_generation(

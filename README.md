@@ -229,6 +229,12 @@ evidence, qualifications, and the complete capability matrix.
   Run detail names the selected stage scope from the workflow input, so a
   cover-only maintenance run is labeled **Cover letter run** instead of the
   generic pipeline workflow name.
+- Treat `pending` as work that can still start. When a current score is below
+  the live materials threshold, Tailor, Cover, and Apply instead show
+  **skipped** with the `MIN_SCORE` reason and the exact score/threshold pair.
+  A score hard blocker remains **blocked**. Lowering the threshold, recording a
+  higher score, or deliberately choosing **Tailor this job** clears only that
+  threshold-owned skip; it does not consume a failed-generation retry.
 - Review privacy-bounded learning recommendations on the Dashboard. JobCtrl
   derives them only from explicit reviewed signals, requires compatible
   evidence across jobs, and changes Materials behavior only after you accept a

@@ -82,6 +82,7 @@ from jobctrl.scoring.employer_analysis import build_analyze_use_case
 from jobctrl.state import (
     ensure_job_stage_rows,
     reconcile_score_eligibility_blockers,
+    reconcile_score_threshold_skips,
     record_job_event,
     set_stage_state,
     utc_now,
@@ -890,17 +891,20 @@ def tailor_job_by_id(
     # salary-only scores may still carry SCORE_ELIGIBILITY_BLOCKED rows from
     # the old policy; clearing them after selection would skip this invocation
     # and strand the preparation workflow until another external trigger.
-    if _reconcile_score_eligibility_skip(
+    score_skip_reason = _reconcile_score_eligibility_skip(
         conn,
         job_id=stable_job_id,
         tenant_id=tenant_id,
-    ):
+        min_score=min_score,
+        allow_low_fit_override=allow_low_fit_override,
+    )
+    if score_skip_reason is not None:
         conn.commit()
         return {
             "url": target["url"],
             "job_id": str(stable_job_id),
             "status": "skipped",
-            "reason": "score_eligibility_blocked",
+            "reason": score_skip_reason,
         }
 
     existing_materials = _reconcile_existing_approved_resume(
@@ -1323,11 +1327,13 @@ def _reconcile_score_eligibility_skip(
     *,
     job_id: JobId,
     tenant_id: TenantId,
-) -> bool:
+    min_score: int,
+    allow_low_fit_override: bool,
+) -> str | None:
     stable_job_id = canonical_job_id(str(job_id))
     score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
     if score is None:
-        return False
+        return None
     eligibility = normalize_eligibility_for_downstream(score.breakdown.eligibility)
     if not eligibility_blocks_downstream(eligibility):
         reconcile_score_eligibility_blockers(
@@ -1337,17 +1343,41 @@ def _reconcile_score_eligibility_skip(
             eligibility_status=eligibility.status,
             hard_blockers=list(eligibility.hard_blockers),
         )
-        return False
+        effective_min_score = (
+            0
+            if allow_low_fit_override
+            else db_module.effective_tailoring_min_score(min_score)
+        )
+        if score.fit_score.value < effective_min_score:
+            row = conn.execute(
+                "SELECT discovered_at FROM jobs WHERE tenant_id = ? AND job_id = ?",
+                (str(tenant_id), str(score.job_id)),
+            ).fetchone()
+            ensure_job_stage_rows(
+                conn,
+                score.job_id,
+                tenant_id=tenant_id,
+                discovered_at=row["discovered_at"] if row is not None else None,
+            )
+        reconcile_score_threshold_skips(
+            conn,
+            tenant_id=tenant_id,
+            job_id=score.job_id,
+            fit_score=score.fit_score.value,
+            min_score=effective_min_score,
+        )
+        if score.fit_score.value < effective_min_score:
+            return "score_below_threshold"
+        return None
     row = conn.execute(
         "SELECT discovered_at FROM jobs WHERE tenant_id = ? AND job_id = ?",
         (str(tenant_id), str(score.job_id)),
     ).fetchone()
-    discovered_at = row["discovered_at"] if row is not None else None
     ensure_job_stage_rows(
         conn,
         score.job_id,
         tenant_id=tenant_id,
-        discovered_at=discovered_at,
+        discovered_at=row["discovered_at"] if row is not None else None,
     )
     reconcile_score_eligibility_blockers(
         conn,
@@ -1356,7 +1386,7 @@ def _reconcile_score_eligibility_skip(
         eligibility_status=eligibility.status,
         hard_blockers=list(eligibility.hard_blockers),
     )
-    return True
+    return "score_eligibility_blocked"
 
 
 def _record_tailor_enrichment_block(
