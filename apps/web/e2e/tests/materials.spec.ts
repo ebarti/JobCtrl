@@ -46,8 +46,16 @@ test("Generate materials: button enabled → dispatch queued → ResumeApproved 
   const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });
 
+  const moreActions = drawer.getByRole("button", {
+    name: "More job actions",
+  });
+  await moreActions.click();
+  await expect(moreActions).toHaveAttribute("aria-expanded", "true");
+
   // The button is enabled (no longer the disabled "not yet wired" stub).
-  const generateButton = drawer.getByRole("button", { name: /generate materials/i });
+  const generateButton = page
+    .getByRole("toolbar", { name: "Job actions" })
+    .getByRole("button", { name: /generate materials/i });
   await expect(generateButton).toBeEnabled();
 
   // Capture the dispatch response to prove the route returns 202 (not 400).
