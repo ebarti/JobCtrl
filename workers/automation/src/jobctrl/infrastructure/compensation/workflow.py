@@ -47,7 +47,7 @@ _COMPENSATION_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=5),
     maximum_interval=timedelta(minutes=1),
     maximum_attempts=2,
-    non_retryable_error_types=["configuration", "authentication", "missing_input", "budget_exceeded"],
+    non_retryable_error_types=["configuration", "missing_input", "budget_exceeded"],
 )
 _DEFAULT_TIMEOUT = timedelta(minutes=20)
 

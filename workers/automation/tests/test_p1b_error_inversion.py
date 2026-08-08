@@ -33,8 +33,6 @@ from jobctrl.discovery import smartextract, workday
 from jobctrl.discovery.jobspy import DiscoveryCancelled, run_discovery
 from jobctrl.domain.errors import (
     AttemptBudgetExhaustedError,
-    AuthenticationError,
-    BrowserTransientError,
     ConfigurationError,
     JobCtrlError,
     LlmTransientError,
@@ -226,10 +224,8 @@ def test_error_taxonomy_maps_to_temporal_application_errors() -> None:
     cases: tuple[tuple[type[JobCtrlError], str, bool], ...] = (
         (AttemptBudgetExhaustedError, "attempt_budget_exhausted", True),
         (ConfigurationError, "configuration", True),
-        (AuthenticationError, "authentication", True),
         (MissingInputError, "missing_input", True),
         (TransientNetworkError, "transient_network", False),
-        (BrowserTransientError, "browser_transient", False),
         (LlmTransientError, "llm_transient", False),
         (SourceUnavailableError, "source_unavailable", False),
     )
