@@ -2399,6 +2399,22 @@ async def _worker_heartbeat_loop(
                 if reconciled:
                     console.print(f"[yellow]Reconciler updated {reconciled} workflow run(s).[/yellow]")
             try:
+                from jobctrl.infrastructure.temporal.cancellation_audit import (
+                    reconcile_cancellation_audit,
+                )
+
+                audited = await reconcile_cancellation_audit(temporal_client)
+            except Exception:
+                log.warning(
+                    "Cancellation-audit reconciler iteration failed; will retry",
+                    exc_info=True,
+                )
+            else:
+                if audited:
+                    console.print(
+                        f"[yellow]Recovered the cancellation requester for {audited} workflow run(s).[/yellow]"
+                    )
+            try:
                 recovered = await _reconcile_legacy_discovery_executions(temporal_client)
             except Exception:
                 log.warning(
@@ -2751,6 +2767,38 @@ async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> 
         error_message=error_message,
         temporal_run_id=description.run_id or run.get("temporal_run_id"),
     )
+    if status == "canceled":
+        # Audit enrichment, never settlement-blocking: record Temporal's
+        # immutable requester identity from the exact execution the describe
+        # just observed. Failures degrade to the recovered_temporal_history
+        # backfill sweep on a later heartbeat iteration.
+        from jobctrl.domain.tenant import LOCAL_TENANT
+        from jobctrl.infrastructure.temporal.cancellation_audit import (
+            observe_and_record_cancellation_request,
+        )
+
+        observed_run_id = str(description.run_id or temporal_run_id or "") or None
+        try:
+            audit_handle = (
+                temporal_client.get_workflow_handle(workflow_id, run_id=observed_run_id)
+                if observed_run_id
+                else handle
+            )
+            await observe_and_record_cancellation_request(
+                conn,
+                audit_handle,
+                workflow_id=workflow_id,
+                evidence_kind="temporal_history",
+                workflow_type=str(run.get("workflow_type") or "") or None,
+                temporal_run_id=observed_run_id,
+                tenant_id=str(run.get("tenant_id") or LOCAL_TENANT),
+            )
+        except Exception:
+            log.warning(
+                "Cancellation-request audit recording failed for %s; the backfill sweep will retry",
+                workflow_id,
+                exc_info=True,
+            )
     return True
 
 

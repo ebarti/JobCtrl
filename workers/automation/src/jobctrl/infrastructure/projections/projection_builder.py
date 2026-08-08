@@ -106,16 +106,25 @@ PROJECTION_NAME = "operations_projections"
 SCORE_AUDIT_BACKFILL = "score_audit_columns_v1"
 COMPENSATION_PROJECTION_VERSION = 1
 
-# Workflow lifecycle events fold into ``workflow_run_projections`` keyed by
-# ``workflowId``. The ``WorkflowStarted`` marker opens a row; each terminal
-# event maps to a terminal status in the 12-state ``WORKFLOW_RUN_STATUSES``.
-WORKFLOW_EVENT_TYPES: tuple[str, ...] = (
+# State-bearing workflow lifecycle events fold into
+# ``workflow_run_projections`` keyed by ``workflowId``. The ``WorkflowStarted``
+# marker opens a row; each terminal event maps to a terminal status in the
+# 12-state ``WORKFLOW_RUN_STATUSES``.
+WORKFLOW_STATE_EVENT_TYPES: tuple[str, ...] = (
     "WorkflowStarted",
     "WorkflowCompleted",
     "WorkflowFailed",
     "WorkflowCanceled",
     "WorkflowTimedOut",
     "WorkflowTerminated",
+)
+# Audit-only facts riding the same per-run stream: they enrich the projected
+# timeline but must never drive the lifecycle fold. A group that contains only
+# audit facts (e.g. a cancellation-requester backfill for a legacy canceled
+# run) materialises nothing, so the stored row is preserved verbatim.
+WORKFLOW_AUDIT_EVENT_TYPES: tuple[str, ...] = ("WorkflowCancellationRequested",)
+WORKFLOW_EVENT_TYPES: tuple[str, ...] = (
+    WORKFLOW_STATE_EVENT_TYPES + WORKFLOW_AUDIT_EVENT_TYPES
 )
 
 PIPELINE_STEP_EVENT_TYPES: frozenset[str] = frozenset(
@@ -3641,7 +3650,10 @@ class ProjectionBuilder:
         the watermark past workflow events while the workflow-run table is still
         empty. A count mismatch is enough to trigger a deterministic rebuild.
         """
-        placeholders = ", ".join("?" for _ in WORKFLOW_EVENT_TYPES)
+        # Count state-bearing events only: an audit-only group (e.g. a lone
+        # ``WorkflowCancellationRequested``) never materialises a row, so it
+        # must not keep the backfill detector permanently pending.
+        placeholders = ", ".join("?" for _ in WORKFLOW_STATE_EVENT_TYPES)
         try:
             event_row = self._conn.execute(
                 f"""
@@ -3655,7 +3667,7 @@ class ProjectionBuilder:
                   AND payload_json IS NOT NULL
                   AND json_valid(payload_json)
                 """,
-                (str(self._tenant_id), *WORKFLOW_EVENT_TYPES),
+                (str(self._tenant_id), *WORKFLOW_STATE_EVENT_TYPES),
             ).fetchone()
             projection_row = self._conn.execute(
                 "SELECT COUNT(*) FROM workflow_run_projections WHERE tenant_id = ?",
@@ -3722,6 +3734,17 @@ class ProjectionBuilder:
         self, workflow_id: str, events: list[dict]
     ) -> WorkflowRunProjection | None:
         if not events:
+            return None
+        # An audit-only group (no ``WorkflowStarted`` and no terminal event —
+        # e.g. a ``WorkflowCancellationRequested`` fact recorded for a legacy
+        # run whose lifecycle predates the event log) carries no lifecycle
+        # state. Materialising the seed fold here would full-row-overwrite the
+        # stored projection (a canceled run would flip to ``in_progress`` and
+        # lose ``started_at``/``finished_at``/``input_summary`` — PR #750
+        # review, reproduced). Return ``None`` so the stored row is preserved.
+        if not any(
+            event["event_type"] in WORKFLOW_STATE_EVENT_TYPES for event in events
+        ):
             return None
         workflow_type = ""
         status = "in_progress"

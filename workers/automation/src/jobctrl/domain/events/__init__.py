@@ -145,6 +145,8 @@ from jobctrl.domain.events.operations import (
 from jobctrl.domain.events.workflow import (
     WorkflowStartedPayload,
     create_workflow_started,
+    WorkflowCancellationRequestedPayload,
+    create_workflow_cancellation_requested,
     WorkflowCompletedPayload,
     create_workflow_completed,
     WorkflowFailedPayload,
@@ -272,6 +274,7 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "PipelineStepFailed",
     "DigestReviewed",
     "WorkflowStarted",
+    "WorkflowCancellationRequested",
     "WorkflowCompleted",
     "WorkflowFailed",
     "WorkflowCanceled",
@@ -436,6 +439,8 @@ __all__ = [
     # Workflow lifecycle (Temporal loop closure)
     "WorkflowStartedPayload",
     "create_workflow_started",
+    "WorkflowCancellationRequestedPayload",
+    "create_workflow_cancellation_requested",
     "WorkflowCompletedPayload",
     "create_workflow_completed",
     "WorkflowFailedPayload",

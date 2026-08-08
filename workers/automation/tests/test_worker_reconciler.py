@@ -27,22 +27,53 @@ class _FakeDescribe:
         self.run_id = run_id
 
 
+class _FakeCancelRequestAttributes:
+    def __init__(self, identity: str, cause: str | None = None) -> None:
+        self.identity = identity
+        self.cause = cause
+
+
+class _FakeCancelRequestedEvent:
+    """Minimal Temporal history event carrying a cancel-request identity.
+
+    ``event_time`` stays ``None`` so ``_event_timestamp`` falls back to
+    ``utc_now()`` — the timestamp is not what these tests pin."""
+
+    def __init__(self, identity: str, cause: str | None = None) -> None:
+        self.workflow_execution_cancel_requested_event_attributes = (
+            _FakeCancelRequestAttributes(identity, cause)
+        )
+        self.event_time = None
+
+    def WhichOneof(self, _field: str) -> str:  # noqa: N802 — protobuf casing
+        return "workflow_execution_cancel_requested_event_attributes"
+
+
 class _FakeHandle:
-    def __init__(self, outcome) -> None:
+    def __init__(self, outcome, history=()) -> None:
         self._outcome = outcome
+        self._history = tuple(history)
 
     async def describe(self):
         if isinstance(self._outcome, Exception):
             raise self._outcome
         return self._outcome
 
+    async def _iterate_history(self):
+        for event in self._history:
+            yield event
+
+    def fetch_history_events(self, *, wait_new_event: bool = False):
+        return self._iterate_history()
+
 
 class _FakeClient:
     """Maps workflow ids to a describe result; unknown ids look RUNNING so
     leftover rows from other suites are never terminalized by this test."""
 
-    def __init__(self, mapping: dict) -> None:
+    def __init__(self, mapping: dict, histories: dict | None = None) -> None:
         self._mapping = mapping
+        self._histories = histories or {}
         self.lookups: list[tuple[str, str | None]] = []
 
     def get_workflow_handle(
@@ -50,7 +81,8 @@ class _FakeClient:
     ) -> _FakeHandle:
         self.lookups.append((workflow_id, run_id))
         return _FakeHandle(
-            self._mapping.get(workflow_id, _FakeDescribe(WorkflowExecutionStatus.RUNNING))
+            self._mapping.get(workflow_id, _FakeDescribe(WorkflowExecutionStatus.RUNNING)),
+            history=self._histories.get(workflow_id, ()),
         )
 
 
@@ -296,3 +328,46 @@ async def test_reconciler_maps_canceled_execution_to_workflow_canceled() -> None
     canceled_code, canceled_message = _reason(conn, canceled_id)
     assert canceled_code == "reconciled_closed_canceled"
     assert canceled_message and "CANCELED" in canceled_message
+    # A history without a readable cancel-request event settles the run all the
+    # same — the audit read is enrichment, never settlement-blocking.
+    assert _cancellation_facts(conn, canceled_id) == []
+
+
+def _cancellation_facts(conn, workflow_id: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT payload_json FROM job_events "
+        "WHERE event_type = 'WorkflowCancellationRequested' AND entity_ref = ? "
+        "ORDER BY event_id ASC",
+        (workflow_id,),
+    ).fetchall()
+    return [json.loads(row["payload_json"] or "{}") for row in rows]
+
+
+@pytest.mark.asyncio
+async def test_reconciler_records_requester_when_closing_canceled_execution() -> None:
+    """Closing a CANCELED execution also records Temporal's immutable requester
+    from the exact run's history (evidence_kind ``temporal_history``) — the
+    timely half of the cancellation audit. Runs it cannot read here are picked
+    up later by the ``recovered_temporal_history`` backfill sweep."""
+    conn = get_connection()
+    canceled_id = f"run-{uuid.uuid4().hex}"
+    run_id = f"temporal-{uuid.uuid4().hex}"
+    _seed_open_run(conn, canceled_id, workflow_type="ApplyWorkflow", temporal_run_id=run_id)
+
+    client = _FakeClient(
+        {canceled_id: _FakeDescribe(WorkflowExecutionStatus.CANCELED, run_id=run_id)},
+        histories={
+            canceled_id: (_FakeCancelRequestedEvent("temporal-web:ops@local"),)
+        },
+    )
+    await _reconcile_workflow_runs(client)
+
+    assert _status(conn, canceled_id) == "canceled"
+    facts = _cancellation_facts(conn, canceled_id)
+    assert len(facts) == 1
+    assert facts[0]["evidenceKind"] == "temporal_history"
+    assert facts[0]["requestedBy"] == "temporal-web:ops@local"
+    assert facts[0]["source"] == "temporal_web"
+    assert facts[0]["temporalRunId"] == run_id
+    # The audit read was pinned to the exact execution the describe observed.
+    assert (canceled_id, run_id) in client.lookups

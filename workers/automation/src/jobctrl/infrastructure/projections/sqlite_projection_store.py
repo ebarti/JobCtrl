@@ -1034,6 +1034,38 @@ class SqliteProjectionStore:
         columns = [column[0] for column in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
+    def workflow_runs_missing_cancellation_audit(self, tenant_id: str) -> list[dict]:
+        """Return canceled runs lacking the immutable requester/source fact."""
+
+        cursor = self._conn.execute(
+            """
+            SELECT wrp.workflow_id, wrp.tenant_id, wrp.workflow_type,
+                   wrp.status, wrp.started_at, wrp.finished_at,
+                   wrp.temporal_run_id, wrp.error_code,
+                   wrp.input_summary_json
+            FROM workflow_run_projections AS wrp
+            WHERE wrp.tenant_id = ?
+              AND wrp.status = 'canceled'
+              AND wrp.temporal_run_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1
+                FROM job_events AS events
+                WHERE events.tenant_id = wrp.tenant_id
+                  AND events.event_type = 'WorkflowCancellationRequested'
+                  AND events.payload_json IS NOT NULL
+                  AND json_valid(events.payload_json)
+                  AND json_extract(events.payload_json, '$.workflowId') = wrp.workflow_id
+                  AND json_extract(events.payload_json, '$.temporalRunId') = wrp.temporal_run_id
+                  AND json_extract(events.payload_json, '$.evidenceKind') IN (
+                    'temporal_history', 'recovered_temporal_history'
+                  )
+              )
+            """,
+            (tenant_id,),
+        )
+        columns = [column[0] for column in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
     def replace_source_quality(self, tenant_id: str, stats: Iterable[SourceQualityStats]) -> None:
         self._conn.execute("DELETE FROM source_quality_stats WHERE tenant_id = ?", (tenant_id,))
         for projection in stats:

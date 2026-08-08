@@ -243,4 +243,50 @@ describe("<WorkflowRunDrawer>", () => {
       within(workspace).queryByRole("button", { name: /Stop workflow run/ }),
     ).not.toBeInTheDocument();
   });
+
+  it("shows the cancellation requester and source in the run timeline", async () => {
+    const workflowRun = vi.fn(async () =>
+      makeWorkflowRunDetail({
+        status: "canceled",
+        errorCode: null,
+        errorMessage: null,
+        retryable: false,
+        events: [
+          {
+            eventType: "WorkflowCancellationRequested",
+            occurredAt: "2026-08-04T21:04:08Z",
+            // The real Python-built timeline carries no status for the
+            // audit-only fact (the payload has no `status` key), so the
+            // fixture must match: null, not "in_progress".
+            status: null,
+            message:
+              "Cancellation requested by temporal-cli:tester@local via temporal_cli.",
+          },
+          {
+            eventType: "WorkflowCanceled",
+            occurredAt: "2026-08-04T21:04:09Z",
+            status: "canceled",
+            message: "Workflow canceled.",
+          },
+        ],
+      }),
+    );
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { workflowRun } }),
+    });
+    const router = buildRouter();
+    render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+
+    const timeline = await screen.findByRole("list", {
+      name: "Workflow lifecycle",
+    });
+    const request = within(timeline).getByRole("listitem", {
+      name: "Workflow cancellation requested",
+    });
+    expect(request).toHaveTextContent("temporal-cli:tester@local");
+    expect(request).toHaveTextContent("temporal_cli");
+    expect(
+      within(timeline).getByRole("listitem", { name: "Workflow canceled" }),
+    ).toBeInTheDocument();
+  });
 });

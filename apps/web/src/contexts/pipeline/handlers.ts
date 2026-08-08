@@ -17,6 +17,7 @@ import type {
   PipelineStepStarted,
   TenantId,
   WorkflowStarted,
+  WorkflowCancellationRequested,
   WorkflowCompleted,
   WorkflowFailed,
   WorkflowCanceled,
@@ -187,6 +188,13 @@ const workflowLifecycleHandler = (
 ];
 
 export const workflowStartedHandler = workflowLifecycleHandler;
+export const workflowCancellationRequestedHandler = (
+  event: WorkflowCancellationRequested,
+): readonly InvalidationItem[] => [
+  invalidate(workflowRunsKeys.lists(event.tenantId)),
+  invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.workflowId)),
+  pipelineOperationsInvalidation(event.tenantId),
+];
 export const workflowCompletedHandler = workflowLifecycleHandler;
 export const workflowFailedHandler = workflowLifecycleHandler;
 export const workflowCanceledHandler = (

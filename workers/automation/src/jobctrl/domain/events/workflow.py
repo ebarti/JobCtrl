@@ -70,6 +70,51 @@ def create_workflow_started(tenant_id: TenantId, payload: WorkflowStartedPayload
 
 
 @dataclass(frozen=True)
+class WorkflowCancellationRequestedPayload:
+    """Audit fact for who requested cancellation and through which boundary."""
+
+    workflow_id: str
+    workflow_type: str
+    requested_by: str
+    source: str
+    requested_at: str
+    evidence_kind: str
+    reason: str | None = None
+    temporal_run_id: str | None = None
+
+
+def create_workflow_cancellation_requested(
+    tenant_id: TenantId,
+    payload: WorkflowCancellationRequestedPayload,
+) -> DomainEvent:
+    if payload.evidence_kind == "recovered_temporal_history":
+        message = (
+            "Cancellation requester recovered from a prior Temporal history "
+            f"observation: {payload.requested_by} via {payload.source}."
+        )
+    else:
+        message = f"Cancellation requested by {payload.requested_by} via {payload.source}."
+    if payload.reason:
+        message = f"{message} Reason: {payload.reason}"
+    return create_domain_event(
+        "WorkflowCancellationRequested",
+        tenant_id,
+        {
+            "tenantId": str(tenant_id),
+            "workflowId": payload.workflow_id,
+            "workflowType": payload.workflow_type,
+            "requestedBy": payload.requested_by,
+            "source": payload.source,
+            "evidenceKind": payload.evidence_kind,
+            "reason": payload.reason,
+            "requestedAt": payload.requested_at,
+            "temporalRunId": payload.temporal_run_id,
+            "message": message,
+        },
+    )
+
+
+@dataclass(frozen=True)
 class WorkflowCompletedPayload:
     workflow_id: str
     workflow_type: str
