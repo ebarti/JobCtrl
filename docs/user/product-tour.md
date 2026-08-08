@@ -190,14 +190,17 @@ logs, and follow-up reminders remain inspectable as separate decisions.
 
 Runs is the durable workflow index. Filter by status, inspect start/update/end
 time and progress, cancel eligible work, or open the run route for its complete
-timeline and failure facts.
+timeline and failure facts. Run detail derives its heading and **Selected
+stages** field from the canonical workflow input, so a targeted maintenance run
+identifies the pipeline stages that actually ran.
 
 ### Run Detail
 
 ![JobCtrl Run Detail route workspace with workflow facts, failure diagnostics, and lifecycle timeline](../assets/screenshots/run-detail.png)
 
 Run Detail shows workflow and Temporal identities, job relationship, mode,
-status, timestamps, retryability, failure code/message, and lifecycle events.
+selected stage scope, status, timestamps, retryability, failure code/message,
+and lifecycle events.
 
 ### Debug
 

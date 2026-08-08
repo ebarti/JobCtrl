@@ -541,7 +541,8 @@ Useful web app views:
 - Jobs for triage and the bookmarkable Job Detail workspace.
 - Runs for the shared Discover, preparation, and Apply history, using one status
   vocabulary, terminal-state contract, cancellation control, and route-level
-  timeline.
+  timeline. A run's heading and **Selected stages** field identify the exact
+  stage scope recorded in its workflow input.
 - Evidence for profile-evidence reuse, generated-material usage, and gaps.
 - Artifacts for generated files and same-job artifact comparisons.
 - Apply Review for approval and resume edits.
@@ -567,7 +568,7 @@ you pass `--acknowledge`, which marks the displayed digest as reviewed.
 <WorkflowSurfacePanel surface="web">
 
 ![JobCtrl Runs page listing workflow runs with status and mode](../assets/screenshots/runs.png)
-*The Runs page lists workflow runs with status, mode, timing, and a link into the web interface of Temporal, the workflow engine. Filter the complete history by status, exact workflow type, or an inclusive date range before opening a run timeline.*
+*The Runs page lists workflow runs with status, mode, timing, and a link into the web interface of Temporal, the workflow engine. Filter the complete history by status, exact workflow type, or an inclusive date range before opening a run timeline. Run detail names the exact selected stage scope from the workflow input.*
 
 </WorkflowSurfacePanel>
 

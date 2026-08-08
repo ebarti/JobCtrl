@@ -51,7 +51,7 @@ describe("<WorkflowRunDrawer>", () => {
     expect(
       within(workspace).getByRole("heading", {
         level: 1,
-        name: "Job pipeline workflow",
+        name: "Discover run",
       }),
     ).toHaveAttribute("data-typography", "page-title");
     expect(
@@ -109,6 +109,8 @@ describe("<WorkflowRunDrawer>", () => {
     expect(
       within(metadata!).queryByText("Status", { exact: true }),
     ).not.toBeInTheDocument();
+    expect(within(metadata!).getByText("Selected stages")).toBeInTheDocument();
+    expect(within(metadata!).getByText("Discover")).toBeInTheDocument();
 
     expect(
       within(workspace).getByRole("link", {
@@ -125,6 +127,39 @@ describe("<WorkflowRunDrawer>", () => {
       within(workspace).getByRole("link", { name: "Open pipeline controls" }),
     ).toHaveAttribute("href", "/pipelines");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("names a maintenance pipeline from its selected stage scope", async () => {
+    const workflowRun = vi.fn(async () =>
+      makeWorkflowRunDetail({
+        status: "succeeded",
+        errorCode: null,
+        errorMessage: null,
+        retryable: false,
+        inputSummary: { stages: ["cover"] },
+      }),
+    );
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { workflowRun } }),
+    });
+    const router = buildRouter();
+    render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+
+    const workspace = await screen.findByRole("article", {
+      name: "Workflow run details",
+    });
+    expect(
+      within(workspace).getByRole("heading", {
+        level: 1,
+        name: "Cover letter run",
+      }),
+    ).toBeInTheDocument();
+    const details = within(workspace)
+      .getByRole("heading", { level: 2, name: "Run details" })
+      .closest("section");
+    expect(details).not.toBeNull();
+    expect(within(details!).getByText("Selected stages")).toBeInTheDocument();
+    expect(within(details!).getByText("Cover letter")).toBeInTheDocument();
   });
 
   it("copies both run identities through the clipboard port", async () => {
