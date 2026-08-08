@@ -1,3 +1,4 @@
+import type { ApplyReviewApprovalGateReason } from "@jobctrl/contracts";
 import {
   LOCAL_TENANT,
   createContactCreated,
@@ -632,13 +633,13 @@ export class DemoLocalCommandExecutor {
         const gate = item.approvalGate;
         if (decision === "approve_submit") {
           if (numberValue(body.materialsGeneration) !== gate.materialsGeneration) {
-            throw new TypeError("approval_stale_materials");
+            throw new TypeError("approval_stale_materials" satisfies ApplyReviewApprovalGateReason);
           }
           if (numberValue(body.profileVersion) !== gate.profileVersion) {
-            throw new TypeError("approval_stale_profile");
+            throw new TypeError("approval_stale_profile" satisfies ApplyReviewApprovalGateReason);
           }
           if (stringValue(body.applicationUrl) !== gate.applicationUrl) {
-            throw new TypeError("approval_stale_url");
+            throw new TypeError("approval_stale_url" satisfies ApplyReviewApprovalGateReason);
           }
           const partialOverrideRunId = stringValue(body.partialOverrideRunId);
           if (partialOverrideRunId) {
@@ -646,14 +647,14 @@ export class DemoLocalCommandExecutor {
               throw new TypeError("partial_override_evidence_invalid");
             }
           } else if (!gate.dryRunEvidence || gate.dryRunEvidence.coverage !== "full") {
-            throw new TypeError("awaiting_dry_run");
+            throw new TypeError("awaiting_dry_run" satisfies ApplyReviewApprovalGateReason);
           }
           if (item.emailApplication) {
             if (
               stringValue(body.emailRecipient)?.toLowerCase() !== item.emailApplication.recipient.toLowerCase() ||
               stringValue(body.emailAttachmentArtifactId) !== item.emailApplication.attachmentArtifactId
             ) {
-              throw new TypeError("approval_stale_email_candidate");
+              throw new TypeError("approval_stale_email_candidate" satisfies ApplyReviewApprovalGateReason);
             }
           }
         }
