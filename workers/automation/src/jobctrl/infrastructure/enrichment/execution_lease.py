@@ -27,15 +27,38 @@ def claim_enrichment_execution_lease(
 ) -> EnrichmentExecutionLease:
     """Claim the newest workflow-assigned enrichment phase and attempt."""
 
+    return claim_enrichment_execution_lease_for_run(
+        conn,
+        tenant_id=TenantId(execution.tenant_id),
+        workflow_id=execution.workflow_id,
+        run_id=execution.temporal_run_id,
+        owner_token=owner_token,
+        activity_phase=activity_phase,
+        activity_attempt=activity_attempt,
+    )
+
+
+def claim_enrichment_execution_lease_for_run(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    workflow_id: str,
+    run_id: str,
+    owner_token: str,
+    activity_phase: int,
+    activity_attempt: int,
+) -> EnrichmentExecutionLease:
+    """Claim the fenced enrichment lane for any exact Temporal execution."""
+
     owner = owner_token.strip()
     if not owner:
         raise ValueError("activity_owner_token must be non-empty")
     if activity_phase < 1 or activity_attempt < 1:
         raise ValueError("activity_phase and activity_attempt must be positive")
     entity_ref = _execution_entity_ref(
-        execution.tenant_id,
-        execution.workflow_id,
-        execution.temporal_run_id,
+        str(tenant_id),
+        workflow_id,
+        run_id,
     )
     idempotency_key = f"enrichment-lease:{entity_ref}:{owner}"
     # Serialize the semantic comparison and append. Arrival order is not
@@ -68,13 +91,13 @@ def claim_enrichment_execution_lease(
             None,
             "workflow",
             "EnrichmentLeaseClaimed",
-            tenant_id=TenantId(execution.tenant_id),
-            message="Discover enrichment activity lease claimed",
+            tenant_id=tenant_id,
+            message="Enrichment activity lease claimed",
             payload={
                 "execution": {
-                    "tenantId": execution.tenant_id,
-                    "workflowId": execution.workflow_id,
-                    "runId": execution.temporal_run_id,
+                    "tenantId": str(tenant_id),
+                    "workflowId": workflow_id,
+                    "runId": run_id,
                 },
                 "ownerToken": owner,
                 "activityPhase": activity_phase,
@@ -103,9 +126,9 @@ def claim_enrichment_execution_lease(
         ).fetchone()[0]
     )
     return EnrichmentExecutionLease(
-        tenant_id=TenantId(execution.tenant_id),
-        workflow_id=execution.workflow_id,
-        run_id=execution.temporal_run_id,
+        tenant_id=tenant_id,
+        workflow_id=workflow_id,
+        run_id=run_id,
         owner_token=owner,
         epoch=event_id,
         generation=generation,
@@ -174,5 +197,6 @@ def _execution_entity_ref(tenant_id: str, workflow_id: str, run_id: str) -> str:
 
 __all__ = [
     "claim_enrichment_execution_lease",
+    "claim_enrichment_execution_lease_for_run",
     "fence_enrichment_execution_lease",
 ]

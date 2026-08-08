@@ -1,11 +1,55 @@
+from types import SimpleNamespace
+
 import pytest
 from temporalio.testing import WorkflowEnvironment
 
+import jobctrl.infrastructure.temporal.worker as temporal_worker_module
 from jobctrl.infrastructure.temporal import (
     JOBCTRL_TASK_QUEUE,
     build_worker,
 )
 from jobctrl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
+
+
+def test_build_worker_separates_temporal_and_blocking_activity_executors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executors: list[object] = []
+    blocking: list[object] = []
+
+    class _Executor:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            executors.append(self)
+
+    def _worker(client, **kwargs):
+        return SimpleNamespace(client=client, **kwargs)
+
+    monkeypatch.setattr(temporal_worker_module, "ThreadPoolExecutor", _Executor)
+    monkeypatch.setattr(temporal_worker_module, "Worker", _worker)
+    monkeypatch.setattr(
+        temporal_worker_module,
+        "set_activity_executor",
+        blocking.append,
+    )
+
+    worker = temporal_worker_module.build_worker(
+        SimpleNamespace(),
+        workflows=[],
+        activities=[],
+        max_concurrent_activities=4,
+    )
+
+    assert len(executors) == 2
+    assert worker.activity_executor is executors[0]
+    assert blocking == [executors[1]]
+    assert worker.activity_executor is not blocking[0]
+    assert executors[0].kwargs["thread_name_prefix"] == (
+        "jobctrl-temporal-sync-activity"
+    )
+    assert executors[1].kwargs["thread_name_prefix"] == (
+        "jobctrl-blocking-activity"
+    )
 
 
 @pytest.mark.asyncio

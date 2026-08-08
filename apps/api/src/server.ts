@@ -1054,7 +1054,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     const dispatch = await actionDispatcher(command, actionContext);
     if (dispatch.workflowId) {
-      recordPipelineWorkflowStarted(options.dbPath, firstStage, dispatch.workflowId, dispatch.runId);
+      recordPipelineWorkflowStarted(
+        options.dbPath,
+        firstStage,
+        dispatch.workflowId,
+        temporalExecutionRunId(dispatch),
+      );
     }
     actions.push(buildActionResponse(command, dispatch));
     const status = stageRunStatus(actions);
@@ -1451,12 +1456,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       for (const group of runnableGroups) {
         const command = bulkRetryRunStageCommand(db, group.stage, group.jobUrls, body);
         const dispatch = await actionDispatcher(command, actionContext);
+        const executionRunId = temporalExecutionRunId(dispatch);
         if (dispatch.workflowId) {
           recordPipelineWorkflowStarted(
             options.dbPath,
             group.stage,
             dispatch.workflowId,
-            dispatch.runId,
+            executionRunId,
             bulkRetryWorkflowPayload(command, dispatch),
           );
         }
@@ -1466,7 +1472,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             group.jobUrls.map((jobUrl) => ({ jobUrl, stage: group.stage })),
             {
               ...(dispatch.workflowId ? { workflowId: dispatch.workflowId } : {}),
-              ...(dispatch.runId ? { runId: dispatch.runId } : {}),
+              ...(executionRunId ? { temporalRunId: executionRunId } : {}),
               ...(dispatch.actionId ? { actionId: dispatch.actionId } : {}),
               ...(command.workers !== undefined ? { requestedWorkers: command.workers } : {}),
               ...(command.limit !== undefined ? { requestedLimit: command.limit } : {}),
@@ -1514,12 +1520,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       for (const group of runnableGroups) {
         const command = pendingPreparationRunStageCommand(db, group.stage, group.jobUrls, body);
         const dispatch = await actionDispatcher(command, actionContext);
+        const executionRunId = temporalExecutionRunId(dispatch);
         if (dispatch.workflowId) {
           recordPipelineWorkflowStarted(
             options.dbPath,
             group.stage,
             dispatch.workflowId,
-            dispatch.runId,
+            executionRunId,
             pendingPreparationWorkflowPayload(command, dispatch),
           );
         }
@@ -1529,7 +1536,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             group.jobUrls.map((jobUrl) => ({ jobUrl, stage: group.stage })),
             {
               ...(dispatch.workflowId ? { workflowId: dispatch.workflowId } : {}),
-              ...(dispatch.runId ? { runId: dispatch.runId } : {}),
+              ...(executionRunId ? { temporalRunId: executionRunId } : {}),
               ...(dispatch.actionId ? { actionId: dispatch.actionId } : {}),
               ...(command.workers !== undefined ? { requestedWorkers: command.workers } : {}),
               ...(command.limit !== undefined ? { requestedLimit: command.limit } : {}),
@@ -1842,7 +1849,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       const dispatch = await actionDispatcher(command, actionContext);
       if (dispatch.workflowId) {
-        recordPipelineWorkflowStarted(options.dbPath, body.stage, dispatch.workflowId, dispatch.runId);
+        recordPipelineWorkflowStarted(
+          options.dbPath,
+          body.stage,
+          dispatch.workflowId,
+          temporalExecutionRunId(dispatch),
+        );
       }
       void reply.code(dispatch.status === "queued" ? 202 : 200);
       return buildActionResponse(command, dispatch);
@@ -1890,7 +1902,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       const dispatch = await actionDispatcher(command, actionContext);
       if (dispatch.workflowId) {
-        recordPipelineWorkflowStarted(options.dbPath, primaryStage, dispatch.workflowId, dispatch.runId);
+        recordPipelineWorkflowStarted(
+          options.dbPath,
+          primaryStage,
+          dispatch.workflowId,
+          temporalExecutionRunId(dispatch),
+        );
       }
       void reply.code(dispatch.status === "queued" ? 202 : 200);
       return buildActionResponse(command, dispatch);
@@ -3949,6 +3966,33 @@ function firstEligiblePendingPreparationStage(
   return null;
 }
 
+function hasActiveUpstreamPreparationStage(
+  db: ApiDb,
+  jobId: string,
+  stage: Stage,
+): boolean {
+  const stageIndex = PREPARATION_STAGE_ORDER.indexOf(
+    stage as (typeof PREPARATION_STAGE_ORDER)[number],
+  );
+  if (stageIndex <= 0) {
+    return false;
+  }
+  const upstreamStages = PREPARATION_STAGE_ORDER.slice(0, stageIndex);
+  const placeholders = upstreamStages.map(() => "?").join(", ");
+  const active = db
+    .prepare(
+      `SELECT 1 AS active
+       FROM job_stage_states
+       WHERE tenant_id = 'local'
+         AND job_id = ?
+         AND stage IN (${placeholders})
+         AND state IN ('queued', 'running')
+       LIMIT 1`,
+    )
+    .get(jobId, ...upstreamStages) as { active: number } | undefined;
+  return Boolean(active?.active);
+}
+
 function stageCountsForTargets(targets: readonly RetryFailedJobTarget[]): Partial<Record<Stage, number>> {
   const counts: Partial<Record<Stage, number>> = {};
   for (const target of targets) {
@@ -4043,7 +4087,8 @@ interface PreparationPickupEligibility {
 }
 
 interface PreparationPickupRow {
-  full_description: string | null;
+  enrichment_status: string | null;
+  enrichment_full_description: string | null;
   fit_score: number | null;
   score_breakdown_json: string | null;
   score_version: number | null;
@@ -4075,7 +4120,8 @@ function preparationPickupEligibility(
   const row = db
     .prepare(
       `SELECT
-         projections.full_description,
+         enrichment.current_status AS enrichment_status,
+         enrichment.full_description AS enrichment_full_description,
          projections.fit_score,
          projections.score_breakdown_json,
          projections.score_version,
@@ -4090,6 +4136,8 @@ function preparationPickupEligibility(
        FROM jobs
        LEFT JOIN job_list_projections projections
          ON projections.tenant_id = jobs.tenant_id AND projections.job_id = jobs.job_id
+       LEFT JOIN job_enrichments enrichment
+         ON enrichment.tenant_id = jobs.tenant_id AND enrichment.job_id = jobs.job_id
        LEFT JOIN job_stage_states stage_state
          ON stage_state.tenant_id = jobs.tenant_id
         AND stage_state.job_id = jobs.job_id
@@ -4108,11 +4156,17 @@ function preparationPickupEligibility(
   if ((row.stage_state ?? "pending") !== "pending") {
     return ineligiblePickup("stage_not_pending", `The ${stage} stage is not pending.`);
   }
+  if (hasActiveUpstreamPreparationStage(db, jobId, stage)) {
+    return ineligiblePickup(
+      "upstream_stage_active",
+      "Job already has an active upstream preparation stage.",
+    );
+  }
   if (stageAttemptsExhausted(stage, row)) {
     return ineligiblePickup("stage_attempts_exhausted", `The ${stage} stage has exhausted automatic attempts.`);
   }
 
-  const hasFullDescription = Boolean(row.full_description?.trim());
+  const hasFullDescription = Boolean(row.enrichment_full_description?.trim());
   const fitScore = row.fit_score === null || row.fit_score === undefined ? null : Number(row.fit_score);
   const scoreIsStale = Number(row.unresolved_stale_scores ?? 0) > 0;
   const scoreIsCurrentForDownstream =
@@ -4126,14 +4180,17 @@ function preparationPickupEligibility(
   const hasPdf = Boolean(row.has_pdf);
 
   if (stage === "enrich") {
-    return hasFullDescription
-      ? ineligiblePickup("already_enriched", "Job already has enriched posting detail.")
-      : eligiblePickup();
+    return row.enrichment_status === null || row.enrichment_status === "pending"
+      ? eligiblePickup()
+      : ineligiblePickup("already_enriched", "Job already has enriched posting detail.");
+  }
+  if (row.enrichment_status !== "enriched" || !hasFullDescription) {
+    return ineligiblePickup(
+      "missing_description",
+      "Job needs completed canonical enrichment before downstream preparation.",
+    );
   }
   if (stage === "score") {
-    if (!hasFullDescription) {
-      return ineligiblePickup("missing_description", "Job needs enrichment before scoring.");
-    }
     return fitScore === null || scoreIsStale
       ? eligiblePickup()
       : ineligiblePickup("already_scored", "Job already has a current score.");
@@ -4407,6 +4464,16 @@ function recordPipelineWorkflowStarted(
     progressStatus: "running",
     extraPayload,
   });
+}
+
+function temporalExecutionRunId(dispatch: ActionDispatchResult): string | undefined {
+  if (dispatch.firstExecutionRunId) {
+    return dispatch.firstExecutionRunId;
+  }
+  if (dispatch.runId && (!dispatch.workflowId || dispatch.runId !== dispatch.workflowId)) {
+    return dispatch.runId;
+  }
+  return undefined;
 }
 
 function recordPipelineWorkflowEvent(

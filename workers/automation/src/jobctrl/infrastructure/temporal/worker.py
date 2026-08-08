@@ -76,9 +76,14 @@ def build_worker(
         else _max_concurrent_activities()
     )
     activity_executor = ThreadPoolExecutor(
-        max_workers=activity_executor_max_workers(active_max_concurrent_activities)
+        max_workers=activity_executor_max_workers(active_max_concurrent_activities),
+        thread_name_prefix="jobctrl-temporal-sync-activity",
     )
-    set_activity_executor(activity_executor)
+    blocking_activity_executor = ThreadPoolExecutor(
+        max_workers=activity_executor_max_workers(active_max_concurrent_activities),
+        thread_name_prefix="jobctrl-blocking-activity",
+    )
+    set_activity_executor(blocking_activity_executor)
     runtime_inventory = activity_inventory or ActiveActivityInventory()
     return Worker(
         client,

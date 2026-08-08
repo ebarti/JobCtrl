@@ -9,6 +9,7 @@ network-free: scraping and browsers are stubbed.
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 import json
 import sqlite3
 import threading
@@ -644,11 +645,28 @@ def test_run_detail_scraper_transient_network_still_all_sites_fail_stays_retryab
 def test_run_detail_scraper_propagates_cancellation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workers: int
 ) -> None:
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
-        _seed_pending(conn, "https://remoteok.com/1", "RemoteOK")
-        _seed_pending(conn, "https://jobbank.ca/1", "Job Bank Canada")
+        first = _seed_pending(conn, "https://remoteok.com/1", "RemoteOK")
+        second = _seed_pending(conn, "https://jobbank.ca/1", "Job Bank Canada")
+        blocked = _seed_pending(conn, "https://remoteok.com/blocked", "RemoteOK")
+        unrelated = _seed_pending(conn, "https://remoteok.com/unrelated", "RemoteOK")
+        ensure_job_stage_rows(conn, blocked, tenant_id=LOCAL_TENANT)
+        set_stage_state(
+            conn,
+            blocked,
+            "enrich",
+            "blocked",
+            tenant_id=LOCAL_TENANT,
+            error_code="ENRICH_ROBOTS_DISALLOWED",
+            error_message="retryable robots block",
+            retryable=True,
+        )
+        conn.commit()
+        cancel_event = threading.Event()
 
         def fake_batch(
             _conn,
@@ -659,6 +677,8 @@ def test_run_detail_scraper_propagates_cancellation(
             on_job_enriched=None,
             **_politeness,
         ):
+            assert cancel_event is not None
+            cancel_event.set()
             raise TransientNetworkError("enrichment canceled")
 
         monkeypatch.setattr(detail, "scrape_site_batch", fake_batch)
@@ -667,9 +687,783 @@ def test_run_detail_scraper_propagates_cancellation(
             detail._run_detail_scraper(
                 conn,
                 workers=workers,
-                cancel_event=threading.Event(),
-                reset_linkedin_candidates=False,
+                job_ids=(first, second, blocked),
+                cancel_event=cancel_event,
+                reset_linkedin_candidates=True,
+                workflow_id="workflow-cancel-test",
+                workflow_run_id="temporal-run-cancel-test",
             )
+
+        states = {
+            row[0]: row[1]
+            for row in conn.execute(
+                "SELECT job_id, state FROM job_stage_states "
+                "WHERE tenant_id = ? AND stage = 'enrich'",
+                (str(LOCAL_TENANT),),
+            ).fetchall()
+        }
+        assert states[str(first)] == "canceled"
+        assert states[str(second)] == "canceled"
+        assert states[str(blocked)] == "canceled"
+        assert states.get(str(unrelated), "pending") == "pending"
+        canceled_payloads = [
+            json.loads(row[0] or "{}")
+            for row in conn.execute(
+                "SELECT payload_json FROM job_events "
+                "WHERE event_type = 'StageCanceled' ORDER BY event_id"
+            ).fetchall()
+        ]
+        assert {payload["jobId"] for payload in canceled_payloads} == {
+            str(first),
+            str(second),
+            str(blocked),
+        }
+        assert all(
+            payload["workflowId"] == "workflow-cancel-test"
+            and payload["temporalRunId"] == "temporal-run-cancel-test"
+            for payload in canceled_payloads
+        )
+    finally:
+        close_connection(db_path)
+
+
+def test_selected_enrich_workflow_picks_up_api_prequeued_job(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        job_id = _seed_pending(conn, "https://remoteok.com/prequeued", "RemoteOK")
+        ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+        set_stage_state(
+            conn,
+            job_id,
+            "enrich",
+            "queued",
+            tenant_id=LOCAL_TENANT,
+            metadata={
+                "workflowId": "workflow-prequeued",
+                "temporalRunId": "temporal-prequeued",
+            },
+        )
+        conn.commit()
+        selected: list[JobId] = []
+
+        def fake_batch(_conn, _site, jobs, **_kwargs):
+            selected.extend(job[0] for job in jobs)
+            return _healthy_stats()
+
+        monkeypatch.setattr(detail, "scrape_site_batch", fake_batch)
+        detail._run_detail_scraper(
+            conn,
+            workers=1,
+            job_ids=(job_id,),
+            reset_linkedin_candidates=False,
+            workflow_id="workflow-prequeued",
+            workflow_run_id="temporal-prequeued",
+        )
+
+        assert selected == [job_id]
+    finally:
+        close_connection(db_path)
+
+
+def test_selected_enrich_workflow_does_not_steal_another_queued_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        job_id = _seed_pending(conn, "https://remoteok.com/owned", "RemoteOK")
+        ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+        set_stage_state(
+            conn,
+            job_id,
+            "enrich",
+            "queued",
+            tenant_id=LOCAL_TENANT,
+            metadata={
+                "workflowId": "workflow-owner-a",
+                "temporalRunId": "temporal-owner-a",
+            },
+        )
+        conn.commit()
+        batch = monkeypatch.setattr(
+            detail,
+            "scrape_site_batch",
+            lambda *_args, **_kwargs: pytest.fail("foreign-owned row was selected"),
+        )
+
+        result = detail._run_detail_scraper(
+            conn,
+            workers=1,
+            job_ids=(job_id,),
+            reset_linkedin_candidates=False,
+            workflow_id="workflow-owner-b",
+            workflow_run_id="temporal-owner-b",
+        )
+
+        assert batch is None
+        assert result["processed"] == 0
+        row = conn.execute(
+            "SELECT state, metadata_json FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()
+        assert row[0] == "queued"
+        assert json.loads(row[1]) == {
+            "workflowId": "workflow-owner-a",
+            "temporalRunId": "temporal-owner-a",
+        }
+    finally:
+        close_connection(db_path)
+
+
+def test_linkedin_prepass_persists_owner_before_navigation_and_restart_cancels_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobctrl.cli import _reconcile_canceled_enrichment_cohorts
+    from jobctrl.infrastructure.enrichment.execution_lease import (
+        claim_enrichment_execution_lease_for_run,
+    )
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    failed_id = _seed_pending(
+        conn,
+        "https://www.linkedin.com/jobs/view/prepass-failed",
+        "linkedin",
+    )
+    enriched_id = _seed_pending(
+        conn,
+        "https://www.linkedin.com/jobs/view/prepass-enriched",
+        "linkedin",
+    )
+    repo = SqliteEnrichmentRepository(conn)
+    failed = (
+        JobEnrichment.empty(
+            tenant_id=LOCAL_TENANT,
+            job_id=failed_id,
+            updated_at="2026-08-05T00:02:00+00:00",
+        )
+        .start_attempt(
+            extraction_tier=ExtractionTier.CSS_SELECTORS,
+            started_at="2026-08-05T00:02:00+00:00",
+        )
+        .fail_attempt(
+            error=EnrichmentError(
+                code="DETAIL_ERROR",
+                message="authenticated retry required",
+                retryable=True,
+            ),
+            finished_at="2026-08-05T00:02:01+00:00",
+        )
+    )
+    enriched = (
+        JobEnrichment.empty(
+            tenant_id=LOCAL_TENANT,
+            job_id=enriched_id,
+            updated_at="2026-08-05T00:01:00+00:00",
+        )
+        .start_attempt(
+            extraction_tier=ExtractionTier.JSON_LD,
+            started_at="2026-08-05T00:01:00+00:00",
+        )
+        .succeed_attempt(
+            full_description=FullDescription(text=_long_description()),
+            application_url=None,
+            extraction_tier=ExtractionTier.JSON_LD,
+            finished_at="2026-08-05T00:01:01+00:00",
+        )
+    )
+    repo.save(failed)
+    repo.save(enriched)
+    for job_id, state in ((failed_id, "failed"), (enriched_id, "succeeded")):
+        ensure_job_stage_rows(conn, job_id)
+        set_stage_state(
+            conn,
+            job_id,
+            "enrich",
+            state,
+            error_code="DETAIL_ERROR" if state == "failed" else None,
+            retryable=True,
+            validate_transition=False,
+        )
+    conn.commit()
+
+    workflow_id = "workflow-linkedin-prepass"
+    run_id = "run-linkedin-prepass"
+    lease = claim_enrichment_execution_lease_for_run(
+        conn,
+        tenant_id=LOCAL_TENANT,
+        workflow_id=workflow_id,
+        run_id=run_id,
+        owner_token="activity-prepass:attempt-1",
+        activity_phase=1,
+        activity_attempt=1,
+    )
+    resolver_started = threading.Event()
+    resolver_release = threading.Event()
+    cancel_event = threading.Event()
+
+    class _BlockingResolver:
+        def resolve(self, _url: str):
+            resolver_started.set()
+            assert resolver_release.wait(timeout=10)
+            return None
+
+        def close(self) -> None:
+            return None
+
+    class _AllowedSession:
+        @contextmanager
+        def guard(self, _url: str):
+            yield SimpleNamespace(allowed=True)
+
+    monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: True)
+    monkeypatch.setattr(
+        detail,
+        "_default_linkedin_apply_resolver_factory",
+        _BlockingResolver,
+    )
+    monkeypatch.setattr(
+        detail,
+        "_enrichment_session",
+        lambda *_args, **_kwargs: _AllowedSession(),
+    )
+    monkeypatch.setattr(
+        detail,
+        "scrape_site_batch",
+        lambda *_args, **_kwargs: pytest.fail(
+            "normal cohort started before cancellation"
+        ),
+    )
+    thread_errors: list[BaseException] = []
+
+    def _run() -> None:
+        thread_conn = init_db(db_path)
+        try:
+            detail._run_detail_scraper(
+                thread_conn,
+                workers=1,
+                job_ids=(failed_id, enriched_id),
+                cancel_event=cancel_event,
+                reset_linkedin_candidates=True,
+                activity_lease=lease,
+                workflow_id=workflow_id,
+                workflow_run_id=run_id,
+            )
+        except BaseException as exc:  # noqa: BLE001 - capture thread result
+            thread_errors.append(exc)
+        finally:
+            thread_conn.close()
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    assert resolver_started.wait(timeout=10)
+
+    durable = conn.execute(
+        "SELECT state, metadata_json FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+        (str(LOCAL_TENANT), str(failed_id)),
+    ).fetchone()
+    assert durable[0] == "queued"
+    assert json.loads(durable[1])["workflowId"] == workflow_id
+    assert json.loads(durable[1])["temporalRunId"] == run_id
+    assert repo.load(LOCAL_TENANT, failed_id).is_pending
+
+    conn.execute(
+        "INSERT INTO workflow_run_projections ("
+        "workflow_id, tenant_id, workflow_type, status, input_summary_json, "
+        "retryable, started_at, finished_at, temporal_run_id, events_json) "
+        "VALUES (?, 'local', 'JobPipelineWorkflow', 'canceled', '{}', 0, ?, ?, ?, '[]')",
+        (
+            workflow_id,
+            "2026-08-05T00:00:00+00:00",
+            "2026-08-05T00:03:00+00:00",
+            run_id,
+        ),
+    )
+    conn.commit()
+    cancel_event.set()
+    assert _reconcile_canceled_enrichment_cohorts(conn, tenant_id="local") == 1
+    resolver_release.set()
+    worker.join(timeout=10)
+    assert not worker.is_alive()
+    assert thread_errors and isinstance(
+        thread_errors[0],
+        (TransientNetworkError, StaleEnrichmentExecutionLease),
+    )
+    final = conn.execute(
+        "SELECT state, metadata_json FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+        (str(LOCAL_TENANT), str(failed_id)),
+    ).fetchone()
+    assert final[0] == "canceled"
+    assert json.loads(final[1])["workflowId"] == workflow_id
+    close_connection(db_path)
+
+
+def test_reconcile_settled_canceled_cohort_performs_no_further_writes(
+    tmp_path: Path,
+) -> None:
+    """A settled canceled cohort must stop costing write transactions.
+
+    The reconciler runs on the 15s worker heartbeat; once a canceled run's
+    cohort is terminal and its phase-3 cancellation lease is claimed, later
+    passes must be read-only or the single-writer database pays two write
+    locks per historical canceled run forever.
+    """
+
+    from jobctrl.cli import _reconcile_canceled_enrichment_cohorts
+    from jobctrl.infrastructure.enrichment.execution_lease import (
+        claim_enrichment_execution_lease_for_run,
+    )
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        job_id = _seed_pending(
+            conn, "https://remoteok.com/settled-cohort", "RemoteOK"
+        )
+        ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+        workflow_id = "workflow-settled-cohort"
+        run_id = "run-settled-cohort"
+        set_stage_state(
+            conn,
+            job_id,
+            "enrich",
+            "queued",
+            tenant_id=LOCAL_TENANT,
+            metadata={"workflowId": workflow_id, "temporalRunId": run_id},
+        )
+        conn.commit()
+        claim_enrichment_execution_lease_for_run(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            owner_token="activity-settled:attempt-1",
+            activity_phase=1,
+            activity_attempt=1,
+        )
+        conn.execute(
+            "INSERT INTO workflow_run_projections ("
+            "workflow_id, tenant_id, workflow_type, status, input_summary_json, "
+            "retryable, started_at, finished_at, temporal_run_id, events_json) "
+            "VALUES (?, 'local', 'JobPipelineWorkflow', 'canceled', '{}', 0, ?, ?, ?, '[]')",
+            (
+                workflow_id,
+                "2026-08-06T00:00:00+00:00",
+                "2026-08-06T00:01:00+00:00",
+                run_id,
+            ),
+        )
+        conn.commit()
+
+        assert _reconcile_canceled_enrichment_cohorts(conn, tenant_id="local") == 1
+        state = conn.execute(
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()[0]
+        assert state == "canceled"
+
+        statements: list[str] = []
+        conn.set_trace_callback(statements.append)
+        try:
+            assert (
+                _reconcile_canceled_enrichment_cohorts(conn, tenant_id="local") == 0
+            )
+        finally:
+            conn.set_trace_callback(None)
+        writes = [
+            statement
+            for statement in statements
+            if statement.strip().upper().startswith(
+                ("BEGIN", "INSERT", "UPDATE", "DELETE", "REPLACE")
+            )
+        ]
+        assert writes == []
+
+        # The settled marker is the phase-3 lease, not a permanent tombstone:
+        # a live row re-bound to the same canceled run must still recover.
+        set_stage_state(
+            conn,
+            job_id,
+            "enrich",
+            "queued",
+            tenant_id=LOCAL_TENANT,
+            metadata={"workflowId": workflow_id, "temporalRunId": run_id},
+            validate_transition=False,
+        )
+        conn.commit()
+        assert _reconcile_canceled_enrichment_cohorts(conn, tenant_id="local") == 1
+        state = conn.execute(
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()[0]
+        assert state == "canceled"
+    finally:
+        close_connection(db_path)
+
+
+def test_cancel_enrich_cohort_preserves_committed_outcomes(
+    tmp_path: Path,
+) -> None:
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        enriched_id = _seed_pending(
+            conn, "https://example.test/cancel-committed", "RemoteOK"
+        )
+        failed_id = _seed_pending(
+            conn, "https://example.test/cancel-failed", "RemoteOK"
+        )
+        unfinished_id = _seed_pending(
+            conn, "https://example.test/cancel-unfinished", "RemoteOK"
+        )
+        started_at = "2026-08-05T00:00:00+00:00"
+        finished_at = "2026-08-05T00:01:00+00:00"
+        repo = SqliteEnrichmentRepository(conn)
+        enriched = JobEnrichment.empty(
+            tenant_id=LOCAL_TENANT,
+            job_id=enriched_id,
+            updated_at=started_at,
+        ).start_attempt(
+            extraction_tier=ExtractionTier.JSON_LD,
+            started_at=started_at,
+        ).succeed_attempt(
+            full_description=FullDescription(text=_long_description()),
+            application_url=None,
+            extraction_tier=ExtractionTier.JSON_LD,
+            finished_at=finished_at,
+        )
+        failed = JobEnrichment.empty(
+            tenant_id=LOCAL_TENANT,
+            job_id=failed_id,
+            updated_at=started_at,
+        ).start_attempt(
+            extraction_tier=ExtractionTier.JSON_LD,
+            started_at=started_at,
+        ).fail_attempt(
+            error=EnrichmentError(
+                code="DETAIL_ERROR",
+                message="committed extraction failure",
+                retryable=True,
+            ),
+            finished_at=finished_at,
+        )
+        repo.save(enriched)
+        repo.save(failed)
+        for job_id in (enriched_id, failed_id, unfinished_id):
+            ensure_job_stage_rows(conn, job_id)
+            set_stage_state(
+                conn,
+                job_id,
+                "enrich",
+                "running",
+                metadata={
+                    "workflowId": "workflow-cancel-commit-test",
+                    "temporalRunId": "temporal-cancel-commit-test",
+                },
+            )
+        conn.commit()
+
+        canceled = detail.cancel_enrichment_cohort(
+            conn,
+            (enriched_id, failed_id, unfinished_id),
+            workflow_id="workflow-cancel-commit-test",
+            workflow_run_id="temporal-cancel-commit-test",
+        )
+
+        states = {
+            str(row[0]): (str(row[1]), row[2])
+            for row in conn.execute(
+                "SELECT job_id, state, error_code FROM job_stage_states "
+                "WHERE tenant_id = ? AND stage = 'enrich' "
+                "AND job_id IN (?, ?, ?)",
+                (
+                    str(LOCAL_TENANT),
+                    str(enriched_id),
+                    str(failed_id),
+                    str(unfinished_id),
+                ),
+            ).fetchall()
+        }
+        assert canceled == 1
+        assert states[str(enriched_id)] == ("succeeded", None)
+        assert states[str(failed_id)] == ("failed", "DETAIL_ERROR")
+        assert states[str(unfinished_id)] == ("canceled", None)
+    finally:
+        close_connection(db_path)
+
+
+def test_cancellation_does_not_mutate_successor_owned_enrich_row(
+    tmp_path: Path,
+) -> None:
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        job_id = _seed_pending(
+            conn,
+            "https://example.test/successor-owner",
+            "RemoteOK",
+        )
+        ensure_job_stage_rows(conn, job_id)
+        set_stage_state(
+            conn,
+            job_id,
+            "enrich",
+            "queued",
+            metadata={
+                "workflowId": "workflow-successor",
+                "temporalRunId": "run-successor",
+            },
+        )
+        conn.commit()
+
+        canceled = detail.cancel_enrichment_cohort(
+            conn,
+            (job_id,),
+            workflow_id="workflow-canceled-predecessor",
+            workflow_run_id="run-canceled-predecessor",
+        )
+
+        row = conn.execute(
+            "SELECT state, metadata_json FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()
+        assert canceled == 0
+        assert row[0] == "queued"
+        assert json.loads(row[1]) == {
+            "workflowId": "workflow-successor",
+            "temporalRunId": "run-successor",
+        }
+    finally:
+        close_connection(db_path)
+
+
+def test_cancellation_terminal_lease_rejects_abandoned_activity_failure_write(
+    tmp_path: Path,
+) -> None:
+    from jobctrl.infrastructure.enrichment.execution_lease import (
+        claim_enrichment_execution_lease_for_run,
+    )
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        job_id = _seed_pending(
+            conn,
+            "https://example.test/abandoned-activity",
+            "RemoteOK",
+        )
+        ensure_job_stage_rows(conn, job_id)
+        set_stage_state(
+            conn,
+            job_id,
+            "enrich",
+            "queued",
+            metadata={
+                "workflowId": "workflow-abandoned",
+                "temporalRunId": "run-abandoned",
+            },
+        )
+        conn.commit()
+        stale_lease = claim_enrichment_execution_lease_for_run(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            workflow_id="workflow-abandoned",
+            run_id="run-abandoned",
+            owner_token="activity:attempt-1",
+            activity_phase=1,
+            activity_attempt=1,
+        )
+        assert detail.cancel_enrichment_cohort(
+            conn,
+            (job_id,),
+            workflow_id="workflow-abandoned",
+            workflow_run_id="run-abandoned",
+        ) == 1
+
+        with pytest.raises(StaleEnrichmentExecutionLease):
+            detail._record_enrich_job_failure(
+                conn,
+                job_id,
+                "https://example.test/abandoned-activity",
+                RuntimeError("late stale activity write"),
+                activity_lease=stale_lease,
+            )
+
+        stage = conn.execute(
+            "SELECT state FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()
+        aggregate = SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, job_id)
+        assert stage[0] == "canceled"
+        assert aggregate is None or aggregate.is_pending
+    finally:
+        close_connection(db_path)
+
+
+def test_stale_cleanup_cannot_release_successor_activity_owner(tmp_path: Path) -> None:
+    from jobctrl.infrastructure.enrichment.execution_lease import (
+        claim_enrichment_execution_lease_for_run,
+    )
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        job_id = _seed_pending(
+            conn,
+            "https://example.test/successor-activity-cleanup",
+            "RemoteOK",
+        )
+        workflow_id = "workflow-successor-cleanup"
+        run_id = "run-successor-cleanup"
+        stale_lease = claim_enrichment_execution_lease_for_run(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            owner_token="activity:attempt-1",
+            activity_phase=1,
+            activity_attempt=1,
+        )
+        detail._queue_enrichment_cohort(
+            conn,
+            (job_id,),
+            tenant_id=LOCAL_TENANT,
+            workflow_id=workflow_id,
+            workflow_run_id=run_id,
+            activity_lease=stale_lease,
+        )
+        successor_lease = claim_enrichment_execution_lease_for_run(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            owner_token="activity:attempt-2",
+            activity_phase=1,
+            activity_attempt=2,
+        )
+        detail._queue_enrichment_cohort(
+            conn,
+            (job_id,),
+            tenant_id=LOCAL_TENANT,
+            workflow_id=workflow_id,
+            workflow_run_id=run_id,
+            activity_lease=successor_lease,
+        )
+
+        detail._release_unstarted_enrichment_cohort(
+            conn,
+            (job_id,),
+            tenant_id=LOCAL_TENANT,
+            workflow_id=workflow_id,
+            workflow_run_id=run_id,
+            activity_lease=stale_lease,
+        )
+
+        row = conn.execute(
+            "SELECT state, metadata_json FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()
+        assert row[0] == "queued"
+        assert json.loads(row[1]) == {
+            "activityAttempt": 2,
+            "activityOwner": "activity:attempt-2",
+            "leaseEpoch": successor_lease.epoch,
+            "temporalRunId": run_id,
+            "workflowId": workflow_id,
+        }
+    finally:
+        close_connection(db_path)
+
+
+def test_stale_cleanup_cannot_release_after_terminal_lease(tmp_path: Path) -> None:
+    from jobctrl.infrastructure.enrichment.execution_lease import (
+        claim_enrichment_execution_lease_for_run,
+    )
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        job_id = _seed_pending(
+            conn,
+            "https://example.test/terminal-cleanup",
+            "RemoteOK",
+        )
+        workflow_id = "workflow-terminal-cleanup"
+        run_id = "run-terminal-cleanup"
+        activity_lease = claim_enrichment_execution_lease_for_run(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            owner_token="activity:attempt-1",
+            activity_phase=1,
+            activity_attempt=1,
+        )
+        detail._queue_enrichment_cohort(
+            conn,
+            (job_id,),
+            tenant_id=LOCAL_TENANT,
+            workflow_id=workflow_id,
+            workflow_run_id=run_id,
+            activity_lease=activity_lease,
+        )
+        claim_enrichment_execution_lease_for_run(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            owner_token=f"cancellation:{workflow_id}:{run_id}",
+            activity_phase=3,
+            activity_attempt=1,
+        )
+
+        detail._release_unstarted_enrichment_cohort(
+            conn,
+            (job_id,),
+            tenant_id=LOCAL_TENANT,
+            workflow_id=workflow_id,
+            workflow_run_id=run_id,
+            activity_lease=activity_lease,
+        )
+
+        row = conn.execute(
+            "SELECT state, metadata_json FROM job_stage_states "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            (str(LOCAL_TENANT), str(job_id)),
+        ).fetchone()
+        assert row[0] == "queued"
+        assert json.loads(row[1]) == {
+            "activityAttempt": 1,
+            "activityOwner": "activity:attempt-1",
+            "leaseEpoch": activity_lease.epoch,
+            "temporalRunId": run_id,
+            "workflowId": workflow_id,
+        }
     finally:
         close_connection(db_path)
 

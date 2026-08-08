@@ -167,7 +167,13 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(fake.calls).toEqual([
       {
         method: "cancel_run",
-        params: { tenantId: "local", runId: "workflow-run-1" },
+        params: {
+          tenantId: "local",
+          runId: "workflow-run-1",
+          requestedBy: "local_operator",
+          source: "jobctrl_api",
+          reason: "Canceled from JobCtrl.",
+        },
       },
     ]);
     expect(result).toEqual({

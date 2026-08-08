@@ -118,9 +118,7 @@ def test_scrape_detail_page_reports_expired_json_ld_as_inactive(monkeypatch: pyt
     )
     monkeypatch.setattr(detail, "_collect_main_content", lambda _page: "<main>Expired role</main>")
 
-    result = scrape_detail_page(
-        _FakePage(), "https://example.com/jobs/closed", session=offline_session()
-    )
+    result = scrape_detail_page(_FakePage(), "https://example.com/jobs/closed", session=offline_session())
 
     assert result["status"] == "inactive"
     assert result["active_state"] == "expired"
@@ -140,9 +138,7 @@ def test_scrape_detail_page_reports_closed_marker_as_inactive(monkeypatch: pytes
         ),
     )
 
-    result = scrape_detail_page(
-        _FakePage(), "https://example.com/jobs/closed", session=offline_session()
-    )
+    result = scrape_detail_page(_FakePage(), "https://example.com/jobs/closed", session=offline_session())
 
     assert result["status"] == "inactive"
     assert result["active_state"] == "closed"
@@ -151,14 +147,17 @@ def test_scrape_detail_page_reports_closed_marker_as_inactive(monkeypatch: pytes
 
 
 def test_verified_no_data_extracted_detail_failure_stays_retryable() -> None:
-    assert _detail_failure_retryable(
-        {
-            "status": "error",
-            "error": "no data extracted",
-            "active_state": "active",
-            "verification_method": "default_body_present",
-        }
-    ) is True
+    assert (
+        _detail_failure_retryable(
+            {
+                "status": "error",
+                "error": "no data extracted",
+                "active_state": "active",
+                "verification_method": "default_body_present",
+            }
+        )
+        is True
+    )
 
 
 def test_page_load_detail_failure_stays_retryable() -> None:
@@ -166,14 +165,17 @@ def test_page_load_detail_failure_stays_retryable() -> None:
 
 
 def test_verified_inactive_detail_failure_is_not_retryable() -> None:
-    assert _detail_failure_retryable(
-        {
-            "status": "inactive",
-            "error": "posting removed",
-            "active_state": "removed",
-            "verification_method": "http_status",
-        }
-    ) is False
+    assert (
+        _detail_failure_retryable(
+            {
+                "status": "inactive",
+                "error": "posting removed",
+                "active_state": "removed",
+                "verification_method": "http_status",
+            }
+        )
+        is False
+    )
 
 
 def test_source_lookup_only_falls_back_for_missing_exact_v7_observation() -> None:
@@ -194,9 +196,7 @@ def test_source_lookup_only_falls_back_for_missing_exact_v7_observation() -> Non
         assert _source_id_for_enriched_job(conn, job_id, fallback="enrichment") == "enrichment"
 
         conn.execute("DROP TABLE job_source_observations")
-        conn.execute(
-            "CREATE TABLE job_source_observations (tenant_id TEXT NOT NULL, source_id TEXT)"
-        )
+        conn.execute("CREATE TABLE job_source_observations (tenant_id TEXT NOT NULL, source_id TEXT)")
         with pytest.raises(sqlite3.OperationalError, match="no such column: job_id"):
             _source_id_for_enriched_job(conn, job_id, fallback="enrichment")
     finally:
@@ -278,8 +278,7 @@ def test_authenticated_linkedin_retry_resets_only_exact_v7_aggregate(
         assert reset is not None and reset.is_pending
         assert reset.attempt_count == 1
         legacy_row = conn.execute(
-            "SELECT detail_error, detail_scraped_at FROM jobs "
-            "WHERE tenant_id = ? AND job_id = ?",
+            "SELECT detail_error, detail_scraped_at FROM jobs WHERE tenant_id = ? AND job_id = ?",
             (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()
         assert tuple(legacy_row) == (
@@ -287,14 +286,12 @@ def test_authenticated_linkedin_retry_resets_only_exact_v7_aggregate(
             "2026-06-04T16:00:00+00:00",
         )
         stage = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
             (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()
         assert stage is not None and stage["state"] == "pending"
         event = conn.execute(
-            "SELECT job_id, payload_json FROM job_events "
-            "WHERE tenant_id = ? AND event_type = 'StageReset'",
+            "SELECT job_id, payload_json FROM job_events WHERE tenant_id = ? AND event_type = 'StageReset'",
             (str(LOCAL_TENANT),),
         ).fetchone()
         assert event is not None and event["job_id"] == str(job_id)
@@ -321,15 +318,18 @@ def test_scrape_site_batch_resolves_url_once_before_exact_v7_writes(
         monkeypatch.setattr(
             detail,
             "scrape_detail_page",
-            lambda _page, _url, session=None: fetched_urls.append(_url) or {
-                "status": "ok",
-                "tier_used": 1,
-                "full_description": _long_description(),
-                "application_url": f"{job_url}/apply",
-                "elapsed": 1.0,
-                "active_state": "active",
-                "verification_method": "json_ld",
-            },
+            lambda _page, _url, session=None: (
+                fetched_urls.append(_url)
+                or {
+                    "status": "ok",
+                    "tier_used": 1,
+                    "full_description": _long_description(),
+                    "application_url": f"{job_url}/apply",
+                    "elapsed": 1.0,
+                    "active_state": "active",
+                    "verification_method": "json_ld",
+                }
+            ),
         )
 
         stats = detail.scrape_site_batch(
@@ -515,14 +515,25 @@ def test_selected_enrichment_filters_retry_to_requested_job(monkeypatch: pytest.
 
     calls: list[dict[str, object]] = []
 
-    monkeypatch.setattr(detail, "_run_detail_scraper", lambda *args, **kwargs: calls.append(kwargs) or {
-        "processed": 1,
-        "ok": 1,
-        "partial": 0,
-        "error": 0,
-        "tiers": {1: 1},
-    })
+    monkeypatch.setattr(
+        detail,
+        "_run_detail_scraper",
+        lambda *args, **kwargs: (
+            calls.append(kwargs)
+            or {
+                "processed": 1,
+                "ok": 1,
+                "partial": 0,
+                "error": 0,
+                "tiers": {1: 1},
+            }
+        ),
+    )
     monkeypatch.setattr("jobctrl.database.get_connection", lambda: object())
+    monkeypatch.setattr(
+        "jobctrl.enrichment.activities._selected_enriched_job_ids",
+        lambda _conn, *, tenant_id, job_ids: job_ids,
+    )
 
     result = _run_selected_enrichment(
         EnrichActivityInput(
@@ -536,6 +547,7 @@ def test_selected_enrichment_filters_retry_to_requested_job(monkeypatch: pytest.
     )
 
     assert result["status"] == "ok"
+    assert result["stages"][0]["enrichedJobIds"] == ["60000000-0000-4000-8000-000000000010"]
     assert calls == [
         {
             "max_per_site": 1,
@@ -546,9 +558,7 @@ def test_selected_enrichment_filters_retry_to_requested_job(monkeypatch: pytest.
     ]
 
 
-def _seed_current_job(
-    conn, *, job_id, url: str, title: str = "Closed engineering role"
-) -> None:
+def _seed_current_job(conn, *, job_id, url: str, title: str = "Closed engineering role") -> None:
     discovered_at = "2026-05-29T10:00:00+00:00"
     conn.execute(
         """
@@ -632,13 +642,8 @@ def test_inactive_cascade_snapshot_uses_current_job_id_and_keeps_url_as_locator(
         assert quarantine is not None
         assert quarantine["job_id"] == str(job_id)
         assert quarantine["posting_url"] == url
-        assert "job_url" not in {
-            row["name"] for row in conn.execute("PRAGMA table_info(posting_snapshot_sets)")
-        }
-        assert "job_key" not in {
-            row["name"]
-            for row in conn.execute("PRAGMA table_info(discovery_quarantine_entries)")
-        }
+        assert "job_url" not in {row["name"] for row in conn.execute("PRAGMA table_info(posting_snapshot_sets)")}
+        assert "job_key" not in {row["name"] for row in conn.execute("PRAGMA table_info(discovery_quarantine_entries)")}
     finally:
         close_connection(db_path)
 

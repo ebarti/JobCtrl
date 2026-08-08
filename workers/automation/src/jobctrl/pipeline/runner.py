@@ -2406,6 +2406,8 @@ def _run_enrich(
     on_job_enriched: Callable[[JobId], None] | None = None,
     recovery_key: str | None = None,
     activity_lease: EnrichmentExecutionLease | None = None,
+    workflow_id: str | None = None,
+    workflow_run_id: str | None = None,
 ) -> dict:
     """Stage: Detail enrichment — scrape full descriptions and apply URLs."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2423,6 +2425,10 @@ def _run_enrich(
         enrich_kwargs["recovery_key"] = recovery_key
     if activity_lease is not None:
         enrich_kwargs["activity_lease"] = activity_lease
+    if workflow_id:
+        enrich_kwargs["workflow_id"] = workflow_id
+    if workflow_run_id:
+        enrich_kwargs["workflow_run_id"] = workflow_run_id
     if cancel_event is None:
         stats = run_enrichment(**enrich_kwargs)
     else:

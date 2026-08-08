@@ -199,6 +199,7 @@ function resetResolvedJobStage(
   const stageOptions: Parameters<typeof upsertStageStateById>[5] = {
     retryable: true,
     clearTiming: true,
+    clearMetadata: true,
     skipValidation: true,
   };
   if (options.resetAttempts) {
@@ -254,7 +255,7 @@ export function queueRetriedJobsForWorkflow(
   targets: readonly RetryFailedJobTarget[],
   workflow: {
     readonly workflowId?: string;
-    readonly runId?: string;
+    readonly temporalRunId?: string;
     readonly actionId?: string;
     readonly requestedWorkers?: number;
     readonly requestedLimit?: number;
@@ -267,6 +268,12 @@ export function queueRetriedJobsForWorkflow(
     for (const target of rows) {
       const job = resolveJobIdentity(db, LOCAL_TENANT, target.jobUrl);
       if (!job) throw new InputError("Job not found.");
+      if (target.stage === "enrich" && (!workflow.workflowId || !workflow.temporalRunId)) {
+        // A workflow handle is not a Temporal execution owner. Leave the row
+        // pending so the selected Enrich activity can claim its exact run
+        // before navigation instead of persisting an owner it can never match.
+        continue;
+      }
       const current = getRow<{ state?: string }>(
         db,
         "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = ?",
@@ -278,6 +285,21 @@ export function queueRetriedJobsForWorkflow(
       upsertStageStateById(db, LOCAL_TENANT, job.jobId, target.stage, "queued", {
         retryable: true,
       });
+      if (target.stage === "enrich" && workflow.workflowId) {
+        db.prepare(
+          `UPDATE job_stage_states
+              SET metadata_json = ?, updated_at = ?
+            WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich' AND state = 'queued'`,
+        ).run(
+          JSON.stringify({
+            workflowId: workflow.workflowId,
+            ...(workflow.temporalRunId ? { temporalRunId: workflow.temporalRunId } : {}),
+          }),
+          new Date().toISOString(),
+          LOCAL_TENANT,
+          job.jobId,
+        );
+      }
       recordActionEventById(db, {
         tenantId: LOCAL_TENANT,
         jobId: job.jobId,
@@ -289,8 +311,8 @@ export function queueRetriedJobsForWorkflow(
           source,
           workflowId: workflow.workflowId ?? null,
           workflow_id: workflow.workflowId ?? null,
-          runId: workflow.runId ?? null,
-          run_id: workflow.runId ?? null,
+          runId: workflow.temporalRunId ?? null,
+          run_id: workflow.temporalRunId ?? null,
           actionId: workflow.actionId ?? null,
           requestedWorkers: workflow.requestedWorkers ?? null,
           requestedLimit: workflow.requestedLimit ?? null,
@@ -1794,6 +1816,7 @@ function upsertStageStateById(
   options: {
     attemptCount?: number;
     clearTiming?: boolean;
+    clearMetadata?: boolean;
     finishedAt?: string;
     retryable?: boolean;
     skipValidation?: boolean;
@@ -1819,6 +1842,9 @@ function upsertStageStateById(
     updates.started_at = null;
     updates.finished_at = null;
     updates.duration_ms = null;
+  }
+  if (options.clearMetadata) {
+    updates.metadata_json = null;
   }
   if (options.finishedAt) {
     updates.finished_at = options.finishedAt;

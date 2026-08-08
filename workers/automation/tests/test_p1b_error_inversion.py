@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import threading
 import time
@@ -17,7 +18,13 @@ import pytest
 from temporalio import activity, workflow
 from temporalio.client import WorkflowFailureError
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
+from temporalio.exceptions import (
+    ActivityError,
+    ApplicationError,
+    CancelledError,
+    TimeoutError as TemporalTimeoutError,
+    TimeoutType,
+)
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
@@ -37,8 +44,19 @@ from jobctrl.domain.errors import (
 )
 from jobctrl.enrichment.activities import EnrichActivityInput, EnrichActivityOutput, enrich_activity
 from jobctrl.infrastructure.discovery import production_wiring
-from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
-from jobctrl.materials.activities import TailorActivityInput, TailorActivityOutput, tailor_activity
+from jobctrl.infrastructure.temporal.run_in_activity import (
+    run_blocking_with_heartbeat,
+    set_activity_executor,
+    shutdown_activity_executors,
+)
+from jobctrl.materials.activities import (
+    TailorActivityInput,
+    TailorActivityOutput,
+    TailorJobActivityInput,
+    TailorJobActivityOutput,
+    tailor_activity,
+    tailor_job_activity,
+)
 from jobctrl.pipeline import runner as pipeline_runner
 from jobctrl.scoring.activities import ScoreActivityInput, ScoreActivityOutput, score_activity
 
@@ -87,8 +105,22 @@ class _P1bTailorHarness:
         )
 
 
+@workflow.defn(name="P1bTailorJobHarness")
+class _P1bTailorJobHarness:
+    @workflow.run
+    async def run(self, payload: TailorJobActivityInput) -> TailorJobActivityOutput:
+        return await workflow.execute_activity(
+            tailor_job_activity,
+            payload,
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=_P1B_RETRY,
+        )
+
+
 _cooperative_observed_cancel = threading.Event()
 _ignore_cancel_released = threading.Event()
+_timeout_ignore_cancel_released = threading.Event()
+_timeout_observed_cancel = threading.Event()
 
 
 @workflow.defn(name="P1bRunInActivityWorkflow")
@@ -100,6 +132,23 @@ class _P1bRunInActivityWorkflow:
             ignore_cancel,
             start_to_close_timeout=timedelta(minutes=5),
             heartbeat_timeout=timedelta(seconds=5),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+
+
+@workflow.defn(name="P1bRunInActivityTimeoutWorkflow")
+class _P1bRunInActivityTimeoutWorkflow:
+    @workflow.run
+    async def run(self, block: bool) -> str:
+        return await workflow.execute_activity(
+            _p1b_timeout_capacity_activity,
+            block,
+            start_to_close_timeout=(
+                timedelta(milliseconds=200)
+                if block
+                else timedelta(seconds=5)
+            ),
+            heartbeat_timeout=timedelta(milliseconds=100),
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
 
@@ -126,6 +175,32 @@ async def _p1b_blocking_activity(ignore_cancel: bool) -> str:
         cancel_wait_seconds=0.2,
         activity_name="p1b_test_activity",
         job_context={"test": "p1b"},
+    )
+
+
+@activity.defn(name="p1b_timeout_capacity_activity")
+async def _p1b_timeout_capacity_activity(block: bool) -> str:
+    cancel_event = threading.Event()
+
+    def _blocking() -> str:
+        if not block:
+            return "next activity ran"
+        _timeout_ignore_cancel_released.wait(timeout=5)
+        return "ignored"
+
+    def _cancel() -> None:
+        cancel_event.set()
+        _timeout_observed_cancel.set()
+
+    return await run_blocking_with_heartbeat(
+        _blocking,
+        starting_message="p1b timeout test starting",
+        progress_message="p1b timeout test still running",
+        poll_interval=0.02,
+        on_cancel=_cancel,
+        cancel_wait_seconds=0.05,
+        activity_name="p1b_timeout_capacity_activity",
+        job_context={"test": "p1b_start_to_close_timeout"},
     )
 
 
@@ -285,6 +360,7 @@ async def test_run_in_activity_records_abandoned_thread_when_cancel_ignored(
         "jobctrl.infrastructure.temporal.run_in_activity.activity.info",
         lambda: SimpleNamespace(activity_type="p1b_test_activity"),
     )
+    set_activity_executor(ThreadPoolExecutor(max_workers=1))
 
     async def _drive() -> None:
         await run_blocking_with_heartbeat(
@@ -298,20 +374,159 @@ async def test_run_in_activity_records_abandoned_thread_when_cancel_ignored(
             job_context={"test": "p1b"},
         )
 
-    with patch(
-        "jobctrl.infrastructure.temporal.run_in_activity._record_abandoned_thread_metric",
-    ) as metric_mock:
-        with caplog.at_level(logging.WARNING, logger="jobctrl.infrastructure.temporal.run_in_activity"):
-            task = asyncio.create_task(_drive())
-            await asyncio.sleep(0.05)
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            release.set()
+    try:
+        with patch(
+            "jobctrl.infrastructure.temporal.run_in_activity._record_abandoned_thread_metric",
+        ) as metric_mock:
+            with caplog.at_level(
+                logging.WARNING,
+                logger="jobctrl.infrastructure.temporal.run_in_activity",
+            ):
+                task = asyncio.create_task(_drive())
+                await asyncio.sleep(0.05)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                next_result = await asyncio.wait_for(
+                    run_blocking_with_heartbeat(
+                        lambda: "next activity ran",
+                        starting_message="next activity starting",
+                        poll_interval=0.01,
+                    ),
+                    timeout=0.5,
+                )
+    finally:
+        release.set()
+        shutdown_activity_executors()
 
     assert cancel_event.is_set()
+    assert next_result == "next activity ran"
     assert any(record.message == "abandoned_thread" for record in caplog.records)
+    assert any(
+        getattr(record, "activity_executor_rotated", False)
+        for record in caplog.records
+    )
     metric_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_start_to_close_timeout_rotates_capacity_for_next_activity() -> None:
+    """A timed-out provider call must not consume the next activity's slot."""
+
+    _timeout_ignore_cancel_released.clear()
+    _timeout_observed_cancel.clear()
+    queue = f"p1b-start-to-close-timeout-{uuid.uuid4()}"
+    set_activity_executor(ThreadPoolExecutor(max_workers=1))
+
+    try:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[_P1bRunInActivityTimeoutWorkflow],
+                activities=[_p1b_timeout_capacity_activity],
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                with pytest.raises(WorkflowFailureError) as exc_info:
+                    await env.client.execute_workflow(
+                        _P1bRunInActivityTimeoutWorkflow.run,
+                        True,
+                        id=f"p1b-timeout-blocked-wf-{uuid.uuid4()}",
+                        task_queue=queue,
+                    )
+                activity_error = exc_info.value.cause
+                assert isinstance(activity_error, ActivityError)
+                timeout_error = activity_error.cause
+                assert isinstance(timeout_error, TemporalTimeoutError)
+                assert timeout_error.type is TimeoutType.START_TO_CLOSE
+
+                for _attempt in range(50):
+                    if _timeout_observed_cancel.is_set():
+                        break
+                    await asyncio.sleep(0.01)
+                assert _timeout_observed_cancel.is_set()
+
+                result = await asyncio.wait_for(
+                    env.client.execute_workflow(
+                        _P1bRunInActivityTimeoutWorkflow.run,
+                        False,
+                        id=f"p1b-timeout-next-wf-{uuid.uuid4()}",
+                        task_queue=queue,
+                    ),
+                    timeout=1,
+                )
+    finally:
+        _timeout_ignore_cancel_released.set()
+        shutdown_activity_executors()
+
+    assert result == "next activity ran"
+
+
+@pytest.mark.asyncio
+async def test_rotation_prunes_retired_executors_whose_tasks_finished() -> None:
+    """Retired generations must not accumulate for the worker's lifetime."""
+
+    from jobctrl.infrastructure.temporal import run_in_activity as ria
+
+    loop = asyncio.get_running_loop()
+    first = ThreadPoolExecutor(max_workers=2)
+    finished_task: asyncio.Future = loop.create_future()
+    stuck_task: asyncio.Future = loop.create_future()
+    try:
+        ria.set_activity_executor(first)
+        assert ria._rotate_abandoned_activity_executor(first, finished_task)
+        assert [
+            executor for executor, _task in ria._RETIRED_ACTIVITY_EXECUTORS
+        ] == [first]
+        replacement = ria._activity_executor()
+        assert replacement is not first
+        assert replacement._max_workers == 2
+
+        finished_task.set_result(None)
+        assert ria._rotate_abandoned_activity_executor(replacement, stuck_task)
+        assert [
+            executor for executor, _task in ria._RETIRED_ACTIVITY_EXECUTORS
+        ] == [replacement]
+    finally:
+        if not stuck_task.done():
+            stuck_task.set_result(None)
+        ria.shutdown_activity_executors()
+        first.shutdown(wait=False, cancel_futures=True)
+
+
+def test_rotation_replacement_sizing_survives_missing_private_attr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without ThreadPoolExecutor._max_workers, use the worker sizing rule, not 1."""
+
+    from jobctrl.infrastructure.temporal import concurrency
+    from jobctrl.infrastructure.temporal import run_in_activity as ria
+
+    class _OpaqueExecutor:
+        def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+            return None
+
+    monkeypatch.setattr(
+        concurrency,
+        "resolve_max_concurrent_activities",
+        lambda config_path=None: concurrency.ResolvedActivityConcurrency(
+            value=4,
+            source="default",
+        ),
+    )
+    opaque = _OpaqueExecutor()
+    done_task = SimpleNamespace(done=lambda: True)
+    try:
+        ria.set_activity_executor(opaque)
+        assert ria._rotate_abandoned_activity_executor(opaque, done_task)
+        replacement = ria._activity_executor()
+        assert replacement is not opaque
+        assert (
+            replacement._max_workers
+            == concurrency.activity_executor_max_workers(4)
+        )
+    finally:
+        ria.shutdown_activity_executors()
 
 
 def test_run_stage_observed_reraises_after_stage_failed_event(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from temporalio.client import WorkflowExecutionStatus
@@ -18,13 +19,25 @@ from temporalio.service import RPCError, RPCStatusCode
 from jobctrl.cli import _reconcile_workflow_runs, _record_reconciled_outcome
 from jobctrl.database import get_connection
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobctrl.state import record_job_event
+from jobctrl.infrastructure.projections.sqlite_projection_store import (
+    SqliteProjectionStore,
+)
+from jobctrl.infrastructure.temporal.cancellation_audit import (
+    record_workflow_cancellation_requested,
+)
+from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state
 
 
 class _FakeDescribe:
-    def __init__(self, status: WorkflowExecutionStatus, run_id: str = "temporal-run") -> None:
+    def __init__(
+        self,
+        status: WorkflowExecutionStatus,
+        run_id: str = "temporal-run",
+        history: tuple[object, ...] = (),
+    ) -> None:
         self.status = status
         self.run_id = run_id
+        self.history = history
 
 
 class _FakeCancelRequestAttributes:
@@ -33,17 +46,27 @@ class _FakeCancelRequestAttributes:
         self.cause = cause
 
 
+class _FakeTimestamp:
+    def ToDatetime(self, tzinfo=None):  # noqa: N802 - protobuf API parity
+        value = datetime(2026, 8, 4, 21, 4, 8, tzinfo=timezone.utc)
+        return value if tzinfo is not None else value.replace(tzinfo=None)
+
+
 class _FakeCancelRequestedEvent:
     """Minimal Temporal history event carrying a cancel-request identity.
 
-    ``event_time`` stays ``None`` so ``_event_timestamp`` falls back to
-    ``utc_now()`` — the timestamp is not what these tests pin."""
+    ``event_time`` is pinned so payload-shape tests can assert ``requestedAt``;
+    tests that don't pin the timestamp simply ignore it."""
 
-    def __init__(self, identity: str, cause: str | None = None) -> None:
+    def __init__(
+        self,
+        identity: str = "temporal-cli:tester@local",
+        cause: str | None = None,
+    ) -> None:
         self.workflow_execution_cancel_requested_event_attributes = (
             _FakeCancelRequestAttributes(identity, cause)
         )
-        self.event_time = None
+        self.event_time = _FakeTimestamp()
 
     def WhichOneof(self, _field: str) -> str:  # noqa: N802 — protobuf casing
         return "workflow_execution_cancel_requested_event_attributes"
@@ -62,8 +85,11 @@ class _FakeHandle:
     async def _iterate_history(self):
         for event in self._history:
             yield event
+        for event in getattr(self._outcome, "history", ()):
+            yield event
 
     def fetch_history_events(self, *, wait_new_event: bool = False):
+        assert wait_new_event is False
         return self._iterate_history()
 
 
@@ -318,19 +344,84 @@ async def test_reconciler_maps_canceled_execution_to_workflow_canceled() -> None
     canceled_id = f"run-{uuid.uuid4().hex}"
     _seed_open_run(conn, canceled_id, workflow_type="ApplyWorkflow")
 
-    client = _FakeClient({canceled_id: _FakeDescribe(WorkflowExecutionStatus.CANCELED)})
+    client = _FakeClient(
+        {
+            canceled_id: _FakeDescribe(
+                WorkflowExecutionStatus.CANCELED,
+                history=(_FakeCancelRequestedEvent(),),
+            )
+        }
+    )
     await _reconcile_workflow_runs(client)
+    record_workflow_cancellation_requested(
+        conn,
+        workflow_id=canceled_id,
+        workflow_type="ApplyWorkflow",
+        temporal_run_id="temporal-run",
+        requested_by="local_operator",
+        source="jobctrl_api",
+        requested_at="2026-08-04T21:04:07+00:00",
+        evidence_kind="request_intent",
+    )
+    # The closure pass above already terminalized the run AND recorded the
+    # exact Temporal requester from its history (evidence_kind
+    # ``temporal_history``); settled runs are excluded from rework, so the
+    # next heartbeat makes no further durable changes.
+    assert await _reconcile_workflow_runs(client) == 0
 
     assert _status(conn, canceled_id) == "canceled"
     assert "WorkflowCanceled" in _events(conn, canceled_id)
+    assert "WorkflowCancellationRequested" in _events(conn, canceled_id)
     # WorkflowCanceled carries no app-level error, so the reconciler stamps its
     # own reason (observability review).
     canceled_code, canceled_message = _reason(conn, canceled_id)
     assert canceled_code == "reconciled_closed_canceled"
     assert canceled_message and "CANCELED" in canceled_message
-    # A history without a readable cancel-request event settles the run all the
-    # same — the audit read is enrichment, never settlement-blocking.
-    assert _cancellation_facts(conn, canceled_id) == []
+    audit_payloads = [
+        payload
+        for payload in _raw_workflow_payloads(conn, canceled_id)
+        if payload.get("requestedBy")
+    ]
+    assert audit_payloads == [
+        {
+            "evidenceKind": "temporal_history",
+            "level": "info",
+            "message": (
+                "Cancellation requested by temporal-cli:tester@local via temporal_cli."
+            ),
+            "reason": None,
+            "requestedAt": "2026-08-04T21:04:08+00:00",
+            "requestedBy": "temporal-cli:tester@local",
+            "source": "temporal_cli",
+            "stage": "workflow",
+            "temporalRunId": "temporal-run",
+            "tenantId": "local",
+            "workflowId": canceled_id,
+            "workflowType": "ApplyWorkflow",
+        },
+        {
+            "evidenceKind": "request_intent",
+            "level": "info",
+            "message": "Cancellation requested by local_operator via jobctrl_api.",
+            "reason": None,
+            "requestedAt": "2026-08-04T21:04:07+00:00",
+            "requestedBy": "local_operator",
+            "source": "jobctrl_api",
+            "stage": "workflow",
+            "temporalRunId": "temporal-run",
+            "tenantId": "local",
+            "workflowId": canceled_id,
+            "workflowType": "ApplyWorkflow",
+        },
+    ]
+    await _reconcile_workflow_runs(client)
+    assert len(
+        [
+            payload
+            for payload in _raw_workflow_payloads(conn, canceled_id)
+            if payload.get("requestedBy")
+        ]
+    ) == 2
 
 
 def _cancellation_facts(conn, workflow_id: str) -> list[dict]:
@@ -371,3 +462,140 @@ async def test_reconciler_records_requester_when_closing_canceled_execution() ->
     assert facts[0]["temporalRunId"] == run_id
     # The audit read was pinned to the exact execution the describe observed.
     assert (canceled_id, run_id) in client.lookups
+
+
+@pytest.mark.asyncio
+async def test_reconciler_settles_canceled_run_without_readable_cancel_history() -> None:
+    """A history without a readable cancel-request event settles the run all
+    the same — the audit read is enrichment, never settlement-blocking."""
+    conn = get_connection()
+    canceled_id = f"run-{uuid.uuid4().hex}"
+    _seed_open_run(conn, canceled_id, workflow_type="ApplyWorkflow")
+
+    client = _FakeClient({canceled_id: _FakeDescribe(WorkflowExecutionStatus.CANCELED)})
+    await _reconcile_workflow_runs(client)
+
+    assert _status(conn, canceled_id) == "canceled"
+    assert _cancellation_facts(conn, canceled_id) == []
+
+
+def test_recovered_temporal_history_is_explicit_and_satisfies_audit_backfill() -> None:
+    conn = get_connection()
+    workflow_id = f"run-{uuid.uuid4().hex}"
+    run_id = f"temporal-{uuid.uuid4().hex}"
+    _seed_open_run(
+        conn,
+        workflow_id,
+        workflow_type="JobPipelineWorkflow",
+        temporal_run_id=run_id,
+    )
+    _record_terminal(conn, workflow_id, "WorkflowCanceled", "canceled")
+
+    assert record_workflow_cancellation_requested(
+        conn,
+        workflow_id=workflow_id,
+        workflow_type="JobPipelineWorkflow",
+        temporal_run_id=run_id,
+        requested_by="temporal-cli:tester@local",
+        source="temporal_cli",
+        requested_at="2026-08-04T21:04:08+00:00",
+        evidence_kind="recovered_temporal_history",
+    )
+
+    payloads = [
+        payload
+        for payload in _raw_workflow_payloads(conn, workflow_id)
+        if payload.get("requestedBy")
+    ]
+    assert payloads == [
+        {
+            "evidenceKind": "recovered_temporal_history",
+            "level": "info",
+            "message": (
+                "Cancellation requester recovered from a prior Temporal history "
+                "observation: temporal-cli:tester@local via temporal_cli."
+            ),
+            "reason": None,
+            "requestedAt": "2026-08-04T21:04:08+00:00",
+            "requestedBy": "temporal-cli:tester@local",
+            "source": "temporal_cli",
+            "stage": "workflow",
+            "temporalRunId": run_id,
+            "tenantId": "local",
+            "workflowId": workflow_id,
+            "workflowType": "JobPipelineWorkflow",
+        }
+    ]
+    assert workflow_id not in {
+        row["workflow_id"]
+        for row in SqliteProjectionStore(
+            conn
+        ).workflow_runs_missing_cancellation_audit("local")
+    }
+    assert not record_workflow_cancellation_requested(
+        conn,
+        workflow_id=workflow_id,
+        workflow_type="JobPipelineWorkflow",
+        temporal_run_id=run_id,
+        requested_by="temporal-cli:tester@local",
+        source="temporal_cli",
+        requested_at="2026-08-04T21:04:08+00:00",
+        evidence_kind="recovered_temporal_history",
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconciler_cancels_persisted_enrich_ownership_after_worker_restart() -> None:
+    """A restarted worker closes the exact persisted cohort a cancel interrupted."""
+
+    conn = get_connection()
+    workflow_id = f"run-{uuid.uuid4().hex}"
+    run_id = f"temporal-{uuid.uuid4().hex}"
+    job_id = str(uuid.uuid4())
+    url = f"https://example.test/reconcile-cancel/{job_id}"
+    conn.execute(
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
+        "VALUES ('local', ?, ?, 'Engineer', 'RemoteOK', '2026-08-05T00:00:00+00:00')",
+        (job_id, url),
+    )
+    conn.execute(
+        "INSERT INTO job_locators (tenant_id, job_id, locator_kind, locator_value, "
+        "is_current, first_seen_at, last_seen_at) "
+        "VALUES ('local', ?, 'posting_url', ?, 1, "
+        "'2026-08-05T00:00:00+00:00', '2026-08-05T00:00:00+00:00')",
+        (job_id, url),
+    )
+    ensure_job_stage_rows(conn, job_id)
+    ownership = {"workflowId": workflow_id, "temporalRunId": run_id}
+    set_stage_state(conn, job_id, "enrich", "queued", metadata=ownership)
+    set_stage_state(conn, job_id, "enrich", "running", metadata=ownership)
+    conn.commit()
+    _seed_open_run(conn, workflow_id, temporal_run_id=run_id)
+    _record_terminal(conn, workflow_id, "WorkflowCanceled", "canceled")
+
+    client = _FakeClient(
+        {
+            workflow_id: _FakeDescribe(
+                WorkflowExecutionStatus.CANCELED,
+                run_id=run_id,
+                history=(_FakeCancelRequestedEvent(),),
+            )
+        }
+    )
+    assert await _reconcile_workflow_runs(client) >= 1
+
+    row = conn.execute(
+        "SELECT state FROM job_stage_states "
+        "WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'",
+        (job_id,),
+    ).fetchone()
+    assert row[0] == "canceled"
+    event = conn.execute(
+        "SELECT payload_json FROM job_events "
+        "WHERE tenant_id = 'local' AND job_id = ? "
+        "AND stage = 'enrich' AND event_type = 'StageCanceled'",
+        (job_id,),
+    ).fetchone()
+    payload = json.loads(event[0])
+    assert payload["workflowId"] == workflow_id
+    assert payload["temporalRunId"] == run_id

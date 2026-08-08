@@ -406,6 +406,189 @@ def test_snapshot_captured_event_records_confidence_and_quarantine(
     assert payload["quarantined"] is True
 
 
+def test_trustworthy_snapshot_releases_tailor_and_resolves_quarantine(
+    conn: sqlite3.Connection,
+) -> None:
+    from jobctrl.enrichment.detail import _record_posting_snapshot_from_cascade
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+    url = "https://example.com/job/quarantine-recovered"
+    _seed_enriched_job(conn, url)
+    job_id = _job_id(conn, url)
+    _record_posting_snapshot_from_cascade(
+        conn,
+        job_id=job_id,
+        url=url,
+        source_id="acme",
+        title="Engineer",
+        cascade_result={
+            "full_description": "short",
+            "application_url": None,
+            "tier_used": 3,
+            "active_state": "active",
+            "verification_method": "default_body_present",
+        },
+        captured_at=NOW,
+    )
+    ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+    set_stage_state(
+        conn,
+        job_id,
+        "tailor",
+        "blocked",
+        tenant_id=LOCAL_TENANT,
+        error_code="ENRICHMENT_QUARANTINED",
+        retryable=True,
+        blocked_by=["enrich"],
+        validate_transition=False,
+    )
+    conn.commit()
+
+    recovered_at = "2026-05-13T01:00:00+00:00"
+    _record_posting_snapshot_from_cascade(
+        conn,
+        job_id=job_id,
+        url=url,
+        source_id="acme",
+        title="Engineer",
+        cascade_result={
+            "full_description": _DESCRIPTION,
+            "application_url": "https://example.com/apply/quarantine-recovered",
+            "tier_used": 1,
+            "active_state": "active",
+            "verification_method": "json_ld",
+        },
+        captured_at=recovered_at,
+    )
+
+    tailor = conn.execute(
+        "SELECT state, error_code FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert dict(tailor) == {"state": "pending", "error_code": None}
+    quarantine = conn.execute(
+        "SELECT status, decision_reason, decided_at "
+        "FROM discovery_quarantine_entries WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert dict(quarantine) == {
+        "status": "resolved",
+        "decision_reason": "trustworthy_snapshot_captured",
+        "decided_at": recovered_at,
+    }
+
+
+def test_trustworthy_snapshot_rolls_back_if_tailor_release_is_interrupted(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobctrl.enrichment import detail
+    from jobctrl.state import ensure_job_stage_rows, set_stage_state
+
+    url = "https://example.com/job/quarantine-release-crash"
+    _seed_enriched_job(conn, url)
+    job_id = _job_id(conn, url)
+    detail._record_posting_snapshot_from_cascade(
+        conn,
+        job_id=job_id,
+        url=url,
+        source_id="acme",
+        title="Engineer",
+        cascade_result={
+            "full_description": "short",
+            "application_url": None,
+            "tier_used": 3,
+            "active_state": "active",
+            "verification_method": "default_body_present",
+        },
+        captured_at=NOW,
+    )
+    ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+    set_stage_state(
+        conn,
+        job_id,
+        "tailor",
+        "blocked",
+        tenant_id=LOCAL_TENANT,
+        error_code="ENRICHMENT_QUARANTINED",
+        retryable=True,
+        blocked_by=["enrich"],
+        validate_transition=False,
+    )
+    conn.commit()
+
+    from jobctrl import state
+
+    event_counts_before = {
+        event_type: conn.execute(
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? "
+            "AND event_type = ?",
+            (str(LOCAL_TENANT), str(job_id), event_type),
+        ).fetchone()[0]
+        for event_type in ("StageReset", "PostingContentSnapshotCaptured")
+    }
+    original_record_job_event = state.record_job_event
+
+    def fail_after_tailor_release(*args, **kwargs):
+        event_type = args[3] if len(args) > 3 else kwargs.get("event_type")
+        if event_type == "PostingContentSnapshotCaptured":
+            raise RuntimeError("fault after Tailor release and StageReset audit")
+        return original_record_job_event(*args, **kwargs)
+
+    monkeypatch.setattr(state, "record_job_event", fail_after_tailor_release)
+    detail._record_posting_snapshot_from_cascade(
+        conn,
+        job_id=job_id,
+        url=url,
+        source_id="acme",
+        title="Engineer",
+        cascade_result={
+            "full_description": _DESCRIPTION,
+            "application_url": "https://example.com/apply/quarantine-release-crash",
+            "tier_used": 1,
+            "active_state": "active",
+            "verification_method": "json_ld",
+        },
+        captured_at="2026-05-13T01:00:00+00:00",
+    )
+
+    snapshot = conn.execute(
+        "SELECT latest_snapshot_version, latest_confidence, latest_quarantine_reason "
+        "FROM posting_snapshot_sets WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert dict(snapshot) == {
+        "latest_snapshot_version": 1,
+        "latest_confidence": "low",
+        "latest_quarantine_reason": "low_confidence_extraction",
+    }
+    tailor = conn.execute(
+        "SELECT state, error_code FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert dict(tailor) == {
+        "state": "blocked",
+        "error_code": "ENRICHMENT_QUARANTINED",
+    }
+    quarantine = conn.execute(
+        "SELECT status FROM discovery_quarantine_entries "
+        "WHERE tenant_id = ? AND job_id = ?",
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert quarantine["status"] == "pending"
+    event_counts_after = {
+        event_type: conn.execute(
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? "
+            "AND event_type = ?",
+            (str(LOCAL_TENANT), str(job_id), event_type),
+        ).fetchone()[0]
+        for event_type in ("StageReset", "PostingContentSnapshotCaptured")
+    }
+    assert event_counts_after == event_counts_before
+
+
 def test_no_snapshot_backlog_job_is_never_gated_from_any_selector(
     conn: sqlite3.Connection,
 ) -> None:

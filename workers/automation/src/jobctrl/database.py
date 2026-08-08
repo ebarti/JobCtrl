@@ -2376,14 +2376,36 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
     )
 
     # Idempotent one-shot backfill: every existing jobs row gets one
-    # observation row using its legacy URL / site / discovered_at.
+    # observation row using the identity column owned by the active schema.
+    # Exact v7 replaced ``job_url`` with canonical ``job_id``; this helper is
+    # still called by discovery hygiene, so it must not reintroduce the retired
+    # URL-shaped foreign key after cutover.
     backfilled = conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0]
     if backfilled == 0:
-        legacy_jobs = conn.execute("SELECT url, site, strategy, discovered_at FROM jobs").fetchall()
+        observation_columns = {
+            str(row[1])
+            for row in conn.execute(
+                "PRAGMA table_info(job_source_observations)"
+            ).fetchall()
+        }
+        identity_column = "job_id" if "job_id" in observation_columns else "job_url"
+        if identity_column == "job_id":
+            legacy_jobs = conn.execute(
+                "SELECT tenant_id, job_id, url, site, strategy, discovered_at FROM jobs"
+            ).fetchall()
+        else:
+            legacy_jobs = conn.execute(
+                "SELECT url, site, strategy, discovered_at FROM jobs"
+            ).fetchall()
         if legacy_jobs:
             now = datetime.now(timezone.utc).isoformat()
             for row in legacy_jobs:
-                _backfill_one_observation_row(conn, row, now)
+                _backfill_one_observation_row(
+                    conn,
+                    row,
+                    now,
+                    identity_column=identity_column,
+                )
 
     conn.commit()
     return [
@@ -2593,6 +2615,8 @@ def _backfill_one_observation_row(
     conn: sqlite3.Connection,
     row: sqlite3.Row,
     now: str,
+    *,
+    identity_column: str = "job_url",
 ) -> None:
     """Backfill one legacy ``jobs`` row into ``job_source_observations``.
 
@@ -2609,31 +2633,65 @@ def _backfill_one_observation_row(
     """
     from jobctrl.domain.discovery.identity import normalize_observed_url
 
-    url = row["url"] if isinstance(row, sqlite3.Row) else row[0]
-    site = (row["site"] if isinstance(row, sqlite3.Row) else row[1]) or "unknown"
-    discovered_at = (row["discovered_at"] if isinstance(row, sqlite3.Row) else row[3]) or now
+    if identity_column == "job_id":
+        tenant_id = row["tenant_id"] if isinstance(row, sqlite3.Row) else row[0]
+        job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[1]
+        url = row["url"] if isinstance(row, sqlite3.Row) else row[2]
+        site = (row["site"] if isinstance(row, sqlite3.Row) else row[3]) or "unknown"
+        discovered_at = (
+            row["discovered_at"] if isinstance(row, sqlite3.Row) else row[5]
+        ) or now
+    else:
+        tenant_id = "local"
+        job_id = None
+        url = row["url"] if isinstance(row, sqlite3.Row) else row[0]
+        site = (row["site"] if isinstance(row, sqlite3.Row) else row[1]) or "unknown"
+        discovered_at = (
+            row["discovered_at"] if isinstance(row, sqlite3.Row) else row[3]
+        ) or now
     if not url:
         return
     source_native_id = url  # fall back to the URL when we have nothing better
     source_observation_id = f"backfill:{url}"
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO job_source_observations (
-            tenant_id, source_observation_id, job_url, source_id,
-            source_native_id, observed_url, normalized_observed_url,
-            run_id, observed_at
-        ) VALUES ('local', ?, ?, ?, ?, ?, ?, 'backfill', ?)
-        """,
-        (
-            source_observation_id,
-            url,
-            str(site),
-            str(source_native_id),
-            url,
-            normalize_observed_url(url),
-            discovered_at,
-        ),
-    )
+    if identity_column == "job_id":
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO job_source_observations (
+                tenant_id, source_observation_id, job_id, source_id,
+                source_native_id, observed_url, normalized_observed_url,
+                run_id, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'backfill', ?)
+            """,
+            (
+                str(tenant_id),
+                source_observation_id,
+                str(job_id),
+                str(site),
+                str(source_native_id),
+                url,
+                normalize_observed_url(url),
+                discovered_at,
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO job_source_observations (
+                tenant_id, source_observation_id, job_url, source_id,
+                source_native_id, observed_url, normalized_observed_url,
+                run_id, observed_at
+            ) VALUES ('local', ?, ?, ?, ?, ?, ?, 'backfill', ?)
+            """,
+            (
+                source_observation_id,
+                url,
+                str(site),
+                str(source_native_id),
+                url,
+                normalize_observed_url(url),
+                discovered_at,
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2660,6 +2718,10 @@ _ENRICHMENT_PENDING: str = (
     "(je.job_id IS NULL OR je.current_status = 'pending') "
     "AND COALESCE(jss_enrich.state, 'pending') = 'pending'"
 )
+_ENRICHMENT_SELECTED_PENDING: str = (
+    "(je.job_id IS NULL OR je.current_status = 'pending') "
+    "AND COALESCE(jss_enrich.state, 'pending') IN ('pending', 'queued')"
+)
 _ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED: str = (
     "(je.job_id IS NULL OR je.current_status = 'pending') "
     "AND jss_enrich.state = 'blocked' "
@@ -2668,6 +2730,9 @@ _ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED: str = (
 )
 _ENRICHMENT_RUNNABLE: str = (
     f"(({_ENRICHMENT_PENDING}) OR ({_ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED}))"
+)
+_ENRICHMENT_SELECTED_RUNNABLE: str = (
+    f"(({_ENRICHMENT_SELECTED_PENDING}) OR ({_ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED}))"
 )
 
 # Closed/removed posting states are Enrichment-owned facts, not user

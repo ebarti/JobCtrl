@@ -63,12 +63,14 @@ class SqliteProfileRepository:
         publisher: EventPublisher,
         pdf_parser: PdfParserPort | None = None,
         profile_id: str = DEFAULT_PROFILE_ID,
+        initialize_schema: bool = True,
     ) -> None:
         self._conn = conn
         self._publisher = publisher
         self._pdf_parser = pdf_parser
         self._profile_id = profile_id or DEFAULT_PROFILE_ID
-        ensure_profile_tables(self._conn)
+        if initialize_schema:
+            ensure_profile_tables(self._conn)
 
     # ------------------------------------------------------------------
     # Load / save
