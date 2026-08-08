@@ -645,7 +645,8 @@
             "id": "r1",
             "text": "5+ years platform engineering",
             "tier": "must_have",
-            "weight": 0.9
+            "weight": 0.9,
+            "coverage_scope": null
           }
         ],
         "role_framing": "Own the developer platform.",
@@ -671,7 +672,8 @@
                 "id": "r1",
                 "text": "5+ years platform engineering",
                 "tier": "must_have",
-                "weight": 0.9
+                "weight": 0.9,
+                "coverage_scope": null
               }
             ],
             "role_framing": "Own the developer platform."
@@ -1135,7 +1137,8 @@
           "text": "5+ years platform engineering",
           "tier": "must_have",
           "weight": 0.9,
-          "evidence_span": "5+ years building developer platforms"
+          "evidence_span": "5+ years building developer platforms",
+          "coverage_scope": null
         }
       ],
       "keywords": [
@@ -1159,7 +1162,8 @@
               "text": "5+ years platform engineering",
               "tier": "must_have",
               "weight": 0.9,
-              "evidence_span": "5+ years building developer platforms"
+              "evidence_span": "5+ years building developer platforms",
+              "coverage_scope": null
             }
           ],
           "keywords": [

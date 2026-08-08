@@ -22,6 +22,7 @@ from jobctrl.domain.materials.requirement_coverage import (
     CoverageGraph,
     TargetProfile,
     build_target_profile,
+    resolve_requirement_coverage_scope,
     seed_coverage_graph,
 )
 from jobctrl.domain.materials.value_objects import ValidationResult
@@ -260,6 +261,7 @@ class RequirementDirectivePlanItem:
     weight: float
     fit_kind: str
     action: str
+    coverage_scope: str = "resume"
     priority: float = 0.0
     allowed_evidence_ids: tuple[str, ...] = ()
     target_keywords: tuple[str, ...] = ()
@@ -275,6 +277,7 @@ class RequirementDirectivePlanItem:
             "weight": self.weight,
             "pre_tailor_fit": self.fit_kind,
             "action": self.action,
+            "coverage_scope": self.coverage_scope,
             "priority": self.priority,
             "allowed_evidence_ids": list(self.allowed_evidence_ids),
             "target_keywords": list(self.target_keywords),
@@ -289,6 +292,7 @@ class RequirementDirectivePlanItem:
             "requirement_text": self.requirement_text,
             "fit": self.fit_kind,
             "action": self.action,
+            "coverage_scope": self.coverage_scope,
             "priority": self.priority,
             "allowed_evidence_ids": list(self.allowed_evidence_ids),
             "target_keywords": list(self.target_keywords),
@@ -348,6 +352,7 @@ class TailoringPlan:
                 "Use standard sections: EXECUTIVE PROFILE, EXPERIENCE, EDUCATION, SKILLS.",
                 "Use only verified profile metrics or evidence metrics.",
                 "Use requirement directives to decide which evidence to emphasize or bridge.",
+                "Treat context-only requirements as eligibility/apply-review facts, never resume coverage.",
                 "Do not claim prohibited missing requirements unless grounded evidence exists.",
                 "Cover relevant job keywords naturally; do not stuff repeated keywords.",
                 "Match seniority to the job title and responsibilities.",
@@ -560,6 +565,7 @@ def build_tailoring_plan(
         requirement_fit_report=matched_requirement_fit_report,
         job=job,
         employer_analysis=employer_analysis,
+        evidence_items=evidence_items,
     )
     directive_keywords = tuple(
         keyword
@@ -988,19 +994,52 @@ def _requirement_directive_items(
     requirement_fit_report: "RequirementFitReport | None",
     job: dict,
     employer_analysis: EmployerAnalysis,
+    evidence_items: tuple[EvidencePlanItem, ...] = (),
 ) -> tuple[RequirementDirectivePlanItem, ...]:
     if not _requirement_fit_report_matches(requirement_fit_report, job, employer_analysis):
         return ()
     items: list[RequirementDirectivePlanItem] = []
-    for assessment in getattr(requirement_fit_report, "assessments", ()) or ():
+    canonical_requirements = {
+        str(getattr(requirement, "id", "") or ""): requirement
+        for requirement in employer_analysis.canonical.requirements
+    }
+    assessments = tuple(getattr(requirement_fit_report, "assessments", ()) or ())
+    coverage_scopes: dict[str, str] = {}
+    requirement_texts: dict[str, str] = {}
+    for assessment in assessments:
+        requirement_id = str(getattr(assessment, "requirement_id", "") or "").strip()
+        canonical_requirement = canonical_requirements.get(requirement_id)
+        requirement_text = str(
+            getattr(canonical_requirement, "text", "")
+            or getattr(assessment, "requirement_text", "")
+            or ""
+        ).strip()
+        if not requirement_id or not requirement_text:
+            continue
+        requirement_texts[requirement_id] = requirement_text
+        coverage_scopes[requirement_id] = resolve_requirement_coverage_scope(
+            requirement_text,
+            getattr(canonical_requirement, "coverage_scope", None),
+        )
+    legitimate_claim_corpus = _legitimate_claim_corpus(
+        evidence_items=evidence_items,
+        employer_analysis=employer_analysis,
+        resume_requirement_texts=tuple(
+            text
+            for requirement_id, text in requirement_texts.items()
+            if coverage_scopes.get(requirement_id) == "resume"
+        ),
+    )
+    for assessment in assessments:
         fit = getattr(assessment, "fit", None)
         directive = getattr(assessment, "tailoring", None)
         requirement_id = str(getattr(assessment, "requirement_id", "") or "").strip()
-        requirement_text = str(getattr(assessment, "requirement_text", "") or "").strip()
+        requirement_text = requirement_texts.get(requirement_id, "")
         if not requirement_id or not requirement_text:
             continue
         fit_kind = str(getattr(fit, "kind", "not_assessed") or "not_assessed")
         action = str(getattr(directive, "action", "low_priority") or "low_priority")
+        coverage_scope = coverage_scopes[requirement_id]
         allowed_evidence_ids = _merge_strings(
             tuple(getattr(fit, "evidence_ids", ()) or ()),
             tuple(getattr(directive, "allowed_evidence_ids", ()) or ()),
@@ -1010,9 +1049,32 @@ def _requirement_directive_items(
             _requirement_keywords(employer_analysis, requirement_id),
         )
         prohibited_claims = tuple(getattr(directive, "prohibited_claims", ()) or ())
+        if coverage_scope != "resume":
+            action = "context_only"
+            allowed_evidence_ids = ()
+            target_keywords = ()
+            # The canonical posting sentence is always prohibited verbatim.
+            # Model-supplied fragments stay in force only when they cannot
+            # collide with text a grounded resume may legitimately contain: a
+            # bare token such as "hybrid" would otherwise reject legitimate
+            # hybrid-cloud or remote-team evidence, while a fragment such as
+            # "on-site three days" keeps the deterministic net against
+            # fabricated work-arrangement claims.
+            prohibited_claims = (
+                requirement_text,
+                *_collision_safe_prohibited_claims(
+                    prohibited_claims,
+                    legitimate_claim_corpus=legitimate_claim_corpus,
+                ),
+            )
         if fit_kind in {"missing", "blocked"} and not prohibited_claims:
             prohibited_claims = (requirement_text,)
         instruction = str(getattr(directive, "instruction", "") or "").strip()
+        if coverage_scope != "resume":
+            instruction = (
+                f"Keep this {coverage_scope.replace('_', ' ')} requirement in "
+                "eligibility/apply review; do not claim it as resume evidence."
+            )
         items.append(
             RequirementDirectivePlanItem(
                 requirement_id=requirement_id,
@@ -1021,6 +1083,7 @@ def _requirement_directive_items(
                 weight=float(getattr(assessment, "weight", 0.0) or 0.0),
                 fit_kind=fit_kind,
                 action=action,
+                coverage_scope=coverage_scope,
                 priority=float(getattr(directive, "priority", 0.0) or 0.0),
                 allowed_evidence_ids=allowed_evidence_ids,
                 target_keywords=target_keywords,
@@ -1071,12 +1134,73 @@ def _directive_evidence_ids(
     return tuple(dict.fromkeys(ids))
 
 
+def _legitimate_claim_corpus(
+    *,
+    evidence_items: tuple[EvidencePlanItem, ...],
+    employer_analysis: EmployerAnalysis,
+    resume_requirement_texts: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Normalized text a grounded resume may legitimately contain.
+
+    Prohibited-claim fragments are substring-matched against generated text, so
+    any fragment that already appears in profile evidence, the analysis's
+    reconciled keywords, or resume-scoped requirement wording would flag
+    legitimate grounded output as a fabricated claim.
+    """
+    entries: list[str] = []
+    for item in evidence_items:
+        entries.extend(
+            (
+                item.source_text,
+                item.scope,
+                item.action,
+                item.outcome,
+                *item.tools,
+                *item.metrics,
+                *item.tags,
+            )
+        )
+    entries.extend(_analysis_job_keywords(employer_analysis))
+    entries.extend(resume_requirement_texts)
+    return tuple(
+        dict.fromkeys(
+            normalized
+            for entry in entries
+            if (normalized := _normalize_claim_phrase(str(entry or "")))
+        )
+    )
+
+
+def _collision_safe_prohibited_claims(
+    model_prohibited_claims: tuple[str, ...],
+    *,
+    legitimate_claim_corpus: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Keep model-supplied prohibited fragments that cannot misfire.
+
+    A fragment is dropped when its normalized form appears inside any
+    legitimate corpus entry: the deterministic prohibited-claim gate would then
+    reject grounded resume content (the "hybrid" false positive). Surviving
+    fragments keep the gate armed against fabricated work-arrangement and
+    eligibility claims.
+    """
+    kept: list[str] = []
+    for claim in model_prohibited_claims:
+        normalized = _normalize_claim_phrase(str(claim or ""))
+        if len(normalized) < 3:
+            continue
+        if any(normalized in entry for entry in legitimate_claim_corpus):
+            continue
+        kept.append(str(claim).strip())
+    return tuple(dict.fromkeys(kept))
+
+
 def _directive_prohibited_claims(
     directives: tuple[RequirementDirectivePlanItem, ...],
 ) -> tuple[str, ...]:
     claims: list[str] = []
     for directive in directives:
-        if directive.action != "avoid_claim":
+        if directive.action not in {"avoid_claim", "context_only"}:
             continue
         claims.extend(directive.prohibited_claims)
     return tuple(dict.fromkeys(_normalize_space(claim) for claim in claims if claim))

@@ -542,8 +542,26 @@ class TestEmployerAnalysisAggregate:
         assert read["is_degraded"] is True
         assert read["agreement"]["flagged_keywords"] == ["Go"]
         assert read["requirements"][0]["tier"] == "must_have"
+        assert read["requirements"][0]["coverage_scope"] is None
         assert read["sub_analyses"][0]["model_id"] == "claude-opus-4-8"
+        assert read["sub_analyses"][0]["requirements"][0]["coverage_scope"] is None
         assert read["failures"][0]["model_id"] == "gpt-5.4"
+
+    def test_read_model_carries_declared_requirement_coverage_scope(self) -> None:
+        analysis = _analysis(requirements=[_requirement(coverage_scope="logistics")])
+        record = EmployerAnalysis.build(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId("https://example.com/job/1"),
+            generation=1,
+            snapshot_hash=compute_snapshot_hash(JD_SNAPSHOT),
+            canonical=analysis,
+            sub_analyses=(),
+            failures=(),
+            agreement=AnalysisAgreement(score=1.0),
+            legs_attempted=1,
+        )
+
+        assert record.to_read_model()["requirements"][0]["coverage_scope"] == "logistics"
 
     def test_generation_must_be_positive(self) -> None:
         with pytest.raises(ValueError):

@@ -1889,6 +1889,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           tier: "must_have",
           weight: 0.9,
           evidence_span: "5+ years Python",
+          coverage_scope: "resume",
         },
       ];
       const keywords = [
@@ -1963,7 +1964,11 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           role_framing: "Own the event platform.",
           inferred_seniority: "senior",
         });
-        expect(analysis.requirements[0]).toMatchObject({ tier: "must_have", weight: 0.9 });
+        expect(analysis.requirements[0]).toMatchObject({
+          tier: "must_have",
+          weight: 0.9,
+          coverage_scope: "resume",
+        });
         expect(analysis.keywords[0]).toMatchObject({ keyword: "Python", requirement_ref: "r1" });
         expect(analysis.agreement.flagged_keywords).toEqual(["kafka"]);
         expect(analysis.sub_analyses[0].model_id).toBe("claude-opus-4-8");

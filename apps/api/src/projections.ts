@@ -1218,6 +1218,13 @@ function loadEmployerAnalysisJson(db: SqliteDatabase, tenantId: string, jobId: s
     [tenantId, jobId, generation],
   );
 
+  const normalizeRequirements = (value: unknown): unknown[] =>
+    (Array.isArray(value) ? value : []).map((requirement) =>
+      isRecord(requirement)
+        ? { ...requirement, coverage_scope: requirement.coverage_scope ?? null }
+        : requirement,
+    );
+
   const readModel = {
     generation,
     snapshot_hash: row.snapshot_hash,
@@ -1233,12 +1240,16 @@ function loadEmployerAnalysisJson(db: SqliteDatabase, tenantId: string, jobId: s
     role_framing: row.role_framing,
     inferred_seniority: row.inferred_seniority,
     ideal_candidate_narrative: row.ideal_candidate_narrative,
-    requirements: parseJsonArray(row.requirements_json),
+    requirements: normalizeRequirements(parseJsonArray(row.requirements_json)),
     keywords: parseJsonArray(row.keywords_json),
-    sub_analyses: subRows.map((sub) => ({
-      model_id: sub.model_id,
-      ...(parseJsonObject(sub.analysis_json) as Record<string, unknown>),
-    })),
+    sub_analyses: subRows.map((sub) => {
+      const analysis = parseJsonObject(sub.analysis_json) as Record<string, unknown>;
+      return {
+        model_id: sub.model_id,
+        ...analysis,
+        requirements: normalizeRequirements(analysis.requirements),
+      };
+    }),
     failures: failureRows.map((f) => ({
       model_id: f.model_id,
       error: f.error,
