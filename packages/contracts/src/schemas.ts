@@ -872,14 +872,22 @@ export interface RepeatApplicationOverrideResponse {
 }
 
 export type ApplyReviewDryRunCoverage = "full" | "partial";
-export type ApplyReviewApprovalGateReason =
-  | "awaiting_approval"
-  | "awaiting_dry_run"
-  | "approval_stale_materials"
-  | "approval_stale_profile"
-  | "approval_stale_url"
-  | "approval_stale_email_candidate"
-  | "override_evidence_invalid";
+/**
+ * The apply-review approval-gate vocabulary. This constant is the single
+ * TypeScript source for the gate reasons; the Python launcher's refusal
+ * reasons are pinned to the same fixture
+ * (packages/domain-types/test/fixtures/apply_approval_gate_reasons.json).
+ */
+export const APPLY_REVIEW_APPROVAL_GATE_REASONS = [
+  "awaiting_approval",
+  "awaiting_dry_run",
+  "approval_stale_materials",
+  "approval_stale_profile",
+  "approval_stale_url",
+  "approval_stale_email_candidate",
+  "override_evidence_invalid",
+] as const;
+export type ApplyReviewApprovalGateReason = (typeof APPLY_REVIEW_APPROVAL_GATE_REASONS)[number];
 
 export interface ApplyReviewDryRunEvidence {
   runId: string;
