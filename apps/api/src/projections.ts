@@ -290,6 +290,14 @@ function reconcileObsoleteCoverGenerationConflicts(db: SqliteDatabase, tenantId:
   return repairedJobs;
 }
 
+/**
+ * Bound the per-request catch-up: one read folds at most this many pending
+ * events; the remainder folds on subsequent reads (the watermark only
+ * advances to the last event actually scanned, so a capped pass stays
+ * correct by construction). Matches the SSE tick's per-batch bound.
+ */
+export const REFRESH_EVENT_BATCH_LIMIT = 1000;
+
 /** Read the watermark; returns 0 when missing. */
 function readWatermark(db: SqliteDatabase, projection: string): number {
   const row = getRow<{ last_event_id: number | string }>(
@@ -300,14 +308,24 @@ function readWatermark(db: SqliteDatabase, projection: string): number {
   return row ? Number(row.last_event_id) : 0;
 }
 
-/** Atomic upsert + commit of the watermark. */
-function setWatermark(db: SqliteDatabase, projection: string, eventId: number): void {
+/**
+ * Atomic upsert + commit of the watermark. MAX() keeps the watermark
+ * monotonic: a stale or out-of-order writer can never rewind an advance
+ * made by the other runtime's builder, and updated_at only moves when the
+ * value actually advances. Mirrors the Python setter in
+ * workers/automation/src/jobctrl/infrastructure/events/watermark.py.
+ */
+export function setWatermark(db: SqliteDatabase, projection: string, eventId: number): void {
   db.prepare(
     `INSERT INTO event_watermarks (projection_name, last_event_id, updated_at)
      VALUES (?, ?, ?)
      ON CONFLICT(projection_name) DO UPDATE SET
-       last_event_id = excluded.last_event_id,
-       updated_at    = excluded.updated_at`,
+       last_event_id = MAX(event_watermarks.last_event_id, excluded.last_event_id),
+       updated_at    = CASE
+         WHEN excluded.last_event_id > event_watermarks.last_event_id
+           THEN excluded.updated_at
+         ELSE event_watermarks.updated_at
+       END`,
   ).run(projection, eventId, new Date().toISOString());
 }
 
@@ -640,8 +658,8 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   {
     const rows = allRows<{ event_id: number; tenant_id: string; job_id: string | null; event_type: string }>(
       db,
-      "SELECT event_id, tenant_id, job_id, event_type FROM job_events WHERE event_id > ? ORDER BY event_id ASC",
-      [watermark],
+      "SELECT event_id, tenant_id, job_id, event_type FROM job_events WHERE event_id > ? ORDER BY event_id ASC LIMIT ?",
+      [watermark, REFRESH_EVENT_BATCH_LIMIT],
     );
     for (const row of rows) {
       const eventId = Number(row.event_id);
