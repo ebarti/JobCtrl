@@ -283,6 +283,7 @@ def submission_result_kind(result: SubmissionResult) -> str:
 
 
 __all__ = [
+    "APPROVAL_GATE_REFUSAL_REASONS",
     "Applied",
     "ApplyPrompt",
     "ApplyRunId",
