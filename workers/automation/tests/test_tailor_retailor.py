@@ -25,7 +25,7 @@ from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.materials import SqliteTailoringPolicyRepository
-from jobctrl.pipeline import _count_pending
+from jobctrl.pipeline.runner import _count_pending
 from jobctrl.pipeline.current_policy_selectors import tailoring_current_policy_job_ids
 from jobctrl.state import ensure_job_stage_rows, set_stage_state
 from jobctrl.scoring.tailor import (

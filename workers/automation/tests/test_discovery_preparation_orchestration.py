@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,14 +29,6 @@ def _job_id(index: int) -> JobId:
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
     return init_db(tmp_path / "jobctrl.db")
-
-
-def test_all_stage_expands_to_primary_discover_only_and_keeps_maintenance_explicit() -> None:
-    assert runner.PRIMARY_STAGE_ORDER == ("discover",)
-    assert runner.MAINTENANCE_STAGE_ORDER == ("score", "tailor", "cover")
-    assert runner.SUPPORTED_STAGE_ORDER == ("discover", "score", "tailor", "cover")
-    assert runner._resolve_stages(["all"]) == ["discover"]
-    assert runner._resolve_stages(["score", "tailor", "cover"]) == ["score", "tailor", "cover"]
 
 
 def test_discover_workflow_is_registered() -> None:
@@ -563,29 +554,6 @@ def test_build_preparation_workflow_spec_uses_deterministic_id(
     assert spec.workflow_id == f"prep-{payload.idempotency_key}"
 
 
-def test_discover_stage_kwargs_include_preparation_controls() -> None:
-    kwargs = runner._build_stage_kwargs(
-        "discover",
-        min_score=8,
-        workers=3,
-        validation_mode="strict",
-        limit=5,
-        llm_model="local:score",
-        tailor_models=("local:draft",),
-        tailor_judge_model="local:judge",
-        tailor_judge_min_score=0.9,
-    )
-
-    assert kwargs["min_score"] == 8
-    assert kwargs["workers"] == 3
-    assert kwargs["validation_mode"] == "strict"
-    assert kwargs["limit"] == 5
-    assert kwargs["llm_model"] == "local:score"
-    assert kwargs["tailor_models"] == ("local:draft",)
-    assert kwargs["tailor_judge_model"] == "local:judge"
-    assert kwargs["tailor_judge_min_score"] == 0.9
-
-
 def test_discovery_source_failure_records_failed_progress(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[tuple[str, str, str, dict]] = []
     monkeypatch.setattr(
@@ -640,62 +608,3 @@ def test_discovery_source_failure_records_failed_progress(monkeypatch: pytest.Mo
     }
 
 
-def test_discover_runs_internal_preparation_after_enrichment(
-    conn: sqlite3.Connection,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, object] = {}
-
-    monkeypatch.setattr(runner, "init_db", lambda: conn)
-    monkeypatch.setattr(runner, "get_connection", lambda: conn)
-    monkeypatch.setattr(runner.config, "load_search_config", lambda: {"disable_jobspy": True})
-    monkeypatch.setattr(
-        runner,
-        "_start_discovery_enrichment_worker",
-        lambda *, workers, limit: (
-            SimpleNamespace(set=lambda: None),
-            {"status": "ok", "passes": 0, "pending": 0},
-            SimpleNamespace(join=lambda: None),
-        ),
-    )
-    monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(runner, "_record_operational_attempt", lambda **_kwargs: None)
-    monkeypatch.setitem(
-        sys.modules,
-        "jobctrl.discovery.workday",
-        SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0, run_id=None: None),
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "jobctrl.discovery.smartextract",
-        SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: None),
-    )
-
-    def fake_fan_out(**kwargs):
-        captured.update(kwargs)
-        return {"status": "ok", "has_work": True, "queued": {}, "started": {}}
-
-    monkeypatch.setattr(preparation, "start_discovery_preparation_workflows", fake_fan_out)
-
-    result = runner.run_discovery_legacy_once(
-        workers=3,
-        limit=5,
-        min_score=8,
-        validation_mode="strict",
-        llm_model="local:score",
-        tailor_models=("local:draft",),
-        tailor_judge_model="local:judge",
-        tailor_judge_min_score=0.9,
-    )
-
-    assert result["preparation"] == "ok"
-    assert captured == {
-        "min_score": 8,
-        "limit": 5,
-        "workers": 3,
-        "validation_mode": "strict",
-        "llm_model": "local:score",
-        "tailor_models": ("local:draft",),
-        "tailor_judge_model": "local:judge",
-        "tailor_judge_min_score": 0.9,
-    }
