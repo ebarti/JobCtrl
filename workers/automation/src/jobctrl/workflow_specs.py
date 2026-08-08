@@ -59,6 +59,11 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
     apply_selector = _apply_selector(params) if "apply" in stages else None
     if "apply" in stages:
         _require_auto_apply_browser_capability()
+    params, material_selection_resolved = _scope_global_material_batch(
+        params,
+        stages=stages,
+        tenant_id=tenant_id,
+    )
     raw_judge_min_score = params.get("tailorJudgeMinScore")
     if stages == ["discover"]:
         payload = DiscoverWorkflowInput(
@@ -100,11 +105,21 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
         ),
         job_id=(
             apply_selector.job_id
-            if apply_selector is not None
+            if apply_selector is not None and apply_selector.job_id is not None
             else _optional_job_id(params, "jobId")
         ),
-        job_ids=() if apply_selector is not None else _job_ids(params),
+        job_ids=(
+            ()
+            if apply_selector is not None and apply_selector.job_id is not None
+            else _job_ids(params)
+        ),
+        # ``coverJobIds`` is an internal key written only by the material
+        # cohort freeze above; ignore it on unresolved requests.
+        cover_job_ids=(
+            _job_ids(params, key="coverJobIds") if material_selection_resolved else ()
+        ),
         apply_selector_keys=apply_selector.keys if apply_selector else (),
+        material_selection_resolved=material_selection_resolved,
         source_ids=_source_ids(params),
         headless=bool(params.get("headless", False)),
         model=str(params.get("model", "default")),
@@ -120,6 +135,70 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
     )
 
 
+def _scope_global_material_batch(
+    params: dict[str, Any],
+    *,
+    stages: list[str],
+    tenant_id: str,
+) -> tuple[dict[str, Any], bool]:
+    """Freeze a global Tailor/Cover pickup into per-stage workflow cohorts.
+
+    Material activities need an exact cohort so their bounded per-job fan-out,
+    cancellation fence, and scaled timeout apply. Leaving ``jobIds`` empty
+    selects the legacy global runner, whose blocking work can outlive a Temporal
+    timeout and write after a newer owner has taken over.
+
+    Each requested material stage freezes its own backlog when the command
+    starts, wherever the material stages sit in the run: the first material
+    stage's cohort rides in ``jobIds`` and a Cover stage that follows Tailor
+    keeps its independently frozen ``pending_cover`` backlog in
+    ``coverJobIds``. Queue growth inside the run flows through stage-output
+    unions instead of an unscoped fallback — Score's ``scoredJobIds`` join the
+    frozen Tailor cohort and Tailor's ``approvedJobIds`` join the frozen Cover
+    cohort. Enrich-led runs are not frozen here because the Enrich stage
+    already hands its enriched subset to every later preparation stage.
+    """
+
+    if not any(stage in {"tailor", "cover"} for stage in stages):
+        return params, False
+    if "enrich" in stages:
+        return params, False
+    if params.get("jobId") or params.get("jobIds"):
+        return params, False
+
+    from jobctrl.database import get_connection, get_jobs_by_stage
+
+    conn = get_connection()
+
+    def frozen_cohort(queue_stage: str, *, retailor: bool) -> list[str]:
+        jobs = get_jobs_by_stage(
+            conn=conn,
+            stage=queue_stage,
+            min_score=int(params.get("minScore", 7)),
+            limit=int(params.get("limit", 0)),
+            retailor=retailor,
+        )
+        return list(
+            dict.fromkeys(
+                str(canonical_job_id(str(job["job_id"])))
+                for job in jobs
+                if str(job.get("tenant_id") or tenant_id) == tenant_id
+            )
+        )
+
+    scoped = dict(params)
+    if "tailor" in stages:
+        scoped["jobIds"] = frozen_cohort(
+            "pending_tailor",
+            retailor=bool(params.get("retailor", False)),
+        )
+        if "cover" in stages:
+            scoped["coverJobIds"] = frozen_cohort("pending_cover", retailor=False)
+    else:
+        scoped["jobIds"] = frozen_cohort("pending_cover", retailor=False)
+    return scoped, True
+
+
 def build_pipeline_workflow_spec(
     params: dict[str, Any],
     *,
@@ -131,6 +210,7 @@ def build_pipeline_workflow_spec(
     job_ids: tuple[JobId, ...] = (),
     score_current_policy_only: bool = False,
     tailor_current_policy_only: bool = False,
+    material_selection_resolved: bool = False,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
@@ -166,6 +246,7 @@ def build_pipeline_workflow_spec(
         apply_selector_keys=apply_selector.keys if apply_selector else (),
         score_current_policy_only=score_current_policy_only,
         tailor_current_policy_only=tailor_current_policy_only,
+        material_selection_resolved=material_selection_resolved,
         suppress_existing_artifacts=suppress_existing_artifacts,
         allow_low_fit_override=allow_low_fit_override,
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
@@ -520,12 +601,12 @@ def _stage_list(params: dict[str, Any]) -> list[str]:
     return [stage for stage in _WORKFLOW_STAGE_ORDER if stage in unique]
 
 
-def _job_ids(params: dict[str, Any]) -> tuple[JobId, ...]:
-    raw = params.get("jobIds") or ()
+def _job_ids(params: dict[str, Any], key: str = "jobIds") -> tuple[JobId, ...]:
+    raw = params.get(key) or ()
     if not raw:
         return ()
     if not isinstance(raw, list):
-        raise ValueError("jobIds must be an array")
+        raise ValueError(f"{key} must be an array")
     return tuple(dict.fromkeys(canonical_job_id(str(item)) for item in raw))
 
 

@@ -712,6 +712,7 @@ def test_run_scoring_persists_via_repository_only(
     assert summary["scored"] == 1
     assert summary["errors"] == 0
     assert summary["distribution"] == [(7, 1)]
+    assert summary["scoredJobIds"] == [str(_job_id(url))]
 
     # New aggregate persisted.
     loaded = repo.load(LOCAL_TENANT, _job_id(url))
@@ -1183,6 +1184,9 @@ def test_run_scoring_reuses_same_content_score_for_duplicate_jobs(
 
     assert summary["scored"] == 2
     assert summary["errors"] == 0
+    assert sorted(summary["scoredJobIds"]) == sorted(
+        [str(_job_id(first_url)), str(_job_id(duplicate_url))]
+    )
     assert llm.calls == 1
     first_score = repo.load(LOCAL_TENANT, _job_id(first_url))
     duplicate_score = repo.load(LOCAL_TENANT, _job_id(duplicate_url))
@@ -1478,7 +1482,13 @@ def test_run_scoring_increments_score_attempts_until_cap(
         llm_port=drained,
         resume_text="anything",
     )
-    assert summary == {"scored": 0, "errors": 0, "elapsed": 0.0, "distribution": []}
+    assert summary == {
+        "scored": 0,
+        "errors": 0,
+        "elapsed": 0.0,
+        "distribution": [],
+        "scoredJobIds": [],
+    }
     assert drained.calls == 0
     assert _score_attempt_count(conn, url) == 5
 

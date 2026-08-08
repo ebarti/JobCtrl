@@ -598,13 +598,28 @@ def refresh_compensation(params: dict[str, Any]) -> WorkflowStartSpec:
 
 
 def retailor_current_policy(params: dict[str, Any]) -> WorkflowStartSpec:
+    requested_job_ids = _job_ids(params)
+    material_selection_resolved = not requested_job_ids
+    job_ids = requested_job_ids
+    if material_selection_resolved:
+        from jobctrl.pipeline.current_policy_selectors import (
+            tailoring_current_policy_job_ids,
+        )
+
+        job_ids = tailoring_current_policy_job_ids(
+            get_connection(),
+            tenant_id=_tenant_id(params),
+            min_score=int(params.get("minScore", 7)),
+            limit=int(params.get("limit", 100)),
+        )
     return _pipeline_workflow_spec(
         params,
         stages=["tailor", "cover"],
         limit=int(params.get("limit", 100)),
         retailor=True,
-        job_ids=_job_ids(params),
+        job_ids=job_ids,
         tailor_current_policy_only=True,
+        material_selection_resolved=material_selection_resolved,
         suppress_existing_artifacts=_bool_param(params, "suppressExistingArtifacts", default=False),
     )
 
@@ -620,6 +635,7 @@ def _pipeline_workflow_spec(
     job_ids: tuple[JobId, ...] = (),
     score_current_policy_only: bool = False,
     tailor_current_policy_only: bool = False,
+    material_selection_resolved: bool = False,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
@@ -634,6 +650,7 @@ def _pipeline_workflow_spec(
             job_ids=job_ids,
             score_current_policy_only=score_current_policy_only,
             tailor_current_policy_only=tailor_current_policy_only,
+            material_selection_resolved=material_selection_resolved,
             suppress_existing_artifacts=suppress_existing_artifacts,
             allow_low_fit_override=allow_low_fit_override,
         )
