@@ -5564,6 +5564,16 @@ function progressStatus(value: unknown, eventType: string | null): DashboardSumm
   return "running";
 }
 
+const ACTIVITY_WORKFLOW_ID_SQL = `CASE
+  WHEN e.payload_json IS NOT NULL AND json_valid(e.payload_json)
+  THEN COALESCE(
+    json_extract(e.payload_json, '$.workflowId'),
+    json_extract(e.payload_json, '$.workflow_id'),
+    json_extract(e.payload_json, '$.execution.workflowId')
+  )
+  ELSE NULL
+END`;
+
 function listActivityFromEvents(
   db: SqliteDatabase,
   query: ActivityListQuery,
@@ -5600,10 +5610,22 @@ function listActivityFromEvents(
       OR LOWER(COALESCE(jp.title, '')) LIKE ?
       OR LOWER(COALESCE(jp.employer, '')) LIKE ?
       OR LOWER(COALESCE(e.job_id, '')) LIKE ?
+      OR LOWER(COALESCE(${ACTIVITY_WORKFLOW_ID_SQL}, '')) LIKE ?
       OR LOWER(CAST(e.event_id AS TEXT)) LIKE ?
       OR LOWER(COALESCE(e.occurred_at, '')) LIKE ?
     )`);
-    params.push(search, search, search, search, search, search, search, search, search);
+    params.push(
+      search,
+      search,
+      search,
+      search,
+      search,
+      search,
+      search,
+      search,
+      search,
+      search,
+    );
   }
   const activityWhere = `WHERE ${activityClauses.join(" AND ")}`;
   const fromSql = `
@@ -5629,6 +5651,7 @@ function listActivityFromEvents(
     SELECT
       e.event_id,
       ${eventTypeSelect},
+      ${ACTIVITY_WORKFLOW_ID_SQL} AS workflow_id,
       e.job_id,
       e.stage,
       e.level,
@@ -5669,6 +5692,7 @@ function getActivityEventFromEvents(db: SqliteDatabase, eventId: string): Activi
     `SELECT
        e.event_id,
        ${eventTypeSelect},
+       ${ACTIVITY_WORKFLOW_ID_SQL} AS workflow_id,
        e.job_id,
        e.stage,
        e.level,
@@ -5707,6 +5731,7 @@ function activityRowToSummary(row: Record<string, unknown>): ActivityEventSummar
   return {
     eventId: stringField(row.event_id),
     eventType: stringField(row.event_type) || "Event",
+    workflowId: nullableString(row.workflow_id),
     jobKey: nullableString(row.job_id),
     title: nullableString(row.title),
     company: nullableString(row.employer),
@@ -5961,8 +5986,9 @@ function applyWorkflowLifecycleFold(
  * `loadWorkflowRunLifecycleFolds`) so a stale terminal outcome from a superseded
  * execution never leaks onto a run the current execution has restarted.
  * Apply rows are enriched with job context via `apply_run_projections` (the
- * apply-specific detail projection). Preparation rows resolve the canonical
- * JobId in their input summary against the tenant-scoped job read model. The
+ * apply-specific detail projection). Job-scoped preparation and pipeline rows
+ * resolve the canonical JobId in their input summary against the tenant-scoped
+ * job read model. The
  * `runId` equals the Temporal `workflow_id`, so the Temporal Web UI deep-link
  * uses it verbatim.
  */
@@ -5977,7 +6003,7 @@ export function listWorkflowRuns(
        arp.job_employer AS job_employer, arp.dry_run AS apply_dry_run,
        arp.model AS apply_model, arp.result AS apply_result`;
   const relatedJobJoin = ` LEFT JOIN job_list_projections rjp
-    ON wrp.workflow_type = 'JobPreparationWorkflow'
+    ON wrp.workflow_type IN ('JobPreparationWorkflow', 'JobPipelineWorkflow')
    AND rjp.tenant_id = wrp.tenant_id
    AND rjp.job_id = CASE
      WHEN json_valid(wrp.input_summary_json)
@@ -6034,9 +6060,9 @@ function workflowRunsFilterPayload(query: WorkflowRunsListQuery): Record<string,
 /**
  * Workflow run detail (Temporal loop closure — P0). Reads one
  * `workflow_run_projections` row (enriched with canonical job context when the
- * run is an apply or preparation workflow) and returns the full
- * `WorkflowRunDetail` shape, including the folded lifecycle timeline. Returns
- * `null` when the run id is unknown.
+ * run is an apply or job-scoped preparation/pipeline workflow) and returns the
+ * full `WorkflowRunDetail` shape, including the folded lifecycle timeline.
+ * Returns `null` when the run id is unknown.
  */
 export function getWorkflowRunDetail(
   db: SqliteDatabase,
@@ -6049,7 +6075,7 @@ export function getWorkflowRunDetail(
        arp.job_employer AS job_employer, arp.dry_run AS apply_dry_run,
        arp.model AS apply_model, arp.result AS apply_result`;
   const relatedJobJoin = ` LEFT JOIN job_list_projections rjp
-    ON wrp.workflow_type = 'JobPreparationWorkflow'
+    ON wrp.workflow_type IN ('JobPreparationWorkflow', 'JobPipelineWorkflow')
    AND rjp.tenant_id = wrp.tenant_id
    AND rjp.job_id = CASE
      WHEN json_valid(wrp.input_summary_json)
@@ -6153,9 +6179,9 @@ function rowToWorkflowRunSummary(row: WorkflowRunProjectionRow): WorkflowRunSumm
     workflowType === "ApplyWorkflow" &&
     (inputSummary.autoApplyLoop === true || inputSummary.auto_apply_loop === true) &&
     inputSummary.continuous === true;
-  // Apply context remains authoritative for apply runs. Preparation context
-  // comes only from the canonical JobId join; job-independent runs continue to
-  // surface their workflow type.
+  // Apply context remains authoritative for apply runs. Preparation and
+  // single-job pipeline contexts come only from the canonical JobId join;
+  // job-independent runs continue to surface their workflow type.
   const hasApplyJob = Boolean(stringField(row.apply_job_id));
   const jobKey = stringField(row.apply_job_id) || stringField(row.related_job_id);
   const hasJob = Boolean(jobKey);

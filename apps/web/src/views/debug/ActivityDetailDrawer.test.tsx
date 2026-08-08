@@ -24,6 +24,9 @@ describe("<ActivityDetailDrawer>", () => {
       "href",
       "/jobs/job-1",
     );
+    expect(
+      screen.getByRole("link", { name: "Open related run" }),
+    ).toHaveAttribute("href", "/runs/run-pipeline-1");
 
     const inspector = screen.getByRole("complementary", {
       name: "Activity event facts",
@@ -36,7 +39,7 @@ describe("<ActivityDetailDrawer>", () => {
       "job-1",
       "Staff Software Engineer",
       "Acme Corp",
-      "Not exposed by the activity projection",
+      "run-pipeline-1",
     ]) {
       expect(within(inspector).getByText(fact)).toBeInTheDocument();
     }
@@ -49,6 +52,7 @@ describe("<ActivityDetailDrawer>", () => {
       name: "Projected event payload",
     });
     expect(payload).toHaveTextContent('"eventId": "evt-1"');
+    expect(payload).toHaveTextContent('"workflowId": "run-pipeline-1"');
     expect(payload).toHaveTextContent('"message": "Job scored 8/10"');
 
     const timeline = screen.getByRole("region", {

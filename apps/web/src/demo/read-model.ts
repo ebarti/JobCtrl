@@ -141,14 +141,83 @@ const staleJob = {
 const activity = {
   eventId: "event-demo-score",
   eventType: "JobScored",
-  jobKey: job.jobKey,
-  title: job.title,
-  company: job.company,
+  workflowId: "run-score-succeeded",
+  jobKey: staleJob.jobKey,
+  title: staleJob.title,
+  company: staleJob.company,
   stage: "score",
   level: "info",
-  message: "Synthetic score recorded.",
-  at: at("2026-07-09T09:30:00.000Z"),
+  message: "Synthetic score completed.",
+  at: at("2026-07-10T07:31:00.000Z"),
 } satisfies DemoReadModel["dashboard"]["summary"]["activity"][number];
+
+const workflowActivities = [
+  {
+    eventId: "event-demo-materials-progress",
+    eventType: "WorkflowStarted",
+    workflowId: "run-materials-progress",
+    jobKey: job.jobKey,
+    title: job.title,
+    company: job.company,
+    stage: "tailor",
+    level: "info",
+    message: "Synthetic material review is in progress.",
+    at: at("2026-07-11T08:58:00.000Z"),
+  },
+  {
+    eventId: "event-demo-application-rehearsal",
+    eventType: "WorkflowCompleted",
+    workflowId: "run-application-rehearsal",
+    jobKey: job.jobKey,
+    title: job.title,
+    company: job.company,
+    stage: "apply",
+    level: "info",
+    message: "No application was submitted.",
+    at: at("2026-07-11T08:31:00.000Z"),
+  },
+  {
+    eventId: "event-demo-discovery-completed",
+    eventType: "WorkflowCompleted",
+    workflowId: "run-discovery-demo",
+    jobKey: job.jobKey,
+    title: job.title,
+    company: job.company,
+    stage: "discover",
+    level: "info",
+    message: "Synthetic discovery completed.",
+    at: at("2026-07-11T08:30:00.000Z"),
+  },
+  {
+    eventId: "event-demo-quality-gate-failed",
+    eventType: "WorkflowFailed",
+    workflowId: "run-failed-quality-gate",
+    jobKey: staleJob.jobKey,
+    title: staleJob.title,
+    company: staleJob.company,
+    stage: "score",
+    level: "error",
+    message: "The synthetic rescore quality gate requested a retry.",
+    at: at("2026-07-11T08:22:00.000Z"),
+  },
+  {
+    eventId: "event-demo-discovery-cancelled",
+    eventType: "WorkflowCanceled",
+    workflowId: "run-discovery-cancelled",
+    jobKey: job.jobKey,
+    title: job.title,
+    company: job.company,
+    stage: "discover",
+    level: "warning",
+    message: "Synthetic discovery cancelled.",
+    at: at("2026-07-11T08:02:00.000Z"),
+  },
+  activity,
+] satisfies DemoReadModel["dashboard"]["summary"]["activity"];
+
+const workflowActivityEvents = Object.fromEntries(
+  workflowActivities.map((event) => [event.eventId, { ok: true as const, event }]),
+) satisfies DemoReadModel["dashboard"]["activityEvents"];
 
 const funnel = {
   applied: 3,
@@ -415,7 +484,7 @@ export const DEMO_READ_MODEL = {
         bySource: [{ source: "bundled-capture", ...funnel }],
         byBand: [{ band: "strong", ...funnel }],
       },
-      activity: [activity],
+      activity: workflowActivities,
       progress: [
         {
           stage: "tailor",
@@ -508,14 +577,12 @@ export const DEMO_READ_MODEL = {
     },
     activity: {
       ok: true,
-      items: [activity],
-      pagination: { page: 1, pageSize: 50, total: 1, pages: 1 },
+      items: workflowActivities,
+      pagination: { page: 1, pageSize: 50, total: workflowActivities.length, pages: 1 },
       sort: { field: "at", dir: "desc" },
       filter: {},
     },
-    activityEvents: {
-      [activity.eventId]: { ok: true, event: activity },
-    },
+    activityEvents: workflowActivityEvents,
   },
   jobs: {
     list: {
@@ -1324,7 +1391,7 @@ export const DEMO_READ_MODEL = {
         durationMs: 120_000,
         events: [
           { eventType: "WorkflowStarted", occurredAt: at("2026-07-11T08:00:00.000Z"), status: "in_progress", message: "Synthetic discovery started." },
-          { eventType: "WorkflowCancelled", occurredAt: at("2026-07-11T08:02:00.000Z"), status: "canceled", message: "Synthetic discovery cancelled." },
+          { eventType: "WorkflowCanceled", occurredAt: at("2026-07-11T08:02:00.000Z"), status: "canceled", message: "Synthetic discovery cancelled." },
         ],
       },
       "run-discovery-demo": {

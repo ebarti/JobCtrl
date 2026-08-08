@@ -105,4 +105,21 @@ describe("list and detail route composition", () => {
       screen.queryByRole("article", { name: "Job details" }),
     ).not.toBeInTheDocument();
   });
+
+  it("keeps a job-scoped activity route on event details with a separate job link", async () => {
+    renderRoute("/activity/evt-1");
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Job scored 8/10",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open related job" }),
+    ).toHaveAttribute("href", "/jobs/job-1");
+    expect(
+      screen.queryByRole("article", { name: "Job details" }),
+    ).not.toBeInTheDocument();
+  });
 });

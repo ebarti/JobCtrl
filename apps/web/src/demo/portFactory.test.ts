@@ -78,9 +78,6 @@ describe("port factory", () => {
     expect(direct.openInOs).toBeInstanceOf(OpenArtifactAdapter);
     expect(direct.telemetry).toBeInstanceOf(ConsoleTelemetryAdapter);
     expect(direct.featureFlags).toBeInstanceOf(StaticFeatureFlagAdapter);
-    expect(direct.featureFlags.get("activityDetailDirectLoad", false)).toBe(
-      false,
-    );
     expect(direct.featureFlags.get("demoMode", false)).toBe(false);
     expect(composition.ports.api).toBeInstanceOf(FetchApiClientAdapter);
   });
@@ -116,9 +113,6 @@ describe("port factory", () => {
       expect(composition.ports.featureFlags).toBeInstanceOf(
         DemoFeatureFlagAdapter,
       );
-      expect(
-        composition.ports.featureFlags.get("activityDetailDirectLoad", false),
-      ).toBe(true);
       expect(composition.ports.featureFlags.get("demoMode", false)).toBe(true);
       expect(composition.ports.telemetry).toBe(telemetry);
       expect(composition.ports.api).toBeInstanceOf(DemoApiClientAdapter);

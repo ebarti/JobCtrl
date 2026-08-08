@@ -32,6 +32,8 @@ from typing import Callable, TypeVar
 
 from temporalio import activity
 
+from jobctrl.infrastructure.workflow_run_context import carry_workflow_run_context
+
 _T = TypeVar("_T")
 log = logging.getLogger(__name__)
 _ACTIVITY_EXECUTOR: ThreadPoolExecutor | None = None
@@ -153,7 +155,10 @@ async def run_blocking_with_heartbeat(
     activity.heartbeat(starting_message)
     loop = asyncio.get_running_loop()
     blocking_executor = _activity_executor()
-    task = loop.run_in_executor(blocking_executor, fn)
+    # ``run_in_executor`` does not carry this coroutine's context into the
+    # worker thread, so bind the owning workflow id explicitly. Durable events
+    # recorded by the blocking stage runner then keep canonical run ownership.
+    task = loop.run_in_executor(blocking_executor, carry_workflow_run_context(fn))
     activity_label = activity_name or activity.info().activity_type
     try:
         while True:

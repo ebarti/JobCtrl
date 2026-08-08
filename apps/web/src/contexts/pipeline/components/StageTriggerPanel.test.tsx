@@ -616,6 +616,7 @@ describe("StageTriggerPanel", () => {
               {
                 eventId: "538",
                 eventType: "StageStarted",
+                workflowId: null,
                 jobKey: "pipeline",
                 title: null,
                 company: null,
@@ -650,6 +651,7 @@ describe("StageTriggerPanel", () => {
               {
                 eventId: "539",
                 eventType: "StageStarted",
+                workflowId: null,
                 jobKey: "pipeline",
                 title: null,
                 company: null,

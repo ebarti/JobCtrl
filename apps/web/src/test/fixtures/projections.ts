@@ -1203,6 +1203,7 @@ export const sampleDashboardSummary: DashboardSummary = {
     {
       eventId: "evt-1",
       eventType: "JobScored",
+      workflowId: "run-pipeline-1",
       jobKey: "job-1",
       title: sampleJob.title,
       company: sampleJob.company,

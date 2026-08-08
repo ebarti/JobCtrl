@@ -247,8 +247,15 @@ def _run_selected_scores(
     if worker_count == 1 or len(job_ids) <= 1:
         results = [score_one(job_id) for job_id in job_ids]
     else:
+        # Pool threads lose the activity's run context; re-bind it so per-job
+        # stage events emitted inside ``score_job_by_id`` keep run ownership.
+        from jobctrl.infrastructure.workflow_run_context import (
+            carry_workflow_run_context,
+        )
+
+        score_one_owned = carry_workflow_run_context(score_one)
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures = [executor.submit(score_one, job_id) for job_id in job_ids]
+            futures = [executor.submit(score_one_owned, job_id) for job_id in job_ids]
             results = [future.result() for future in as_completed(futures)]
 
     for job_id, outcome in results:

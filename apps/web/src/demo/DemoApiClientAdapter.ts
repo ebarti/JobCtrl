@@ -179,6 +179,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
         event.message,
         event.title ?? "",
         event.company ?? "",
+        event.workflowId ?? "",
         event.jobKey ?? "",
         event.eventId,
         event.at,

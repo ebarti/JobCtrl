@@ -162,6 +162,57 @@ describe("<WorkflowRunDrawer>", () => {
     expect(within(details!).getByText("Cover letter")).toBeInTheDocument();
   });
 
+  it("identifies a job-scoped pipeline run and reviews activity by the exact workflow", async () => {
+    const workflowRun = vi.fn(async () =>
+      makeWorkflowRunDetail({
+        jobKey: "job-1",
+        title: "Staff Software Engineer",
+        company: "Acme Corp",
+        status: "in_progress",
+        errorCode: null,
+        errorMessage: null,
+        retryable: false,
+        inputSummary: { jobId: "job-1", stages: ["tailor", "cover"] },
+      }),
+    );
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { workflowRun } }),
+    });
+    const router = buildRouter();
+    render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+
+    const workspace = await screen.findByRole("article", {
+      name: "Workflow run details",
+    });
+    expect(
+      within(workspace).getByRole("heading", {
+        level: 1,
+        name: "Tailor → Cover letter run",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(workspace).getByRole("link", {
+        name: "View job: Staff Software Engineer at Acme Corp",
+      }),
+    ).toHaveAttribute("href", "/jobs/job-1");
+    expect(
+      within(workspace).getByRole("link", {
+        name: "Open job Staff Software Engineer at Acme Corp",
+      }),
+    ).toHaveAttribute("href", "/jobs/job-1");
+    const activityLink = within(workspace).getByRole("link", {
+      name: "Review activity",
+    });
+    expect(activityLink).toHaveAttribute(
+      "href",
+      expect.stringContaining("q=run-pipeline-1"),
+    );
+    expect(activityLink).not.toHaveAttribute(
+      "href",
+      expect.stringContaining("q=job-1"),
+    );
+  });
+
   it("copies both run identities through the clipboard port", async () => {
     const user = userEvent.setup();
     const harness = buildProviderHarness();

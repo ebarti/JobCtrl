@@ -13,6 +13,7 @@ import { DebugActivityTable } from "./DebugActivityTable.js";
 const baseActivity: ActivityEventSummary = {
   eventId: "evt-0",
   eventType: "JobScored",
+  workflowId: null,
   jobKey: "job-1",
   title: "Staff Software Engineer",
   company: "Acme Corp",

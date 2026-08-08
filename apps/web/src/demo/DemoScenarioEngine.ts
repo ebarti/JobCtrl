@@ -516,6 +516,14 @@ export class DemoScenarioEngine {
     });
     updateStageProjection(draft, pending, "queued", pending.requestedAt);
     appendRequestedEvents(pending, context, pending.requestedAt);
+    appendWorkflowActivity(
+      draft,
+      pending,
+      "WorkflowQueued",
+      "info",
+      pending.definition.queuedMessage,
+      pending.requestedAt,
+    );
   }
 
   private applyRunning(
@@ -553,6 +561,14 @@ export class DemoScenarioEngine {
       startedAt: now,
       temporalRunId: null,
     }, now);
+    appendWorkflowActivity(
+      draft,
+      pending,
+      "WorkflowStarted",
+      "info",
+      pending.definition.runningMessage,
+      now,
+    );
     if (pending.targetRefs.stage) {
       appendEvent(context, "StageStarted", {
         jobId: pending.targetRefs.jobKey ?? "pipeline",
@@ -630,6 +646,14 @@ export class DemoScenarioEngine {
           durationMs,
           temporalRunId: null,
         }, now);
+    appendWorkflowActivity(
+      draft,
+      pending,
+      failed ? "WorkflowFailed" : "WorkflowCompleted",
+      failed ? "error" : "info",
+      pending.definition.outcome.summary,
+      now,
+    );
     if (pending.targetRefs.stage) {
       appendEvent(context, failed ? "StageFailed" : "StageCompleted", failed
         ? {
@@ -736,6 +760,45 @@ export class DemoScenarioEngine {
       check();
     });
   }
+}
+
+function appendWorkflowActivity(
+  draft: DemoWorkspaceSnapshot,
+  pending: DemoScenarioInvocation,
+  eventType: "WorkflowQueued" | "WorkflowStarted" | "WorkflowCompleted" | "WorkflowFailed",
+  level: "info" | "error",
+  message: string,
+  at: string,
+): void {
+  const job = jobForInvocation(draft, pending);
+  const event = {
+    eventId: `activity-${pending.runId}-${eventType.toLowerCase()}`,
+    eventType,
+    workflowId: pending.runId,
+    jobKey: pending.targetRefs.jobKey,
+    title: job?.title ?? null,
+    company: job?.company ?? null,
+    stage: pending.targetRefs.stage ?? "workflow",
+    level,
+    message,
+    at,
+  };
+  const dashboard = draft.state.readModel.dashboard;
+  const activityEvents = dashboard.activityEvents as Mutable<
+    typeof dashboard.activityEvents
+  >;
+  if (activityEvents[event.eventId]) return;
+  dashboard.summary.activity.unshift(event);
+  dashboard.activity.items.unshift(event);
+  dashboard.activity.pagination.total = dashboard.activity.items.length;
+  dashboard.activity.pagination.pages = Math.max(
+    1,
+    Math.ceil(
+      dashboard.activity.pagination.total /
+        dashboard.activity.pagination.pageSize,
+    ),
+  );
+  activityEvents[event.eventId] = { ok: true, event };
 }
 
 function actionForTarget(

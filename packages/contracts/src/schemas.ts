@@ -3096,6 +3096,8 @@ export interface PaginatedResponse<T> {
 export interface ActivityEventSummary {
   eventId: string;
   eventType: string;
+  /** Canonical workflow id when the event payload carries run ownership. */
+  workflowId: string | null;
   jobKey: string | null;
   title: string | null;
   company: string | null;

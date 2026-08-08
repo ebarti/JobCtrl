@@ -49,6 +49,7 @@ from jobctrl.infrastructure.enrichment.execution_lease import (
 from jobctrl.infrastructure.discovery.sqlite_run_repository import (
     SqliteDiscoveryRunRepository,
 )
+from jobctrl.infrastructure.workflow_run_context import current_workflow_id
 from jobctrl.infrastructure.discovery.production_wiring import (
     enqueue_manual_action_for_sources,
     retire_invalid_source_jobs,
@@ -67,7 +68,6 @@ log = logging.getLogger(__name__)
 console = Console()
 
 _PIPELINE_JOB_ID = "pipeline"
-_PIPELINE_RUN_CONTEXT = threading.local()
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +97,12 @@ def _pipeline_tracer():
 
 
 def _current_workflow_id() -> str | None:
-    value = getattr(_PIPELINE_RUN_CONTEXT, "workflow_id", None)
-    return value if isinstance(value, str) and value else None
+    """Canonical workflow id owning this stage execution, if any.
+
+    Resolved through :mod:`jobctrl.infrastructure.workflow_run_context`, which
+    ``run_blocking_with_heartbeat`` binds from the enclosing Temporal activity.
+    """
+    return current_workflow_id()
 
 
 def _record_pipeline_event(

@@ -79,18 +79,32 @@ export function ActivityDetailDrawer({ eventId }: ActivityDetailDrawerProps) {
                   {activity.company ? ` at ${activity.company}` : ""}
                 </p>
               </div>
-              {activity.jobKey ? (
+              {activity.jobKey || activity.workflowId ? (
                 <div className="activity-detail-workspace__actions">
-                  <Link
-                    className={buttonVariants({
-                      size: "sm",
-                      variant: "outline",
-                    })}
-                    to="/jobs/$jobId"
-                    params={{ jobId: activity.jobKey }}
-                  >
-                    Open related job
-                  </Link>
+                  {activity.jobKey ? (
+                    <Link
+                      className={buttonVariants({
+                        size: "sm",
+                        variant: "outline",
+                      })}
+                      to="/jobs/$jobId"
+                      params={{ jobId: activity.jobKey }}
+                    >
+                      Open related job
+                    </Link>
+                  ) : null}
+                  {activity.workflowId ? (
+                    <Link
+                      className={buttonVariants({
+                        size: "sm",
+                        variant: "outline",
+                      })}
+                      to="/runs/$runId"
+                      params={{ runId: activity.workflowId }}
+                    >
+                      Open related run
+                    </Link>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -144,7 +158,19 @@ export function ActivityDetailDrawer({ eventId }: ActivityDetailDrawerProps) {
                 />
                 <InspectorLedgerItem
                   label="Run reference"
-                  source="Not exposed by the activity projection"
+                  value={
+                    activity.workflowId ? (
+                      <Link
+                        aria-label={`Open run ${activity.workflowId}`}
+                        className="mono"
+                        params={{ runId: activity.workflowId }}
+                        to="/runs/$runId"
+                      >
+                        {activity.workflowId}
+                      </Link>
+                    ) : undefined
+                  }
+                  source="Activity projection"
                 />
               </InspectorLedger>
             </div>
