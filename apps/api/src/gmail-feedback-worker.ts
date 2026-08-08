@@ -1,12 +1,10 @@
-import { spawn } from "node:child_process";
-
 import type {
   ApplicationOutcomeKind,
   GmailOutcomeScanRequest,
   GmailOutcomeScanResponse,
 } from "./contracts.js";
-import { APPLICATION_OUTCOME_KINDS } from "./contracts.js";
-import { createSourcePythonRuntime, type PythonRuntimeCommandResolver } from "./python-runtime.js";
+import { APPLICATION_OUTCOME_KINDS, RpcMethods } from "./contracts.js";
+import type { JsonRpcDispatcher } from "./json-rpc-adapter.js";
 
 export interface GmailFeedbackScanContext {
   appDir: string;
@@ -18,12 +16,6 @@ export type GmailFeedbackScanner = (
   context: GmailFeedbackScanContext,
 ) => Promise<unknown>;
 
-export interface WorkerGmailFeedbackScannerOptions {
-  projectDir?: string;
-  uvBinary?: string;
-  pythonRuntime?: PythonRuntimeCommandResolver;
-}
-
 export class GmailFeedbackScanError extends Error {
   readonly statusCode: number;
 
@@ -34,22 +26,36 @@ export class GmailFeedbackScanError extends Error {
   }
 }
 
-export function createWorkerGmailFeedbackScanner(
-  options: WorkerGmailFeedbackScannerOptions = {},
-): GmailFeedbackScanner {
-  const pythonRuntime =
-    options.pythonRuntime ??
-    createSourcePythonRuntime({
-      ...(options.projectDir ? { projectDir: options.projectDir } : {}),
-      ...(options.uvBinary ? { uvBinary: options.uvBinary } : {}),
+// Runs the bounded Gmail outcome scan through the long-lived JSON-RPC worker
+// child instead of a bespoke one-shot subprocess with stdout line-parsing.
+// Auth failures still travel as { ok: false, message } inside the result so
+// the status mapping below stays behavior-identical.
+export function createWorkerGmailFeedbackScanner(dispatcher: JsonRpcDispatcher): GmailFeedbackScanner {
+  return async (input, context) => {
+    const response = await dispatcher.call(RpcMethods.GmailFeedbackScan, {
+      expectedAppDir: context.appDir,
+      expectedDbPath: context.dbPath,
+      ...(input.recipientEmail !== undefined ? { recipientEmail: input.recipientEmail } : {}),
+      ...(input.limit !== undefined ? { limit: Number(input.limit) } : {}),
+      ...(input.maxResultsPerAnchor !== undefined
+        ? { maxResultsPerAnchor: Number(input.maxResultsPerAnchor) }
+        : {}),
+      ...(input.windowDays !== undefined ? { windowDays: Number(input.windowDays) } : {}),
     });
-
-  return async (input, context) =>
-    runWorkerScan(input, {
-      appDir: context.appDir,
-      dbPath: context.dbPath,
-      pythonRuntime,
-    });
+    if (response.error) {
+      const message = response.error.message || "Gmail feedback scan failed.";
+      throw new GmailFeedbackScanError(message, gmailFeedbackErrorStatus(message));
+    }
+    const parsed = response.result;
+    if (!isRecord(parsed)) {
+      throw new GmailFeedbackScanError("Worker response was not a JSON object.", 500);
+    }
+    if (parsed.ok === false) {
+      const message = optionalText(parsed.message) ?? "Gmail feedback scan failed.";
+      throw new GmailFeedbackScanError(message, gmailFeedbackErrorStatus(message));
+    }
+    return sanitizeGmailFeedbackScanResponse(parsed);
+  };
 }
 
 export function sanitizeGmailFeedbackScanResponse(output: unknown): GmailOutcomeScanResponse {
@@ -82,94 +88,6 @@ export function sanitizeGmailFeedbackScanResponse(output: unknown): GmailOutcome
       };
     }),
   };
-}
-
-interface WorkerRunOptions extends GmailFeedbackScanContext {
-  pythonRuntime: PythonRuntimeCommandResolver;
-}
-
-function runWorkerScan(
-  payload: GmailOutcomeScanRequest,
-  options: WorkerRunOptions,
-): Promise<GmailOutcomeScanResponse> {
-  return new Promise((resolve, reject) => {
-    const command = options.pythonRuntime.resolve(
-      {
-        kind: "module",
-        module: "jobctrl.infrastructure.gmail.feedback",
-        args: ["--db-path", options.dbPath],
-      },
-      { appDir: options.appDir },
-    );
-    const child = spawn(command.executable, command.argv, {
-      cwd: command.cwd,
-      env: command.env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code !== 0) {
-        const parsed = tryParseWorkerOutput(stdout);
-        const message =
-          (isRecord(parsed) && optionalText(parsed.message)) ||
-          stderr.trim() ||
-          stdout.trim() ||
-          `Worker exited with code ${code ?? "unknown"}.`;
-        reject(new GmailFeedbackScanError(message, gmailFeedbackErrorStatus(message)));
-        return;
-      }
-      try {
-        const parsed = parseWorkerOutput(stdout);
-        if (!isRecord(parsed)) {
-          throw new Error("Worker response was not a JSON object.");
-        }
-        if (parsed.ok === false) {
-          const message = optionalText(parsed.message) ?? "Gmail feedback scan failed.";
-          throw new GmailFeedbackScanError(message, gmailFeedbackErrorStatus(message));
-        }
-        resolve(sanitizeGmailFeedbackScanResponse(parsed));
-      } catch (error) {
-        reject(
-          error instanceof GmailFeedbackScanError
-            ? error
-            : new GmailFeedbackScanError(
-                error instanceof Error ? error.message : "Unable to parse worker response.",
-                500,
-              ),
-        );
-      }
-    });
-    child.stdin.end(`${JSON.stringify(payload)}\n`);
-  });
-}
-
-function parseWorkerOutput(stdout: string): unknown {
-  const line = stdout
-    .trim()
-    .split("\n")
-    .findLast((candidate) => candidate.trim().startsWith("{"));
-  if (!line) {
-    throw new Error("Worker did not return a JSON object.");
-  }
-  return JSON.parse(line) as unknown;
-}
-
-function tryParseWorkerOutput(stdout: string): unknown {
-  try {
-    return parseWorkerOutput(stdout);
-  } catch {
-    return null;
-  }
 }
 
 function gmailFeedbackErrorStatus(message: string): number {
