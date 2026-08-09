@@ -1,0 +1,2079 @@
+{
+  "schemaVersion": 1,
+  "endpoints": {
+    "learningRecommendations": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "page": {
+            "default": 1,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        }
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "recommendations": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "recommendationId": {
+                  "type": "string",
+                  "pattern": "^learning-recommendation:[a-f0-9]{64}$"
+                },
+                "derivationVersion": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "evaluationFixtureVersion": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "context": {
+                  "type": "string",
+                  "const": "materials"
+                },
+                "policyKind": {
+                  "type": "string",
+                  "const": "tailoring_rule"
+                },
+                "signalKind": {
+                  "type": "string",
+                  "enum": [
+                    "style_preference",
+                    "factual_correction",
+                    "claim_policy_correction",
+                    "keyword_strategy",
+                    "provenance_dispute"
+                  ]
+                },
+                "ruleKey": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80,
+                  "pattern": "^[a-z0-9_]+$"
+                },
+                "ruleValue": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "pattern": "^[a-z0-9_]+$"
+                },
+                "allowlistVersion": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "status": {
+                  "type": "string",
+                  "const": "pending"
+                },
+                "active": {
+                  "type": "boolean"
+                },
+                "observedSignalCount": {
+                  "type": "integer",
+                  "minimum": 3,
+                  "maximum": 9007199254740991
+                },
+                "observedJobCount": {
+                  "type": "integer",
+                  "minimum": 2,
+                  "maximum": 9007199254740991
+                },
+                "minimumSignalCount": {
+                  "type": "integer",
+                  "minimum": 3,
+                  "maximum": 9007199254740991
+                },
+                "minimumJobCount": {
+                  "type": "integer",
+                  "minimum": 2,
+                  "maximum": 9007199254740991
+                },
+                "confidenceLimit": {
+                  "type": "string",
+                  "const": "sample_gated_no_population_inference"
+                },
+                "supportingEvidenceCount": {
+                  "type": "integer",
+                  "minimum": 3,
+                  "maximum": 9007199254740991
+                },
+                "contradictingEvidenceCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "tombstoneCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "derivedAt": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80,
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                }
+              },
+              "required": [
+                "recommendationId",
+                "derivationVersion",
+                "evaluationFixtureVersion",
+                "context",
+                "policyKind",
+                "signalKind",
+                "ruleKey",
+                "ruleValue",
+                "allowlistVersion",
+                "status",
+                "active",
+                "observedSignalCount",
+                "observedJobCount",
+                "minimumSignalCount",
+                "minimumJobCount",
+                "confidenceLimit",
+                "supportingEvidenceCount",
+                "contradictingEvidenceCount",
+                "tombstoneCount",
+                "derivedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "totalPages": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "ok",
+          "recommendations",
+          "page",
+          "pageSize",
+          "total",
+          "totalPages"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "reviewLearningRecommendation": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "decision": {
+                "type": "string",
+                "const": "accepted"
+              }
+            },
+            "required": [
+              "decision"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "decision": {
+                "type": "string",
+                "const": "rejected"
+              }
+            },
+            "required": [
+              "decision"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": true
+              },
+              "reviewId": {
+                "type": "string",
+                "pattern": "^learning-recommendation-review:[a-f0-9]{64}$"
+              },
+              "recommendationId": {
+                "type": "string",
+                "pattern": "^learning-recommendation:[a-f0-9]{64}$"
+              },
+              "revision": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "context": {
+                "type": "string",
+                "const": "materials"
+              },
+              "policyKind": {
+                "type": "string",
+                "const": "tailoring_rule"
+              },
+              "reviewedAt": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+              },
+              "decision": {
+                "type": "string",
+                "const": "accepted"
+              },
+              "policyVersion": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "ok",
+              "reviewId",
+              "recommendationId",
+              "revision",
+              "context",
+              "policyKind",
+              "reviewedAt",
+              "decision",
+              "policyVersion"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": true
+              },
+              "reviewId": {
+                "type": "string",
+                "pattern": "^learning-recommendation-review:[a-f0-9]{64}$"
+              },
+              "recommendationId": {
+                "type": "string",
+                "pattern": "^learning-recommendation:[a-f0-9]{64}$"
+              },
+              "revision": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "context": {
+                "type": "string",
+                "const": "materials"
+              },
+              "policyKind": {
+                "type": "string",
+                "const": "tailoring_rule"
+              },
+              "reviewedAt": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+              },
+              "decision": {
+                "type": "string",
+                "const": "rejected"
+              },
+              "policyVersion": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "ok",
+              "reviewId",
+              "recommendationId",
+              "revision",
+              "context",
+              "policyKind",
+              "reviewedAt",
+              "decision",
+              "policyVersion"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "rollbackTailoringPolicy": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "targetVersion": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "targetVersion"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "context": {
+            "type": "string",
+            "const": "materials"
+          },
+          "policyKind": {
+            "type": "string",
+            "const": "tailoring_rule"
+          },
+          "version": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "status": {
+            "type": "string",
+            "const": "current"
+          },
+          "learnedRules": {
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "ruleKey": {
+                      "type": "string",
+                      "const": "style_guidance"
+                    },
+                    "ruleValue": {
+                      "type": "string",
+                      "const": "preserve_user_edit_pattern"
+                    }
+                  },
+                  "required": [
+                    "ruleKey",
+                    "ruleValue"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "ruleKey": {
+                      "type": "string",
+                      "const": "fact_handling"
+                    },
+                    "ruleValue": {
+                      "type": "string",
+                      "const": "require_source_match"
+                    }
+                  },
+                  "required": [
+                    "ruleKey",
+                    "ruleValue"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "ruleKey": {
+                      "type": "string",
+                      "const": "claim_policy"
+                    },
+                    "ruleValue": {
+                      "type": "string",
+                      "const": "omit_unsupported_claims"
+                    }
+                  },
+                  "required": [
+                    "ruleKey",
+                    "ruleValue"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "ruleKey": {
+                      "type": "string",
+                      "const": "keyword_strategy"
+                    },
+                    "ruleValue": {
+                      "type": "string",
+                      "const": "use_supported_terms_only"
+                    }
+                  },
+                  "required": [
+                    "ruleKey",
+                    "ruleValue"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "ruleKey": {
+                      "type": "string",
+                      "const": "provenance_policy"
+                    },
+                    "ruleValue": {
+                      "type": "string",
+                      "const": "require_direct_evidence"
+                    }
+                  },
+                  "required": [
+                    "ruleKey",
+                    "ruleValue"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "sourceReviewId": {
+            "type": "null"
+          },
+          "sourceRecommendationId": {
+            "type": "null"
+          },
+          "rollbackOfVersion": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "rollbackReasonCode": {
+            "type": "string",
+            "const": "user_requested"
+          },
+          "createdAt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+          }
+        },
+        "required": [
+          "ok",
+          "context",
+          "policyKind",
+          "version",
+          "status",
+          "learnedRules",
+          "sourceReviewId",
+          "sourceRecommendationId",
+          "rollbackOfVersion",
+          "rollbackReasonCode",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "renderResumeReviewDraft": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "draftRevisionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": true
+              },
+              "draft": {
+                "type": "object",
+                "properties": {
+                  "draftId": {
+                    "type": "string"
+                  },
+                  "jobKey": {
+                    "type": "string"
+                  },
+                  "baseGeneration": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "baseResumeTextArtifactId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "baseResumePdfArtifactId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "rendererFormat": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "rendered",
+                      "promoted",
+                      "abandoned"
+                    ]
+                  },
+                  "currentRevisionId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "latestRevisionNumber": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80,
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                  },
+                  "updatedAt": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80,
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                  },
+                  "latestRevision": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "revisionId": {
+                            "type": "string"
+                          },
+                          "draftId": {
+                            "type": "string"
+                          },
+                          "jobKey": {
+                            "type": "string"
+                          },
+                          "revisionNumber": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "editedText": {
+                            "type": "string"
+                          },
+                          "plateDocument": {
+                            "anyOf": [
+                              {},
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "editDeltas": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "deltaId": {
+                                  "type": "string"
+                                },
+                                "revisionId": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "replace_text",
+                                    "insert_text",
+                                    "delete_text",
+                                    "structure_change"
+                                  ]
+                                },
+                                "section": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "semanticId": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "lineAnchor": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "semanticId": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "lineNumber": {
+                                          "anyOf": [
+                                            {
+                                              "type": "integer",
+                                              "minimum": -9007199254740991,
+                                              "maximum": 9007199254740991
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "pageNumber": {
+                                          "anyOf": [
+                                            {
+                                              "type": "integer",
+                                              "minimum": -9007199254740991,
+                                              "maximum": 9007199254740991
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "textHash": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "semanticId",
+                                        "lineNumber",
+                                        "pageNumber",
+                                        "textHash"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "beforeText": {
+                                  "type": "string"
+                                },
+                                "afterText": {
+                                  "type": "string"
+                                },
+                                "createdAt": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 80,
+                                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                                }
+                              },
+                              "required": [
+                                "deltaId",
+                                "revisionId",
+                                "kind",
+                                "section",
+                                "semanticId",
+                                "lineAnchor",
+                                "beforeText",
+                                "afterText",
+                                "createdAt"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 80,
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                          }
+                        },
+                        "required": [
+                          "revisionId",
+                          "draftId",
+                          "jobKey",
+                          "revisionNumber",
+                          "editedText",
+                          "plateDocument",
+                          "editDeltas",
+                          "createdAt"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "commentThreads": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "threadId": {
+                          "type": "string"
+                        },
+                        "draftId": {
+                          "type": "string"
+                        },
+                        "jobKey": {
+                          "type": "string"
+                        },
+                        "baseArtifactId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "semanticId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "lineAnchor": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "semanticId": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "lineNumber": {
+                                  "anyOf": [
+                                    {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "pageNumber": {
+                                  "anyOf": [
+                                    {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "textHash": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "semanticId",
+                                "lineNumber",
+                                "pageNumber",
+                                "textHash"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "sourcePinId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "riskLabel": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "commentBody": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "open",
+                            "user_replied",
+                            "resolved",
+                            "superseded_by_edit",
+                            "residual_after_acceptance"
+                          ]
+                        },
+                        "anchorResolved": {
+                          "type": "boolean"
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80,
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80,
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                        },
+                        "replies": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "replyId": {
+                                "type": "string"
+                              },
+                              "threadId": {
+                                "type": "string"
+                              },
+                              "draftRevisionId": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "author": {
+                                "type": "string"
+                              },
+                              "decision": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted",
+                                  "rejected",
+                                  "clarified",
+                                  "rewrite_requested"
+                                ]
+                              },
+                              "body": {
+                                "type": "string"
+                              },
+                              "createdAt": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 80,
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                              }
+                            },
+                            "required": [
+                              "replyId",
+                              "threadId",
+                              "draftRevisionId",
+                              "author",
+                              "decision",
+                              "body",
+                              "createdAt"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "threadId",
+                        "draftId",
+                        "jobKey",
+                        "baseArtifactId",
+                        "semanticId",
+                        "lineAnchor",
+                        "sourcePinId",
+                        "riskLabel",
+                        "commentBody",
+                        "state",
+                        "anchorResolved",
+                        "createdAt",
+                        "updatedAt",
+                        "replies"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "feedbackSignals": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "signalId": {
+                          "type": "string"
+                        },
+                        "jobKey": {
+                          "type": "string"
+                        },
+                        "draftId": {
+                          "type": "string"
+                        },
+                        "draftRevisionId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "sourceKind": {
+                          "type": "string",
+                          "enum": [
+                            "edit_delta",
+                            "comment_reply"
+                          ]
+                        },
+                        "sourceId": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "style_preference",
+                            "factual_correction",
+                            "claim_policy_correction",
+                            "keyword_strategy",
+                            "provenance_dispute"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "candidate",
+                            "accepted",
+                            "rejected"
+                          ]
+                        },
+                        "summary": {
+                          "type": "string"
+                        },
+                        "section": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "semanticId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80,
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                        },
+                        "reviewedAt": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80,
+                              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "signalId",
+                        "jobKey",
+                        "draftId",
+                        "draftRevisionId",
+                        "sourceKind",
+                        "sourceId",
+                        "kind",
+                        "status",
+                        "summary",
+                        "section",
+                        "semanticId",
+                        "createdAt",
+                        "reviewedAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "draftId",
+                  "jobKey",
+                  "baseGeneration",
+                  "baseResumeTextArtifactId",
+                  "baseResumePdfArtifactId",
+                  "rendererFormat",
+                  "state",
+                  "currentRevisionId",
+                  "latestRevisionNumber",
+                  "createdAt",
+                  "updatedAt",
+                  "latestRevision",
+                  "commentThreads",
+                  "feedbackSignals"
+                ],
+                "additionalProperties": false
+              },
+              "validation": {
+                "type": "object",
+                "properties": {
+                  "passed": {
+                    "type": "boolean"
+                  },
+                  "errors": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "warnings": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "passed",
+                  "errors",
+                  "warnings"
+                ],
+                "additionalProperties": false
+              },
+              "artifacts": {
+                "type": "object",
+                "properties": {
+                  "resumeText": {
+                    "type": "object",
+                    "properties": {
+                      "artifactId": {
+                        "type": "string"
+                      },
+                      "artifactType": {
+                        "type": "string",
+                        "enum": [
+                          "tailored_resume",
+                          "resume_pdf"
+                        ]
+                      },
+                      "generation": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "renderFormat": {
+                        "type": "string",
+                        "enum": [
+                          "text",
+                          "html_pdf"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "artifactId",
+                      "artifactType",
+                      "generation",
+                      "renderFormat"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "resumePdf": {
+                    "type": "object",
+                    "properties": {
+                      "artifactId": {
+                        "type": "string"
+                      },
+                      "artifactType": {
+                        "type": "string",
+                        "enum": [
+                          "tailored_resume",
+                          "resume_pdf"
+                        ]
+                      },
+                      "generation": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "renderFormat": {
+                        "type": "string",
+                        "enum": [
+                          "text",
+                          "html_pdf"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "artifactId",
+                      "artifactType",
+                      "generation",
+                      "renderFormat"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "resumeText",
+                  "resumePdf"
+                ],
+                "additionalProperties": false
+              },
+              "layoutBoxCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "ok",
+              "draft",
+              "validation",
+              "artifacts",
+              "layoutBoxCount"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": false
+              },
+              "error": {
+                "type": "string",
+                "const": "resume_review_draft_invalid"
+              },
+              "draft": {
+                "type": "object",
+                "properties": {
+                  "draftId": {
+                    "type": "string"
+                  },
+                  "jobKey": {
+                    "type": "string"
+                  },
+                  "baseGeneration": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "baseResumeTextArtifactId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "baseResumePdfArtifactId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "rendererFormat": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "rendered",
+                      "promoted",
+                      "abandoned"
+                    ]
+                  },
+                  "currentRevisionId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "latestRevisionNumber": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80,
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                  },
+                  "updatedAt": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80,
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                  },
+                  "latestRevision": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "revisionId": {
+                            "type": "string"
+                          },
+                          "draftId": {
+                            "type": "string"
+                          },
+                          "jobKey": {
+                            "type": "string"
+                          },
+                          "revisionNumber": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "editedText": {
+                            "type": "string"
+                          },
+                          "plateDocument": {
+                            "anyOf": [
+                              {},
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "editDeltas": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "deltaId": {
+                                  "type": "string"
+                                },
+                                "revisionId": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "replace_text",
+                                    "insert_text",
+                                    "delete_text",
+                                    "structure_change"
+                                  ]
+                                },
+                                "section": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "semanticId": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "lineAnchor": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "semanticId": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "lineNumber": {
+                                          "anyOf": [
+                                            {
+                                              "type": "integer",
+                                              "minimum": -9007199254740991,
+                                              "maximum": 9007199254740991
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "pageNumber": {
+                                          "anyOf": [
+                                            {
+                                              "type": "integer",
+                                              "minimum": -9007199254740991,
+                                              "maximum": 9007199254740991
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "textHash": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "semanticId",
+                                        "lineNumber",
+                                        "pageNumber",
+                                        "textHash"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "beforeText": {
+                                  "type": "string"
+                                },
+                                "afterText": {
+                                  "type": "string"
+                                },
+                                "createdAt": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 80,
+                                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                                }
+                              },
+                              "required": [
+                                "deltaId",
+                                "revisionId",
+                                "kind",
+                                "section",
+                                "semanticId",
+                                "lineAnchor",
+                                "beforeText",
+                                "afterText",
+                                "createdAt"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 80,
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                          }
+                        },
+                        "required": [
+                          "revisionId",
+                          "draftId",
+                          "jobKey",
+                          "revisionNumber",
+                          "editedText",
+                          "plateDocument",
+                          "editDeltas",
+                          "createdAt"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "commentThreads": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "threadId": {
+                          "type": "string"
+                        },
+                        "draftId": {
+                          "type": "string"
+                        },
+                        "jobKey": {
+                          "type": "string"
+                        },
+                        "baseArtifactId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "semanticId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "lineAnchor": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "semanticId": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "lineNumber": {
+                                  "anyOf": [
+                                    {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "pageNumber": {
+                                  "anyOf": [
+                                    {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "textHash": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "semanticId",
+                                "lineNumber",
+                                "pageNumber",
+                                "textHash"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "sourcePinId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "riskLabel": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "commentBody": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "open",
+                            "user_replied",
+                            "resolved",
+                            "superseded_by_edit",
+                            "residual_after_acceptance"
+                          ]
+                        },
+                        "anchorResolved": {
+                          "type": "boolean"
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80,
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80,
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                        },
+                        "replies": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "replyId": {
+                                "type": "string"
+                              },
+                              "threadId": {
+                                "type": "string"
+                              },
+                              "draftRevisionId": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "author": {
+                                "type": "string"
+                              },
+                              "decision": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted",
+                                  "rejected",
+                                  "clarified",
+                                  "rewrite_requested"
+                                ]
+                              },
+                              "body": {
+                                "type": "string"
+                              },
+                              "createdAt": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 80,
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                              }
+                            },
+                            "required": [
+                              "replyId",
+                              "threadId",
+                              "draftRevisionId",
+                              "author",
+                              "decision",
+                              "body",
+                              "createdAt"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "threadId",
+                        "draftId",
+                        "jobKey",
+                        "baseArtifactId",
+                        "semanticId",
+                        "lineAnchor",
+                        "sourcePinId",
+                        "riskLabel",
+                        "commentBody",
+                        "state",
+                        "anchorResolved",
+                        "createdAt",
+                        "updatedAt",
+                        "replies"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "feedbackSignals": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "signalId": {
+                          "type": "string"
+                        },
+                        "jobKey": {
+                          "type": "string"
+                        },
+                        "draftId": {
+                          "type": "string"
+                        },
+                        "draftRevisionId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "sourceKind": {
+                          "type": "string",
+                          "enum": [
+                            "edit_delta",
+                            "comment_reply"
+                          ]
+                        },
+                        "sourceId": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "style_preference",
+                            "factual_correction",
+                            "claim_policy_correction",
+                            "keyword_strategy",
+                            "provenance_dispute"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "candidate",
+                            "accepted",
+                            "rejected"
+                          ]
+                        },
+                        "summary": {
+                          "type": "string"
+                        },
+                        "section": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "semanticId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80,
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                        },
+                        "reviewedAt": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80,
+                              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "signalId",
+                        "jobKey",
+                        "draftId",
+                        "draftRevisionId",
+                        "sourceKind",
+                        "sourceId",
+                        "kind",
+                        "status",
+                        "summary",
+                        "section",
+                        "semanticId",
+                        "createdAt",
+                        "reviewedAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "draftId",
+                  "jobKey",
+                  "baseGeneration",
+                  "baseResumeTextArtifactId",
+                  "baseResumePdfArtifactId",
+                  "rendererFormat",
+                  "state",
+                  "currentRevisionId",
+                  "latestRevisionNumber",
+                  "createdAt",
+                  "updatedAt",
+                  "latestRevision",
+                  "commentThreads",
+                  "feedbackSignals"
+                ],
+                "additionalProperties": false
+              },
+              "validation": {
+                "type": "object",
+                "properties": {
+                  "passed": {
+                    "type": "boolean"
+                  },
+                  "errors": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "warnings": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "passed",
+                  "errors",
+                  "warnings"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "ok",
+              "error",
+              "draft",
+              "validation"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "scanGmailApplicationOutcomes": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "recipientEmail": {
+            "type": "string",
+            "format": "email",
+            "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+          },
+          "limit": {
+            "default": 25,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "maxResultsPerAnchor": {
+            "default": 5,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "windowDays": {
+            "default": 45,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 180
+          }
+        },
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "scannedAnchorCount": {
+            "type": "number"
+          },
+          "searchedMessageCount": {
+            "type": "number"
+          },
+          "linkedEvidenceCount": {
+            "type": "number"
+          },
+          "suggestionsCreatedCount": {
+            "type": "number"
+          },
+          "duplicateMessageCount": {
+            "type": "number"
+          },
+          "unlinkedCandidateCount": {
+            "type": "number"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "evidenceId": {
+                  "type": "string"
+                },
+                "jobKey": {
+                  "type": "string"
+                },
+                "providerMessageId": {
+                  "type": "string"
+                },
+                "linkConfidence": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "evidenceId",
+                "jobKey",
+                "providerMessageId",
+                "linkConfidence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "suggestionId": {
+                  "type": "string"
+                },
+                "evidenceId": {
+                  "type": "string"
+                },
+                "jobKey": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "applied_confirmation",
+                    "recruiter_reply",
+                    "interview",
+                    "assessment",
+                    "rejection",
+                    "offer",
+                    "withdrawn",
+                    "bounced",
+                    "no_response",
+                    "unknown"
+                  ]
+                },
+                "confidence": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "suggestionId",
+                "evidenceId",
+                "jobKey",
+                "kind",
+                "confidence"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "ok",
+          "scannedAnchorCount",
+          "searchedMessageCount",
+          "linkedEvidenceCount",
+          "suggestionsCreatedCount",
+          "duplicateMessageCount",
+          "unlinkedCandidateCount",
+          "evidence",
+          "suggestions"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}
