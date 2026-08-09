@@ -1,4 +1,4 @@
-import { JobCtrlApiClient } from "@jobctrl/api-client";
+import { createEndpointDelegates, JobCtrlApiClient } from "@jobctrl/api-client";
 import type {
   ContactCreateRequest,
   ContactDeleteRequest,
@@ -7,6 +7,7 @@ import type {
   ContactUpdateRequest,
   ConfirmContactCandidateRequest,
   ContactResearchListQuery,
+  EndpointClientMethods,
   RunContactResearchRequest,
 } from "@jobctrl/contracts";
 import type { ApiClientPort } from "../../ports/ApiClientPort.js";
@@ -16,6 +17,7 @@ export class FetchApiClientAdapter implements ApiClientPort {
 
   constructor(baseUrl?: string) {
     this.client = new JobCtrlApiClient(baseUrl);
+    Object.assign(this, createEndpointDelegates(this.client));
   }
 
   health(): ReturnType<JobCtrlApiClient["health"]> {
@@ -30,30 +32,16 @@ export class FetchApiClientAdapter implements ApiClientPort {
   outcomeAnalytics() {
     return this.client.outcomeAnalytics();
   }
-  learningRecommendations(query: Parameters<JobCtrlApiClient["learningRecommendations"]>[0] = {}) {
-    return this.client.learningRecommendations(query);
-  }
   learningRecommendationEvidence(
     recommendationId: string,
     query: Parameters<JobCtrlApiClient["learningRecommendationEvidence"]>[1] = {},
   ) {
     return this.client.learningRecommendationEvidence(recommendationId, query);
   }
-  reviewLearningRecommendation(
-    recommendationId: string,
-    body: Parameters<JobCtrlApiClient["reviewLearningRecommendation"]>[1],
-  ) {
-    return this.client.reviewLearningRecommendation(recommendationId, body);
-  }
   tailoringPolicyRevisions(
     query: Parameters<JobCtrlApiClient["tailoringPolicyRevisions"]>[0] = {},
   ) {
     return this.client.tailoringPolicyRevisions(query);
-  }
-  rollbackTailoringPolicy(
-    body: Parameters<JobCtrlApiClient["rollbackTailoringPolicy"]>[0],
-  ) {
-    return this.client.rollbackTailoringPolicy(body);
   }
   digest() {
     return this.client.digest();
@@ -179,12 +167,6 @@ export class FetchApiClientAdapter implements ApiClientPort {
     body: Parameters<JobCtrlApiClient["seedResumeReviewCommentThreads"]>[1],
   ) {
     return this.client.seedResumeReviewCommentThreads(draftId, body);
-  }
-  renderResumeReviewDraft(
-    draftId: string,
-    body: Parameters<JobCtrlApiClient["renderResumeReviewDraft"]>[1] = {},
-  ) {
-    return this.client.renderResumeReviewDraft(draftId, body);
   }
   replyToResumeReviewComment(
     threadId: string,
@@ -513,3 +495,5 @@ export class FetchApiClientAdapter implements ApiClientPort {
     return this.client.dueOutreachFollowUps();
   }
 }
+
+export interface FetchApiClientAdapter extends EndpointClientMethods {}
