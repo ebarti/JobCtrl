@@ -103,22 +103,38 @@ export interface RpcEndpointDispatch<
   readonly error: (failure: EndpointDispatchFailure) => EndpointFailureResponse;
 }
 
-export interface EndpointDefinition<
+interface EndpointDefinitionBase<
   TName extends string,
   TMethod extends EndpointHttpMethod,
   TPath extends AnyEndpointPath,
   TRequestSchema extends AnySchema,
   TResponseSchema extends AnySchema,
-  TDispatch = undefined,
 > {
   readonly name: TName;
   readonly method: TMethod;
   readonly path: TPath;
   readonly request: TRequestSchema;
   readonly response: TResponseSchema;
-  readonly dispatch?: TDispatch;
   readonly demo: EndpointDemoCapability;
 }
+
+export type EndpointDefinition<
+  TName extends string,
+  TMethod extends EndpointHttpMethod,
+  TPath extends AnyEndpointPath,
+  TRequestSchema extends AnySchema,
+  TResponseSchema extends AnySchema,
+  TDispatch = undefined,
+> = EndpointDefinitionBase<
+  TName,
+  TMethod,
+  TPath,
+  TRequestSchema,
+  TResponseSchema
+> &
+  ([TDispatch] extends [undefined]
+    ? { readonly dispatch?: never }
+    : { readonly dispatch: TDispatch });
 
 export function defineEndpoint<
   const TName extends string,
@@ -153,7 +169,9 @@ export type LearningRecommendationListQuery = z.output<
 >;
 
 const LearningRecommendationsRequestSchema =
-  LearningRecommendationListQuerySchema.optional();
+  LearningRecommendationListQuerySchema.optional().transform(
+    (query) => query ?? LearningRecommendationListQuerySchema.parse({}),
+  );
 
 export const LearningRecommendationListResponseSchema = z
   .object({
