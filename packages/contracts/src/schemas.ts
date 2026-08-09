@@ -184,7 +184,7 @@ const optionalText = z
   .transform((value) => value ?? "");
 
 const optionalNumber = z.coerce.number().int().optional().catch(undefined);
-const IsoTimestampSchema = z
+export const IsoTimestampSchema = z
   .string()
   .trim()
   .min(1)
@@ -2211,40 +2211,6 @@ export const LearningRecommendationReviewIdSchema = z
   .string()
   .regex(/^learning-recommendation-review:[a-f0-9]{64}$/);
 
-export const LearningRecommendationReviewRequestSchema = z.discriminatedUnion("decision", [
-  z.object({ decision: z.literal("accepted") }).strict(),
-  z.object({ decision: z.literal("rejected") }).strict(),
-]);
-export type LearningRecommendationReviewRequest = z.infer<
-  typeof LearningRecommendationReviewRequestSchema
->;
-
-const LearningRecommendationReviewResponseBaseSchema = z
-  .object({
-    ok: z.literal(true),
-    reviewId: LearningRecommendationReviewIdSchema,
-    recommendationId: LearningRecommendationIdSchema,
-    revision: z.number().int().positive(),
-    context: z.literal("materials"),
-    policyKind: z.literal("tailoring_rule"),
-    reviewedAt: IsoTimestampSchema,
-  })
-  .strict();
-
-export const LearningRecommendationReviewResponseSchema = z.discriminatedUnion("decision", [
-  LearningRecommendationReviewResponseBaseSchema.extend({
-    decision: z.literal("accepted"),
-    policyVersion: z.number().int().positive(),
-  }),
-  LearningRecommendationReviewResponseBaseSchema.extend({
-    decision: z.literal("rejected"),
-    policyVersion: z.null(),
-  }),
-]);
-export type LearningRecommendationReviewResponse = z.infer<
-  typeof LearningRecommendationReviewResponseSchema
->;
-
 const LearningEvidenceIdentifierSchema = z
   .string()
   .min(1)
@@ -2257,7 +2223,7 @@ const LearningEvidenceJobIdSchema = z
     /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,
   );
 
-export const LearningRecommendationListQuerySchema = z
+export const LearningPaginationQuerySchema = z
   .object({
     page: z.coerce.number().int().min(1).default(1).catch(1),
     pageSize: z.coerce.number().int().min(1).max(100).optional().catch(undefined),
@@ -2267,11 +2233,9 @@ export const LearningRecommendationListQuerySchema = z
     page: value.page,
     pageSize: value.pageSize ?? value.page_size ?? 50,
   }));
-export type LearningRecommendationListQuery = z.infer<
-  typeof LearningRecommendationListQuerySchema
->;
+export type LearningPaginationQuery = z.infer<typeof LearningPaginationQuerySchema>;
 
-export const TailoringPolicyRevisionListQuerySchema = LearningRecommendationListQuerySchema;
+export const TailoringPolicyRevisionListQuerySchema = LearningPaginationQuerySchema;
 export type TailoringPolicyRevisionListQuery = z.infer<
   typeof TailoringPolicyRevisionListQuerySchema
 >;
@@ -2358,32 +2322,6 @@ export type TailoringPolicyRevisionListResponse = z.infer<
   typeof TailoringPolicyRevisionListResponseSchema
 >;
 
-export const TailoringPolicyRollbackRequestSchema = z
-  .object({ targetVersion: z.number().int().positive() })
-  .strict();
-export type TailoringPolicyRollbackRequest = z.infer<
-  typeof TailoringPolicyRollbackRequestSchema
->;
-
-export const TailoringPolicyRollbackResponseSchema = z
-  .object({
-    ok: z.literal(true),
-    context: z.literal("materials"),
-    policyKind: z.literal("tailoring_rule"),
-    version: z.number().int().positive(),
-    status: z.literal("current"),
-    learnedRules: z.array(TailoringPolicyLearnedRuleSchema).max(5),
-    sourceReviewId: z.null(),
-    sourceRecommendationId: z.null(),
-    rollbackOfVersion: z.number().int().positive(),
-    rollbackReasonCode: z.literal("user_requested"),
-    createdAt: IsoTimestampSchema,
-  })
-  .strict();
-export type TailoringPolicyRollbackResponse = z.infer<
-  typeof TailoringPolicyRollbackResponseSchema
->;
-
 export const LearningRecommendationSummarySchema = z
   .object({
     recommendationId: LearningRecommendationIdSchema,
@@ -2418,26 +2356,8 @@ export type LearningRecommendationSummary = z.infer<
   typeof LearningRecommendationSummarySchema
 >;
 
-export const LearningRecommendationListResponseSchema = z
-  .object({
-    ok: z.literal(true),
-    recommendations: z.array(LearningRecommendationSummarySchema).max(100),
-    page: z.number().int().min(1),
-    pageSize: z.number().int().min(1).max(100),
-    total: z.number().int().nonnegative(),
-    totalPages: z.number().int().nonnegative(),
-  })
-  .strict()
-  .refine(
-    (value) => value.recommendations.length <= value.pageSize,
-    "Recommendation page exceeds its declared page size.",
-  );
-export type LearningRecommendationListResponse = z.infer<
-  typeof LearningRecommendationListResponseSchema
->;
-
 export const LearningRecommendationEvidenceListQuerySchema =
-  LearningRecommendationListQuerySchema;
+  LearningPaginationQuerySchema;
 export type LearningRecommendationEvidenceListQuery = z.infer<
   typeof LearningRecommendationEvidenceListQuerySchema
 >;
