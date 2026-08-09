@@ -4,6 +4,7 @@ import {
   ArtifactListQuerySchema,
   ContactListQuerySchema,
   ContactResearchListQuerySchema,
+  ENDPOINTS,
   JobListQuerySchema,
   WorkflowRunsListQuerySchema,
   compareJobs,
@@ -14,6 +15,7 @@ import {
   timestampBefore,
   type ActivityEventSummary,
   type ArtifactSummary,
+  type EndpointClientMethods,
   type JobCompensationSummary,
   type JobSummary,
   type PaginatedResponse,
@@ -107,6 +109,14 @@ export class DemoApiClientAdapter implements ApiClientPort {
         ...(options.createId ? { createId: options.createId } : {}),
       },
     );
+    Object.assign(
+      this,
+      Object.fromEntries(
+        Object.values(ENDPOINTS)
+          .filter((endpoint) => endpoint.demo.class === "unavailable")
+          .map((endpoint) => [endpoint.name, this.unsupported(endpoint.name)]),
+      ),
+    );
   }
 
   initialize(): Promise<void> {
@@ -131,11 +141,8 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return this.read((model) => model.analytics.summary);
   }
 
-  learningRecommendations = this.unsupported("learningRecommendations");
   learningRecommendationEvidence = this.unsupported("learningRecommendationEvidence");
-  reviewLearningRecommendation = this.unsupported("reviewLearningRecommendation");
   tailoringPolicyRevisions = this.unsupported("tailoringPolicyRevisions");
-  rollbackTailoringPolicy = this.unsupported("rollbackTailoringPolicy");
 
   digest() {
     return this.read((model) => model.dashboard.digest);
@@ -819,6 +826,8 @@ export class DemoApiClientAdapter implements ApiClientPort {
     }
   }
 }
+
+export interface DemoApiClientAdapter extends EndpointClientMethods {}
 
 const DEMO_ACTION_TELEMETRY: Readonly<
   Record<string, Readonly<Record<string, string>>>

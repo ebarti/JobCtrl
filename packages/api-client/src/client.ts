@@ -70,6 +70,7 @@ import type {
   DiscoveryFeedbackRequest,
   DiscoveryFeedbackResponse,
   DiscoveryPreviewResponse,
+  EndpointClientMethods,
   EvidenceMapResponse,
   GenerateInterviewPrepRequest,
   GenerateMaterialsRequest,
@@ -85,14 +86,8 @@ import type {
   JobListQuery,
   LearningRecommendationEvidenceListQuery,
   LearningRecommendationEvidenceListResponse,
-  LearningRecommendationListResponse,
-  LearningRecommendationListQuery,
-  LearningRecommendationReviewRequest,
-  LearningRecommendationReviewResponse,
   TailoringPolicyRevisionListQuery,
   TailoringPolicyRevisionListResponse,
-  TailoringPolicyRollbackRequest,
-  TailoringPolicyRollbackResponse,
   JobMutationResponse,
   JobSummary,
   MarkJobActionRequest,
@@ -166,11 +161,10 @@ import type {
 } from "@jobctrl/contracts";
 import {
   LearningRecommendationEvidenceListResponseSchema,
-  LearningRecommendationListResponseSchema,
-  LearningRecommendationReviewResponseSchema,
   TailoringPolicyRevisionListResponseSchema,
-  TailoringPolicyRollbackResponseSchema,
 } from "@jobctrl/contracts";
+
+import { createEndpointMethods } from "./endpoint-client.js";
 
 type QueryValue = boolean | number | string | null | undefined;
 const DEFAULT_NODE_BASE_URL = "http://127.0.0.1:8766";
@@ -240,6 +234,21 @@ export class JobCtrlApiClient {
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.requestTimeoutMs = requestTimeoutMs;
+    Object.assign(
+      this,
+      createEndpointMethods((method, path, request) => {
+        switch (method) {
+          case "GET":
+            return this.get(path, request as Record<string, QueryValue> | undefined);
+          case "POST":
+            return this.post(path, request);
+          case "PATCH":
+            return this.patch(path, request);
+          case "DELETE":
+            return this.delete(path, request);
+        }
+      }),
+    );
   }
 
   health(): Promise<HealthResponse> {
@@ -262,14 +271,6 @@ export class JobCtrlApiClient {
     return this.get("/v1/scoring/keywords");
   }
 
-  async learningRecommendations(
-    query: Partial<LearningRecommendationListQuery> = {},
-  ): Promise<LearningRecommendationListResponse> {
-    return LearningRecommendationListResponseSchema.parse(
-      await this.get("/v1/learning/recommendations", query),
-    );
-  }
-
   async learningRecommendationEvidence(
     recommendationId: string,
     query: Partial<LearningRecommendationEvidenceListQuery> = {},
@@ -282,31 +283,11 @@ export class JobCtrlApiClient {
     );
   }
 
-  async reviewLearningRecommendation(
-    recommendationId: string,
-    body: LearningRecommendationReviewRequest,
-  ): Promise<LearningRecommendationReviewResponse> {
-    return LearningRecommendationReviewResponseSchema.parse(
-      await this.post(
-        `/v1/learning/recommendations/${encodeURIComponent(recommendationId)}/reviews`,
-        body,
-      ),
-    );
-  }
-
   async tailoringPolicyRevisions(
     query: Partial<TailoringPolicyRevisionListQuery> = {},
   ): Promise<TailoringPolicyRevisionListResponse> {
     return TailoringPolicyRevisionListResponseSchema.parse(
       await this.get("/v1/learning/policies/materials", query),
-    );
-  }
-
-  async rollbackTailoringPolicy(
-    body: TailoringPolicyRollbackRequest,
-  ): Promise<TailoringPolicyRollbackResponse> {
-    return TailoringPolicyRollbackResponseSchema.parse(
-      await this.post("/v1/learning/policies/materials/rollbacks", body),
     );
   }
 
@@ -1275,6 +1256,8 @@ export class JobCtrlApiClient {
     return (await response.json()) as T;
   }
 }
+
+export interface JobCtrlApiClient extends EndpointClientMethods {}
 
 export function createJobCtrlApiClient(baseUrl?: string): JobCtrlApiClient {
   return new JobCtrlApiClient(baseUrl);
