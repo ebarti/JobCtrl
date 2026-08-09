@@ -302,7 +302,6 @@ def test_count_pending_score_uses_same_attempt_cap_as_selector(
 def test_closed_postings_are_excluded_from_score_and_tailor_queues(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from jobctrl import pipeline
     from jobctrl.pipeline import runner as pipeline_runner
 
     score_url = "https://example.com/job/closed-score"
@@ -319,8 +318,8 @@ def test_closed_postings_are_excluded_from_score_and_tailor_queues(
         row["job_id"]
         for row in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)
     } == set()
-    assert pipeline._count_pending("score") == 0
-    assert pipeline._count_pending("tailor", min_score=7) == 0
+    assert pipeline_runner._count_pending("score") == 0
+    assert pipeline_runner._count_pending("tailor", min_score=7) == 0
 
 
 def test_pending_tailor_includes_jobs_scored_through_repository(
@@ -522,7 +521,6 @@ def test_pending_cover_includes_jobs_scored_through_repository(
 def test_closed_postings_are_excluded_from_cover_queue(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from jobctrl import pipeline
     from jobctrl.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/closed-cover"
@@ -534,7 +532,7 @@ def test_closed_postings_are_excluded_from_cover_queue(
 
     pending_cover = get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7)
     assert pending_cover == []
-    assert pipeline._count_pending("cover", min_score=7) == 0
+    assert pipeline_runner._count_pending("cover", min_score=7) == 0
 
 
 def test_pending_cover_includes_high_score_salary_advisory_jobs(
@@ -666,25 +664,23 @@ def test_get_stats_ignores_deprecated_jobs_score_columns(
 def test_pipeline_count_pending_score_excludes_repository_rows(
     conn: sqlite3.Connection, monkeypatch
 ) -> None:
-    """``pipeline._count_pending('score')`` must mirror
+    """``pipeline_runner._count_pending('score')`` must mirror
     ``get_jobs_by_stage('pending_score')`` — the streaming runner's
     progress counter would otherwise be permanently off-by-N."""
-    from jobctrl import pipeline
     from jobctrl.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/pipeline"
     job_id = _seed_enriched_job(conn, url)
     monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
 
-    assert pipeline._count_pending("score") == 1
+    assert pipeline_runner._count_pending("score") == 1
     _save_score(conn, job_id, fit=8)
-    assert pipeline._count_pending("score") == 0
+    assert pipeline_runner._count_pending("score") == 0
 
 
 def test_pipeline_count_pending_tailor_picks_repository_scores(
     conn: sqlite3.Connection, monkeypatch
 ) -> None:
-    from jobctrl import pipeline
     from jobctrl.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/pipeline-tailor"
@@ -692,13 +688,12 @@ def test_pipeline_count_pending_tailor_picks_repository_scores(
     _save_score(conn, job_id, fit=8)
     monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
 
-    assert pipeline._count_pending("tailor", min_score=7) == 1
+    assert pipeline_runner._count_pending("tailor", min_score=7) == 1
 
 
 def test_pipeline_count_pending_tailor_excludes_pending_rescore(
     conn: sqlite3.Connection, monkeypatch
 ) -> None:
-    from jobctrl import pipeline
     from jobctrl.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/pipeline-tailor-pending-rescore"
@@ -708,4 +703,4 @@ def test_pipeline_count_pending_tailor_excludes_pending_rescore(
     set_stage_state(conn, job_id, "score", "pending", validate_transition=False)
     monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
 
-    assert pipeline._count_pending("tailor", min_score=7) == 0
+    assert pipeline_runner._count_pending("tailor", min_score=7) == 0
