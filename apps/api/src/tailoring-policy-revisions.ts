@@ -6,6 +6,8 @@ import {
 import { allRows, getRow, type SqliteDatabase } from "./db.js";
 
 const DEFAULT_TENANT = "local";
+const WORKER_UTC_TIMESTAMP_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(?:Z|\+00:00)$/;
 
 interface TailoringPolicyRevisionRow extends Record<string, unknown> {
   version: number;
@@ -78,7 +80,7 @@ export function listTailoringPolicyRevisions(
             : row.rollback_reason === "user_requested"
               ? "user_requested"
               : "historical_or_unspecified",
-        createdAt: row.created_at,
+        createdAt: canonicalizeWorkerUtcTimestamp(row.created_at),
       })),
       page: query.page,
       pageSize: query.pageSize,
@@ -86,6 +88,22 @@ export function listTailoringPolicyRevisions(
       totalPages: total === 0 ? 0 : Math.ceil(total / query.pageSize),
     });
   })();
+}
+
+function canonicalizeWorkerUtcTimestamp(value: string): string {
+  const candidate = value.trim();
+  const match = WORKER_UTC_TIMESTAMP_PATTERN.exec(candidate);
+  if (!match) {
+    return candidate;
+  }
+  const parsed = Date.parse(candidate);
+  if (!Number.isFinite(parsed)) {
+    return candidate;
+  }
+  const milliseconds = (match[7] ?? "").padEnd(3, "0").slice(0, 3);
+  const normalized = `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}.${milliseconds}Z`;
+  const canonical = new Date(parsed).toISOString();
+  return canonical === normalized ? canonical : candidate;
 }
 
 function learnedRules(rawRuntimeSettings: string): Array<{

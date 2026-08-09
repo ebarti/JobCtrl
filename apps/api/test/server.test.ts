@@ -2721,7 +2721,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("serves privacy-bounded tailoring policy revision history", async () => {
+  it("serves privacy-bounded tailoring policy history with canonical timestamps", async () => {
     const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
     const reviewId = `learning-recommendation-review:${"b".repeat(64)}`;
     const db = new Database(options.dbPath);
@@ -2740,7 +2740,7 @@ describe("local TypeScript API", () => {
       tenantId: "local",
       version: 2,
       learnedRules: { fact_handling: "require_source_match" },
-      createdAt: "2026-08-01T11:00:00Z",
+      createdAt: "2026-08-01T11:00:00.123456+00:00",
     });
     db.prepare(
       `INSERT INTO learning_recommendation_reviews (
@@ -2819,7 +2819,7 @@ describe("local TypeScript API", () => {
         sourceRecommendationId: recommendationId,
         rollbackOfVersion: null,
         rollbackReasonCode: null,
-        createdAt: "2026-08-01T11:00:00.000Z",
+        createdAt: "2026-08-01T11:00:00.123Z",
       },
       {
         context: "materials",
