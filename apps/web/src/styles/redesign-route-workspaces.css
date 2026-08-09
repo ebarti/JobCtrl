@@ -423,8 +423,8 @@
 
   .job-detail-top-actions {
     justify-content: flex-start;
-    border-top: 1px solid var(--border);
-    padding-top: var(--jh-surface-gap);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: var(--jh-surface-gap);
   }
 
   .job-detail-top-actions .action-panel,

@@ -180,39 +180,6 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 <IconArrowLeft aria-hidden="true" size={16} stroke={1.9} />
                 Jobs
               </Button>
-              <JobOverview detail={detail} />
-              <div
-                className="job-detail-mobile-sections"
-                aria-label="Job detail section"
-                role="group"
-              >
-                <Button
-                  aria-controls="job-detail-overview-panel"
-                  aria-pressed={mobileSection === "overview"}
-                  data-selected={
-                    mobileSection === "overview" ? "true" : "false"
-                  }
-                  size="sm"
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setMobileSection("overview")}
-                >
-                  Summary and evidence
-                </Button>
-                <Button
-                  aria-controls="job-detail-diagnostics-panel"
-                  aria-pressed={mobileSection === "diagnostics"}
-                  data-selected={
-                    mobileSection === "diagnostics" ? "true" : "false"
-                  }
-                  size="sm"
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setMobileSection("diagnostics")}
-                >
-                  Progress and history
-                </Button>
-              </div>
               <div className="job-detail-top-actions">
                 <nav
                   className="job-detail-handoff-actions"
@@ -277,6 +244,39 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                     />
                   </PopoverContent>
                 </Popover>
+              </div>
+              <JobOverview detail={detail} />
+              <div
+                className="job-detail-mobile-sections"
+                aria-label="Job detail section"
+                role="group"
+              >
+                <Button
+                  aria-controls="job-detail-overview-panel"
+                  aria-pressed={mobileSection === "overview"}
+                  data-selected={
+                    mobileSection === "overview" ? "true" : "false"
+                  }
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setMobileSection("overview")}
+                >
+                  Summary and evidence
+                </Button>
+                <Button
+                  aria-controls="job-detail-diagnostics-panel"
+                  aria-pressed={mobileSection === "diagnostics"}
+                  data-selected={
+                    mobileSection === "diagnostics" ? "true" : "false"
+                  }
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setMobileSection("diagnostics")}
+                >
+                  Progress and history
+                </Button>
               </div>
             </div>
           }

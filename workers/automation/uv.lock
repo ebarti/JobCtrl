@@ -14,8 +14,8 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-28T20:43:30.561404Z"
-exclude-newer-span = "P7D"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer-span = "P8D"
 
 [options.exclude-newer-package]
 claude-agent-sdk = "2026-07-10T00:00:00Z"
