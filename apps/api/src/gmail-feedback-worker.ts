@@ -32,7 +32,9 @@ export class GmailFeedbackScanError extends Error {
 // the status mapping below stays behavior-identical.
 export function createWorkerGmailFeedbackScanner(dispatcher: JsonRpcDispatcher): GmailFeedbackScanner {
   return async (input, context) => {
-    const response = await dispatcher.call(RpcMethods.GmailFeedbackScan, {
+    let response: Awaited<ReturnType<JsonRpcDispatcher["call"]>>;
+    try {
+      response = await dispatcher.call(RpcMethods.GmailFeedbackScan, {
       expectedAppDir: context.appDir,
       expectedDbPath: context.dbPath,
       ...(input.recipientEmail !== undefined ? { recipientEmail: input.recipientEmail } : {}),
@@ -41,7 +43,14 @@ export function createWorkerGmailFeedbackScanner(dispatcher: JsonRpcDispatcher):
         ? { maxResultsPerAnchor: Number(input.maxResultsPerAnchor) }
         : {}),
       ...(input.windowDays !== undefined ? { windowDays: Number(input.windowDays) } : {}),
-    });
+      });
+    } catch (error) {
+      // Transport-level failures (spawn/write errors, the request timeout,
+      // child exit) reject instead of returning a JSON-RPC error envelope;
+      // keep them on the route's typed error path.
+      const message = `Gmail feedback scan failed: ${error instanceof Error ? error.message : String(error)}`;
+      throw new GmailFeedbackScanError(message, gmailFeedbackErrorStatus(message));
+    }
     if (response.error) {
       // The RPC server hides handler exceptions behind a generic "Internal
       // error" message with the cause in error.data; the handler converts
