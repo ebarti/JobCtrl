@@ -42,15 +42,11 @@ import {
   DiscoveryFeedbackRequestSchema,
   GenerateMaterialsRequestSchema,
   GenerateInterviewPrepRequestSchema,
-  GmailOutcomeScanRequestSchema,
   EnsureCurrentResumeMaterialsRequestSchema,
   JobResumeTemplateAssignmentRequestSchema,
   JobListQuerySchema,
   LearningRecommendationEvidenceListQuerySchema,
   LearningRecommendationIdSchema,
-  LearningRecommendationListQuerySchema,
-  LearningRecommendationReviewRequestSchema,
-  LearningRecommendationReviewResponseSchema,
   TailoringPolicyRevisionListQuerySchema,
   JsonRpcErrorCodes,
   JsonRpcRequestSchema,
@@ -74,19 +70,14 @@ import {
   RunJobStageRequestSchema,
   RoleMatchFeedbackDecisionSchema,
   RetailorJobRequestSchema,
-  ReviewLearningRecommendationResultSchema,
-  RollbackTailoringPolicyResultSchema,
   RpcMethods,
   ResumeTemplateDefaultSelectionRequestSchema,
   ResumeTemplateVersionSaveRequestSchema,
   ResumeCommentReplyRequestSchema,
   ResumeReviewCommentThreadSeedRequestSchema,
   ResumeReviewDraftCreateRequestSchema,
-  ResumeReviewDraftRenderRequestSchema,
   ResumeReviewDraftRevisionSaveRequestSchema,
   TailoringFeedbackSignalReviewRequestSchema,
-  TailoringPolicyRollbackRequestSchema,
-  TailoringPolicyRollbackResponseSchema,
   RunPipelineStagesRequestSchema,
   SettingsUpdateRequestSchema,
   type ExtensionCapabilityTokenResponse,
@@ -192,6 +183,7 @@ import {
   writeDiscoverySettings,
 } from "./discovery-controls.js";
 import { registerEventStreamRoute } from "./event-stream.js";
+import { registerEndpointRoutes } from "./endpoint-routes.js";
 import {
   assertLiveApplicationMayDispatch,
   recordRepeatApplicationOverride,
@@ -640,14 +632,64 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => listScoringKeywords(db)),
   );
 
-  app.get("/v1/learning/recommendations", async (request, reply) =>
-    withDb(reply, options.dbPath, (db) =>
-      listLearningRecommendations(
-        db,
-        LearningRecommendationListQuerySchema.parse(request.query),
-      ),
-    ),
-  );
+  registerEndpointRoutes(app, {
+    dispatcher: providerDispatcher,
+    dispatchContext: {
+      tenantId: "local",
+      appDir,
+      dbPath: options.dbPath,
+    },
+    handlers: {
+      learningRecommendations: ({ request }, reply) =>
+        withDb(reply, options.dbPath, (db) =>
+          listLearningRecommendations(db, request!),
+        ),
+      renderResumeReviewDraft: ({ request, pathParam: draftId }, reply) =>
+        withWritableDb(reply, options.dbPath, async (db) => {
+          const result = await renderResumeReviewDraft(
+            db,
+            draftId,
+            request,
+            resumePdfRenderer,
+          );
+          if (result.ok) {
+            refreshProjections(db);
+          }
+          return result;
+        }),
+      scanGmailApplicationOutcomes: async ({ request }, reply) => {
+        if (!databaseExists(options.dbPath)) {
+          void reply.code(503);
+          return {
+            ok: false,
+            error: "db_not_found",
+            message: `No JobCtrl database found at ${options.dbPath}`,
+          };
+        }
+        try {
+          const output = await gmailFeedbackScanner(request, {
+            appDir,
+            dbPath: options.dbPath,
+          });
+          return sanitizeGmailFeedbackScanResponse(output);
+        } catch (error) {
+          if (error instanceof GmailFeedbackScanError) {
+            void reply.code(error.statusCode);
+            return {
+              ok: false,
+              error:
+                error.statusCode === 400
+                  ? "invalid_gmail_feedback_scan"
+                  : "gmail_feedback_scan_failed",
+              message: error.message,
+            };
+          }
+          throw error;
+        }
+      },
+    },
+    parseBody,
+  });
 
   app.get("/v1/learning/policies/materials", async (request, reply) =>
     withDb(reply, options.dbPath, (db) =>
@@ -657,52 +699,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       ),
     ),
   );
-
-  app.post("/v1/learning/policies/materials/rollbacks", async (request, reply) => {
-    const body = parseBody(reply, TailoringPolicyRollbackRequestSchema, request.body ?? {});
-    if (!body) {
-      return undefined;
-    }
-
-    let response;
-    try {
-      response = await providerDispatcher.call(RpcMethods.RollbackTailoringPolicy, {
-        tenantId: "local",
-        targetVersion: body.targetVersion,
-        expectedAppDir: appDir,
-        expectedDbPath: options.dbPath,
-      });
-    } catch {
-      return tailoringPolicyRollbackFailure(reply, 503);
-    }
-    if (response.error) {
-      return tailoringPolicyRollbackFailure(
-        reply,
-        response.error.code === JsonRpcErrorCodes.InvalidParams ? 409 : 502,
-      );
-    }
-
-    const parsedResult = RollbackTailoringPolicyResultSchema.safeParse(response.result);
-    if (
-      !parsedResult.success ||
-      parsedResult.data.rollbackOfVersion !== body.targetVersion
-    ) {
-      return tailoringPolicyRollbackFailure(reply, 502);
-    }
-    return TailoringPolicyRollbackResponseSchema.parse({
-      ok: true,
-      context: parsedResult.data.context,
-      policyKind: parsedResult.data.policyKind,
-      version: parsedResult.data.policyVersion,
-      status: "current",
-      learnedRules: parsedResult.data.learnedRules,
-      sourceReviewId: null,
-      sourceRecommendationId: null,
-      rollbackOfVersion: parsedResult.data.rollbackOfVersion,
-      rollbackReasonCode: parsedResult.data.rollbackReasonCode,
-      createdAt: parsedResult.data.rolledBackAt,
-    });
-  });
 
   app.get<{ Params: { recommendationId: string } }>(
     "/v1/learning/recommendations/:recommendationId/evidence",
@@ -726,54 +722,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         }
         return response;
       });
-    },
-  );
-
-  app.post<{ Params: { recommendationId: string } }>(
-    "/v1/learning/recommendations/:recommendationId/reviews",
-    async (request, reply) => {
-      const parsedRecommendationId = LearningRecommendationIdSchema.safeParse(
-        decodeRouteParam(request.params.recommendationId),
-      );
-      if (!parsedRecommendationId.success) {
-        void reply.code(400);
-        return { ok: false, error: "invalid_learning_recommendation_id" };
-      }
-      const body = parseBody(reply, LearningRecommendationReviewRequestSchema, request.body ?? {});
-      if (!body) {
-        return undefined;
-      }
-
-      let response;
-      try {
-        response = await providerDispatcher.call(RpcMethods.ReviewLearningRecommendation, {
-          tenantId: "local",
-          recommendationId: parsedRecommendationId.data,
-          decision: body.decision,
-          expectedAppDir: appDir,
-          expectedDbPath: options.dbPath,
-        });
-      } catch {
-        return learningRecommendationReviewFailure(reply, 503);
-      }
-
-      if (response.error) {
-        return learningRecommendationReviewFailure(
-          reply,
-          response.error.code === JsonRpcErrorCodes.InvalidParams ? 409 : 502,
-        );
-      }
-
-      const parsedResult = ReviewLearningRecommendationResultSchema.safeParse(response.result);
-      if (
-        !parsedResult.success ||
-        parsedResult.data.recommendationId !== parsedRecommendationId.data ||
-        parsedResult.data.decision !== body.decision
-      ) {
-        return learningRecommendationReviewFailure(reply, 502);
-      }
-      const { status: _status, ...review } = parsedResult.data;
-      return LearningRecommendationReviewResponseSchema.parse({ ok: true, ...review });
     },
   );
 
@@ -1339,23 +1287,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     },
   );
 
-  app.post<{ Params: { draftId: string } }>(
-    "/v1/resume-review/drafts/:draftId/render",
-    async (request, reply) => {
-      const body = parseBody(reply, ResumeReviewDraftRenderRequestSchema, request.body ?? {});
-      if (!body) {
-        return undefined;
-      }
-      return withWritableDb(reply, options.dbPath, async (db) => {
-        const result = await renderResumeReviewDraft(db, decodeRouteParam(request.params.draftId), body, resumePdfRenderer);
-        if (result.ok) {
-          refreshProjections(db);
-        }
-        return result;
-      });
-    },
-  );
-
   app.post<{ Params: { threadId: string } }>(
     "/v1/resume-review/comment-threads/:threadId/replies",
     async (request, reply) => {
@@ -1372,34 +1303,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.get("/v1/outcomes", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listApplicationOutcomes(db)),
   );
-
-  app.post("/v1/outcomes/gmail/scan", async (request, reply) => {
-    const body = parseBody(reply, GmailOutcomeScanRequestSchema, request.body ?? {});
-    if (!body) {
-      return undefined;
-    }
-    if (!databaseExists(options.dbPath)) {
-      void reply.code(503);
-      return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${options.dbPath}` };
-    }
-    try {
-      const output = await gmailFeedbackScanner(body, { appDir, dbPath: options.dbPath });
-      return sanitizeGmailFeedbackScanResponse(output);
-    } catch (error) {
-      if (error instanceof GmailFeedbackScanError) {
-        void reply.code(error.statusCode);
-        return {
-          ok: false,
-          error:
-            error.statusCode === 400
-              ? "invalid_gmail_feedback_scan"
-              : "gmail_feedback_scan_failed",
-          message: error.message,
-        };
-      }
-      throw error;
-    }
-  });
 
   app.post("/v1/jobs/bulk-delete", async (request, reply) => {
     const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
@@ -3485,24 +3388,6 @@ function providerOperationError(
   message: string,
 ) {
   return { ok: false as const, error, message };
-}
-
-function learningRecommendationReviewFailure(reply: FastifyReply, statusCode: 409 | 502 | 503) {
-  void reply.code(statusCode);
-  return {
-    ok: false as const,
-    error: "learning_recommendation_review_failed" as const,
-    message: "The learning recommendation review could not be completed.",
-  };
-}
-
-function tailoringPolicyRollbackFailure(reply: FastifyReply, statusCode: 409 | 502 | 503) {
-  void reply.code(statusCode);
-  return {
-    ok: false as const,
-    error: "tailoring_policy_rollback_failed" as const,
-    message: "The tailoring policy rollback could not be completed.",
-  };
 }
 
 async function dispatchProviderModelCatalog(

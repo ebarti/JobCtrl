@@ -4,6 +4,9 @@
  * pair here so type drift between TS and Python surfaces in CI.
  */
 import { describe, expect, it } from "vitest";
+import endpointSpecsFixture from "../../../packages/domain-types/test/fixtures/endpoint_specs.json" with {
+  type: "json",
+};
 
 import {
   AnalyzeJobParamsSchema,
@@ -12,6 +15,8 @@ import {
   CancelRunParamsSchema,
   CancelRunResultSchema,
   DEFAULT_PIPELINE_LLM_MODEL,
+  ENDPOINTS,
+  endpointSpecJsonSchemaFixture,
   GenerateInterviewPrepRequestSchema,
   GenerateInterviewPrepParamsSchema,
   ManualCaptureImportParamsSchema,
@@ -19,10 +24,6 @@ import {
   ProviderModelCatalogResultSchema,
   RederiveLearningRecommendationsParamsSchema,
   RederiveLearningRecommendationsResultSchema,
-  ReviewLearningRecommendationParamsSchema,
-  ReviewLearningRecommendationResultSchema,
-  RollbackTailoringPolicyParamsSchema,
-  RollbackTailoringPolicyResultSchema,
   RefreshCompensationParamsSchema,
   RefreshCompensationResultSchema,
   RescoreJobParamsSchema,
@@ -37,6 +38,26 @@ import {
 } from "../src/contracts.js";
 
 const CANONICAL_JOB_ID = "11111111-1111-4111-8111-111111111111";
+const ENDPOINT_DISPATCH_CONTEXT = {
+  tenantId: "local",
+  appDir: "/tmp/jobctrl",
+  dbPath: "/tmp/jobctrl/jobctrl.db",
+} as const;
+
+describe("endpoint spec fixture", () => {
+  it("pins every migrated request and response JSON Schema", () => {
+    expect(endpointSpecJsonSchemaFixture()).toEqual(endpointSpecsFixture);
+  });
+
+  it("records the indirect worker RPCs used by merged endpoint handlers", () => {
+    expect(ENDPOINTS.renderResumeReviewDraft.rpcDependencies).toEqual([
+      RpcMethods.RenderResumePdf,
+    ]);
+    expect(ENDPOINTS.scanGmailApplicationOutcomes.rpcDependencies).toEqual([
+      RpcMethods.GmailFeedbackScan,
+    ]);
+  });
+});
 
 describe("learning recommendation derivation RPC contract", () => {
   it("registers bounded runtime-scoped request and result shapes", () => {
@@ -84,35 +105,39 @@ describe("learning recommendation derivation RPC contract", () => {
 
 describe("learning recommendation review RPC contract", () => {
   it("registers runtime-scoped review params and couples decision to policy effect", () => {
+    const endpoint = ENDPOINTS.reviewLearningRecommendation;
     const recommendationId = `learning-recommendation:${"a".repeat(64)}`;
     const reviewId = `learning-recommendation-review:${"b".repeat(64)}`;
-    expect(RpcMethods.ReviewLearningRecommendation).toBe("review_learning_recommendation");
-    expect(
-      ReviewLearningRecommendationParamsSchema.parse({
-        recommendationId,
-        decision: "accepted",
-        expectedAppDir: "/tmp/jobctrl",
-        expectedDbPath: "/tmp/jobctrl/jobctrl.db",
-      }),
-    ).toEqual({
-      tenantId: "local",
+    const request = endpoint.request.parse({ decision: "accepted" });
+    const params = endpoint.dispatch.params(
+      { request, pathParam: recommendationId },
+      ENDPOINT_DISPATCH_CONTEXT,
+    );
+    expect(endpoint.dispatch.rpcMethod).toBe("review_learning_recommendation");
+    expect(endpoint.dispatch.paramsSchema.parse(params)).toEqual(params);
+    expect(params.recommendationId).toBe(recommendationId);
+    expect(params.decision).toBe(request.decision);
+    expect(params.expectedAppDir).toBe(ENDPOINT_DISPATCH_CONTEXT.appDir);
+    expect(params.expectedDbPath).toBe(ENDPOINT_DISPATCH_CONTEXT.dbPath);
+    const acceptedResult = endpoint.dispatch.result.parse({
+      status: "succeeded",
+      reviewId,
       recommendationId,
+      revision: 1,
       decision: "accepted",
-      expectedAppDir: "/tmp/jobctrl",
-      expectedDbPath: "/tmp/jobctrl/jobctrl.db",
+      context: "materials",
+      policyKind: "tailoring_rule",
+      policyVersion: 2,
+      reviewedAt: "2026-08-01T12:34:56+00:00",
     });
     expect(
-      ReviewLearningRecommendationResultSchema.parse({
-        status: "succeeded",
-        reviewId,
-        recommendationId,
-        revision: 1,
-        decision: "accepted",
-        context: "materials",
-        policyKind: "tailoring_rule",
-        policyVersion: 2,
-        reviewedAt: "2026-08-01T12:34:56+00:00",
-      }),
+      endpoint.response.parse(
+        endpoint.dispatch.response({
+          request,
+          pathParam: recommendationId,
+          result: acceptedResult,
+        }),
+      ),
     ).toMatchObject({
       reviewId,
       recommendationId,
@@ -121,14 +146,13 @@ describe("learning recommendation review RPC contract", () => {
       reviewedAt: "2026-08-01T12:34:56.000Z",
     });
     expect(() =>
-      ReviewLearningRecommendationParamsSchema.parse({
-        recommendationId,
-        decision: "accepted",
+      endpoint.dispatch.paramsSchema.parse({
+        ...params,
         unexpected: true,
       }),
     ).toThrow();
     expect(() =>
-      ReviewLearningRecommendationResultSchema.parse({
+      endpoint.dispatch.result.parse({
         status: "succeeded",
         reviewId,
         recommendationId,
@@ -141,7 +165,7 @@ describe("learning recommendation review RPC contract", () => {
       }),
     ).toThrow();
     expect(() =>
-      ReviewLearningRecommendationResultSchema.parse({
+      endpoint.dispatch.result.parse({
         status: "succeeded",
         reviewId,
         recommendationId,
@@ -158,40 +182,45 @@ describe("learning recommendation review RPC contract", () => {
 
 describe("tailoring policy rollback RPC contract", () => {
   it("registers a runtime-scoped rollback with closed policy metadata", () => {
-    expect(RpcMethods.RollbackTailoringPolicy).toBe("rollback_tailoring_policy");
-    expect(
-      RollbackTailoringPolicyParamsSchema.parse({
-        targetVersion: 1,
-        expectedAppDir: "/tmp/jobctrl",
-        expectedDbPath: "/tmp/jobctrl/jobctrl.db",
-      }),
-    ).toEqual({
-      tenantId: "local",
-      targetVersion: 1,
-      expectedAppDir: "/tmp/jobctrl",
-      expectedDbPath: "/tmp/jobctrl/jobctrl.db",
-    });
-    expect(
-      RollbackTailoringPolicyResultSchema.parse({
-        status: "succeeded",
-        context: "materials",
-        policyKind: "tailoring_rule",
-        policyVersion: 3,
-        rollbackOfVersion: 1,
-        rollbackReasonCode: "user_requested",
-        learnedRules: [],
-        rolledBackAt: "2026-08-01T12:34:56+00:00",
-      }),
-    ).toMatchObject({
+    const endpoint = ENDPOINTS.rollbackTailoringPolicy;
+    const request = endpoint.request.parse({ targetVersion: 1 });
+    const params = endpoint.dispatch.params(
+      { request, pathParam: undefined },
+      ENDPOINT_DISPATCH_CONTEXT,
+    );
+    expect(endpoint.dispatch.rpcMethod).toBe("rollback_tailoring_policy");
+    expect(endpoint.dispatch.paramsSchema.parse(params)).toEqual(params);
+    expect(params.targetVersion).toBe(request.targetVersion);
+    expect(params.expectedAppDir).toBe(ENDPOINT_DISPATCH_CONTEXT.appDir);
+    expect(params.expectedDbPath).toBe(ENDPOINT_DISPATCH_CONTEXT.dbPath);
+    const result = endpoint.dispatch.result.parse({
+      status: "succeeded",
+      context: "materials",
+      policyKind: "tailoring_rule",
       policyVersion: 3,
       rollbackOfVersion: 1,
-      rolledBackAt: "2026-08-01T12:34:56.000Z",
+      rollbackReasonCode: "user_requested",
+      learnedRules: [],
+      rolledBackAt: "2026-08-01T12:34:56+00:00",
+    });
+    expect(
+      endpoint.response.parse(
+        endpoint.dispatch.response({
+          request,
+          pathParam: undefined,
+          result,
+        }),
+      ),
+    ).toMatchObject({
+      version: 3,
+      rollbackOfVersion: 1,
+      createdAt: "2026-08-01T12:34:56.000Z",
     });
     expect(() =>
-      RollbackTailoringPolicyParamsSchema.parse({ targetVersion: 0 }),
+      endpoint.request.parse({ targetVersion: 0 }),
     ).toThrow();
     expect(() =>
-      RollbackTailoringPolicyResultSchema.parse({
+      endpoint.dispatch.result.parse({
         status: "succeeded",
         context: "materials",
         policyKind: "tailoring_rule",
