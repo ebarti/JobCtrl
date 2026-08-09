@@ -168,12 +168,6 @@ export class FetchApiClientAdapter implements ApiClientPort {
   ) {
     return this.client.seedResumeReviewCommentThreads(draftId, body);
   }
-  renderResumeReviewDraft(
-    draftId: string,
-    body: Parameters<JobCtrlApiClient["renderResumeReviewDraft"]>[1] = {},
-  ) {
-    return this.client.renderResumeReviewDraft(draftId, body);
-  }
   replyToResumeReviewComment(
     threadId: string,
     body: Parameters<JobCtrlApiClient["replyToResumeReviewComment"]>[1],

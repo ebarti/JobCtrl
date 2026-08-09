@@ -75,4 +75,31 @@ describe("endpoint client factory", () => {
 
     await expect(client.rollbackTailoringPolicy({ targetVersion: 1 })).rejects.toThrow();
   });
+
+  it("preserves empty-object bodies for optional write requests", async () => {
+    const transport = vi.fn(async (_method: string, path: string) =>
+      path === "/v1/outcomes/gmail/scan"
+        ? {
+            ok: true,
+            scannedAnchorCount: 0,
+            searchedMessageCount: 0,
+            linkedEvidenceCount: 0,
+            suggestionsCreatedCount: 0,
+            duplicateMessageCount: 0,
+            unlinkedCandidateCount: 0,
+            evidence: [],
+            suggestions: [],
+          }
+        : {},
+    );
+    const client = createEndpointMethods(transport);
+
+    await expect(client.renderResumeReviewDraft("draft/one")).rejects.toThrow();
+    await client.scanGmailApplicationOutcomes();
+
+    expect(transport.mock.calls).toEqual([
+      ["POST", "/v1/resume-review/drafts/draft%2Fone/render", {}],
+      ["POST", "/v1/outcomes/gmail/scan", {}],
+    ]);
+  });
 });

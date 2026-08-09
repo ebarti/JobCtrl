@@ -74,8 +74,6 @@ import type {
   EvidenceMapResponse,
   GenerateInterviewPrepRequest,
   GenerateMaterialsRequest,
-  GmailOutcomeScanRequest,
-  GmailOutcomeScanResponse,
   EnsureCurrentResumeMaterialsRequest,
   EnsureCurrentResumeMaterialsResponse,
   ExtensionCapabilityTokenResponse,
@@ -132,8 +130,6 @@ import type {
   ResumeReviewCommentThreadSeedRequest,
   ResumeReviewCommentThreadSeedResponse,
   ResumeReviewDraftCreateRequest,
-  ResumeReviewDraftRenderRequest,
-  ResumeReviewDraftRenderResponse,
   ResumeReviewDraftResponse,
   ResumeReviewDraftRevisionResponse,
   ResumeReviewDraftRevisionSaveRequest,
@@ -531,16 +527,6 @@ export class JobCtrlApiClient {
     );
   }
 
-  renderResumeReviewDraft(
-    draftId: string,
-    body: ResumeReviewDraftRenderRequest = {},
-  ): Promise<ResumeReviewDraftRenderResponse> {
-    return this.post(
-      `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
-      body,
-    );
-  }
-
   replyToResumeReviewComment(
     threadId: string,
     body: ResumeCommentReplyRequest,
@@ -634,12 +620,6 @@ export class JobCtrlApiClient {
       `/v1/outcome-suggestions/${encodeURIComponent(suggestionId)}/decision`,
       body,
     );
-  }
-
-  scanGmailApplicationOutcomes(
-    body: GmailOutcomeScanRequest = {},
-  ): Promise<GmailOutcomeScanResponse> {
-    return this.post("/v1/outcomes/gmail/scan", body);
   }
 
   jobs(

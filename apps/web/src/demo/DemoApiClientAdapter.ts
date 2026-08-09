@@ -634,7 +634,6 @@ export class DemoApiClientAdapter implements ApiClientPort {
   createResumeReviewDraft = this.local("createResumeReviewDraft");
   saveResumeReviewDraftRevision = this.local("saveResumeReviewDraftRevision");
   seedResumeReviewCommentThreads = this.local("seedResumeReviewCommentThreads");
-  renderResumeReviewDraft = this.unsupported("renderResumeReviewDraft");
   replyToResumeReviewComment = this.local("replyToResumeReviewComment");
   saveResumeTemplate = this.local("saveResumeTemplate");
   setDefaultResumeTemplate = this.local("setDefaultResumeTemplate");
@@ -749,7 +748,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return ((...args: Parameters<ApiClientPort[TMethod]>) =>
       this.trackDemoAction(method, () =>
         this.scenarios.execute(method, args),
-      )) as ApiClientPort[TMethod];
+      )) as unknown as ApiClientPort[TMethod];
   }
 
   private rehearsed<TMethod extends DemoInitialExternalRehearsalOperation>(

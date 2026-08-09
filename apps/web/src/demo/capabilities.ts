@@ -57,7 +57,6 @@ export const DEMO_CAPABILITY_MANIFEST = {
   createResumeReviewDraft: local("Creates a synthetic draft locally."),
   saveResumeReviewDraftRevision: local("Saves a draft revision locally."),
   seedResumeReviewCommentThreads: local("Seeds synthetic review comments locally."),
-  renderResumeReviewDraft: unavailable("Draft rendering is deferred from the public-demo MVP."),
   replyToResumeReviewComment: local("Records a comment reply locally."),
   resumeReviewFeedback: local("Reads synthetic review feedback."),
   resumeTemplates: local("Reads bundled resume templates."),

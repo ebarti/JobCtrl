@@ -20,7 +20,13 @@ export function createEndpointMethods(
       const path = hasPathParam
         ? (endpoint.path as (param: unknown) => string)(args[0])
         : endpoint.path;
-      const request = args[hasPathParam ? 1 : 0];
+      const requestArgument = args[hasPathParam ? 1 : 0];
+      const request =
+        requestArgument === undefined &&
+        endpoint.method !== "GET" &&
+        endpoint.request.safeParse(undefined).success
+          ? {}
+          : requestArgument;
       const response = await transport(endpoint.method, path, request);
       return endpoint.response.parse(response);
     };

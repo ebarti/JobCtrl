@@ -121,8 +121,6 @@ import type {
   ResumeReviewCommentThreadSeedRequest,
   ResumeReviewCommentThreadSeedResponse,
   ResumeReviewDraftCreateRequest,
-  ResumeReviewDraftRenderRequest,
-  ResumeReviewDraftRenderResponse,
   ResumeReviewDraftResponse,
   ResumeReviewDraftRevisionResponse,
   ResumeReviewDraftRevisionSaveRequest,
@@ -272,10 +270,6 @@ export interface ApiClientPort extends EndpointClientMethods {
     draftId: string,
     body: ResumeReviewCommentThreadSeedRequest,
   ): Promise<ResumeReviewCommentThreadSeedResponse>;
-  renderResumeReviewDraft(
-    draftId: string,
-    body?: ResumeReviewDraftRenderRequest,
-  ): Promise<ResumeReviewDraftRenderResponse>;
   replyToResumeReviewComment(
     threadId: string,
     body: ResumeCommentReplyRequest,
