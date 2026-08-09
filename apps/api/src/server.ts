@@ -338,13 +338,18 @@ import {
   writeSettingsConfig,
 } from "./write-model.js";
 
+import type { ApplyReviewApprovalGateReason } from "./contracts.js";
+
 const UNSAFE_METHODS = new Set(["DELETE", "PATCH", "POST", "PUT"]);
-const APPLY_REVIEW_PRECONDITION_ERRORS = new Set([
+const APPLY_REVIEW_GATE_PRECONDITIONS: readonly ApplyReviewApprovalGateReason[] = [
   "awaiting_dry_run",
   "approval_stale_materials",
   "approval_stale_profile",
   "approval_stale_url",
   "approval_stale_email_candidate",
+];
+const APPLY_REVIEW_PRECONDITION_ERRORS = new Set<string>([
+  ...APPLY_REVIEW_GATE_PRECONDITIONS,
   "partial_override_evidence_invalid",
   "repeat_application_blocked",
   "repeat_application_confirmation_required",

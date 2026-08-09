@@ -283,6 +283,7 @@ def submission_result_kind(result: SubmissionResult) -> str:
 
 
 __all__ = [
+    "APPROVAL_GATE_REFUSAL_REASONS",
     "Applied",
     "ApplyPrompt",
     "ApplyRunId",
@@ -300,3 +301,21 @@ __all__ = [
     "new_apply_run_id",
     "submission_result_kind",
 ]
+
+
+# The launcher's approval-gate refusal vocabulary. Pinned cross-runtime to
+# packages/domain-types/test/fixtures/apply_approval_gate_reasons.json (the
+# TypeScript source is APPLY_REVIEW_APPROVAL_GATE_REASONS in
+# packages/contracts); tests/test_apply_approval_vocabulary.py enforces that
+# every literal _approval_refusal_reason can return stays inside this set.
+APPROVAL_GATE_REFUSAL_REASONS: frozenset[str] = frozenset(
+    {
+        "awaiting_approval",
+        "awaiting_dry_run",
+        "approval_stale_materials",
+        "approval_stale_profile",
+        "approval_stale_url",
+        "approval_stale_email_candidate",
+        "override_evidence_invalid",
+    }
+)

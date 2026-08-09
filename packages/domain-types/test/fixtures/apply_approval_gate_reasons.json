@@ -1,0 +1,20 @@
+{
+  "reasons": [
+    "awaiting_approval",
+    "awaiting_dry_run",
+    "approval_stale_materials",
+    "approval_stale_profile",
+    "approval_stale_url",
+    "approval_stale_email_candidate",
+    "override_evidence_invalid"
+  ],
+  "launcherRefusalReasons": [
+    "awaiting_approval",
+    "awaiting_dry_run",
+    "approval_stale_materials",
+    "approval_stale_profile",
+    "approval_stale_url",
+    "approval_stale_email_candidate",
+    "override_evidence_invalid"
+  ]
+}
