@@ -105,7 +105,7 @@ class JobPipelineWorkflowResult:
     error_code: str | None = None
 
 
-_NON_RETRYABLE_ERROR_TYPES = ["configuration", "authentication", "missing_input", "budget_exceeded"]
+_NON_RETRYABLE_ERROR_TYPES = ["configuration", "missing_input", "budget_exceeded"]
 _SPENDFUL_STAGES = {"discover", "enrich", "score", "tailor", "cover", "apply"}
 _ENRICH_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=5),

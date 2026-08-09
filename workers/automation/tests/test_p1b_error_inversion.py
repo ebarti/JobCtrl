@@ -33,8 +33,6 @@ from jobctrl.discovery import smartextract, workday
 from jobctrl.discovery.jobspy import DiscoveryCancelled, run_discovery
 from jobctrl.domain.errors import (
     AttemptBudgetExhaustedError,
-    AuthenticationError,
-    BrowserTransientError,
     ConfigurationError,
     JobCtrlError,
     LlmTransientError,
@@ -66,7 +64,7 @@ _P1B_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=1),
     maximum_interval=timedelta(seconds=1),
     maximum_attempts=3,
-    non_retryable_error_types=["configuration", "authentication", "missing_input"],
+    non_retryable_error_types=["configuration", "missing_input"],
 )
 _OK_OBSERVED = ({"status": "ok"}, 0.0, "ok")
 
@@ -226,10 +224,8 @@ def test_error_taxonomy_maps_to_temporal_application_errors() -> None:
     cases: tuple[tuple[type[JobCtrlError], str, bool], ...] = (
         (AttemptBudgetExhaustedError, "attempt_budget_exhausted", True),
         (ConfigurationError, "configuration", True),
-        (AuthenticationError, "authentication", True),
         (MissingInputError, "missing_input", True),
         (TransientNetworkError, "transient_network", False),
-        (BrowserTransientError, "browser_transient", False),
         (LlmTransientError, "llm_transient", False),
         (SourceUnavailableError, "source_unavailable", False),
     )

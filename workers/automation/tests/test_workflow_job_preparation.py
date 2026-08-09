@@ -556,7 +556,7 @@ async def test_preparation_workflow_resumes_at_cover_after_worker_restart(
         initial_interval=timedelta(milliseconds=100),
         maximum_interval=timedelta(milliseconds=100),
         maximum_attempts=3,
-        non_retryable_error_types=["configuration", "authentication", "missing_input"],
+        non_retryable_error_types=["configuration", "missing_input"],
     )
 
     try:
@@ -800,7 +800,7 @@ async def test_preparation_workflow_retries_transient_tailor_failure(
         initial_interval=timedelta(milliseconds=100),
         maximum_interval=timedelta(milliseconds=100),
         maximum_attempts=3,
-        non_retryable_error_types=["configuration", "authentication", "missing_input"],
+        non_retryable_error_types=["configuration", "missing_input"],
     )
 
     try:
