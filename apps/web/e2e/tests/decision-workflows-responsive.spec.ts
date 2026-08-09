@@ -125,7 +125,7 @@ test.describe("decision workflow mobile composition", () => {
     await moreActions.click();
     await expect(moreActions).toHaveAttribute("aria-expanded", "true");
     await expect(
-      workspace.getByRole("toolbar", { name: "Job actions" }),
+      page.getByRole("toolbar", { name: "Job actions" }),
     ).toBeVisible();
 
     const hasPlaceholderMetadata = await workspace

@@ -486,3 +486,41 @@ test("Job detail: Apply Review handoff preserves the selected job", async ({
   ).toHaveAttribute("aria-pressed", "true");
   expect(prohibitedRequests).toEqual([]);
 });
+
+test("keeps the job detail header Tab order aligned with its visual order", async ({
+  page,
+}) => {
+  // The desktop header grid paints Back + actions on row one and the
+  // overview on row two; this asserts the Tab sequence matches it.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`/jobs?${FILTER_PARAMS}`);
+  const row = page
+    .locator("table.jobs-data-grid-table tbody tr")
+    .filter({ hasText: PLATFORM_JOB_TITLE });
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await row
+    .getByRole("button", { name: /^Open job Director of Platform Engineering/ })
+    .press("Enter");
+  const drawer = page.getByRole("article", { name: "Job details" });
+  await expect(drawer).toBeVisible({ timeout: 10_000 });
+
+  // The header paints Back + actions on the top row and the overview (with
+  // the posting link) below; the Tab sequence must follow the same order.
+  await drawer.getByRole("button", { name: "Back to jobs" }).focus();
+  await page.keyboard.press("Tab");
+  await expect(
+    drawer.getByRole("link", { name: /^Open Apply Review for/ }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    drawer.getByRole("link", { name: /^Open evidence map for/ }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    drawer.getByRole("button", { name: "More job actions" }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    drawer.getByRole("link", { name: "Open original posting" }),
+  ).toBeFocused();
+});

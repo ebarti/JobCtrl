@@ -28,6 +28,11 @@ import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.
 import { RescoreJobButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
 import { Empty } from "../../shared/ui/empty.js";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../../shared/ui/popover.js";
 import { RouteWorkspace } from "../../shared/ui/route-workspace.js";
 import { Section } from "../../shared/ui/section.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
@@ -175,6 +180,71 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 <IconArrowLeft aria-hidden="true" size={16} stroke={1.9} />
                 Jobs
               </Button>
+              <div className="job-detail-top-actions">
+                <nav
+                  className="job-detail-handoff-actions"
+                  aria-label="Related job workspaces"
+                >
+                  <Link
+                    aria-label={`Open Apply Review for ${detail.job.title}`}
+                    className={buttonVariants({
+                      size: "sm",
+                      variant: "default",
+                    })}
+                    search={{ jobKey: detail.job.jobKey }}
+                    to="/apply-review"
+                  >
+                    Open Apply Review
+                  </Link>
+                  <Link
+                    aria-label={`Open evidence map for ${detail.job.title}`}
+                    className={buttonVariants({
+                      size: "sm",
+                      variant: "outline",
+                    })}
+                    search={{ q: "", entry: "", job: detail.job.jobKey }}
+                    to="/evidence-map"
+                  >
+                    Evidence map
+                  </Link>
+                </nav>
+                <Popover open={commandsOpen} onOpenChange={setCommandsOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      className="job-detail-command-trigger"
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      More job actions
+                      <IconChevronDown
+                        aria-hidden="true"
+                        data-icon="inline-end"
+                      />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="end"
+                    aria-label="Job workflow actions"
+                    className="job-detail-workflow-actions"
+                    id="job-detail-workflow-commands"
+                    sideOffset={8}
+                  >
+                    <JobActions
+                      jobId={detail.job.jobKey}
+                      currentStage={detail.job.currentSubstage}
+                      canRetryStage={canRetryStage(currentSubstage)}
+                      canRunCurrentStage={canRunCurrentStage(currentSubstage)}
+                      canRetailor={detail.artifacts.length > 0}
+                      applyApprovalRequired={applyApprovalRequired}
+                      activeApplyRunId={detail.activeApplyRun?.runId ?? null}
+                      isApplied={
+                        detail.job.applyStatus?.toLowerCase() === "applied"
+                      }
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
               <JobOverview detail={detail} />
               <div
                 className="job-detail-mobile-sections"
@@ -208,71 +278,6 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   Progress and history
                 </Button>
               </div>
-              <div className="job-detail-top-actions">
-                <nav
-                  className="job-detail-handoff-actions"
-                  aria-label="Related job workspaces"
-                >
-                  <Link
-                    aria-label={`Open Apply Review for ${detail.job.title}`}
-                    className={buttonVariants({
-                      size: "sm",
-                      variant: "default",
-                    })}
-                    search={{ jobKey: detail.job.jobKey }}
-                    to="/apply-review"
-                  >
-                    Open Apply Review
-                  </Link>
-                  <Link
-                    aria-label={`Open evidence map for ${detail.job.title}`}
-                    className={buttonVariants({
-                      size: "sm",
-                      variant: "outline",
-                    })}
-                    search={{ q: "", entry: "", job: detail.job.jobKey }}
-                    to="/evidence-map"
-                  >
-                    Evidence map
-                  </Link>
-                </nav>
-                <div className="job-detail-command-disclosure">
-                  <Button
-                    aria-controls="job-detail-workflow-commands"
-                    aria-expanded={commandsOpen}
-                    className="job-detail-command-trigger"
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                    onClick={() => setCommandsOpen((open) => !open)}
-                  >
-                    More job actions
-                    <IconChevronDown
-                      aria-hidden="true"
-                      data-icon="inline-end"
-                    />
-                  </Button>
-                  <section
-                    className="job-detail-workflow-actions"
-                    aria-label="Job workflow actions"
-                    data-mobile-open={commandsOpen ? "true" : "false"}
-                    id="job-detail-workflow-commands"
-                  >
-                    <JobActions
-                      jobId={detail.job.jobKey}
-                      currentStage={detail.job.currentSubstage}
-                      canRetryStage={canRetryStage(currentSubstage)}
-                      canRunCurrentStage={canRunCurrentStage(currentSubstage)}
-                      canRetailor={detail.artifacts.length > 0}
-                      applyApprovalRequired={applyApprovalRequired}
-                      activeApplyRunId={detail.activeApplyRun?.runId ?? null}
-                      isApplied={
-                        detail.job.applyStatus?.toLowerCase() === "applied"
-                      }
-                    />
-                  </section>
-                </div>
-              </div>
             </div>
           }
           inspector={
@@ -293,11 +298,18 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
               <Section title="Active artifacts">
                 {detail.artifacts.length ? (
                   detail.artifacts.map((artifact) => (
-                    <div className="mini-row" key={artifact.artifactId}>
+                    <div
+                      className="mini-row job-artifact-row"
+                      key={artifact.artifactId}
+                    >
                       <ArtifactStatusBadge status={artifact.status} />
                       <span>{artifact.type}</span>
                       <OpenArtifactButton
                         artifactId={artifact.artifactId}
+                        className={buttonVariants({
+                          size: "sm",
+                          variant: "outline",
+                        })}
                         disabled={artifact.status === "missing"}
                       />
                       <details className="job-artifact-technical-details">

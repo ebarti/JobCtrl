@@ -66,13 +66,54 @@
 }
 
 /* Job detail: summary and consequence remain visible; raw scoring and commands disclose on demand. */
-.job-detail-mobile-sections,
-.job-detail-command-trigger {
+.job-detail-mobile-sections {
   display: none;
 }
 
-.job-detail-command-disclosure {
+.job-detail-command-trigger {
+  display: inline-flex;
+}
+
+.job-detail-workflow-actions {
+  display: block;
+  width: min(calc(100dvw - (var(--jh-internal-gap, 8px) * 2)), 32rem);
+  max-height: min(68dvh, 36rem);
+  overflow: auto;
+}
+
+.job-detail-workflow-actions .action-panel {
+  display: grid;
+  width: 100%;
+  gap: var(--jh-internal-gap, 8px);
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.job-detail-workflow-actions .job-action-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  width: 100%;
+  gap: calc(var(--jh-internal-gap, 8px) / 2);
+}
+
+.job-detail-workflow-actions .job-action-group + .job-action-group {
+  margin-top: var(--jh-internal-gap, 8px);
+  border-top: 1px solid var(--border);
+  padding-top: var(--jh-internal-gap, 8px);
+}
+
+.job-detail-workflow-actions .job-action-group-label {
+  grid-column: 1 / -1;
+  color: var(--muted-foreground);
+}
+
+.job-detail-workflow-actions [data-slot="button"] {
+  width: 100%;
   min-width: 0;
+  justify-content: flex-start;
 }
 
 .job-audit-rationale {
@@ -211,14 +252,6 @@
     border-bottom-color: var(--primary);
     background: color-mix(in oklch, var(--primary) 10%, transparent);
     color: var(--foreground);
-  }
-
-  .job-detail-command-trigger {
-    display: inline-flex;
-  }
-
-  .job-detail-workflow-actions[data-mobile-open="false"] {
-    display: none;
   }
 
   .job-detail-workspace
@@ -395,42 +428,8 @@
     flex: 1 1 auto;
   }
 
-  .job-detail-command-disclosure {
-    position: relative;
-  }
-
-  .job-detail-workflow-actions[data-mobile-open="true"] {
-    position: absolute;
-    right: 0;
-    bottom: calc(100% + var(--jh-internal-gap));
-    display: block;
-    width: min(calc(100dvw - (var(--jh-internal-gap) * 2)), 32rem);
-    max-height: min(68dvh, 36rem);
-    overflow: auto;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--card);
-    padding: var(--jh-internal-gap);
-    box-shadow: 0 16px 48px
-      color-mix(in oklch, var(--foreground) 18%, transparent);
-  }
-
-  .job-detail-workflow-actions .action-panel,
   .job-detail-workflow-actions .job-action-group {
-    display: grid;
     grid-template-columns: minmax(0, 1fr);
-    width: 100%;
-    gap: calc(var(--jh-internal-gap) / 2);
-  }
-
-  .job-detail-workflow-actions .job-action-group + .job-action-group {
-    margin-top: var(--jh-internal-gap);
-    border-top: 1px solid var(--border);
-    padding-top: var(--jh-internal-gap);
-  }
-
-  .job-detail-workflow-actions [data-slot="button"] {
-    width: 100%;
   }
 
   .job-detail-command-trigger[aria-expanded="true"] [data-icon="inline-end"] {

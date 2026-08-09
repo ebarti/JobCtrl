@@ -43,6 +43,9 @@ export function JobActions({
         role="group"
         aria-label="Preparation actions"
       >
+        <span className="job-action-group-label" data-typography="label">
+          Preparation
+        </span>
         {canRetryStage ? (
           <RetryStageButton
             className={buttonVariants({ size: "sm", variant: "default" })}
@@ -87,6 +90,9 @@ export function JobActions({
         role="group"
         aria-label="Application actions"
       >
+        <span className="job-action-group-label" data-typography="label">
+          Application
+        </span>
         <DryRunButton
           className={buttonVariants({ size: "sm", variant: "outline" })}
           jobId={jobId}

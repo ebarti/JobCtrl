@@ -219,20 +219,18 @@ test("job detail keeps its title and actions readable at desktop and mobile widt
 }) => {
   for (const viewport of [
     { width: 1440, height: 900 },
+    { width: 1080, height: 900 },
     { width: 390, height: 844 },
   ]) {
-    const usesActionDisclosure = viewport.width <= 820;
     await page.setViewportSize(viewport);
     await page.goto(JOB_DETAIL_ROUTE);
 
     const workspace = page.getByRole("article", { name: "Job details" });
-    const toolbar = workspace.getByRole("toolbar", { name: "Job actions" });
+    const toolbar = page.getByRole("toolbar", { name: "Job actions" });
     const commandTrigger = workspace.getByRole("button", {
       name: "More job actions",
     });
-    const workflowActions = workspace.locator(
-      "#job-detail-workflow-commands",
-    );
+    const workflowActions = page.locator("#job-detail-workflow-commands");
     const preparationActions = toolbar.getByRole("group", {
       name: "Preparation actions",
     });
@@ -275,7 +273,7 @@ test("job detail keeps its title and actions readable at desktop and mobile widt
         );
       });
       return {
-        actionsBelowTitle: actionsRect.top >= titleRect.bottom,
+        actionsAboveTitle: actionsRect.bottom <= titleRect.top + 1,
         controlsContained: controls.every((control) => {
           const rect = control.getBoundingClientRect();
           return (
@@ -290,22 +288,43 @@ test("job detail keeps its title and actions readable at desktop and mobile widt
     });
 
     expect(layout.titleWidthRatio).toBeGreaterThan(0.65);
-    expect(layout.actionsBelowTitle).toBe(true);
+    if (viewport.width > 720) {
+      expect(layout.actionsAboveTitle).toBe(true);
+    }
     expect(layout.controlsContained).toBe(true);
     expect(layout.pageScrollWidth).toBeLessThanOrEqual(
       layout.viewportWidth + 1,
     );
 
-    if (usesActionDisclosure) {
-      await expect(commandTrigger).toBeVisible();
-      await expect(commandTrigger).toHaveAttribute("aria-expanded", "false");
-      await expect(workflowActions).toBeHidden();
-      await commandTrigger.click();
-      await expect(commandTrigger).toHaveAttribute("aria-expanded", "true");
-    } else {
-      await expect(commandTrigger).toBeHidden();
+    if (viewport.width > 720) {
+      const artifactLayout = await workspace
+        .locator(".job-artifact-row")
+        .evaluateAll((rows) =>
+          rows.map((row) => {
+            const rowRect = row.getBoundingClientRect();
+            const openButton = row.querySelector<HTMLElement>("button");
+            const buttonRect = openButton?.getBoundingClientRect();
+            return {
+              buttonContained: Boolean(
+                buttonRect &&
+                  buttonRect.left >= rowRect.left - 1 &&
+                  buttonRect.right <= rowRect.right + 1,
+              ),
+              contentContained: row.scrollWidth <= row.clientWidth + 1,
+            };
+          }),
+        );
+      expect(artifactLayout.length).toBeGreaterThan(0);
+      expect(artifactLayout.every((row) => row.buttonContained)).toBe(true);
+      expect(artifactLayout.every((row) => row.contentContained)).toBe(true);
     }
 
+    await expect(commandTrigger).toBeVisible();
+    await expect(commandTrigger).toHaveAttribute("aria-expanded", "false");
+    await expect(workflowActions).toHaveCount(0);
+    await commandTrigger.click();
+    await expect(commandTrigger).toHaveAttribute("aria-expanded", "true");
+    await expect(workflowActions).toBeVisible();
     await expect(preparationActions).toBeVisible();
     await expect(
       preparationActions.getByRole("button", { name: "Generate materials" }),
