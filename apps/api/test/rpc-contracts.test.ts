@@ -48,6 +48,15 @@ describe("endpoint spec fixture", () => {
   it("pins every migrated request and response JSON Schema", () => {
     expect(endpointSpecJsonSchemaFixture()).toEqual(endpointSpecsFixture);
   });
+
+  it("records the indirect worker RPCs used by merged endpoint handlers", () => {
+    expect(ENDPOINTS.renderResumeReviewDraft.rpcDependencies).toEqual([
+      RpcMethods.RenderResumePdf,
+    ]);
+    expect(ENDPOINTS.scanGmailApplicationOutcomes.rpcDependencies).toEqual([
+      RpcMethods.GmailFeedbackScan,
+    ]);
+  });
 });
 
 describe("learning recommendation derivation RPC contract", () => {

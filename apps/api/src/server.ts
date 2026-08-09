@@ -42,7 +42,6 @@ import {
   DiscoveryFeedbackRequestSchema,
   GenerateMaterialsRequestSchema,
   GenerateInterviewPrepRequestSchema,
-  GmailOutcomeScanRequestSchema,
   EnsureCurrentResumeMaterialsRequestSchema,
   JobResumeTemplateAssignmentRequestSchema,
   JobListQuerySchema,
@@ -77,7 +76,6 @@ import {
   ResumeCommentReplyRequestSchema,
   ResumeReviewCommentThreadSeedRequestSchema,
   ResumeReviewDraftCreateRequestSchema,
-  ResumeReviewDraftRenderRequestSchema,
   ResumeReviewDraftRevisionSaveRequestSchema,
   TailoringFeedbackSignalReviewRequestSchema,
   RunPipelineStagesRequestSchema,
@@ -646,6 +644,49 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         withDb(reply, options.dbPath, (db) =>
           listLearningRecommendations(db, request!),
         ),
+      renderResumeReviewDraft: ({ request, pathParam: draftId }, reply) =>
+        withWritableDb(reply, options.dbPath, async (db) => {
+          const result = await renderResumeReviewDraft(
+            db,
+            draftId,
+            request,
+            resumePdfRenderer,
+          );
+          if (result.ok) {
+            refreshProjections(db);
+          }
+          return result;
+        }),
+      scanGmailApplicationOutcomes: async ({ request }, reply) => {
+        if (!databaseExists(options.dbPath)) {
+          void reply.code(503);
+          return {
+            ok: false,
+            error: "db_not_found",
+            message: `No JobCtrl database found at ${options.dbPath}`,
+          };
+        }
+        try {
+          const output = await gmailFeedbackScanner(request, {
+            appDir,
+            dbPath: options.dbPath,
+          });
+          return sanitizeGmailFeedbackScanResponse(output);
+        } catch (error) {
+          if (error instanceof GmailFeedbackScanError) {
+            void reply.code(error.statusCode);
+            return {
+              ok: false,
+              error:
+                error.statusCode === 400
+                  ? "invalid_gmail_feedback_scan"
+                  : "gmail_feedback_scan_failed",
+              message: error.message,
+            };
+          }
+          throw error;
+        }
+      },
     },
     parseBody,
   });
@@ -1246,23 +1287,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     },
   );
 
-  app.post<{ Params: { draftId: string } }>(
-    "/v1/resume-review/drafts/:draftId/render",
-    async (request, reply) => {
-      const body = parseBody(reply, ResumeReviewDraftRenderRequestSchema, request.body ?? {});
-      if (!body) {
-        return undefined;
-      }
-      return withWritableDb(reply, options.dbPath, async (db) => {
-        const result = await renderResumeReviewDraft(db, decodeRouteParam(request.params.draftId), body, resumePdfRenderer);
-        if (result.ok) {
-          refreshProjections(db);
-        }
-        return result;
-      });
-    },
-  );
-
   app.post<{ Params: { threadId: string } }>(
     "/v1/resume-review/comment-threads/:threadId/replies",
     async (request, reply) => {
@@ -1279,34 +1303,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.get("/v1/outcomes", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listApplicationOutcomes(db)),
   );
-
-  app.post("/v1/outcomes/gmail/scan", async (request, reply) => {
-    const body = parseBody(reply, GmailOutcomeScanRequestSchema, request.body ?? {});
-    if (!body) {
-      return undefined;
-    }
-    if (!databaseExists(options.dbPath)) {
-      void reply.code(503);
-      return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${options.dbPath}` };
-    }
-    try {
-      const output = await gmailFeedbackScanner(body, { appDir, dbPath: options.dbPath });
-      return sanitizeGmailFeedbackScanResponse(output);
-    } catch (error) {
-      if (error instanceof GmailFeedbackScanError) {
-        void reply.code(error.statusCode);
-        return {
-          ok: false,
-          error:
-            error.statusCode === 400
-              ? "invalid_gmail_feedback_scan"
-              : "gmail_feedback_scan_failed",
-          message: error.message,
-        };
-      }
-      throw error;
-    }
-  });
 
   app.post("/v1/jobs/bulk-delete", async (request, reply) => {
     const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});

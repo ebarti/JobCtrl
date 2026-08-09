@@ -110,9 +110,12 @@ export function registerEndpointRoutes(
             { request: parsedRequest, pathParam },
             reply,
           );
-          return isFailurePayload(response)
-            ? response
-            : endpoint.response.parse(response);
+          const parsedResponse = endpoint.response.safeParse(response);
+          return parsedResponse.success
+            ? parsedResponse.data
+            : isFailurePayload(response)
+              ? response
+              : endpoint.response.parse(response);
         }
 
         const dispatch = endpoint.dispatch;
