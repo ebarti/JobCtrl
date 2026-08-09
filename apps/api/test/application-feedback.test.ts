@@ -7,7 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureApplicationFeedbackTables } from "../src/application-feedback.js";
 import type { ApplyReviewQueueResponse } from "../src/contracts.js";
-import { GmailFeedbackScanError, type GmailFeedbackScanner } from "../src/gmail-feedback-worker.js";
+import {
+  createWorkerGmailFeedbackScanner,
+  GmailFeedbackScanError,
+  type GmailFeedbackScanner,
+} from "../src/gmail-feedback-worker.js";
+import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 import { type ActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { type BuildAppOptions, buildApp } from "../src/server.js";
@@ -1869,6 +1874,34 @@ describe("application feedback API", () => {
       ok: false,
       error: "gmail_feedback_scan_failed",
       message: "missing Gmail token at local auth path",
+    });
+
+    await app.close();
+  });
+
+  it("keeps dispatcher transport rejections on the typed scan error path", async () => {
+    const rejectingDispatcher: JsonRpcDispatcher = {
+      call: async () => {
+        throw new Error("JSON-RPC request timed out after 600000ms");
+      },
+      close: async () => {},
+    };
+    const app = buildApp({
+      ...options,
+      gmailFeedbackScanner: createWorkerGmailFeedbackScanner(rejectingDispatcher),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/outcomes/gmail/scan",
+      payload: { limit: 1 },
+    });
+
+    expect(response.statusCode, response.body).toBe(500);
+    expect(response.json()).toEqual({
+      ok: false,
+      error: "gmail_feedback_scan_failed",
+      message: "Gmail feedback scan failed: JSON-RPC request timed out after 600000ms",
     });
 
     await app.close();
