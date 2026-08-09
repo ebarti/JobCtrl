@@ -120,7 +120,7 @@ beforeEach(() => {
     dbPath: path.join(tempDir, "jobctrl.db"),
     configPath: path.join(tempDir, "config.json"),
     actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-profile-retailor" })),
-    resumePdfRenderer: ({ htmlPath, pdfPath }) => {
+    resumePdfRenderer: async ({ htmlPath, pdfPath }) => {
       fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);
     },
   };

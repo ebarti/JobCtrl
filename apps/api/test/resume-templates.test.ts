@@ -27,7 +27,7 @@ const NOW = "2026-06-24T10:00:00.000Z";
 // Stand-in for the Playwright HTML-to-PDF subprocess: it renders the exact HTML
 // the refresh built, so tests inspect the full resume content instead of spawning
 // a browser.
-const renderHtmlToPdf: ResumeHtmlPdfRenderer = ({ htmlPath, pdfPath }) => {
+const renderHtmlToPdf: ResumeHtmlPdfRenderer = async ({ htmlPath, pdfPath }) => {
   fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);
 };
 
@@ -46,7 +46,7 @@ afterEach(() => {
 });
 
 describe("resume template service", () => {
-  it("saves style-only template versions, default selection, and per-job overrides", () => {
+  it("saves style-only template versions, default selection, and per-job overrides", async () => {
     const initial = listResumeTemplates(db);
     expect(initial.templates).toHaveLength(1);
     expect(initial.templates[0]).toMatchObject({ builtIn: true, displayName: "Modern HTML" });
@@ -86,7 +86,7 @@ describe("resume template service", () => {
     expect(assignment.templateState?.state).toBe("template_stale");
   });
 
-  it("returns the exact pinned default version when a newer version exists", () => {
+  it("returns the exact pinned default version when a newer version exists", async () => {
     const first = createResumeTemplateVersion(db, {
       displayName: "Pinned template",
       theme: {
@@ -125,7 +125,7 @@ describe("resume template service", () => {
     });
   });
 
-  it("rejects template payloads that contain profile or job facts", () => {
+  it("rejects template payloads that contain profile or job facts", async () => {
     expect(() =>
       createResumeTemplateVersion(db, {
         displayName: "Jordan Candidate",
@@ -143,7 +143,7 @@ describe("resume template service", () => {
     ).toThrow(ResumeTemplateInputError);
   });
 
-  it("lazily creates a render-only generation when the effective template changes", () => {
+  it("lazily creates a render-only generation when the effective template changes", async () => {
     const saved = createResumeTemplateVersion(db, {
       displayName: "Spacious serif",
       theme: {
@@ -159,7 +159,7 @@ describe("resume template service", () => {
       versionId: saved.template.activeVersion.versionId,
     });
 
-    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, renderHtmlToPdf);
+    const refresh = await ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, renderHtmlToPdf);
     expect(refresh.status).toBe("completed");
     expect(refresh.generation).toBe(2);
     expect(refresh.templateState?.state).toBe("template_current");
@@ -189,7 +189,7 @@ describe("resume template service", () => {
     expect(event?.payload_json).toContain(saved.template.activeVersion.versionId);
   });
 
-  it("opens the refreshed resume artifact when a stale artifact id is requested", () => {
+  it("opens the refreshed resume artifact when a stale artifact id is requested", async () => {
     const saved = createResumeTemplateVersion(db, {
       displayName: "Current open template",
       theme: {
@@ -203,12 +203,12 @@ describe("resume template service", () => {
       versionId: saved.template.activeVersion.versionId,
     });
 
-    const resolved = resolveCurrentResumeArtifactIdForOpen(db, "resume-pdf-v1", renderHtmlToPdf);
+    const resolved = await resolveCurrentResumeArtifactIdForOpen(db, "resume-pdf-v1", renderHtmlToPdf);
     expect(resolved).not.toBe("resume-pdf-v1");
     expect(resolved).toMatch(/^template_refresh_pdf_/);
   });
 
-  it("reports refresh unavailable without hiding the last accepted artifact", () => {
+  it("reports refresh unavailable without hiding the last accepted artifact", async () => {
     db.prepare("DELETE FROM job_materials_artifacts WHERE artifact_type = 'tailored_resume'").run();
     const saved = createResumeTemplateVersion(db, {
       displayName: "Unavailable refresh template",
@@ -223,7 +223,7 @@ describe("resume template service", () => {
       versionId: saved.template.activeVersion.versionId,
     });
 
-    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, renderHtmlToPdf);
+    const refresh = await ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, renderHtmlToPdf);
     expect(refresh.status).toBe("unavailable");
     expect(refresh.generation).toBeNull();
     expect(refresh.templateState?.state).toBe("refresh_unavailable");
@@ -244,7 +244,7 @@ describe("resume template service", () => {
     expect(event?.payload_json).toContain("unavailable");
   });
 
-  it("renders every line of a long resume across the refreshed PDF without truncation", () => {
+  it("renders every line of a long resume across the refreshed PDF without truncation", async () => {
     const longBullet =
       "- Drove a company-wide reliability program spanning ingestion, streaming, and storage tiers while mentoring a distributed platform and product engineering team.";
     const lines = ["Jordan Candidate", "Platform Engineering Leader", "Experience"];
@@ -265,7 +265,7 @@ describe("resume template service", () => {
       versionId: saved.template.activeVersion.versionId,
     });
 
-    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, renderHtmlToPdf);
+    const refresh = await ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, renderHtmlToPdf);
     expect(refresh.status).toBe("completed");
 
     const refreshedPdf = db
@@ -279,7 +279,7 @@ describe("resume template service", () => {
     expect(pdf).not.toContain("72 750 Td");
   });
 
-  it("keeps the last accepted resume artifact when the PDF render fails", () => {
+  it("keeps the last accepted resume artifact when the PDF render fails", async () => {
     const saved = createResumeTemplateVersion(db, {
       displayName: "Failing render template",
       theme: { ...BUILT_IN_RESUME_TEMPLATE_THEME, fontFamily: "serif" },
@@ -293,7 +293,7 @@ describe("resume template service", () => {
     const failingRenderer: ResumeHtmlPdfRenderer = () => {
       throw new Error("chromium unavailable");
     };
-    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, failingRenderer);
+    const refresh = await ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, failingRenderer);
     expect(refresh.status).toBe("failed");
     expect(refresh.generation).toBeNull();
     expect(refresh.templateState?.state).toBe("refresh_failed");
@@ -313,7 +313,7 @@ describe("resume template service", () => {
     expect(failedEvent?.payload_json).toContain("failed");
   });
 
-  it("uses exact-v7 tenant and JobId keys for assignments, materials, layout, attempts, and events", () => {
+  it("uses exact-v7 tenant and JobId keys for assignments, materials, layout, attempts, and events", async () => {
     const saved = createResumeTemplateVersion(db, {
       displayName: "Tenant-isolated template",
       theme: { ...BUILT_IN_RESUME_TEMPLATE_THEME, fontFamily: "serif" },
@@ -330,7 +330,7 @@ describe("resume template service", () => {
     ).run(JOB_ID, NOW);
 
     expect(resumeTemplateStateForJob(db, JOB_ID)?.effective.templateId).toBe(saved.template.templateId);
-    const refresh = ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, renderHtmlToPdf);
+    const refresh = await ensureCurrentResumeTemplateMaterials(db, JOB_ID, {}, renderHtmlToPdf);
     expect(refresh.status).toBe("completed");
 
     expect(
@@ -361,14 +361,39 @@ describe("resume template service", () => {
     ]);
   });
 
-  it("refuses invalid UUIDs and never treats posting or application URLs as identity", () => {
+  it("fails the refresh cleanly when a material write races the render", async () => {
+    const racingRenderer: ResumeHtmlPdfRenderer = async ({ htmlPath, pdfPath }) => {
+      db.prepare(
+        `INSERT INTO job_materials (
+           tenant_id, job_id, generation, status, created_at, updated_at,
+           last_validation_json, last_verdict_json, metadata_json
+         ) SELECT tenant_id, job_id, MAX(generation) + 1, 'resume_approved', ?, ?, '{}', '{}', '{}'
+         FROM job_materials WHERE job_id = ? GROUP BY tenant_id, job_id`,
+      ).run(new Date().toISOString(), new Date().toISOString(), JOB_ID);
+      fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);
+    };
+
+    const refresh = await ensureCurrentResumeTemplateMaterials(db, JOB_ID, { force: true }, racingRenderer);
+    expect(refresh.status).toBe("failed");
+    expect(refresh.message).toContain("retry the refresh");
+
+    const tmpStrays = fs
+      .readdirSync(tempDir, { recursive: true })
+      .filter((entry) => String(entry).endsWith(".tmp"));
+    expect(tmpStrays).toEqual([]);
+
+    const retry = await ensureCurrentResumeTemplateMaterials(db, JOB_ID, { force: true }, renderHtmlToPdf);
+    expect(retry.status).toBe("completed");
+  });
+
+  it("refuses invalid UUIDs and never treats posting or application URLs as identity", async () => {
     expect(() => setJobResumeTemplateAssignment(db, JOB_URL, { templateId: null })).toThrow(
       "jobId must be a canonical lowercase UUID",
     );
     expect(() => resumeTemplateStateForJob(db, JOB_ID.toUpperCase())).toThrow(
       "jobId must be a canonical lowercase UUID",
     );
-    expect(() => ensureCurrentResumeTemplateMaterials(db, UUID_SHAPED_URL, {}, renderHtmlToPdf)).toThrow(
+    await expect(ensureCurrentResumeTemplateMaterials(db, UUID_SHAPED_URL, {}, renderHtmlToPdf)).rejects.toThrow(
       `Job not found: ${UUID_SHAPED_URL}`,
     );
   });

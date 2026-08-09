@@ -4,6 +4,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ResumeRenderError } from "../src/resume-pdf-render.js";
 import type { ResumeHtmlPdfRenderInput, ResumeHtmlPdfRenderer } from "../src/resume-pdf-render.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
@@ -21,7 +22,7 @@ let renderedPdfInputs: ResumeHtmlPdfRenderInput[] = [];
 // Stand-in for the Playwright HTML-to-PDF subprocess: records the render inputs
 // and writes the exact HTML the flow built so tests inspect the full resume
 // content instead of spawning a browser.
-const resumePdfRenderer: ResumeHtmlPdfRenderer = (input) => {
+const resumePdfRenderer: ResumeHtmlPdfRenderer = async (input) => {
   renderedPdfInputs.push(input);
   fs.writeFileSync(input.pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(input.htmlPath, "utf8")}`);
 };
@@ -1180,7 +1181,10 @@ describe("resume review draft API", () => {
     });
     expect(renderResponse.statusCode, renderResponse.body).toBe(200);
     const body = renderResponse.json();
-    const renderedHtml = fs.readFileSync(renderedPdfInputs[0]!.htmlPath, "utf8");
+    const renderedHtml = fs.readFileSync(
+      renderedPdfInputs[0]!.htmlPath.replace(/\.[0-9a-f]{8}\.tmp$/, ""),
+      "utf8",
+    );
     expect(renderedHtml).toContain('href="https://portfolio.example.test"');
     expect(renderedHtml).toContain(">Portfolio</a>");
     expect(renderedHtml).not.toContain("javascript:");
@@ -1234,7 +1238,10 @@ describe("resume review draft API", () => {
     expect(body.artifacts.resumePdf.renderFormat).toBe("html_pdf");
 
     expect(renderedPdfInputs).toHaveLength(1);
-    const renderedHtml = fs.readFileSync(renderedPdfInputs[0]!.htmlPath, "utf8");
+    const renderedHtml = fs.readFileSync(
+      renderedPdfInputs[0]!.htmlPath.replace(/\.[0-9a-f]{8}\.tmp$/, ""),
+      "utf8",
+    );
     expect(renderedHtml).toContain("Delivered platform outcome number 70 across critical services.");
     expect(renderedHtml).toContain(longBullet.replace(/^- /, ""));
 
@@ -1259,7 +1266,7 @@ describe("resume review draft API", () => {
     const app = buildApp({
       ...options,
       resumePdfRenderer: () => {
-        throw new Error("chromium unavailable");
+        throw new ResumeRenderError("Resume HTML-to-PDF render failed: chromium unavailable");
       },
     });
     const createResponse = await app.inject({
@@ -1286,7 +1293,14 @@ describe("resume review draft API", () => {
       url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
       payload: { draftRevisionId: revisionId },
     });
-    expect(renderResponse.statusCode).toBe(500);
+    expect(renderResponse.statusCode).toBe(502);
+    expect(renderResponse.json().error).toBe("resume_render_failed");
+    expect(renderResponse.json().message).toContain("chromium unavailable");
+
+    const strays = fs
+      .readdirSync(path.dirname(options.dbPath), { recursive: true })
+      .filter((entry) => String(entry).includes("resume-review-"));
+    expect(strays).toEqual([]);
 
     const db = new Database(options.dbPath);
     try {
@@ -1306,6 +1320,135 @@ describe("resume review draft API", () => {
     } finally {
       db.close();
     }
+
+    await app.close();
+  });
+
+  it("returns a retryable 409 when materials change while rendering", async () => {
+    let conflictInjected = false;
+    const app = buildApp({
+      ...options,
+      resumePdfRenderer: async ({ htmlPath, pdfPath }) => {
+        if (!conflictInjected) {
+          conflictInjected = true;
+          const db = new Database(options.dbPath);
+          try {
+            const jobId = db
+              .prepare("SELECT job_id FROM resume_review_drafts LIMIT 1")
+              .get() as { job_id: string };
+            db.prepare(
+              `INSERT INTO job_materials (
+                 tenant_id, job_id, generation, status, created_at, updated_at,
+                 last_validation_json, last_verdict_json, metadata_json
+               ) SELECT tenant_id, job_id, MAX(generation) + 1, 'resume_approved', ?, ?, '{}', '{}', '{}'
+               FROM job_materials WHERE job_id = ? GROUP BY tenant_id, job_id`,
+            ).run(new Date().toISOString(), new Date().toISOString(), jobId.job_id);
+          } finally {
+            db.close();
+          }
+        }
+        fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);
+      },
+    });
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+    const draftId = createResponse.json().draft.draftId as string;
+    const saveResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
+      payload: { editedText: "Jordan Example\nExperience\n- Led work.", editDeltas: [] },
+    });
+    const revisionId = saveResponse.json().revision.revisionId as string;
+
+    const conflicted = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
+      payload: { draftRevisionId: revisionId },
+    });
+    expect(conflicted.statusCode, conflicted.body).toBe(409);
+    expect(conflicted.json().error).toBe("resume_render_conflict");
+
+    const straysAfterConflict = fs
+      .readdirSync(path.dirname(options.dbPath), { recursive: true })
+      .filter((entry) => String(entry).includes("resume-review-"));
+    expect(straysAfterConflict).toEqual([]);
+
+    const retry = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
+      payload: { draftRevisionId: revisionId },
+    });
+    expect(retry.statusCode, retry.body).toBe(200);
+    expect(retry.json().ok).toBe(true);
+
+    await app.close();
+  });
+
+  it("keeps the winner's files intact when concurrent renders race the same revision", async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let renderCalls = 0;
+    const renderer: ResumeHtmlPdfRenderer = async ({ htmlPath, pdfPath }) => {
+      renderCalls += 1;
+      const call = renderCalls;
+      fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);
+      if (call === 1) {
+        await firstGate;
+      }
+    };
+    const app = buildApp({ ...options, resumePdfRenderer: renderer });
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+    const draftId = createResponse.json().draft.draftId as string;
+    const saveResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
+      payload: { editedText: "Jordan Example\nExperience\n- Led racing work.", editDeltas: [] },
+    });
+    const revisionId = saveResponse.json().revision.revisionId as string;
+
+    // Both attempts compute the same generation and deterministic final
+    // paths; the first stalls in its render while the second commits.
+    const firstAttempt = app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
+      payload: { draftRevisionId: revisionId },
+    });
+    await vi.waitFor(() => expect(renderCalls).toBe(1));
+    const second = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
+      payload: { draftRevisionId: revisionId },
+    });
+    expect(second.statusCode, second.body).toBe(200);
+    const winnerPdf = second.json().artifacts.resumePdf.artifactId as string;
+
+    releaseFirst();
+    const first = await firstAttempt;
+    expect(first.statusCode, first.body).toBe(409);
+    expect(first.json().error).toBe("resume_render_conflict");
+
+    const db = new Database(options.dbPath);
+    try {
+      const winnerRow = db
+        .prepare("SELECT path FROM job_materials_artifacts WHERE artifact_id = ?")
+        .get(winnerPdf) as { path: string };
+      expect(fs.existsSync(winnerRow.path), winnerRow.path).toBe(true);
+    } finally {
+      db.close();
+    }
+    const tmpStrays = fs
+      .readdirSync(path.dirname(options.dbPath), { recursive: true })
+      .filter((entry) => String(entry).endsWith(".tmp"));
+    expect(tmpStrays).toEqual([]);
 
     await app.close();
   });

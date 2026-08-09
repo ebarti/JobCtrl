@@ -212,13 +212,6 @@ interface ResumeReviewDraftValidation {
   warnings: string[];
 }
 
-interface RenderedResumeArtifacts {
-  generation: number;
-  resumeTextArtifactId: string;
-  resumePdfArtifactId: string;
-  layoutBoxCount: number;
-}
-
 interface ResumeLayoutBoxDraft {
   semanticId: string;
   pageNumber: number;
@@ -247,14 +240,14 @@ export function getResumeReviewDraftForJob(
   return row ? { ok: true, draft: draftFromRow(db, row) } : null;
 }
 
-export function createOrLoadResumeReviewDraft(
+export async function createOrLoadResumeReviewDraft(
   db: SqliteDatabase,
   jobLocator: string,
   request: ResumeReviewDraftCreateRequest = {},
   renderPdf: ResumeHtmlPdfRenderer = defaultResumeHtmlPdfRenderer,
-): ResumeReviewDraftResponse {
+): Promise<ResumeReviewDraftResponse> {
   const jobId = requireExistingJobId(db, jobLocator);
-  const refresh = ensureCurrentResumeTemplateMaterials(db, jobId, {}, renderPdf);
+  const refresh = await ensureCurrentResumeTemplateMaterials(db, jobId, {}, renderPdf);
   if (refresh.status === "failed" || refresh.status === "unavailable") {
     throw new InputError(refresh.message ?? "Resume template refresh did not complete.");
   }
@@ -495,65 +488,111 @@ export function seedResumeReviewCommentThreads(
   return tx();
 }
 
-export function renderResumeReviewDraft(
+export class DraftRenderConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DraftRenderConflictError";
+  }
+}
+
+export async function renderResumeReviewDraft(
   db: SqliteDatabase,
   draftId: string,
   request: ResumeReviewDraftRenderRequest = {},
   renderPdf: ResumeHtmlPdfRenderer = defaultResumeHtmlPdfRenderer,
-): ResumeReviewDraftRenderResponse {
-  const tx = db.transaction(() => {
-    const draft = getDraftRow(db, draftId);
-    if (!draft) {
-      throw new InputError(`Resume review draft not found: ${draftId}`);
-    }
-    const revisionId = request.draftRevisionId ?? draft.current_revision_id;
-    const revision = revisionId ? getRevisionRow(db, revisionId) : undefined;
-    const validation = validateDraftRevisionForRender(revision);
-    if (!validation.passed || !revision) {
-      return {
-        ok: false as const,
-        error: "resume_review_draft_invalid" as const,
-        draft: draftFromRow(db, draft),
-        validation,
-      };
-    }
-
-    const artifacts = persistRenderedDraftArtifacts(db, draft, revision, validation, renderPdf);
-    const now = new Date().toISOString();
-    markResidualCommentThreadsAfterAcceptance(db, draft.draft_id, now);
-    db.prepare(
-      `UPDATE resume_review_drafts
-          SET state = 'promoted',
-              updated_at = ?
-        WHERE tenant_id = ? AND draft_id = ?`,
-    ).run(now, DEFAULT_TENANT, draft.draft_id);
-
-    const promotedDraft = getDraftRow(db, draft.draft_id);
-    if (!promotedDraft) {
-      throw new Error("Resume review draft was not promoted.");
-    }
+): Promise<ResumeReviewDraftRenderResponse> {
+  const draft = getDraftRow(db, draftId);
+  if (!draft) {
+    throw new InputError(`Resume review draft not found: ${draftId}`);
+  }
+  const revisionId = request.draftRevisionId ?? draft.current_revision_id;
+  const revision = revisionId ? getRevisionRow(db, revisionId) : undefined;
+  const validation = validateDraftRevisionForRender(revision);
+  if (!validation.passed || !revision) {
     return {
-      ok: true as const,
-      draft: draftFromRow(db, promotedDraft),
+      ok: false as const,
+      error: "resume_review_draft_invalid" as const,
+      draft: draftFromRow(db, draft),
       validation,
-      artifacts: {
-        resumeText: {
-          artifactId: artifacts.resumeTextArtifactId,
-          artifactType: "tailored_resume" as const,
-          generation: artifacts.generation,
-          renderFormat: "text" as const,
-        },
-        resumePdf: {
-          artifactId: artifacts.resumePdfArtifactId,
-          artifactType: "resume_pdf" as const,
-          generation: artifacts.generation,
-          renderFormat: "html_pdf" as const,
-        },
-      },
-      layoutBoxCount: artifacts.layoutBoxCount,
     };
-  });
-  return tx();
+  }
+
+  // Render before the transaction: the awaited render must never sit inside
+  // a better-sqlite3 transaction, whose deferred BEGIN pins a read snapshot
+  // that goes stale against concurrent worker commits and then fails the
+  // write upgrade with SQLITE_BUSY_SNAPSHOT.
+  const rendered = await renderDraftArtifactFiles(db, draft, revision, renderPdf);
+  let promoted = false;
+  try {
+    const tx = db.transaction(() => {
+      const current = getDraftRow(db, draft.draft_id);
+      if (
+        !current ||
+        current.state !== draft.state ||
+        current.current_revision_id !== draft.current_revision_id
+      ) {
+        throw new DraftRenderConflictError("Resume review draft changed while rendering; retry the render.");
+      }
+      if (nextMaterialGeneration(db, draft.job_id) !== rendered.generation) {
+        throw new DraftRenderConflictError("Job materials changed while rendering; retry the render.");
+      }
+      promoted = true;
+      fs.renameSync(rendered.tmpTextPath, rendered.textPath);
+      fs.renameSync(rendered.tmpHtmlPath, rendered.htmlPath);
+      fs.renameSync(rendered.tmpPdfPath, rendered.pdfPath);
+      insertRenderedDraftArtifacts(db, draft, revision, validation, rendered);
+      const now = new Date().toISOString();
+      markResidualCommentThreadsAfterAcceptance(db, draft.draft_id, now);
+      db.prepare(
+        `UPDATE resume_review_drafts
+            SET state = 'promoted',
+                updated_at = ?
+          WHERE tenant_id = ? AND draft_id = ?`,
+      ).run(now, DEFAULT_TENANT, draft.draft_id);
+
+      const promotedDraft = getDraftRow(db, draft.draft_id);
+      if (!promotedDraft) {
+        throw new Error("Resume review draft was not promoted.");
+      }
+      return {
+        ok: true as const,
+        draft: draftFromRow(db, promotedDraft),
+        validation,
+        artifacts: {
+          resumeText: {
+            artifactId: rendered.resumeTextArtifactId,
+            artifactType: "tailored_resume" as const,
+            generation: rendered.generation,
+            renderFormat: "text" as const,
+          },
+          resumePdf: {
+            artifactId: rendered.resumePdfArtifactId,
+            artifactType: "resume_pdf" as const,
+            generation: rendered.generation,
+            renderFormat: "html_pdf" as const,
+          },
+        },
+        layoutBoxCount: rendered.layoutBoxes.length,
+      };
+    });
+    return tx();
+  } catch (error) {
+    // The files rendered but the rows did not commit: remove this attempt's
+    // temp files, plus the promoted finals when the failure happened after
+    // the renames (the commit guards make those finals this attempt's own).
+    const orphans = [rendered.tmpTextPath, rendered.tmpHtmlPath, rendered.tmpPdfPath];
+    if (promoted) {
+      orphans.push(rendered.textPath, rendered.htmlPath, rendered.pdfPath);
+    }
+    for (const orphan of orphans) {
+      try {
+        fs.rmSync(orphan, { force: true });
+      } catch {
+        // Best-effort cleanup only; the original error is what matters.
+      }
+    }
+    throw error;
+  }
 }
 
 export function replyToResumeReviewComment(
@@ -1099,13 +1138,25 @@ function validateDraftRevisionForRender(
   return { passed: errors.length === 0, errors, warnings };
 }
 
-function persistRenderedDraftArtifacts(
+interface RenderedDraftArtifactFiles {
+  readonly generation: number;
+  readonly resumeTextArtifactId: string;
+  readonly resumePdfArtifactId: string;
+  readonly textPath: string;
+  readonly htmlPath: string;
+  readonly pdfPath: string;
+  readonly tmpTextPath: string;
+  readonly tmpHtmlPath: string;
+  readonly tmpPdfPath: string;
+  readonly layoutBoxes: ResumeLayoutBoxDraft[];
+}
+
+async function renderDraftArtifactFiles(
   db: SqliteDatabase,
   draft: ResumeReviewDraftRow,
   revision: ResumeReviewDraftRevisionRow,
-  validation: ResumeReviewDraftValidation,
   renderPdf: ResumeHtmlPdfRenderer,
-): RenderedResumeArtifacts {
+): Promise<RenderedDraftArtifactFiles> {
   const outputDir = renderOutputDirectory(db, draft);
   if (!outputDir) {
     throw new InputError("No base resume artifact path is available for rendering the edited draft.");
@@ -1119,13 +1170,55 @@ function persistRenderedDraftArtifacts(
   const textPath = path.join(outputDir, `${baseName}.txt`);
   const htmlPath = path.join(outputDir, `${baseName}.html`);
   const pdfPath = path.join(outputDir, `${baseName}.pdf`);
+  // Concurrent renders of the same revision compute identical deterministic
+  // final paths; each attempt writes to its own suffixed temp files and only
+  // the transaction that wins the commit guards promotes them, so a losing
+  // attempt's cleanup can never touch a winner's registered files.
+  const attemptId = crypto.randomUUID().slice(0, 8);
+  const tmpTextPath = `${textPath}.${attemptId}.tmp`;
+  const tmpHtmlPath = `${htmlPath}.${attemptId}.tmp`;
+  const tmpPdfPath = `${pdfPath}.${attemptId}.tmp`;
   const editedText = revision.edited_text.replace(/\r\n/g, "\n");
   const layoutBoxes = layoutBoxesForEditedText(editedText);
-  const now = new Date().toISOString();
 
-  fs.writeFileSync(textPath, editedText, "utf8");
-  fs.writeFileSync(htmlPath, htmlForEditedResume(editedText, parseJson(revision.plate_document_json)), "utf8");
-  renderPdf({ htmlPath, pdfPath });
+  fs.writeFileSync(tmpTextPath, editedText, "utf8");
+  fs.writeFileSync(tmpHtmlPath, htmlForEditedResume(editedText, parseJson(revision.plate_document_json)), "utf8");
+  try {
+    await renderPdf({ htmlPath: tmpHtmlPath, pdfPath: tmpPdfPath });
+  } catch (error) {
+    for (const orphan of [tmpTextPath, tmpHtmlPath, tmpPdfPath]) {
+      try {
+        fs.rmSync(orphan, { force: true });
+      } catch {
+        // Best-effort cleanup only; the render error is what matters.
+      }
+    }
+    throw error;
+  }
+  return {
+    generation,
+    resumeTextArtifactId,
+    resumePdfArtifactId,
+    textPath,
+    htmlPath,
+    pdfPath,
+    tmpTextPath,
+    tmpHtmlPath,
+    tmpPdfPath,
+    layoutBoxes,
+  };
+}
+
+function insertRenderedDraftArtifacts(
+  db: SqliteDatabase,
+  draft: ResumeReviewDraftRow,
+  revision: ResumeReviewDraftRevisionRow,
+  validation: ResumeReviewDraftValidation,
+  rendered: RenderedDraftArtifactFiles,
+): void {
+  const { generation, resumeTextArtifactId, resumePdfArtifactId, textPath, htmlPath, pdfPath, layoutBoxes } =
+    rendered;
+  const now = new Date().toISOString();
 
   db.prepare(
     `INSERT INTO job_materials (
@@ -1190,13 +1283,6 @@ function persistRenderedDraftArtifacts(
     now,
   );
   replaceLayoutBoxes(db, draft.job_id, generation, resumePdfArtifactId, layoutBoxes, now);
-
-  return {
-    generation,
-    resumeTextArtifactId,
-    resumePdfArtifactId,
-    layoutBoxCount: layoutBoxes.length,
-  };
 }
 
 function renderOutputDirectory(db: SqliteDatabase, draft: ResumeReviewDraftRow): string | null {

@@ -262,12 +262,13 @@ import {
 } from "./learning-recommendations.js";
 import { listTailoringPolicyRevisions } from "./tailoring-policy-revisions.js";
 import { refreshProjections } from "./projections.js";
-import { createResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
+import { createResumeHtmlPdfRenderer, ResumeRenderError, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 import {
   defaultSourcePythonRuntime,
   type PythonRuntimeCommandResolver,
 } from "./python-runtime.js";
 import {
+  DraftRenderConflictError,
   createOrLoadResumeReviewDraft,
   getResumeReviewDraftForJob,
   listResumeReviewFeedback,
@@ -446,7 +447,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     options.gmailFeedbackScanner ?? createWorkerGmailFeedbackScanner({ pythonRuntime });
   const profileImporter = options.profileImporter ?? createProfileImporter(pythonRuntime);
   const profilePreviewRenderer = options.profilePreviewRenderer ?? createProfilePreviewRenderer(pythonRuntime);
-  const resumePdfRenderer = options.resumePdfRenderer ?? createResumeHtmlPdfRenderer(pythonRuntime, appDir);
+  const resumePdfRenderer = options.resumePdfRenderer ?? createResumeHtmlPdfRenderer(providerDispatcher);
   const requireHealthyWorkerForActions =
     options.requireHealthyWorkerForActions ?? !options.actionDispatcher;
   ensureLocalCapabilityToken(appDir);
@@ -1345,8 +1346,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) {
         return undefined;
       }
-      return withWritableDb(reply, options.dbPath, (db) => {
-        const result = renderResumeReviewDraft(db, decodeRouteParam(request.params.draftId), body, resumePdfRenderer);
+      return withWritableDb(reply, options.dbPath, async (db) => {
+        const result = await renderResumeReviewDraft(db, decodeRouteParam(request.params.draftId), body, resumePdfRenderer);
         if (result.ok) {
           refreshProjections(db);
         }
@@ -4389,6 +4390,14 @@ async function withWritableDb<T>(
         error: "invalid_tailoring_feedback_review",
         message: error.message,
       };
+    }
+    if (error instanceof DraftRenderConflictError) {
+      void reply.code(409);
+      return { ok: false, error: "resume_render_conflict", message: error.message };
+    }
+    if (error instanceof ResumeRenderError) {
+      void reply.code(502);
+      return { ok: false, error: "resume_render_failed", message: error.message };
     }
     if (error instanceof InputError) {
       if (APPLY_REVIEW_PRECONDITION_ERRORS.has(error.message)) {

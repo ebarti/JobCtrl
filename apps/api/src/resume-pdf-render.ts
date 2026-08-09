@@ -1,73 +1,53 @@
-import { execFileSync } from "node:child_process";
-import { defaultSourcePythonRuntime, type PythonRuntimeCommandResolver } from "./python-runtime.js";
-
-// The render is synchronous so it can run inside the better-sqlite3 write
-// transaction. Bound the subprocess so a hung runtime resolve or Chromium launch
-// cannot freeze the Node event loop indefinitely; on timeout execFileSync throws
-// and the caller's catch turns it into a preserved-generation render failure.
-// Generous enough for a cold Chromium start.
-const RESUME_RENDER_TIMEOUT_MS = 120_000;
-const RESUME_RENDER_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+import type { JsonRpcDispatcher } from "./json-rpc-adapter.js";
+import { getDefaultJsonRpcDispatcher } from "./json-rpc-adapter.js";
+import { RenderResumePdfResultSchema, RpcMethods } from "./contracts.js";
 
 export interface ResumeHtmlPdfRenderInput {
   readonly htmlPath: string;
   readonly pdfPath: string;
 }
 
-export type ResumeHtmlPdfRenderer = (input: ResumeHtmlPdfRenderInput) => void;
+export type ResumeHtmlPdfRenderer = (input: ResumeHtmlPdfRenderInput) => Promise<void>;
 
-export const RESUME_HTML_PDF_SCRIPT = `
-import sys
-from pathlib import Path
+// Renders pre-built resume HTML to a full, paginated PDF via the same
+// Playwright adapter the Python worker uses — through the long-lived JSON-RPC
+// worker child rather than a synchronous subprocess, so the API's event loop
+// keeps serving during Chromium renders. Callers persist database rows only
+// after the awaited render returns, never around it.
+export class ResumeRenderError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ResumeRenderError";
+  }
+}
 
-from jobctrl.infrastructure.materials.html_resume_pdf import render_resume_html_to_pdf
-
-html_path = Path(sys.argv[1])
-output_path = Path(sys.argv[2])
-
-render_resume_html_to_pdf(html_path.read_text(encoding="utf-8"), str(output_path))
-`;
-
-// Renders pre-built resume HTML to a full, paginated PDF via the same Playwright
-// adapter the Python worker uses, so the reviewed/submitted resume matches the
-// edited HTML instead of a truncated single-page fallback. Synchronous so it can
-// run inside the better-sqlite3 write transactions that persist the artifact.
-export function createResumeHtmlPdfRenderer(
-  pythonRuntime: PythonRuntimeCommandResolver = defaultSourcePythonRuntime,
-  appDir = process.cwd(),
-): ResumeHtmlPdfRenderer {
-  return ({ htmlPath, pdfPath }) => {
-    const command = pythonRuntime.resolve(
-      {
-        kind: "script",
-        script: RESUME_HTML_PDF_SCRIPT,
-        args: [htmlPath, pdfPath],
-      },
-      { appDir },
-    );
+export function createResumeHtmlPdfRenderer(dispatcher: JsonRpcDispatcher): ResumeHtmlPdfRenderer {
+  return async ({ htmlPath, pdfPath }) => {
+    let response: Awaited<ReturnType<JsonRpcDispatcher["call"]>>;
     try {
-      execFileSync(command.executable, command.argv, {
-        cwd: command.cwd,
-        env: command.env,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: RESUME_RENDER_TIMEOUT_MS,
-        maxBuffer: RESUME_RENDER_MAX_BUFFER_BYTES,
-      });
+      response = await dispatcher.call(RpcMethods.RenderResumePdf, { htmlPath, pdfPath });
     } catch (error) {
-      throw new Error(resumeRenderErrorMessage(error));
+      // Transport-level failures (spawn/write errors, the request timeout,
+      // child exit) reject instead of returning a JSON-RPC error envelope.
+      throw new ResumeRenderError(
+        `Resume HTML-to-PDF render failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (response.error) {
+      // The RPC server wraps handler exceptions as a generic "Internal
+      // error" message and puts the real cause in error.data.
+      const detail =
+        typeof response.error.data === "string" && response.error.data.trim()
+          ? response.error.data
+          : response.error.message;
+      throw new ResumeRenderError(`Resume HTML-to-PDF render failed: ${detail}`);
+    }
+    const parsed = RenderResumePdfResultSchema.safeParse(response.result);
+    if (!parsed.success) {
+      throw new ResumeRenderError("Resume HTML-to-PDF render returned an invalid result.");
     }
   };
 }
 
-export const defaultResumeHtmlPdfRenderer: ResumeHtmlPdfRenderer = createResumeHtmlPdfRenderer();
-
-function resumeRenderErrorMessage(error: unknown): string {
-  if (error && typeof error === "object" && "stderr" in error) {
-    const { stderr } = error as { stderr?: Buffer | string | null };
-    const text = (typeof stderr === "string" ? stderr : stderr?.toString("utf8"))?.trim();
-    if (text) {
-      return `Resume HTML-to-PDF render failed: ${text}`;
-    }
-  }
-  return `Resume HTML-to-PDF render failed: ${error instanceof Error ? error.message : String(error)}`;
-}
+export const defaultResumeHtmlPdfRenderer: ResumeHtmlPdfRenderer = (input) =>
+  createResumeHtmlPdfRenderer(getDefaultJsonRpcDispatcher())(input);
