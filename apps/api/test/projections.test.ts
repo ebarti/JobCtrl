@@ -5,7 +5,7 @@
  * Python projection builder now owns ``apply_run_projections``
  * materialisation from ``job_events``.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
@@ -3839,24 +3839,31 @@ describe("shared watermark discipline", () => {
     }
   });
 
-  it("folds a bounded batch per refresh and resumes on the next call", () => {
+  it("caps the synchronous fold and drains the remainder in the background", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
       refreshProjections(db);
       const start = readWatermarkRow(db)?.last_event_id ?? 0;
+      const readTitle = (): string =>
+        (db.prepare("SELECT title FROM job_list_projections WHERE job_id = ?").get(EVENT_JOB_ID) as { title: string })
+          .title;
+      const staleTitle = readTitle();
 
-      const insert = db.prepare(
-        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) VALUES ('local', ?, 1, 'discover', 'JobDiscovered', 'info', 'batch', ?, '{}')",
+      const filler = db.prepare(
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) VALUES ('local', NULL, 1, 'discover', 'JobDiscovered', 'info', 'filler', ?, '{}')",
       );
-      const total = REFRESH_EVENT_BATCH_LIMIT + 2;
       const bulk = db.transaction(() => {
-        for (let i = 0; i < total; i += 1) {
-          insert.run(EVENT_JOB_ID, `2026-08-08T00:00:${String(i % 60).padStart(2, "0")}Z`);
+        for (let i = 0; i < REFRESH_EVENT_BATCH_LIMIT; i += 1) {
+          filler.run(`2026-08-09T00:00:${String(i % 60).padStart(2, "0")}Z`);
         }
       });
       bulk();
+      db.prepare("UPDATE jobs SET title = ? WHERE job_id = ?").run("Event-Driven Engineer (Renamed)", EVENT_JOB_ID);
+      db.prepare(
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json) VALUES ('local', ?, 1, 'discover', 'JobUpdated', 'info', 'rename', '2026-08-09T00:01:00Z', '{}')",
+      ).run(EVENT_JOB_ID);
       const maxEventId = Number(
         (db.prepare("SELECT MAX(event_id) AS m FROM job_events").get() as { m: number }).m,
       );
@@ -3871,11 +3878,20 @@ describe("shared watermark discipline", () => {
       );
 
       refreshProjections(db);
+      // Synchronous view right after the single call: stopped exactly at the
+      // batch cap, with the rename event beyond it still unfolded.
       expect(readWatermarkRow(db)!.last_event_id).toBe(expectedFirstStop);
       expect(readWatermarkRow(db)!.last_event_id).toBeLessThan(maxEventId);
+      expect(readTitle()).toBe(staleTitle);
 
-      refreshProjections(db);
-      expect(readWatermarkRow(db)!.last_event_id).toBe(maxEventId);
+      // The background drain finishes the backlog without another read.
+      await vi.waitFor(
+        () => {
+          expect(readWatermarkRow(db)!.last_event_id).toBe(maxEventId);
+          expect(readTitle()).toBe("Event-Driven Engineer (Renamed)");
+        },
+        { timeout: 5000, interval: 25 },
+      );
       db.close();
     } finally {
       cleanup();
