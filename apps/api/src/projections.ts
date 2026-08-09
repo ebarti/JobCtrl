@@ -28,7 +28,7 @@ import type {
   MarketCompensationEstimateResponse,
   PostedCompensationFactResponse,
 } from "./contracts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { allRows, getRow, openDatabase, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { normalizeJobLocation } from "./location-normalization.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
@@ -290,6 +290,14 @@ function reconcileObsoleteCoverGenerationConflicts(db: SqliteDatabase, tenantId:
   return repairedJobs;
 }
 
+/**
+ * Bound the per-request catch-up: one read folds at most this many pending
+ * events; the remainder folds on subsequent reads (the watermark only
+ * advances to the last event actually scanned, so a capped pass stays
+ * correct by construction). Matches the SSE tick's per-batch bound.
+ */
+export const REFRESH_EVENT_BATCH_LIMIT = 1000;
+
 /** Read the watermark; returns 0 when missing. */
 function readWatermark(db: SqliteDatabase, projection: string): number {
   const row = getRow<{ last_event_id: number | string }>(
@@ -300,14 +308,24 @@ function readWatermark(db: SqliteDatabase, projection: string): number {
   return row ? Number(row.last_event_id) : 0;
 }
 
-/** Atomic upsert + commit of the watermark. */
-function setWatermark(db: SqliteDatabase, projection: string, eventId: number): void {
+/**
+ * Atomic upsert + commit of the watermark. MAX() keeps the watermark
+ * monotonic: a stale or out-of-order writer can never rewind an advance
+ * made by the other runtime's builder, and updated_at only moves when the
+ * value actually advances. Mirrors the Python setter in
+ * workers/automation/src/jobctrl/infrastructure/events/watermark.py.
+ */
+export function setWatermark(db: SqliteDatabase, projection: string, eventId: number): void {
   db.prepare(
     `INSERT INTO event_watermarks (projection_name, last_event_id, updated_at)
      VALUES (?, ?, ?)
      ON CONFLICT(projection_name) DO UPDATE SET
-       last_event_id = excluded.last_event_id,
-       updated_at    = excluded.updated_at`,
+       last_event_id = MAX(event_watermarks.last_event_id, excluded.last_event_id),
+       updated_at    = CASE
+         WHEN excluded.last_event_id > event_watermarks.last_event_id
+           THEN excluded.updated_at
+         ELSE event_watermarks.updated_at
+       END`,
   ).run(projection, eventId, new Date().toISOString());
 }
 
@@ -618,12 +636,54 @@ function rebuildPipelineStepProjections(db: SqliteDatabase, tenantId: string): v
 }
 
 /**
- * Refresh the projections from canonical state, advancing the
- * shared watermark.  Called at the top of every read-model query so
- * dashboards, lists, and detail views always reflect the latest
- * worker writes (which also bump ``job_events``).
+ * Refresh the projections from canonical state, advancing the shared
+ * watermark.  Called at the top of every read-model query so dashboards,
+ * lists, and detail views always reflect the latest worker writes (which
+ * also bump ``job_events``). One call folds at most
+ * REFRESH_EVENT_BATCH_LIMIT pending events synchronously; a capped pass
+ * schedules a background drain that continues one batch per event-loop
+ * tick on its own connection, so a large backlog converges without
+ * further reads while no single tick blocks serving.
  */
 export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void {
+  if (runRefreshPass(db, tenantId)) {
+    scheduleBackgroundDrain(db.name, tenantId);
+  }
+}
+
+const activeBackgroundDrains = new Set<string>();
+
+function scheduleBackgroundDrain(dbPath: string, tenantId: string): void {
+  const key = `${tenantId}::${dbPath}`;
+  if (!dbPath || activeBackgroundDrains.has(key)) {
+    return;
+  }
+  activeBackgroundDrains.add(key);
+  const step = (): void => {
+    let capped = false;
+    try {
+      const db = openDatabase(dbPath);
+      try {
+        capped = runRefreshPass(db, tenantId);
+      } finally {
+        db.close();
+      }
+    } catch {
+      // Best-effort backstop: on any error (database gone, contention) stop
+      // draining — the next foreground read resumes from the watermark.
+      capped = false;
+    }
+    if (capped) {
+      setImmediate(step);
+    } else {
+      activeBackgroundDrains.delete(key);
+    }
+  };
+  setImmediate(step);
+}
+
+/** One bounded fold pass; returns true when it stopped at the batch cap. */
+function runRefreshPass(db: SqliteDatabase, tenantId: string): boolean {
   const repairedDependencyJobs = reconcileDependencyBlockers(db, tenantId);
   const repairedCoverConflictJobs = reconcileObsoleteCoverGenerationConflicts(db, tenantId);
 
@@ -636,13 +696,15 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   let contactsDirty = false;
   let contactResearchDirty = false;
   let outreachDirty = false;
+  let capped = false;
   let maxEventId = watermark;
   {
     const rows = allRows<{ event_id: number; tenant_id: string; job_id: string | null; event_type: string }>(
       db,
-      "SELECT event_id, tenant_id, job_id, event_type FROM job_events WHERE event_id > ? ORDER BY event_id ASC",
-      [watermark],
+      "SELECT event_id, tenant_id, job_id, event_type FROM job_events WHERE event_id > ? ORDER BY event_id ASC LIMIT ?",
+      [watermark, REFRESH_EVENT_BATCH_LIMIT],
     );
+    capped = rows.length === REFRESH_EVENT_BATCH_LIMIT;
     for (const row of rows) {
       const eventId = Number(row.event_id);
       if (eventId > maxEventId) maxEventId = eventId;
@@ -747,7 +809,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
     (sourceQualityExists > 0 || !sourceQualityHistory) &&
     maxEventId === watermark
   ) {
-    return;
+    return false;
   }
 
   if (sourceQualityDirty || (sourceQualityExists === 0 && sourceQualityHistory)) {
@@ -785,6 +847,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   if (maxEventId > watermark) {
     setWatermark(db, PROJECTION_WATERMARK_NAME, maxEventId);
   }
+  return capped;
 }
 
 interface MaterialsLatest {
