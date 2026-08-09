@@ -2994,6 +2994,22 @@ export interface ActivityEventResponse {
   event: ActivityEventSummary;
 }
 
+export const DiscoveryProviderProgressSchema = z
+  .object({
+    site: z.string().min(1),
+    phase: z.string().min(1),
+    unit: z.string().min(1),
+    completedUnits: z.number().int().nonnegative(),
+    totalUnits: z.number().int().nonnegative().nullable(),
+    rawItemsSeen: z.number().int().nonnegative().nullable(),
+    jobsEmitted: z.number().int().nonnegative(),
+    hasMore: z.boolean().nullable(),
+  })
+  .strict();
+export type DiscoveryProviderProgress = z.infer<
+  typeof DiscoveryProviderProgressSchema
+>;
+
 export interface PipelineProgressSummary {
   stage: Stage;
   status: "running" | "succeeded" | "failed" | "partial";
@@ -3315,6 +3331,7 @@ export const SourceFamilyProgressSchema = z
     counts: PipelineStageCountsSchema,
     eta: PipelineEtaSchema,
     asOf: z.string(),
+    providerProgress: DiscoveryProviderProgressSchema.nullable().optional(),
   })
   .strict();
 export type SourceFamilyProgress = z.infer<typeof SourceFamilyProgressSchema>;

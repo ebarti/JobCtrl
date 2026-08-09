@@ -96,6 +96,21 @@ uv --project workers/automation run pytest -q \
   workers/automation/tests/test_jobstreaming_gateway.py
 ```
 
+The provider-progress regression additionally emits a JobStreaming page
+boundary carrying a private fake cursor. Verify that the worker callback,
+exact-run Operations response, and expanded **Crawl sources** row expose only
+the normalized provider/page counts and continuation state. The private cursor
+must be absent, an event from another Temporal run must not leak into the
+selected execution, and a missing provider total must render as unavailable
+rather than a synthetic percentage:
+
+```bash
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/pipeline-operations.test.ts
+corepack pnpm --filter @jobctrl/web exec vitest run \
+  src/views/pipelines/PipelinesView.test.tsx
+```
+
 ### Preparation ownership and four-process chaos
 
 Score, Tailor, and Cover must recover from both sides of the commit boundary:

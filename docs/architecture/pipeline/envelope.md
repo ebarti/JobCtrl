@@ -128,7 +128,7 @@ required-step list is never interpreted as proof of no work.
 ### Broad-Board Search Unit Envelope
 
 The `jobspy` source family name remains a compatibility key, but its provider is
-JobStreaming 0.0.2. At activity start, JobCtrl compiles or verifies an immutable
+JobStreaming 0.0.3. At activity start, JobCtrl compiles or verifies an immutable
 ordered plan of query/location/board units under the exact
 `DiscoveryExecutionRef`. Changing the live target-search configuration cannot
 rewrite a retrying execution's persisted plan.

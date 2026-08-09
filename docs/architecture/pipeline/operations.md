@@ -119,8 +119,14 @@ Broad-board progress uses `search units` as its source-level unit. Its
 `filteredJobs` comes from hashed filtered-result receipts, and `recoveredUnits`
 counts units reclaimed by a newer Temporal activity attempt.
 The TypeScript read model preserves that optional field and Pipelines renders
-it as `N resumed`. Raw provider output, checkpoints, owner tokens, and error
-messages are not projected into this broad progress payload.
+it as `N resumed`. JobStreaming 0.0.3 `ProviderProgress` is a separate immutable
+value inside the source progress: provider, phase, unit, completed/total units,
+raw items seen, emitted jobs, and tri-state continuation. The worker stamps the
+exact Discover workflow/run identity onto the progress event, and Operations
+accepts only a matching execution before rendering the latest traversal facts.
+Unknown provider totals stay null and do not become a synthetic percentage or
+ETA. Raw provider output, cursors, resume dictionaries, checkpoints, owner
+tokens, and error messages are not projected into this broad progress payload.
 
 ## Pipeline Operations Snapshot
 
@@ -169,6 +175,12 @@ Source-family progress and reconciliation are also separate. The former counts
 planned family crawls; the latter counts enrichment passes and preparation
 fan-out. Source completion therefore never implies that downstream scoring,
 materials, or PDF work is complete.
+
+Provider traversal progress is observational evidence inside the active broad-
+board family, not a third completion authority. It can explain that a provider
+has completed pages and whether continuation is known. It cannot bound shared-
+pool contention or establish remaining pages when `totalUnits` is null, so the
+ETA estimator remains conservative in those states.
 
 The API prefers an active or draining Discover execution and otherwise shows
 the latest terminal execution. The phase vocabulary is `discovering`,

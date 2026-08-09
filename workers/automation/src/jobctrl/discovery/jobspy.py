@@ -95,7 +95,7 @@ def _scrape_with_retry(kwargs: dict, max_retries: int = 2, backoff: float = 5.0)
             scrape_legacy_options,
         )
     except ImportError as exc:
-        raise ImportError("jobstreaming 0.0.2 is not installed. Run the JobCtrl setup again.") from exc
+        raise ImportError("jobstreaming 0.0.3 is not installed. Run the JobCtrl setup again.") from exc
     return scrape_legacy_options(
         kwargs,
         max_retries=max_retries,
@@ -1618,6 +1618,7 @@ def _durable_progress_snapshot(
     filtered_jobs: int,
     raw_total: int,
     message: str,
+    provider_progress: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     terminal = {"completed", "skipped", "failed", "canceled"}
     snapshot: dict[str, Any] = {
@@ -1635,6 +1636,9 @@ def _durable_progress_snapshot(
     if current is not None:
         snapshot["current_query"] = current.spec.query
         snapshot["current_location"] = current.spec.target_location
+    if provider_progress is not None:
+        snapshot["provider_progress"] = provider_progress
+        snapshot["providerProgress"] = provider_progress
     return snapshot
 
 
@@ -1702,6 +1706,7 @@ def _durable_full_crawl(
         run_id=run_id,
     )
     stopped_for_limit = False
+    latest_provider_progress: dict[str, Any] | None = None
 
     def emit_progress(current: DiscoverySearchUnit | None, message: str) -> None:
         if progress_callback is None:
@@ -1718,6 +1723,7 @@ def _durable_full_crawl(
                     discovery_execution
                 ),
                 message=message,
+                provider_progress=latest_provider_progress,
             )
         )
 
@@ -1764,6 +1770,7 @@ def _durable_full_crawl(
         repository.reset_checkpoint_if_requested(lease)
         unit = repository.get_unit(discovery_execution, lease.unit_id)
         assert unit is not None
+        latest_provider_progress = None
         message = (
             "Resuming interrupted JobStreaming search unit"
             if unit.recovered
@@ -1905,7 +1912,28 @@ def _durable_full_crawl(
                                 raise DiscoveryResumeRequired(
                                     "JobStreaming ended without a terminal board outcome"
                                 )
-                        elif isinstance(event, (ProgressEvent, WarningEvent)):
+                        elif isinstance(event, ProgressEvent):
+                            latest_provider_progress = {
+                                "site": event.site.value,
+                                "phase": event.progress.phase.value,
+                                "unit": event.progress.unit.value,
+                                "completed_units": event.progress.completed_units,
+                                "completedUnits": event.progress.completed_units,
+                                "total_units": event.progress.total_units,
+                                "totalUnits": event.progress.total_units,
+                                "raw_items_seen": event.progress.raw_items_seen,
+                                "rawItemsSeen": event.progress.raw_items_seen,
+                                "jobs_emitted": event.progress.jobs_emitted,
+                                "jobsEmitted": event.progress.jobs_emitted,
+                                "has_more": event.progress.has_more,
+                                "hasMore": event.progress.has_more,
+                            }
+                            emit_progress(
+                                unit,
+                                "JobStreaming provider page completed",
+                            )
+                            stream.ack(event)
+                        elif isinstance(event, WarningEvent):
                             stream.ack(event)
                         else:  # pragma: no cover - pinned event union is exhaustive
                             raise TypeError(

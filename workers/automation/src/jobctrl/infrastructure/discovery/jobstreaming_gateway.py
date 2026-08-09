@@ -34,7 +34,7 @@ from jobstreaming import (
     default_registry,
     stream_search,
 )
-from jobstreaming.result import jobs_to_dataframe
+from jobstreaming.batch import jobs_to_dataframe
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +115,7 @@ _TLS_CLIENT_SITES = frozenset({Site.GLASSDOOR, Site.ZIP_RECRUITER})
 
 
 class _IntegralTlsTimeoutAdapter(Scraper):
-    """Normalize JobStreaming 0.0.2's float timeout for tls-client adapters."""
+    """Normalize the provider timeout for tls-client adapters that require ints."""
 
     def __init__(self, delegate: Scraper) -> None:
         super().__init__(
@@ -157,13 +157,12 @@ def _normalize_tls_adapter_timeouts(
             site,
             factory,
             replace=True,
-            cursor_schema_version=source.cursor_schema_version(site),
         )
     return normalized
 
 
 class JobStreamingGateway:
-    """Build and consume the pinned JobStreaming 0.0.2 event contract."""
+    """Build and consume the pinned JobStreaming 0.0.3 event contract."""
 
     @staticmethod
     def build_request(spec: JobStreamingSearchSpec) -> SearchRequest:

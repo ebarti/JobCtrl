@@ -1149,6 +1149,31 @@ def test_discovery_source_progress_emits_temporal_heartbeat(monkeypatch: pytest.
     assert captured == [progress.to_dict()]
 
 
+def test_jobstreaming_progress_snapshot_becomes_typed_provider_facts() -> None:
+    progress = runner._discovery_provider_progress(
+        {
+            "providerProgress": {
+                "site": "indeed",
+                "phase": "search",
+                "unit": "page",
+                "completedUnits": 3,
+                "totalUnits": None,
+                "rawItemsSeen": 12,
+                "jobsEmitted": 4,
+                "hasMore": True,
+            }
+        }
+    )
+
+    assert progress is not None
+    assert progress.site == "indeed"
+    assert progress.completed_units == 3
+    assert progress.total_units is None
+    assert progress.raw_items_seen == 12
+    assert progress.jobs_emitted == 4
+    assert progress.has_more is True
+
+
 def test_discovery_schedule_defaults_disabled() -> None:
     assert DEFAULT_DISCOVERY_SEARCH_CONFIG["scheduling_enabled"] is False
     assert load_discovery_schedule_settings() == (False, "0 7 * * *")

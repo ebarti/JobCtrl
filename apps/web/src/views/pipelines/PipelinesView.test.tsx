@@ -132,6 +132,12 @@ describe("PipelinesView", () => {
     expect(
       within(crawl).getByRole("progressbar", { name: "Stage progress" }),
     ).toHaveAttribute("aria-valuenow", "33");
+    expect(
+      within(crawl).getByRole("heading", { name: "Provider traversal" }),
+    ).toBeInTheDocument();
+    expect(crawl).toHaveTextContent(
+      "Indeed · 3 pages completed; provider total unavailable · 42 raw listings seen · 9 jobs emitted · more pages available",
+    );
 
     expect(
       screen.queryByRole("region", { name: "Execution sweep ledger table" }),
