@@ -1,44 +1,63 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-vi.mock("node:child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:child_process")>();
-  return { ...actual, execFileSync: vi.fn() };
-});
+import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
+import { createResumeHtmlPdfRenderer, ResumeRenderError } from "../src/resume-pdf-render.js";
 
-import { execFileSync } from "node:child_process";
-
-import { defaultResumeHtmlPdfRenderer } from "../src/resume-pdf-render.js";
-
-const execFileSyncMock = vi.mocked(execFileSync);
-
-beforeEach(() => {
-  execFileSyncMock.mockReset();
-});
-
-describe("defaultResumeHtmlPdfRenderer", () => {
-  it("bounds the synchronous render subprocess with a timeout and generous maxBuffer", () => {
-    execFileSyncMock.mockReturnValue(Buffer.from(""));
-
-    defaultResumeHtmlPdfRenderer({ htmlPath: "/tmp/resume.html", pdfPath: "/tmp/resume.pdf" });
-
-    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
-    const options = execFileSyncMock.mock.calls[0]![2] as { timeout?: number; maxBuffer?: number };
-    expect(options.timeout).toBe(120_000);
-    expect(options.maxBuffer).toBeGreaterThanOrEqual(10 * 1024 * 1024);
+describe("resume pdf renderer", () => {
+  it("dispatches render_resume_pdf and resolves on a valid result", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const dispatcher: JsonRpcDispatcher = {
+      call: async (method, params) => {
+        calls.push({ method, params });
+        return {
+          jsonrpc: "2.0" as const,
+          id: 1,
+          result: { status: "succeeded", pdfPath: String(params.pdfPath) },
+        };
+      },
+      close: async () => {},
+    };
+    await createResumeHtmlPdfRenderer(dispatcher)({ htmlPath: "/tmp/in.html", pdfPath: "/tmp/out.pdf" });
+    expect(calls).toEqual([
+      { method: "render_resume_pdf", params: { htmlPath: "/tmp/in.html", pdfPath: "/tmp/out.pdf" } },
+    ]);
   });
 
-  it("surfaces a subprocess timeout as a render failure the persist path can catch", () => {
-    const timeoutError = Object.assign(new Error("spawnSync uv ETIMEDOUT"), {
-      code: "ETIMEDOUT",
-      killed: true,
-      stderr: Buffer.from(""),
-    });
-    execFileSyncMock.mockImplementation(() => {
-      throw timeoutError;
-    });
+  it("wraps dispatcher rejections in ResumeRenderError", async () => {
+    const dispatcher: JsonRpcDispatcher = {
+      call: async () => {
+        throw new Error("JSON-RPC request timed out after 600000ms");
+      },
+      close: async () => {},
+    };
+    const render = createResumeHtmlPdfRenderer(dispatcher);
+    await expect(render({ htmlPath: "/tmp/in.html", pdfPath: "/tmp/out.pdf" })).rejects.toThrow(
+      ResumeRenderError,
+    );
+    await expect(render({ htmlPath: "/tmp/in.html", pdfPath: "/tmp/out.pdf" })).rejects.toThrow(
+      "Resume HTML-to-PDF render failed: JSON-RPC request timed out after 600000ms",
+    );
+  });
 
-    expect(() =>
-      defaultResumeHtmlPdfRenderer({ htmlPath: "/tmp/resume.html", pdfPath: "/tmp/resume.pdf" }),
-    ).toThrow(/Resume HTML-to-PDF render failed/);
+  it("wraps error envelopes preferring error.data and rejects invalid results", async () => {
+    const errorDispatcher: JsonRpcDispatcher = {
+      call: async () => ({
+        jsonrpc: "2.0" as const,
+        id: 1,
+        error: { code: -32603, message: "Internal error", data: "[Errno 21] Is a directory" },
+      }),
+      close: async () => {},
+    };
+    await expect(
+      createResumeHtmlPdfRenderer(errorDispatcher)({ htmlPath: "a", pdfPath: "b" }),
+    ).rejects.toThrow("Resume HTML-to-PDF render failed: [Errno 21] Is a directory");
+
+    const invalidDispatcher: JsonRpcDispatcher = {
+      call: async () => ({ jsonrpc: "2.0" as const, id: 1, result: { nope: true } }),
+      close: async () => {},
+    };
+    await expect(
+      createResumeHtmlPdfRenderer(invalidDispatcher)({ htmlPath: "a", pdfPath: "b" }),
+    ).rejects.toThrow(ResumeRenderError);
   });
 });

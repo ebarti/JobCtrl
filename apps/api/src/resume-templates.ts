@@ -929,16 +929,20 @@ async function persistRenderOnlyRefresh(
   const textPath = path.join(outputDir, `${baseName}.txt`);
   const htmlPath = path.join(outputDir, `${baseName}.html`);
   const pdfPath = path.join(outputDir, `${baseName}.pdf`);
+  const attemptId = crypto.randomUUID().slice(0, 8);
+  const tmpTextPath = `${textPath}.${attemptId}.tmp`;
+  const tmpHtmlPath = `${htmlPath}.${attemptId}.tmp`;
+  const tmpPdfPath = `${pdfPath}.${attemptId}.tmp`;
   const layoutBoxes = layoutBoxesForText(text);
   const now = new Date().toISOString();
   const templateMetadata = templateMetadataPayload(effective);
 
-  fs.writeFileSync(textPath, text, "utf8");
-  fs.writeFileSync(htmlPath, htmlForTemplateRefresh(text, effective), "utf8");
+  fs.writeFileSync(tmpTextPath, text, "utf8");
+  fs.writeFileSync(tmpHtmlPath, htmlForTemplateRefresh(text, effective), "utf8");
   try {
-    await renderPdf({ htmlPath, pdfPath });
+    await renderPdf({ htmlPath: tmpHtmlPath, pdfPath: tmpPdfPath });
   } catch (error) {
-    for (const orphan of [textPath, htmlPath, pdfPath]) {
+    for (const orphan of [tmpTextPath, tmpHtmlPath, tmpPdfPath]) {
       try {
         fs.rmSync(orphan, { force: true });
       } catch {
@@ -948,6 +952,93 @@ async function persistRenderOnlyRefresh(
     throw error;
   }
 
+  // Generation, source material, and effective template were captured before
+  // the awaited render; a concurrent material write, refresh, or template
+  // assignment can land in that gap. Revalidate and persist in one short
+  // transaction, promoting this attempt's temp files only after the guards.
+  let promoted = false;
+  try {
+    const tx = db.transaction(() => {
+      if (nextMaterialGeneration(db, jobId) !== generation) {
+        throw new ResumeTemplateInputError("Job materials changed while refreshing; retry the refresh.");
+      }
+      const currentMaterial = latestResumeMaterial(db, jobId);
+      if (!currentMaterial || currentMaterial.generation !== material.generation) {
+        throw new ResumeTemplateInputError("The source resume changed while refreshing; retry the refresh.");
+      }
+      const currentState = resumeTemplateStateForJobId(db, jobId);
+      if (
+        !currentState ||
+        currentState.effective.templateVersionId !== effective.templateVersionId ||
+        currentState.effective.templateHash !== effective.templateHash
+      ) {
+        throw new ResumeTemplateInputError("The effective template changed while refreshing; retry the refresh.");
+      }
+      promoted = true;
+      fs.renameSync(tmpTextPath, textPath);
+      fs.renameSync(tmpHtmlPath, htmlPath);
+      fs.renameSync(tmpPdfPath, pdfPath);
+      persistRefreshRows(db, {
+        jobId,
+        generation,
+        now,
+        textPath,
+        htmlPath,
+        pdfPath,
+        textArtifactId,
+        pdfArtifactId,
+        layoutBoxes,
+        material,
+        templateMetadata,
+      });
+    });
+    tx();
+  } catch (error) {
+    const orphans = [tmpTextPath, tmpHtmlPath, tmpPdfPath];
+    if (promoted) {
+      orphans.push(textPath, htmlPath, pdfPath);
+    }
+    for (const orphan of orphans) {
+      try {
+        fs.rmSync(orphan, { force: true });
+      } catch {
+        // Best-effort cleanup only; the original error is what matters.
+      }
+    }
+    throw error;
+  }
+  return { generation };
+}
+
+function persistRefreshRows(
+  db: SqliteDatabase,
+  input: {
+    jobId: JobId;
+    generation: number;
+    now: string;
+    textPath: string;
+    htmlPath: string;
+    pdfPath: string;
+    textArtifactId: string;
+    pdfArtifactId: string;
+    layoutBoxes: ReturnType<typeof layoutBoxesForText>;
+    material: { generation: number; text: MaterialArtifactRow; pdf: MaterialArtifactRow | null };
+    templateMetadata: unknown;
+  },
+): void {
+  const {
+    jobId,
+    generation,
+    now,
+    textPath,
+    htmlPath,
+    pdfPath,
+    textArtifactId,
+    pdfArtifactId,
+    layoutBoxes,
+    material,
+    templateMetadata,
+  } = input;
   db.prepare(
     `INSERT INTO job_materials (
        tenant_id, job_id, generation, status, created_at, updated_at,
@@ -1000,7 +1091,6 @@ async function persistRenderOnlyRefresh(
     createdAt: now,
   });
   replaceLayoutBoxes(db, jobId, generation, pdfArtifactId, layoutBoxes, now);
-  return { generation };
 }
 
 function insertMaterialArtifact(

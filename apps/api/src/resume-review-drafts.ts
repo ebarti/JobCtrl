@@ -522,6 +522,7 @@ export async function renderResumeReviewDraft(
   // that goes stale against concurrent worker commits and then fails the
   // write upgrade with SQLITE_BUSY_SNAPSHOT.
   const rendered = await renderDraftArtifactFiles(db, draft, revision, renderPdf);
+  let promoted = false;
   try {
     const tx = db.transaction(() => {
       const current = getDraftRow(db, draft.draft_id);
@@ -535,6 +536,10 @@ export async function renderResumeReviewDraft(
       if (nextMaterialGeneration(db, draft.job_id) !== rendered.generation) {
         throw new DraftRenderConflictError("Job materials changed while rendering; retry the render.");
       }
+      promoted = true;
+      fs.renameSync(rendered.tmpTextPath, rendered.textPath);
+      fs.renameSync(rendered.tmpHtmlPath, rendered.htmlPath);
+      fs.renameSync(rendered.tmpPdfPath, rendered.pdfPath);
       insertRenderedDraftArtifacts(db, draft, revision, validation, rendered);
       const now = new Date().toISOString();
       markResidualCommentThreadsAfterAcceptance(db, draft.draft_id, now);
@@ -572,9 +577,14 @@ export async function renderResumeReviewDraft(
     });
     return tx();
   } catch (error) {
-    // The files rendered but the rows did not commit: remove the orphans so
-    // a failed render leaves no artifacts without database rows.
-    for (const orphan of [rendered.textPath, rendered.htmlPath, rendered.pdfPath]) {
+    // The files rendered but the rows did not commit: remove this attempt's
+    // temp files, plus the promoted finals when the failure happened after
+    // the renames (the commit guards make those finals this attempt's own).
+    const orphans = [rendered.tmpTextPath, rendered.tmpHtmlPath, rendered.tmpPdfPath];
+    if (promoted) {
+      orphans.push(rendered.textPath, rendered.htmlPath, rendered.pdfPath);
+    }
+    for (const orphan of orphans) {
       try {
         fs.rmSync(orphan, { force: true });
       } catch {
@@ -1135,6 +1145,9 @@ interface RenderedDraftArtifactFiles {
   readonly textPath: string;
   readonly htmlPath: string;
   readonly pdfPath: string;
+  readonly tmpTextPath: string;
+  readonly tmpHtmlPath: string;
+  readonly tmpPdfPath: string;
   readonly layoutBoxes: ResumeLayoutBoxDraft[];
 }
 
@@ -1157,15 +1170,23 @@ async function renderDraftArtifactFiles(
   const textPath = path.join(outputDir, `${baseName}.txt`);
   const htmlPath = path.join(outputDir, `${baseName}.html`);
   const pdfPath = path.join(outputDir, `${baseName}.pdf`);
+  // Concurrent renders of the same revision compute identical deterministic
+  // final paths; each attempt writes to its own suffixed temp files and only
+  // the transaction that wins the commit guards promotes them, so a losing
+  // attempt's cleanup can never touch a winner's registered files.
+  const attemptId = crypto.randomUUID().slice(0, 8);
+  const tmpTextPath = `${textPath}.${attemptId}.tmp`;
+  const tmpHtmlPath = `${htmlPath}.${attemptId}.tmp`;
+  const tmpPdfPath = `${pdfPath}.${attemptId}.tmp`;
   const editedText = revision.edited_text.replace(/\r\n/g, "\n");
   const layoutBoxes = layoutBoxesForEditedText(editedText);
 
-  fs.writeFileSync(textPath, editedText, "utf8");
-  fs.writeFileSync(htmlPath, htmlForEditedResume(editedText, parseJson(revision.plate_document_json)), "utf8");
+  fs.writeFileSync(tmpTextPath, editedText, "utf8");
+  fs.writeFileSync(tmpHtmlPath, htmlForEditedResume(editedText, parseJson(revision.plate_document_json)), "utf8");
   try {
-    await renderPdf({ htmlPath, pdfPath });
+    await renderPdf({ htmlPath: tmpHtmlPath, pdfPath: tmpPdfPath });
   } catch (error) {
-    for (const orphan of [textPath, htmlPath, pdfPath]) {
+    for (const orphan of [tmpTextPath, tmpHtmlPath, tmpPdfPath]) {
       try {
         fs.rmSync(orphan, { force: true });
       } catch {
@@ -1181,6 +1202,9 @@ async function renderDraftArtifactFiles(
     textPath,
     htmlPath,
     pdfPath,
+    tmpTextPath,
+    tmpHtmlPath,
+    tmpPdfPath,
     layoutBoxes,
   };
 }

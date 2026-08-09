@@ -23,7 +23,16 @@ export class ResumeRenderError extends Error {
 
 export function createResumeHtmlPdfRenderer(dispatcher: JsonRpcDispatcher): ResumeHtmlPdfRenderer {
   return async ({ htmlPath, pdfPath }) => {
-    const response = await dispatcher.call(RpcMethods.RenderResumePdf, { htmlPath, pdfPath });
+    let response: Awaited<ReturnType<JsonRpcDispatcher["call"]>>;
+    try {
+      response = await dispatcher.call(RpcMethods.RenderResumePdf, { htmlPath, pdfPath });
+    } catch (error) {
+      // Transport-level failures (spawn/write errors, the request timeout,
+      // child exit) reject instead of returning a JSON-RPC error envelope.
+      throw new ResumeRenderError(
+        `Resume HTML-to-PDF render failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     if (response.error) {
       // The RPC server wraps handler exceptions as a generic "Internal
       // error" message and puts the real cause in error.data.

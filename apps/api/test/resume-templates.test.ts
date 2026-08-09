@@ -361,6 +361,31 @@ describe("resume template service", () => {
     ]);
   });
 
+  it("fails the refresh cleanly when a material write races the render", async () => {
+    const racingRenderer: ResumeHtmlPdfRenderer = async ({ htmlPath, pdfPath }) => {
+      db.prepare(
+        `INSERT INTO job_materials (
+           tenant_id, job_id, generation, status, created_at, updated_at,
+           last_validation_json, last_verdict_json, metadata_json
+         ) SELECT tenant_id, job_id, MAX(generation) + 1, 'resume_approved', ?, ?, '{}', '{}', '{}'
+         FROM job_materials WHERE job_id = ? GROUP BY tenant_id, job_id`,
+      ).run(new Date().toISOString(), new Date().toISOString(), JOB_ID);
+      fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);
+    };
+
+    const refresh = await ensureCurrentResumeTemplateMaterials(db, JOB_ID, { force: true }, racingRenderer);
+    expect(refresh.status).toBe("failed");
+    expect(refresh.message).toContain("retry the refresh");
+
+    const tmpStrays = fs
+      .readdirSync(tempDir, { recursive: true })
+      .filter((entry) => String(entry).endsWith(".tmp"));
+    expect(tmpStrays).toEqual([]);
+
+    const retry = await ensureCurrentResumeTemplateMaterials(db, JOB_ID, { force: true }, renderHtmlToPdf);
+    expect(retry.status).toBe("completed");
+  });
+
   it("refuses invalid UUIDs and never treats posting or application URLs as identity", async () => {
     expect(() => setJobResumeTemplateAssignment(db, JOB_URL, { templateId: null })).toThrow(
       "jobId must be a canonical lowercase UUID",
