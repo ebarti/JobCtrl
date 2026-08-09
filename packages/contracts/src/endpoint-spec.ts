@@ -10,7 +10,9 @@ import {
 } from "./schemas.js";
 import {
   JsonRpcErrorCodes,
+  ReviewLearningRecommendationParamsSchema,
   ReviewLearningRecommendationResultSchema,
+  RollbackTailoringPolicyParamsSchema,
   RollbackTailoringPolicyResultSchema,
   RpcMethods,
   type JsonRpcError,
@@ -80,6 +82,7 @@ type AnyEndpointPath = string | EndpointPath<any, string>;
 export interface RpcEndpointDispatch<
   TRequestSchema extends AnySchema,
   TPathParam,
+  TRpcParamsSchema extends AnySchema,
   TRpcResultSchema extends AnySchema,
 > {
   readonly rpcMethod: RpcMethod;
@@ -89,7 +92,8 @@ export interface RpcEndpointDispatch<
       readonly pathParam: TPathParam;
     },
     context: EndpointDispatchContext,
-  ) => Readonly<Record<string, unknown>>;
+  ) => z.input<TRpcParamsSchema>;
+  readonly paramsSchema: TRpcParamsSchema;
   readonly result: TRpcResultSchema;
   readonly response: (input: {
     readonly request: z.output<TRequestSchema>;
@@ -290,6 +294,7 @@ export const ENDPOINTS = {
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
       }),
+      paramsSchema: ReviewLearningRecommendationParamsSchema,
       result: ReviewLearningRecommendationResultSchema,
       response: ({ request, pathParam, result }) => {
         if (
@@ -305,6 +310,7 @@ export const ENDPOINTS = {
     } satisfies RpcEndpointDispatch<
       typeof LearningRecommendationReviewRequestSchema,
       string,
+      typeof ReviewLearningRecommendationParamsSchema,
       typeof ReviewLearningRecommendationResultSchema
     >,
     demo: {
@@ -326,6 +332,7 @@ export const ENDPOINTS = {
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
       }),
+      paramsSchema: RollbackTailoringPolicyParamsSchema,
       result: RollbackTailoringPolicyResultSchema,
       response: ({ request, result }) =>
         result.rollbackOfVersion === request.targetVersion
@@ -347,6 +354,7 @@ export const ENDPOINTS = {
     } satisfies RpcEndpointDispatch<
       typeof TailoringPolicyRollbackRequestSchema,
       undefined,
+      typeof RollbackTailoringPolicyParamsSchema,
       typeof RollbackTailoringPolicyResultSchema
     >,
     demo: {
