@@ -74,6 +74,13 @@ import {
   ProfileSchema,
   STAGES,
   WORKFLOW_RUN_STATUSES,
+  STATE_RANK,
+  compareJobs,
+  compareValues,
+  filterJob,
+  paginate,
+  timestampAtOrAfter,
+  timestampBefore,
 } from "./contracts.js";
 import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { evaluateRepeatApplication } from "./repeat-application.js";
@@ -107,20 +114,6 @@ const DEFAULT_MAX_ATTEMPTS: Record<Stage, number> = {
   tailor: 5,
   cover: 5,
   apply: 3,
-};
-
-const STATE_RANK: Record<StageState, number> = {
-  failed: 0,
-  exhausted: 1,
-  needs_verification: 2,
-  blocked: 3,
-  running: 4,
-  queued: 5,
-  pending: 6,
-  stale: 7,
-  canceled: 8,
-  skipped: 9,
-  succeeded: 10,
 };
 
 function sqlRankCase(column: string, ranks: Record<string, number>, fallback: number): string {
@@ -4903,66 +4896,6 @@ function countRows(db: SqliteDatabase, sql: string, params: SqliteValue[]): numb
   return Number(row?.count ?? 0);
 }
 
-function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string): boolean {
-  if (query.stage && job.currentStage !== query.stage) return false;
-  if (query.state && job.currentState !== query.state) return false;
-  if (
-    query.applyStatus === "applied"
-    && !job.appliedAt
-    && job.applyStatus?.toLowerCase() !== "applied"
-  ) {
-    return false;
-  }
-  if (
-    query.source &&
-    ![job.source, job.discoverySource, job.postingSource, job.postingSourceUrl ?? ""].some((source) =>
-      source.toLowerCase().includes(query.source.toLowerCase()),
-    )
-  ) {
-    return false;
-  }
-  if (query.company && !job.company.toLowerCase().includes(query.company.toLowerCase())) return false;
-  if (query.minFitScore !== undefined && (job.fitScore ?? -1) < query.minFitScore) return false;
-  if (query.maxFitScore !== undefined && (job.fitScore ?? 999) > query.maxFitScore) return false;
-  if (query.discoveredSince && query.scoredSince) {
-    const discoveredMatches = timestampAtOrAfter(job.discoveredAt, query.discoveredSince);
-    const scoredMatches = timestampAtOrAfter(job.scoredAt, query.scoredSince);
-    if (!discoveredMatches && !scoredMatches) return false;
-  } else {
-    if (query.discoveredSince && !timestampAtOrAfter(job.discoveredAt, query.discoveredSince)) return false;
-    if (query.scoredSince && !timestampAtOrAfter(job.scoredAt, query.scoredSince)) return false;
-  }
-  if (!normalizedQuery) return true;
-  return [
-    job.title,
-    job.company,
-    job.url,
-    job.location,
-    job.source,
-    job.discoverySource,
-    job.postingSource,
-    job.postingSourceUrl ?? "",
-    job.strategy,
-    job.currentStage,
-    job.currentSubstage,
-    job.currentState,
-  ].some((value) => value.toLowerCase().includes(normalizedQuery));
-}
-
-function timestampAtOrAfter(value: string | null | undefined, since: string): boolean {
-  if (!value) return false;
-  const valueTime = Date.parse(value);
-  const sinceTime = Date.parse(since);
-  return Number.isFinite(valueTime) && Number.isFinite(sinceTime) && valueTime >= sinceTime;
-}
-
-function timestampBefore(value: string | null | undefined, before: string): boolean {
-  if (!value) return false;
-  const valueTime = Date.parse(value);
-  const beforeTime = Date.parse(before);
-  return Number.isFinite(valueTime) && Number.isFinite(beforeTime) && valueTime < beforeTime;
-}
-
 function displayPostingSource(
   atsKind: string | null | undefined,
   canonicalUrl: string | null | undefined,
@@ -5011,124 +4944,6 @@ function slugText(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "source";
 }
 
-function compareJobs(left: JobSummary, right: JobSummary, field: string, direction: "asc" | "desc"): number {
-  const multiplier = direction === "asc" ? 1 : -1;
-  const values: Record<string, [unknown, unknown]> = {
-    discovered_at: [left.discoveredAt, right.discoveredAt],
-    title: [left.title, right.title],
-    company: [left.company, right.company],
-    source: [jobSourceSortValue(left), jobSourceSortValue(right)],
-    compensation_min_eur: [
-      postedCompensationAmountEur(left.compensationSummary, "min"),
-      postedCompensationAmountEur(right.compensationSummary, "min"),
-    ],
-    compensation_max_eur: [
-      postedCompensationAmountEur(left.compensationSummary, "max"),
-      postedCompensationAmountEur(right.compensationSummary, "max"),
-    ],
-    compensation_posted: [
-      postedCompensationSortValue(left.compensationSummary, left.salary),
-      postedCompensationSortValue(right.compensationSummary, right.salary),
-    ],
-    compensation_market: [
-      marketCompensationSortValue(left.compensationSummary),
-      marketCompensationSortValue(right.compensationSummary),
-    ],
-    compensation_confidence: [
-      marketConfidenceSortValue(left.compensationSummary),
-      marketConfidenceSortValue(right.compensationSummary),
-    ],
-    compensation_warnings: [
-      left.compensationSummary?.warningCount ?? 0,
-      right.compensationSummary?.warningCount ?? 0,
-    ],
-    location: [left.location, right.location],
-    fit_score: [left.fitScore ?? -1, right.fitScore ?? -1],
-    current_stage: [left.currentStage, right.currentStage],
-    current_state: [
-      `${STATE_RANK[left.currentState] ?? 999}:${left.currentSubstage}`,
-      `${STATE_RANK[right.currentState] ?? 999}:${right.currentSubstage}`,
-    ],
-    apply_status: [left.applyStatus ?? "", right.applyStatus ?? ""],
-  };
-  const [leftValue, rightValue] = values[field] ?? values.discovered_at!;
-  const compared = compareValues(leftValue, rightValue);
-  return compared ? compared * multiplier : left.jobKey.localeCompare(right.jobKey);
-}
-
-function jobSourceSortValue(job: JobSummary): string {
-  return (job.postingSource || job.discoverySource || job.source || "").toLowerCase();
-}
-
-function postedCompensationSortValue(
-  summary: JobCompensationSummary | null,
-  fallbackSalary: string,
-): number {
-  const amount = postedCompensationAmountEur(summary, "min");
-  if (amount !== null) return amount;
-  if (summary?.posted.displayRange || summary?.legacyRawSalary || fallbackSalary) return -1;
-  if (summary?.posted.parseState === "ambiguous") return -2;
-  if (summary?.posted.parseState === "unparseable") return -3;
-  if (summary?.posted.parseState === "missing") return -4;
-  return Number.NEGATIVE_INFINITY;
-}
-
-function postedCompensationAmountEur(
-  summary: JobCompensationSummary | null,
-  bound: "min" | "max",
-): number | null {
-  const range = summary?.posted.range;
-  return compensationRangeAmountEur(range, bound);
-}
-
-function marketCompensationSortValue(summary: JobCompensationSummary | null): number {
-  const amount = compensationRangeAmountEur(summary?.market.range ?? null, "min");
-  if (amount !== null) return amount;
-  switch (summary?.market.estimateState) {
-    case "estimated_range":
-      return -1;
-    case "insufficient_evidence":
-      return -2;
-    case "source_unavailable":
-      return -3;
-    case "unsupported":
-      return -4;
-    case "not_requested":
-    default:
-      return Number.NEGATIVE_INFINITY;
-  }
-}
-
-function marketConfidenceSortValue(summary: JobCompensationSummary | null): number {
-  const market = summary?.market;
-  if (!market || market.recordStatus === "not_requested") return Number.NEGATIVE_INFINITY;
-  if (Number.isFinite(market.confidenceScore)) return Number(market.confidenceScore);
-  switch (market.confidenceBand) {
-    case "high":
-      return 0.9;
-    case "medium":
-      return 0.62;
-    case "low":
-      return 0.3;
-    case "none":
-      return 0;
-  }
-}
-
-function compensationRangeAmountEur(
-  range: JobCompensationSummary["posted"]["range"] | null | undefined,
-  bound: "min" | "max",
-): number | null {
-  const normalized = bound === "min" ? range?.annualizedMinimumEur : range?.annualizedMaximumEur;
-  if (Number.isFinite(normalized)) return Number(normalized);
-  if (range?.currency?.toUpperCase() !== "EUR") return null;
-  const annualized = bound === "min" ? range.annualizedMinimumAmount : range.annualizedMaximumAmount;
-  if (Number.isFinite(annualized)) return Number(annualized);
-  if (range.period !== "year") return null;
-  const source = bound === "min" ? range.minimumAmount : range.maximumAmount;
-  return Number.isFinite(source) ? Number(source) : null;
-}
-
 function compareArtifacts(
   left: ArtifactSummary,
   right: ArtifactSummary,
@@ -5146,32 +4961,6 @@ function compareArtifacts(
   };
   const [leftValue, rightValue] = values[field] ?? values.created_at!;
   return compareValues(leftValue, rightValue) * multiplier;
-}
-
-function paginate<T>(
-  items: T[],
-  page: number,
-  pageSize: number,
-  sortField: string,
-  sortDir: "asc" | "desc",
-  filter: Record<string, unknown>,
-): PaginatedResponse<T> {
-  const total = items.length;
-  const pages = Math.max(1, Math.ceil(total / pageSize));
-  const safePage = Math.min(page, pages);
-  const offset = (safePage - 1) * pageSize;
-  return {
-    ok: true,
-    items: items.slice(offset, offset + pageSize),
-    pagination: {
-      page: safePage,
-      pageSize,
-      total,
-      pages,
-    },
-    sort: { field: sortField, dir: sortDir },
-    filter,
-  };
 }
 
 function paginateWithTotal<T>(
@@ -6311,14 +6100,6 @@ function localFileSize(filePath: string): number | null {
   } catch {
     return null;
   }
-}
-
-function compareValues(left: unknown, right: unknown): number {
-  if (left === right) return 0;
-  if (left === null || left === undefined || left === "") return -1;
-  if (right === null || right === undefined || right === "") return 1;
-  if (typeof left === "number" && typeof right === "number") return left - right;
-  return String(left).localeCompare(String(right));
 }
 
 function isStage(value: unknown): value is Stage {
