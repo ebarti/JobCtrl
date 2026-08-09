@@ -1,11 +1,19 @@
 import { z } from "zod";
 
 import {
+  APPLICATION_OUTCOME_KINDS,
   IsoTimestampSchema,
   LearningPaginationQuerySchema,
   LearningRecommendationIdSchema,
   LearningRecommendationReviewIdSchema,
   LearningRecommendationSummarySchema,
+  RESUME_COMMENT_REPLY_DECISIONS,
+  RESUME_COMMENT_THREAD_STATES,
+  RESUME_REVIEW_DRAFT_STATES,
+  RESUME_REVIEW_EDIT_KINDS,
+  TAILORING_FEEDBACK_SIGNAL_KINDS,
+  TAILORING_FEEDBACK_SIGNAL_STATUSES,
+  TAILORING_FEEDBACK_SOURCE_KINDS,
   TailoringPolicyLearnedRuleSchema,
 } from "./schemas.js";
 import {
@@ -115,6 +123,8 @@ interface EndpointDefinitionBase<
   readonly path: TPath;
   readonly request: TRequestSchema;
   readonly response: TResponseSchema;
+  /** Indirect worker calls owned by an injected handler rather than this HTTP shell. */
+  readonly rpcDependencies?: readonly RpcMethod[];
   readonly demo: EndpointDemoCapability;
 }
 
@@ -251,6 +261,230 @@ export type TailoringPolicyRollbackResponse = z.infer<
   typeof TailoringPolicyRollbackResponseSchema
 >;
 
+export const ResumeReviewDraftRenderRequestSchema = z
+  .object({
+    draftRevisionId: z.string().trim().min(1).max(160).optional(),
+  })
+  .strict();
+export type ResumeReviewDraftRenderRequest = z.infer<
+  typeof ResumeReviewDraftRenderRequestSchema
+>;
+
+const ResumeLineAnchorResponseSchema = z
+  .object({
+    semanticId: z.string().nullable(),
+    lineNumber: z.number().int().nullable(),
+    pageNumber: z.number().int().nullable(),
+    textHash: z.string().nullable(),
+  })
+  .strict();
+
+const ResumeReviewEditDeltaResponseSchema = z
+  .object({
+    deltaId: z.string(),
+    revisionId: z.string(),
+    kind: z.enum(RESUME_REVIEW_EDIT_KINDS),
+    section: z.string().nullable(),
+    semanticId: z.string().nullable(),
+    lineAnchor: ResumeLineAnchorResponseSchema.nullable(),
+    beforeText: z.string(),
+    afterText: z.string(),
+    createdAt: IsoTimestampSchema,
+  })
+  .strict();
+
+const ResumeReviewDraftRevisionResponseSchema = z
+  .object({
+    revisionId: z.string(),
+    draftId: z.string(),
+    jobKey: z.string(),
+    revisionNumber: z.number().int().nonnegative(),
+    editedText: z.string(),
+    plateDocument: z.unknown().nullable(),
+    editDeltas: z.array(ResumeReviewEditDeltaResponseSchema),
+    createdAt: IsoTimestampSchema,
+  })
+  .strict();
+
+const ResumeCommentReplyResponseSchema = z
+  .object({
+    replyId: z.string(),
+    threadId: z.string(),
+    draftRevisionId: z.string().nullable(),
+    author: z.string(),
+    decision: z.enum(RESUME_COMMENT_REPLY_DECISIONS),
+    body: z.string(),
+    createdAt: IsoTimestampSchema,
+  })
+  .strict();
+
+const ResumeCommentThreadResponseSchema = z
+  .object({
+    threadId: z.string(),
+    draftId: z.string(),
+    jobKey: z.string(),
+    baseArtifactId: z.string().nullable(),
+    semanticId: z.string().nullable(),
+    lineAnchor: ResumeLineAnchorResponseSchema.nullable(),
+    sourcePinId: z.string().nullable(),
+    riskLabel: z.string().nullable(),
+    commentBody: z.string(),
+    state: z.enum(RESUME_COMMENT_THREAD_STATES),
+    anchorResolved: z.boolean(),
+    createdAt: IsoTimestampSchema,
+    updatedAt: IsoTimestampSchema,
+    replies: z.array(ResumeCommentReplyResponseSchema),
+  })
+  .strict();
+
+const TailoringFeedbackSignalResponseSchema = z
+  .object({
+    signalId: z.string(),
+    jobKey: z.string(),
+    draftId: z.string(),
+    draftRevisionId: z.string().nullable(),
+    sourceKind: z.enum(TAILORING_FEEDBACK_SOURCE_KINDS),
+    sourceId: z.string(),
+    kind: z.enum(TAILORING_FEEDBACK_SIGNAL_KINDS),
+    status: z.enum(TAILORING_FEEDBACK_SIGNAL_STATUSES),
+    summary: z.string(),
+    section: z.string().nullable(),
+    semanticId: z.string().nullable(),
+    createdAt: IsoTimestampSchema,
+    reviewedAt: IsoTimestampSchema.nullable(),
+  })
+  .strict();
+
+const ResumeReviewDraftResponseSchema = z
+  .object({
+    draftId: z.string(),
+    jobKey: z.string(),
+    baseGeneration: z.number().int().nonnegative(),
+    baseResumeTextArtifactId: z.string().nullable(),
+    baseResumePdfArtifactId: z.string().nullable(),
+    rendererFormat: z.string(),
+    state: z.enum(RESUME_REVIEW_DRAFT_STATES),
+    currentRevisionId: z.string().nullable(),
+    latestRevisionNumber: z.number().int().nonnegative(),
+    createdAt: IsoTimestampSchema,
+    updatedAt: IsoTimestampSchema,
+    latestRevision: ResumeReviewDraftRevisionResponseSchema.nullable(),
+    commentThreads: z.array(ResumeCommentThreadResponseSchema),
+    feedbackSignals: z.array(TailoringFeedbackSignalResponseSchema),
+  })
+  .strict();
+
+export const ResumeReviewDraftValidationResultSchema = z
+  .object({
+    passed: z.boolean(),
+    errors: z.array(z.string()),
+    warnings: z.array(z.string()),
+  })
+  .strict();
+export type ResumeReviewDraftValidationResult = z.infer<
+  typeof ResumeReviewDraftValidationResultSchema
+>;
+
+export const ResumeReviewRenderedArtifactSchema = z
+  .object({
+    artifactId: z.string(),
+    artifactType: z.enum(["tailored_resume", "resume_pdf"]),
+    generation: z.number().int().nonnegative(),
+    renderFormat: z.enum(["text", "html_pdf"]),
+  })
+  .strict();
+export type ResumeReviewRenderedArtifact = z.infer<
+  typeof ResumeReviewRenderedArtifactSchema
+>;
+
+export const ResumeReviewDraftRenderResponseSchema = z.discriminatedUnion("ok", [
+  z
+    .object({
+      ok: z.literal(true),
+      draft: ResumeReviewDraftResponseSchema,
+      validation: ResumeReviewDraftValidationResultSchema,
+      artifacts: z
+        .object({
+          resumeText: ResumeReviewRenderedArtifactSchema,
+          resumePdf: ResumeReviewRenderedArtifactSchema,
+        })
+        .strict(),
+      layoutBoxCount: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      error: z.literal("resume_review_draft_invalid"),
+      draft: ResumeReviewDraftResponseSchema,
+      validation: ResumeReviewDraftValidationResultSchema,
+    })
+    .strict(),
+]);
+export type ResumeReviewDraftRenderResponse = z.infer<
+  typeof ResumeReviewDraftRenderResponseSchema
+>;
+
+export const GmailOutcomeScanRequestSchema = z
+  .object({
+    recipientEmail: z.string().trim().email().optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(25),
+    maxResultsPerAnchor: z.coerce.number().int().min(1).max(20).default(5),
+    windowDays: z.coerce.number().int().min(1).max(180).default(45),
+  })
+  .strict();
+export type GmailOutcomeScanRequest = z.input<typeof GmailOutcomeScanRequestSchema>;
+
+export const GmailOutcomeScanEvidenceSummarySchema = z
+  .object({
+    evidenceId: z.string(),
+    jobKey: z.string(),
+    providerMessageId: z.string(),
+    linkConfidence: z.number(),
+  })
+  .strict();
+export type GmailOutcomeScanEvidenceSummary = z.infer<
+  typeof GmailOutcomeScanEvidenceSummarySchema
+>;
+
+export const GmailOutcomeScanSuggestionSummarySchema = z
+  .object({
+    suggestionId: z.string(),
+    evidenceId: z.string(),
+    jobKey: z.string(),
+    kind: z.enum(APPLICATION_OUTCOME_KINDS),
+    confidence: z.number(),
+  })
+  .strict();
+export type GmailOutcomeScanSuggestionSummary = z.infer<
+  typeof GmailOutcomeScanSuggestionSummarySchema
+>;
+
+export const GmailOutcomeScanResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    scannedAnchorCount: z.number(),
+    searchedMessageCount: z.number(),
+    linkedEvidenceCount: z.number(),
+    suggestionsCreatedCount: z.number(),
+    duplicateMessageCount: z.number(),
+    unlinkedCandidateCount: z.number(),
+    evidence: z.array(GmailOutcomeScanEvidenceSummarySchema),
+    suggestions: z.array(GmailOutcomeScanSuggestionSummarySchema),
+  })
+  .strict();
+export type GmailOutcomeScanResponse = z.infer<
+  typeof GmailOutcomeScanResponseSchema
+>;
+
+const RenderResumeReviewDraftRequestSchema =
+  ResumeReviewDraftRenderRequestSchema.optional().transform((request) => request ?? {});
+
+const ScanGmailApplicationOutcomesRequestSchema =
+  GmailOutcomeScanRequestSchema.optional().transform((request) =>
+    GmailOutcomeScanRequestSchema.parse(request ?? {}),
+  );
+
 const recommendationReviewPath = defineEndpointPath({
   route: "/v1/learning/recommendations/:recommendationId/reviews",
   paramName: "recommendationId",
@@ -261,6 +495,18 @@ const recommendationReviewPath = defineEndpointPath({
   },
   build: (recommendationId: string) =>
     `/v1/learning/recommendations/${encodeURIComponent(recommendationId)}/reviews`,
+});
+
+const resumeReviewDraftRenderPath = defineEndpointPath({
+  route: "/v1/resume-review/drafts/:draftId/render",
+  paramName: "draftId",
+  paramSchema: z.string(),
+  invalid: {
+    status: 400,
+    error: "invalid_resume_review_draft_id",
+  },
+  build: (draftId: string) =>
+    `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
 });
 
 const reviewFailure = (failure: EndpointDispatchFailure): EndpointFailureResponse => ({
@@ -378,6 +624,30 @@ export const ENDPOINTS = {
     demo: {
       class: "unavailable",
       reason: "Tailoring policy rollback requires the local audited database.",
+    },
+  }),
+  renderResumeReviewDraft: defineEndpoint({
+    name: "renderResumeReviewDraft",
+    method: "POST",
+    path: resumeReviewDraftRenderPath,
+    request: RenderResumeReviewDraftRequestSchema,
+    response: ResumeReviewDraftRenderResponseSchema,
+    rpcDependencies: [RpcMethods.RenderResumePdf],
+    demo: {
+      class: "unavailable",
+      reason: "Draft rendering is deferred from the public-demo MVP.",
+    },
+  }),
+  scanGmailApplicationOutcomes: defineEndpoint({
+    name: "scanGmailApplicationOutcomes",
+    method: "POST",
+    path: "/v1/outcomes/gmail/scan",
+    request: ScanGmailApplicationOutcomesRequestSchema,
+    response: GmailOutcomeScanResponseSchema,
+    rpcDependencies: [RpcMethods.GmailFeedbackScan],
+    demo: {
+      class: "unavailable",
+      reason: "Gmail outcome scanning requires the local authenticated mailbox.",
     },
   }),
 } as const;

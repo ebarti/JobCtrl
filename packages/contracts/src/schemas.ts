@@ -1243,15 +1243,6 @@ export type ResumeReviewCommentThreadSeedRequest = z.infer<
   typeof ResumeReviewCommentThreadSeedRequestSchema
 >;
 
-export const ResumeReviewDraftRenderRequestSchema = z
-  .object({
-    draftRevisionId: z.string().trim().min(1).max(160).optional(),
-  })
-  .strict();
-export type ResumeReviewDraftRenderRequest = z.infer<
-  typeof ResumeReviewDraftRenderRequestSchema
->;
-
 export const ResumeCommentReplyRequestSchema = z
   .object({
     draftRevisionId: z.string().trim().min(1).max(160).optional(),
@@ -1287,37 +1278,6 @@ export interface ResumeCommentReplyResponse {
   reply: ResumeCommentReply;
   feedbackSignal: TailoringFeedbackSignal;
 }
-
-export interface ResumeReviewDraftValidationResult {
-  passed: boolean;
-  errors: string[];
-  warnings: string[];
-}
-
-export interface ResumeReviewRenderedArtifact {
-  artifactId: string;
-  artifactType: "tailored_resume" | "resume_pdf";
-  generation: number;
-  renderFormat: "text" | "html_pdf";
-}
-
-export type ResumeReviewDraftRenderResponse =
-  | {
-      ok: true;
-      draft: ResumeReviewDraft;
-      validation: ResumeReviewDraftValidationResult;
-      artifacts: {
-        resumeText: ResumeReviewRenderedArtifact;
-        resumePdf: ResumeReviewRenderedArtifact;
-      };
-      layoutBoxCount: number;
-    }
-  | {
-      ok: false;
-      error: "resume_review_draft_invalid";
-      draft: ResumeReviewDraft;
-      validation: ResumeReviewDraftValidationResult;
-    };
 
 export interface ResumeReviewFeedbackListResponse {
   ok: true;
@@ -1474,43 +1434,6 @@ export interface ApplicationOutcomeListResponse {
 
 export interface JobApplicationOutcomeListResponse extends ApplicationOutcomeListResponse {
   jobKey: string;
-}
-
-export const GmailOutcomeScanRequestSchema = z
-  .object({
-    recipientEmail: z.string().trim().email().optional(),
-    limit: z.coerce.number().int().min(1).max(100).default(25),
-    maxResultsPerAnchor: z.coerce.number().int().min(1).max(20).default(5),
-    windowDays: z.coerce.number().int().min(1).max(180).default(45),
-  })
-  .strict();
-export type GmailOutcomeScanRequest = z.input<typeof GmailOutcomeScanRequestSchema>;
-
-export interface GmailOutcomeScanEvidenceSummary {
-  evidenceId: string;
-  jobKey: string;
-  providerMessageId: string;
-  linkConfidence: number;
-}
-
-export interface GmailOutcomeScanSuggestionSummary {
-  suggestionId: string;
-  evidenceId: string;
-  jobKey: string;
-  kind: ApplicationOutcomeKind;
-  confidence: number;
-}
-
-export interface GmailOutcomeScanResponse {
-  ok: true;
-  scannedAnchorCount: number;
-  searchedMessageCount: number;
-  linkedEvidenceCount: number;
-  suggestionsCreatedCount: number;
-  duplicateMessageCount: number;
-  unlinkedCandidateCount: number;
-  evidence: GmailOutcomeScanEvidenceSummary[];
-  suggestions: GmailOutcomeScanSuggestionSummary[];
 }
 
 export const RunPipelineStagesRequestSchema = z
