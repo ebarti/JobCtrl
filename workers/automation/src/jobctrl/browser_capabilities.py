@@ -564,6 +564,17 @@ def _safe_profile_label(value: object, fallback: str) -> str:
     return "".join(result) or fallback
 
 
+def _profile_display_label(record: object, fallback: str) -> str:
+    """Choose Chrome's recognizable display label without exposing account IDs."""
+
+    if not isinstance(record, dict):
+        return fallback
+    configured_name = _safe_profile_label(record.get("name"), fallback)
+    if record.get("is_using_default_name") is True:
+        return _safe_profile_label(record.get("gaia_name"), configured_name)
+    return configured_name
+
+
 def _profile_metadata(root: Path) -> tuple[dict[str, object], tuple[str, ...]]:
     """Read bounded Chrome display metadata without following a Local State symlink."""
 
@@ -657,13 +668,12 @@ def detect_browser_profiles(browser_id: str) -> tuple[DetectedBrowserProfile, ..
             if not profile_directory.is_dir() or profile_directory.is_symlink():
                 continue
             record = metadata.get(directory_name)
-            display_name = record.get("name") if isinstance(record, dict) else None
             fallback = "Default" if directory_name == "Default" else directory_name
             detected.append(
                 DetectedBrowserProfile(
                     id=_detected_profile_id(browser.id, root, directory_name),
                     browser_id=browser.id,
-                    label=_safe_profile_label(display_name, fallback),
+                    label=_profile_display_label(record, fallback),
                     user_data_root=root,
                     directory_name=directory_name,
                 )
