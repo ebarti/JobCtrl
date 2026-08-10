@@ -65,6 +65,7 @@ from jobctrl.domain.discovery.source_registry import (
     validate_locator_candidate,
 )
 from jobctrl.domain.discovery.scheduler import (
+    DiscoveryProviderProgress,
     DiscoveryRun,
     DiscoveryRunCounts,
     DiscoveryRunProgress,
@@ -123,6 +124,7 @@ __all__ = [
     "SourceRegistryEntry",
     "SourceState",
     "validate_locator_candidate",
+    "DiscoveryProviderProgress",
     "DiscoveryRun",
     "DiscoveryRunCounts",
     "DiscoveryRunProgress",

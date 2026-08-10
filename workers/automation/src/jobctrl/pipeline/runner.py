@@ -20,6 +20,7 @@ from jobctrl import config
 from jobctrl import database as db_module
 from jobctrl.database import init_db, get_connection
 from jobctrl.domain.discovery.scheduler import (
+    DiscoveryProviderProgress,
     DiscoveryRun,
     DiscoveryRunCounts,
     DiscoveryRunProgress,
@@ -737,6 +738,7 @@ def _record_discovery_source_progress(
     progress_total: int,
     source_progress: DiscoveryRunProgress,
     message: str,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> None:
     now = utc_now()
     counts = DiscoveryRunCounts(
@@ -772,6 +774,14 @@ def _record_discovery_source_progress(
             "sourceLabel": label,
             "runId": run_id,
             "sourceIds": list(source_ids),
+            **(
+                {
+                    "discoverWorkflowId": discovery_execution.workflow_id,
+                    "discoverRunId": discovery_execution.temporal_run_id,
+                }
+                if discovery_execution is not None
+                else {}
+            ),
             **_discovery_progress_payload(
                 completed=progress_completed,
                 total=progress_total,
@@ -1303,6 +1313,10 @@ def _optional_text(value: object) -> str | None:
     return text or None
 
 
+def _optional_bool(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
 def _first_present(*values: object) -> object:
     for value in values:
         if value is not None:
@@ -1508,6 +1522,7 @@ def run_discovery_source_family(
                     source_ids=tuple(item.source_id for item in jobspy_sources if item.should_run),
                     progress_completed=progress_completed,
                     progress_total=progress_total,
+                    discovery_execution=discovery_execution,
                 ),
             )
             return run_discovery(**run_kwargs)
@@ -1910,6 +1925,7 @@ def _jobspy_progress_callback(
     source_ids: tuple[str, ...],
     progress_completed: int,
     progress_total: int,
+    discovery_execution: DiscoveryExecutionRef | None,
 ) -> Callable[[dict[str, Any]], None] | None:
     if not run_id:
         return None
@@ -1920,6 +1936,7 @@ def _jobspy_progress_callback(
             snapshot.get("error_count"),
             snapshot.get("errorCount"),
         )
+        provider_progress = _discovery_provider_progress(snapshot)
         _record_discovery_source_progress(
             source="jobspy",
             label="Broad boards",
@@ -1952,11 +1969,63 @@ def _jobspy_progress_callback(
                         snapshot.get("recoveredUnits"),
                     )
                 ),
+                provider_progress=provider_progress,
             ),
             message=str(snapshot.get("message") or "JobStreaming progress updated"),
+            discovery_execution=discovery_execution,
         )
 
     return record_jobspy_progress
+
+
+def _discovery_provider_progress(
+    snapshot: dict[str, Any],
+) -> DiscoveryProviderProgress | None:
+    raw = _first_present(
+        snapshot.get("provider_progress"),
+        snapshot.get("providerProgress"),
+    )
+    if not isinstance(raw, dict):
+        return None
+    site = _optional_text(raw.get("site"))
+    phase = _optional_text(raw.get("phase"))
+    unit = _optional_text(raw.get("unit"))
+    completed_units = _optional_int(
+        _first_present(raw.get("completed_units"), raw.get("completedUnits"))
+    )
+    jobs_emitted = _optional_int(
+        _first_present(raw.get("jobs_emitted"), raw.get("jobsEmitted"))
+    )
+    if (
+        site is None
+        or phase is None
+        or unit is None
+        or completed_units is None
+        or jobs_emitted is None
+    ):
+        return None
+    try:
+        return DiscoveryProviderProgress(
+            site=site,
+            phase=phase,
+            unit=unit,
+            completed_units=completed_units,
+            total_units=_optional_int(
+                _first_present(raw.get("total_units"), raw.get("totalUnits"))
+            ),
+            raw_items_seen=_optional_int(
+                _first_present(
+                    raw.get("raw_items_seen"),
+                    raw.get("rawItemsSeen"),
+                )
+            ),
+            jobs_emitted=jobs_emitted,
+            has_more=_optional_bool(
+                _first_present(raw.get("has_more"), raw.get("hasMore"))
+            ),
+        )
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------

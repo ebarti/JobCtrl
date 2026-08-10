@@ -8,6 +8,7 @@ from typing import Any
 
 from jobctrl.database import ensure_discovery_run_tables
 from jobctrl.domain.discovery.scheduler import (
+    DiscoveryProviderProgress,
     DiscoveryRun,
     DiscoveryRunCounts,
     DiscoveryRunProgress,
@@ -106,6 +107,9 @@ def _row_to_run(row: sqlite3.Row | tuple[Any, ...]) -> DiscoveryRun:
 
     counts = _json_dict(get("counts_json", 5))
     progress = _json_dict(get("progress_json", 6))
+    provider_progress = _provider_progress(
+        _first_present(progress, "provider_progress", "providerProgress")
+    )
     return DiscoveryRun(
         tenant_id=TenantId(str(get("tenant_id", 0))),
         run_id=str(get("run_id", 1)),
@@ -134,6 +138,7 @@ def _row_to_run(row: sqlite3.Row | tuple[Any, ...]) -> DiscoveryRun:
             recovered_units=_nullable_int(
                 _first_present(progress, "recovered_units", "recoveredUnits")
             ),
+            provider_progress=provider_progress,
         ),
         error_classes=tuple(str(value) for value in _json_list(get("error_classes_json", 7))),
         started_at=str(get("started_at", 8)),
@@ -176,6 +181,47 @@ def _nullable_int(value: object) -> int | None:
     try:
         return int(value)
     except (TypeError, ValueError):
+        return None
+
+
+def _provider_progress(value: object) -> DiscoveryProviderProgress | None:
+    if not isinstance(value, dict):
+        return None
+    site = _nullable_str(value.get("site"))
+    phase = _nullable_str(value.get("phase"))
+    unit = _nullable_str(value.get("unit"))
+    completed_units = _nullable_int(
+        _first_present(value, "completed_units", "completedUnits")
+    )
+    jobs_emitted = _nullable_int(
+        _first_present(value, "jobs_emitted", "jobsEmitted")
+    )
+    if (
+        site is None
+        or phase is None
+        or unit is None
+        or completed_units is None
+        or jobs_emitted is None
+    ):
+        return None
+    has_more_value = _first_present(value, "has_more", "hasMore")
+    has_more = has_more_value if isinstance(has_more_value, bool) else None
+    try:
+        return DiscoveryProviderProgress(
+            site=site,
+            phase=phase,
+            unit=unit,
+            completed_units=completed_units,
+            total_units=_nullable_int(
+                _first_present(value, "total_units", "totalUnits")
+            ),
+            raw_items_seen=_nullable_int(
+                _first_present(value, "raw_items_seen", "rawItemsSeen")
+            ),
+            jobs_emitted=jobs_emitted,
+            has_more=has_more,
+        )
+    except ValueError:
         return None
 
 

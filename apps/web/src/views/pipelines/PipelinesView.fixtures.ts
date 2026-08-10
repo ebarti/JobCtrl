@@ -158,6 +158,16 @@ function snapshot(overrides: Partial<PipelineOperationsSnapshot> = {}): Pipeline
       counts: counts({ eligible: 3, processing: 2, succeeded: 1 }),
       eta: etaAvailable,
       asOf: AS_OF,
+      providerProgress: {
+        site: "indeed",
+        phase: "search",
+        unit: "page",
+        completedUnits: 3,
+        totalUnits: null,
+        rawItemsSeen: 42,
+        jobsEmitted: 9,
+        hasMore: true,
+      },
     },
     reconciliation: {
       enrichment: counts({ eligible: 1, waiting: 1 }),

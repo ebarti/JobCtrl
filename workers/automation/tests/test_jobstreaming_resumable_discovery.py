@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +21,8 @@ from jobstreaming import (
     JobPost,
     JobResponse,
     Location,
+    Resumable,
+    ResumeGranularity,
     Scraper,
     SearchCheckpoint,
     Site,
@@ -115,6 +118,30 @@ class _SuccessfulIndeed(_PagedIndeed):
             {"next": 1},
         )
         return JobResponse()
+
+
+class _ProgressIndeed(_SuccessfulIndeed):
+    def scrape(self, request, context=None) -> JobResponse:
+        assert context is not None
+        response = super().scrape(request, context=context)
+        context.emit_progress(
+            {"next": 1, "private_cursor": "must-not-project"},
+            completed_units=3,
+            total_units=None,
+            raw_items_seen=12,
+            has_more=True,
+        )
+        return response
+
+
+class _SchemaV2Indeed(_SuccessfulIndeed):
+    capabilities = AdapterCapabilities(
+        filters=frozenset({"location", "is_remote", "hours_old"}),
+        resume=Resumable(
+            granularity=ResumeGranularity.PAGE,
+            cursor_schema_version=2,
+        ),
+    )
 
 
 class _FilteredIndeed(Scraper):
@@ -436,6 +463,45 @@ def test_store_before_ack_replay_resumes_without_duplicate_counts_or_events(
     )
 
 
+def test_provider_progress_is_projected_without_private_resume_state(
+    discovery_db,
+) -> None:
+    _conn, _db_path = discovery_db
+    progress: list[dict] = []
+
+    result = jobspy.run_discovery(
+        cfg=_config(),
+        progress_callback=progress.append,
+        discovery_execution=_execution("temporal-run-provider-progress"),
+        activity_attempt=1,
+        activity_owner_token="provider-progress-attempt-1",
+        adapter_registry=_registry(indeed_factory=_ProgressIndeed),
+    )
+
+    provider_snapshot = next(
+        snapshot
+        for snapshot in progress
+        if snapshot["message"] == "JobStreaming provider page completed"
+    )
+    assert provider_snapshot["providerProgress"] == {
+        "site": "indeed",
+        "phase": "search",
+        "unit": "page",
+        "completed_units": 3,
+        "completedUnits": 3,
+        "total_units": None,
+        "totalUnits": None,
+        "raw_items_seen": 12,
+        "rawItemsSeen": 12,
+        "jobs_emitted": 1,
+        "jobsEmitted": 1,
+        "has_more": True,
+        "hasMore": True,
+    }
+    assert "private_cursor" not in json.dumps(provider_snapshot)
+    assert result["new"] == 1
+
+
 def test_filtered_count_survives_loss_after_acknowledgement(
     discovery_db,
     monkeypatch: pytest.MonkeyPatch,
@@ -712,11 +778,7 @@ def test_incompatible_cursor_schema_fails_explicitly_without_resetting(
     )
     repository.checkpoint_store(seed_lease).save(checkpoint)
     incompatible_registry = AdapterRegistry()
-    incompatible_registry.register(
-        Site.INDEED,
-        _SuccessfulIndeed,
-        cursor_schema_version=2,
-    )
+    incompatible_registry.register(Site.INDEED, _SchemaV2Indeed)
 
     with pytest.raises(RuntimeError, match="JobStreaming failed for all"):
         jobspy.run_discovery(

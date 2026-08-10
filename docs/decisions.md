@@ -2140,6 +2140,11 @@ Cites: `docs/plans/implemented/2026-07-17-resumable-jobstreaming-discovery-plan.
 `docs/architecture/pipeline/envelope.md`; `docs/architecture/storage.md`;
 `workers/automation/tests/test_jobstreaming_resumable_discovery.py`.
 
+Amended (2026-08-10): the provider pin advances to JobStreaming 0.0.3. Its
+normalized, cursor-free `ProviderProgress` observations are projected under the
+exact Discover workflow/run identity, while provider totals remain nullable and
+separate from JobCtrl acceptance counts and whole-pipeline ETA evidence.
+
 ## 2026-07-29: Stable Job Identity And Human-Approved Feedback Learning
 
 Status: accepted

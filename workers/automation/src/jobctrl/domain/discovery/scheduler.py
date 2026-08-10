@@ -88,6 +88,62 @@ class DiscoveryRunCounts:
 
 
 @dataclass(frozen=True)
+class DiscoveryProviderProgress:
+    """Client-safe traversal facts for the latest provider observation."""
+
+    site: str
+    phase: str
+    unit: str
+    completed_units: int
+    total_units: int | None
+    raw_items_seen: int | None
+    jobs_emitted: int
+    has_more: bool | None
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("site", self.site),
+            ("phase", self.phase),
+            ("unit", self.unit),
+        ):
+            if not value.strip():
+                raise ValueError(f"{field_name} must be non-empty")
+        for field_name, value in (
+            ("completed_units", self.completed_units),
+            ("jobs_emitted", self.jobs_emitted),
+        ):
+            if value < 0:
+                raise ValueError(f"{field_name} must be non-negative")
+        for field_name, value in (
+            ("total_units", self.total_units),
+            ("raw_items_seen", self.raw_items_seen),
+        ):
+            if value is not None and value < 0:
+                raise ValueError(f"{field_name} must be non-negative when supplied")
+        if self.total_units is not None and self.completed_units > self.total_units:
+            raise ValueError("completed_units cannot exceed total_units")
+        if self.raw_items_seen is not None and self.jobs_emitted > self.raw_items_seen:
+            raise ValueError("jobs_emitted cannot exceed raw_items_seen")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "site": self.site,
+            "phase": self.phase,
+            "unit": self.unit,
+            "completed_units": self.completed_units,
+            "completedUnits": self.completed_units,
+            "total_units": self.total_units,
+            "totalUnits": self.total_units,
+            "raw_items_seen": self.raw_items_seen,
+            "rawItemsSeen": self.raw_items_seen,
+            "jobs_emitted": self.jobs_emitted,
+            "jobsEmitted": self.jobs_emitted,
+            "has_more": self.has_more,
+            "hasMore": self.has_more,
+        }
+
+
+@dataclass(frozen=True)
 class DiscoveryRunProgress:
     completed: int = 0
     total: int = 0
@@ -100,6 +156,7 @@ class DiscoveryRunProgress:
     error_count: int | None = None
     raw_total: int | None = None
     recovered_units: int | None = None
+    provider_progress: DiscoveryProviderProgress | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -122,6 +179,16 @@ class DiscoveryRunProgress:
             "rawTotal": self.raw_total,
             "recovered_units": self.recovered_units,
             "recoveredUnits": self.recovered_units,
+            "provider_progress": (
+                self.provider_progress.to_dict()
+                if self.provider_progress is not None
+                else None
+            ),
+            "providerProgress": (
+                self.provider_progress.to_dict()
+                if self.provider_progress is not None
+                else None
+            ),
         }
 
 

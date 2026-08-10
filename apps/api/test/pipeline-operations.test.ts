@@ -375,6 +375,86 @@ describe("pipeline operations read model", () => {
     });
   });
 
+  it("projects exact-run JobStreaming traversal facts without provider cursors", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertStep(fixture, {
+      stepKind: "source_planning",
+      itemKey: "plan",
+      state: "succeeded",
+      detailCount: 1,
+    });
+    insertStep(fixture, {
+      stepKind: "source_family",
+      itemKey: "family:jobspy",
+      state: "running",
+    });
+    const progressPayload = (runId: string, site: string, completedUnits: number) => ({
+      workflowId: DISCOVER_WORKFLOW_ID,
+      discoverRunId: runId,
+      progress: {
+        sourceProgress: {
+          providerProgress: {
+            site,
+            phase: "search",
+            unit: "page",
+            completedUnits,
+            totalUnits: null,
+            rawItemsSeen: 42,
+            jobsEmitted: 9,
+            hasMore: true,
+          },
+        },
+      },
+    });
+    fixture.db.prepare(
+      `INSERT INTO job_events (
+         tenant_id, job_id, identity_version, stage, event_type, level,
+         message, occurred_at, payload_json
+       ) VALUES ('local', NULL, 1, 'discover', 'StageProgress', 'info', ?, ?, ?)`,
+    ).run(
+      "current provider progress",
+      "2026-07-14T11:58:00.000Z",
+      JSON.stringify(progressPayload(DISCOVER_RUN_ID, "indeed", 3)),
+    );
+    fixture.db.prepare(
+      `INSERT INTO job_events (
+         tenant_id, job_id, identity_version, stage, event_type, level,
+         message, occurred_at, payload_json
+       ) VALUES ('local', NULL, 1, 'discover', 'StageProgress', 'info', ?, ?, ?)`,
+    ).run(
+      "newer progress from another run",
+      "2026-07-14T11:59:00.000Z",
+      JSON.stringify(progressPayload("different-temporal-run", "google", 99)),
+    );
+
+    const result = snapshot(fixture);
+
+    expect(result.sourceFamilies?.providerProgress).toEqual({
+      site: "indeed",
+      phase: "search",
+      unit: "page",
+      completedUnits: 3,
+      totalUnits: null,
+      rawItemsSeen: 42,
+      jobsEmitted: 9,
+      hasMore: true,
+    });
+    expect(JSON.stringify(result)).not.toContain("resume_state");
+    expect(JSON.stringify(result)).not.toContain("cursor");
+
+    fixture.db.prepare(
+      `UPDATE pipeline_step_projections
+          SET state = 'succeeded', finished_at = ?, duration_ms = 60000
+        WHERE tenant_id = 'local'
+          AND discover_workflow_id = ?
+          AND discover_run_id = ?
+          AND step_kind = 'source_family'
+          AND item_key = 'family:jobspy'`,
+    ).run(NOW.toISOString(), DISCOVER_WORKFLOW_ID, DISCOVER_RUN_ID);
+    expect(snapshot(fixture).sourceFamilies?.providerProgress).toBeUndefined();
+  });
+
   it("uses every bucket exactly once for the current execution stage scope", () => {
     const fixture = createFixture();
     insertExecution(fixture, { status: "in_progress" });

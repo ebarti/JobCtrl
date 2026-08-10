@@ -140,7 +140,11 @@ The workspace deliberately keeps different scopes and units separate:
 - **Source-family progress** reports source intake; enrichment and preparation
   reconciliation report the downstream drain. A finished crawl can therefore
   coexist with preparation that is still running. Broad-board progress also
-  reports how many interrupted search units resumed.
+  reports how many interrupted search units resumed. While a board is active,
+  its latest provider traversal facts show completed pages, raw listings,
+  emitted jobs, and whether more pages are known to exist. When the provider
+  does not publish a total page count, JobCtrl says the total is unavailable
+  instead of inventing a percentage or finish time.
 - **Worker capacity** reports Temporal workers and shared activity slots.
   Source-family internal concurrency is a separate control, and approximate
   task-queue depth is not a count of domain jobs.
@@ -187,7 +191,7 @@ Temporal run ID, and the bounded repair reason code remain available under
 
 ### Resumable Broad-Board Searches
 
-Broad-board discovery uses JobStreaming 0.0.2. At the beginning of the source
+Broad-board discovery uses JobStreaming 0.0.3. At the beginning of the source
 activity, JobCtrl compiles an immutable unit for every query, target/provider
 location, and board under the exact Discover workflow/run identity. JobCtrl,
 not the provider, owns whether that unit is pending, running, completed, failed,
@@ -209,6 +213,13 @@ cursor is reset only after its error event has been acknowledged. Request or
 cursor-schema incompatibility fails explicitly instead of silently starting a
 different search. Healthy boards and already accepted postings remain useful
 when another board fails. Pipelines shows `N resumed` when recovery happened.
+
+JobStreaming page progress is projected separately from JobCtrl acceptance
+counts. The provider payload contains no cursor or resume dictionary, and the
+Pipelines operations view binds it to the exact Discover workflow/run before
+displaying it. These traversal facts explain current crawl activity; they do
+not override a whole-stage ETA that is unavailable because shared worker-pool
+contention or an authoritative provider total is still unknown.
 
 **Stop discovery** is different from interruption: cooperative cancellation
 interrupts provider waits and marks active and pending units canceled. Canceled

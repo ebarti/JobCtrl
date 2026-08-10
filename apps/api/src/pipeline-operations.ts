@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type {
+  DiscoveryProviderProgress,
   DiscoveryExecutionSummary,
   PipelineActiveItem,
   PipelineCapacity,
@@ -1473,6 +1474,11 @@ function sourceFamilyProgress(
   if (sourceRows.length === 0 && sourcePlanRows.length === 0) return null;
   const planned = Math.max(maxDetailCount(sourcePlanRows) ?? 0, sourceRows.length);
   const counts = projectionCounts(sourceRows, planned);
+  const providerProgress = sourceRows.some(
+    (step) => step.item_key === "family:jobspy" && step.state === "running",
+  )
+    ? latestDiscoveryProviderProgress(db, tenantId, selected)
+    : null;
   return {
     planned,
     counts,
@@ -1501,6 +1507,94 @@ function sourceFamilyProgress(
       contention: sourceContention(selected, sweepCounts, globalCounts, globalRetryability, telemetry),
     }) as PipelineEta,
     asOf: generatedAt,
+    ...(providerProgress ? { providerProgress } : {}),
+  };
+}
+
+function latestDiscoveryProviderProgress(
+  db: SqliteDatabase,
+  tenantId: string,
+  selected: SelectedExecution,
+): DiscoveryProviderProgress | null {
+  const runId = nullableText(selected.row.temporal_run_id);
+  if (!runId) return null;
+  const rows = allRows<{ payload_json: string | null }>(
+    db,
+    `SELECT payload_json
+       FROM job_events
+      WHERE tenant_id = ?
+        AND job_id IS NULL
+        AND stage = 'discover'
+        AND event_type = 'StageProgress'
+        AND payload_json IS NOT NULL
+        AND json_valid(payload_json)
+        AND COALESCE(
+              json_extract(payload_json, '$.workflowId'),
+              json_extract(payload_json, '$.workflow_id')
+            ) = ?
+        AND COALESCE(
+              json_extract(payload_json, '$.discoverRunId'),
+              json_extract(payload_json, '$.discover_run_id')
+            ) = ?
+        AND (
+          json_type(payload_json, '$.progress.sourceProgress.providerProgress') = 'object'
+          OR json_type(payload_json, '$.progress.source_progress.provider_progress') = 'object'
+        )
+      ORDER BY event_id DESC
+      LIMIT 1`,
+    [tenantId, selected.row.workflow_id, runId],
+  );
+  const payload = parseRecord(rows[0]?.payload_json ?? null);
+  const progress = objectRecord(payload?.progress);
+  const sourceProgress = objectRecord(
+    progress?.sourceProgress ?? progress?.source_progress,
+  );
+  return parseDiscoveryProviderProgress(
+    sourceProgress?.providerProgress ?? sourceProgress?.provider_progress,
+  );
+}
+
+function parseDiscoveryProviderProgress(
+  value: unknown,
+): DiscoveryProviderProgress | null {
+  const progress = objectRecord(value);
+  if (!progress) return null;
+  const site = safeCode(progress.site);
+  const phase = safeCode(progress.phase);
+  const unit = safeCode(progress.unit);
+  const completedUnits = nonnegativeInteger(
+    progress.completedUnits ?? progress.completed_units,
+  );
+  const totalUnits = nullableNonnegativeInteger(
+    progress.totalUnits ?? progress.total_units,
+  );
+  const rawItemsSeen = nullableNonnegativeInteger(
+    progress.rawItemsSeen ?? progress.raw_items_seen,
+  );
+  const jobsEmitted = nonnegativeInteger(
+    progress.jobsEmitted ?? progress.jobs_emitted,
+  );
+  if (
+    !site
+    || !phase
+    || !unit
+    || completedUnits === null
+    || jobsEmitted === null
+    || (totalUnits !== null && completedUnits > totalUnits)
+    || (rawItemsSeen !== null && jobsEmitted > rawItemsSeen)
+  ) {
+    return null;
+  }
+  const hasMoreValue = progress.hasMore ?? progress.has_more;
+  return {
+    site,
+    phase,
+    unit,
+    completedUnits,
+    totalUnits,
+    rawItemsSeen,
+    jobsEmitted,
+    hasMore: typeof hasMoreValue === "boolean" ? hasMoreValue : null,
   };
 }
 
@@ -2306,6 +2400,18 @@ function nonnegative(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+function nonnegativeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+function nullableNonnegativeInteger(value: unknown): number | null {
+  return value === null || value === undefined
+    ? null
+    : nonnegativeInteger(value);
+}
+
 function nullableText(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;
 }
@@ -2331,6 +2437,12 @@ function parseRecord(raw: string | null): Record<string, unknown> | null {
   const parsed = parseJson(raw);
   return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
     ? (parsed as Record<string, unknown>)
+    : null;
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
     : null;
 }
 

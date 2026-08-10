@@ -1,4 +1,5 @@
 import type {
+  DiscoveryProviderProgress,
   PipelineActiveItem,
   PipelineApproximateTaskQueue,
   PipelineCapacity,
@@ -87,6 +88,24 @@ const COHORT_FIELDS = [
   ["terminal", "Terminal"],
   ["remaining", "Remaining"],
 ] as const;
+
+function providerProgressLabel(progress: DiscoveryProviderProgress): string {
+  const unit = progress.completedUnits === 1
+    ? progress.unit
+    : `${progress.unit}s`;
+  const completion = progress.totalUnits === null
+    ? `${progress.completedUnits} ${unit} completed; provider total unavailable`
+    : `${progress.completedUnits}/${progress.totalUnits} ${unit} completed`;
+  const raw = progress.rawItemsSeen === null
+    ? "raw listing count unavailable"
+    : `${progress.rawItemsSeen} raw listings seen`;
+  const continuation = progress.hasMore === true
+    ? "more pages available"
+    : progress.hasMore === false
+      ? "no more pages"
+      : "continuation unknown";
+  return `${sentenceCase(progress.site)} · ${completion} · ${raw} · ${progress.jobsEmitted} jobs emitted · ${continuation}`;
+}
 
 function statusTone(status: string): StatusTagTone {
   if (["available", "completed", "fresh", "succeeded"].includes(status)) {
@@ -669,10 +688,12 @@ function StageRows({
 }
 
 function PipelineStageRow({
+  providerProgress,
   recoveryLabel,
   stage,
   trackingReady,
 }: {
+  readonly providerProgress?: DiscoveryProviderProgress;
   readonly recoveryLabel: string;
   readonly stage: PipelineOperationalStage;
   readonly trackingReady: boolean;
@@ -733,6 +754,12 @@ function PipelineStageRow({
                 <span data-typography="label">ETA</span>
                 <strong data-typography="strong-body">{etaLabel(stage.eta)}</strong>
               </div>
+            ) : null}
+            {providerProgress ? (
+              <section className="pipeline-stage-row__outcomes">
+                <h4 data-typography="component-title">Provider traversal</h4>
+                <p data-typography="body">{providerProgressLabel(providerProgress)}</p>
+              </section>
             ) : null}
             <section className="pipeline-stage-row__outcomes">
               <h4 data-typography="component-title">Exact outcomes</h4>
@@ -1104,6 +1131,13 @@ function PipelineLiveFlow({
             {currentStages.map((stage, index) => (
               <PipelineStageRow
                 key={`${stage.scope}-${stage.stage}-${index}`}
+                {...(stage.stage === "source_family"
+                  && snapshot.sourceFamilies?.providerProgress
+                  ? {
+                      providerProgress:
+                        snapshot.sourceFamilies.providerProgress,
+                    }
+                  : {})}
                 recoveryLabel="Restoring history"
                 stage={stage}
                 trackingReady

@@ -1645,11 +1645,11 @@ def test_jobspy_normalizes_source_locations_before_storage(tmp_path):
 
 def test_jobspy_missing_dependency_is_not_reported_as_empty_success(monkeypatch):
     def missing_jobspy(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
-        raise ImportError("jobstreaming 0.0.2 is not installed")
+        raise ImportError("jobstreaming 0.0.3 is not installed")
 
     monkeypatch.setattr(jobspy, "_scrape_with_retry", missing_jobspy)
 
-    with pytest.raises(ImportError, match="jobstreaming 0.0.2"):
+    with pytest.raises(ImportError, match="jobstreaming 0.0.3"):
         jobspy._run_one_search(
             {"query": "Director of Engineering", "location": "Barcelona, Spain", "remote": True},
             ["indeed"],
