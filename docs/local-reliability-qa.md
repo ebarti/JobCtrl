@@ -477,6 +477,12 @@ every sibling profile. Concurrent replacements must serialize through publish,
 state validation, rollback, and cleanup so a stale failure cannot overwrite a
 newer successful selection.
 
+For Chrome records whose `is_using_default_name` flag is true, use the bounded
+`gaia_name` as the recognizable label instead of Chrome's generic default such
+as `Your Chrome`. A custom profile `name` must continue to win when that flag is
+false, and neither case may return the account `user_name` (email), directory
+name, or host path.
+
 <a id="scoring-policy-eval-gate"></a>
 <a id="saved-views-smoke"></a>
 <a id="daily-digest-smoke"></a>

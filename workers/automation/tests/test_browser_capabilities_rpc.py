@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -76,6 +77,92 @@ def test_capability_list_never_returns_executable_paths(monkeypatch: pytest.Monk
     assert "/secret/host/path" not in json.dumps(result)
     assert "/secret/detected/browser/path" not in json.dumps(result)
     assert "/secret/detected/profile/path" not in json.dumps(result)
+
+
+def test_capability_list_disambiguates_duplicate_signed_in_labels_without_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobctrl import browser_capabilities
+
+    profile_root = tmp_path / "Chrome"
+    (profile_root / "Default").mkdir(parents=True)
+    (profile_root / "Profile 1").mkdir()
+    (profile_root / "Profile 2").mkdir()
+    (profile_root / "Local State").write_text(
+        json.dumps(
+            {
+                "profile": {
+                    "profiles_order": ["Default", "Profile 1", "Profile 2"],
+                    "info_cache": {
+                        "Default": {
+                            "name": "Your Chrome",
+                            "gaia_name": "E",
+                            "user_name": "private@example.test",
+                            "is_using_default_name": True,
+                        },
+                        "Profile 1": {
+                            "name": "Chrome Person 1",
+                            "gaia_name": "E",
+                            "user_name": "other-private@example.test",
+                            "is_using_default_name": True,
+                        },
+                        "Profile 2": {
+                            "name": "E (1)",
+                            "gaia_name": "Unused identity",
+                            "user_name": "third-private@example.test",
+                            "is_using_default_name": False,
+                        },
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "list_browser_capabilities",
+        lambda: (
+            _status("core-browser", "ready"),
+            _status("auto-apply-browser"),
+            _status("authenticated-linkedin-browser"),
+        ),
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "detect_supported_browsers",
+        lambda: (
+            browser_capabilities.DetectedBrowser(
+                "google-chrome",
+                "Google Chrome",
+                tmp_path / "Chrome executable",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_default_browser_profile_locations",
+        lambda _browser_id: (profile_root,),
+    )
+
+    result = handlers.browser_capabilities_list({})
+    serialized = json.dumps(result)
+
+    assert [
+        profile["label"]
+        for profile in result["detectedBrowsers"][0]["profiles"]
+    ] == ["E (2)", "E (3)", "E (1)"]
+    assert len(
+        {
+            profile["label"]
+            for profile in result["detectedBrowsers"][0]["profiles"]
+        }
+    ) == 3
+    assert "Default" not in serialized
+    assert "Profile 1" not in serialized
+    assert "private@example.test" not in serialized
+    assert "other-private@example.test" not in serialized
+    assert "third-private@example.test" not in serialized
+    assert str(profile_root) not in serialized
 
 
 def test_enable_accepts_an_explicit_detected_browser_id(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -564,6 +564,33 @@ def _safe_profile_label(value: object, fallback: str) -> str:
     return "".join(result) or fallback
 
 
+def _profile_display_label(record: object, fallback: str) -> str:
+    """Choose Chrome's recognizable display label without exposing account IDs."""
+
+    if not isinstance(record, dict):
+        return fallback
+    configured_name = _safe_profile_label(record.get("name"), fallback)
+    if record.get("is_using_default_name") is True:
+        return _safe_profile_label(record.get("gaia_name"), configured_name)
+    return configured_name
+
+
+def _profile_label_with_ordinal(label: str, ordinal: int) -> str:
+    """Disambiguate duplicate labels without returning a profile directory name."""
+
+    suffix = f" ({ordinal})"
+    max_prefix_units = 80 - len(suffix)
+    prefix: list[str] = []
+    utf16_units = 0
+    for character in label:
+        character_units = 2 if ord(character) > 0xFFFF else 1
+        if utf16_units + character_units > max_prefix_units:
+            break
+        prefix.append(character)
+        utf16_units += character_units
+    return f"{''.join(prefix).rstrip() or 'Profile'}{suffix}"
+
+
 def _profile_metadata(root: Path) -> tuple[dict[str, object], tuple[str, ...]]:
     """Read bounded Chrome display metadata without following a Local State symlink."""
 
@@ -657,13 +684,12 @@ def detect_browser_profiles(browser_id: str) -> tuple[DetectedBrowserProfile, ..
             if not profile_directory.is_dir() or profile_directory.is_symlink():
                 continue
             record = metadata.get(directory_name)
-            display_name = record.get("name") if isinstance(record, dict) else None
             fallback = "Default" if directory_name == "Default" else directory_name
             detected.append(
                 DetectedBrowserProfile(
                     id=_detected_profile_id(browser.id, root, directory_name),
                     browser_id=browser.id,
-                    label=_safe_profile_label(display_name, fallback),
+                    label=_profile_display_label(record, fallback),
                     user_data_root=root,
                     directory_name=directory_name,
                 )
@@ -672,21 +698,35 @@ def detect_browser_profiles(browser_id: str) -> tuple[DetectedBrowserProfile, ..
     label_counts: dict[str, int] = {}
     for profile in detected:
         label_counts[profile.label] = label_counts.get(profile.label, 0) + 1
-    return tuple(
-        profile
-        if label_counts[profile.label] == 1
-        else DetectedBrowserProfile(
-            id=profile.id,
-            browser_id=profile.browser_id,
-            label=_safe_profile_label(
-                f"{profile.label} ({profile.directory_name})",
-                profile.label,
-            ),
-            user_data_root=profile.user_data_root,
-            directory_name=profile.directory_name,
-        )
+    label_ordinals: dict[str, int] = {}
+    used_labels = {
+        profile.label
         for profile in detected
-    )
+        if label_counts[profile.label] == 1
+    }
+    disambiguated: list[DetectedBrowserProfile] = []
+    for profile in detected:
+        if label_counts[profile.label] == 1:
+            disambiguated.append(profile)
+            continue
+        ordinal = label_ordinals.get(profile.label, 0)
+        while True:
+            ordinal += 1
+            label = _profile_label_with_ordinal(profile.label, ordinal)
+            if label not in used_labels:
+                break
+        label_ordinals[profile.label] = ordinal
+        used_labels.add(label)
+        disambiguated.append(
+            DetectedBrowserProfile(
+                id=profile.id,
+                browser_id=profile.browser_id,
+                label=label,
+                user_data_root=profile.user_data_root,
+                directory_name=profile.directory_name,
+            )
+        )
+    return tuple(disambiguated)
 
 
 def detect_default_browser_profile(browser_id: str) -> Path | None:

@@ -197,6 +197,62 @@ def test_profile_detection_lists_safe_labels_with_opaque_ids(
     )
 
 
+def test_profile_detection_uses_gaia_name_only_for_chrome_default_labels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobctrl import browser_capabilities
+
+    profile_root = tmp_path / "Chrome"
+    (profile_root / "Default").mkdir(parents=True)
+    (profile_root / "Profile 1").mkdir()
+    (profile_root / "Local State").write_text(
+        json.dumps(
+            {
+                "profile": {
+                    "profiles_order": ["Default", "Profile 1"],
+                    "info_cache": {
+                        "Default": {
+                            "name": "Your Chrome",
+                            "gaia_name": "E",
+                            "user_name": "private@example.test",
+                            "is_using_default_name": True,
+                        },
+                        "Profile 1": {
+                            "name": "Work",
+                            "gaia_name": "Other identity",
+                            "user_name": "other-private@example.test",
+                            "is_using_default_name": False,
+                        },
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "detect_supported_browsers",
+        lambda: (
+            DetectedBrowser(
+                "google-chrome",
+                "Google Chrome",
+                tmp_path / "Chrome executable",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_default_browser_profile_locations",
+        lambda _browser_id: (profile_root,),
+    )
+
+    profiles = detect_browser_profiles("google-chrome")
+
+    assert [profile.label for profile in profiles] == ["E", "Work"]
+    assert "private@example.test" not in repr(profiles)
+    assert "other-private@example.test" not in repr(profiles)
+
+
 def test_profile_detection_bounds_non_bmp_labels_to_the_rpc_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
