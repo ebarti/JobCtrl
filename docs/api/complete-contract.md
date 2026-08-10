@@ -387,7 +387,7 @@ schema:
 | `freshness` | Discriminated `fresh`, `stale`, `unsupported`, or `unavailable`; every arm carries `asOf` and `staleAfterSeconds`, and non-fresh arms carry a bounded reason. |
 | `execution` | `null` or exact Discover identity/status/phase/membership closure, timestamps/error code, and `currentExecution` / `sweptExistingBacklog` cohort summaries. Each cohort has `members`, `planned`, `notEligible`, `pending`, `failedPlan`, `terminal`, and `remaining`. |
 | `capacity` | Discriminated `available`, `stale`, or `unavailable`; see below. |
-| `sourceFamilies` | `null` or `{ planned, counts, eta, asOf }`. |
+| `sourceFamilies` | `null` or `{ planned, counts, eta, asOf, providerProgress? }`. The optional progress object contains `{ site, phase, unit, completedUnits, totalUnits, rawItemsSeen, jobsEmitted, hasMore }`; nullable provider facts remain `null`. |
 | `reconciliation` | `null` or `{ enrichment, preparationFanout, asOf }`, where both values use the canonical stage-count shape. |
 | `projectionCoverage` | `null` only when no execution is selected and fresh available telemetry proves zero active slots; otherwise the `ready`, `recovering`, `retrying`, or terminal `incomplete` exact-lineage checkpoint described below. |
 | `stages` | Ordered `PipelineOperationalStage[]`; each has `stage`, `label`, `scope`, `currentExecution`, `existingBacklog`, `capacity`, `eta`, and `asOf`. |
@@ -396,6 +396,14 @@ schema:
 | `activeItemsTotal` | Exact allowlisted active-detail count, or `null` when inventory cannot make an exact statement. |
 | `activeItemsTruncated` | Whether safe detail was omitted, or `null` when inventory is unavailable/stale. |
 | `overallEta` | The ETA discriminated union below. |
+
+`sourceFamilies.providerProgress` is a cursor-free observation from the latest
+JobStreaming provider event for the selected execution's exact
+`{ discoverWorkflowId, discoverRunId }`. It is projected only while that
+execution's `family:jobspy` source step is running and is omitted after the
+source step becomes terminal, so an older event cannot look current. The field
+never contains a provider cursor, checkpoint, resume token, raw provider
+payload, or other continuation state.
 
 `projectionCoverage.status = "ready"` carries `mode` (`native` or
 `reconstructed`), `decoderVersion`, `historyEventId`, verified

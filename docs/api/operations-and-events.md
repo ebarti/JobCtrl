@@ -118,6 +118,15 @@ calculation: unresolved current jobs or swept backlog can keep a successful
 Discover workflow in `draining`, while a closed membership with failed or
 inconsistent planning/terminal steps produces `completed_with_issues`.
 
+While the selected execution's `family:jobspy` source step is running,
+`sourceFamilies.providerProgress` may expose the latest normalized
+JobStreaming traversal observation: `site`, `phase`, `unit`, completed and
+optional total units, optional raw-items-seen count, jobs emitted, and optional
+continuation status. The API binds the event to both the exact Discover
+workflow ID and Temporal run ID, omits it when the source step is terminal, and
+never exposes the provider cursor, checkpoint, resume token, raw provider
+payload, or other continuation state.
+
 The Dashboard/Pipelines progress projection may include
 `sourceProgress.recoveredUnits` for the compatibility-named `jobspy` family.
 It counts immutable JobStreaming query/location/board units reclaimed by a
