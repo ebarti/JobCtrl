@@ -19,6 +19,13 @@ export const EXACT_V7_SCHEMA_MANIFEST: SchemaManifest = {
   fingerprint: "775312f0ec2640a2a87889602886c90e21a49e06fffc53cf26c435856247da97",
 };
 
+export const EXACT_V8_SCHEMA_MANIFEST: SchemaManifest = {
+  version: 8,
+  objectCount: 272,
+  tableCount: 117,
+  fingerprint: "3705f7c7d90454bbeaa85227a9d4ce87c12efd14935e0d14afc830939e80ff31",
+};
+
 type SqliteMasterRow = [type: string, name: string, tableName: string, sql: string];
 
 type SqliteMasterQueryRow = {
@@ -84,11 +91,22 @@ export function schemaManifest(
 }
 
 export function hasExactV7SchemaManifest(db: Pick<Database.Database, "prepare">): boolean {
-  const observed = schemaManifest(db, EXACT_V7_SCHEMA_MANIFEST.version);
+  return hasExactSchemaManifest(db, EXACT_V7_SCHEMA_MANIFEST);
+}
+
+export function hasExactV8SchemaManifest(db: Pick<Database.Database, "prepare">): boolean {
+  return hasExactSchemaManifest(db, EXACT_V8_SCHEMA_MANIFEST);
+}
+
+function hasExactSchemaManifest(
+  db: Pick<Database.Database, "prepare">,
+  expected: SchemaManifest,
+): boolean {
+  const observed = schemaManifest(db, expected.version);
   return (
-    observed.version === EXACT_V7_SCHEMA_MANIFEST.version
-    && observed.objectCount === EXACT_V7_SCHEMA_MANIFEST.objectCount
-    && observed.tableCount === EXACT_V7_SCHEMA_MANIFEST.tableCount
-    && observed.fingerprint === EXACT_V7_SCHEMA_MANIFEST.fingerprint
+    observed.version === expected.version
+    && observed.objectCount === expected.objectCount
+    && observed.tableCount === expected.tableCount
+    && observed.fingerprint === expected.fingerprint
   );
 }

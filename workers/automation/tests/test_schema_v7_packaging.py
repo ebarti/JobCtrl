@@ -10,7 +10,10 @@ from pathlib import Path
 
 
 _AUTOMATION_ROOT = Path(__file__).resolve().parents[1]
-_SCHEMA_MEMBER = "jobctrl/infrastructure/migrations/schema_v7.sql"
+_SCHEMA_MEMBERS = {
+    "jobctrl/infrastructure/migrations/schema_v7.sql",
+    "jobctrl/infrastructure/migrations/schema_v8.sql",
+}
 
 
 def test_exact_v7_schema_is_bundled_in_wheel_and_sdist(tmp_path: Path) -> None:
@@ -33,8 +36,9 @@ def test_exact_v7_schema_is_bundled_in_wheel_and_sdist(tmp_path: Path) -> None:
 
     wheel = next(tmp_path.glob("*.whl"))
     with zipfile.ZipFile(wheel) as archive:
-        assert _SCHEMA_MEMBER in archive.namelist()
+        assert _SCHEMA_MEMBERS <= set(archive.namelist())
 
     sdist = next(tmp_path.glob("*.tar.gz"))
     with tarfile.open(sdist) as archive:
-        assert any(member.name.endswith(_SCHEMA_MEMBER) for member in archive)
+        names = {member.name for member in archive}
+        assert all(any(name.endswith(schema) for name in names) for schema in _SCHEMA_MEMBERS)

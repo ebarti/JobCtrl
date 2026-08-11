@@ -29,6 +29,14 @@ EXACT_V7_MANIFEST = SchemaManifest(
 )
 
 
+EXACT_V8_MANIFEST = SchemaManifest(
+    version=8,
+    object_count=272,
+    table_count=117,
+    fingerprint="3705f7c7d90454bbeaa85227a9d4ce87c12efd14935e0d14afc830939e80ff31",
+)
+
+
 class SchemaManifestError(RuntimeError):
     """Raised before writes when a database is not an exact known schema."""
 

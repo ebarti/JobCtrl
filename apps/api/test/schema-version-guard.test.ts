@@ -14,7 +14,12 @@ import {
   openReadOnlyDatabase,
   tableExists,
 } from "../src/db.js";
-import { EXACT_V7_SCHEMA_MANIFEST } from "../src/schema-manifest.js";
+import {
+  EXACT_V7_SCHEMA_MANIFEST,
+  EXACT_V8_SCHEMA_MANIFEST,
+  hasExactV8SchemaManifest,
+  schemaManifest,
+} from "../src/schema-manifest.js";
 
 function makeDbWithUserVersion(userVersion: number): { dbPath: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-schema-version-"));
@@ -151,6 +156,35 @@ describe("schema version guard at DB open", () => {
       tableCount: 110,
       fingerprint: "775312f0ec2640a2a87889602886c90e21a49e06fffc53cf26c435856247da97",
     });
+    expect(pythonManifest).toContain("version=8,");
+    expect(pythonManifest).toContain("object_count=272,");
+    expect(pythonManifest).toContain("table_count=117,");
+    expect(pythonManifest).toContain(`fingerprint="${EXACT_V8_SCHEMA_MANIFEST.fingerprint}",`);
+    expect(EXACT_V8_SCHEMA_MANIFEST).toEqual({
+      version: 8,
+      objectCount: 272,
+      tableCount: 117,
+      fingerprint: "3705f7c7d90454bbeaa85227a9d4ce87c12efd14935e0d14afc830939e80ff31",
+    });
+  });
+
+  it("computes the exact v8 manifest from the frozen v7 schema plus v8 additions", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-exact-v8-"));
+    const dbPath = path.join(dir, "jobs.db");
+    const migrations = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../../workers/automation/src/jobctrl/infrastructure/migrations",
+    );
+    const db = new Database(dbPath);
+    try {
+      db.exec(fs.readFileSync(path.join(migrations, "schema_v7.sql"), "utf8"));
+      db.exec(fs.readFileSync(path.join(migrations, "schema_v8.sql"), "utf8"));
+      expect(schemaManifest(db, EXACT_V8_SCHEMA_MANIFEST.version)).toEqual(EXACT_V8_SCHEMA_MANIFEST);
+      expect(hasExactV8SchemaManifest(db)).toBe(true);
+    } finally {
+      db.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
