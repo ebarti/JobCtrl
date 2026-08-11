@@ -512,22 +512,30 @@ def _upsert_posted_compensation_fact(
     write_fence: Callable[[], None] | None = None,
     idempotency_key: str | None = None,
 ) -> None:
-    from jobctrl.infrastructure.compensation import SqlitePostedCompensationRepository
+    from jobctrl.infrastructure.compensation import (
+        SqlitePostedCompensationRepository,
+        posted_compensation_source_from_job,
+    )
 
     repository = SqlitePostedCompensationRepository(conn)
     _apply_write_fence(write_fence)
     row = conn.execute(
-        "SELECT job_id, salary FROM jobs WHERE tenant_id = ? AND url = ?",
+        """
+        SELECT job_id, salary, full_description, description
+        FROM jobs
+        WHERE tenant_id = ? AND url = ?
+        """,
         (tenant_id, job_url),
     ).fetchone()
     if row is None:
         return
     job_id = canonical_job_id(str(row["job_id"] if isinstance(row, sqlite3.Row) else row[0]))
-    salary = row["salary"] if isinstance(row, sqlite3.Row) else row[1]
+    source_text, source_field = posted_compensation_source_from_job(row)
     repository.parse_and_save_job_salary(
         job_id,
-        salary,
+        source_text,
         tenant_id=tenant_id,
+        source_field=source_field,
         parsed_at=parsed_at,
         event_idempotency_key=idempotency_key,
         event_write_fence=write_fence,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from types import SimpleNamespace
 
@@ -23,6 +24,7 @@ from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.compensation import SqlitePostedCompensationRepository
 from jobctrl.infrastructure.discovery import SqliteJobRepository
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
+from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 
 
 _JOBSPY_DESCRIPTION = "Lead engineering, platform, security, and delivery teams in Spain. " * 8
@@ -1143,6 +1145,63 @@ def test_jobspy_persists_posted_compensation_fact_from_bounded_salary_text(tmp_p
         assert fact.currency == "EUR"
         assert fact.minimum_amount == 80_000
         assert fact.maximum_amount == 95_000
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_projects_posted_compensation_from_full_description_when_salary_is_blank(
+    tmp_path,
+):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        description = (
+            "Competitive compensation and benefits. "
+            "In addition to base salary, the annual learning stipend is €2,000 per year. "
+            + ("Lead platform engineering and delivery teams. " * 16)
+            + "Base pay range per year:\n**€80,000 - €95,000**"
+        )
+        frame = _jobspy_frame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/description-comp",
+                    "title": "Staff Platform Engineer",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                    "description": description,
+                }
+            ]
+        )
+
+        assert jobspy.store_jobspy_results(conn, frame, "Platform", limit=10) == (1, 0)
+        job_id = _stable_job_id(
+            conn,
+            "https://www.linkedin.com/jobs/view/description-comp",
+        )
+        fact = SqlitePostedCompensationRepository(conn).get_fact("local", job_id)
+        salary = conn.execute(
+            "SELECT salary FROM jobs WHERE tenant_id = ? AND job_id = ?",
+            ("local", job_id),
+        ).fetchone()["salary"]
+
+        assert salary in (None, "")
+        assert fact is not None
+        assert fact.source_field == "jobs.full_description"
+        assert fact.parse_state == "parsed_range"
+        assert fact.annualized_minimum_amount == 80_000
+        assert fact.annualized_maximum_amount == 95_000
+
+        ProjectionBuilder(conn_factory=lambda: conn).refresh()
+        projection = conn.execute(
+            "SELECT compensation_summary_json FROM job_list_projections WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        assert projection is not None
+        summary = json.loads(projection["compensation_summary_json"])
+        assert summary["posted"]["parseState"] == "parsed_range"
+        assert summary["posted"]["range"]["annualizedMinimumAmount"] == 80_000
+        assert summary["posted"]["range"]["annualizedMaximumAmount"] == 95_000
     finally:
         close_connection(db_path)
 
