@@ -112,6 +112,10 @@ def test_failed_to_running_transition_skips_validation(
     production."""
 
     job_id = generate_job_id()
+    db.execute(
+        "INSERT INTO jobs (tenant_id, job_id, url) VALUES ('local', ?, ?)",
+        (str(job_id), f"https://jobs.example.test/{job_id}"),
+    )
     ensure_job_stage_rows(db, job_id, discovered_at="2026-01-01T00:00:00+00:00")
     # Seed the row in 'failed' state via the validation bypass — the
     # canonical state machine doesn't permit pending -> failed directly,

@@ -1,4 +1,4 @@
-"""Exact-v7 schema creation and runtime-open contracts."""
+"""Exact-v7 construction and current runtime-open contracts."""
 
 from __future__ import annotations
 
@@ -13,9 +13,10 @@ from jobctrl.database import (
     close_connection,
     init_db,
 )
-from jobctrl.infrastructure.migrations import schema_v7
+from jobctrl.infrastructure.migrations import schema_v8
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V7_MANIFEST,
+    EXACT_V8_MANIFEST,
     SchemaManifestError,
     assert_exact_manifest,
     schema_dump,
@@ -98,13 +99,14 @@ def _create_incomplete_v6_database(path: Path) -> None:
         conn.close()
 
 
-def test_fresh_v7_creation_matches_the_exact_manifest(tmp_path: Path) -> None:
+def test_fresh_runtime_creation_matches_the_exact_v8_manifest(tmp_path: Path) -> None:
     db_path = tmp_path / "jobctrl.db"
 
     conn = init_db(db_path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-    assert_exact_manifest(conn, EXACT_V7_MANIFEST)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == EXACT_V8_MANIFEST.version
+    assert_exact_manifest(conn, EXACT_V8_MANIFEST)
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     assert conn.execute(
         "SELECT name FROM sqlite_master WHERE name = 'job_identity_aliases'"
     ).fetchone() is None
@@ -183,7 +185,7 @@ def test_unstamped_v7_candidate_rejects_nonzero_version_without_mutation(
         conn.close()
 
 
-def test_exact_v7_reopen_has_no_writes_or_schema_or_data_changes(tmp_path: Path) -> None:
+def test_exact_v8_reopen_has_no_writes_or_schema_or_data_changes(tmp_path: Path) -> None:
     db_path = tmp_path / "jobctrl.db"
     conn = init_db(db_path)
     before = _complete_database_dump(db_path)
@@ -231,7 +233,7 @@ def test_exact_v7_reopen_has_no_writes_or_schema_or_data_changes(tmp_path: Path)
     close_connection(db_path)
 
 
-def test_worker_heartbeat_does_not_drift_the_exact_v7_schema(
+def test_worker_heartbeat_does_not_drift_the_exact_v8_schema(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -249,7 +251,7 @@ def test_worker_heartbeat_does_not_drift_the_exact_v7_schema(
 
     reopened = init_db(db_path)
     assert schema_dump(reopened) == before_schema
-    assert_exact_manifest(reopened, EXACT_V7_MANIFEST)
+    assert_exact_manifest(reopened, EXACT_V8_MANIFEST)
     close_connection(db_path)
 
 
@@ -1459,6 +1461,20 @@ def test_incomplete_v6_is_rejected_before_any_write(tmp_path: Path) -> None:
     assert _complete_database_dump(db_path) == before
 
 
+def test_exact_v7_is_rejected_before_any_write(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = sqlite3.connect(db_path)
+    create_exact_v7_schema(conn)
+    conn.close()
+    before = _complete_database_dump(db_path)
+
+    with pytest.raises(SchemaMigrationRequiredError, match="schema v7"):
+        init_db(db_path)
+
+    close_connection(db_path)
+    assert _complete_database_dump(db_path) == before
+
+
 def test_fresh_schema_fault_leaves_no_partial_stamped_v7_database(tmp_path: Path) -> None:
     db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
@@ -1516,7 +1532,7 @@ def test_failed_fresh_init_removes_its_file_and_can_retry(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "jobctrl.db"
-    create_schema = schema_v7.create_exact_v7_schema
+    create_schema = schema_v8.create_exact_v8_schema
 
     def fail_after_partial_creation(conn: sqlite3.Connection) -> None:
         executed = 0
@@ -1530,7 +1546,7 @@ def test_failed_fresh_init_removes_its_file_and_can_retry(
 
         create_schema(conn, _execute=fail_second_statement)
 
-    monkeypatch.setattr(schema_v7, "create_exact_v7_schema", fail_after_partial_creation)
+    monkeypatch.setattr(schema_v8, "create_exact_v8_schema", fail_after_partial_creation)
     with pytest.raises(RuntimeError, match="fixture creation failure"):
         init_db(db_path)
 
@@ -1538,7 +1554,7 @@ def test_failed_fresh_init_removes_its_file_and_can_retry(
     assert not Path(f"{db_path}-wal").exists()
     assert not Path(f"{db_path}-shm").exists()
 
-    monkeypatch.setattr(schema_v7, "create_exact_v7_schema", create_schema)
+    monkeypatch.setattr(schema_v8, "create_exact_v8_schema", create_schema)
     conn = init_db(db_path)
-    assert_exact_manifest(conn, EXACT_V7_MANIFEST)
+    assert_exact_manifest(conn, EXACT_V8_MANIFEST)
     close_connection(db_path)

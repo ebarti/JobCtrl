@@ -19,7 +19,7 @@ from typing import Any
 
 from jobctrl.config import DB_PATH, DEFAULTS
 from jobctrl.infrastructure.migrations.schema_manifest import (
-    EXACT_V7_MANIFEST,
+    EXACT_V8_MANIFEST,
     SchemaManifestError,
     assert_exact_manifest,
     schema_dump,
@@ -31,7 +31,8 @@ from jobctrl.scoring.eligibility_sql import (
 
 # Schema version stamped into the SQLite ``user_version`` header. Runtime opens
 # only this exact schema and refuses databases written by newer code. The only
-# supported upgrade is the explicit stopped-runtime v6-to-v7 cutover.
+# supported upgrades are the explicit stopped-runtime v6-to-v8 composite and
+# v7-to-v8 additive cutovers.
 #
 # v2 (Contact & Outreach): generic ``entity_kind``/``entity_ref`` columns on
 # ``job_events`` so contact-only events carry honest identity without
@@ -45,9 +46,11 @@ from jobctrl.scoring.eligibility_sql import (
 # replay-idempotent receipts for caller-filtered provider results.
 # v6 (repeat-application prevention): evidence-bound confirmations,
 # one-attempt consumption, and immutable protection audit records.
-# v7 replaces URL-shaped storage identity with canonical ``(tenant_id,
-# job_id)`` keys. Posting URLs remain unique locators, never aggregate identity.
-SCHEMA_VERSION = 7
+# v7 replaced URL-shaped storage identity with canonical ``(tenant_id,
+# job_id)`` keys. v8 adds reusable direct and extrapolated compensation facts
+# without changing any v7 table. Posting URLs remain unique locators, never
+# aggregate identity.
+SCHEMA_VERSION = 8
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -55,7 +58,7 @@ class IncompatibleSchemaVersionError(RuntimeError):
 
 
 class SchemaMigrationRequiredError(RuntimeError):
-    """Raised when a stopped-runtime v6 cutover has not been run."""
+    """Raised when a stopped-runtime v6/v7 cutover has not been run."""
 
 
 # Thread-local connection storage — each thread gets its own connection
@@ -98,6 +101,7 @@ def get_connection(
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=10000")
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     register_score_eligibility_sql(conn)
     _local.connections[path] = conn
     return conn
@@ -181,24 +185,24 @@ def _assert_schema_version_supported(
     return current
 
 
-def create_exact_v7_database(
+def create_exact_v8_database(
     db_path: Path | str | None = None,
 ) -> sqlite3.Connection:
-    """Create a brand-new database directly from the exact v7 schema."""
+    """Create a brand-new database directly from the exact v8 schema."""
     path = Path(db_path or DB_PATH)
     if path.exists():
         raise FileExistsError(
-            f"exact v7 creation requires a missing database path, found {path}"
+            f"exact v8 creation requires a missing database path, found {path}"
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = get_connection(path)
     try:
         if schema_dump(conn):
-            raise SchemaManifestError("fresh v7 creation found pre-existing schema")
+            raise SchemaManifestError("fresh v8 creation found pre-existing schema")
 
-        from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
+        from jobctrl.infrastructure.migrations.schema_v8 import create_exact_v8_schema
 
-        create_exact_v7_schema(conn)
+        create_exact_v8_schema(conn)
         conn.commit()
         return conn
     except BaseException:
@@ -213,36 +217,36 @@ def create_exact_v7_database(
         raise
 
 
-def open_exact_v7_database(
+def open_exact_v8_database(
     db_path: Path | str | None = None,
 ) -> sqlite3.Connection:
-    """Open an existing exact-v7 database without performing any writes."""
+    """Open an existing exact-v8 database without performing any writes."""
     path = Path(db_path or DB_PATH)
     if not path.exists():
         raise FileNotFoundError(f"No database to open at {path}")
     conn = get_connection(path, enable_wal=False)
     current_version = _assert_schema_version_supported(conn)
-    if current_version == 6:
+    if current_version in (6, 7):
         raise SchemaMigrationRequiredError(
-            "JobCtrl database is schema v6. Run `jobctrl update` so the native "
-            "lifecycle can stop JobCtrl, verify quiescence, create the paired "
-            "backup, and activate schema v7 before starting the runtime."
+            f"JobCtrl database is schema v{current_version}. Run `jobctrl update` so "
+            "the native lifecycle can stop JobCtrl, create the paired backup, "
+            "and activate schema v8 before starting the runtime."
         )
     if current_version != SCHEMA_VERSION:
         raise SchemaMigrationRequiredError(
-            "JobCtrl can only open the exact schema v7 at runtime; "
+            "JobCtrl can only open the exact schema v8 at runtime; "
             f"found schema version {current_version}."
         )
-    assert_exact_manifest(conn, EXACT_V7_MANIFEST)
+    assert_exact_manifest(conn, EXACT_V8_MANIFEST)
     return conn
 
 
 def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
-    """Create a missing v7 database or read-only validate an existing one."""
+    """Create a missing v8 database or read-only validate an existing one."""
     path = Path(db_path or DB_PATH)
     if not path.exists():
-        return create_exact_v7_database(path)
-    return open_exact_v7_database(path)
+        return create_exact_v8_database(path)
+    return open_exact_v8_database(path)
 
 
 def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> list[str]:

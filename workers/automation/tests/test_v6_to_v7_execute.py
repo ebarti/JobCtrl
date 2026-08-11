@@ -10,7 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from jobctrl.database import close_connection, open_exact_v7_database
+from jobctrl.infrastructure.migrations.schema_manifest import (
+    EXACT_V7_MANIFEST,
+    assert_exact_manifest,
+)
 from jobctrl.infrastructure.migrations.v6_to_v7_execute import (
     CandidateExecutionError,
     execute_v6_to_v7_candidate,
@@ -62,14 +65,15 @@ def test_executor_builds_a_closed_exact_v7_candidate_without_mutating_source(
     assert result.candidate_sha256 == _sha256(candidate)
     assert len(result.source_digest) == 64
     assert len(result.candidate_logical_digest) == 64
-    reopened = open_exact_v7_database(candidate)
+    reopened = sqlite3.connect(candidate)
     try:
         assert tuple(reopened.execute("PRAGMA user_version").fetchone()) == (7,)
+        assert_exact_manifest(reopened, EXACT_V7_MANIFEST)
         assert tuple(
             reopened.execute("SELECT job_id FROM jobs").fetchone()
         ) == (_JOB_ID,)
     finally:
-        close_connection(candidate)
+        reopened.close()
 
 
 @pytest.mark.parametrize(

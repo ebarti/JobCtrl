@@ -2214,3 +2214,13 @@ Cites:
 `docs/plans/2026-07-29-stable-job-identity-workflow-feedback-learning.md`;
 `docs/architecture/domain-model/tactical.md`;
 `docs/user/outcomes-and-feedback.md`.
+
+Amended (2026-08-11): exact schema v8 is now the sole runtime contract. The
+native stopped-runtime lifecycle accepts retained v6 and exact-v7 sources: v6
+is transformed through a private, never-installed exact-v7 intermediate before
+the additive v8 schema is applied, while v7 receives only that additive step.
+Both routes preserve the paired-backup, atomic activation, rollback, and
+no-mixed-runtime invariants above. V8 adds versioned role-family taxonomy and
+physically separate append-only authorities for direct benchmarks, price-level
+inputs, and geographic extrapolations; per-job market estimates remain derived
+materialized output rather than benchmark authority.

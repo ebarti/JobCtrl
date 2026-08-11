@@ -546,7 +546,7 @@ func preseedUnsignedHomebrewRelease(t *testing.T, home string, fixture homebrewB
 func seedHomebrewSQLitePair(t *testing.T, python, state string) {
 	t.Helper()
 	for _, name := range []string{"jobctrl.db", "temporal.db"} {
-		code := "import pathlib,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('create table t(v)'); c.execute('insert into t values (1)'); c.execute('PRAGMA user_version=7') if pathlib.Path(sys.argv[1]).name == 'jobctrl.db' else None; c.commit()"
+		code := "import pathlib,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('create table t(v)'); c.execute('insert into t values (1)'); c.execute('PRAGMA user_version=8') if pathlib.Path(sys.argv[1]).name == 'jobctrl.db' else None; c.commit()"
 		if output, err := exec.Command(python, "-c", code, filepath.Join(state, name)).CombinedOutput(); err != nil {
 			t.Fatalf("seed %s: %v %s", name, err, output)
 		}

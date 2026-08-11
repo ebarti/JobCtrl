@@ -184,6 +184,7 @@ def test_signal_reads_are_tenant_scoped_and_deterministic(tmp_path: Path) -> Non
     _insert_job(conn, tenant_id="tenant-a", job_id=_JOB_A, suffix="tenant-a")
     _insert_job(conn, tenant_id="tenant-b", job_id=_JOB_A, suffix="tenant-b")
     _insert_job(conn, tenant_id="tenant-b", job_id=_JOB_B, suffix="tenant-b-only")
+    _insert_job(conn, tenant_id="tenant-c", job_id=_JOB_B, suffix="tenant-c-only")
     for tenant_id, score in (("tenant-a", 8), ("tenant-b", 4)):
         conn.execute(
             """
@@ -215,7 +216,7 @@ def test_signal_reads_are_tenant_scoped_and_deterministic(tmp_path: Path) -> Non
         INSERT INTO job_scores (
             tenant_id, job_id, version, fit_score, breakdown_json,
             keywords_json, scored_at, correction_json, trace_json
-        ) VALUES ('tenant-a', ?, 1, 6, '{}', '[]', ?, NULL, '{}')
+        ) VALUES ('tenant-c', ?, 1, 6, '{}', '[]', ?, NULL, '{}')
         """,
         (_JOB_B, "2026-08-01T08:00:00Z"),
     )
@@ -224,7 +225,7 @@ def test_signal_reads_are_tenant_scoped_and_deterministic(tmp_path: Path) -> Non
         INSERT INTO job_scores (
             tenant_id, job_id, version, fit_score, breakdown_json,
             keywords_json, scored_at, correction_json, trace_json
-        ) VALUES ('tenant-a', ?, 2, 9, '{}', '[]', ?, ?, '{}')
+        ) VALUES ('tenant-c', ?, 2, 9, '{}', '[]', ?, ?, '{}')
         """,
         (
             _JOB_B,
@@ -237,7 +238,7 @@ def test_signal_reads_are_tenant_scoped_and_deterministic(tmp_path: Path) -> Non
         INSERT INTO discovery_feedback (
             tenant_id, feedback_id, job_id, source_id, kind, note, recorded_at
         ) VALUES (
-            'tenant-a', 'cross-tenant-discovery', ?, 'source-private',
+            'tenant-c', 'cross-tenant-discovery', ?, 'source-private',
             'useful', 'private tenant-b-only discovery', ?
         )
         """,
@@ -250,7 +251,7 @@ def test_signal_reads_are_tenant_scoped_and_deterministic(tmp_path: Path) -> Non
             title_display, reason_code, reason, sample_count,
             source_ids_json, evidence_json, created_at, updated_at, decided_at
         ) VALUES (
-            'tenant-a', 'cross-tenant-role', 'approved',
+            'tenant-c', 'cross-tenant-role', 'approved',
             'exact_title_exclusion', 'account executive', 'Account Executive',
             'low_role_fit', 'private role reason', 1, '[]', ?, ?, ?, ?
         )

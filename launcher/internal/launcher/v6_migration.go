@@ -1,9 +1,9 @@
 package launcher
 
-// Native activation glue for the one supported local schema transition. The
-// Python payload owns candidate population and exact-v7 verification; this
-// launcher boundary owns process quiescence, paired backup binding, atomic
-// installation, and recovery.
+// Native activation glue for local schema transitions. The Python payload owns
+// candidate population and exact-schema verification; this launcher boundary
+// owns process quiescence, paired backup binding, atomic installation, and
+// recovery.
 
 import (
 	"bytes"
@@ -23,14 +23,17 @@ import (
 )
 
 const (
-	legacyJobCtrlSchemaVersion = int64(6)
-	exactJobCtrlSchemaVersion  = int64(7)
+	legacyJobCtrlSchemaVersion  = int64(6)
+	exactJobCtrlSchemaVersion   = int64(7)
+	currentJobCtrlSchemaVersion = int64(8)
 )
 
 var (
-	temporalQuiescenceProof    = proveStoppedTemporalQuiescence
-	sealedV7CandidateBuilder   = buildSealedV7Candidate
-	sealedV7CandidateInstaller = installSealedV7Candidate
+	temporalQuiescenceProof = proveStoppedTemporalQuiescence
+	// These seam names are retained for the existing lifecycle fault-injection
+	// matrix. Production builds and installs the current exact-v8 candidate.
+	sealedV7CandidateBuilder   = buildSealedV8Candidate
+	sealedV7CandidateInstaller = installSealedV8Candidate
 )
 
 type temporalQuiescenceReceipt struct {
@@ -390,7 +393,7 @@ func pairedDatabasePath(stateDir string, pair databasePair, name string, version
 		}
 	}
 	if !found {
-		return "", errors.New("paired backup does not contain the required v6 database")
+		return "", errors.New("paired backup does not contain the required database version")
 	}
 	path := filepath.Join(stateDir, "backups", pair.ID, name)
 	actual, err := describeDatabase(path, name, version)
@@ -434,10 +437,14 @@ func v7CandidatePath(stateDir, journalID string) string {
 }
 
 func cleanupV7Candidate(stateDir, journalID string) {
-	path := v7CandidatePath(stateDir, journalID)
-	_ = os.Remove(path)
-	for _, suffix := range []string{"-journal", "-shm", "-wal"} {
-		_ = os.Remove(path + suffix)
+	for _, path := range []string{
+		v7CandidatePath(stateDir, journalID),
+		v8CandidatePath(stateDir, journalID),
+	} {
+		_ = os.Remove(path)
+		for _, suffix := range []string{"-journal", "-shm", "-wal"} {
+			_ = os.Remove(path + suffix)
+		}
 	}
 }
 

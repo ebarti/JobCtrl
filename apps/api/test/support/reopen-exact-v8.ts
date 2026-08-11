@@ -2,7 +2,7 @@ import { openDatabase, openReadOnlyDatabase } from "../../src/db.js";
 
 const databasePath = process.argv[2];
 if (!databasePath) {
-  throw new Error("exact-v7 reopen probe requires a database path");
+  throw new Error("exact-v8 reopen probe requires a database path");
 }
 
 for (const open of [openDatabase, openReadOnlyDatabase]) {

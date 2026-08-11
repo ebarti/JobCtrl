@@ -67,7 +67,7 @@ The remaining tables group by owner:
 | --- | --- |
 | Candidate Profile | `candidate_profiles` plus 12 `candidate_profile_*` child tables (experience, bullets, skills, education, achievement evidence, required-content sets, resume constraint metrics) |
 | Resume templates | `resume_templates`, `resume_template_versions`, `resume_template_defaults`, `resume_template_refresh_attempts`, `job_resume_template_assignments` |
-| Compensation | `job_posted_compensation_facts`, `job_market_compensation_estimates` |
+| Compensation | `job_posted_compensation_facts`, per-job `job_market_compensation_estimates`, versioned `compensation_role_families` and mappings, immutable direct/price-level/extrapolated benchmark facts, relational extrapolation inputs, and `compensation_market_refresh_state` |
 | Scoring | `job_scores`, versioned/indexed `job_score_keywords`, `scoring_policies`, `job_score_staleness` |
 | Read-model projections | `job_list_projections`, `job_detail_projections`, `dashboard_projections`, `apply_run_projections`, `workflow_run_projections`, `pipeline_step_projections`, `artifact_list_projections`, `event_watermarks`, `digest_state` |
 | Discovery & preparation | `discovery_runs`, `discovery_execution_jobs`, `discovery_search_units`, `discovery_search_unit_jobs`, `discovery_search_unit_filtered_events`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, `job_canonical_identities`, `job_source_observations`, `job_duplicate_links`, legacy `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
@@ -87,24 +87,36 @@ licensed-feed coverage policy. Public Levels.fyi Markdown needs no credential.
 Credentials, feed paths/URLs, feed contents, and provider payloads do not belong
 in the settings file.
 
-### Exact v7 identity cutover
+### Exact v8 runtime and compatible cutovers
 
-Schema v7 is an exact runtime contract. The native lifecycle upgrades an
-admitted v6 installation only while the application is stopped: it quiesces
-the local runtime, creates a paired backup of `jobctrl.db` and Temporal state,
-builds an isolated candidate, and runs the v6-to-v7 rewrite in one SQLite
-transaction. URL-rooted job rows and foreign references are mapped to stable
-tenant-scoped JobIds; immutable historical events are upcast only as part of
-that migration.
+Schema v8 is the exact runtime contract. The native lifecycle upgrades admitted
+v6 and exact-v7 installations only while the application is stopped. It creates
+a paired backup of `jobctrl.db` and Temporal state before building an isolated
+candidate. A v6 source first runs the existing identity rewrite into an
+owner-private exact-v7 intermediate and then applies v8; the intermediate is
+deleted and never becomes live. An exact-v7 source receives only the additive
+v8 schema. The v6 path retains the Temporal quiescence proof required before
+URL-rooted job rows and foreign references are mapped to stable tenant-scoped
+JobIds.
 
-Activation happens only after schema, row/reference, projection, and paired
-state verification succeeds. The verified candidate replaces the live pair
-atomically. Any failed build, verification, or activation restores the paired
-backup and leaves the previous version runnable. There is no mixed-version
-runtime, rolling deployment, dual-write path, or permanent compatibility
-layer: the TypeScript API and Python worker accept exact v7 and reject direct
-v6 operation. Runtime projections read registered persisted artifacts only and
-do not reconstruct legacy URL-shaped fallback rows.
+Activation happens only after exact-manifest, row/reference, foreign-key,
+integrity, source-preservation, file-permission, digest, and paired-state
+verification succeeds. The verified v8 candidate replaces the live database
+atomically. Any failed build, verification, activation, or readiness check
+restores the paired backup and leaves the previous version runnable. There is
+no mixed-version runtime, rolling deployment, dual-write path, or permanent
+compatibility layer: the TypeScript API and Python worker accept exact v8 and
+reject direct v6/v7 operation. Runtime projections read registered persisted
+artifacts only and do not reconstruct legacy URL-shaped fallback rows.
+
+V8 adds a versioned JobCtrl role-family taxonomy plus physically separate
+authorities for directly observed market benchmarks, price-level inputs, and
+geographically extrapolated benchmarks. Direct and extrapolated records cannot
+be confused by a nullable discriminator. Their evidence rows and input links
+are append-only, content-addressed, source-dated, and protected against update,
+delete, `INSERT OR REPLACE`, and conflicting UPSERT paths. The existing
+`job_market_compensation_estimates` table remains the per-job materialized
+output; it is not the reusable benchmark authority.
 
 ### Repeat-application authority retained in v7
 

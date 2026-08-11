@@ -1120,16 +1120,18 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	switch databaseVersion {
 	case legacyJobCtrlSchemaVersion:
 		if err := temporalQuiescenceProof(activeRuntime, candidateRuntime); err != nil {
-			return restartBeforeBackup(fmt.Errorf("v6-to-v7 upgrade blocked before backup: %w", err))
+			return restartBeforeBackup(fmt.Errorf("v6-to-v8 upgrade blocked before backup: %w", err))
 		}
 	case exactJobCtrlSchemaVersion:
-		// Ordinary exact-v7 release promotion uses the existing paired lifecycle.
+		// Exact v7 upgrades add v8 only after the stopped-runtime paired backup.
+	case currentJobCtrlSchemaVersion:
+		// Ordinary exact-v8 release promotion uses the paired lifecycle unchanged.
 	default:
 		return restartBeforeBackup(fmt.Errorf("unsupported stopped JobCtrl schema version %d", databaseVersion))
 	}
 	pair, err := snapshotPair(ctx, active.Receipt)
 	if err != nil {
-		if databaseVersion == legacyJobCtrlSchemaVersion {
+		if databaseVersion != currentJobCtrlSchemaVersion {
 			return restartBeforeBackup(fmt.Errorf("create paired pre-upgrade backup: %w", err))
 		}
 		_ = store.Advance(&journal, release.Failed, err)
@@ -1169,16 +1171,16 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		_ = store.Advance(&journal, release.RolledBack, cause)
 		return cause
 	}
-	if databaseVersion == legacyJobCtrlSchemaVersion {
+	if databaseVersion != currentJobCtrlSchemaVersion {
 		candidatePath, err := sealedV7CandidateBuilder(candidateRuntime, pair, journal.ID)
 		if err != nil {
-			return rollbackFailure(fmt.Errorf("build exact-v7 migration candidate: %w", err))
+			return rollbackFailure(fmt.Errorf("build exact-v8 migration candidate: %w", err))
 		}
 		if err := advance(store, &journal, release.MigrationCandidateReady); err != nil {
 			return rollbackFailure(err)
 		}
 		if err := sealedV7CandidateInstaller(candidateRuntime, candidatePath); err != nil {
-			return rollbackFailure(fmt.Errorf("activate exact-v7 database: %w", err))
+			return rollbackFailure(fmt.Errorf("activate exact-v8 database: %w", err))
 		}
 		if err := advance(store, &journal, release.MigrationActivated); err != nil {
 			return rollbackFailure(err)

@@ -213,6 +213,7 @@ class DurableJobEventPublisher:
             job_id,
             self._stage,
             event.event_type,
+            tenant_id=event.tenant_id,
             message=event.event_type,
             payload=payload,
             occurred_at=event.occurred_at,

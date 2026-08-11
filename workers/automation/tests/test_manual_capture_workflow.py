@@ -237,6 +237,16 @@ def test_activity_scopes_same_capture_to_tenant_canonical_job_ids(tmp_path: Path
             """,
             (local_payload.item_id,),
         ).fetchall()
+        discovered_events = conn.execute(
+            """
+            SELECT tenant_id, job_id
+            FROM job_events
+            WHERE event_type = 'JobDiscovered'
+              AND job_id IN (?, ?)
+            ORDER BY tenant_id
+            """,
+            (local_first.job_id, other_first.job_id),
+        ).fetchall()
     finally:
         close_connection(db_path)
 
@@ -245,6 +255,10 @@ def test_activity_scopes_same_capture_to_tenant_canonical_job_ids(tmp_path: Path
     assert {row["tenant_id"] for row in rows} == {"local", "other"}
     assert {row["job_id"] for row in rows} == {local_first.job_id, other_first.job_id}
     assert {row["url"] for row in rows} == {_CAPTURE_URL}
+    assert [(row["tenant_id"], row["job_id"]) for row in discovered_events] == [
+        ("local", local_first.job_id),
+        ("other", other_first.job_id),
+    ]
 
 
 @pytest.mark.parametrize(
