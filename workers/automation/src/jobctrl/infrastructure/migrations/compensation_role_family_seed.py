@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
-ROLE_FAMILY_TAXONOMY_VERSION = "jobctrl-role-family-v1"
+from jobctrl.domain.compensation.benchmarks import ROLE_FAMILY_TAXONOMY_VERSION
+
 _CREATED_AT = "2026-08-11T00:00:00Z"
 _ROLE_FAMILIES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("software_engineering", "Software Engineering", ("2512", "2513", "2514", "2519")),
