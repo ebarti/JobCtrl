@@ -12,6 +12,7 @@ from jobctrl.domain.compensation import (
     build_price_level_fact,
     classify_role,
     extrapolate_benchmark,
+    resolve_benchmark_geography,
     resolve_country_code,
 )
 from jobctrl.infrastructure.compensation import (
@@ -36,6 +37,12 @@ def test_role_and_country_classification_is_deterministic() -> None:
     assert resolve_country_code("Remote — Barcelona, Spain") == "ES"
     assert resolve_country_code("London / UK") == "GB"
     assert resolve_country_code("Remote") is None
+    assert resolve_benchmark_geography("Madrid, Spain") == BenchmarkGeography(
+        "ES",
+        scope="locality",
+        locality="Madrid",
+    )
+    assert resolve_benchmark_geography("Remote - Spain") == BenchmarkGeography("ES")
 
 
 def test_reported_observations_become_content_addressed_direct_facts() -> None:
@@ -85,7 +92,7 @@ def test_reported_observations_become_content_addressed_direct_facts() -> None:
     fact = first.facts[0]
     assert fact.role_family_code == "infrastructure_platform"
     assert fact.seniority_label == "senior"
-    assert fact.geography == BenchmarkGeography("DE")
+    assert fact.geography == BenchmarkGeography("DE", scope="locality", locality="Berlin")
     assert fact.normalized_company == "acme"
     assert fact.eur_annual_minimum_amount == 86_400
     assert fact.eur_annual_maximum_amount == 108_000
@@ -113,6 +120,71 @@ def test_posted_salary_is_rejected_from_direct_market_authority() -> None:
 
     assert result.facts == ()
     assert result.rejected[0].reason == "employer_posted_is_not_market_evidence"
+
+
+def test_invalid_observation_does_not_discard_independent_valid_evidence() -> None:
+    invalid = ReportedCompensationObservation(
+        source_id="levels_fyi",
+        source_provenance="public",
+        company_name="Levels.fyi market aggregate",
+        role_title="Senior Software Engineer",
+        minimum_amount=80_000,
+        maximum_amount=100_000,
+        location="Spain",
+        level_label="Senior",
+        snapshot_version="/tmp/private-feed.json",
+        attribution="Data source: Levels.fyi (https://www.levels.fyi)",
+        source_url="https://www.levels.fyi/t/software-engineer",
+    )
+    valid = replace(invalid, snapshot_version="levels-public-2026")
+
+    result = canonicalize_reported_observations(
+        (invalid, valid),
+        tenant_id="local",
+        fetched_at="2026-08-12T08:00:00Z",
+        fresh_until="2026-08-19T08:00:00Z",
+    )
+
+    assert len(result.facts) == 1
+    assert result.rejected[0].reason == "invalid_observation"
+
+
+@pytest.mark.parametrize(
+    "location",
+    (
+        r"C:\Users\alice\private-salary.csv, Spain",
+        "/tmp/private-salary.csv, Spain",
+        "./private-salary.csv, Spain",
+        "https://private.example/Spain",
+        f"{'A' * 129}, Spain",
+    ),
+)
+def test_local_or_unbounded_geography_is_rejected_from_canonical_facts(
+    location: str,
+) -> None:
+    observation = ReportedCompensationObservation(
+        source_id="levels_fyi",
+        source_provenance="public",
+        company_name="Levels.fyi market aggregate",
+        role_title="Senior Software Engineer",
+        minimum_amount=80_000,
+        maximum_amount=100_000,
+        location=location,
+        level_label="Senior",
+        snapshot_version="levels-public-2026",
+        attribution="Data source: Levels.fyi (https://www.levels.fyi)",
+        source_url="https://www.levels.fyi/t/software-engineer",
+    )
+
+    result = canonicalize_reported_observations(
+        (observation,),
+        tenant_id="local",
+        fetched_at="2026-08-12T08:00:00Z",
+        fresh_until="2026-08-19T08:00:00Z",
+    )
+
+    assert result.facts == ()
+    assert result.rejected[0].reason == "invalid_observation"
 
 
 def test_direct_fact_builder_enforces_authority_and_public_provenance() -> None:
@@ -383,6 +455,18 @@ def test_price_level_requires_a_finite_positive_index() -> None:
     for invalid in (float("inf"), float("-inf"), float("nan"), 0):
         with pytest.raises(ValueError, match="finite and positive"):
             _price_fact(country="ES", index=invalid, marker="invalid")
+
+
+def test_fx_rate_requires_a_finite_positive_rate() -> None:
+    for invalid in (float("inf"), float("-inf"), float("nan"), 0):
+        with pytest.raises(ValueError, match="finite and positive"):
+            FxRateToEur(
+                currency="USD",
+                rate=invalid,
+                source_id="ecb",
+                reference_id="ecb-2026-08-12",
+                as_of_date="2026-08-12",
+            )
 
 
 def _direct_fact(

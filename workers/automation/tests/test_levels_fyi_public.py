@@ -25,6 +25,10 @@ def test_builds_job_family_and_location_routes_from_local_job_fields() -> None:
         levels_fyi_public_url(LevelsFyiPublicTarget("Senior Platform Engineer", "Madrid, Spain"))
         == f"{LEVELS_FYI_BASE_URL}/t/software-engineer/locations/madrid-esp"
     )
+    assert (
+        levels_fyi_public_url(LevelsFyiPublicTarget("Senior Platform Engineer", "ES"))
+        == f"{LEVELS_FYI_BASE_URL}/t/software-engineer/locations/spain"
+    )
 
 
 def test_loads_tokenless_markdown_with_required_attribution() -> None:
@@ -140,3 +144,74 @@ def test_empty_markdown_falls_back_to_public_next_data() -> None:
     assert company.minimum_amount == 187_200
     assert company.sample_count is None
     assert all(row.currency == "EUR" for row in observations)
+
+    raw_observations = load_levels_fyi_public_observations(
+        [LevelsFyiPublicTarget("Software Engineer", "London, United Kingdom")],
+        fetch_text=fetch,
+        preserve_source_currency=True,
+    )
+    raw_aggregate, raw_company = raw_observations
+    assert (raw_aggregate.minimum_amount, raw_aggregate.maximum_amount) == (70_000, 130_000)
+    assert raw_company.minimum_amount == 160_000
+    assert all(row.currency == "GBP" for row in raw_observations)
+
+
+def test_unavailable_public_pages_are_reported_separately_from_no_evidence() -> None:
+    outcomes = []
+
+    observations = load_levels_fyi_public_observations(
+        [LevelsFyiPublicTarget("Software Engineer", "Spain")],
+        fetch_text=lambda _url: None,
+        on_load_outcome=outcomes.append,
+    )
+
+    assert observations == ()
+    assert len(outcomes) == 1
+    assert outcomes[0].requested_pages == 1
+    assert outcomes[0].reachable_pages == 0
+    assert outcomes[0].parsed_pages == 0
+    assert outcomes[0].unavailable is True
+
+
+def test_nonfinite_company_value_does_not_discard_valid_page_aggregate() -> None:
+    occupation = {
+        "@type": "Occupation",
+        "sampleSize": 42,
+        "mainEntityOfPage": {"lastReviewed": "2026-07-12T13:00:00.000Z"},
+        "estimatedSalary": [
+            {
+                "@type": "MonetaryAmountDistribution",
+                "name": "total",
+                "currency": "EUR",
+                "percentile25": 70_000,
+                "median": 95_000,
+                "percentile75": 130_000,
+            }
+        ],
+    }
+    next_data = {
+        "props": {
+            "pageProps": {
+                "jobFamily": "Software Engineer",
+                "location": "Spain",
+                "locationCurrency": "EUR",
+                "locationExchangeRate": 1,
+                "totalJobFamilySubmissionCount": 42,
+                "topPayingCompanies": [{"name": "Malformed Company", "totalCompensation": float("inf")}],
+                "jobFamilyLocationPageOccupationSchema": json.dumps(occupation),
+            }
+        }
+    }
+    public_html = f'<html><script id="__NEXT_DATA__" type="application/json">{json.dumps(next_data)}</script></html>'
+
+    observations = load_levels_fyi_public_observations(
+        [LevelsFyiPublicTarget("Software Engineer", "Spain")],
+        fetch_text=lambda url: "" if url.endswith(".md") else public_html,
+    )
+
+    assert len(observations) == 1
+    assert observations[0].company_name == LEVELS_FYI_MARKET_AGGREGATE_COMPANY
+    assert (observations[0].minimum_amount, observations[0].maximum_amount) == (
+        70_000,
+        130_000,
+    )
