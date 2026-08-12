@@ -5,10 +5,13 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import socket
+import ssl
 import urllib.request
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
+
+import certifi
 
 from jobctrl.infrastructure.network.url_safety import Resolver, validate_public_http_url
 
@@ -36,7 +39,11 @@ def build_public_http_opener(
 
     public_handlers: list[urllib.request.BaseHandler] = [
         PublicDestinationHTTPHandler(resolver=resolver, socket_factory=socket_factory),
-        PublicDestinationHTTPSHandler(resolver=resolver, socket_factory=socket_factory),
+        PublicDestinationHTTPSHandler(
+            resolver=resolver,
+            socket_factory=socket_factory,
+            context=_verified_https_context(),
+        ),
     ]
     if follow_redirects:
         public_handlers.append(PublicDestinationRedirectHandler(resolver=resolver))
@@ -44,6 +51,14 @@ def build_public_http_opener(
         public_handlers.append(NoRedirectHandler())
     public_handlers.extend(handlers)
     return urllib.request.build_opener(*public_handlers)
+
+
+def _verified_https_context() -> ssl.SSLContext:
+    """Combine platform roots with JobCtrl's bundled Mozilla CA store."""
+
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=certifi.where())
+    return context
 
 
 def create_public_connection(
@@ -127,9 +142,7 @@ def resolve_public_addrinfos(
 
     for address in addresses:
         if not address.is_global:
-            raise UnsafePublicDestinationError(
-                f"URL host resolves to a non-public address: {address}"
-            )
+            raise UnsafePublicDestinationError(f"URL host resolves to a non-public address: {address}")
 
     return tuple(addrinfos)
 
@@ -186,13 +199,17 @@ class _PublicConnectionMixin:
 
 
 class _PublicHTTPConnection(_PublicConnectionMixin, http.client.HTTPConnection):
-    def __init__(self, *args: Any, resolver: Resolver | None = None, socket_factory: SocketFactory | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, resolver: Resolver | None = None, socket_factory: SocketFactory | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._init_public_destination(resolver=resolver, socket_factory=socket_factory)
 
 
 class _PublicHTTPSConnection(_PublicConnectionMixin, http.client.HTTPSConnection):
-    def __init__(self, *args: Any, resolver: Resolver | None = None, socket_factory: SocketFactory | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, resolver: Resolver | None = None, socket_factory: SocketFactory | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._init_public_destination(resolver=resolver, socket_factory=socket_factory)
 
@@ -223,10 +240,11 @@ class PublicDestinationHTTPSHandler(urllib.request.HTTPSHandler):
         *,
         resolver: Resolver | None = None,
         socket_factory: SocketFactory | None = None,
+        context: ssl.SSLContext | None = None,
     ) -> None:
         self._resolver = resolver
         self._socket_factory = socket_factory
-        super().__init__()
+        super().__init__(context=context or _verified_https_context())
 
     def https_open(self, req):  # noqa: ANN001
         return self.do_open(
@@ -234,6 +252,7 @@ class PublicDestinationHTTPSHandler(urllib.request.HTTPSHandler):
             req,
             resolver=self._resolver,
             socket_factory=self._socket_factory,
+            context=self._context,
         )
 
 
