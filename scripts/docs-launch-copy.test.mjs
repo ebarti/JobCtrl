@@ -11,7 +11,7 @@ test("public onboarding leads with bundled acquisition and keeps source advanced
 
   assert.match(
     readme,
-    /\[Join the discussion\]\(https:\/\/github\.com\/ebarti\/JobCtrl\/discussions\)/,
+    /\[Help test JobCtrl\]\(https:\/\/github\.com\/ebarti\/JobCtrl\/discussions\/797\)/,
   );
 
   for (const document of [gettingStarted, readme]) {
@@ -102,6 +102,9 @@ test("homepage describes supervised browser and email submission", async () => {
 test("public docs emit crawl and social-discovery metadata", async () => {
   const config = await read("docs/.vitepress/config.ts");
   const homepage = await read("docs/index.md");
+  const indexNowKey = await read(
+    "docs/public/3f74c8ee66cad2b5e1e266cfc518a5db.txt",
+  );
   const robots = await read("docs/public/robots.txt");
 
   assert.match(config, /SOCIAL_IMAGE_URL = `\$\{DOCS_SITE_URL\}\/assets\/brand\/social-preview\.png`/);
@@ -112,20 +115,28 @@ test("public docs emit crawl and social-discovery metadata", async () => {
   assert.match(config, /"@type": "Organization"/);
   assert.match(config, /"@type": "WebSite"/);
   assert.match(config, /alternateName: "jobctrl\.dev"/);
+  assert.match(config, /disambiguatingDescription: DISAMBIGUATING_DESCRIPTION/);
   assert.match(config, /"@type": "SoftwareApplication"/);
+  assert.match(config, /alternateName: "JobCtrl\.dev"/);
   assert.match(config, /offers:\s*\{\s*"@type": "Offer",\s*price: "0",/);
   assert.match(config, /id: "jobctrl-structured-data"/);
-  assert.match(homepage, /title: "JobCtrl — Local-first job search automation"/);
+  assert.match(homepage, /title: "JobCtrl\.dev — Local-first job search automation"/);
   assert.match(homepage, /titleTemplate: false/);
+  assert.match(homepage, /^## Help test JobCtrl on Apple silicon$/m);
+  assert.match(homepage, /github\.com\/ebarti\/JobCtrl\/discussions\/797/);
   assert.equal(
     robots,
     "User-agent: *\nAllow: /\n\nSitemap: https://jobctrl.dev/sitemap.xml\n",
   );
+  assert.equal(indexNowKey, "3f74c8ee66cad2b5e1e266cfc518a5db\n");
 });
 
 test("priority public pages have distinct search descriptions", async () => {
   const descriptions = new Map([
-    ["docs/index.md", "JobCtrl is a local-first job search application"],
+    [
+      "docs/index.md",
+      "JobCtrl.dev is the open-source, local-first job search application",
+    ],
     ["docs/comparison.md", "Compare JobCtrl's local-first, auditable workflow"],
     ["docs/user/product-tour.md", "Tour JobCtrl's local-first workspace"],
     ["docs/user/getting-started.md", "Install JobCtrl on Apple-silicon macOS"],
@@ -274,23 +285,31 @@ test("homepage and canonical owners cross-link the public guides", async () => {
   }
 });
 
-test("comparison cites the current pinned AI Job Search discovery source", async () => {
+test("comparison pins dated four-project snapshots", async () => {
   const comparison = await read("docs/comparison.md");
-  const pinnedSource =
-    "https://github.com/MadsLorentzen/ai-job-search/blob/faa479973aeaa7b8a1463112d088fdefff202961/";
-  const currentPath = "." + "claude/skills/job-scraper/SKILL.md";
-  const stalePath = "." + "agents/" + "skills/job-scraper/SKILL.md";
-  const currentSource = `${pinnedSource}${currentPath}`.replaceAll(".", "\\.").replaceAll("/", "\\/");
+  const currentSnapshots = [
+    "b4063e1a3227d31eebacbc7d2c620ae5236f744b",
+    "03fc92bb04e1fc8821ff4ec71b26bcc6f0da1182",
+    "c834c6502bf4685904b6abc3d5a008294b8b7020",
+    "670d30ae7e9709bbf624deb2d9962ba5733331f5",
+  ];
 
+  for (const snapshot of currentSnapshots) {
+    assert.ok(comparison.includes(snapshot), `comparison must cite ${snapshot}`);
+  }
+  assert.match(comparison, /^\| Capability \| JobCtrl \| Career-Ops \| JobOps \| AI Job Search \|$/m);
+  assert.match(comparison, /74 provider modules/);
+  assert.match(comparison, /Commons Clause/);
   assert.match(
     comparison,
-    new RegExp(`${currentSource}#L58-L72`),
+    /competitor snapshots were last reverified on\s+\*\*2026-08-12\*\*/,
   );
   assert.match(
     comparison,
-    new RegExp(`${currentSource}#L131-L153`),
+    /JobCtrl's reviewed snapshot was advanced on \*\*2026-08-15\*\*/,
   );
-  assert.doesNotMatch(comparison, new RegExp(stalePath.replaceAll("/", "\\/")));
+  assert.match(comparison, /^\| JobCtrl .* \| 2026-08-15 \|$/m);
+  assert.equal(comparison.match(/\| 2026-08-12 \|$/gm)?.length, 3);
 });
 
 test("launch provider guidance requires one of Codex, Claude, or Google", async () => {

@@ -6,7 +6,9 @@ const REPO_URL = "https://github.com/ebarti/JobCtrl";
 const DOCS_SITE_URL = "https://jobctrl.dev";
 const SITE_NAME = "JobCtrl";
 const SITE_DESCRIPTION =
-  "Run your job search without surrendering your data: local discovery, evidence-backed scoring, truthful tailoring, and supervised apply.";
+  "JobCtrl.dev is the open-source, local-first job search application for evidence-backed scoring, truthful tailoring, and supervised apply.";
+const DISAMBIGUATING_DESCRIPTION =
+  "The open-source JobCtrl job-search application published at jobctrl.dev and github.com/ebarti/JobCtrl.";
 const SOCIAL_IMAGE_URL = `${DOCS_SITE_URL}/assets/brand/social-preview.png`;
 const SOCIAL_IMAGE_ALT =
   "JobCtrl: run your job search, keep your data, and inspect key AI-assisted decisions.";
@@ -31,6 +33,7 @@ const HOME_STRUCTURED_DATA = JSON.stringify({
       name: SITE_NAME,
       alternateName: "jobctrl.dev",
       description: SITE_DESCRIPTION,
+      disambiguatingDescription: DISAMBIGUATING_DESCRIPTION,
       inLanguage: "en",
       publisher: { "@id": ORGANIZATION_ID },
     },
@@ -40,6 +43,8 @@ const HOME_STRUCTURED_DATA = JSON.stringify({
       name: SITE_NAME,
       url: `${DOCS_SITE_URL}/`,
       description: SITE_DESCRIPTION,
+      alternateName: "JobCtrl.dev",
+      disambiguatingDescription: DISAMBIGUATING_DESCRIPTION,
       applicationCategory: "BusinessApplication",
       applicationSubCategory: "Job search automation",
       operatingSystem: "macOS 15 or later on Apple silicon",
