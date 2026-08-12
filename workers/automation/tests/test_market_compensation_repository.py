@@ -28,6 +28,7 @@ from jobctrl.infrastructure.compensation.sqlite_market_repository import DEFAULT
 from jobctrl.infrastructure.compensation.sqlite_market_repository import (
     EuroTopTechLoadOutcome,
 )
+from jobctrl.infrastructure.events import get_default_publisher, reset_default_publisher
 
 
 @pytest.fixture()
@@ -172,6 +173,51 @@ def test_save_and_read_round_trip_estimated_company_role_range(conn: sqlite3.Con
     }
     assert all(row.company_score == 1 for row in loaded.evidence)
     assert "reported_compensation_sample" in loaded.warnings
+
+
+def test_save_notifies_commit_capable_subscribers_only_after_commit(
+    conn: sqlite3.Connection,
+) -> None:
+    job_url = _seed_job(conn, url="https://example.com/jobs/committing-subscriber")
+    job_id = _job_id(job_url)
+    estimate = estimate_market_compensation(
+        job_id=job_id,
+        title="Senior Platform Engineer",
+        company="Acme AI",
+        location="Remote Europe",
+        observations=(_levels(), _glassdoor()),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+    reset_default_publisher()
+    publisher = get_default_publisher()
+    observed_rows: list[int] = []
+
+    def commit_capable_subscriber(_event: object) -> None:
+        observed_rows.append(
+            int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?",
+                    ("local", job_id),
+                ).fetchone()[0]
+            )
+        )
+        conn.commit()
+
+    subscription = publisher.subscribe("CompensationFactsUpdated", commit_capable_subscriber)
+    try:
+        SqliteMarketCompensationRepository(conn).save_estimate(estimate)
+    finally:
+        subscription.unsubscribe()
+        reset_default_publisher()
+
+    assert observed_rows == [1]
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? AND event_type = ?",
+            ("local", job_id, "CompensationFactsUpdated"),
+        ).fetchone()[0]
+        == 1
+    )
 
 
 def test_repository_round_trips_non_range_states(

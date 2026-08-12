@@ -147,7 +147,8 @@ def test_materialization_retry_repairs_projection_after_save_event_failure(
         )
         original = SqliteMarketCompensationRepository._record_updated_event
 
-        def fail_before_event(_repository, _estimate) -> None:
+        def fail_before_event(_repository, _estimate, *, publisher) -> None:
+            del publisher
             raise sqlite3.OperationalError("simulated compensation event failure")
 
         monkeypatch.setattr(

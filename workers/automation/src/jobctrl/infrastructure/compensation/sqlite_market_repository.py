@@ -43,7 +43,9 @@ from jobctrl.domain.compensation import (
     estimate_market_compensation,
     sanitize_market_source_snapshot,
 )
+from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.domain.ports.events import EventHandler, Subscription
 from jobctrl.domain.tenant import TenantId
 
 SAFE_FACTOR_NAMES = frozenset(
@@ -233,6 +235,23 @@ class EuroTopTechLoadOutcome:
         return self.requested_pages > 0 and self.parsed_pages == 0
 
 
+class _BufferedEventPublisher:
+    """Hold notifications until the canonical write has committed."""
+
+    def __init__(self) -> None:
+        self.events: list[DomainEvent] = []
+
+    def publish(self, event: DomainEvent) -> None:
+        self.events.append(event)
+
+    def subscribe(
+        self,
+        _event_type: str | None,
+        _handler: EventHandler,
+    ) -> Subscription:
+        raise RuntimeError("buffered event publisher does not accept subscriptions")
+
+
 class SqliteMarketCompensationRepository:
     """SQLite-backed repository for canonical reported compensation estimates."""
 
@@ -243,9 +262,9 @@ class SqliteMarketCompensationRepository:
         if estimate.estimate_state == "not_requested":
             raise ValueError("not_requested market estimates are read-side markers and must not be persisted")
         estimate = replace(estimate, job_id=canonical_job_id(str(estimate.job_id)))
-        with self._atomic_event_write():
+        with self._atomic_event_write() as publisher:
             self._save_estimate_row(estimate)
-            self._record_updated_event(estimate)
+            self._record_updated_event(estimate, publisher=publisher)
 
     def _save_estimate_row(self, estimate: MarketCompensationEstimate) -> None:
         self._conn.execute(
@@ -362,7 +381,7 @@ class SqliteMarketCompensationRepository:
         """Clear a stale projection only when it belongs to the named estimator."""
 
         job_id = canonical_job_id(str(job_id))
-        with self._atomic_event_write():
+        with self._atomic_event_write() as publisher:
             cursor = self._conn.execute(
                 """
                 DELETE FROM job_market_compensation_estimates
@@ -378,17 +397,19 @@ class SqliteMarketCompensationRepository:
                 tenant_id=tenant_id,
                 job_id=job_id,
                 cleared_at=deleted_at,
+                publisher=publisher,
             )
             return True
 
     @contextmanager
-    def _atomic_event_write(self) -> Iterator[None]:
-        """Commit the canonical estimate mutation and dirty event together."""
+    def _atomic_event_write(self) -> Iterator[_BufferedEventPublisher]:
+        """Commit the canonical mutation and dirty event before notifying."""
 
         savepoint = "market_compensation_event_write"
+        publisher = _BufferedEventPublisher()
         self._conn.execute(f"SAVEPOINT {savepoint}")
         try:
-            yield
+            yield publisher
         except BaseException:
             self._conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
             self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
@@ -396,6 +417,11 @@ class SqliteMarketCompensationRepository:
         else:
             self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
             self._conn.commit()
+            from jobctrl.infrastructure.events import get_default_publisher
+
+            destination = get_default_publisher()
+            for event in publisher.events:
+                destination.publish(event)
 
     def estimate_and_save_job(
         self,
@@ -509,7 +535,12 @@ class SqliteMarketCompensationRepository:
             _row_value(row, "annualized_maximum_amount")
         )
 
-    def _record_updated_event(self, estimate: MarketCompensationEstimate) -> None:
+    def _record_updated_event(
+        self,
+        estimate: MarketCompensationEstimate,
+        *,
+        publisher: _BufferedEventPublisher,
+    ) -> None:
         from jobctrl.state import record_job_event
 
         record_job_event(
@@ -520,6 +551,7 @@ class SqliteMarketCompensationRepository:
             tenant_id=TenantId(estimate.tenant_id),
             message="Market compensation estimate updated",
             occurred_at=estimate.estimated_at,
+            publisher=publisher,
             payload={
                 "jobId": str(estimate.job_id),
                 "changedSections": ["market"],
@@ -537,6 +569,7 @@ class SqliteMarketCompensationRepository:
         tenant_id: str,
         job_id: JobId,
         cleared_at: str,
+        publisher: _BufferedEventPublisher,
     ) -> None:
         from jobctrl.state import record_job_event
 
@@ -548,6 +581,7 @@ class SqliteMarketCompensationRepository:
             tenant_id=TenantId(tenant_id),
             message="Market compensation estimate cleared",
             occurred_at=cleared_at,
+            publisher=publisher,
             payload={
                 "jobId": str(job_id),
                 "changedSections": ["market"],
