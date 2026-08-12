@@ -4,9 +4,9 @@ set -euo pipefail
 
 # P6 renders these from the signed publication. Empty pins fail closed.
 # BEGIN JOBCTRL RELEASE PINS
-INSTALLER_URL="https://releases.jobctrl.dev/v1/artifacts/2.0.8-92770fe5fcc99e73c0a06e73315acbb7b506a7af-darwin-arm64/jobctrl-installer"
-INSTALLER_SHA256="be91015004c63d0f26f9ed6891d70e393058e99cc975cd4737a4e907a8229ccb"
-INSTALLER_VERSION="2.0.8"
+INSTALLER_URL="https://releases.jobctrl.dev/v1/artifacts/0.1.0-d01764c815d2aaa589ce29261274f1b255f322d4-darwin-arm64/jobctrl-installer"
+INSTALLER_SHA256="17cf5f6eb2d5af23cd58ac66720f130731a00c749691dac1d33e2d1d33086c33"
+INSTALLER_VERSION="0.1.0"
 # END JOBCTRL RELEASE PINS
 
 usage() {
