@@ -183,9 +183,14 @@ from that current-execution flow. Capacity details include configured and active
 slots, internal parallelism when applicable, and approximate task-queue pollers,
 backlog, age, add rate, and dispatch rate. The execution inspector shows cohort
 membership and remaining work, read-model freshness, and the bounded active-work
-inventory. Treat ETA as an observed range: calibrating, paused, stale,
-unavailable, and no-work states are deliberately explicit rather than replaced
-by a guessed finish time.
+inventory. Treat ETA as an observed range: calibrating, no recent dispatch,
+stale, unavailable, and no-work states are deliberately explicit rather than
+replaced by a guessed finish time. An
+unavailable ETA does not mean that the workflow itself is paused.
+When a closed run leaves work behind, **Set up a new Discover run** becomes
+available only after the live operations snapshot proves that shared runtime
+capacity is idle. The Discover run control follows the same guard, so selecting
+the tab directly cannot bypass it.
 
 ### Workers, Activity Slots, And Queue Backlog
 

@@ -202,7 +202,10 @@ A failed execution is never treated as proof that the runtime is idle. The UI
 uses `activeItemsTotal` as a three-state recovery gate: a positive value reports
 remaining work, `null` reports that the inventory is unavailable, and exactly
 zero permits **Set up a new Discover run**. That action only selects and focuses
-the Discover launch controls; it never dispatches work implicitly.
+the Discover launch controls; it never dispatches work implicitly. The same
+fresh zero-active-slot guard disables direct Discover submission for failed,
+completed-with-issues, closed-draining, and incomplete-history replacement
+runs, so selecting the action tab cannot bypass recovery safety.
 
 `reconciled_not_found` is a provisional verdict: the worker could not find the
 exact recorded Temporal run in the history store it could currently reach. The
@@ -382,8 +385,12 @@ per-stage and source-family ranges can price their already-known scoped backlog
 before closure. Every estimate still withholds a number when telemetry is stale,
 a worker is unavailable, work is budget-blocked, or shared contention is
 unbounded. Non-numeric `calibrating`, `paused`, `stale`, and `unavailable`
-states are part of the contract. An available low/high range is a current
-projection estimate, not a completion promise.
+states are part of the contract. The web surface presents a `paused` estimate
+as **No ETA** plus the bounded reason so it cannot be mistaken for the Temporal
+workflow's lifecycle state. In particular, `no_dispatch` means the estimator
+has not observed recent dispatch activity; it is not a resumable workflow
+command. An available low/high range is a current projection estimate, not a
+completion promise.
 
 ## Persistence Map
 

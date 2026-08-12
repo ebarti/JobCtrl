@@ -18,6 +18,8 @@ import { CancelWorkflowRunButton } from "../../contexts/pipeline/components/Canc
 import { StageTriggerPanel } from "../../contexts/pipeline/components/StageTriggerPanel.js";
 import {
   etaLabel,
+  etaReasonLabel,
+  etaStatusLabel,
   formatSeconds,
   safeOperationalIdentifier,
   sentenceCase,
@@ -178,6 +180,32 @@ function canSafelyPrepareNewDiscoverRun(
   );
 }
 
+function executionNeedsReplacement(
+  execution: NonNullable<PipelineOperationsSnapshot["execution"]>,
+): boolean {
+  return (
+    execution.phase === "failed" ||
+    execution.phase === "completed_with_issues" ||
+    (execution.phase === "draining" &&
+      execution.workflowStatus !== "in_progress")
+  );
+}
+
+function discoverRunBlockReason(
+  snapshot: PipelineOperationsSnapshot,
+): string | null {
+  const execution = snapshot.execution;
+  const needsReplacementGuard =
+    (execution ? executionNeedsReplacement(execution) : false) ||
+    snapshot.projectionCoverage?.status === "incomplete";
+  if (!needsReplacementGuard) return null;
+  if (canSafelyPrepareNewDiscoverRun(snapshot)) return null;
+  if (snapshot.capacity.status !== "available") {
+    return "Shared runtime capacity must be available before starting a new Discover run.";
+  }
+  return "Wait for active pipeline work to finish before starting a new Discover run.";
+}
+
 function PipelineStatus({
   children,
   status,
@@ -336,7 +364,7 @@ function EtaLedger({
 }) {
   return (
     <InspectorLedger aria-label={label} className="pipeline-compact-ledger">
-      <InspectorLedgerItem label="Status" value={sentenceCase(eta.status)} />
+      <InspectorLedgerItem label="Status" value={etaStatusLabel(eta)} />
       {eta.status === "available" ? (
         <>
           <InspectorLedgerItem label="Low" value={formatSeconds(eta.lowSeconds)} />
@@ -366,7 +394,7 @@ function EtaLedger({
       {eta.status === "paused" ||
       eta.status === "stale" ||
       eta.status === "unavailable" ? (
-        <InspectorLedgerItem label="Reason" value={sentenceCase(eta.reason)} />
+        <InspectorLedgerItem label="Reason" value={etaReasonLabel(eta)} />
       ) : null}
       <InspectorLedgerItem label="As of" value={formatDateTime(eta.asOf)} />
     </InspectorLedger>
@@ -756,7 +784,7 @@ function PipelineStageRow({
               </div>
             ) : null}
             {providerProgress ? (
-              <section className="pipeline-stage-row__outcomes">
+              <section className="pipeline-stage-row__provider-progress">
                 <h4 data-typography="component-title">Provider traversal</h4>
                 <p data-typography="body">{providerProgressLabel(providerProgress)}</p>
               </section>
@@ -842,17 +870,30 @@ function PipelineExecutionNotice({
   if (!projectionReady(snapshot)) return null;
 
   const execution = snapshot.execution;
+  if (!execution) return null;
+
+  if (!executionNeedsReplacement(execution)) return null;
+  const isClosedDraining =
+    execution.phase === "draining" &&
+    execution.workflowStatus !== "in_progress";
+  let copy: ExecutionFailureCopy;
   if (
-    !execution ||
-    (execution.phase !== "failed" &&
-      execution.phase !== "completed_with_issues")
+    execution.phase === "failed" ||
+    execution.phase === "completed_with_issues"
   ) {
+    copy = executionFailureCopy(execution.phase, execution.errorCode);
+  } else if (isClosedDraining) {
+    copy = {
+      title: "This Discover run has ended",
+      description:
+        "The selected workflow is closed, so there is no paused workflow to resume. Use Set up a new Discover run to continue the remaining work once shared runtime capacity is idle.",
+    };
+  } else {
     return null;
   }
 
-  const copy = executionFailureCopy(execution.phase, execution.errorCode);
   const activityCopy = failedExecutionActivityCopy(snapshot.activeItemsTotal);
-  const canStartNewRun = snapshot.activeItemsTotal === 0;
+  const canStartNewRun = canSafelyPrepareNewDiscoverRun(snapshot);
   return (
     <div className="pipeline-recovery-notice">
       <Alert
@@ -1740,6 +1781,7 @@ function PipelineWorkspace({
   const canStartFromIncompleteHistory =
     snapshot.projectionCoverage?.status === "incomplete" &&
     canSafelyPrepareNewDiscoverRun(snapshot);
+  const discoverBlockReason = discoverRunBlockReason(snapshot);
 
   return (
     <RouteWorkspace
@@ -1797,7 +1839,15 @@ function PipelineWorkspace({
             aria-label="Pipeline action tools"
             className="pipelines-workspace__controls"
             id="pipeline-actions"
-            primary={<StageTriggerPanel />}
+            primary={
+              <StageTriggerPanel
+                stageRunBlockReasons={
+                  discoverBlockReason
+                    ? { discover: discoverBlockReason }
+                    : {}
+                }
+              />
+            }
             role="group"
           />
         ) : null}

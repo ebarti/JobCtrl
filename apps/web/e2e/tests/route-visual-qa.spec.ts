@@ -9,6 +9,7 @@ import {
   sampleJob,
   sampleResumeTemplateListResponse,
 } from "../../src/test/fixtures/projections.js";
+import { pipelinesDiscoveringSnapshot } from "../../src/views/pipelines/PipelinesView.fixtures.js";
 
 type Density = "compact" | "regular" | "comfy";
 
@@ -1829,6 +1830,128 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
     role: null,
   });
 });
+test("Crawl sources keeps provider traversal separate from exact outcomes", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1491, height: 1245 });
+  await page.route("**/v1/pipeline/operations", async (route) => {
+    await route.fulfill({ json: pipelinesDiscoveringSnapshot });
+  });
+  await page.goto("/pipelines");
+
+  const crawl = page.getByRole("region", { name: "Crawl sources stage" });
+  const trigger = crawl.getByRole("button", { name: /Crawl sources/i });
+  await expect(trigger).toBeVisible({ timeout: 30_000 });
+  await trigger.click();
+
+  const content = crawl.locator(".pipeline-stage-row__content");
+  const provider = content.locator(".pipeline-stage-row__provider-progress");
+  const outcomes = content.locator(".pipeline-stage-row__outcomes");
+  await expect(provider).toBeVisible();
+  await expect(outcomes).toBeVisible();
+
+  const desktop = await content.evaluate((element) => {
+    const provider = element.querySelector<HTMLElement>(
+      ".pipeline-stage-row__provider-progress",
+    );
+    const outcomes = element.querySelector<HTMLElement>(
+      ".pipeline-stage-row__outcomes",
+    );
+    if (!provider || !outcomes) {
+      throw new Error("Expected both stage detail panels.");
+    }
+    const providerRect = provider.getBoundingClientRect();
+    const outcomesRect = outcomes.getBoundingClientRect();
+    return {
+      providerRight: providerRect.right,
+      outcomesLeft: outcomesRect.left,
+      overlaps:
+        providerRect.left < outcomesRect.right &&
+        providerRect.right > outcomesRect.left &&
+        providerRect.top < outcomesRect.bottom &&
+        providerRect.bottom > outcomesRect.top,
+    };
+  });
+  expect(desktop.overlaps).toBe(false);
+  expect(desktop.providerRight).toBeLessThanOrEqual(desktop.outcomesLeft + 1);
+
+  await page.setViewportSize({ width: 720, height: 900 });
+  const mobile = await content.evaluate((element) => {
+    const provider = element.querySelector<HTMLElement>(
+      ".pipeline-stage-row__provider-progress",
+    );
+    const outcomes = element.querySelector<HTMLElement>(
+      ".pipeline-stage-row__outcomes",
+    );
+    if (!provider || !outcomes) {
+      throw new Error("Expected both stage detail panels.");
+    }
+    const providerRect = provider.getBoundingClientRect();
+    const outcomesRect = outcomes.getBoundingClientRect();
+    return {
+      providerBottom: providerRect.bottom,
+      outcomesTop: outcomesRect.top,
+      overlaps:
+        providerRect.left < outcomesRect.right &&
+        providerRect.right > outcomesRect.left &&
+        providerRect.top < outcomesRect.bottom &&
+        providerRect.bottom > outcomesRect.top,
+    };
+  });
+  expect(mobile.overlaps).toBe(false);
+  expect(mobile.providerBottom).toBeLessThanOrEqual(mobile.outcomesTop + 1);
+});
+
+test("busy replacement guidance keeps its title readable without an action", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1491, height: 1245 });
+  await page.route("**/v1/pipeline/operations", async (route) => {
+    await route.fulfill({
+      json: {
+        ...pipelinesDiscoveringSnapshot,
+        execution: {
+          ...pipelinesDiscoveringSnapshot.execution,
+          workflowStatus: "succeeded",
+          phase: "draining",
+          finishedAt: "2026-07-14T12:04:00.000Z",
+        },
+        capacity: {
+          ...pipelinesDiscoveringSnapshot.capacity,
+          activeSlots: 1,
+          availableSlots: 3,
+          slotSaturation: 0.25,
+        },
+        activeItems: [],
+        activeItemsTotal: 0,
+        activeItemsTruncated: false,
+        activeStageCounts: [],
+      },
+    });
+  });
+  await page.goto("/pipelines");
+
+  const alert = page.getByRole("alert").filter({
+    hasText: "This Discover run has ended",
+  });
+  const title = alert.locator('[data-slot="alert-title"]');
+  await expect(title).toBeVisible({ timeout: 30_000 });
+  await expect(
+    alert.getByRole("link", { name: "Set up a new Discover run" }),
+  ).toHaveCount(0);
+
+  const geometry = await title.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      width: rect.width,
+    };
+  });
+  expect(geometry.width).toBeGreaterThan(100);
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth + 1);
+});
+
 test("Profile and Preferences subjects share one expandable-card hierarchy", async ({
   page,
 }) => {
