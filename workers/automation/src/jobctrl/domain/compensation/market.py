@@ -53,12 +53,17 @@ MarketConfidenceFactorName = Literal[
     "trimodal_tier",
 ]
 MarketWarningCode = Literal[
+    "benchmark_extrapolated",
+    "benchmark_level_fallback",
     "reported_compensation_sample",
     "posted_salary_sample",
     "source_conflict_with_posted_salary",
     "stale_source_snapshot",
     "low_sample_count",
     "company_role_fallback",
+    "cost_of_living_only",
+    "factor_out_of_bounds",
+    "limited_matched_company_evidence",
     "trimodal_tier_inferred",
     "location_mismatch",
 ]
@@ -99,12 +104,17 @@ COMPANY_TIERS: tuple[CompanyCompensationTier, ...] = (
 )
 MARKET_CONFIDENCE_BANDS: tuple[MarketConfidenceBand, ...] = ("none", "low", "medium", "high")
 MARKET_WARNING_CODES: tuple[MarketWarningCode, ...] = (
+    "benchmark_extrapolated",
+    "benchmark_level_fallback",
     "reported_compensation_sample",
     "posted_salary_sample",
     "source_conflict_with_posted_salary",
     "stale_source_snapshot",
     "low_sample_count",
     "company_role_fallback",
+    "cost_of_living_only",
+    "factor_out_of_bounds",
+    "limited_matched_company_evidence",
     "trimodal_tier_inferred",
     "location_mismatch",
 )
@@ -437,7 +447,14 @@ def estimate_market_compensation(
             normalized_company=normalized_company,
         )
 
-    unsupported_sources = sorted(str(row.source_id) for row in observations if row.source_id not in MARKET_SOURCE_IDS)
+    reported_observations = tuple(
+        row
+        for row in observations
+        if row.source_id != "posted_salary_text" and row.source_provenance != "employer_posted"
+    )
+    unsupported_sources = sorted(
+        str(row.source_id) for row in reported_observations if row.source_id not in MARKET_SOURCE_IDS
+    )
     if unsupported_sources:
         unsupported_reasons.append("unsupported_source")
         factors.append(_factor("company", 0.0, "Unsupported reported-compensation source evidence was rejected."))
@@ -457,7 +474,7 @@ def estimate_market_compensation(
         )
 
     component_rows = tuple(
-        row for row in observations if row.source_id in MARKET_SOURCE_IDS and row.component == component_value
+        row for row in reported_observations if row.source_id in MARKET_SOURCE_IDS and row.component == component_value
     )
     if not component_rows:
         insufficient_reasons.append("missing_reported_observation")

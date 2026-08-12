@@ -438,7 +438,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(listProjection?.salary).toBe("USD 70000-90000/year");
         const summary = JSON.parse(listProjection?.compensation_summary_json ?? "{}");
         expect(summary).toMatchObject({
-          projectionVersion: 1,
+          projectionVersion: 2,
           warningCount: 3,
           posted: {
             recordStatus: "recorded",
@@ -522,6 +522,202 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(JSON.stringify(audit)).not.toContain("/Users/");
       } finally {
         db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rebuilds settled v1 compensation projections across the posted-market authority upgrade", () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      const db = new Database(dbPath);
+      try {
+        refreshProjections(db);
+        const initial = db
+          .prepare(
+            `SELECT compensation_summary_json
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get(EVENT_JOB_ID) as { compensation_summary_json: string };
+        expect(JSON.parse(initial.compensation_summary_json)).toMatchObject({
+          projectionVersion: 2,
+          market: { recordStatus: "recorded" },
+        });
+
+        for (const { table, column } of [
+          { table: "job_list_projections", column: "compensation_summary_json" },
+          { table: "job_detail_projections", column: "compensation_summary_json" },
+          { table: "job_detail_projections", column: "compensation_audit_json" },
+        ]) {
+          const row = db
+            .prepare(`SELECT ${column} AS payload FROM ${table} WHERE tenant_id = 'local' AND job_id = ?`)
+            .get(EVENT_JOB_ID) as { payload: string };
+          const payload = JSON.parse(row.payload);
+          payload.projectionVersion = 1;
+          db.prepare(`UPDATE ${table} SET ${column} = ? WHERE tenant_id = 'local' AND job_id = ?`).run(
+            JSON.stringify(payload),
+            EVENT_JOB_ID,
+          );
+        }
+        db.prepare(
+          `UPDATE job_market_compensation_estimates
+              SET source_snapshot_json = ?, warnings_json = ?
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        ).run(
+          JSON.stringify([
+            {
+              source_id: "posted_salary_text",
+              source_provenance: "employer_posted",
+              source_type: "posted_salary",
+            },
+          ]),
+          JSON.stringify(["posted_salary_sample"]),
+          EVENT_JOB_ID,
+        );
+
+        // The original event is already folded; projectionVersion is the
+        // deterministic dirty signal for this authority migration.
+        refreshProjections(db);
+
+        const rebuilt = db
+          .prepare(
+            `SELECT list.compensation_summary_json,
+                    detail.compensation_summary_json AS detail_summary_json,
+                    detail.compensation_audit_json
+               FROM job_list_projections AS list
+               JOIN job_detail_projections AS detail
+                 ON detail.tenant_id = list.tenant_id
+                AND detail.job_id = list.job_id
+              WHERE list.tenant_id = 'local' AND list.job_id = ?`,
+          )
+          .get(EVENT_JOB_ID) as {
+          compensation_summary_json: string;
+          detail_summary_json: string;
+          compensation_audit_json: string;
+        };
+        const summary = JSON.parse(rebuilt.compensation_summary_json);
+        const detailSummary = JSON.parse(rebuilt.detail_summary_json);
+        const audit = JSON.parse(rebuilt.compensation_audit_json);
+        expect(summary).toMatchObject({
+          projectionVersion: 2,
+          market: { recordStatus: "not_requested", displayRange: null },
+        });
+        expect(detailSummary.projectionVersion).toBe(2);
+        expect(audit).toMatchObject({
+          projectionVersion: 2,
+          market: { recordStatus: "not_requested" },
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("keeps extrapolation safety warnings and country lineage during a TypeScript rebuild", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertCompensationRows(dbPath);
+      const db = new Database(dbPath);
+      try {
+        db.prepare(
+          `UPDATE job_market_compensation_estimates
+              SET minimum_amount = ?,
+                  maximum_amount = ?,
+                  confidence_interval_minimum_amount = ?,
+                  confidence_interval_maximum_amount = ?,
+                  confidence_band = ?,
+                  confidence_score = ?,
+                  source_count = ?,
+                  sample_count = ?,
+                  geography_scope = ?,
+                  source_snapshot_json = ?,
+                  warnings_json = ?,
+                  estimator_version = ?
+            WHERE tenant_id = 'local' AND job_id = ?`,
+        ).run(
+          1_200_000,
+          1_800_000,
+          900_000,
+          2_100_000,
+          "low",
+          0.31,
+          1,
+          4,
+          "country",
+          JSON.stringify([
+            {
+              source_id: "levels_fyi",
+              source_provenance: "public",
+              source_type: "reported_compensation",
+              release_year: 2026,
+              snapshot_version: "levels-fyi-public-de-2026-08-12",
+              geography_scope: "country",
+              aggregate_bucket: "reported company-role compensation",
+              attribution: "Data source: Levels.fyi (https://www.levels.fyi)",
+              sample_count: 4,
+            },
+          ]),
+          JSON.stringify([
+            "benchmark_extrapolated",
+            "cost_of_living_only",
+            "factor_out_of_bounds",
+          ]),
+          "company-role-reported-compensation-canonical-benchmark-v1:extrapolated:fact-1",
+          EVENT_JOB_ID,
+        );
+      } finally {
+        db.close();
+      }
+
+      const app = buildApp({
+        dbPath,
+        configPath: path.join(path.dirname(dbPath), "config.json"),
+      });
+      try {
+        const response = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(response.statusCode, response.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const readonlyDb = new Database(dbPath, { readonly: true });
+      try {
+        const rows = readonlyDb
+          .prepare(
+            `SELECT list.compensation_summary_json, detail.compensation_audit_json
+               FROM job_list_projections AS list
+               JOIN job_detail_projections AS detail
+                 ON detail.tenant_id = list.tenant_id
+                AND detail.job_id = list.job_id
+              WHERE list.tenant_id = 'local' AND list.job_id = ?`,
+          )
+          .get(EVENT_JOB_ID) as
+          | { compensation_summary_json: string; compensation_audit_json: string }
+          | undefined;
+        const summary = JSON.parse(rows?.compensation_summary_json ?? "{}");
+        expect(summary.market).toMatchObject({
+          displayRange: "EUR 1200000-1800000/year",
+          warningCount: 3,
+        });
+        const audit = JSON.parse(rows?.compensation_audit_json ?? "{}");
+        expect(audit.market.estimate).toMatchObject({
+          geographyScope: "country",
+          sources: [expect.objectContaining({ geographyScope: "country" })],
+        });
+        expect(audit.market.estimate.warnings.map((warning: { code: string }) => warning.code)).toEqual([
+          "benchmark_extrapolated",
+          "cost_of_living_only",
+          "factor_out_of_bounds",
+        ]);
+      } finally {
+        readonlyDb.close();
       }
     } finally {
       cleanup();

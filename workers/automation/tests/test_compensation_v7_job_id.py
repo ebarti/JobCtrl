@@ -84,7 +84,9 @@ def test_repositories_scope_compensation_facts_and_estimates_by_tenant_and_job_i
     estimate = market.get_estimate("local", local_job_id)
     assert estimate is not None
     assert estimate.job_id == local_job_id
-    assert estimate.minimum_amount == 100_000
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.minimum_amount is None
+    assert estimate.sources == ()
     assert market.get_estimate("other", other_job_id) is None
 
 

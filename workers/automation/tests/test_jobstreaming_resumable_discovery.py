@@ -31,6 +31,7 @@ from jobstreaming import (
 from jobctrl.database import close_connection, init_db
 from jobctrl.discovery import jobspy
 from jobctrl.discovery.activities import (
+    AutomaticCompensationRefreshActivityOutput,
     DiscoveryEnrichmentActivityInput,
     DiscoveryEnrichmentActivityOutput,
     DiscoveryPreparationFanoutInput,
@@ -67,9 +68,7 @@ class _NoopLimiter:
 
 
 class _PagedIndeed(Scraper):
-    capabilities = AdapterCapabilities(
-        filters=frozenset({"location", "is_remote", "hours_old"})
-    )
+    capabilities = AdapterCapabilities(filters=frozenset({"location", "is_remote", "hours_old"}))
     requests: list[str] = []
 
     def __init__(self, **_: object) -> None:
@@ -88,10 +87,7 @@ class _PagedIndeed(Scraper):
                     company_name=f"Example {index + 1}",
                     job_url=f"https://example.test/{slug}/{index + 1}",
                     location=Location(city="Remote"),
-                    description=(
-                        _DESCRIPTION
-                        + f" Unique organization marker {index + 1}." * 20
-                    ),
+                    description=(_DESCRIPTION + f" Unique organization marker {index + 1}." * 20),
                     is_remote=True,
                 ),
                 {"next": index + 1},
@@ -145,9 +141,7 @@ class _SchemaV2Indeed(_SuccessfulIndeed):
 
 
 class _FilteredIndeed(Scraper):
-    capabilities = AdapterCapabilities(
-        filters=frozenset({"location", "is_remote", "hours_old"})
-    )
+    capabilities = AdapterCapabilities(filters=frozenset({"location", "is_remote", "hours_old"}))
 
     def __init__(self, **_: object) -> None:
         super().__init__(Site.INDEED)
@@ -172,9 +166,7 @@ class _FilteredIndeed(Scraper):
 
 
 class _InvalidLinkedIn(Scraper):
-    capabilities = AdapterCapabilities(
-        filters=frozenset({"location", "is_remote", "hours_old"})
-    )
+    capabilities = AdapterCapabilities(filters=frozenset({"location", "is_remote", "hours_old"}))
 
     def __init__(self, **_: object) -> None:
         super().__init__(Site.LINKEDIN)
@@ -195,9 +187,7 @@ class _CursorThenPosting(_SuccessfulIndeed):
 
 
 class _CursorThenLinkedIn(Scraper):
-    capabilities = AdapterCapabilities(
-        filters=frozenset({"location", "is_remote", "hours_old"})
-    )
+    capabilities = AdapterCapabilities(filters=frozenset({"location", "is_remote", "hours_old"}))
     calls = 0
 
     def __init__(self, **_: object) -> None:
@@ -225,9 +215,7 @@ class _CursorThenLinkedIn(Scraper):
 
 
 class _WaitingIndeed(Scraper):
-    capabilities = AdapterCapabilities(
-        filters=frozenset({"location", "is_remote", "hours_old"})
-    )
+    capabilities = AdapterCapabilities(filters=frozenset({"location", "is_remote", "hours_old"}))
     started = threading.Event()
 
     def __init__(self, **_: object) -> None:
@@ -257,9 +245,7 @@ def _config(
     return {
         "boards": list(boards),
         "queries": [{"query": query} for query in queries],
-        "locations": [
-            {"label": "remote", "location": "Remote", "remote": True}
-        ],
+        "locations": [{"label": "remote", "location": "Remote", "remote": True}],
         "defaults": {
             "results_per_site": 10,
             "hours_old": 72,
@@ -345,6 +331,13 @@ async def _temporal_enrichment(
     return DiscoveryEnrichmentActivityOutput(status="ok", passes=1, pending=0)
 
 
+@activity.defn(name="automatic_compensation_refresh")
+async def _temporal_compensation_refresh(
+    _payload,
+) -> AutomaticCompensationRefreshActivityOutput:
+    return AutomaticCompensationRefreshActivityOutput(status="skipped")
+
+
 @activity.defn(name="discovery_preparation_fanout")
 async def _temporal_fanout(
     _payload: DiscoveryPreparationFanoutInput,
@@ -360,6 +353,7 @@ def _temporal_activities():
         _temporal_plan_sources,
         _temporal_resumable_source,
         _temporal_enrichment,
+        _temporal_compensation_refresh,
         _temporal_fanout,
     ]
 
@@ -453,14 +447,14 @@ def test_store_before_ack_replay_resumes_without_duplicate_counts_or_events(
         """
     ).fetchone()
     assert event_counts[0] == event_counts[1]
-    assert conn.execute(
-        "SELECT COUNT(*) FROM job_events WHERE job_id = ?",
-        (first_job_id,),
-    ).fetchone()[0] == first_job_event_count
-    assert any(
-        snapshot["message"] == "Resuming interrupted JobStreaming search unit"
-        for snapshot in progress
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_events WHERE job_id = ?",
+            (first_job_id,),
+        ).fetchone()[0]
+        == first_job_event_count
     )
+    assert any(snapshot["message"] == "Resuming interrupted JobStreaming search unit" for snapshot in progress)
 
 
 def test_provider_progress_is_projected_without_private_resume_state(
@@ -479,9 +473,7 @@ def test_provider_progress_is_projected_without_private_resume_state(
     )
 
     provider_snapshot = next(
-        snapshot
-        for snapshot in progress
-        if snapshot["message"] == "JobStreaming provider page completed"
+        snapshot for snapshot in progress if snapshot["message"] == "JobStreaming provider page completed"
     )
     assert provider_snapshot["providerProgress"] == {
         "site": "indeed",
@@ -742,9 +734,7 @@ def test_recoverable_board_failure_is_retried_after_healthy_partial_output(
         adapter_registry=registry,
     )
 
-    indeed_unit, linkedin_unit = SqliteDiscoverySearchUnitRepository(conn).list_units(
-        execution
-    )
+    indeed_unit, linkedin_unit = SqliteDiscoverySearchUnitRepository(conn).list_units(execution)
     assert result["new"] == 2
     assert result["failed_source_ids"] == []
     assert indeed_unit.state == "completed"
@@ -773,9 +763,7 @@ def test_incompatible_cursor_schema_fails_explicitly_without_resetting(
     seed_lease = repository.claim_next(execution, "schema-attempt-1", 1)
     assert seed_lease is not None
     provider_spec = jobspy._jobstreaming_spec(specs[0])  # noqa: SLF001
-    checkpoint = SearchCheckpoint.for_request(
-        JobStreamingGateway.build_request(provider_spec)
-    )
+    checkpoint = SearchCheckpoint.for_request(JobStreamingGateway.build_request(provider_spec))
     repository.checkpoint_store(seed_lease).save(checkpoint)
     incompatible_registry = AdapterRegistry()
     incompatible_registry.register(Site.INDEED, _SchemaV2Indeed)
@@ -832,9 +820,7 @@ def test_durable_plan_preserves_target_location_and_splits_glassdoor_request(
         "Barcelona, Catalonia, Spain",
         "Barcelona",
     ]
-    assert all(
-        spec.target_location == "Barcelona, Catalonia, Spain" for spec in specs
-    )
+    assert all(spec.target_location == "Barcelona, Catalonia, Spain" for spec in specs)
 
 
 def test_partial_board_success_is_retained_with_typed_failure_evidence(
@@ -855,9 +841,7 @@ def test_partial_board_success_is_retained_with_typed_failure_evidence(
         ),
     )
 
-    indeed_unit, linkedin_unit = SqliteDiscoverySearchUnitRepository(conn).list_units(
-        execution
-    )
+    indeed_unit, linkedin_unit = SqliteDiscoverySearchUnitRepository(conn).list_units(execution)
     assert result["new"] == 1
     assert result["errors"] == 1
     assert result["failed_source_ids"] == ["jobspy:linkedin"]
@@ -971,12 +955,7 @@ async def test_temporal_worker_loss_after_store_before_ack_reclaims_and_complete
         assert await asyncio.to_thread(store_completed.wait, 30)
         committed = init_db(db_path)
         try:
-            assert (
-                committed.execute(
-                    "SELECT COUNT(*) FROM discovery_search_unit_jobs"
-                ).fetchone()[0]
-                == 1
-            )
+            assert committed.execute("SELECT COUNT(*) FROM discovery_search_unit_jobs").fetchone()[0] == 1
         finally:
             close_connection(db_path)
 

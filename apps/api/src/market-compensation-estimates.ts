@@ -1,4 +1,5 @@
 import type {
+  MarketCompensationGeographyScope,
   MarketCompensationEstimate,
   MarketCompensationEstimateResponse,
   MarketCompensationEvidenceRow,
@@ -66,7 +67,12 @@ type MarketCompensationRecordedEstimateRow = MarketCompensationEstimateRow & {
 };
 
 const WARNING_MESSAGES: Record<MarketCompensationWarningCode, string> = {
+  benchmark_extrapolated: "The range was extrapolated from direct benchmark evidence in another geography.",
+  benchmark_level_fallback: "The benchmark uses an all-level fallback because exact seniority evidence was unavailable.",
   company_role_fallback: "The estimate fell back from exact company-role evidence to adjacent company or tier evidence.",
+  cost_of_living_only: "The geographic adjustment relies on cost-of-living evidence without a matched-company pay bridge.",
+  factor_out_of_bounds: "The raw geographic adjustment is outside the supported 0.1x to 10x range and needs careful review.",
+  limited_matched_company_evidence: "Only limited matched-company cross-country evidence supports the geographic adjustment.",
   location_mismatch: "Reported compensation locations did not strongly match the job location.",
   low_sample_count: "Reported compensation sample support is low.",
   reported_compensation_sample: "The estimate uses reported compensation rows for the job company and role.",
@@ -111,7 +117,7 @@ const SOURCE_DEFAULTS: Record<
     sourceType: "reported_compensation" | "posted_salary";
     provenance: MarketCompensationSourceProvenance;
     snapshotVersion: string;
-    geographyScope: string;
+    geographyScope: MarketCompensationGeographyScope;
     aggregateBucket: string;
     attribution: string;
   }
@@ -172,7 +178,13 @@ const SAFE_AGGREGATE_BUCKETS = new Set([
   "trimodal tier role fallback",
   "trimodal market baseline fallback",
 ]);
-const SAFE_GEOGRAPHY_SCOPES = new Set(["Europe", "reported"]);
+const SAFE_GEOGRAPHY_SCOPES = new Set<MarketCompensationGeographyScope>([
+  "Europe",
+  "reported",
+  "country",
+  "country_subdivision",
+  "locality",
+]);
 const FACTOR_NAMES = new Set<MarketCompensationFactorName>([
   "agreement",
   "company",
@@ -232,11 +244,23 @@ export function getMarketCompensationEstimate(
   if (!isRecordedEstimateRow(row)) {
     return notRequested(job);
   }
+  if (usesEmployerPostedMarketAuthority(row.source_snapshot_json)) {
+    return notRequested(job);
+  }
   return {
     ok: true,
     recordStatus: "recorded",
     estimate: mapEstimateRow(row),
   };
+}
+
+function usesEmployerPostedMarketAuthority(value: string): boolean {
+  return parseObjects(value).some(
+    (entry) =>
+      stringValue(entry.source_id) === "posted_salary_text" ||
+      stringValue(entry.source_type) === "posted_salary" ||
+      stringValue(entry.source_provenance) === "employer_posted",
+  );
 }
 
 function isRecordedEstimateRow(row: MarketCompensationEstimateRow): row is MarketCompensationRecordedEstimateRow {
@@ -447,7 +471,7 @@ function parseSources(value: string): MarketCompensationSourceSnapshot[] {
           provenance,
           releaseYear,
         ),
-        geographyScope: defaults.geographyScope,
+        geographyScope: safeGeographyScope(stringValue(entry.geography_scope)) ?? defaults.geographyScope,
         aggregateBucket: defaults.aggregateBucket,
         attribution: sourceAttribution(entry.attribution, typedSourceId, provenance),
         sampleCount: nullableNumber(entry.sample_count),
@@ -552,9 +576,11 @@ function safeAggregateBucket(
   return buckets.length ? buckets.join(", ") : null;
 }
 
-function safeGeographyScope(value: string | null | undefined): string | null {
+function safeGeographyScope(value: string | null | undefined): MarketCompensationGeographyScope | null {
   const text = nullableText(value);
-  return text && SAFE_GEOGRAPHY_SCOPES.has(text) ? text : null;
+  return text && SAFE_GEOGRAPHY_SCOPES.has(text as MarketCompensationGeographyScope)
+    ? (text as MarketCompensationGeographyScope)
+    : null;
 }
 
 function companyTier(value: unknown): "tier_1_local" | "tier_2_ambitious" | "tier_3_top_of_market" | "unknown" {

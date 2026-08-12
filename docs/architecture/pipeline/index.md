@@ -163,7 +163,7 @@ activity call sites.
 
 | Workflow | Business activities | Key timeouts | Retry |
 | --- | --- | --- | --- |
-| `DiscoverWorkflow` | `plan_discovery_sources`, then one execution-scoped live `discovery_enrichment` alongside `discovery_source_family` producers, per-family preparation backstops, and a terminal reconcile enrichment + fan-out | source/enrichment 6 h; plan/fanout 30 min; live-enrich heartbeat 5 s; other heartbeats 2 min | source & enrich: 5 s→60 s ×3 |
+| `DiscoverWorkflow` | `plan_discovery_sources`, then one execution-scoped live `discovery_enrichment` alongside `discovery_source_family` producers, per-family preparation backstops, terminal reconcile enrichment, `automatic_compensation_refresh`, and terminal fan-out | source/enrichment 6 h; plan/fanout/compensation 30 min; live-enrich heartbeat 5 s; other heartbeats 2 min | source, enrich, and automatic compensation: 5 s→60 s ×3 |
 | `JobPipelineWorkflow` | serial stage dispatch; `discover`→child `DiscoverWorkflow`, `enrich`/`score`/`tailor`/`cover`→activities, `apply`→child `ApplyWorkflow` | stage activities 30 min; heartbeat 2 min | enrich/score 5 s→60 s ×3; tailor/cover 10 s→120 s ×3 |
 | `JobPreparationWorkflow` | `score_job`, `tailor_job`, `cover_letter`, `render_pdf` in fixed order | each 30 min; heartbeat 2 min | score ×3; tailor ×3; cover/pdf ×3 |
 | `ApplyWorkflow` | `apply_activity` | 2 h batch / 1 h continuous batch; heartbeat 60 s | live: 1 attempt; dry-run: 2 attempts |
@@ -190,6 +190,18 @@ A few catalog details worth calling out:
   `prep-{idempotency_key}` id + `USE_EXISTING`; a one-time straggler sweep runs
   before the family loop and every family/terminal fan-out is score-only. See
   [Concurrency & Fan-out](concurrency.md#where-fan-out-happens-and-why).
+- **Automatic compensation refresh is due-slice work, not a second crawl.**
+  After terminal enrichment, the workflow's replay-patched compensation
+  activity derives versioned role-family/seniority/country slices from active
+  jobs. It lease-claims only missing or stale slices, refreshes direct evidence
+  under the saved source policy, derives a country range from official
+  price-level and matched-company evidence when needed, and materializes the
+  latest direct or extrapolated fact before terminal preparation fan-out.
+  Successful and insufficient slices are due again after seven days; source
+  failures retry after one day and preserve the last good projection. A source
+  or activity failure becomes a bounded compensation warning and does not fail
+  otherwise healthy Discovery. Levels.fyi remains disabled until the user opts
+  in through the same source-policy contract used by explicit refresh.
 - **`JobPipelineWorkflow` is the serial batch driver.** It runs the requested
   stages in canonical order as activities, but hands `discover` and `apply` to
   child workflows so a mixed request like `score → tailor → apply` still

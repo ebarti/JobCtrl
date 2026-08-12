@@ -1,14 +1,16 @@
 # Compensation Evidence
 
 Compensation evidence is JobCtrl's persisted, inspectable record of what an
-employer posted and what permitted reported-market sources support for a
-company-role match. Posted facts and market estimates stay separate so a parsed
-job-post salary is never presented as crowdsourced market data, or vice versa.
+employer posted and what permitted reported-market sources support for a role,
+level, and geography. Employer-posted facts, direct market benchmarks, and
+geographically extrapolated benchmarks remain separate authorities. The Jobs
+read model may display them together, but it never relabels a posted salary as
+market evidence or an extrapolated range as a direct observation.
 
 ## How Compensation Is Calculated
 
-JobCtrl produces two independent records and displays them together only for
-comparison:
+JobCtrl produces independent evidence records and displays them together only
+for comparison:
 
 ### Employer-posted compensation
 
@@ -25,32 +27,43 @@ comparison:
    conversion, broad ranges, and ambiguity lower confidence and remain visible
    as warnings.
 
-### Reported-market estimate
+### Direct and extrapolated market benchmarks
 
-1. **Load only permitted evidence.** An explicit refresh loads only enabled,
-   supported observations. Rows older than 36 months, unsupported components,
-   and unusable samples are excluded.
-2. **Score the weakest factor.** Candidate rows are matched on company, role,
-   level, location, component, freshness, sample support, agreement, and company
-   tier. The estimate's confidence score is the **lowest** of those factor
-   scores, so one weak link cannot be hidden by stronger unrelated matches.
-   Critical company, role, and level factors below `0.55` are recorded as
-   insufficiency reasons.
-3. **Build the range and interval.** Selected evidence contributes the observed
-   minimum and maximum. The confidence interval widens for fallback scopes, low
-   sample count, location mismatch, dispersion, posted-only evidence, or low
-   confidence. High confidence starts at `0.85` without a low-sample warning;
-   medium starts at `0.62` when an estimated range is otherwise supportable.
-4. **Persist uncertainty.** If the support does not clear the scope-specific
-   evidence floor, JobCtrl persists an explicit insufficient/unavailable state
-   rather than inventing a range. A material difference from the employer-posted
-   range becomes a source conflict warning, never a fit-score adjustment.
+1. **Discover reusable benchmark slices.** At the end of each Discover run,
+   active jobs are classified with JobCtrl's versioned role-family taxonomy and
+   grouped by role family, seniority, country, and compensation component. Jobs
+   whose role family or country cannot be resolved remain explicitly without a
+   market benchmark.
+2. **Refresh only missing or due slices.** A lease-fenced refresh claims each
+   missing slice, or a slice whose seven-day freshness window has expired, at
+   most once for that run. Euro Top Tech is a fixed public source. Levels.fyi
+   and Glassdoor are loaded only when their Settings policy explicitly permits
+   the selected access mode; an absent Levels.fyi preference remains disabled.
+3. **Normalize direct evidence.** Supported observations are canonicalized to
+   EUR per year with source-dated ECB exchange rates when conversion is needed.
+   Direct facts preserve role taxonomy, seniority, exact geography, sample
+   count, source snapshot, freshness, confidence interval, attribution, and
+   evidence hash. Employer-posted compensation is not a direct market fact.
+4. **Extrapolate missing geographies audibly.** When no fresh exact-country
+   benchmark exists, JobCtrl may derive one from another country using Eurostat
+   price-level evidence and same-company cross-country pay ratios. The company
+   bridge is shrunk toward the cost-of-living factor according to its evidence
+   weight. A cost-of-living-only range is allowed at low confidence. The raw
+   factor and numeric range remain visible even outside the supported `0.1x` to
+   `10x` review bound, with a prominent `factor_out_of_bounds` warning.
+5. **Materialize the last good result.** The latest direct or extrapolated fact
+   is attached to every matching active job, with lineage and warning codes. A
+   source outage cannot erase a prior usable range; failed source availability
+   retries after one day, while successful or insufficient slices are checked
+   again after seven days.
 
 Employer-posted facts may be parsed when Discovery ingests or refreshes a job
-and are also reparsed during an explicit compensation refresh. Loading enabled
-reported sources and matching market evidence happen only during that explicit
-refresh. Opening Jobs or Apply Review remains a passive read of persisted
-evidence; it does not fetch or recalculate salary.
+and are also reparsed during an explicit compensation refresh. Direct benchmark
+discovery and geographic extrapolation run automatically at the end of
+Discover, after terminal enrichment and before terminal preparation fan-out.
+The existing explicit compensation refresh remains available for focused
+company-role evidence maintenance. Opening Jobs or Apply Review remains a
+passive read of persisted evidence; it does not fetch or recalculate salary.
 
 ## What You Can See And Control
 
@@ -61,14 +74,15 @@ evidence; it does not fetch or recalculate salary.
   the posted-salary parse from the reported company-role market estimate and
   exposes parse/estimate state, range, confidence, warnings, attribution,
   source trail, selected evidence, and matching factors when recorded.
-- The Job Detail workspace can start a focused compensation refresh. The Jobs
-  toolbar can refresh the current backlog. An optional local observation import
-  can be supplied to an explicit refresh; it is never loaded by a passive read.
+- The Job Detail workspace can still start a focused compensation refresh. The
+  Jobs toolbar can refresh the current backlog. An optional local observation
+  import can be supplied to that explicit refresh; automatic discovery does not
+  infer permission from the presence of a local file.
 - `/apply-review` shows the persisted compensation summary as context. It is not
   an Apply readiness or approval gate.
 - `/settings` owns **Compensation sources** policy. Enabling or disabling a
-  permitted public or licensed source changes what a future explicit refresh
-  may load; saving policy does not fetch a provider.
+  permitted public or licensed source changes what future automatic and
+  explicit refreshes may load; saving policy does not fetch a provider.
 
 Your salary expectations in the Candidate Profile are personal preferences,
 not evidence about the employer or market. [Configuration → Compensation
@@ -82,7 +96,11 @@ access boundaries, attribution, and refresh behavior that policy controls.
 | --- | --- | --- |
 | Raw posting salary | Canonical job/source observation | Retained for compatibility and source review; UI reads do not repeatedly parse it. |
 | Posted compensation fact | `job_posted_compensation_facts` | A versioned deterministic parse with explicit missing, ambiguous, unparseable, or legal range state and warnings. |
-| Reported-market estimate | `job_market_compensation_estimates` | A persisted estimate state with selected sanitized evidence, provenance, match scope, confidence factors, and interval when support exists. |
+| Direct market benchmark | `compensation_direct_benchmark_facts` | Append-only, source-dated role/level/geography evidence normalized to EUR/year. Never employer-posted compensation. |
+| Price-level evidence | `compensation_price_level_facts` | Append-only official geography inputs used only for an auditable bridge. |
+| Extrapolated market benchmark | `compensation_extrapolated_benchmark_facts` plus lineage tables | Append-only derived range with the exact direct anchor, price-level inputs, matched-company inputs, factor, confidence, and warnings. |
+| Per-job market estimate | `job_market_compensation_estimates` | The latest matching direct or extrapolated benchmark projected onto an active job with sanitized source/evidence lineage. |
+| Refresh state | `compensation_market_refresh_state` | Lease-fenced missing/due/failure status and the latest successful result reference for each reusable benchmark slice. |
 | Source policy | `config.json` through `/v1/compensation/sources` | Safe enablement/access declarations only. No credentials, feed location, provider rows, or private-account state. |
 | Jobs read model | Compensation JSON in list/detail projections | Displays already-persisted facts and estimates. `GET` routes neither fetch nor estimate. |
 
@@ -100,26 +118,32 @@ source conflict is a warning to inspect, not a hidden decision rule.
 1. **Capture source text.** Discovery and enrichment preserve the posting's raw
    salary field and bounded compensation text with the job record.
 2. **Choose source policy.** Settings records which user-controlled reported
-   sources a future refresh may use. This step is network-free.
-3. **Start an explicit refresh.** A per-job, all-jobs, or CLI action starts
-   `CompensationRefreshWorkflow`; it does not rerun discovery, scoring,
-   tailoring, cover generation, or Apply.
+   sources a future automatic or explicit refresh may use. This step is
+   network-free, and an absent preference is not consent.
+3. **Finish Discovery.** After terminal enrichment, `DiscoverWorkflow` invokes
+   the replay-safe `automatic_compensation_refresh` activity. It deduplicates
+   active role/level/country slices and skips every slice that is still fresh.
 4. **Parse posted evidence.** The worker deterministically records a posted-fact
    state, normalized legal range fields when available, parser identity,
    confidence, and warnings without overwriting the raw salary.
-5. **Load and match permitted market evidence.** The refresh imports configured
-   observations, selects company/role/location evidence, and persists either an
-   estimated range or an explicit unsupported/unavailable/insufficient state.
-   The fallback and confidence algorithm are owned by the
-   [complete compensation contract](../api/complete-contract.md#compensation).
+5. **Refresh and derive market evidence.** Missing or due slices load permitted
+   reported sources, normalize direct facts, and use official price levels plus
+   matched-company ratios when an exact country is unavailable. Source-family
+   failures are isolated; a failed automatic activity is reported as a bounded
+   Discover warning and does not block healthy discovery or preparation.
 6. **Project and display.** A privacy-bounded compensation event refreshes Jobs
    list/detail reads. Both Python and TypeScript projection builders materialize
    the same summary/audit shape; the UI renders it without client-side salary
    parsing.
 
+A per-job, all-jobs, or CLI action can also start the independent
+`CompensationRefreshWorkflow`; it does not rerun discovery, scoring, tailoring,
+cover generation, or Apply.
+
 A later source-policy change affects later refreshes only. Previously persisted
 evidence remains an auditable snapshot of what supported that estimate at the
-time.
+time, and the next Discover run checks any missing or due slice against the new
+policy.
 
 ## Implementation And API Pointers
 

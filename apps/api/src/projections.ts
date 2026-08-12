@@ -131,7 +131,7 @@ interface PipelineStepProjectionFold extends PipelineStepProjectionEvent {
   lastEventId: number;
   lastUpdatedAt: string;
 }
-const COMPENSATION_PROJECTION_VERSION = 1;
+const COMPENSATION_PROJECTION_VERSION = 2;
 const WORKFLOW_RUN_PROJECTION_COLUMNS: ReadonlyArray<readonly [string, string]> = [
   ["input_summary_json", "TEXT NOT NULL DEFAULT '{}'"],
   ["error_code", "TEXT"],
@@ -787,6 +787,9 @@ function runRefreshPass(db: SqliteDatabase, tenantId: string): boolean {
     dirtyJobs.add(jobId);
   }
   for (const jobId of staleStageProjectionJobs(db, tenantId)) {
+    dirtyJobs.add(jobId);
+  }
+  for (const jobId of staleCompensationProjectionJobs(db, tenantId)) {
     dirtyJobs.add(jobId);
   }
 
@@ -2423,6 +2426,42 @@ function staleStageProjectionJobs(db: SqliteDatabase, tenantId: string): string[
           )
         )`,
     [tenantId],
+  );
+  return rows.map((row) => row.job_id).filter(Boolean);
+}
+
+function staleCompensationProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
+  const rows = allRows<{ job_id: string }>(
+    db,
+    `SELECT p.job_id
+       FROM job_list_projections p
+       LEFT JOIN job_detail_projections d
+         ON d.tenant_id = p.tenant_id
+        AND d.job_id = p.job_id
+      WHERE p.tenant_id = ?
+        AND (
+          (
+            CASE WHEN json_valid(p.compensation_summary_json)
+                 THEN CAST(json_extract(p.compensation_summary_json, '$.projectionVersion') AS INTEGER)
+            END
+          ) BETWEEN 1 AND ? - 1
+          OR (
+            CASE WHEN json_valid(d.compensation_summary_json)
+                 THEN CAST(json_extract(d.compensation_summary_json, '$.projectionVersion') AS INTEGER)
+            END
+          ) BETWEEN 1 AND ? - 1
+          OR (
+            CASE WHEN json_valid(d.compensation_audit_json)
+                 THEN CAST(json_extract(d.compensation_audit_json, '$.projectionVersion') AS INTEGER)
+            END
+          ) BETWEEN 1 AND ? - 1
+        )`,
+    [
+      tenantId,
+      COMPENSATION_PROJECTION_VERSION,
+      COMPENSATION_PROJECTION_VERSION,
+      COMPENSATION_PROJECTION_VERSION,
+    ],
   );
   return rows.map((row) => row.job_id).filter(Boolean);
 }
