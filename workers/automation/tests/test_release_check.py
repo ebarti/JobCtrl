@@ -854,6 +854,11 @@ def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> No
     assert "verify-pypi-gate" not in build
     assert "JOBCTRL_RELEASE_PUBLIC_KEY" not in build
     assert "JOBCTRL_RELEASE_KEY_ID" not in build
+    assert "PYPI_RECOVERY_ONLY: ${{ inputs.pypi_recovery_only || false }}" in build
+    assert '[[ "$PYPI_RECOVERY_ONLY" = true && "$RELEASE_TAG" = v0.1.0 ]]' in build
+    assert 'grep -Fqx \'exclude-newer = "7 days"\'' in build
+    assert 'grep -Fqx \'exclude-newer-span = "P8D"\'' in build
+    assert 'UV_EXCLUDE_NEWER="8 days" uv --project workers/automation sync' in build
     sync = "uv --project workers/automation sync --python 3.12.13 --locked --no-default-groups --only-group release-build --no-install-project"
     build_command = "uv --project workers/automation run --python 3.12.13 --no-sync python -m build --no-isolation workers/automation"
     assert sync in build
@@ -907,9 +912,26 @@ def test_pypi_no_isolation_backend_is_exactly_pinned_and_locked() -> None:
     assert 'requires = ["hatchling==1.29.0"]' in pyproject
     assert '"hatchling==1.29.0"' in pyproject
     assert 'release-build = ["build==1.4.3", "hatchling==1.29.0"]' in pyproject
+    assert 'exclude-newer = "7 days"' in pyproject
+    assert 'exclude-newer-span = "P7D"' in lock
     assert 'name = "build"\nversion = "1.4.3"' in lock
     assert 'name = "hatchling"\nversion = "1.29.0"' in lock
     assert release_check._pypi_build_backend_findings(release_check.ROOT) == []
+
+
+def test_pypi_lock_cutoff_span_must_match_the_pyproject_policy(tmp_path: Path) -> None:
+    pyproject = (release_check.ROOT / release_check.PYTHON_PROJECT_PATH).read_text(
+        encoding="utf-8"
+    )
+    lock = (release_check.ROOT / release_check.PYTHON_LOCK_PATH).read_text(
+        encoding="utf-8"
+    ).replace('exclude-newer-span = "P7D"', 'exclude-newer-span = "P8D"', 1)
+    _write(tmp_path / release_check.PYTHON_PROJECT_PATH, pyproject)
+    _write(tmp_path / release_check.PYTHON_LOCK_PATH, lock)
+
+    findings = release_check._pypi_build_backend_findings(tmp_path)
+
+    assert any("relative dependency cutoff must match" in item for item in findings)
 
 
 def test_pypi_workflow_static_contract_is_clean() -> None:

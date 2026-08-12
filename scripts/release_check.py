@@ -1084,7 +1084,7 @@ def _release_distribution_findings(root: Path) -> list[str]:
         "immutable-releases": "does not fail closed unless immutable GitHub Releases are enabled",
         "gh release verify-asset": "does not compare post-lock release assets to local trusted bytes",
         "gh release verify \"$RELEASE_TAG\"": "does not verify the immutable release attestation",
-        "Prove immutable v2.0.7 release before PyPI recovery": "does not isolate read-only immutable-release recovery preflight",
+        "Prove an explicitly supported immutable release before PyPI recovery": "does not isolate read-only immutable-release recovery preflight",
         "uses: ./.github/workflows/sync-homebrew-tap.yml": "does not call the artifact-only Homebrew promotion workflow",
         "tap_name=\"jobctrl/release-smoke-${GITHUB_RUN_ID}\"": "does not isolate the temporary verification tap by release run",
         "brew tap-new --no-git \"$tap_name\"": "does not create an isolated temporary tap for formula verification without CI Git side effects",
@@ -1393,7 +1393,8 @@ def _release_distribution_findings(root: Path) -> list[str]:
         for marker in (
             "needs: resolve",
             "inputs.pypi_recovery_only == true",
-            'test "$RELEASE_TAG" = v2.0.7',
+            'v2.0.7|v0.1.0',
+            'unsupported immutable PyPI recovery tag',
             'compare/$RELEASE_REF...main',
             'commits/$RELEASE_TAG',
             "targetCommitish",
@@ -1499,6 +1500,10 @@ def _pypi_release_workflow_findings(workflow: str) -> list[str]:
             "needs: pypi-resolve",
             "if: ${{ !cancelled() && needs.pypi-resolve.result == 'success' }}",
             "SOURCE_DATE_EPOCH:",
+            'PYPI_RECOVERY_ONLY: ${{ inputs.pypi_recovery_only || false }}',
+            'grep -Fqx \'exclude-newer = "7 days"\' workers/automation/pyproject.toml',
+            'grep -Fqx \'exclude-newer-span = "P8D"\' workers/automation/uv.lock',
+            'UV_EXCLUDE_NEWER="8 days" uv --project workers/automation sync',
             "uv --project workers/automation sync --python 3.12.13 --locked --no-default-groups --only-group release-build --no-install-project",
             "uv --project workers/automation run --python 3.12.13 --no-sync python -m build --no-isolation workers/automation",
             "jobctrl-pypi-distributions-",
@@ -1581,6 +1586,10 @@ def _pypi_build_backend_findings(root: Path) -> list[str]:
         findings.append(
             f"{PYTHON_PROJECT_PATH}: release-build group must contain only build==1.4.3 and hatchling==1.29.0"
         )
+    if not re.search(r'(?m)^exclude-newer\s*=\s*"7 days"\s*$', pyproject_text):
+        findings.append(
+            f"{PYTHON_PROJECT_PATH}: broad dependency cutoff must remain exactly seven days"
+        )
     try:
         lock_text = lock_path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -1597,6 +1606,10 @@ def _pypi_build_backend_findings(root: Path) -> list[str]:
     ]
     if len(build_blocks) != 1 or not re.search(r'(?m)^version\s*=\s*"1\.4\.3"\s*$', build_blocks[0]):
         findings.append(f"{PYTHON_LOCK_PATH}: must lock build==1.4.3 for release-build")
+    if not re.search(r'(?m)^exclude-newer-span\s*=\s*"P7D"\s*$', lock_text):
+        findings.append(
+            f"{PYTHON_LOCK_PATH}: relative dependency cutoff must match the seven-day pyproject policy"
+        )
     return findings
 
 

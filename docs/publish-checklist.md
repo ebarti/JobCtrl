@@ -346,6 +346,20 @@ especially §§11–14. This is a release precondition, not permission to publis
   Remove those two temporary branch policies immediately after the run reaches
   a terminal state and verify both environments again admit only `v*` tags.
   Do not change the policies of `release-signing` or `release-publication`.
+- **Immutable `v0.1.0` PyPI recovery.** Release run `31605551963` successfully
+  published the signed sequence-3 R2 pointer, Homebrew formula, and immutable
+  GitHub Release before the PyPI builder found that the tagged `pyproject.toml`
+  declares a seven-day dependency cutoff while its immutable `uv.lock` records
+  `P8D`. The OIDC publisher did not run. Preserve that tag and release. The
+  recovery workflow dispatched from `main` may admit only the explicitly
+  supported immutable `v2.0.7` and `v0.1.0` releases, must reverify the exact
+  ancestral immutable release before dependencies execute, and for `v0.1.0`
+  must require those exact mismatched records before setting
+  `UV_EXCLUDE_NEWER="8 days"`. `uv --locked` remains mandatory, so the recovery
+  reproduces the tagged lock input without changing dependency versions or
+  checksums. All native signing, R2, pointer, Homebrew, and GitHub publication
+  jobs remain skipped. Main and future release tags must instead carry the
+  regenerated `P7D` lock metadata and pass the static parity regression.
 - **Published `v2.0.8` security release.** The signed workflow published
   `v2.0.8` from audited commit
   `92770fe5fcc99e73c0a06e73315acbb7b506a7af` in workflow run

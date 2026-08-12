@@ -903,7 +903,8 @@ test("release workflows use protected manual signing, artifact handoff, candidat
   const recovery = releaseJob("pypi-recovery-preflight");
   assert.match(recovery, /github\.event_name == 'workflow_dispatch' && inputs\.pypi_recovery_only == true/);
   for (const marker of [
-    'test "$RELEASE_TAG" = v2.0.7',
+    'v2.0.7|v0.1.0',
+    'unsupported immutable PyPI recovery tag',
     "compare/$RELEASE_REF...main",
     "isDraft",
     "isPrerelease",
@@ -911,6 +912,11 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     'gh release verify "$RELEASE_TAG"',
   ]) assert.ok(recovery.includes(marker), `recovery must prove ${marker}`);
   assert.doesNotMatch(recovery, /\baws\b|git push|gh release (?:create|edit|upload)/);
+  assert.match(pypiBuild, /PYPI_RECOVERY_ONLY: \$\{\{ inputs\.pypi_recovery_only \|\| false \}\}/);
+  assert.match(pypiBuild, /\[\[ "\$PYPI_RECOVERY_ONLY" = true && "\$RELEASE_TAG" = v0\.1\.0 \]\]/);
+  assert.match(pypiBuild, /grep -Fqx 'exclude-newer = "7 days"' workers\/automation\/pyproject\.toml/);
+  assert.match(pypiBuild, /grep -Fqx 'exclude-newer-span = "P8D"' workers\/automation\/uv\.lock/);
+  assert.match(pypiBuild, /UV_EXCLUDE_NEWER="8 days" uv --project workers\/automation sync/);
 });
 
 test("release lineage allows main to advance without loosening exact tag identity", async () => {
