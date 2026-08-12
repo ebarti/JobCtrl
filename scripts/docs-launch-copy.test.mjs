@@ -18,6 +18,8 @@ test("public onboarding leads with bundled acquisition and keeps source advanced
     assert.match(document, /curl -fsSL https:\/\/jobctrl\.dev\/install\.sh \| sh/);
     assert.match(document, /brew install ebarti\/tap\/jobctrl/);
     assert.match(document, /jobctrl start/);
+    assert.match(document, /0\.1\.0/);
+    assert.match(document, /early.access/i);
   }
 
   const installer = gettingStarted.indexOf("### Recommended: bundled installer");
@@ -57,11 +59,13 @@ test("public onboarding leads with bundled acquisition and keeps source advanced
     await read("docs/user/normal-flows.md"),
     await read("docs/user/configuration.md"),
     await read("docs/user/data-and-safety.md"),
+    await read("LAUNCH_CHECKLIST.md"),
   ].join("\n");
   assert.doesNotMatch(
     publicCopy,
     /not published yet|not public yet|only public path|current public path|after the first signed bundled release|public channel remains blocked|unpublished bundled product/i,
   );
+  assert.doesNotMatch(publicCopy, /(?:current|latest)[^\n]{0,80}2\.0\.8|2\.0\.8[^\n]{0,80}(?:current|latest)/i);
 
   const claimsLedger = await read("docs/claims-ledger.md");
   assert.match(claimsLedger, /\| CL-082 \|[^\n]+\| Roadmap \|/);

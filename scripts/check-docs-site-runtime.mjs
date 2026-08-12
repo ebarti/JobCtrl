@@ -200,7 +200,7 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
     labels: [
       "Fetch once, then walk the configured extraction cascade.",
       "Verify active state independently.",
-      "Assign confidence from the extraction evidence.",
+      "Assign confidence from the posting-content evidence.",
       "Quarantine instead of guessing.",
       "Surface duplicate candidates from content evidence.",
     ],

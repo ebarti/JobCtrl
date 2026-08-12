@@ -70,6 +70,7 @@ test("Homebrew render uses the exact signed curl ZIP identity without a toolchai
   await writeFile(formulaPath, rendered.formula);
   assert.equal(validateRenderedHomebrewFormula({ formula: rendered.formula, descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }), true);
   assert.match(rendered.formula, /url "https:\/\/releases\.jobctrl\.dev\/v1\/artifacts\/stable-build-0000042\/jobctrl-2\.0\.0-darwin-arm64\.zip"/);
+  assert.match(rendered.formula, /^\s*version_scheme 1$/m);
   assert.match(rendered.formula, /JOBCTRL_MANIFEST_SHA256 = "b{64}"/);
   assert.match(rendered.formula, /JOBCTRL_BUILD_ID = "stable-build-0000042"/);
   assert.match(rendered.formula, /resource "jobctrl-release-descriptor"/);
@@ -218,6 +219,10 @@ test("Homebrew formula validation rejects a render that omits launcher or Chromi
   const signatureRaw = `${JSON.stringify(signed.signature, null, 2)}\n`;
   const descriptorUrl = stableDescriptorUrl();
   const rendered = await renderHomebrewFormula({ descriptorRaw, signatureRaw, descriptorUrl, trust: signed.trust });
+  assert.throws(
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace("  version_scheme 1\n", ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
+    /version_scheme 1/,
+  );
   assert.throws(
     () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('verify_notarized_executable!(buildpath/"launcher/jobctrl")', ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
     /launcher\/jobctrl/,

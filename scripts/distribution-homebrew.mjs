@@ -133,6 +133,7 @@ export function validateRenderedHomebrewFormula({ formula, descriptor, descripto
     `url "${values.ARTIFACT_URL}"`,
     `sha256 "${values.ARTIFACT_SHA256}"`,
     `version "${values.APP_VERSION}"`,
+    "version_scheme 1",
     `JOBCTRL_BUILD_ID = "${values.BUILD_ID}"`,
     `JOBCTRL_MANIFEST_SHA256 = "${values.MANIFEST_SHA256}"`,
     `JOBCTRL_DESCRIPTOR_URL = "${values.DESCRIPTOR_URL}"`,

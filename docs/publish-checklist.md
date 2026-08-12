@@ -297,7 +297,7 @@ especially §§11–14. This is a release precondition, not permission to publis
   installation, so the stable pointer, public GitHub Release, Homebrew tap, and
   PyPI package were not published.
   Do not move, delete, or dispatch any of these tags again.
-- **Current release record.** `v2.0.7` is the first published stable release.
+- **First release record.** `v2.0.7` is the first published stable release.
   Its immutable GitHub Release, signed R2 assets, stable channel pointer, native
   lifecycle proof, and verified Homebrew formula were published from audited
   commit `db257efe1087ec00ac2ec49b846a95d2423aecc2`. The initial PyPI upload
@@ -346,25 +346,53 @@ especially §§11–14. This is a release precondition, not permission to publis
   Remove those two temporary branch policies immediately after the run reaches
   a terminal state and verify both environments again admit only `v*` tags.
   Do not change the policies of `release-signing` or `release-publication`.
-- **Approved `v2.0.8` security patch.** Publish the merged release-preparation
-  commit as annotated tag `v2.0.8`, then manually dispatch this workflow at the
-  tag ref. The release advances the signed safety floor and explicitly revokes
-  the vulnerable `v2.0.7` build so a client that accepts `v2.0.8` cannot roll
-  back below the security fixes. Use these exact promotion inputs:
+- **Published `v2.0.8` security release.** The signed workflow published
+  `v2.0.8` from audited commit
+  `92770fe5fcc99e73c0a06e73315acbb7b506a7af` in workflow run
+  `30480825567`. GitHub Releases, R2, Homebrew, and PyPI all received the
+  release. Its signed descriptor advanced to sequence 2, raised the
+  minimum-safe sequence to 2, and revoked only
+  `2.0.7-db257efe1087ec00ac2ec49b846a95d2423aecc2-darwin-arm64`. Preserve the
+  release, tag, signatures, and immutable evidence.
+- **Approved `v0.1.0` public version reset.** Publish the merged
+  release-preparation commit as annotated tag `v0.1.0`, then manually dispatch
+  the signed workflow at the tag ref. This resets only the public application
+  SemVer so JobCtrl communicates its early-access maturity accurately. The
+  pre-launch `2.0.x` numbering is withdrawn, not deleted or rewritten. The
+  reset is not a product, data, database-schema, migration, launcher-protocol,
+  signed-sequence, build-identity, or security downgrade. There are no known
+  external users; the very small public download signals are not verified
+  adoption and do not establish zero historical users.
+
+  Sequence 3 remains newer than sequence 2 even though app SemVer decreases.
+  Keep minimum-safe sequence 2, carry the bytewise-sorted `v2.0.7` revocation,
+  and do not revoke the safe historical `v2.0.8` build solely because of the
+  numbering reset. The Homebrew template and every future render must carry
+  `version_scheme 1` so Homebrew treats the new scheme as newer. Keep the
+  existing `Development Status :: 4 - Beta` Python classifier. No `2.0.9`
+  bridge release is required. Use these exact promotion inputs:
 
   ```text
-  release_tag=v2.0.8
+  release_tag=v0.1.0
   channel=stable
   pypi_recovery_only=false
-  sequence=2
+  sequence=3
   minimum_safe_sequence=2
   revoked_build_ids=["2.0.7-db257efe1087ec00ac2ec49b846a95d2423aecc2-darwin-arm64"]
-  expected_channel_pointer_sha256=071df066a27b937ba7194b663698564c862565a8588753070b65de074ad5241d
+  expected_channel_pointer_sha256=98ce7f2a0ff19b2e7428eece939da75d160bdc991e119182246dc053898a31c2
   ```
 
   Re-read the public stable pointer immediately before dispatch. If its digest
   changed, stop and reconcile the intervening signed release instead of
   weakening the compare-and-swap guard.
+  After `0.1.0` is verified on PyPI, yank rather than delete `2.0.7` with a
+  reason that identifies the withdrawn numbering line and its security-fixed
+  supersession path, and yank `2.0.8` with
+  `Pre-launch version-number reset; use 0.1.0 or later.` Confirm an unpinned
+  fresh install selects `0.1.0`, while exact historical pins remain available
+  with a yank warning. Update the existing GitHub release descriptions without
+  changing their immutable assets: label `v2.0.7` withdrawn and revoked, and
+  label `v2.0.8` a safe historical build superseded by the numbering reset.
 - **Rollback.** Preserve the immutable Release and tag as audit evidence. Yank
   a bad PyPI file/version when necessary, then publish a new higher-sequence
   signed release that explicitly revokes or supersedes the affected build.
@@ -421,7 +449,9 @@ from `main` or merely from a published GitHub Release.
 The formula writes only its Homebrew prefix: its `bin/jobctrl` target is a
 native first-invocation bootstrap holding the signed descriptor resources and
 cached ZIP. It must not create `~/.jobctrl`, mutate a Cellar payload, or link a
-runtime payload from the Cellar during `brew install`.
+runtime payload from the Cellar during `brew install`. The template must retain
+`version_scheme 1` on this and every future render so Homebrew does not compare
+the reset scheme-zero SemVer directly with the withdrawn `2.0.x` line.
 
 - **Action.** Configure the external signing/publication gates, then run the
   implemented signed-descriptor, published-ZIP smoke, formula render,
@@ -461,7 +491,7 @@ Phase 7 and its Definition of Done.
 - **Mandatory canonical-installer cutover.** Treat the immutable signed release
   and the public installer deployment as two linked but different records:
 
-  1. Record the immutable `v2.0.7` tag/release SHA and tree as **R**. Retrieve
+  1. Record the immutable `v0.1.0` tag/release SHA and tree as **R**. Retrieve
      that release's immutable pinned `install.sh` and `SHA256SUMS`, verify
      `install.sh` against its published SHA-256, and retain the verified asset
      URL and checksum with R. Do not reconstruct or edit the retrieved script.
@@ -617,12 +647,16 @@ Perform the following in order and stop at the first failed gate:
    after the exact-tree local gate passes.
 2. Rerun the standard hosted workflows on the recorded SHA and require green
    runs with executed steps.
-3. On that final validated `main` SHA, create and push `v2.0.7`, verify the
-   remote tag resolves to that exact SHA and remains in `origin/main` history,
-   and confirm the exact
-   tag-triggered `Release distribution` run uses the six first-release defaults
-   in 9.4. Complete the signed release, channel-pointer promotion, PyPI
-   publication, Homebrew formula sync, and immutable release evidence as R.
+3. On that final validated `main` SHA, create and push the annotated `v0.1.0`
+   tag, verify the remote tag resolves to that exact SHA and remains in
+   `origin/main` history, and preserve the existing `v2.0.7` and `v2.0.8` tags
+   and evidence unchanged. Re-read the live stable-pointer SHA-256, then
+   manually dispatch `Release distribution` at `v0.1.0` with sequence `3`,
+   minimum-safe sequence `2`, only the existing bytewise-sorted `v2.0.7`
+   revoked build ID, and that fresh digest as the compare-and-swap input, as
+   specified in 9.4. Complete signing, notarization, lifecycle smoke,
+   channel-pointer promotion, PyPI publication, Homebrew formula sync, and
+   immutable release evidence as R.
 4. Complete the separate post-release installer/docs PR in 9.6, merge it, and
    deploy Docs Site as D. Verify its public installer bytes still match R's
    immutable pinned `install.sh` before proceeding.
@@ -679,8 +713,8 @@ rollback evidence, and publish corrections where a public claim proved wrong.
 | 9.1 Visibility flip | Owner | Run the exact-tree local gate, make the repository public, then rerun every standard hosted gate with real executed steps. |
 | 9.2 Docs-site verification | Owner | Docs are already public and deploy is enabled; dispatch at the gated `main` SHA and record the public deployment proof. |
 | 9.3 Rename redirect | Owner | Verify old-URL redirects after the flip and repair any stale repository links. |
-| 9.4 Release and PyPI | Owner | `v2.0.7` is live on GitHub, R2, Homebrew, and PyPI. Publish approved security patch `v2.0.8` as signed sequence 2 with the recorded compare-and-swap and rollback-revocation inputs, then verify every public channel. |
-| 9.5 Homebrew tap | Signed workflow | Completed for `v2.0.7`; retain the verified formula and land the protected top-level deploy-key publication fix for future releases. |
+| 9.4 Release and PyPI | Owner | Publish the `v0.1.0` early-access version reset as signed sequence 3 with minimum-safe sequence 2, the existing `v2.0.7` revocation, and the freshly re-read compare-and-swap digest; then verify every public channel and yank, not delete, PyPI `2.0.7`/`2.0.8`. |
+| 9.5 Homebrew tap | Signed workflow | Publish only the signer-rendered `v0.1.0` formula and require `version_scheme 1` on this and every future render. |
 | 9.6 Installer and artifact acceptance | Owner | Verify immutable `install.sh` from R, land matching `scripts/get` and `docs/public/install.sh` in a separate post-release PR, validate/deploy D, then run public curl/Homebrew smoke. |
 | 9.7 Public live demo | Owner | The demo is already public and deploy is enabled; verify the audited deployment externally and record its release evidence. |
 | 10 Publicization | Owner | Prepare factual assets and platform access today; on launch day announce only after the public release and command smoke pass, then cover responses and record the 1h–72h metrics. |
