@@ -20,7 +20,9 @@ import {
   createExtractedRuntimeStackPlan,
   createDeterministicZip,
   createDeterministicTarGz,
+  assertPersistedExtensionCaptureSmokeJob,
   extensionCaptureSmokeHeaders,
+  extensionCaptureSmokeJobId,
   normalizeInstalledPythonMetadata,
   loadNativeLauncherToolchain,
   nativeLauncherLifecycleSmokeRequirement,
@@ -538,6 +540,31 @@ test("extension capture smoke uses the real bearer plus Chrome extension caller 
     origin: "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "sec-fetch-site": "cross-site",
   });
+});
+
+test("extension capture smoke accepts the canonical JobId returned by the API", () => {
+  const jobId = "40000000-0000-4000-8000-000000000001";
+  assert.equal(extensionCaptureSmokeJobId({ ok: true, jobKey: jobId }), jobId);
+  assert.throws(
+    () => extensionCaptureSmokeJobId({ ok: true, jobKey: "https://example.test/jobs/distribution-smoke" }),
+    /did not return a canonical JobId/,
+  );
+});
+
+test("extension capture smoke resolves the returned JobId to the imported fixture URL", () => {
+  const jobId = "40000000-0000-4000-8000-000000000001";
+  const jobUrl = "https://example.test/jobs/distribution-smoke";
+  assert.doesNotThrow(() => assertPersistedExtensionCaptureSmokeJob(
+    { ok: true, job: { jobKey: jobId, url: jobUrl } },
+    { jobId, jobUrl },
+  ));
+  assert.throws(
+    () => assertPersistedExtensionCaptureSmokeJob(
+      { ok: true, job: { jobKey: jobId, url: "https://example.test/jobs/wrong" } },
+      { jobId, jobUrl },
+    ),
+    /did not resolve the captured JobId/,
+  );
 });
 
 test("successful distribution CLI invocation accepts the option separator and always persists build-result.json", async (context) => {

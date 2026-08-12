@@ -10777,6 +10777,20 @@ function extensionCaptureSmokeHeaders(token) {
     "sec-fetch-site": "cross-site"
   };
 }
+function extensionCaptureSmokeJobId(result) {
+  invariant3(result?.ok === true, "extension capture smoke did not import the fixture job");
+  invariant3(
+    typeof result.jobKey === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(result.jobKey),
+    "extension capture smoke did not return a canonical JobId"
+  );
+  return result.jobKey;
+}
+function assertPersistedExtensionCaptureSmokeJob(detail, { jobId, jobUrl }) {
+  invariant3(
+    detail?.ok === true && detail.job?.jobKey === jobId && detail.job?.url === jobUrl,
+    "extracted API did not resolve the captured JobId to the workflow-imported offline fixture job"
+  );
+}
 async function submitExtensionCaptureFixture(plan, { captureId, jobUrl, captureHtml }) {
   const pairing = await requireJsonResponse(
     `${plan.apiOrigin}/v1/extension/pairing-token`,
@@ -10802,8 +10816,8 @@ async function submitExtensionCaptureFixture(plan, { captureId, jobUrl, captureH
     },
     "extension saved-HTML capture smoke"
   );
-  invariant3(result?.ok === true && result.jobKey === jobUrl, "extension capture smoke did not return the imported fixture job");
-  return { itemId: result.itemId, jobKey: result.jobKey, importedAt: result.importedAt };
+  const jobId = extensionCaptureSmokeJobId(result);
+  return { itemId: result.itemId, jobKey: jobId, importedAt: result.importedAt };
 }
 async function waitForApiWorkflow(plan, workflowType) {
   let last = null;
@@ -10819,9 +10833,13 @@ async function waitForApiWorkflow(plan, workflowType) {
   }
   throw new Error(`${workflowType} did not reach a succeeded API projection: ${JSON.stringify(last).slice(-2e3)}`);
 }
-async function requirePersistedJob(plan, jobUrl) {
-  const jobs = await requireJsonResponse(`${plan.apiOrigin}/v1/jobs`, { method: "GET" }, "persisted jobs smoke");
-  invariant3(JSON.stringify(jobs).includes(jobUrl), "extracted API did not return the workflow-imported offline fixture job");
+async function requirePersistedJob(plan, jobId, jobUrl) {
+  const detail = await requireJsonResponse(
+    `${plan.apiOrigin}/v1/jobs/${encodeURIComponent(jobId)}`,
+    { method: "GET" },
+    "persisted captured job smoke"
+  );
+  assertPersistedExtensionCaptureSmokeJob(detail, { jobId, jobUrl });
   return true;
 }
 async function describeTemporalWorkflow(plan, workflowId) {
@@ -11186,7 +11204,7 @@ print(json.dumps({"pdfPath": str(pdf_path), "pdfBytes": len(pdf_bytes)}, sort_ke
     );
     const workflowEventTypes = new Set((workflowDetailEvidence.events ?? []).map((event) => event.eventType));
     invariant3(workflowEventTypes.has("WorkflowStarted") && workflowEventTypes.has("WorkflowCompleted"), "manual-capture workflow history is missing started/completed events");
-    await requirePersistedJob(runtimePlan, offlineFixtureUrl);
+    await requirePersistedJob(runtimePlan, captureEvidence.jobKey, offlineFixtureUrl);
     firstTemporalDescription = await describeTemporalWorkflow(runtimePlan, workflowEvidence.workflowId);
     invariant3(
       workflowDetailEvidence.temporalRunId === firstTemporalDescription.runId,
@@ -11325,7 +11343,7 @@ with sync_playwright() as playwright:
     );
     invariant3(secondStack.apiHealth.dbIdentity === firstStack.apiHealth.dbIdentity, "runtime restart changed the JobCtrl DB identity");
     invariant3(secondStack.apiHealth.worker.heartbeat.pid === secondStack.worker.pid, "runtime restart health does not identify the fresh worker");
-    await requirePersistedJob(runtimePlan, offlineFixtureUrl);
+    await requirePersistedJob(runtimePlan, captureEvidence.jobKey, offlineFixtureUrl);
     const persistedWorkflow = await requireJsonResponse(
       `${runtimePlan.apiOrigin}/v1/workflow-runs/${encodeURIComponent(workflowEvidence.workflowId)}`,
       { method: "GET" },
