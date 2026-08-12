@@ -689,7 +689,7 @@ def test_built_distribution_metadata_must_match_project_version(tmp_path: Path) 
 def _write_homebrew_p4_contract(tmp_path: Path, workflow: str | None = None) -> None:
     _write(
         tmp_path / release_check.HOMEBREW_FORMULA_TEMPLATE_PATH,
-        'class Jobctrl < Formula\n  url "{{ARTIFACT_URL}}"\nend\n',
+        'class Jobctrl < Formula\n  url "{{ARTIFACT_URL}}"\n  version_scheme 1\nend\n',
     )
     _write(tmp_path / release_check.HOMEBREW_FORMULA_GENERATOR_PATH, "// generator\n")
     _write(tmp_path / release_check.HOMEBREW_RELEASE_TRUST_PATH, '{"schemaVersion": 1, "keys": {}}\n')
@@ -715,6 +715,22 @@ def test_homebrew_tap_sync_requires_reusable_signed_render_gate(tmp_path: Path) 
     )
 
     assert release_check._homebrew_sync_findings(tmp_path) == []
+
+
+def test_homebrew_template_requires_version_scheme_after_public_reset(tmp_path: Path) -> None:
+    workflow = (
+        release_check.ROOT / release_check.HOMEBREW_SYNC_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    _write_homebrew_p4_contract(tmp_path, workflow)
+    _write(
+        tmp_path / release_check.HOMEBREW_FORMULA_TEMPLATE_PATH,
+        'class Jobctrl < Formula\n  url "{{ARTIFACT_URL}}"\nend\n',
+    )
+
+    assert release_check._homebrew_sync_findings(tmp_path) == [
+        "packaging/homebrew/Formula/jobctrl.rb.tmpl: must preserve Homebrew "
+        "version_scheme 1 after the public SemVer reset"
+    ]
 
 
 def test_homebrew_tap_key_is_resolved_only_behind_publication_environment() -> None:
@@ -768,7 +784,8 @@ def test_homebrew_template_rejects_toolchain_or_head_spec(tmp_path: Path) -> Non
     )
     _write(
         tmp_path / release_check.HOMEBREW_FORMULA_TEMPLATE_PATH,
-        'class Jobctrl < Formula\n  depends_on "corepack"\n  head "https://example.test/jobctrl.git"\nend\n',
+        'class Jobctrl < Formula\n  version_scheme 1\n  depends_on "corepack"\n'
+        '  head "https://example.test/jobctrl.git"\nend\n',
     )
 
     assert release_check._homebrew_sync_findings(tmp_path) == [

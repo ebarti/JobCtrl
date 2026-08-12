@@ -186,7 +186,7 @@ test("release CLI rejects non-canonical owner-supplied integers", async (context
 async function writePyPIGateFixture(root, { privateKey, sourceCommit = "a".repeat(40) }) {
   const keyId = "jobctrl-release-v1";
   const publicKeyBase64 = releasePublicKeyBase64(privateKey);
-  const archiveFile = "jobctrl-2.0.0-darwin-arm64.zip";
+  const archiveFile = "jobctrl-0.1.0-darwin-arm64.zip";
   const archive = Buffer.from("fixture P6 archive\n");
   const manifestRaw = '{"fixture":"signed-manifest"}\n';
   const urls = canonicalReleaseUrls("stable", archiveFile, "stable-build-0000042");
@@ -197,7 +197,7 @@ async function writePyPIGateFixture(root, { privateKey, sourceCommit = "a".repea
     minimumSafeSequence: 1,
     revokedBuildIds: [],
     buildId: "stable-build-0000042",
-    appVersion: "2.0.0",
+    appVersion: "0.1.0",
     sourceCommit,
     platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
     artifact: {
@@ -298,10 +298,10 @@ test("local fixture release descriptor, signature, and curl contract bind one ZI
     minimumSafeSequence: 0,
     revokedBuildIds: [],
     buildId: "fixture-build-0001",
-    appVersion: "2.0.8",
+    appVersion: "0.1.0",
     platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
     artifact: {
-      url: "file:///jobctrl-local-release/jobctrl-2.0.8-darwin-arm64.zip",
+      url: "file:///jobctrl-local-release/jobctrl-0.1.0-darwin-arm64.zip",
       sha256: build.archiveSha256,
       sizeBytes: build.compressedBytes,
       archiveType: "zip",
@@ -732,7 +732,7 @@ test("PyPI promotion binds signed source provenance to protected external releas
   const trustedFixture = await writePyPIGateFixture(trustedRoot, { privateKey: trusted.privateKey, sourceCommit });
   await assert.doesNotReject(verifyPyPIReleaseGate({
     releaseDirectory: trustedRoot,
-    expectedTag: "v2.0.0",
+    expectedTag: "v0.1.0",
     sourceCommit,
     expectedPublicKeyBase64: trustedFixture.publicKeyBase64,
     expectedKeyId: trustedFixture.keyId,
@@ -744,7 +744,7 @@ test("PyPI promotion binds signed source provenance to protected external releas
   await writePyPIGateFixture(attackerRoot, { privateKey: attacker.privateKey, sourceCommit });
   await assert.rejects(verifyPyPIReleaseGate({
     releaseDirectory: attackerRoot,
-    expectedTag: "v2.0.0",
+    expectedTag: "v0.1.0",
     sourceCommit,
     expectedPublicKeyBase64: trustedFixture.publicKeyBase64,
     expectedKeyId: trustedFixture.keyId,

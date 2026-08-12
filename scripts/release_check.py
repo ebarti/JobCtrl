@@ -889,6 +889,10 @@ def _homebrew_sync_findings(root: Path) -> list[str]:
         findings.append(
             f"{HOMEBREW_FORMULA_TEMPLATE_PATH}: does not define the Jobctrl formula template"
         )
+    if not re.search(r"(?m)^\s*version_scheme 1\s*$", template):
+        findings.append(
+            f"{HOMEBREW_FORMULA_TEMPLATE_PATH}: must preserve Homebrew version_scheme 1 after the public SemVer reset"
+        )
     if "depends_on" in template or re.search(r"(?m)^\s*head\s+", template):
         findings.append(
             f"{HOMEBREW_FORMULA_TEMPLATE_PATH}: must not declare Homebrew dependencies or a HEAD source path"

@@ -8,6 +8,13 @@ JobCtrl is a local application: the app, database, settings, and generated
 files stay on your computer unless you explicitly connect an external provider.
 Install it once, then use the same `jobctrl` command from any directory.
 
+::: warning Early access
+JobCtrl `0.1.0` resets the public application version from the pre-launch
+`2.0.x` numbering so the version reflects the product's actual maturity. The
+reset does not downgrade product behavior, local data, database schemas,
+launcher protocols, signed-release safety, or security controls.
+:::
+
 ::: tip Want to explore before installing?
 Open the [live demo](https://demo.jobctrl.dev) for an interactive workspace
 with synthetic browser-local data, or use the [Product Tour](product-tour.md)

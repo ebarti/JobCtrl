@@ -6,7 +6,7 @@ This is the detailed engineering backlog. The public roadmap lives in
 `docs/plans/implemented/`. Delivery history lives in the git log and the
 implemented plan records.
 
-## Current State Snapshot (2026-07-04)
+## Current State Snapshot (2026-08-12)
 
 Delivered work is recorded in the git log and the implemented plan directory.
 Discovery RFC production wiring and scoring intelligence are implemented via
@@ -30,15 +30,17 @@ of legacy `jobs.*` storage fallbacks, table/artifact/profile UX improvements,
 browser QA gaps, frontend a11y deferrals, and tooling / CI enforcement gaps.
 Hosted product, hosted data, hosted automation, and cloud-mode frontend adapters
 remain deferred until the local product is solid. Native distribution is
-implemented and the signed/notarized `v2.0.7` GitHub, R2, Homebrew, and PyPI
-release is live. P7 clean-machine product QA remains an operational release
-follow-up rather than unfinished implementation.
+implemented. The public application version is resetting to the `0.1.0`
+early-access line while the withdrawn pre-launch `2.0.x` tags, releases, and
+immutable artifacts remain preserved. P7 clean-machine product QA remains an
+operational release follow-up rather than unfinished implementation.
 
 ## Release Hardening Follow-Ups
 
-- Publish the approved `v2.0.8` security patch through the signed stable
-  workflow, then run the published-artifact, lifecycle, clean-machine, and
-  real-path TTFV acceptance matrix recorded in `docs/publish-checklist.md`.
+- Publish `v0.1.0` through the signed stable workflow as sequence 3 while
+  retaining minimum-safe sequence 2 and the existing `v2.0.7` revocation, then
+  run the published-artifact, lifecycle, clean-machine, and real-path TTFV
+  acceptance matrix recorded in `docs/publish-checklist.md`.
 - Treat analytics-optional public-demo access and post-accept
   withdrawal/current-visitor erasure as separately scoped privacy work. Keep
   the shipped consent-required behavior unchanged unless an explicit
@@ -49,9 +51,10 @@ follow-up rather than unfinished implementation.
   capability checks, connection verification, model discovery, telemetry and
   spend semantics, every core `LlmPort` operation, employer-analysis synthesis,
   and fail-closed readiness before `LLM_URL` or an equivalent setting can return
-  to the product surface. The v2.0 release supports only Codex, Claude, and
-  Google.
-- Implement the explicitly deferred W2.4 spend-control delta after v2.0.0:
+  to the product surface. The `0.1.0` early-access release supports only Codex,
+  Claude, and Google.
+- Implement the explicitly deferred W2.4 spend-control delta after the initial
+  public release:
   attribute every recorded LLM usage entry to its workflow lane, capture apply
   subprocess usage in the same ledger, enforce configurable per-lane daily
   token ceilings through the existing budget preflight, and expose the lane
@@ -312,8 +315,8 @@ Delivered by
 the signed Apple-silicon release, immutable GitHub/R2 assets, authenticated
 stable pointer, and Homebrew formula are live.
 
-- Publish the approved `v2.0.8` security patch with a new signed sequence and
-  explicit `v2.0.7` rollback revocation.
+- Publish the `v0.1.0` early-access reset at signed sequence 3 without lowering
+  the sequence-2 safety floor or dropping the existing `v2.0.7` revocation.
 - Run the P7 clean-machine curl/Homebrew, no-toolchain/no-system-Chrome,
   upgrade, provider-auth, capability, update/rollback, uninstall, and real-path
   TTFV matrix against published bytes.

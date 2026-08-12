@@ -739,6 +739,70 @@ func TestNetworkChannelPointerResolvesOnlyItsImmutablePair(t *testing.T) {
 	}
 }
 
+func TestSignedVersionResetUsesMonotonicSequenceInsteadOfAppSemver(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const origin = "https://releases.jobctrl.dev"
+	const revokedBuild = "2.0.7-db257efe1087ec00ac2ec49b846a95d2423aecc2-darwin-arm64"
+	oldBuild := "2.0.8-" + strings.Repeat("a", 40) + "-darwin-arm64"
+	oldDescriptor := stableDescriptor(origin + "/v1/artifacts/" + oldBuild + "/jobctrl-2.0.8-darwin-arm64.zip")
+	oldDescriptor.Sequence = 2
+	oldDescriptor.MinimumSafeSequence = 2
+	oldDescriptor.RevokedBuildIDs = []string{revokedBuild}
+	oldDescriptor.BuildID = oldBuild
+	oldDescriptor.AppVersion = "2.0.8"
+
+	newBuild := "0.1.0-" + strings.Repeat("b", 40) + "-darwin-arm64"
+	newDescriptor := stableDescriptor(origin + "/v1/artifacts/" + newBuild + "/jobctrl-0.1.0-darwin-arm64.zip")
+	newDescriptor.Sequence = 3
+	newDescriptor.MinimumSafeSequence = 2
+	newDescriptor.RevokedBuildIDs = []string{revokedBuild}
+	newDescriptor.BuildID = newBuild
+	newDescriptor.AppVersion = "0.1.0"
+	newDescriptor.SourceCommit = strings.Repeat("b", 40)
+
+	_, descriptorRaw, signatureRaw, pointer, pointerRaw := signedChannelPointerFixtureFromDescriptor(t, private, origin, newDescriptor)
+	client, _ := channelPointerClient(map[string][]byte{
+		mustDefaultReleaseURL(t, "stable"): pointerRaw,
+		pointer.Descriptor.URL:             descriptorRaw,
+		pointer.Signature.URL:              signatureRaw,
+	})
+	resolved, _, _, err := resolveNetworkRelease(Options{
+		Policy:     launcher.AcquisitionPolicy{ExpectedChannel: "stable", AllowNetwork: true},
+		Trust:      map[string]ed25519.PublicKey{"jobctrl-release-v1": public},
+		HTTPClient: client,
+	}, client)
+	if err != nil {
+		t.Fatalf("resolve signed 0.1.0 reset: %v", err)
+	}
+	if resolved.AppVersion != "0.1.0" || resolved.Sequence != 3 || resolved.MinimumSafeSequence != 2 {
+		t.Fatalf("resolved reset descriptor = %#v", resolved)
+	}
+
+	store, err := release.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordMetadata("stable", 2, 2, oldDescriptor.BuildID, strings.Repeat("2", 64), oldDescriptor.RevokedBuildIDs); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.RecordMetadata("stable", resolved.Sequence, resolved.MinimumSafeSequence, resolved.BuildID, digestBytes(descriptorRaw), resolved.RevokedBuildIDs)
+	if err != nil {
+		t.Fatalf("record higher-sequence lower-SemVer release: %v", err)
+	}
+	if state.MaxSequence != 3 || state.MinimumSafeSequence != 2 || state.RevokedBuildIDs[oldBuild] {
+		t.Fatalf("reset changed monotonic policy or revoked the safe predecessor: %#v", state)
+	}
+	if _, err := store.RecordMetadata("stable", 2, 2, "0.0.9-"+strings.Repeat("c", 40)+"-darwin-arm64", strings.Repeat("3", 64), []string{revokedBuild}); err == nil {
+		t.Fatal("accepted a lower signed sequence after the version reset")
+	}
+	if _, err := store.RecordMetadata("stable", 3, 2, "0.1.0-"+strings.Repeat("c", 40)+"-darwin-arm64", strings.Repeat("4", 64), []string{revokedBuild}); err == nil {
+		t.Fatal("accepted a reused signed sequence for a different build")
+	}
+}
+
 func TestNetworkChannelPointerHashesBothImmutableFilesBeforeSignatureVerification(t *testing.T) {
 	_, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -1221,6 +1285,11 @@ func signedChannelPointerFixtureAtOrigin(t *testing.T, private ed25519.PrivateKe
 	t.Helper()
 	descriptor := stableDescriptor(origin + "/v1/artifacts/fixture-build-0001/jobctrl-2.0.0-darwin-arm64.zip")
 	descriptor.Channel = channel
+	return signedChannelPointerFixtureFromDescriptor(t, private, origin, descriptor)
+}
+
+func signedChannelPointerFixtureFromDescriptor(t *testing.T, private ed25519.PrivateKey, origin string, descriptor Descriptor) (Descriptor, []byte, []byte, channelPointer, []byte) {
+	t.Helper()
 	descriptorRaw, err := json.Marshal(descriptor)
 	if err != nil {
 		t.Fatal(err)
@@ -1236,11 +1305,11 @@ func signedChannelPointerFixtureAtOrigin(t *testing.T, private ed25519.PrivateKe
 		BuildID:       descriptor.BuildID,
 		Sequence:      descriptor.Sequence,
 		Descriptor: pointerAsset{
-			URL:    origin + "/v1/artifacts/fixture-build-0001/release-descriptor.json",
+			URL:    origin + "/v1/artifacts/" + descriptor.BuildID + "/release-descriptor.json",
 			SHA256: digestBytes(descriptorRaw),
 		},
 		Signature: pointerAsset{
-			URL:    origin + "/v1/artifacts/fixture-build-0001/release-descriptor.json.sig",
+			URL:    origin + "/v1/artifacts/" + descriptor.BuildID + "/release-descriptor.json.sig",
 			SHA256: digestBytes(signatureRaw),
 		},
 	}

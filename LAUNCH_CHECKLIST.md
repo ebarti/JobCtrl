@@ -1,8 +1,11 @@
 # JobCtrl Public Launch Status
 
-JobCtrl launched its first stable public macOS release,
-[`v2.0.7`](https://github.com/ebarti/JobCtrl/releases/tag/v2.0.7), on
-2026-07-24. The detailed release and recovery record remains in
+JobCtrl's public application version is resetting to `v0.1.0` as an
+early-access release. The withdrawn pre-launch `2.0.x` numbering remains
+preserved in tags, releases, signatures, and immutable artifacts; the reset
+corrects maturity signaling and does not reset product data, database schemas,
+launcher protocols, or signed-release security counters. The detailed release
+and recovery record remains in
 [`docs/publish-checklist.md`](docs/publish-checklist.md).
 
 ## Live Public Surfaces
@@ -18,8 +21,8 @@ JobCtrl launched its first stable public macOS release,
 
 ## Remaining Distribution Follow-Up
 
-- [x] Publish and verify the supported `2.0.7` Python package through the
-  protected PyPI recovery path.
+- [ ] Publish and verify the `0.1.0` early-access Python package, then yank the
+  preserved `2.0.7` and `2.0.8` files without deleting them.
 - [ ] Complete the published-artifact, lifecycle, clean-machine, and real-path
   TTFV acceptance matrix recorded in `docs/publish-checklist.md`.
 

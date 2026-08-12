@@ -63,6 +63,11 @@ refreshes that browser-local workspace once; cookie consent is unchanged.
 
 ## Get Started
 
+JobCtrl `0.1.0` is an early-access application release. The public version was
+reset from the pre-launch `2.0.x` numbering so the version communicates the
+product's actual maturity; this is not a product, data, database-schema,
+launcher-protocol, or security downgrade.
+
 Install the signed Apple-silicon macOS release with the bundled installer:
 
 ```bash
