@@ -429,7 +429,7 @@ test("source measurement reports dependency, lockfile, and environment presence"
   assert.equal(report.schemaVersion, 1);
   assert.ok(report.source.javascript.uniqueDirect > 0);
   assert.ok(report.source.javascript.uniqueRuntimeDirect > 0);
-  assert.equal(report.source.python.coreRuntimeDirect, 19);
+  assert.equal(report.source.python.coreRuntimeDirect, 20);
   assert.equal(report.source.python.providerRuntimeDirect, 4);
   assert.ok(report.source.locks.pnpmPackageRecords > 0);
   assert.ok(report.source.locks.uvPackageRecords > 0);
