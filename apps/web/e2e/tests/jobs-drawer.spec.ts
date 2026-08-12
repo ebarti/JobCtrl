@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { test, expect, type Locator, type Page } from "@playwright/test";
 
-import { QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
+import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
 
 const FILTER_PARAMS =
   "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
@@ -42,19 +42,12 @@ function watchProhibitedProductPathRequests(page: Page): string[] {
 }
 
 function seedSyntheticCompensationData(): void {
-  const dbPath = process.env["JOBCTRL_E2E_DB_PATH"];
-  if (!dbPath) {
-    throw new Error(
-      "JOBCTRL_E2E_DB_PATH is required for Jobs compensation e2e data.",
-    );
-  }
+  const dbPath = loadE2eDbPath();
   const db = new Database(dbPath);
   try {
-    db.prepare("UPDATE jobs SET salary = ? WHERE tenant_id = ? AND job_id = ?").run(
-      "€55,000/year",
-      "local",
-      QA_PLATFORM_JOB_ID,
-    );
+    db.prepare(
+      "UPDATE jobs SET salary = ? WHERE tenant_id = ? AND job_id = ?",
+    ).run("€55,000/year", "local", QA_PLATFORM_JOB_ID);
     db.prepare(
       `INSERT INTO job_posted_compensation_facts (
         tenant_id, job_id, source_field, source_text, legacy_raw_salary,
@@ -106,10 +99,10 @@ function seedSyntheticCompensationData(): void {
         minimum_amount, maximum_amount, confidence_band, confidence_score,
         source_count, sample_count, aggregate_bucket, geography_scope,
         occupation_code, occupation_label, seniority_label, source_snapshot_json,
-        factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
+        factor_reasons_json, selected_evidence_json, insufficient_reasons_json, unsupported_reasons_json,
         source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
         company_name, normalized_company, role_title, normalized_role, company_tier, match_scope
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(tenant_id, job_id) DO UPDATE SET
         estimate_state = excluded.estimate_state,
         currency = excluded.currency,
@@ -125,6 +118,7 @@ function seedSyntheticCompensationData(): void {
         geography_scope = excluded.geography_scope,
         source_snapshot_json = excluded.source_snapshot_json,
         factor_reasons_json = excluded.factor_reasons_json,
+        selected_evidence_json = excluded.selected_evidence_json,
         warnings_json = excluded.warnings_json,
         estimator_version = excluded.estimator_version,
         estimated_at = excluded.estimated_at,
@@ -179,6 +173,52 @@ function seedSyntheticCompensationData(): void {
       JSON.stringify([
         { name: "company", score: 1, band: "high", reason: "Company matched." },
         { name: "role", score: 1, band: "high", reason: "Role matched." },
+      ]),
+      JSON.stringify([
+        {
+          source_id: "levels_fyi",
+          source_url:
+            "https://www.levels.fyi/companies/gitlab/salaries/software-engineer",
+          company_name: "GitLab",
+          role_title: "Director of Platform Engineering",
+          location: "Europe",
+          level_label: "director",
+          company_tier: "tier_2_ambitious",
+          component: "total_compensation",
+          currency: "EUR",
+          period: "year",
+          minimum_amount: 112_000,
+          maximum_amount: 138_000,
+          sample_count: 4,
+          release_year: 2026,
+          company_score: 1,
+          role_score: 0.96,
+          level_score: 0.95,
+          location_score: 0.78,
+          freshness_score: 0.95,
+        },
+        {
+          source_id: "glassdoor",
+          source_url:
+            "https://www.glassdoor.com/Salary/GitLab-Engineering-Director-Salaries-E1296544.htm",
+          company_name: "GitLab",
+          role_title: "Engineering Director",
+          location: "Europe",
+          level_label: "director",
+          company_tier: "tier_2_ambitious",
+          component: "total_compensation",
+          currency: "EUR",
+          period: "year",
+          minimum_amount: 118_000,
+          maximum_amount: 142_000,
+          sample_count: 3,
+          release_year: 2026,
+          company_score: 1,
+          role_score: 0.92,
+          level_score: 0.95,
+          location_score: 0.78,
+          freshness_score: 0.95,
+        },
       ]),
       "[]",
       "[]",
@@ -353,12 +393,12 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
   await expect(
     compensation.getByText("EUR 112000-142000/year").first(),
   ).toBeVisible();
-  await expect(
-    compensation.getByText("reported_compensation_sample"),
-  ).toBeVisible();
-  await expect(
-    compensation.getByText("source_conflict_with_posted_salary"),
-  ).toBeVisible();
+  await expect(compensation.getByText("Market salary estimate")).toBeVisible();
+  await expect(compensation.getByText(/medium reliability/i)).toBeVisible();
+  await expect(compensation.getByText("Evidence reviewed")).toBeVisible();
+  await expect(compensation.getByText("How this was assessed")).toBeVisible();
+  await compensation.getByText("Evidence reviewed").click();
+  await compensation.getByText("How this was assessed").click();
   await expect(
     compensation.getByText(
       "Reported compensation diverges materially from the posted salary.",
@@ -372,7 +412,10 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
   await expect(compensation.getByText("Reported source trail")).toBeVisible();
   await expect(compensation.getByText("Levels.fyi").first()).toBeVisible();
   await expect(compensation.getByText("Glassdoor").first()).toBeVisible();
-  await expect(compensation.getByText("Confidence factors")).toBeVisible();
+  await expect(compensation.getByText("Reliability factors")).toBeVisible();
+  await expect(
+    compensation.getByText("Observation JSON path (optional)"),
+  ).toHaveCount(0);
 
   await expect(triage.getByText("reported_compensation_sample")).toHaveCount(0);
   await expect(

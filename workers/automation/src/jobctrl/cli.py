@@ -62,7 +62,7 @@ _TIER2_STAGE_FEATURES = {
 _projection_subscription = None
 
 
-def _bootstrap() -> None:
+def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
     """Common setup: load env, create dirs, init DB, refresh projections.
 
     Phase 9 (S-32): the ``ProjectionBuilder`` runs an initial backfill on
@@ -77,7 +77,7 @@ def _bootstrap() -> None:
     """
     global _projection_subscription
     from jobctrl.config import load_env, ensure_dirs
-    from jobctrl.database import get_connection, init_db
+    from jobctrl.database import close_connection, get_connection, init_db
     from jobctrl.infrastructure.projections.projection_builder import (
         ProjectionBuilder,
     )
@@ -92,6 +92,26 @@ def _bootstrap() -> None:
     from jobctrl.infrastructure.observability import init_otel
 
     init_otel()
+    if reconcile_posted_compensation:
+        try:
+            from jobctrl.infrastructure.compensation import (
+                SqlitePostedCompensationRepository,
+            )
+
+            maintenance_conn = get_connection()
+            try:
+                SqlitePostedCompensationRepository(maintenance_conn).reparse_outdated_facts(
+                    tenant_id="local",
+                    parsed_at=datetime.now(timezone.utc).isoformat(),
+                )
+            finally:
+                # The worker does not need this maintenance handle again
+                # before projection bootstrap. Close it deterministically so
+                # neither a failed write nor future connection configuration
+                # can leak a lock into the long-lived worker process.
+                close_connection()
+        except Exception:  # noqa: BLE001 - retry on the next worker start
+            log.exception("Posted compensation parser reconciliation failed")
     try:
         # Pass a thread-local connection factory so the wildcard
         # subscriber (which fires on whichever thread published the
@@ -105,6 +125,15 @@ def _bootstrap() -> None:
 
             _projection_subscription = builder.subscribe_to(get_default_publisher())
     except Exception:  # noqa: BLE001 — projection refresh failure must not break boot
+        # A failed rebuild may leave SQLite inside the write transaction that
+        # contains its partial projection changes. Keeping the long-lived
+        # RPC/worker process on that handle would hold the rollback journal and
+        # block every API reader. Roll back before degrading startup so the
+        # existing projections remain readable and a later refresh can retry.
+        try:
+            get_connection().rollback()
+        except Exception:  # noqa: BLE001 - preserve the original failure
+            log.exception("ProjectionBuilder bootstrap rollback failed")
         log.exception("ProjectionBuilder backfill on bootstrap failed")
 
 
@@ -2256,7 +2285,7 @@ def worker(
     ),
 ) -> None:
     """Run the long-lived JobCtrl Temporal worker."""
-    _bootstrap()
+    _bootstrap(reconcile_posted_compensation=True)
 
     # Verify the browser this worker needs is installed before we connect to
     # Temporal and start accepting activities — a missing binary must surface

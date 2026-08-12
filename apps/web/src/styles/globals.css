@@ -6613,16 +6613,8 @@ input[type="radio"] {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  align-items: end;
+  align-items: center;
   justify-content: flex-end;
-}
-
-.compensation-refresh-path {
-  display: grid;
-  gap: 4px;
-  min-width: min(260px, 100%);
-  color: var(--muted-foreground);
-  font-size: var(--jh-type-body-size);
 }
 
 .compensation-refresh-status {
@@ -6630,11 +6622,6 @@ input[type="radio"] {
   color: var(--status-success);
   font-size: var(--jh-type-label-size);
   font-weight: var(--jh-type-label-weight);
-}
-
-.compensation-refresh-path input {
-  height: 30px;
-  font-size: var(--jh-type-control-size);
 }
 
 .compensation-panels {
@@ -6646,6 +6633,8 @@ input[type="radio"] {
 .compensation-panel {
   display: grid;
   min-width: 0;
+  align-content: start;
+  align-self: start;
   gap: 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -6662,6 +6651,112 @@ input[type="radio"] {
 
 .compensation-panel header b {
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.compensation-result-card {
+  gap: 14px;
+}
+
+.compensation-result-header {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 10px !important;
+  align-items: start !important;
+}
+
+.compensation-result-header .eyebrow {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.compensation-result-value {
+  font-size: var(--jh-type-metric-size) !important;
+  font-weight: var(--jh-type-metric-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-metric-line-height) !important;
+}
+
+.compensation-result-explanation {
+  max-width: 64ch;
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: var(--jh-type-body-line-height);
+}
+
+.compensation-market-details,
+.compensation-reliability-explainer {
+  display: grid;
+  gap: 10px;
+}
+
+.compensation-reliability-explainer > p {
+  margin: 0;
+  border-left: 2px solid var(--status-info);
+  color: var(--muted-foreground);
+  padding-left: 10px;
+  line-height: var(--jh-type-body-line-height);
+}
+
+.compensation-disclosure {
+  min-width: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.compensation-disclosure > summary {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  cursor: pointer;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--foreground);
+  font-size: var(--jh-type-control-size);
+  font-weight: var(--jh-type-control-weight);
+  list-style-position: inside;
+}
+
+.compensation-disclosure-label {
+  display: inline-flex;
+  min-width: 0;
+  gap: 6px;
+  align-items: center;
+}
+
+.compensation-disclosure-label > svg {
+  flex: 0 0 auto;
+  transition: transform 150ms ease;
+}
+
+.compensation-disclosure[open]
+  > summary
+  .compensation-disclosure-label
+  > svg {
+  transform: rotate(180deg);
+}
+
+.compensation-disclosure > summary b {
+  color: var(--muted-foreground);
+  font-size: var(--jh-type-label-size);
+  font-weight: var(--jh-type-label-weight);
+  text-align: right;
+}
+
+.compensation-disclosure-content {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.compensation-posting-excerpt {
+  margin: 0;
+  border-left: 2px solid var(--border);
+  color: var(--muted-foreground);
+  padding-left: 12px;
+  font-size: var(--jh-type-body-size);
+  line-height: var(--jh-type-body-line-height);
   overflow-wrap: anywhere;
 }
 
@@ -6799,32 +6894,15 @@ input[type="radio"] {
   overflow-wrap: anywhere;
 }
 
-.compensation-evidence-rows > summary {
-  display: flex;
-  width: fit-content;
-  max-width: 100%;
-  cursor: pointer;
-  gap: 8px;
-  align-items: center;
-  color: var(--muted-foreground);
-  font-size: var(--jh-type-control-size);
-  font-weight: var(--jh-type-control-weight);
-}
-
 .compensation-evidence-rows > summary b {
-  border-radius: 4px;
-  background: var(--muted);
-  color: var(--foreground);
-  padding: 1px 4px;
-  font-family: var(--font-sans);
-  font-size: var(--jh-type-control-size);
+  color: var(--muted-foreground);
 }
 
 .compensation-evidence-row-list {
   display: grid;
   gap: 8px;
   min-width: 0;
-  padding-top: 4px;
+  padding-top: 12px;
 }
 
 .compensation-evidence-row {
@@ -6909,6 +6987,10 @@ input[type="radio"] {
   color: var(--foreground);
   padding: 1px 4px;
   overflow-wrap: anywhere;
+}
+
+.compensation-warning-list li:not(:has(code)) {
+  display: list-item;
 }
 
 .compensation-warning-list span {

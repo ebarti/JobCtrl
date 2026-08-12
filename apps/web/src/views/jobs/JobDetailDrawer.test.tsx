@@ -193,16 +193,11 @@ describe("<JobDetailDrawer>", () => {
     const compensation = await screen.findByRole("region", {
       name: "Compensation evidence",
     });
-    expect(
-      within(compensation).getByText("source_conflict_with_posted_salary"),
-    ).toBeInTheDocument();
+    fireEvent.click(within(compensation).getByText("How this was assessed"));
     expect(
       within(compensation).getByText(
         "Market estimate is above the posted range.",
       ),
-    ).toBeInTheDocument();
-    expect(
-      within(compensation).getByText("reported_compensation_sample"),
     ).toBeInTheDocument();
     expect(
       within(compensation).getByText(
@@ -283,9 +278,13 @@ describe("<JobDetailDrawer>", () => {
 
     renderJobDetailDrawer("https://example.com/jobs/1");
 
+    await screen.findByRole("region", { name: "Compensation evidence" });
     expect(
-      await screen.findByText("Used only when refreshing this job."),
-    ).toBeInTheDocument();
+      screen.queryByText("Observation JSON path (optional)"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText("/path/to/reported-compensation.json"),
+    ).not.toBeInTheDocument();
     await user.click(
       await screen.findByRole("button", { name: "Refresh this job" }),
     );
@@ -589,7 +588,7 @@ describe("<JobDetailDrawer>", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders compensation audit range, statistical confidence, and reported sources", async () => {
+  it("leads with salary outcomes and keeps benchmark calculations expandable", async () => {
     if (
       sampleCompensationAudit.market.recordStatus !== "recorded" ||
       sampleCompensationAudit.market.estimate.benchmarkLineage?.kind !==
@@ -644,25 +643,43 @@ describe("<JobDetailDrawer>", () => {
     });
     expect(within(compensation).getByText("Compensation")).toBeInTheDocument();
     expect(
-      within(compensation).getAllByText("EUR 112000-142000/year").length,
-    ).toBeGreaterThan(0);
+      within(compensation).getByText("EUR 112000-142000/year"),
+    ).toBeInTheDocument();
     expect(
       within(compensation).getAllByText("EUR 70000-90000/year").length,
     ).toBeGreaterThan(0);
     expect(
-      within(compensation).getAllByText(/market confidence medium/i).length,
-    ).toBeGreaterThan(0);
-    expect(within(compensation).getAllByText("82%").length).toBeGreaterThan(0);
-    expect(
-      within(compensation).getAllByText(/2 sources/i).length,
-    ).toBeGreaterThan(0);
-    expect(
-      within(compensation).getAllByText(/7 samples/i).length,
-    ).toBeGreaterThan(0);
-    expect(within(compensation).getByText("Posted Salary")).toBeInTheDocument();
-    expect(
-      within(compensation).getByText("Extrapolated Market Benchmark"),
+      within(compensation).getByText("Employer posted"),
     ).toBeInTheDocument();
+    expect(
+      within(compensation).getByText("Market salary estimate"),
+    ).toBeInTheDocument();
+    expect(
+      within(compensation).getAllByText(/medium reliability/i).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(compensation).queryByText(/market confidence medium/i),
+    ).not.toBeInTheDocument();
+    expect(
+      within(compensation).queryByText(/posted confidence/i),
+    ).not.toBeInTheDocument();
+
+    const evidenceSummary = within(compensation).getByText("Evidence reviewed");
+    const evidenceDisclosure = evidenceSummary.closest("details");
+    expect(evidenceDisclosure).not.toBeNull();
+    expect(evidenceDisclosure).not.toHaveAttribute("open");
+    expect(evidenceDisclosure).toHaveTextContent("1 evidence record");
+    expect(evidenceDisclosure).toHaveTextContent("2 providers");
+    expect(evidenceDisclosure).toHaveTextContent("7 reported samples");
+
+    const assessmentSummary = within(compensation).getByText(
+      "How this was assessed",
+    );
+    const assessmentDisclosure = assessmentSummary.closest("details");
+    expect(assessmentDisclosure).not.toBeNull();
+    expect(assessmentDisclosure).not.toHaveAttribute("open");
+    fireEvent.click(assessmentSummary);
+    expect(assessmentDisclosure).toHaveAttribute("open");
     const lineage = within(compensation).getByRole("region", {
       name: "Geographic extrapolation lineage",
     });
@@ -686,18 +703,15 @@ describe("<JobDetailDrawer>", () => {
       within(compensation).getByText("exact company role"),
     ).toBeInTheDocument();
     expect(
-      within(compensation).getByText("Confidence factors"),
+      within(compensation).getByText("Reliability factors"),
     ).toBeInTheDocument();
     expect(
-      within(compensation).getByText("Reported rows match Globex directly."),
+      within(compensation).getByText(
+        "Direct reported salary evidence matched Globex; company support is 96%.",
+      ),
     ).toBeInTheDocument();
-    const evidenceSummary = within(compensation).getByText("Evidence rows");
-    const evidenceDisclosure = evidenceSummary.closest("details");
-    expect(evidenceDisclosure).not.toBeNull();
-    expect(evidenceDisclosure).not.toHaveAttribute("open");
-    expect(
-      within(evidenceDisclosure as HTMLElement).getByText("1 row"),
-    ).toBeInTheDocument();
+    fireEvent.click(evidenceSummary);
+    expect(evidenceDisclosure).toHaveAttribute("open");
     expect(
       within(evidenceDisclosure as HTMLElement).getByText(
         "Principal Platform Engineer",
@@ -716,6 +730,265 @@ describe("<JobDetailDrawer>", () => {
       "href",
       "https://www.levels.fyi/companies/globex/salaries/software-engineer",
     );
+  });
+
+  it("explains a posted cash amount and a withheld director market range without raw audit markers", async () => {
+    if (sampleCompensationAudit.market.recordStatus !== "recorded") {
+      throw new Error(
+        "sample compensation audit must include recorded market evidence",
+      );
+    }
+    if (sampleCompensationAudit.posted.recordStatus !== "recorded") {
+      throw new Error(
+        "sample compensation audit must include recorded posted evidence",
+      );
+    }
+    const baseEvidence = sampleCompensationAudit.market.estimate.evidence[0];
+    if (!baseEvidence) {
+      throw new Error(
+        "sample compensation audit must include one evidence row",
+      );
+    }
+    const evidence = Array.from({ length: 93 }, (_, index) => {
+      const isAggregate = index === 0;
+      return {
+        ...baseEvidence,
+        sourceId: isAggregate
+          ? ("levels_fyi" as const)
+          : ("euro_top_tech" as const),
+        displayName: isAggregate ? "Levels.fyi" : "Euro Top Tech",
+        sourceUrl: isAggregate
+          ? "https://www.levels.fyi/t/software-engineer/locations/spain"
+          : "https://www.eurotoptech.com/data",
+        companyName: isAggregate
+          ? "Levels.fyi market aggregate"
+          : `European company ${index}`,
+        roleTitle: isAggregate ? "Software Engineer" : "Engineering Director",
+        location: "Spain",
+        levelLabel: isAggregate ? "All levels" : "Principal / Director",
+        minimumAmount: 38_645 + index * 500,
+        maximumAmount: 120_000 + index * 3_000,
+        sampleCount: isAggregate ? null : 1,
+      };
+    });
+    const postedFact = {
+      ...sampleCompensationAudit.posted.fact,
+      parseState: "parsed_range" as const,
+      sourceField: "jobs.full_description",
+      sourceText: "Compensation: USD 243,800 annually and stock options.",
+      currency: "USD",
+      period: "year" as const,
+      component: "unknown" as const,
+      minimumAmount: 243_800,
+      maximumAmount: 243_800,
+      annualizedMinimumAmount: 243_800,
+      annualizedMaximumAmount: 243_800,
+      annualizationAssumption: "Source text states annual compensation.",
+      confidence: "high" as const,
+      parserVersion: "posted-compensation-v2",
+      warnings: [
+        {
+          code: "source_text_truncated" as const,
+          message:
+            "Only a bounded posting excerpt is stored; the excerpt below shows exactly what was parsed.",
+        },
+        {
+          code: "equity_component" as const,
+          message:
+            "The posting also mentions stock or equity; unpriced equity is not added to the displayed amount.",
+        },
+      ],
+    };
+    const estimate = {
+      ...sampleCompensationAudit.market.estimate,
+      estimateState: "insufficient_evidence" as const,
+      confidenceBand: "low" as const,
+      confidenceScore: 0.4,
+      sourceCount: 2,
+      sampleCount: null,
+      seniorityLabel: "director",
+      companyName: "DuckDuckGo",
+      normalizedCompany: "duckduckgo",
+      roleTitle: "Privacy Engineering Director",
+      normalizedRole: "privacy engineering director",
+      estimatorVersion: "company-role-reported-compensation-v3",
+      matchScope: "same_location_role_fallback" as const,
+      benchmarkLineage: null,
+      evidence,
+      sources: [
+        sampleCompensationAudit.market.estimate.sources[0]!,
+        {
+          ...sampleCompensationAudit.market.estimate.sources[1]!,
+          sourceId: "euro_top_tech" as const,
+          provenance: "public" as const,
+          displayName: "Euro Top Tech",
+          snapshotVersion: "euro-top-tech-2026",
+          sampleCount: 92,
+        },
+      ],
+      factors: [
+        {
+          name: "company" as const,
+          score: 0.45,
+          band: "low" as const,
+          reason: "Reported rows matched company DuckDuckGo.",
+        },
+        {
+          name: "role" as const,
+          score: 0.55,
+          band: "low" as const,
+          reason: "Reported rows matched role Privacy Engineering Director.",
+        },
+        {
+          name: "level" as const,
+          score: 0.75,
+          band: "medium" as const,
+          reason: "Level support: staff_plus.",
+        },
+      ],
+      insufficientReasons: [
+        {
+          code: "source_dispersion_too_high" as const,
+          message:
+            "Reported compensation rows diverged too much to emit a precise range.",
+        },
+        {
+          code: "weak_company_match" as const,
+          message: "Company match support was too weak for a range.",
+        },
+      ],
+    };
+    const compensationSummary = {
+      ...sampleCompensationSummary,
+      posted: {
+        ...sampleCompensationSummary.posted,
+        confidence: "high" as const,
+        warningCount: 2,
+        range: {
+          ...sampleCompensationSummary.posted.range!,
+          currency: "USD",
+          component: "unknown" as const,
+          minimumAmount: 243_800,
+          maximumAmount: 243_800,
+          annualizedMinimumAmount: 243_800,
+          annualizedMaximumAmount: 243_800,
+          displayRange: "USD 243800/year",
+        },
+        displayRange: "USD 243800/year",
+      },
+      market: {
+        ...sampleCompensationSummary.market,
+        benchmarkKind: null,
+        estimateState: "insufficient_evidence" as const,
+        confidenceBand: "low" as const,
+        confidenceScore: 0.4,
+        sourceCount: 2,
+        sampleCount: null,
+        range: null,
+        displayRange: null,
+        confidenceInterval: null,
+        displayConfidenceInterval: null,
+      },
+    };
+
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) =>
+        HttpResponse.json(
+          makeJobDetail(
+            {
+              ...sampleSecondaryJob,
+              jobKey: String(params["jobKey"]),
+              title: "Privacy Engineering Director",
+              company: "DuckDuckGo",
+              location: "Spain",
+              compensationSummary,
+            },
+            {
+              compensationAudit: {
+                ...sampleCompensationAudit,
+                posted: {
+                  ok: true,
+                  recordStatus: "recorded",
+                  fact: postedFact,
+                },
+                market: { ok: true, recordStatus: "recorded", estimate },
+              },
+            },
+          ),
+        ),
+      ),
+    );
+
+    renderJobDetailDrawer("job-privacy-director");
+
+    const compensation = await screen.findByRole("region", {
+      name: "Compensation evidence",
+    });
+    expect(
+      within(compensation).getByText("USD 243800/year"),
+    ).toBeInTheDocument();
+    expect(
+      within(compensation).getByText("No reliable market range yet"),
+    ).toBeInTheDocument();
+    expect(
+      within(compensation).getByText(
+        /93 evidence records were reviewed across 2 providers/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(compensation).getByText("Why no range is shown"),
+    ).toBeInTheDocument();
+    expect(
+      within(compensation).getByText(/diverged too much/i),
+    ).toBeInTheDocument();
+    expect(
+      within(compensation).getByText(/too weak for a range/i),
+    ).toBeInTheDocument();
+    expect(
+      within(compensation).getByText(
+        /stock or equity is mentioned separately/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(compensation).queryByText(/posted confidence/i),
+    ).not.toBeInTheDocument();
+    expect(
+      within(compensation).queryByText("source_text_truncated"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(compensation).queryByText("staff plus"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(compensation).queryByText("Observation JSON path (optional)"),
+    ).not.toBeInTheDocument();
+
+    const evidenceSummary = within(compensation).getByText("Evidence reviewed");
+    expect(evidenceSummary.closest("details")).toHaveTextContent(
+      "93 evidence records · 2 providers",
+    );
+    fireEvent.click(evidenceSummary);
+    expect(
+      within(compensation).getAllByText("Euro Top Tech").length,
+    ).toBeGreaterThan(0);
+
+    const assessmentSummary = within(compensation).getByText(
+      "How this was assessed",
+    );
+    expect(assessmentSummary.closest("details")).toHaveTextContent("director");
+    fireEvent.click(assessmentSummary);
+    expect(
+      within(compensation).getByText("Benchmark level").closest("div"),
+    ).toHaveTextContent("director");
+    expect(
+      within(compensation).getByText(
+        "No direct DuckDuckGo salary record matched; same-location role evidence provides 45% support.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(compensation).getByText(
+        /not a probability that the salary is correct/i,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("shows employer requirements beside canonical requirement fit evidence", async () => {

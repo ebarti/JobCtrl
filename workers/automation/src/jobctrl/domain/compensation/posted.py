@@ -11,7 +11,7 @@ from typing import Literal
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
-PARSER_VERSION = "posted-compensation-v1"
+PARSER_VERSION = "posted-compensation-v2"
 SOURCE_TEXT_LIMIT = 280
 
 ParseState = Literal["missing", "unparseable", "ambiguous", "parsed_range"]
@@ -154,7 +154,6 @@ def parse_posted_compensation(
         )
 
     lower = bounded.casefold()
-    component = _detect_component(lower)
     warnings.extend(_component_warnings(lower))
     currency = _detect_currency(bounded)
     if currency is None:
@@ -204,6 +203,7 @@ def parse_posted_compensation(
             source_hash=source_hash,
         )
 
+    component = _detect_component(lower, amounts)
     minimum, maximum, one_sided = _range_bounds(amounts, lower)
     if one_sided:
         warnings.append("one_sided_range")
@@ -318,18 +318,51 @@ def _period_warnings(period: CompensationPeriod) -> list[WarningCode]:
     return []
 
 
-def _detect_component(lower: str) -> CompensationComponent:
-    if re.search(r"\bbase\b|\bsalary\b|\bpay\b|\bwage\b", lower):
-        return "base_salary"
-    if re.search(r"\bote\b|on[- ]target earnings", lower):
-        return "ote"
-    if "commission" in lower:
-        return "commission"
-    if "bonus" in lower:
-        return "bonus"
-    if re.search(r"\bequity\b|\brsu\b|\bstock options?\b", lower):
+def _detect_component(lower: str, amounts: list[_Amount]) -> CompensationComponent:
+    """Bind the amount to its nearest governing compensation cue.
+
+    Description excerpts can mention multiple compensation concepts. Component
+    authority belongs to the cue governing the parsed amount, not to an
+    unrelated word elsewhere in the bounded excerpt.
+    """
+
+    anchor_start = min(amount.start for amount in amounts)
+    anchor_end = max(amount.end for amount in amounts)
+    suffix = lower[anchor_end : anchor_end + 64]
+    additive_equity = re.match(
+        r"^.{0,40}(?:\+|\bplus\b|\band\b).{0,24}\b(?:equity|rsus?|stock options?)\b",
+        suffix,
+    )
+    if additive_equity is None and re.match(
+        r"^.{0,24}\b(?:in|as)\s+(?:equity|rsus?|stock options?)\b",
+        suffix,
+    ):
         return "equity"
-    return "unknown"
+    candidates: list[tuple[int, int, CompensationComponent]] = []
+    cue_patterns: tuple[tuple[CompensationComponent, re.Pattern[str]], ...] = (
+        ("equity", re.compile(r"\b(?:equity|stock) compensation\b")),
+        ("equity", re.compile(r"\b(?:equity|rsus?|stock options?)\b")),
+        ("ote", re.compile(r"\bote\b|on[- ]target earnings")),
+        ("commission", re.compile(r"\bcommission(?:\s+compensation)?\b")),
+        ("bonus", re.compile(r"\bbonus(?:\s+compensation)?\b")),
+        (
+            "base_salary",
+            re.compile(r"\b(?:base salary|base pay|base|pay range|salary|wage|remuneration)\b"),
+        ),
+        ("unknown", re.compile(r"\b(?:total\s+)?compensation(?:\s+range)?\b")),
+    )
+    for priority, (component, pattern) in enumerate(cue_patterns):
+        for match in pattern.finditer(lower):
+            if match.end() <= anchor_start:
+                distance = anchor_start - match.end()
+            elif match.start() >= anchor_end:
+                distance = match.start() - anchor_end
+            else:
+                distance = 0
+            candidates.append((distance, priority, component))
+    if not candidates:
+        return "unknown"
+    return min(candidates)[2]
 
 
 def _component_warnings(lower: str) -> list[WarningCode]:
@@ -362,7 +395,7 @@ def _has_mixed_compensation_components(lower: str) -> bool:
 def _has_additive_component_phrase(lower: str) -> bool:
     return bool(
         re.search(
-            r"(?:\+|\bplus\b|\band\b).{0,24}\b(?:bonus|commission|equity|rsu|ote|on[- ]target earnings)\b",
+            r"(?:\+|\bplus\b|\band\b).{0,24}\b(?:bonus|commission|equity|rsu|stock options?|ote|on[- ]target earnings)\b",
             lower,
         )
     )
@@ -503,7 +536,7 @@ def _confidence(
         return "low"
     if {"hourly_period", "broad_range", "ambiguous_multiple_amounts"} & warning_set:
         return "low"
-    if warning_set:
+    if {"missing_currency", "missing_period", "monthly_period", "one_sided_range"} & warning_set:
         return "medium"
     return "high"
 

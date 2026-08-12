@@ -324,7 +324,7 @@ POSTED_COMPENSATION_WARNING_MESSAGES = {
     "bonus_component": "The source text mentions bonus compensation.",
     "broad_range": "The posted range is broad enough to reduce precision.",
     "commission_component": "The source text mentions commission compensation.",
-    "equity_component": "The source text mentions equity or stock compensation.",
+    "equity_component": "The posting mentions stock or equity compensation; review the amount type below.",
     "hourly_period": "The source text uses an hourly compensation period.",
     "missing_currency": "The parser could not identify an explicit currency.",
     "missing_period": "The parser could not identify an explicit compensation period.",
@@ -332,7 +332,7 @@ POSTED_COMPENSATION_WARNING_MESSAGES = {
     "no_amount_found": "No compensation amount could be safely extracted.",
     "one_sided_range": "The posted range is one-sided.",
     "ote_component": "The source text mentions on-target earnings.",
-    "source_text_truncated": "The stored source text was truncated to the bounded salary excerpt limit.",
+    "source_text_truncated": "Only a bounded posting excerpt is stored; the excerpt below shows exactly what was parsed.",
 }
 MARKET_COMPENSATION_WARNING_MESSAGES = {
     "benchmark_extrapolated": "The range was extrapolated from direct benchmark evidence in another geography.",

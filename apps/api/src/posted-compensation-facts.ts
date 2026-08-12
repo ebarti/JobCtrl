@@ -21,7 +21,13 @@ type PostedCompensationFactRow = {
   parse_state: "missing" | "unparseable" | "ambiguous" | "parsed_range";
   currency: string | null;
   period: "hour" | "month" | "year" | "unknown";
-  component: "base_salary" | "ote" | "bonus" | "commission" | "equity" | "unknown";
+  component:
+    | "base_salary"
+    | "ote"
+    | "bonus"
+    | "commission"
+    | "equity"
+    | "unknown";
   minimum_amount: number | null;
   maximum_amount: number | null;
   annualized_minimum_amount: number | null;
@@ -35,19 +41,23 @@ type PostedCompensationFactRow = {
 };
 
 const WARNING_MESSAGES: Record<PostedCompensationWarningCode, string> = {
-  ambiguous_multiple_amounts: "Multiple compensation amounts were present and the primary range is ambiguous.",
+  ambiguous_multiple_amounts:
+    "Multiple compensation amounts were present and the primary range is ambiguous.",
   bonus_component: "The source text mentions bonus compensation.",
   broad_range: "The posted range is broad enough to reduce precision.",
   commission_component: "The source text mentions commission compensation.",
-  equity_component: "The source text mentions equity or stock compensation.",
+  equity_component:
+    "The posting mentions stock or equity compensation; review the amount type below.",
   hourly_period: "The source text uses an hourly compensation period.",
   missing_currency: "The parser could not identify an explicit currency.",
-  missing_period: "The parser could not identify an explicit compensation period.",
+  missing_period:
+    "The parser could not identify an explicit compensation period.",
   monthly_period: "The source text uses a monthly compensation period.",
   no_amount_found: "No compensation amount could be safely extracted.",
   one_sided_range: "The posted range is one-sided.",
   ote_component: "The source text mentions on-target earnings.",
-  source_text_truncated: "The stored source text was truncated to the bounded salary excerpt limit.",
+  source_text_truncated:
+    "Only a bounded posting excerpt is stored; the excerpt below shows exactly what was parsed.",
 };
 
 export function getPostedCompensationFact(
@@ -143,7 +153,10 @@ function mapFactRow(row: PostedCompensationFactRow): PostedCompensationFact {
     annualizedMinimumAmount: nullableNumber(row.annualized_minimum_amount),
     annualizedMaximumAmount: nullableNumber(row.annualized_maximum_amount),
     annualizationAssumption: nullableText(row.annualization_assumption),
-    confidence: row.confidence === "high" || row.confidence === "medium" ? row.confidence : "low",
+    confidence:
+      row.confidence === "high" || row.confidence === "medium"
+        ? row.confidence
+        : "low",
   };
 }
 
@@ -158,7 +171,9 @@ function parseWarnings(value: string): PostedCompensationWarning[] {
     return [];
   }
   return parsed
-    .filter((entry): entry is PostedCompensationWarningCode => isWarningCode(entry))
+    .filter((entry): entry is PostedCompensationWarningCode =>
+      isWarningCode(entry),
+    )
     .map((code) => ({ code, message: WARNING_MESSAGES[code] }));
 }
 

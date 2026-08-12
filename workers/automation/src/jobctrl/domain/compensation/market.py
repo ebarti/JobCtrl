@@ -11,7 +11,7 @@ from typing import Literal
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
-ESTIMATOR_VERSION = "company-role-reported-compensation-v2"
+ESTIMATOR_VERSION = "company-role-reported-compensation-v3"
 
 MarketEstimateState = Literal[
     "not_requested",
@@ -616,11 +616,34 @@ def estimate_market_compensation(
     level_score = min(level_scores)
     location_score = min(location_scores)
     freshness_score = min(freshness_scores)
+    company_percent = round(company_score * 100)
+    role_percent = round(role_score * 100)
+    level_percent = round(level_score * 100)
+    company_reason = {
+        "exact_company_role": f"Direct reported salary rows matched {company}; company support is {company_percent}%.",
+        "company_adjacent_role": (
+            f"Direct {company} rows matched, but only for adjacent roles; company support is {company_percent}%."
+        ),
+        "tier_role_fallback": (
+            f"No direct {company} salary row matched; comparable companies provide {company_percent}% company support."
+        ),
+        "same_location_role_fallback": (
+            f"No direct {company} salary row matched; comparable roles in the same location provide "
+            f"{company_percent}% company support."
+        ),
+        "market_baseline_fallback": (
+            f"No direct {company} salary row matched; broader market evidence provides {company_percent}% company support."
+        ),
+    }.get(match_scope, f"Company evidence provides {company_percent}% support.")
+    role_reason = f"Selected salary rows provide {role_percent}% role support for {title}."
+    level_reason = (
+        f"The job title was classified as {inferred_level}; selected rows provide {level_percent}% seniority support."
+    )
     factors.extend(
         [
-            _factor("company", company_score, f"Reported rows matched company {company}."),
-            _factor("role", role_score, f"Reported rows matched role {title}."),
-            _factor("level", level_score, f"Level support: {inferred_level}."),
+            _factor("company", company_score, company_reason),
+            _factor("role", role_score, role_reason),
+            _factor("level", level_score, level_reason),
             _factor(
                 "location", location_score, "Location compatibility was evaluated but company-role evidence is primary."
             ),
@@ -1223,7 +1246,9 @@ def _level_from_title(title: str | None) -> str:
     tokens = set(_role_tokens(title))
     if {"ceo", "chief", "cio", "ciso", "coo", "cpo", "cto", "president", "vice", "vp"} & tokens:
         return "executive"
-    if {"staff", "principal", "lead", "director", "head"} & tokens:
+    if {"director", "head"} & tokens:
+        return "director"
+    if {"staff", "principal", "lead"} & tokens:
         return "staff_plus"
     if {"senior", "sr"} & tokens:
         return "senior"
@@ -1241,10 +1266,14 @@ def _level_score(expected: str | None, observed: str | None) -> float:
         return 0.5 if expected_level == "executive" else 0.75
     if expected_level == observed_level:
         return 0.95
-    if expected_level == "executive" and observed_level in {"staff_plus", "manager"}:
+    if expected_level == "executive" and observed_level in {"director", "staff_plus", "manager"}:
         return 0.45
-    if observed_level == "executive" and expected_level in {"staff_plus", "manager"}:
+    if observed_level == "executive" and expected_level in {"director", "staff_plus", "manager"}:
         return 0.45
+    if expected_level == "director" and observed_level in {"staff_plus", "manager"}:
+        return 0.82
+    if observed_level == "director" and expected_level in {"staff_plus", "manager"}:
+        return 0.82
     if expected_level == "senior" and observed_level == "staff_plus":
         return 0.82
     if expected_level == "staff_plus" and observed_level == "senior":
@@ -1261,7 +1290,9 @@ def _normalize_level(value: str | None) -> str:
         return "unknown"
     if {"ceo", "chief", "cio", "ciso", "coo", "cpo", "cto", "executive", "president", "vice", "vp"} & tokens:
         return "executive"
-    if {"staff", "principal", "lead", "director", "head", "l6", "l7", "l8"} & tokens:
+    if {"director", "head"} & tokens:
+        return "director"
+    if {"staff", "principal", "lead", "l6", "l7", "l8"} & tokens:
         return "staff_plus"
     if {"senior", "sr", "l5"} & tokens:
         return "senior"

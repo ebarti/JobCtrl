@@ -199,6 +199,75 @@ def test_single_base_amount_with_variable_component_keeps_base_component() -> No
     assert "equity_component" in equity.warnings
 
 
+def test_stated_cash_compensation_is_not_relabelled_as_separate_stock_options() -> None:
+    fact = parse_posted_compensation(
+        (
+            "Compensation is transparent across the organization. "
+            "Compensation: USD 243,800 annually and stock options. "
+            + ("Privacy leadership across the global region. " * 8)
+        ),
+        source_field="jobs.full_description",
+        parsed_at="2026-08-12T10:00:00Z",
+    )
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.currency == "USD"
+    assert fact.period == "year"
+    assert fact.minimum_amount == 243_800
+    assert fact.maximum_amount == 243_800
+    assert fact.component == "unknown"
+    assert fact.confidence == "high"
+    assert "equity_component" in fact.warnings
+    assert "source_text_truncated" in fact.warnings
+
+
+def test_explicit_equity_compensation_remains_equity() -> None:
+    fact = parse_posted_compensation("Equity compensation: USD 100,000/year in stock options.")
+
+    assert fact.component == "equity"
+    assert fact.confidence == "high"
+
+
+def test_nearest_amount_cue_keeps_explicit_equity_distinct_from_earlier_salary() -> None:
+    fact = parse_posted_compensation(
+        "The position offers a competitive base salary. Equity compensation: USD 100,000/year in stock options."
+    )
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.minimum_amount == 100_000
+    assert fact.component == "equity"
+    assert fact.confidence == "high"
+
+
+def test_amount_denomination_in_stock_options_is_equity() -> None:
+    fact = parse_posted_compensation("USD 100,000/year in stock options.")
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.component == "equity"
+
+
+def test_nearer_generic_compensation_cue_keeps_additive_stock_separate() -> None:
+    fact = parse_posted_compensation("Compensation: USD 243,800 annually and stock options.")
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.component == "unknown"
+
+
+def test_equity_denomination_overrides_generic_compensation_cue() -> None:
+    stock = parse_posted_compensation("Compensation: USD 100,000/year in stock options.")
+    equity = parse_posted_compensation("Compensation: USD 100,000/year as equity.")
+
+    assert stock.component == "equity"
+    assert equity.component == "equity"
+
+
+def test_additive_equity_remains_separate_despite_later_stock_denomination() -> None:
+    fact = parse_posted_compensation("Compensation: USD 243,800/year and equity in stock options.")
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.component == "unknown"
+
+
 def test_source_text_is_bounded_and_hashed() -> None:
     raw = "€80,000/year " + ("with benefits " * 80)
     fact = parse_posted_compensation(raw)
