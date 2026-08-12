@@ -249,6 +249,7 @@ describe("<JobsTable>", () => {
     expect(screen.getByText("70,000")).toBeInTheDocument();
     expect(screen.getByText("90,000")).toBeInTheDocument();
     expect(screen.getByText("112,000-142,000")).toBeInTheDocument();
+    expect(screen.getByText("Geo estimate")).toBeInTheDocument();
     expect(screen.getByText("Medium")).toBeInTheDocument();
     expect(screen.getByText(/2 sources/i)).toBeInTheDocument();
     expect(screen.getByText("1 warning")).toBeInTheDocument();

@@ -131,7 +131,7 @@ interface PipelineStepProjectionFold extends PipelineStepProjectionEvent {
   lastEventId: number;
   lastUpdatedAt: string;
 }
-const COMPENSATION_PROJECTION_VERSION = 2;
+const COMPENSATION_PROJECTION_VERSION = 3;
 const WORKFLOW_RUN_PROJECTION_COLUMNS: ReadonlyArray<readonly [string, string]> = [
   ["input_summary_json", "TEXT NOT NULL DEFAULT '{}'"],
   ["error_code", "TEXT"],
@@ -3067,6 +3067,8 @@ function buildCompensationSummary(
     },
     market: {
       sourceKind: "reported_company_role_market",
+      benchmarkKind:
+        market.recordStatus === "recorded" ? market.estimate.benchmarkLineage?.kind ?? null : null,
       recordStatus: market.recordStatus,
       estimateState: market.recordStatus === "recorded" ? market.estimate.estimateState : "not_requested",
       confidenceBand: market.recordStatus === "recorded" ? market.estimate.confidenceBand : "none",

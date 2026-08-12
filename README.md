@@ -158,6 +158,7 @@ evidence, qualifications, and the complete capability matrix.
 | **Tailored documents** | Resume, cover letter, HTML, and PDF | CV/HTML/PDF and cover letter | LaTeX CV, cover letter, and PDF |
 | **Submission boundary** | Browser rehearsal + manual final submit; exact-approval Gmail sends | Form autofill; the user clicks Submit | Reviewed documents; the user submits |
 | **Interrupted work** | Temporal history, retries, stable workflow identities, and checkpointed broad-board discovery | File integrity + resumable batch flags; no workflow engine | No checkpointed apply resumption evidenced |
+| **Missing-salary intelligence** | **Auditable numeric estimate:** automatic role/level/country benchmarks, seven-day refresh, and explicit geographic extrapolation lineage | No missing-range estimate; an absent advertised figure remains absent | BYO salary dataset; the step is skipped without one |
 | **Application-level cost control** | Daily estimated-spend ceiling | Spend tiers, batch pre-screen/cap, dry run, and resume controls | Token-efficiency instructions; no app-level budget evidenced |
 
 ## What It Does
@@ -177,6 +178,15 @@ evidence, qualifications, and the complete capability matrix.
   by default and uses the configured cron only after you enable it.
 - Enrich postings with full descriptions, canonical posting URLs, and apply
   URLs.
+- Build auditable salary intelligence automatically. JobCtrl keeps the
+  employer's posted range separate, discovers reusable role-family, level, and
+  country benchmarks after each Discover run, and refreshes missing or
+  seven-day-old slices. When a country has no direct benchmark, it can derive a
+  range from an exact foreign anchor using official cost-of-living evidence and
+  same-company cross-country pay ratios. The Jobs UI exposes the direct or
+  extrapolated authority, sample size, freshness, exact bridge inputs, formula,
+  confidence, and out-of-bounds warnings instead of presenting an unexplained
+  number. See [Compensation Evidence](docs/user/compensation-evidence.md).
 - Keep each job under one tenant-scoped, immutable `JobId`. Posting and
   application URLs are locators resolved only at explicit capture/import/API
   boundaries, so a URL change cannot detach scores, materials, outcomes, or

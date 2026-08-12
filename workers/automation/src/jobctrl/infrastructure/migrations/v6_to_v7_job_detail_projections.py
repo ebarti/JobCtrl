@@ -674,6 +674,9 @@ def _compensation_projection(
             )
             and mapped_market["estimate_state"]
             in projection_builder.MARKET_RECORDED_STATES
+            and not projection_builder._market_uses_employer_posted_authority(
+                str(mapped_market["source_snapshot_json"] or "")
+            )
         ):
             market = {
                 "ok": True,
@@ -681,6 +684,7 @@ def _compensation_projection(
                 "estimate": projection_builder._market_estimate_from_row(
                     mapped_market,
                     job_id,
+                    benchmark_lineage=None,
                 ),
             }
     posted_fact = posted.get("fact") if posted["recordStatus"] == "recorded" else None
@@ -716,6 +720,7 @@ def _compensation_projection(
         "market": {
             "sourceKind": "reported_company_role_market",
             "recordStatus": market["recordStatus"],
+            "benchmarkKind": None,
             "estimateState": market_estimate.get("estimateState", "not_requested") if isinstance(market_estimate, dict) else "not_requested",
             "confidenceBand": market_estimate.get("confidenceBand", "none") if isinstance(market_estimate, dict) else "none",
             "confidenceScore": market_estimate.get("confidenceScore") if isinstance(market_estimate, dict) else None,

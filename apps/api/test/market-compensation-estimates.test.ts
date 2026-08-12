@@ -17,6 +17,10 @@ const UNAVAILABLE_JOB_ID = "22222222-2222-4222-8222-222222222215";
 const INSUFFICIENT_JOB_ID = "22222222-2222-4222-8222-222222222216";
 const STALE_ESTIMATOR_JOB_ID = "22222222-2222-4222-8222-222222222217";
 const UNKNOWN_JOB_ID = "22222222-2222-4222-8222-222222222299";
+const ANCHOR_DIRECT_FACT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const SOURCE_PRICE_FACT_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const TARGET_PRICE_FACT_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const EXTRAPOLATED_FACT_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
 function withTempApp() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-market-compensation-"));
@@ -220,6 +224,90 @@ function estimateCount(dbPath: string): number {
   return Number(row.count);
 }
 
+function insertCanonicalBenchmarkLineage(dbPath: string): void {
+  const db = new Database(dbPath);
+  db.prepare(
+    `INSERT INTO compensation_role_families (
+      taxonomy_version, role_family_code, display_name, isco_codes_json, created_at
+    ) VALUES (
+      'jobctrl-role-family-v1', 'software_engineering', 'Software Engineering',
+      '["2512","2513","2514","2519"]', '2026-08-12T08:00:00.000000Z'
+    )`,
+  ).run();
+  db.prepare(
+    `INSERT INTO compensation_direct_benchmark_facts (
+      tenant_id, fact_id, taxonomy_version, role_family_code, seniority_label,
+      country_code, subdivision_code, locality, geography_scope, market_scope,
+      normalized_company, component, original_currency, original_period,
+      original_minimum_amount, original_maximum_amount,
+      eur_annual_minimum_amount, eur_annual_maximum_amount,
+      confidence_interval_minimum_amount, confidence_interval_maximum_amount,
+      confidence_score, sample_count, source_id, source_provenance,
+      source_snapshot_id, source_url, attribution, fx_reference_json,
+      as_of_date, fetched_at, fresh_until, evidence_hash, created_at
+    ) VALUES (
+      'local', ?, 'jobctrl-role-family-v1', 'software_engineering', 'senior',
+      'DE', '', '', 'country', 'market', NULL, 'total_compensation',
+      'EUR', 'year', 60000, 90000, 60000, 90000, 55000, 100000,
+      0.76, 20, 'levels_fyi', 'public', 'levels-public-germany',
+      'https://www.levels.fyi/t/software-engineer',
+      'Data source: Levels.fyi (https://www.levels.fyi)', '{}',
+      '2026-01-01', '2026-08-12T08:00:00.000000Z',
+      '2026-08-19T08:00:00.000000Z', ?, '2026-08-12T08:00:00.000000Z'
+    )`,
+  ).run(ANCHOR_DIRECT_FACT_ID, "a".repeat(64));
+  const insertPrice = db.prepare(
+    `INSERT INTO compensation_price_level_facts (
+      tenant_id, fact_id, country_code, category, reference_year,
+      base_geography_code, index_value, source_id, source_snapshot_id,
+      source_url, attribution, as_of_date, fetched_at, fresh_until,
+      evidence_hash, created_at
+    ) VALUES (
+      'local', ?, ?, 'actual_individual_consumption', 2025,
+      'EU27_2020', ?, 'eurostat', 'eurostat-shared-snapshot',
+      'https://ec.europa.eu/eurostat/', 'Eurostat purchasing power parities',
+      '2025-12-31', '2026-08-12T08:00:00.000000Z',
+      '2026-08-19T08:00:00.000000Z', ?, '2026-08-12T08:00:00.000000Z'
+    )`,
+  );
+  insertPrice.run(SOURCE_PRICE_FACT_ID, "DE", 100, "b".repeat(64));
+  insertPrice.run(TARGET_PRICE_FACT_ID, "ES", 2000, "c".repeat(64));
+  db.prepare(
+    `INSERT INTO compensation_extrapolated_benchmark_facts (
+      tenant_id, fact_id, anchor_direct_fact_id, taxonomy_version,
+      role_family_code, seniority_label, target_country_code,
+      target_subdivision_code, target_locality, target_geography_scope,
+      component, currency, period, minimum_amount, maximum_amount,
+      confidence_interval_minimum_amount, confidence_interval_maximum_amount,
+      confidence_band, confidence_score, extrapolation_method, raw_factor,
+      shrinkage_weight, lower_factor_bound, upper_factor_bound,
+      factor_bound_state, matched_company_count, formula_version, inputs_hash,
+      warnings_json, as_of_date, derived_at, fresh_until
+    ) VALUES (
+      'local', ?, ?, 'jobctrl-role-family-v1', 'software_engineering', 'senior',
+      'ES', '', '', 'country', 'total_compensation', 'EUR', 'year',
+      1200000, 1800000, 900000, 2100000, 'low', 0.31,
+      'evidence_weighted_shrinkage', 20, 0, 0.1, 10,
+      'above_upper_bound', 0, 'geo-shrinkage-v1', ?,
+      '["cost_of_living_only"]', '2026-01-01',
+      '2026-08-12T08:00:00.000000Z', '2026-08-19T08:00:00.000000Z'
+    )`,
+  ).run(EXTRAPOLATED_FACT_ID, ANCHOR_DIRECT_FACT_ID, "d".repeat(64));
+  db.prepare(
+    `INSERT INTO compensation_extrapolation_direct_inputs (
+      tenant_id, extrapolated_fact_id, direct_fact_id, input_role, weight
+    ) VALUES ('local', ?, ?, 'anchor', 1)`,
+  ).run(EXTRAPOLATED_FACT_ID, ANCHOR_DIRECT_FACT_ID);
+  const insertPriceInput = db.prepare(
+    `INSERT INTO compensation_extrapolation_price_inputs (
+      tenant_id, extrapolated_fact_id, price_level_fact_id, input_role, weight
+    ) VALUES ('local', ?, ?, ?, 1)`,
+  );
+  insertPriceInput.run(EXTRAPOLATED_FACT_ID, SOURCE_PRICE_FACT_ID, "source_price_level");
+  insertPriceInput.run(EXTRAPOLATED_FACT_ID, TARGET_PRICE_FACT_ID, "target_price_level");
+  db.close();
+}
+
 describe("market compensation estimates API", () => {
   it("serves a recorded company-role reported compensation range", async () => {
     const { app, dbPath, cleanup } = withTempApp();
@@ -274,6 +362,7 @@ describe("market compensation estimates API", () => {
 
   it("preserves canonical extrapolation warnings and geography lineage", async () => {
     const { app, dbPath, cleanup } = withTempApp();
+    insertCanonicalBenchmarkLineage(dbPath);
     insertEstimate(dbPath, ESTIMATED_JOB_ID, {
       minimumAmount: 1_200_000,
       maximumAmount: 1_800_000,
@@ -299,8 +388,7 @@ describe("market compensation estimates API", () => {
         "cost_of_living_only",
         "factor_out_of_bounds",
       ],
-      estimatorVersion:
-        "company-role-reported-compensation-canonical-benchmark-v1:extrapolated:fact-1",
+      estimatorVersion: `company-role-reported-compensation-canonical-benchmark-v1:extrapolated:${EXTRAPOLATED_FACT_ID}`,
     });
     try {
       const response = await app.inject({
@@ -330,6 +418,137 @@ describe("market compensation estimates API", () => {
         "cost_of_living_only",
         "factor_out_of_bounds",
       ]);
+      expect(body.estimate.benchmarkLineage).toEqual({
+        kind: "extrapolated",
+        factId: EXTRAPOLATED_FACT_ID,
+        taxonomyVersion: "jobctrl-role-family-v1",
+        roleFamilyCode: "software_engineering",
+        seniorityLabel: "senior",
+        targetGeography: {
+          countryCode: "ES",
+          subdivisionCode: null,
+          locality: null,
+          scope: "country",
+        },
+        component: "total_compensation",
+        asOfDate: "2026-01-01",
+        observedAt: "2026-08-12T08:00:00.000000Z",
+        freshUntil: "2026-08-19T08:00:00.000000Z",
+        directInputs: [
+          expect.objectContaining({
+            factId: ANCHOR_DIRECT_FACT_ID,
+            inputRole: "anchor",
+            weight: 1,
+            geography: expect.objectContaining({ countryCode: "DE" }),
+            minimumAmountEur: 60_000,
+            maximumAmountEur: 90_000,
+            sampleCount: 20,
+            sourceId: "levels_fyi",
+          }),
+        ],
+        priceLevelInputs: [
+          expect.objectContaining({
+            factId: SOURCE_PRICE_FACT_ID,
+            inputRole: "source_price_level",
+            countryCode: "DE",
+            indexValue: 100,
+            sourceId: "eurostat",
+          }),
+          expect.objectContaining({
+            factId: TARGET_PRICE_FACT_ID,
+            inputRole: "target_price_level",
+            countryCode: "ES",
+            indexValue: 2000,
+            sourceId: "eurostat",
+          }),
+        ],
+        anchorDirectFactId: ANCHOR_DIRECT_FACT_ID,
+        anchorGeography: {
+          countryCode: "DE",
+          subdivisionCode: null,
+          locality: null,
+          scope: "country",
+        },
+        extrapolationMethod: "evidence_weighted_shrinkage",
+        rawFactor: 20,
+        shrinkageWeight: 0,
+        lowerFactorBound: 0.1,
+        upperFactorBound: 10,
+        factorBoundState: "above_upper_bound",
+        matchedCompanyCount: 0,
+        formulaVersion: "geo-shrinkage-v1",
+      });
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("exposes direct benchmark authority without geographic derivation inputs", async () => {
+    const { app, dbPath, cleanup } = withTempApp();
+    insertCanonicalBenchmarkLineage(dbPath);
+    insertEstimate(dbPath, ESTIMATED_JOB_ID, {
+      minimumAmount: 60_000,
+      maximumAmount: 90_000,
+      geographyScope: "country",
+      occupationCode: "software_engineering",
+      occupationLabel: "Software Engineering",
+      sources: [
+        {
+          source_id: "levels_fyi",
+          source_provenance: "public",
+          source_type: "reported_compensation",
+          release_year: 2026,
+          snapshot_version: "levels-public-germany",
+          geography_scope: "country",
+          aggregate_bucket: "reported company-role compensation",
+          attribution: "Data source: Levels.fyi (https://www.levels.fyi)",
+          sample_count: 20,
+        },
+      ],
+      estimatorVersion: `company-role-reported-compensation-canonical-benchmark-v1:direct:${ANCHOR_DIRECT_FACT_ID}`,
+    });
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${ESTIMATED_JOB_ID}/compensation/market`,
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      const body = response.json() as Extract<MarketCompensationEstimateResponse, { recordStatus: "recorded" }>;
+      expect(body.estimate.benchmarkLineage).toMatchObject({
+        kind: "direct",
+        factId: ANCHOR_DIRECT_FACT_ID,
+        roleFamilyCode: "software_engineering",
+        seniorityLabel: "senior",
+        targetGeography: { countryCode: "DE", scope: "country" },
+        directInputs: [
+          {
+            factId: ANCHOR_DIRECT_FACT_ID,
+            inputRole: "anchor",
+            weight: 1,
+            geography: {
+              countryCode: "DE",
+              subdivisionCode: null,
+              locality: null,
+              scope: "country",
+            },
+            marketScope: "market",
+            normalizedCompany: null,
+            minimumAmountEur: 60_000,
+            maximumAmountEur: 90_000,
+            confidenceScore: 0.76,
+            sampleCount: 20,
+            sourceId: "levels_fyi",
+            sourceProvenance: "public",
+            sourceSnapshotId: "levels-public-germany",
+            asOfDate: "2026-01-01",
+            fetchedAt: "2026-08-12T08:00:00.000000Z",
+            freshUntil: "2026-08-19T08:00:00.000000Z",
+          },
+        ],
+        priceLevelInputs: [],
+      });
     } finally {
       await app.close();
       cleanup();

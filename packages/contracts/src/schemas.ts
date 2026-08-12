@@ -2847,6 +2847,7 @@ export interface JobPostedCompensationSummary {
 
 export interface JobMarketCompensationSummary {
   sourceKind: "reported_company_role_market";
+  benchmarkKind: "direct" | "extrapolated" | null;
   recordStatus: "recorded" | "not_requested";
   estimateState: MarketCompensationEstimateState;
   confidenceBand: MarketCompensationConfidenceBand;
@@ -5493,6 +5494,91 @@ export interface MarketCompensationEvidenceRow {
   freshnessScore: number;
 }
 
+export interface MarketCompensationBenchmarkGeography {
+  countryCode: string;
+  subdivisionCode: string | null;
+  locality: string | null;
+  scope: "country" | "country_subdivision" | "locality";
+}
+
+export interface MarketCompensationDirectBenchmarkInput {
+  factId: string;
+  inputRole:
+    | "anchor"
+    | "matched_company_source"
+    | "matched_company_target"
+    | "occupation_anchor";
+  weight: number;
+  geography: MarketCompensationBenchmarkGeography;
+  marketScope: "market" | "company";
+  normalizedCompany: string | null;
+  minimumAmountEur: number;
+  maximumAmountEur: number;
+  confidenceScore: number;
+  sampleCount: number;
+  sourceId: string;
+  sourceProvenance: "public" | "licensed" | "manual" | "official";
+  sourceSnapshotId: string;
+  asOfDate: string;
+  fetchedAt: string;
+  freshUntil: string;
+}
+
+export interface MarketCompensationPriceLevelInput {
+  factId: string;
+  inputRole: "source_price_level" | "target_price_level" | "shrinkage_prior";
+  weight: number;
+  countryCode: string;
+  category:
+    | "actual_individual_consumption"
+    | "household_final_consumption"
+    | "general_price_level";
+  referenceYear: number;
+  baseGeographyCode: string;
+  indexValue: number;
+  sourceId: "eurostat" | "world_bank" | "oecd" | "manual_official";
+  sourceSnapshotId: string;
+  asOfDate: string;
+  fetchedAt: string;
+  freshUntil: string;
+}
+
+interface MarketCompensationBenchmarkLineageBase {
+  factId: string;
+  taxonomyVersion: string;
+  roleFamilyCode: string;
+  seniorityLabel: string;
+  targetGeography: MarketCompensationBenchmarkGeography;
+  component: MarketCompensationComponent;
+  asOfDate: string;
+  observedAt: string;
+  freshUntil: string;
+  directInputs: MarketCompensationDirectBenchmarkInput[];
+  priceLevelInputs: MarketCompensationPriceLevelInput[];
+}
+
+export interface MarketCompensationDirectBenchmarkLineage extends MarketCompensationBenchmarkLineageBase {
+  kind: "direct";
+}
+
+export interface MarketCompensationExtrapolatedBenchmarkLineage extends MarketCompensationBenchmarkLineageBase {
+  kind: "extrapolated";
+  anchorDirectFactId: string;
+  anchorGeography: MarketCompensationBenchmarkGeography;
+  extrapolationMethod: "evidence_weighted_shrinkage";
+  rawFactor: number;
+  shrinkageWeight: number;
+  lowerFactorBound: number;
+  upperFactorBound: number;
+  factorBoundState: "within_bounds" | "below_lower_bound" | "above_upper_bound";
+  matchedCompanyCount: number;
+  formulaVersion: string;
+}
+
+export type MarketCompensationBenchmarkLineage =
+  | MarketCompensationDirectBenchmarkLineage
+  | MarketCompensationExtrapolatedBenchmarkLineage;
+
 interface MarketCompensationEstimateBase {
   tenantId: string;
   jobKey: string;
@@ -5522,6 +5608,7 @@ interface MarketCompensationEstimateBase {
   factors: MarketCompensationFactor[];
   evidence: MarketCompensationEvidenceRow[];
   warnings: MarketCompensationWarning[];
+  benchmarkLineage: MarketCompensationBenchmarkLineage | null;
   estimatorVersion: string;
   estimatedAt: string;
 }

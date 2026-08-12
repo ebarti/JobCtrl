@@ -438,7 +438,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(listProjection?.salary).toBe("USD 70000-90000/year");
         const summary = JSON.parse(listProjection?.compensation_summary_json ?? "{}");
         expect(summary).toMatchObject({
-          projectionVersion: 2,
+          projectionVersion: 3,
           warningCount: 3,
           posted: {
             recordStatus: "recorded",
@@ -454,6 +454,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           },
           market: {
             sourceKind: "reported_company_role_market",
+            benchmarkKind: null,
             recordStatus: "recorded",
             estimateState: "estimated_range",
             displayRange: "EUR 112000-142000/year",
@@ -544,7 +545,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           )
           .get(EVENT_JOB_ID) as { compensation_summary_json: string };
         expect(JSON.parse(initial.compensation_summary_json)).toMatchObject({
-          projectionVersion: 2,
+          projectionVersion: 3,
           market: { recordStatus: "recorded" },
         });
 
@@ -603,12 +604,12 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         const detailSummary = JSON.parse(rebuilt.detail_summary_json);
         const audit = JSON.parse(rebuilt.compensation_audit_json);
         expect(summary).toMatchObject({
-          projectionVersion: 2,
+          projectionVersion: 3,
           market: { recordStatus: "not_requested", displayRange: null },
         });
-        expect(detailSummary.projectionVersion).toBe(2);
+        expect(detailSummary.projectionVersion).toBe(3);
         expect(audit).toMatchObject({
-          projectionVersion: 2,
+          projectionVersion: 3,
           market: { recordStatus: "not_requested" },
         });
       } finally {

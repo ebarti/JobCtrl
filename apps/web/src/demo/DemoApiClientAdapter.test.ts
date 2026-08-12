@@ -82,6 +82,7 @@ function compensationSummary(
     },
     market: {
       sourceKind: "reported_company_role_market",
+      benchmarkKind: null,
       recordStatus: options.marketRecordStatus ?? "recorded",
       estimateState: options.marketState ?? "estimated_range",
       confidenceBand: options.confidenceBand ?? "none",

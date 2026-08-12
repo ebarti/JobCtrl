@@ -13,6 +13,7 @@ import type {
   MarketCompensationWarning,
   MarketCompensationWarningCode,
 } from "./contracts.js";
+import { loadMarketCompensationBenchmarkLineage } from "./compensation-benchmark-lineage.js";
 import { getRow, type SqliteDatabase } from "./db.js";
 
 type JobRow = {
@@ -250,7 +251,10 @@ export function getMarketCompensationEstimate(
   return {
     ok: true,
     recordStatus: "recorded",
-    estimate: mapEstimateRow(row),
+    estimate: mapEstimateRow(
+      row,
+      loadMarketCompensationBenchmarkLineage(db, tenantId, row.estimator_version),
+    ),
   };
 }
 
@@ -275,7 +279,10 @@ function notRequested(job: JobRow): MarketCompensationEstimateResponse {
   };
 }
 
-function mapEstimateRow(row: MarketCompensationRecordedEstimateRow): MarketCompensationEstimate {
+function mapEstimateRow(
+  row: MarketCompensationRecordedEstimateRow,
+  benchmarkLineage: MarketCompensationEstimate["benchmarkLineage"],
+): MarketCompensationEstimate {
   const sources = parseSources(row.source_snapshot_json);
   const base = {
     tenantId: row.tenant_id,
@@ -300,6 +307,7 @@ function mapEstimateRow(row: MarketCompensationRecordedEstimateRow): MarketCompe
     factors: parseFactors(row.factor_reasons_json),
     evidence: parseEvidence(row.selected_evidence_json),
     warnings: parseWarnings(row.warnings_json),
+    benchmarkLineage,
     estimatorVersion: row.estimator_version,
     estimatedAt: row.estimated_at,
   };
