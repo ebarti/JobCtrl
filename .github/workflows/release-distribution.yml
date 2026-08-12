@@ -24,7 +24,7 @@ on:
         type: choice
         options: [stable, prerelease]
       pypi_recovery_only:
-        description: Rebuild and publish PyPI from immutable v2.0.7 on main without signing or release publication
+        description: Rebuild and publish PyPI from an explicitly supported immutable release on main without signing or release publication
         required: false
         default: false
         type: boolean
@@ -89,7 +89,10 @@ jobs:
           if [[ "$PYPI_RECOVERY_ONLY" = true ]]; then
             test "$GITHUB_EVENT_NAME" = workflow_dispatch
             test "$GITHUB_REF" = refs/heads/main
-            test "$RELEASE_TAG" = v2.0.7
+            case "$RELEASE_TAG" in
+              v2.0.7|v0.1.0) ;;
+              *) echo "unsupported immutable PyPI recovery tag: $RELEASE_TAG" >&2; exit 1 ;;
+            esac
             test "$RELEASE_CHANNEL" = stable
           else
             test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
@@ -1243,7 +1246,7 @@ jobs:
           gh release verify "$RELEASE_TAG"
 
   pypi-recovery-preflight:
-    name: Prove immutable v2.0.7 release before PyPI recovery
+    name: Prove an explicitly supported immutable release before PyPI recovery
     needs: resolve
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.pypi_recovery_only == true }}
     runs-on: ubuntu-24.04
@@ -1258,7 +1261,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$RELEASE_TAG" = v2.0.7
+          case "$RELEASE_TAG" in
+            v2.0.7|v0.1.0) ;;
+            *) echo "unsupported immutable PyPI recovery tag: $RELEASE_TAG" >&2; exit 1 ;;
+          esac
           tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
           test "$tag_sha" = "$RELEASE_REF"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
@@ -1423,7 +1429,20 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Set up only the exact locked release-build dependencies
-        run: uv --project workers/automation sync --python 3.12.13 --locked --no-default-groups --only-group release-build --no-install-project
+        env:
+          PYPI_RECOVERY_ONLY: ${{ inputs.pypi_recovery_only || false }}
+        run: |
+          set -euo pipefail
+          if [[ "$PYPI_RECOVERY_ONLY" = true && "$RELEASE_TAG" = v0.1.0 ]]; then
+            # The immutable v0.1.0 source records P8D even though its
+            # pyproject declares seven days. Reproduce that exact lock input;
+            # --locked still forbids dependency or checksum changes.
+            grep -Fqx 'exclude-newer = "7 days"' workers/automation/pyproject.toml
+            grep -Fqx 'exclude-newer-span = "P8D"' workers/automation/uv.lock
+            UV_EXCLUDE_NEWER="8 days" uv --project workers/automation sync --python 3.12.13 --locked --no-default-groups --only-group release-build --no-install-project
+          else
+            uv --project workers/automation sync --python 3.12.13 --locked --no-default-groups --only-group release-build --no-install-project
+          fi
 
       - name: Build exact fixed-epoch PyPI distributions without isolation
         run: |
