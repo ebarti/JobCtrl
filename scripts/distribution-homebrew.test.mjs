@@ -71,6 +71,11 @@ test("Homebrew render uses the exact signed curl ZIP identity without a toolchai
   assert.equal(validateRenderedHomebrewFormula({ formula: rendered.formula, descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }), true);
   assert.match(rendered.formula, /url "https:\/\/releases\.jobctrl\.dev\/v1\/artifacts\/stable-build-0000042\/jobctrl-2\.0\.0-darwin-arm64\.zip"/);
   assert.match(rendered.formula, /^\s*version_scheme 1$/m);
+  assert.match(
+    rendered.formula,
+    /  version "2\.0\.0"\n  sha256 "a{64}"\n  license "AGPL-3\.0-only"\n  version_scheme 1/,
+    "the canonical formula header must follow Homebrew's audited stanza order",
+  );
   assert.match(rendered.formula, /JOBCTRL_MANIFEST_SHA256 = "b{64}"/);
   assert.match(rendered.formula, /JOBCTRL_BUILD_ID = "stable-build-0000042"/);
   assert.match(rendered.formula, /resource "jobctrl-release-descriptor"/);
