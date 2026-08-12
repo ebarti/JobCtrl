@@ -54,6 +54,14 @@ ADDITIVE_EQUITY_AFTER_AMOUNT_RE = re.compile(
     r"^.{0,40}(?:\+|\bplus\b|\band\b).{0,24}\b(?:equity|rsu|stock options?)\b",
     re.IGNORECASE,
 )
+OUTDATED_POSTED_PARSER_VERSIONS = (
+    "posted-compensation-v1",
+    "posted-compensation-v2",
+)
+
+
+def _parser_version_tag(parser_version: str) -> str:
+    return parser_version.removeprefix("posted-compensation-")
 
 
 class SqlitePostedCompensationRepository:
@@ -115,11 +123,11 @@ class SqlitePostedCompensationRepository:
                  AND enrichments.job_id = jobs.job_id
                  AND enrichments.current_status = 'enriched'
                 WHERE facts.tenant_id = ?
-                  AND facts.parser_version = 'posted-compensation-v1'
+                  AND facts.parser_version IN (?, ?)
                 ORDER BY jobs.url
                 LIMIT ?
                 """,
-                (tenant_id, batch_size),
+                (tenant_id, *OUTDATED_POSTED_PARSER_VERSIONS, batch_size),
             ).fetchall()
             if not rows:
                 return total
@@ -130,6 +138,9 @@ class SqlitePostedCompensationRepository:
             try:
                 for row in rows:
                     job_id = canonical_job_id(str(_maintenance_row_value(row, "job_id")))
+                    source_parser_version = str(
+                        _maintenance_row_value(row, "parser_version"),
+                    )
                     source_text, source_field = _posted_source_from_values(
                         salary=_maintenance_row_value(row, "salary"),
                         enrichment_description=_maintenance_row_value(
@@ -154,7 +165,11 @@ class SqlitePostedCompensationRepository:
                     self._save_fact_row(fact)
                     self._record_updated_event(
                         fact,
-                        idempotency_key=(f"posted-parser-upgrade:{tenant_id}:{job_id}:v1:v2"),
+                        idempotency_key=(
+                            f"posted-parser-upgrade:{tenant_id}:{job_id}:"
+                            f"{_parser_version_tag(source_parser_version)}:"
+                            f"{_parser_version_tag(PARSER_VERSION)}"
+                        ),
                         publisher=publisher,
                         commit=False,
                         suppress_missing_table=False,

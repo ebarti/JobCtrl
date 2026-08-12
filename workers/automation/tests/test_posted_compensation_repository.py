@@ -148,21 +148,22 @@ def test_backfill_is_idempotent_and_preserves_legacy_salary(conn: sqlite3.Connec
     assert fact.minimum_amount == 180_000
 
 
-def _mark_fact_as_v1(
+def _mark_fact_as_legacy(
     conn: sqlite3.Connection,
     job_id: JobId,
     *,
+    parser_version: str = "posted-compensation-v1",
     component: str = "equity",
 ) -> None:
     conn.execute(
         """
         UPDATE job_posted_compensation_facts
-        SET parser_version = 'posted-compensation-v1',
+        SET parser_version = ?,
             component = ?,
             confidence = 'medium'
         WHERE tenant_id = 'local' AND job_id = ?
         """,
-        (component, job_id),
+        (parser_version, component, job_id),
     )
     conn.execute(
         "DELETE FROM job_events WHERE tenant_id = 'local' AND job_id = ?",
@@ -182,7 +183,7 @@ def test_reparse_outdated_facts_is_bounded_idempotent_and_preserves_future_rows(
     _job_url, second_id = _seed_job(
         conn,
         url="https://example.com/jobs/reparse-second",
-        salary="EUR 100,000/year",
+        salary="EUR 100,000 yrs",
     )
     _job_url, future_id = _seed_job(
         conn,
@@ -192,15 +193,20 @@ def test_reparse_outdated_facts_is_bounded_idempotent_and_preserves_future_rows(
     repo = SqlitePostedCompensationRepository(conn)
     for job_id, salary in (
         (first_id, "Compensation: USD 243,800 annually and stock options."),
-        (second_id, "EUR 100,000/year"),
+        (second_id, "EUR 100,000 yrs"),
         (future_id, "EUR 120,000/year"),
     ):
         repo.parse_and_save_job_salary(job_id, salary)
-    _mark_fact_as_v1(conn, first_id)
-    _mark_fact_as_v1(conn, second_id, component="unknown")
+    _mark_fact_as_legacy(conn, first_id)
+    _mark_fact_as_legacy(
+        conn,
+        second_id,
+        parser_version="posted-compensation-v2",
+        component="unknown",
+    )
     conn.execute(
         "UPDATE job_posted_compensation_facts SET parser_version = ? WHERE job_id = ?",
-        ("posted-compensation-v3", future_id),
+        ("posted-compensation-v4", future_id),
     )
     conn.commit()
 
@@ -221,10 +227,15 @@ def test_reparse_outdated_facts_is_bounded_idempotent_and_preserves_future_rows(
 
     first = repo.get_fact("local", first_id)
     assert first is not None
-    assert first.parser_version == "posted-compensation-v2"
+    assert first.parser_version == "posted-compensation-v3"
     assert first.component == "unknown"
     assert first.confidence == "high"
-    assert repo.get_fact("local", future_id).parser_version == "posted-compensation-v3"  # type: ignore[union-attr]
+    second = repo.get_fact("local", second_id)
+    assert second is not None
+    assert second.parser_version == "posted-compensation-v3"
+    assert second.period == "year"
+    assert second.annualized_minimum_amount == 100_000
+    assert repo.get_fact("local", future_id).parser_version == "posted-compensation-v4"  # type: ignore[union-attr]
     events = conn.execute(
         """
         SELECT job_id, idempotency_key
@@ -235,7 +246,7 @@ def test_reparse_outdated_facts_is_bounded_idempotent_and_preserves_future_rows(
         """
     ).fetchall()
     assert len(events) == 2
-    assert all(str(row["idempotency_key"]).endswith(":v1:v2") for row in events)
+    assert {":".join(str(row["idempotency_key"]).rsplit(":", 2)[-2:]) for row in events} == {"v1:v3", "v2:v3"}
 
 
 @pytest.mark.parametrize(
@@ -254,7 +265,7 @@ def test_reparse_outdated_facts_rolls_back_fact_when_event_write_fails(
     )
     repo = SqlitePostedCompensationRepository(conn)
     repo.parse_and_save_job_salary(job_id, "Compensation: USD 243,800 annually and stock options.")
-    _mark_fact_as_v1(conn, job_id)
+    _mark_fact_as_legacy(conn, job_id)
     original = state_module.record_job_event
 
     def fail_event(*_args: object, **_kwargs: object) -> None:
@@ -277,7 +288,7 @@ def test_reparse_outdated_facts_rolls_back_fact_when_event_write_fails(
 
     monkeypatch.setattr(state_module, "record_job_event", original)
     assert repo.reparse_outdated_facts(parsed_at="2026-08-12T12:01:00Z") == 1
-    assert repo.get_fact("local", job_id).parser_version == "posted-compensation-v2"  # type: ignore[union-attr]
+    assert repo.get_fact("local", job_id).parser_version == "posted-compensation-v3"  # type: ignore[union-attr]
     assert (
         conn.execute(
             "SELECT COUNT(*) FROM job_events WHERE tenant_id = 'local' AND job_id = ?",
@@ -285,6 +296,51 @@ def test_reparse_outdated_facts_rolls_back_fact_when_event_write_fails(
         ).fetchone()[0]
         == 1
     )
+
+
+def test_reparse_corrects_v2_hourly_false_positive_from_following_hr_prose(
+    conn: sqlite3.Connection,
+) -> None:
+    source = "Compensation budget approved: $100,000\n\nHR managers will administer this program."
+    _job_url, job_id = _seed_job(
+        conn,
+        url="https://example.com/jobs/reparse-following-hr-prose",
+        salary=source,
+    )
+    repo = SqlitePostedCompensationRepository(conn)
+    repo.parse_and_save_job_salary(job_id, source)
+    conn.execute(
+        """
+        UPDATE job_posted_compensation_facts
+        SET parser_version = 'posted-compensation-v2',
+            period = 'hour',
+            annualized_minimum_amount = 208000000,
+            annualized_maximum_amount = 208000000,
+            annualization_assumption = 'Hourly amounts annualized by multiplying by 2,080 work hours.',
+            confidence = 'low',
+            warnings_json = '["hourly_period"]'
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (job_id,),
+    )
+    conn.execute("DELETE FROM job_events WHERE tenant_id = 'local' AND job_id = ?", (job_id,))
+    conn.commit()
+
+    assert repo.reparse_outdated_facts(parsed_at="2026-08-12T12:00:00Z") == 1
+
+    fact = repo.get_fact("local", job_id)
+    assert fact is not None
+    assert fact.parser_version == "posted-compensation-v3"
+    assert fact.period == "unknown"
+    assert fact.annualized_minimum_amount is None
+    assert fact.annualized_maximum_amount is None
+    assert "missing_period" in fact.warnings
+    assert "hourly_period" not in fact.warnings
+    event_key = conn.execute(
+        "SELECT idempotency_key FROM job_events WHERE tenant_id = 'local' AND job_id = ?",
+        (job_id,),
+    ).fetchone()["idempotency_key"]
+    assert str(event_key).endswith(":v2:v3")
 
 
 def test_reparse_uses_accepted_enrichment_description_and_supports_tuple_rows(
@@ -309,7 +365,7 @@ def test_reparse_uses_accepted_enrichment_description_and_supports_tuple_rows(
     )
     repo = SqlitePostedCompensationRepository(conn)
     repo.parse_and_save_job_salary(job_id, "Base salary EUR 70,000/year")
-    _mark_fact_as_v1(conn, job_id)
+    _mark_fact_as_legacy(conn, job_id)
     conn.row_factory = None
 
     assert repo.reparse_outdated_facts(parsed_at="2026-08-12T12:00:00Z") == 1
@@ -432,6 +488,61 @@ def test_description_source_selection_supports_tuple_job_rows() -> None:
 
     assert source_field == "jobs.full_description"
     assert source_text == full_description
+
+
+def test_backfill_does_not_annualize_hr_prose_after_an_amount(conn: sqlite3.Connection) -> None:
+    _job_url, job_id = _seed_job(conn, salary=None)
+    full_description = "Compensation budget approved: $100,000\n\nHR managers will administer this program."
+    conn.execute(
+        "UPDATE jobs SET full_description = ? WHERE tenant_id = ? AND job_id = ?",
+        (full_description, "local", job_id),
+    )
+    conn.commit()
+
+    SqlitePostedCompensationRepository(conn).backfill_from_jobs(parsed_at="2026-08-12T10:00:00Z")
+
+    fact = SqlitePostedCompensationRepository(conn).get_fact("local", job_id)
+    assert fact is not None
+    assert fact.source_field == "jobs.full_description"
+    assert fact.parse_state == "parsed_range"
+    assert fact.period == "unknown"
+    assert fact.annualized_minimum_amount is None
+    assert fact.annualized_maximum_amount is None
+    assert "missing_period" in fact.warnings
+    assert "hourly_period" not in fact.warnings
+
+
+@pytest.mark.parametrize(
+    "hr_prose",
+    (
+        "HR, benefits, and finance teams will administer this program.",
+        "HR: Managers will administer this program.",
+    ),
+)
+def test_backfill_does_not_annualize_punctuated_hr_prose_after_an_amount(
+    conn: sqlite3.Connection,
+    hr_prose: str,
+) -> None:
+    url_suffix = "comma" if "," in hr_prose else "colon"
+    _job_url, job_id = _seed_job(
+        conn,
+        url=f"https://example.com/jobs/following-hr-{url_suffix}",
+        salary=None,
+    )
+    conn.execute(
+        "UPDATE jobs SET full_description = ? WHERE tenant_id = ? AND job_id = ?",
+        (f"Compensation budget approved: $100,000\n\n{hr_prose}", "local", job_id),
+    )
+    conn.commit()
+
+    SqlitePostedCompensationRepository(conn).backfill_from_jobs(parsed_at="2026-08-12T10:00:00Z")
+
+    fact = SqlitePostedCompensationRepository(conn).get_fact("local", job_id)
+    assert fact is not None
+    assert fact.period == "unknown"
+    assert fact.annualized_minimum_amount is None
+    assert "missing_period" in fact.warnings
+    assert "hourly_period" not in fact.warnings
 
 
 def test_backfill_persists_mixed_component_two_amount_text_as_ambiguous(

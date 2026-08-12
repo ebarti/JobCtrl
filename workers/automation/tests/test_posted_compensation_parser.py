@@ -109,6 +109,69 @@ def test_parses_annual_range_with_currency_and_assumption() -> None:
     assert fact.warnings == ()
 
 
+def test_hr_prose_does_not_override_the_amount_local_annual_period() -> None:
+    fact = parse_posted_compensation(
+        (
+            "anybody (even HR managers) is able to create new integrations. "
+            "Base pay range: €94,300.00/yr - €106,950.00/yr"
+        ),
+        source_field="job_enrichments.full_description",
+        parsed_at="2026-08-12T12:00:00Z",
+    )
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.period == "year"
+    assert fact.minimum_amount == 94_300
+    assert fact.maximum_amount == 106_950
+    assert fact.annualized_minimum_amount == 94_300
+    assert fact.annualized_maximum_amount == 106_950
+    assert fact.annualization_assumption == "Source text states annual compensation."
+    assert "hourly_period" not in fact.warnings
+
+
+def test_amount_adjacent_bare_period_abbreviations_remain_supported() -> None:
+    hourly = parse_posted_compensation("Base pay: $40 hrs")
+    annual = parse_posted_compensation("Base salary: $100,000 yrs")
+    hr_prose = parse_posted_compensation("HR managers benchmark base salary at $100,000 yr")
+
+    assert hourly.period == "hour"
+    assert hourly.annualized_minimum_amount == 83_200
+    assert "hourly_period" in hourly.warnings
+
+    assert annual.period == "year"
+    assert annual.annualized_minimum_amount == 100_000
+
+    assert hr_prose.period == "year"
+    assert hr_prose.annualized_minimum_amount == 100_000
+    assert "hourly_period" not in hr_prose.warnings
+
+
+def test_hr_prose_after_an_amount_is_not_treated_as_a_bare_hour_suffix() -> None:
+    for source in (
+        "Compensation budget approved: $100,000\n\nHR managers will administer this program.",
+        "Compensation budget approved: $100,000\n\nHR, benefits, and finance teams will administer this program.",
+        "Compensation budget approved: $100,000\n\nHR: Managers will administer this program.",
+    ):
+        fact = parse_posted_compensation(source)
+
+        assert fact.parse_state == "parsed_range"
+        assert fact.period == "unknown"
+        assert fact.annualized_minimum_amount is None
+        assert fact.annualized_maximum_amount is None
+        assert "missing_period" in fact.warnings
+        assert "hourly_period" not in fact.warnings
+
+
+def test_parenthesized_bare_period_abbreviations_remain_supported() -> None:
+    hourly = parse_posted_compensation("Base pay: $40 hr (depending on experience)")
+    annual = parse_posted_compensation("Base salary: $100,000 yr (base compensation)")
+
+    assert hourly.period == "hour"
+    assert hourly.annualized_minimum_amount == 83_200
+    assert annual.period == "year"
+    assert annual.annualized_minimum_amount == 100_000
+
+
 def test_parses_monthly_and_hourly_values_with_explicit_assumptions() -> None:
     monthly = parse_posted_compensation("EUR 6,000/month", parsed_at="2026-06-19T10:00:00Z")
     hourly = parse_posted_compensation("€40/hour", parsed_at="2026-06-19T10:00:00Z")

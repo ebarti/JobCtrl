@@ -11,7 +11,7 @@ from typing import Literal
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
-PARSER_VERSION = "posted-compensation-v2"
+PARSER_VERSION = "posted-compensation-v3"
 SOURCE_TEXT_LIMIT = 280
 
 ParseState = Literal["missing", "unparseable", "ambiguous", "parsed_range"]
@@ -75,6 +75,52 @@ _DIRECT_PERIOD_SUFFIX_RE = re.compile(
     r"^\s*(?:(?:/|\bper\s+)(?:hour|hourly|hr|hrs|h|month|monthly|mo|mos|year|yearly|annum|yr|yrs)\b)",
     re.IGNORECASE,
 )
+_PERIOD_CUE_PATTERNS: tuple[
+    tuple[CompensationPeriod, int, re.Pattern[str]],
+    ...,
+] = (
+    (
+        "hour",
+        0,
+        re.compile(r"/(?:h|hr|hrs|hour)\b|\bper\s+(?:h|hr|hrs|hour|hourly)\b"),
+    ),
+    (
+        "month",
+        0,
+        re.compile(r"/(?:mo|mos|month)\b|\bper\s+(?:mo|mos|month|monthly)\b"),
+    ),
+    (
+        "year",
+        0,
+        re.compile(
+            r"/(?:yr|yrs|year)\b|\bper\s+(?:yr|yrs|year|yearly|annum)\b",
+        ),
+    ),
+    ("hour", 1, re.compile(r"\b(?:hour|hourly)\b")),
+    ("month", 1, re.compile(r"\b(?:month|monthly)\b")),
+    (
+        "year",
+        1,
+        re.compile(r"\b(?:year|yearly|annual|annually|annum)\b"),
+    ),
+)
+_BARE_PERIOD_SUFFIX_PATTERNS: tuple[tuple[CompensationPeriod, re.Pattern[str]], ...] = (
+    (
+        "hour",
+        re.compile(
+            r"^(?P<gap>[ \t]{1,3})(?:hr|hrs)\b"
+            r"(?=[ \t]*(?:$|[-–—/,.;:!?()]|[\[\]{}]|\b(?:to|through|plus|and)\b))"
+        ),
+    ),
+    (
+        "year",
+        re.compile(
+            r"^(?P<gap>[ \t]{1,3})(?:yr|yrs)\b"
+            r"(?=[ \t]*(?:$|[-–—/,.;:!?()]|[\[\]{}]|\b(?:to|through|plus|and)\b))"
+        ),
+    ),
+)
+_MAX_PERIOD_CUE_DISTANCE = 64
 
 
 @dataclass(frozen=True)
@@ -158,10 +204,9 @@ def parse_posted_compensation(
     currency = _detect_currency(bounded)
     if currency is None:
         warnings.append("missing_currency")
-    period = _detect_period(lower)
-    warnings.extend(_period_warnings(period))
-
     amounts = _extract_amounts(bounded)
+    period = _detect_period(bounded, amounts)
+    warnings.extend(_period_warnings(period))
     if not amounts:
         return _non_range_fact(
             tenant_id=tenant_id,
@@ -298,14 +343,50 @@ def _detect_currency(text: str) -> str | None:
     return None
 
 
-def _detect_period(lower: str) -> CompensationPeriod:
-    if re.search(r"(?:/(?:h|hr|hrs|hour)|\b(?:hour|hourly|hr|hrs)\b)", lower):
-        return "hour"
-    if re.search(r"(?:/(?:mo|mos|month)|\b(?:month|monthly)\b)", lower):
-        return "month"
-    if re.search(r"(/|\b)(year|yearly|annual|annually|annum|yr|yrs)\b", lower):
-        return "year"
-    return "unknown"
+def _detect_period(text: str, amounts: list[_Amount]) -> CompensationPeriod:
+    """Resolve the pay period from cues governing the parsed amount.
+
+    Compensation excerpts can contain unrelated abbreviations such as "HR".
+    A period cue therefore has authority only when it is close to one of the
+    parsed amounts. Bare abbreviations additionally remain case-sensitive so
+    human-resources prose cannot become an hourly unit after whitespace
+    normalization. Explicit slash/per forms win a same-distance tie, and
+    conflicting equally-near cues fail closed to ``unknown``.
+    """
+
+    if not amounts:
+        return "unknown"
+    lower = text.casefold()
+    candidates: list[tuple[int, int, CompensationPeriod]] = []
+    for period, priority, pattern in _PERIOD_CUE_PATTERNS:
+        for match in pattern.finditer(lower):
+            distance = min(_distance_between(match.start(), match.end(), amount) for amount in amounts)
+            if distance <= _MAX_PERIOD_CUE_DISTANCE:
+                candidates.append((distance, priority, period))
+    for amount in amounts:
+        suffix = text[amount.end :]
+        for period, pattern in _BARE_PERIOD_SUFFIX_PATTERNS:
+            if match := pattern.match(suffix):
+                candidates.append((len(match.group("gap")), 1, period))
+    if not candidates:
+        return "unknown"
+    winning_distance, winning_priority, _period = min(candidates)
+    winning_periods = {
+        period
+        for distance, priority, period in candidates
+        if distance == winning_distance and priority == winning_priority
+    }
+    if len(winning_periods) != 1:
+        return "unknown"
+    return winning_periods.pop()
+
+
+def _distance_between(start: int, end: int, amount: _Amount) -> int:
+    if end <= amount.start:
+        return amount.start - end
+    if start >= amount.end:
+        return start - amount.end
+    return 0
 
 
 def _period_warnings(period: CompensationPeriod) -> list[WarningCode]:
