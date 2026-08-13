@@ -274,6 +274,10 @@ normal operations-projection watermark/rebuild path.
 
 A current-execution membership with `work_plan_state='pending'` and no enrich
 stage row is an expected pre-dispatch state and is projected as **waiting**.
+Likewise, while the Discover workflow is starting or in progress, a planned
+source family whose bounded batch has not been scheduled yet is **waiting**.
+Once that workflow is terminal, a planned family with no durable lifecycle is
+**unknown** because it is then a genuine projection gap.
 Missing stage state after work-plan resolution remains **unknown** and therefore
 actionable; the read model does not hide a genuine projection gap.
 The producer-lifetime live enrichment activity is runtime telemetry, not a

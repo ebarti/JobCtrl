@@ -186,6 +186,10 @@ For pipeline operations, seed a closed Temporal workflow whose final native
 activity timed out after recording only queued/running durable events. Startup
 reconciliation must append the exact terminal failure, make the stage 100%
 terminal, and ensure Pipelines never renders it as active or **In progress**.
+Also seed an active two-family source plan with one family running and only one
+durable family row. Pipelines must report one processing and one waiting family,
+with zero unknown. After terminalizing that workflow without recording the
+second family lifecycle, the missing family must become unknown.
 For a current score below the live materials threshold, preparation must persist
 Tailor, Cover, and Apply as non-retryable `skipped` rows with `MIN_SCORE` and the
 exact score/threshold pair. No row may remain `pending` after the workflow has

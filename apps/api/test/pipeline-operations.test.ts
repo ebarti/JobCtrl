@@ -375,6 +375,50 @@ describe("pipeline operations read model", () => {
     });
   });
 
+  it("reports a planned unscheduled source family as waiting while discovery is active", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertStep(fixture, {
+      stepKind: "source_planning",
+      itemKey: "plan",
+      state: "succeeded",
+      detailCount: 2,
+    });
+    insertStep(fixture, {
+      stepKind: "source_family",
+      itemKey: "family:jobspy",
+      state: "running",
+    });
+
+    const active = snapshot(fixture);
+    expect(active.sourceFamilies).toMatchObject({
+      planned: 2,
+      counts: { eligible: 2, waiting: 1, processing: 1, unknown: 0 },
+    });
+    expect(stage(active, "source_family", "current_execution").currentExecution).toMatchObject({
+      eligible: 2,
+      waiting: 1,
+      processing: 1,
+      unknown: 0,
+    });
+
+    fixture.db.prepare(
+      `UPDATE pipeline_step_projections
+          SET state = 'succeeded', finished_at = ?, duration_ms = 60000
+        WHERE tenant_id = 'local'
+          AND discover_workflow_id = ?
+          AND discover_run_id = ?
+          AND step_kind = 'source_family'
+          AND item_key = 'family:jobspy'`,
+    ).run(NOW.toISOString(), DISCOVER_WORKFLOW_ID, DISCOVER_RUN_ID);
+    insertExecution(fixture, { status: "succeeded" });
+
+    expect(snapshot(fixture).sourceFamilies).toMatchObject({
+      planned: 2,
+      counts: { eligible: 2, waiting: 0, succeeded: 1, unknown: 1 },
+    });
+  });
+
   it("projects exact-run JobStreaming traversal facts without provider cursors", () => {
     const fixture = createFixture();
     insertExecution(fixture, { status: "in_progress" });

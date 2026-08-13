@@ -180,6 +180,10 @@ outcomes** expands the exact succeeded, skipped, blocked, failed, canceled,
 needs-verification, stale, and unknown counts. An attempt budget that has run
 out is a failed outcome with **attempt budget exhausted** as its reason, not a
 separate lifecycle state. Retrying that failure resets its attempt budget.
+During an active source crawl, planned source families that have not entered
+their bounded execution batch appear as **waiting**, not unknown. Unknown is
+reserved for a planned family whose lifecycle is still missing after the
+Discover workflow has ended.
 **Backlog and
 diagnostics** keeps the execution sweep and unrelated global backlog separate
 from that current-execution flow. Capacity details include configured and active
