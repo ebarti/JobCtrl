@@ -94,6 +94,17 @@ The optional browser extension's **Save job** action also lands here: it records
 the active page as a user-mediated manual capture, then the normal discovery
 import path dedupes, snapshots, and surfaces the job in Jobs.
 
+To add one posting without running Discover, open **Jobs**, choose **Import
+job**, and paste its public HTTP(S) URL. JobCtrl fetches and deterministically
+extracts that page through the local worker, deduplicates it against existing
+jobs, and opens the canonical Job Detail workspace. If the page is blocked,
+login-walled, rate-limited, or cannot be identified safely as a posting, no
+placeholder job is created; the URL is placed in **Discovery → Manual Capture**
+for user-provided content instead. Different URLs can be imported concurrently
+from separate Jobs views; each finishes independently. If a later retry can
+read a URL that previously needed Manual Capture, the successful import closes
+that matching manual task against the canonical job.
+
 Target locations are validated before they can drive discovery. Discovery uses
 exact and broader recall role queries, then filters and scores the results
 downstream.

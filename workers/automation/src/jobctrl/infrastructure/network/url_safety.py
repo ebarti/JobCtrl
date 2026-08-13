@@ -73,6 +73,9 @@ def validate_public_http_url(url: str, *, resolver: Resolver | None = None) -> P
     if scheme not in {"http", "https"}:
         return PublicUrlDecision(False, "URL scheme must be http or https")
 
+    if parsed.username is not None or parsed.password is not None:
+        return PublicUrlDecision(False, "URL must not contain embedded credentials")
+
     hostname = parsed.hostname
     if not hostname:
         return PublicUrlDecision(False, "URL host is required")
@@ -213,6 +216,14 @@ def _ip_literal(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | N
     try:
         return ipaddress.ip_address(value)
     except ValueError:
+        pass
+    # Browsers use WHATWG IPv4 parsing, which accepts legacy one-to-four-part
+    # decimal, octal, and hexadecimal forms. ``inet_aton`` follows the same
+    # numeric grammar on supported local platforms; canonicalize it before DNS
+    # so strings such as ``0177.0.0.1`` cannot be resolved as a different host.
+    try:
+        return ipaddress.IPv4Address(socket.inet_aton(value))
+    except (OSError, ValueError):
         return None
 
 

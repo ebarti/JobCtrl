@@ -111,6 +111,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   manualCaptureQueue() {
     return this.client.manualCaptureQueue();
   }
+  importJobUrl(body: Parameters<JobCtrlApiClient["importJobUrl"]>[0]) {
+    return this.client.importJobUrl(body);
+  }
   importManualCapture(itemId: string, body: Parameters<JobCtrlApiClient["importManualCapture"]>[1]) {
     return this.client.importManualCapture(itemId, body);
   }

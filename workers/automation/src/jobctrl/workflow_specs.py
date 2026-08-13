@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 from dataclasses import asdict, dataclass, is_dataclass
+from collections.abc import Callable
 from typing import Any
 
 from temporalio.common import WorkflowIDReusePolicy
@@ -525,6 +526,48 @@ def build_manual_capture_import_workflow_spec(
         args=(payload,),
         workflow_id=manual_capture_import_workflow_id(tenant_id, item_id),
     )
+
+
+def build_job_url_import_workflow_spec(
+    params: dict[str, Any],
+    *,
+    url_validator: Callable[[str], Any] | None = None,
+) -> WorkflowStartSpec:
+    from jobctrl.discovery.job_url_import_workflow import (
+        JobUrlImportWorkflow,
+        JobUrlImportWorkflowInput,
+        job_url_import_workflow_id,
+    )
+
+    tenant_id = _tenant_id(params)
+    url = _job_url_import_url(params, url_validator=url_validator)
+    payload = JobUrlImportWorkflowInput(
+        tenant_id=tenant_id,
+        url=url,
+        expected_app_dir=_optional_string(params, "expectedAppDir"),
+        expected_db_path=_optional_string(params, "expectedDbPath"),
+    )
+    return WorkflowStartSpec(
+        workflow=JobUrlImportWorkflow,
+        args=(payload,),
+        workflow_id=job_url_import_workflow_id(tenant_id, url),
+    )
+
+
+def _job_url_import_url(
+    params: dict[str, Any],
+    *,
+    url_validator: Callable[[str], Any] | None = None,
+) -> str:
+    from jobctrl.infrastructure.network import validate_public_http_url
+
+    url = _required_string(params, "url")
+    if len(url) > 2048:
+        raise ValueError("url must be at most 2048 characters")
+    decision = (url_validator or validate_public_http_url)(url)
+    if not decision.allowed:
+        raise ValueError(decision.reason or "url must be a public http(s) URL")
+    return url
 
 
 def apply_workflow_id(tenant_id: str, job_id: str) -> str:

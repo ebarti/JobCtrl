@@ -624,6 +624,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
   rejectSourceLocatorCandidate = this.local("rejectSourceLocatorCandidate");
   decideDiscoveryQuarantine = this.local("decideDiscoveryQuarantine");
   importManualCapture = this.local("importManualCapture");
+  importJobUrl = this.unsupported("importJobUrl");
   dismissManualCapture = this.local("dismissManualCapture");
   recordDiscoveryFeedback = this.local("recordDiscoveryFeedback");
   decideRoleMatchFeedbackSuggestion = this.local(

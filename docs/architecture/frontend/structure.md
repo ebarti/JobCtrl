@@ -85,7 +85,7 @@ apps/web/
 │   │   │   └── index.ts
 │   │   ├── discovery/                    # Job Discovery
 │   │   │   ├── queryKeys.ts              # discoveryKeys (settings, source registry, locator, quarantine, …)
-│   │   │   ├── hooks/                    # delete/hide/unhide/restore/permanent-delete (bulk) + useImportJobMutation (stub: NotImplementedError)
+│   │   │   ├── hooks/                    # delete/hide/unhide/restore/permanent-delete (bulk) + worker-backed useImportJobMutation
 │   │   │   │                            #   + useDiscoverySettingsQuery / useUpdateDiscoverySettingsMutation
 │   │   │   │                            #   + useDiscoveryProductControlMutations (source registry, quarantine, manual capture, feedback)
 │   │   │   ├── components/               # DiscoveryProductControls, DiscoveryRuntimeSettingsPanel

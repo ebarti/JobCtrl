@@ -200,6 +200,8 @@ function manualActionLabel(value: ManualCaptureItem["reason"]): string {
       return "Bot protection";
     case "rate_limit":
       return "Rate limited";
+    case "robots_disallowed":
+      return "Blocked by robots.txt";
     case "protected_internal_site":
       return "Protected internal site";
     case "ambiguous_career_system":
@@ -221,6 +223,8 @@ function manualActionDetail(value: ManualCaptureItem["reason"]): string {
       return "The site blocked automated parsing.";
     case "rate_limit":
       return "The site temporarily limited repeated access.";
+    case "robots_disallowed":
+      return "The site does not permit JobCtrl to fetch this posting automatically.";
     case "protected_internal_site":
       return "The posting appears to be on a protected company or internal site.";
     case "ambiguous_career_system":

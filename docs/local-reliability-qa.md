@@ -561,6 +561,28 @@ component accessibility, route-level browser behavior, and visual consistency.
 The [Frontend QA guide](developer/qa/frontend.md) gives the commands and the
 [Browser Smoke guide](developer/qa/browser-smoke.md) gives the user paths.
 
+For direct URL import, exercise the Jobs-page dialog through the product API
+and worker boundary. A readable JSON-LD posting must create one canonical job,
+refresh the list, and open that job. A custom careers page with an individual
+job URL, H1, multiple job-section headings, and an embedded ATS application
+form must also import without broadening generic-content acceptance. Start a
+second URL import before the first resolves and prove both requests are
+dispatched and can complete independently. A login/blocked fixture must create a
+pending Manual Capture item, render the fallback action, and create zero jobs.
+Re-importing a legacy direct-URL row whose stored Greenhouse heading is
+`Job Application for <role> at <employer>` must repair the canonical role and
+missing employer without refetching, duplicating the job, or duplicating its
+metadata-correction event.
+An unsafe credential-bearing, loopback, or private URL must perform no worker
+dispatch, navigation, or queue write. Commit-before-ack failures after canonical
+ingestion must converge on retry to one complete discovery event set and one
+posting snapshot, without duplicate Jobs or events. Generic non-job articles
+must route to Manual Capture instead of creating placeholder Jobs. When a
+previously ambiguous URL later imports successfully, its matching pending
+Manual Capture item must close against the canonical job rather than remain as
+a false action item. The same product-path check must confirm employer-posted
+salary evidence is projected from the imported description.
+
 The dedicated demo-workspace Playwright lane starts Vite only; it must not
 start or contact the product API or SSE endpoint. It proves same-profile tab
 sharing and concurrent writes, separate-context isolation, reload persistence,

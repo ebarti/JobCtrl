@@ -308,6 +308,8 @@ Current responsibilities:
 - health endpoint
 - dashboard summary endpoint
 - jobs list/detail endpoints
+- immediate public job-URL import (via JSON-RPC `job_url_import`, which starts
+  `JobUrlImportWorkflow` and awaits either a canonical job or Manual Capture)
 - artifacts list/detail endpoints
 - artifact open endpoint with known-path validation
 - profile/settings read and write endpoints
@@ -338,7 +340,7 @@ subprocess. Workflow-mode handlers return a workflow spec that the RPC server
 starts on Temporal (`run_stage`,
 `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `tailor_job`,
 `retailor_job`, `retailor_current_policy`, `refresh_compensation`, `apply`,
-`profile_import`, `manual_capture_import`, `generate_interview_prep`,
+`profile_import`, `job_url_import`, `manual_capture_import`, `generate_interview_prep`,
 `run_contact_research`). Synchronous handlers include `analyze_job` (inline
 three-SDK employer analysis), `generate_outreach_draft`, `provider_status`,
 `provider_models`, `provider_verify`, and `cancel_run` (cooperative Temporal
@@ -346,7 +348,7 @@ cancellation). The
 per-job maintenance methods `rescore_job`, `tailor_job`, and `retailor_job`
 start `JobPreparationWorkflow` runs directly. Workflow-mode dispatch returns
 `{runId, workflowId, firstExecutionRunId}`; callers can pass `awaitResult`
-to block on the workflow result (profile and manual-capture imports use this).
+to block on the workflow result (profile, job-URL, and manual-capture imports use this).
 
 Worker-backed action routes are gated by worker readiness: `GET /v1/health`
 reports the worker heartbeat (`healthy` / `missing` / `stale` after 45 s /
@@ -646,6 +648,7 @@ Workflow and activity retry policies are stage-specific:
 | `cover` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
 | `ApplyWorkflow` | 1 live / 2 dry-run | 1s | 60s | _none set_ — apply safety comes from the at-most-once claim and submit-intent parking, not error-type filtering |
 | `ManualCaptureImportWorkflow` | 2 | 2s | 10s | `not_found`, `capture_replay_mismatch`, `invalid_capture_input`, `RuntimeIdentityMismatch` |
+| `JobUrlImportWorkflow` | 2 | 2s | 10s | `invalid_url`, `RuntimeIdentityMismatch` |
 | `ProfileImportWorkflow` | 2 | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
 | `CompensationRefreshWorkflow` | 2 | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
 
@@ -697,6 +700,11 @@ Production workflows live alongside the activities:
   Discovery manual-capture importer on the long-lived worker and returns only
   persisted queue/provenance fields, allowing exact recovery after a
   commit-before-ack retry.
+- `JobUrlImportWorkflow`
+  (`jobctrl/discovery/job_url_import_workflow.py`) — validates and fetches one
+  user-supplied public posting URL, deterministically ingests readable posting
+  evidence, and otherwise opens the existing Manual Capture path without
+  creating a placeholder Job.
 - `CompensationRefreshWorkflow`
   (`jobctrl/infrastructure/compensation/workflow.py`) — wraps the extracted
   compensation refresh core so posted facts and market estimates no longer run

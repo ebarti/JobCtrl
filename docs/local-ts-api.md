@@ -110,6 +110,11 @@ Source registry, quarantine, locator candidates, manual capture, schedules, and
 role-match feedback are covered in
 [Profile & Settings](api/profile-and-settings.md#discovery-controls).
 
+`POST /v1/jobs/import-url` accepts `{ "url": "https://…" }` and awaits the
+worker-owned `JobUrlImportWorkflow`. It returns either the canonical imported
+`jobKey` or a typed `manual_capture_required` outcome with the pending queue
+item and reason. The API never fetches the remote page itself.
+
 ## Compensation
 
 Posted compensation, market estimates, source controls, and refresh actions are

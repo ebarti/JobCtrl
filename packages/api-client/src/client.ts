@@ -82,6 +82,8 @@ import type {
   JobDetail,
   JobApplicationOutcomeListResponse,
   JobListQuery,
+  JobUrlImportRequest,
+  JobUrlImportResponse,
   LearningRecommendationEvidenceListQuery,
   LearningRecommendationEvidenceListResponse,
   TailoringPolicyRevisionListQuery,
@@ -626,6 +628,10 @@ export class JobCtrlApiClient {
     query: Partial<JobListQuery> = {},
   ): Promise<PaginatedResponse<JobSummary>> {
     return this.get("/v1/jobs", query);
+  }
+
+  importJobUrl(body: JobUrlImportRequest): Promise<JobUrlImportResponse> {
+    return this.post("/v1/jobs/import-url", body);
   }
 
   job(jobKey: string): Promise<JobDetail> {

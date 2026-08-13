@@ -135,7 +135,7 @@ Full first-run guide: [jobctrl.dev/user/getting-started](https://jobctrl.dev/use
 | | |
 | --- | --- |
 | [<img src="docs/assets/screenshots/pipelines.png" alt="Pipelines workspace with launch controls, a visual stage flow, and diagnostics (synthetic data)" width="440" />](docs/assets/screenshots/pipelines.png) | [<img src="docs/assets/screenshots/jobs.png" alt="Jobs table with fit scores, stages, and filters (synthetic data)" width="440" />](docs/assets/screenshots/jobs.png) |
-| **Pipelines** — launch bounded work and inspect cohorts, backlog, capacity, ETA, and active tasks | **Jobs** — scored, filterable, and ready for bulk or individual triage |
+| **Pipelines** — launch bounded work and inspect cohorts, backlog, capacity, ETA, and active tasks | **Jobs** — import a public posting URL, then filter and triage the canonical job alongside discovered results |
 | [<img src="docs/assets/screenshots/job-detail.png" alt="Route-level Job Detail workspace with requirement evidence and audit history (synthetic data)" width="440" />](docs/assets/screenshots/job-detail.png) | [<img src="docs/assets/screenshots/apply-review.png" alt="Application Review workspace editing a tailored resume with audit evidence (synthetic data)" width="440" />](docs/assets/screenshots/apply-review.png) |
 | **Job detail** — one bookmarkable workspace for fit, provenance, materials, progress, and history | **Apply Review** — edit and approve the exact resume and evidence binding that ships |
 

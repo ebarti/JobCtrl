@@ -1718,6 +1718,53 @@ def _enqueue_manual_capture(
     return item_id
 
 
+def enqueue_manual_capture_for_job_url_import(
+    conn: sqlite3.Connection,
+    *,
+    originating_url: str,
+    reason: ManualActionReason,
+) -> str:
+    """Queue an inaccessible explicit URL import for user-mediated capture.
+
+    A user pressing Import again is an explicit request to reopen a previously
+    dismissed or imported URL.  Source-driven discovery keeps terminal capture
+    rows closed; this user-owned boundary deliberately clears only the capture
+    result fields while retaining the deterministic URL identity.
+    """
+    ensure_worker_discovery_tables(conn)
+    item_id = _enqueue_manual_capture(
+        conn,
+        originating_url=originating_url,
+        source_id="manual_url_import",
+        reason=reason.value,
+        retry_context={
+            "source": "jobs_url_import",
+            "provenance": "explicit_user_url_import",
+            "retryable_with_user_capture": True,
+        },
+        required_at=utc_now(),
+    )
+    conn.execute(
+        """
+        UPDATE manual_capture_queue
+           SET status = 'pending',
+               imported_at = NULL,
+               dismissed_at = NULL,
+               capture_mode = NULL,
+               captured_url = NULL,
+               content_sha256 = NULL,
+               content_length = NULL,
+               note = NULL,
+               future_manual_action_required = 0,
+               job_id = NULL
+         WHERE tenant_id = ? AND item_id = ?
+        """,
+        (str(LOCAL_TENANT), item_id),
+    )
+    conn.commit()
+    return item_id
+
+
 def _source_id_from_locator_candidate(
     conn: sqlite3.Connection,
     candidate: SourceLocationCandidate,

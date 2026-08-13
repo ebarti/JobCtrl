@@ -46,6 +46,18 @@ _IDLE_TIMEOUT_MS = 10000
 _MAIN_CONTENT_HTML_LIMIT = 50000
 
 
+class DetailPageFetchBlocked(RuntimeError):
+    """A policy or destination guard explicitly prevented navigation."""
+
+    def __init__(self, reason_code: str, detail: str = "") -> None:
+        super().__init__(detail or reason_code)
+        self.reason_code = reason_code
+
+
+class DetailPageFetchUnavailable(RuntimeError):
+    """The browser could not acquire a page for a transient runtime reason."""
+
+
 class PlaywrightDetailPageFetcher:
     """Local-mode ``DetailPageFetcherPort`` implementation.
 
@@ -66,6 +78,7 @@ class PlaywrightDetailPageFetcher:
         proxy: ProxyConfig | None = None,
         headless: bool = True,
         session: PolitenessSession | None = None,
+        raise_on_unavailable: bool = False,
     ) -> None:
         self._proxy = proxy
         self._headless = headless
@@ -76,6 +89,7 @@ class PlaywrightDetailPageFetcher:
         # so an owner UA override reaches the browser and the identity robots is
         # evaluated with is exactly the identity the page fetch presents.
         self._session = session
+        self._raise_on_unavailable = raise_on_unavailable
 
     def _politeness_session(self) -> PolitenessSession:
         if self._session is not None:
@@ -114,6 +128,11 @@ class PlaywrightDetailPageFetcher:
                     url,
                     decision.reason,
                 )
+                if self._raise_on_unavailable:
+                    raise DetailPageFetchBlocked(
+                        decision.outcome.value,
+                        decision.reason or "navigation blocked by crawl policy",
+                    )
                 return DetailPage(
                     url=url,
                     final_url=url,
@@ -164,6 +183,11 @@ class PlaywrightDetailPageFetcher:
                                 route_guard.blocked_url or url,
                                 route_guard.blocked_reason,
                             )
+                            if self._raise_on_unavailable:
+                                raise DetailPageFetchBlocked(
+                                    "unsafe_redirect",
+                                    route_guard.blocked_reason or "unsafe redirect blocked",
+                                )
                             return DetailPage(
                                 url=url,
                                 final_url=route_guard.blocked_url or url,
@@ -174,6 +198,8 @@ class PlaywrightDetailPageFetcher:
                                 fetched_at=fetched_at,
                             )
                         log.warning("PlaywrightDetailPageFetcher: navigation error %s: %s", url, exc)
+                        if self._raise_on_unavailable:
+                            raise DetailPageFetchUnavailable("The browser could not load the posting page.") from exc
                         return DetailPage(
                             url=url,
                             final_url=url,
@@ -190,6 +216,11 @@ class PlaywrightDetailPageFetcher:
                             route_guard.blocked_url or url,
                             route_guard.blocked_reason,
                         )
+                        if self._raise_on_unavailable:
+                            raise DetailPageFetchBlocked(
+                                "unsafe_redirect",
+                                route_guard.blocked_reason or "unsafe redirect blocked",
+                            )
                         return DetailPage(
                             url=url,
                             final_url=route_guard.blocked_url or url,
@@ -208,6 +239,11 @@ class PlaywrightDetailPageFetcher:
                             final_url,
                             final_safety.reason,
                         )
+                        if self._raise_on_unavailable:
+                            raise DetailPageFetchBlocked(
+                                "unsafe_redirect",
+                                final_safety.reason or "unsafe final URL blocked",
+                            )
                         return DetailPage(
                             url=url,
                             final_url=final_url,
@@ -232,6 +268,11 @@ class PlaywrightDetailPageFetcher:
                             route_guard.blocked_url or url,
                             route_guard.blocked_reason,
                         )
+                        if self._raise_on_unavailable:
+                            raise DetailPageFetchBlocked(
+                                "unsafe_redirect",
+                                route_guard.blocked_reason or "unsafe redirect blocked",
+                            )
                         return DetailPage(
                             url=url,
                             final_url=route_guard.blocked_url or final_url,

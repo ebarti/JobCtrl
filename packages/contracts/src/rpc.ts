@@ -9,8 +9,10 @@ import { z } from "zod";
 
 import {
   DEFAULT_PIPELINE_LLM_MODEL,
+  JobUrlImportUrlSchema,
   LearningRecommendationIdSchema,
   LearningRecommendationReviewIdSchema,
+  MANUAL_ACTION_REASON_VALUES,
   MANUAL_CAPTURE_MODE_VALUES,
   STAGES,
   TailoringPolicyLearnedRuleSchema,
@@ -80,6 +82,7 @@ export const RpcMethods = {
   GenerateOutreachDraft: "generate_outreach_draft",
   Apply: "apply",
   ProfileImport: "profile_import",
+  JobUrlImport: "job_url_import",
   ManualCaptureImport: "manual_capture_import",
   CancelRun: "cancel_run",
   ProviderStatus: "provider_status",
@@ -170,6 +173,60 @@ export const ManualCaptureImportParamsSchema = z
     { message: "provide capturedUrl, contentText, or contentHtmlBase64" },
   );
 export type ManualCaptureImportParams = z.infer<typeof ManualCaptureImportParamsSchema>;
+
+export const JobUrlImportParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
+    url: JobUrlImportUrlSchema,
+    awaitResult: z.literal(true),
+  })
+  .strict();
+export type JobUrlImportParams = z.infer<typeof JobUrlImportParamsSchema>;
+
+export const JobUrlImportWorkflowResultSchema = z.union([
+  z
+    .object({
+      status: z.literal("succeeded"),
+      outcome: z.literal("imported"),
+      job_id: z.string().trim().min(1),
+      item_id: z.null(),
+      reason: z.null(),
+      imported_at: z.string().trim().min(1),
+      already_existed: z.boolean(),
+      error: z.null(),
+      error_code: z.null(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("succeeded"),
+      outcome: z.literal("manual_capture_required"),
+      job_id: z.null(),
+      item_id: z.string().trim().min(1),
+      reason: z.enum(MANUAL_ACTION_REASON_VALUES),
+      imported_at: z.null(),
+      already_existed: z.literal(false),
+      error: z.null(),
+      error_code: z.null(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("failed"),
+      outcome: z.null(),
+      job_id: z.null(),
+      item_id: z.null(),
+      reason: z.null(),
+      imported_at: z.null(),
+      already_existed: z.literal(false),
+      error: z.string().nullable(),
+      error_code: z.string().nullable(),
+    })
+    .strict(),
+]);
+export type JobUrlImportWorkflowResult = z.infer<typeof JobUrlImportWorkflowResultSchema>;
 
 /** Nested result returned by the awaited manual-capture Temporal workflow. */
 export const ManualCaptureImportWorkflowResultSchema = z.discriminatedUnion("status", [

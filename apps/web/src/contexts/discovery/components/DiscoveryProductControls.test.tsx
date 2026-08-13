@@ -99,6 +99,15 @@ describe("DiscoveryProductControls", () => {
                 requiredAt: "2026-05-15T10:05:00+00:00",
                 status: "pending" as const,
               },
+              {
+                itemId: "manual-robots",
+                originatingUrl: "https://example.com/jobs/robots-denied",
+                sourceId: "manual_url_import",
+                reason: "robots_disallowed" as const,
+                retryContext: { source: "jobs_url_import" },
+                requiredAt: "2026-05-15T10:10:00+00:00",
+                status: "pending" as const,
+              },
             ],
           })),
         },
@@ -141,6 +150,8 @@ describe("DiscoveryProductControls", () => {
     expect(
       screen.getByText(/saved this posting from the browser extension/i),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Blocked by robots.txt/i)).toBeInTheDocument();
+    expect(screen.getByText(/does not permit JobCtrl to fetch/i)).toBeInTheDocument();
   });
 
   it("filters active sources by default on the discovery page table and sorts the registry", async () => {

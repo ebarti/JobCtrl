@@ -5007,6 +5007,7 @@ export const MANUAL_ACTION_REASON_VALUES = [
   "paywall",
   "bot_detection",
   "rate_limit",
+  "robots_disallowed",
   "protected_internal_site",
   "ambiguous_career_system",
   "browser_extension_capture",
@@ -5709,6 +5710,45 @@ export interface QuarantineDecisionResponse {
   decision: "approve" | "reject";
   recordedAt: string;
 }
+
+export const JobUrlImportUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .regex(/^https?:\/\/[^\s]+$/i, "url must be a valid http(s) URL")
+  .refine(
+    (value) => {
+      try {
+        const parsed = new URL(value);
+        return parsed.username === "" && parsed.password === "";
+      } catch {
+        return false;
+      }
+    },
+    { message: "url must not contain embedded credentials" },
+  );
+
+export const JobUrlImportRequestSchema = z
+  .object({
+    url: JobUrlImportUrlSchema,
+  })
+  .strict();
+export type JobUrlImportRequest = z.infer<typeof JobUrlImportRequestSchema>;
+
+export type JobUrlImportResponse =
+  | {
+      ok: true;
+      status: "imported";
+      jobKey: string;
+      importedAt: string;
+      alreadyExisted: boolean;
+    }
+  | {
+      ok: true;
+      status: "manual_capture_required";
+      itemId: string;
+      reason: ManualActionReasonValue;
+    };
 
 export const ManualCaptureImportSchema = z
   .object({

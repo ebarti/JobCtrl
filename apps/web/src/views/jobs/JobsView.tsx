@@ -45,6 +45,7 @@ import {
   type SavedTableColumnOption,
 } from "../../shared/ui/saved-table-views-control.js";
 import { JobBulkActions } from "./JobBulkActions.js";
+import { ImportJobUrlDialog } from "./ImportJobUrlDialog.js";
 import { JobsTable } from "./JobsTable.js";
 import { bulkJobFilters, jobsListInput } from "./jobStageFilters.js";
 
@@ -713,6 +714,7 @@ export function JobsView() {
             ? `${data.pagination.total} ${data.pagination.total === 1 ? "job" : "jobs"}`
             : "Loading jobs"
         }
+        actions={<ImportJobUrlDialog onImported={openJob} />}
       />
       <section className="card full data-list-card">
         {message ? <div className="banner inline">{message}</div> : null}

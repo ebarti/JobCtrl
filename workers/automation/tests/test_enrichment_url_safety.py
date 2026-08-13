@@ -12,7 +12,10 @@ import pytest
 from jobctrl.discovery import smartextract
 from jobctrl.enrichment import detail
 from jobctrl.enrichment.detail import scrape_detail_page
-from jobctrl.infrastructure.enrichment.playwright_fetcher import PlaywrightDetailPageFetcher
+from jobctrl.infrastructure.enrichment.playwright_fetcher import (
+    DetailPageFetchBlocked,
+    PlaywrightDetailPageFetcher,
+)
 from jobctrl.infrastructure.network import (
     PublicHttpUrlRouteGuard,
     PublicUrlDecision,
@@ -46,6 +49,13 @@ def _resolver_for(*addresses: str):
         "http://127.0.0.1:8080/jobs/1",
         "http://[::1]/jobs/1",
         "http://169.254.169.254/latest/meta-data/iam/security-credentials/role",
+        "http://0177.0.0.1/private",
+        "http://012.0.0.1/private",
+        "http://0177.0.0.01/private",
+        "http://0300.0250.0001.0001/private",
+        "http://2130706433/private",
+        "http://0x7f000001/private",
+        "http://127.1/private",
         "file:///etc/passwd",
     ],
 )
@@ -54,6 +64,19 @@ def test_validate_public_http_url_rejects_non_public_destinations(url: str) -> N
 
     assert not decision.allowed
     assert decision.reason
+
+
+def test_legacy_private_ipv4_literal_is_rejected_before_dns_resolution() -> None:
+    resolver_calls: list[str] = []
+
+    def resolver(host: str, *_args, **_kwargs):
+        resolver_calls.append(host)
+        return []
+
+    decision = validate_public_http_url("http://0177.0.0.1/private", resolver=resolver)
+
+    assert not decision.allowed
+    assert resolver_calls == []
 
 
 def test_validate_public_http_url_rejects_hostnames_that_resolve_private() -> None:
@@ -73,6 +96,23 @@ def test_validate_public_http_url_allows_public_hostname_resolution() -> None:
     )
 
     assert decision.allowed
+
+
+def test_validate_public_http_url_rejects_embedded_credentials_before_resolution() -> None:
+    resolver_calls: list[str] = []
+
+    def resolver(host: str, *_args, **_kwargs):
+        resolver_calls.append(host)
+        return []
+
+    decision = validate_public_http_url(
+        "https://user:password@example.com/jobs/42",
+        resolver=resolver,
+    )
+
+    assert not decision.allowed
+    assert decision.reason == "URL must not contain embedded credentials"
+    assert resolver_calls == []
 
 
 class _ExplodingPage:
@@ -426,6 +466,30 @@ def test_playwright_detail_fetcher_blocks_redirect_to_loopback_before_content(
     assert page.final_url == "http://127.0.0.1:8123/latest/meta-data"
     assert page.html == ""
     assert page.json_ld == ()
+
+
+def test_playwright_detail_fetcher_can_surface_an_explicit_unsafe_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.enrichment.playwright_fetcher.validate_public_http_url",
+        lambda _url: PublicUrlDecision(True),
+    )
+    browser = _RecordingBrowser()
+
+    @contextmanager
+    def fake_playwright() -> Iterator[_RecordingPlaywright]:
+        yield _RecordingPlaywright(browser)
+
+    monkeypatch.setattr("playwright.sync_api.sync_playwright", fake_playwright)
+
+    with pytest.raises(DetailPageFetchBlocked) as raised:
+        PlaywrightDetailPageFetcher(
+            session=offline_session(),
+            raise_on_unavailable=True,
+        ).fetch("https://jobs.example/role")
+
+    assert raised.value.reason_code == "unsafe_redirect"
 
 
 def test_playwright_detail_fetcher_keeps_route_guard_through_content_collection(
