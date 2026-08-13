@@ -176,9 +176,14 @@ version is `pipeline-eta-v1`. Every numeric ETA requires fresh capacity, at
 least five successful duration samples for each relevant remaining stage, and
 bounded shared-queue contention. The overall ETA additionally waits for
 execution membership to close; per-stage and source-family ETAs can estimate
-their already-known scoped backlog while membership remains open. The estimator
-uses recent canonical stage/projection durations, reports a low/high range,
-confidence, basis, sample size, timestamp, and caveat, and rounds outward.
+their already-known scoped backlog while membership remains open. A null
+provider total never becomes a synthetic remaining-page count; the
+source-family range can instead use recent whole-family projection durations
+and the observed source concurrency when runtime inventory and queue telemetry
+are bounded. Dormant global rows outside the selected execution do not count as
+live source contention until queued or active. The estimator uses recent
+canonical stage/projection durations, reports a low/high range, confidence,
+basis, sample size, timestamp, and caveat, and rounds outward.
 Otherwise the response returns a typed `calibrating`, `paused`, `stale`, or
 `unavailable` reason such as `membership_open` (overall ETA only),
 `worker_unavailable`, `budget_exceeded`, `telemetry_stale`, or

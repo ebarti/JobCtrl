@@ -217,9 +217,14 @@ when another board fails. Pipelines shows `N resumed` when recovery happened.
 JobStreaming page progress is projected separately from JobCtrl acceptance
 counts. The provider payload contains no cursor or resume dictionary, and the
 Pipelines operations view binds it to the exact Discover workflow/run before
-displaying it. These traversal facts explain current crawl activity; they do
-not override a whole-stage ETA that is unavailable because shared worker-pool
-contention or an authoritative provider total is still unknown.
+displaying it. These traversal facts explain current crawl activity and never
+become a synthetic provider percentage when the total is unknown. Pipelines may
+still estimate the bounded source-family backlog from recent completed-family
+durations when worker inventory and the Temporal queue are fresh and complete.
+Dormant global job rows do not block that source-only estimate until they are
+actually queued or observed as active work. Selected-run sweep demand withholds
+it only when the unique remaining preparation workflows exceed spare runtime
+capacity; unbounded retry demand or queue contention always withholds it.
 
 **Stop discovery** is different from interruption: cooperative cancellation
 interrupts provider waits and marks active and pending units canceled. Canceled

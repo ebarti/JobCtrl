@@ -119,6 +119,7 @@ describe("PipelinesView", () => {
     expect(crawlTrigger).toHaveTextContent(
       "Source family · 2 active · 1 terminal · 0 attention",
     );
+    expect(crawlTrigger).toHaveTextContent("20 min–21 min");
     await user.click(crawlTrigger);
     expect(crawlTrigger).toHaveAttribute("aria-expanded", "true");
     expect(
@@ -148,6 +149,7 @@ describe("PipelinesView", () => {
     expect(crawl).toHaveTextContent(
       "Indeed · 3 pages completed; provider total unavailable · 42 raw listings seen · 9 jobs emitted · more pages available",
     );
+    expect(within(crawl).getAllByText("20 min–21 min").length).toBeGreaterThan(0);
 
     expect(
       screen.queryByRole("region", { name: "Execution sweep ledger table" }),

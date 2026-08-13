@@ -1150,7 +1150,7 @@ describe("pipeline operations read model", () => {
     });
   });
 
-  it("does not price source or a current stage as isolated from a retryable sweep stage", () => {
+  it("withholds source and current-stage ETAs when sweep demand exceeds spare capacity", () => {
     const fixture = createFixture();
     insertExecution(fixture, { status: "succeeded" });
     insertMember(fixture, { key: "cross-stage-current", requiredSteps: ["score"] });
@@ -1171,9 +1171,14 @@ describe("pipeline operations read model", () => {
       );
     }
     insertHeartbeat(fixture, {
-      activeSlots: 1,
-      counts: { score_job: 1 },
-      details: [activityDetail("score_job", "op_000000000000000000000018", unmatchedWorkflowRef("cross-stage"))],
+      activeSlots: 4,
+      counts: { score_job: 4 },
+      details: [
+        activityDetail("score_job", "op_000000000000000000000018", unmatchedWorkflowRef("cross-stage-1")),
+        activityDetail("score_job", "op_000000000000000000000019", unmatchedWorkflowRef("cross-stage-2")),
+        activityDetail("score_job", "op_000000000000000000000020", unmatchedWorkflowRef("cross-stage-3")),
+        activityDetail("score_job", "op_000000000000000000000021", unmatchedWorkflowRef("cross-stage-4")),
+      ],
     });
 
     const result = snapshot(fixture);
@@ -1278,19 +1283,123 @@ describe("pipeline operations read model", () => {
     });
   });
 
-  it("does not price source work as isolated when global preparation work shares the activity pool", () => {
+  it("prices source history when one sweep workflow fits spare capacity and global rows stay dormant", () => {
     const fixture = createFixture();
     insertExecution(fixture, { status: "in_progress" });
-    insertStep(fixture, { stepKind: "source_planning", itemKey: "global-plan", state: "succeeded", detailCount: 1 });
-    insertStep(fixture, { stepKind: "source_family", itemKey: "global-source", state: "running" });
+    insertStep(fixture, { stepKind: "source_planning", itemKey: "global-plan", state: "succeeded", detailCount: 2 });
+    insertStep(fixture, { stepKind: "source_family", itemKey: "family:jobspy", state: "running" });
+    insertMember(fixture, {
+      key: "spare-sweep",
+      cohort: "existing_backlog",
+      requiredSteps: ["score", "tailor", "cover"],
+    });
+    insertStageState(fixture, "spare-sweep", "enrich", "succeeded");
+    insertStageState(fixture, "spare-sweep", "score", "pending");
+    insertStageState(fixture, "spare-sweep", "tailor", "pending");
+    insertStageState(fixture, "spare-sweep", "cover", "pending");
     insertStageState(fixture, "global-outside", "score", "pending");
+    for (let index = 0; index < 5; index += 1) {
+      insertHistoricalStep(fixture, {
+        stepKind: "source_family",
+        itemKey: `global-source-history-${index}`,
+        durationMs: 600_000,
+        index,
+      });
+    }
+    fixture.db.prepare(
+      `INSERT INTO job_events (
+         tenant_id, job_id, identity_version, stage, event_type, level,
+         message, occurred_at, payload_json
+       ) VALUES ('local', NULL, 1, 'discover', 'StageProgress', 'info', ?, ?, ?)`,
+    ).run(
+      "current provider progress",
+      "2026-07-14T11:59:00.000Z",
+      JSON.stringify({
+        workflowId: DISCOVER_WORKFLOW_ID,
+        discoverRunId: DISCOVER_RUN_ID,
+        progress: {
+          sourceProgress: {
+            providerProgress: {
+              site: "linkedin",
+              phase: "search",
+              unit: "page",
+              completedUnits: 39,
+              totalUnits: null,
+              rawItemsSeen: 390,
+              jobsEmitted: 371,
+              hasMore: null,
+            },
+          },
+        },
+      }),
+    );
+    insertHeartbeat(fixture, {
+      activeSlots: 2,
+      counts: { discovery_source_family: 1, discovery_enrichment: 1 },
+      details: [
+        activityDetail("discovery_source_family", "op_000000000000000000000015", DISCOVER_WORKFLOW_ID),
+        activityDetail("discovery_enrichment", "op_000000000000000000000016", DISCOVER_WORKFLOW_ID),
+      ],
+    });
+
+    const result = snapshot(fixture);
+    expect(result.sourceFamilies).toMatchObject({
+      counts: { eligible: 2, waiting: 1, processing: 1, unknown: 0 },
+      providerProgress: { completedUnits: 39, totalUnits: null },
+      eta: {
+        status: "available",
+        lowSeconds: 1_200,
+        highSeconds: 1_260,
+        confidence: "low",
+        basis: "source_rate",
+        sampleSize: 5,
+      },
+    });
+    expect(stage(result, "source_family", "current_execution").eta).toEqual(
+      result.sourceFamilies?.eta,
+    );
+    expect(result.sourceFamilies?.eta).toMatchObject({
+      caveat: "Provider total is unavailable; range uses recent whole-family duration and bounded live capacity.",
+    });
+  });
+
+  it("withholds source history when global job-stage work is queued before telemetry observes it", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertStep(fixture, {
+      stepKind: "source_planning",
+      itemKey: "queued-global-plan",
+      state: "succeeded",
+      detailCount: 1,
+    });
+    insertStep(fixture, {
+      stepKind: "source_family",
+      itemKey: "queued-global-source",
+      state: "running",
+    });
+    insertStageState(fixture, "queued-global-outside", "score", "queued");
+    for (let index = 0; index < 5; index += 1) {
+      insertHistoricalStep(fixture, {
+        stepKind: "source_family",
+        itemKey: `queued-global-source-history-${index}`,
+        durationMs: 600_000,
+        index,
+      });
+    }
     insertHeartbeat(fixture, {
       activeSlots: 1,
       counts: { discovery_source_family: 1 },
-      details: [activityDetail("discovery_source_family", "op_000000000000000000000015", DISCOVER_WORKFLOW_ID)],
+      details: [
+        activityDetail(
+          "discovery_source_family",
+          "op_000000000000000000000021",
+          DISCOVER_WORKFLOW_ID,
+        ),
+      ],
     });
 
-    expect(snapshot(fixture).sourceFamilies?.eta).toMatchObject({
+    const result = snapshot(fixture);
+    expect(result.sourceFamilies?.eta).toMatchObject({
       status: "unavailable",
       reason: "contention_unbounded",
     });
@@ -1571,6 +1680,28 @@ function insertStep(
   );
 }
 
+function insertHistoricalStep(
+  fixture: Fixture,
+  input: { stepKind: string; itemKey: string; durationMs: number; index: number },
+): void {
+  fixture.db.prepare(
+    `INSERT INTO pipeline_step_projections (
+       tenant_id, discover_workflow_id, discover_run_id, step_kind, item_key, state, attempt,
+       queued_at, started_at, finished_at, duration_ms, retryable, detail_count, last_event_id, last_updated_at
+     ) VALUES ('local', ?, ?, ?, ?, 'succeeded', 1, ?, ?, ?, ?, 0, NULL, 0, ?)`,
+  ).run(
+    `history-workflow-${input.index}`,
+    `history-run-${input.index}`,
+    input.stepKind,
+    input.itemKey,
+    "2026-07-14T10:00:00.000Z",
+    "2026-07-14T10:00:00.000Z",
+    new Date(NOW.getTime() - input.index * 60_000).toISOString(),
+    input.durationMs,
+    NOW.toISOString(),
+  );
+}
+
 function insertHeartbeat(
   fixture: Fixture,
   input: {
@@ -1614,6 +1745,7 @@ function activityDetail(
     score_job: "job-scoring",
     tailor_job: "job-tailoring",
     discovery_source_family: "discovery-source-family",
+    discovery_enrichment: "discovery-enrichment",
     discovery_preparation_fanout: "discovery-preparation-fanout",
     plan_discovery_sources: "discovery-plan",
     derive_preparation_targets: "preparation-targets",

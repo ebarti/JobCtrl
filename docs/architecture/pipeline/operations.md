@@ -125,8 +125,11 @@ raw items seen, emitted jobs, and tri-state continuation. The worker stamps the
 exact Discover workflow/run identity onto the progress event, and Operations
 accepts only a matching execution before rendering the latest traversal facts.
 Unknown provider totals stay null and do not become a synthetic percentage or
-ETA. Raw provider output, cursors, resume dictionaries, checkpoints, owner
-tokens, and error messages are not projected into this broad progress payload.
+provider-derived ETA. A separate source-family ETA may use recent completed
+whole-family durations when live worker inventory and the Temporal queue bound
+the source lane. Raw provider output, cursors, resume dictionaries,
+checkpoints, owner tokens, and error messages are not projected into this broad
+progress payload.
 
 ## Pipeline Operations Snapshot
 
@@ -179,8 +182,10 @@ materials, or PDF work is complete.
 Provider traversal progress is observational evidence inside the active broad-
 board family, not a third completion authority. It can explain that a provider
 has completed pages and whether continuation is known. It cannot bound shared-
-pool contention or establish remaining pages when `totalUnits` is null, so the
-ETA estimator remains conservative in those states.
+pool contention or establish remaining pages when `totalUnits` is null. The
+source-family estimator therefore never derives a remaining-page count from
+that payload; it can instead price the known planned-family backlog from recent
+whole-family duration samples when runtime evidence bounds the source lane.
 
 The API prefers an active or draining Discover execution and otherwise shows
 the latest terminal execution. The phase vocabulary is `discovering`,
@@ -390,9 +395,17 @@ approximate infrastructure observations, never as job counts.
 most 50 recent samples, and a minimum of five samples for every remaining
 stage. The overall numeric range is withheld while membership is open;
 per-stage and source-family ranges can price their already-known scoped backlog
-before closure. Every estimate still withholds a number when telemetry is stale,
-a worker is unavailable, work is budget-blocked, or shared contention is
-unbounded. Non-numeric `calibrating`, `paused`, `stale`, and `unavailable`
+before closure. A source-family range uses the currently observed source
+concurrency rather than claiming every configured slot. Dormant global rows
+outside the selected execution are not live contention until their canonical
+state is queued or running, or activity inventory or the Temporal queue observes
+them. Selected-run sweep work reserves
+one slot per remaining preparation workflow rather than one per sequential
+stage; the source estimate is withheld when that demand exceeds spare capacity.
+Unbounded retry demand, queued work, and truncated inventory remain unbounded.
+Every estimate still withholds a number when telemetry is stale, a worker is
+unavailable, work is budget-blocked, or shared contention is unbounded.
+Non-numeric `calibrating`, `paused`, `stale`, and `unavailable`
 states are part of the contract. The web surface presents a `paused` estimate
 as **No ETA** plus the bounded reason so it cannot be mistaken for the Temporal
 workflow's lifecycle state. In particular, `no_dispatch` means the estimator

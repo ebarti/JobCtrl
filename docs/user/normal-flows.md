@@ -194,6 +194,10 @@ inventory. Treat ETA as an observed range: calibrating, no recent dispatch,
 stale, unavailable, and no-work states are deliberately explicit rather than
 replaced by a guessed finish time. An
 unavailable ETA does not mean that the workflow itself is paused.
+An unknown provider page total prevents a crawl percentage, not necessarily a
+source-family ETA: after at least five recent family completions, Pipelines can
+use whole-family duration history when live capacity and queue observations
+bound the current source lane.
 When a closed run leaves work behind, **Set up a new Discover run** becomes
 available only after the live operations snapshot proves that shared runtime
 capacity is idle. The Discover run control follows the same guard, so selecting

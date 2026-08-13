@@ -268,13 +268,17 @@ export function buildPipelineOperationsSnapshot(
   );
   const globalCounts = globalStageCounts(db, tenantId, selected);
   const globalRetryability = loadGlobalRetryability(db, tenantId, selected);
+  const globalQueuedOrRunningDemand = hasGlobalQueuedOrRunningStageDemand(
+    db,
+    tenantId,
+    selected,
+  );
   const sourceFamilies = sourceFamilyProgress(
     db,
     tenantId,
     selected,
-    sweepCounts,
-    globalCounts,
     globalRetryability,
+    globalQueuedOrRunningDemand,
     generatedAt,
     telemetry,
     budgetAvailable,
@@ -315,6 +319,7 @@ export function buildPipelineOperationsSnapshot(
     now,
     runtimeAttribution,
     projectionCoverage,
+    sourceFamilyEta: sourceFamilies?.eta ?? null,
   });
 
   return {
@@ -1202,6 +1207,29 @@ function globalStageCounts(
   return counts;
 }
 
+function hasGlobalQueuedOrRunningStageDemand(
+  db: SqliteDatabase,
+  tenantId: string,
+  selected: SelectedExecution,
+): boolean {
+  const excluded = selected.current.members.concat(selected.sweep.members).map((member) => member.job_id);
+  const where = [
+    "tenant_id = ?",
+    "stage IN ('enrich', 'score', 'tailor', 'cover')",
+    "state IN ('queued', 'running')",
+  ];
+  const params: SqliteValue[] = [tenantId];
+  if (excluded.length > 0) {
+    where.push(`job_id NOT IN (${excluded.map(() => "?").join(", ")})`);
+    params.push(...excluded);
+  }
+  return allRows<{ present: number }>(
+    db,
+    `SELECT 1 AS present FROM job_stage_states WHERE ${where.join(" AND ")} LIMIT 1`,
+    params,
+  ).length > 0;
+}
+
 function loadGlobalRetryability(
   db: SqliteDatabase,
   tenantId: string,
@@ -1316,6 +1344,7 @@ function buildStages(input: {
   now: Date;
   runtimeAttribution: SelectedRuntimeAttribution;
   projectionCoverage: PipelineProjectionCoverage;
+  sourceFamilyEta: PipelineEta | null;
 }): PipelineOperationalStage[] {
   const result: PipelineOperationalStage[] = [];
   const selectedScope = input.projectionCoverage.status === "ready" ? "known" : "unknown";
@@ -1323,35 +1352,38 @@ function buildStages(input: {
     const current = input.currentCounts.get(stage) ?? emptyCounts();
     const sweep = input.sweepCounts.get(stage) ?? emptyCounts();
     const global = input.globalCounts.get(stage) ?? emptyCounts();
-    const stageEta = estimateForStage(
-      input.db,
-      input.tenantId,
-      stage,
-      current,
-      input.selected,
-      input.telemetry,
-      input.budgetAvailable,
-      input.generatedAt,
-      input.now,
-      retryableRemainingForStage(input.selected, input.selected.current, stage, true),
-      true,
-      {
-        runtimeActiveWork: selectedRuntimeStageActiveWork(
-          input.runtimeAttribution,
-          "current_execution",
-          stage,
-        ),
-        scope: selectedScope,
-      },
-      currentStageContention(
-        input.selected,
-        stage,
-        input.sweepCounts,
-        input.globalCounts,
-        input.globalRetryability,
-        input.telemetry,
-      ),
-    );
+    const stageEta =
+      stage === "source_family" && input.sourceFamilyEta !== null
+        ? input.sourceFamilyEta
+        : estimateForStage(
+            input.db,
+            input.tenantId,
+            stage,
+            current,
+            input.selected,
+            input.telemetry,
+            input.budgetAvailable,
+            input.generatedAt,
+            input.now,
+            retryableRemainingForStage(input.selected, input.selected.current, stage, true),
+            true,
+            {
+              runtimeActiveWork: selectedRuntimeStageActiveWork(
+                input.runtimeAttribution,
+                "current_execution",
+                stage,
+              ),
+              scope: selectedScope,
+            },
+            currentStageContention(
+              input.selected,
+              stage,
+              input.sweepCounts,
+              input.globalCounts,
+              input.globalRetryability,
+              input.telemetry,
+            ),
+          );
     result.push({
       stage,
       label: STAGE_LABELS[stage],
@@ -1479,9 +1511,8 @@ function sourceFamilyProgress(
   db: SqliteDatabase,
   tenantId: string,
   selected: SelectedExecution,
-  sweepCounts: Map<(typeof OPERATIONAL_STAGES)[number], PipelineStageCounts>,
-  globalCounts: Map<(typeof OPERATIONAL_STAGES)[number], PipelineStageCounts>,
   globalRetryability: GlobalRetryability,
+  globalQueuedOrRunningDemand: boolean,
   generatedAt: string,
   telemetry: WorkerRuntimeTelemetrySnapshot,
   budgetAvailable: boolean,
@@ -1499,35 +1530,113 @@ function sourceFamilyProgress(
   )
     ? latestDiscoveryProviderProgress(db, tenantId, selected)
     : null;
+  const eta = estimateSourceFamilyEta({
+    db,
+    tenantId,
+    selected,
+    globalRetryability,
+    globalQueuedOrRunningDemand,
+    sourceRows,
+    counts,
+    providerProgress,
+    generatedAt,
+    telemetry,
+    budgetAvailable,
+    now,
+    runtimeAttribution,
+    projectionCoverage,
+  });
   return {
     planned,
     counts,
-    eta: estimatePipelineEta({
-      ...basicEtaInput(
-        selected,
-        telemetry,
-        budgetAvailable,
-        generatedAt,
-        selectedRuntimeStageActiveWork(runtimeAttribution, "current_execution", "source_family"),
-      ),
-      scope: projectionCoverage.status === "ready" ? "known" : "unknown",
-      membershipOpen: false,
-      stages: [
-        {
-          stage: "source_family",
-          remainingCurrentStage: etaRemainingCount(
-            counts,
-            retryablePipelineSteps(sourceRows, isTerminalWorkflowStatus(selected.row.status)),
-          ),
-          primaryEvidence: "pipeline_step_projection",
-          samples: pipelineStepHistorySamples(db, tenantId, "source_family", now),
-        },
-      ],
-      remainingPaths: [],
-      contention: sourceContention(selected, sweepCounts, globalCounts, globalRetryability, telemetry),
-    }) as PipelineEta,
+    eta,
     asOf: generatedAt,
     ...(providerProgress ? { providerProgress } : {}),
+  };
+}
+
+function estimateSourceFamilyEta(input: {
+  db: SqliteDatabase;
+  tenantId: string;
+  selected: SelectedExecution;
+  globalRetryability: GlobalRetryability;
+  globalQueuedOrRunningDemand: boolean;
+  sourceRows: PipelineStepRow[];
+  counts: PipelineStageCounts;
+  providerProgress: DiscoveryProviderProgress | null;
+  generatedAt: string;
+  telemetry: WorkerRuntimeTelemetrySnapshot;
+  budgetAvailable: boolean;
+  now: Date;
+  runtimeAttribution: SelectedRuntimeAttribution;
+  projectionCoverage: PipelineProjectionCoverage;
+}): PipelineEta {
+  const durableSourceConcurrency = Math.max(1, input.counts.processing);
+  const observedSourceConcurrency = Math.max(
+    1,
+    selectedRuntimeStageActiveCount(
+      input.runtimeAttribution,
+      "current_execution",
+      "source_family",
+    ),
+  );
+  const processingFamilies = Math.min(
+    durableSourceConcurrency,
+    observedSourceConcurrency,
+  );
+  const configuredSlots =
+    input.telemetry.status === "available"
+      ? Math.min(processingFamilies, Math.max(1, input.telemetry.configuredSlots))
+      : processingFamilies;
+  const estimated = estimatePipelineEta({
+    ...basicEtaInput(
+      input.selected,
+      input.telemetry,
+      input.budgetAvailable,
+      input.generatedAt,
+      selectedRuntimeStageActiveWork(
+        input.runtimeAttribution,
+        "current_execution",
+        "source_family",
+      ),
+    ),
+    scope: input.projectionCoverage.status === "ready" ? "known" : "unknown",
+    membershipOpen: false,
+    configuredSlots,
+    stages: [
+      {
+        stage: "source_family",
+        remainingCurrentStage: etaRemainingCount(
+          input.counts,
+          retryablePipelineSteps(
+            input.sourceRows,
+            isTerminalWorkflowStatus(input.selected.row.status),
+          ),
+        ),
+        primaryEvidence: "pipeline_step_projection",
+        samples: pipelineStepHistorySamples(
+          input.db,
+          input.tenantId,
+          "source_family",
+          input.now,
+        ),
+      },
+    ],
+    remainingPaths: [],
+    contention: sourceFamilyHistoricalContention(
+      input.selected,
+      input.globalRetryability,
+      input.globalQueuedOrRunningDemand,
+      input.telemetry,
+    ),
+  }) as PipelineEta;
+  if (estimated.status !== "available") return estimated;
+  return {
+    ...estimated,
+    basis: "source_rate",
+    caveat: input.providerProgress?.totalUnits === null
+      ? "Provider total is unavailable; range uses recent whole-family duration and bounded live capacity."
+      : "Range uses recent whole-family duration and bounded live capacity.",
   };
 }
 
@@ -2172,6 +2281,64 @@ function sourceContention(
   return competingDomainWork ? { kind: "unknown" as const } : runtime;
 }
 
+function sourceFamilyHistoricalContention(
+  selected: SelectedExecution,
+  globalRetryability: GlobalRetryability,
+  globalQueuedOrRunningDemand: boolean,
+  telemetry: WorkerRuntimeTelemetrySnapshot,
+) {
+  const runtime = sharedRuntimeContention(telemetry);
+  if (runtime.kind !== "bounded") return runtime;
+  if (
+    globalRetryability.hasUnboundedRetryableDemand ||
+    globalQueuedOrRunningDemand
+  ) {
+    return { kind: "unknown" as const };
+  }
+  // One preparation workflow can contribute several sequential stage rows,
+  // but it can occupy only one shared slot at a time. Reserve one slot for
+  // each remaining sweep member that is not already running. If fresh spare
+  // capacity absorbs that whole set, the observed source lane stays bounded.
+  const unoccupiedSweepDemand = selected.sweep.members.filter(
+    (member) =>
+      sweepMemberHasRemainingWork(selected, member) &&
+      !sweepMemberHasRunningWork(selected, member),
+  ).length;
+  return unoccupiedSweepDemand > telemetry.availableSlots
+    ? { kind: "unknown" as const }
+    : runtime;
+}
+
+function sweepMemberHasRemainingWork(
+  selected: SelectedExecution,
+  member: MembershipRow,
+): boolean {
+  if (member.work_plan_state === "not_eligible") return false;
+  const terminalOwner = memberPreparationWorkflowFailed(
+    member,
+    selected.sweep.preparationWorkflowStatuses,
+  );
+  const states = selected.sweep.stageStates.get(member.job_id);
+  if (!isTerminalStageState(states?.get("enrich"), terminalOwner)) return true;
+  if (member.work_plan_state !== "planned") return true;
+  return requiredSteps(member).some((stage) =>
+    stage === "pdf"
+      ? !isTerminalStepState(pdfStepForMember(member, selected.steps), terminalOwner)
+      : !isTerminalStageState(states?.get(stage), terminalOwner),
+  );
+}
+
+function sweepMemberHasRunningWork(
+  selected: SelectedExecution,
+  member: MembershipRow,
+): boolean {
+  const states = selected.sweep.stageStates.get(member.job_id);
+  if ([...(states?.values() ?? [])].some((state) => state.state === "running")) {
+    return true;
+  }
+  return pdfStepForMember(member, selected.steps)?.state === "running";
+}
+
 function etaRemainingCount(counts: PipelineStageCounts, retryableFailures: number): number {
   return remainingCount(counts) + retryableFailures;
 }
@@ -2295,10 +2462,18 @@ function selectedRuntimeStageActiveWork(
   scope: SelectedRuntimeScope,
   stage: (typeof OPERATIONAL_STAGES)[number],
 ): boolean {
+  return selectedRuntimeStageActiveCount(attribution, scope, stage) > 0;
+}
+
+function selectedRuntimeStageActiveCount(
+  attribution: SelectedRuntimeAttribution,
+  scope: SelectedRuntimeScope,
+  stage: (typeof OPERATIONAL_STAGES)[number],
+): number {
   const counts = scope === "execution_sweep"
     ? attribution.sweepStageCounts
     : attribution.currentStageCounts;
-  return (counts.get(stage) ?? 0) > 0;
+  return counts.get(stage) ?? 0;
 }
 
 function usesStepProjection(stage: string): boolean {

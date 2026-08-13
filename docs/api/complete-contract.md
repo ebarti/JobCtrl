@@ -517,8 +517,15 @@ requires closed execution membership; per-stage and source-family rows can
 estimate their already-known scoped backlog while membership remains open. The
 estimator uses canonical job-stage and pipeline-step durations, falling back to
 operational attempt metrics only when the primary source is empty; it never
-blends the two. Any unbounded shared-queue contention suppresses a numeric
-estimate.
+blends the two. A source-family estimate may use recent completed-family
+durations even when provider `totalUnits` is null; it does not synthesize a
+remaining-page count. It uses observed source concurrency and requires fresh,
+complete runtime inventory plus a bounded Temporal queue. Selected-run sweep
+work reserves one slot per remaining preparation workflow, not one per
+sequential stage, and suppresses the numeric source estimate only when that
+demand exceeds spare capacity. Unbounded retry demand or shared-queue
+contention still suppresses it; dormant global rows do not until queued or
+observed as active work.
 
 The Operations query polls every 15 seconds while phase is `discovering` or
 `draining`, every 60 seconds otherwise, and never in the background. SSE
