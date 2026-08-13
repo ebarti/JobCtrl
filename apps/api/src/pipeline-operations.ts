@@ -15,6 +15,10 @@ import type {
 } from "./contracts.js";
 import { allRows, type SqliteDatabase, type SqliteValue } from "./db.js";
 import {
+  CURRENT_DISCOVERY_EXECUTION_DECODER_VERSION,
+  recoveryKeyDigest,
+} from "./discovery-execution-recovery.js";
+import {
   estimatePipelineEta,
   type PipelineEtaEstimatorInput,
   type PipelineEtaStageInput,
@@ -25,8 +29,6 @@ import { readLlmSpendHealth } from "./worker-health.js";
 const DEFAULT_TENANT = "local";
 const ETA_SAMPLE_LIMIT = 50;
 const ETA_SAMPLE_WINDOW_MS = 14 * 24 * 60 * 60 * 1_000;
-const CURRENT_DISCOVERY_EXECUTION_DECODER_VERSION = 3;
-
 const JOB_STAGES = ["enrich", "score", "tailor", "cover"] as const;
 const OPERATIONAL_STAGES = [
   "source_planning",
@@ -934,23 +936,6 @@ function recoveringProjectionCoverage(
     persistedStepCount,
     updatedAt: null,
   };
-}
-
-function recoveryKeyDigest(
-  membershipKeys: readonly string[],
-  stepKeys: ReadonlyArray<readonly [string, string]>,
-): string {
-  const memberships = membershipKeys.map(utf8Hex).sort();
-  const steps = stepKeys
-    .map((stepKey) => utf8Hex(JSON.stringify(stepKey)))
-    .sort();
-  return createHash("sha256")
-    .update(JSON.stringify({ memberships, steps }))
-    .digest("hex");
-}
-
-function utf8Hex(value: string): string {
-  return Buffer.from(value, "utf8").toString("hex");
 }
 
 function positiveIntegerOrNull(value: unknown): number | null {

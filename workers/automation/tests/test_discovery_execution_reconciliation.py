@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import uuid
@@ -7,6 +8,7 @@ import uuid
 import pytest
 
 import jobctrl.discovery.execution_reconciliation as execution_reconciliation
+import jobctrl.infrastructure.projections.projection_builder as projection_builder_module
 from jobctrl.database import init_db
 from jobctrl.discovery.execution_reconciliation import (
     LegacyActivityAttempt,
@@ -1217,7 +1219,6 @@ async def test_ready_manifest_retries_history_read_without_losing_durable_proof(
         table: [dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()]
         for table in durable_rows
     } == durable_rows
-
     result = await execution_reconciliation.reconcile_legacy_discovery_execution(
         FakeClient(),
         workflow_id=execution.workflow_id,
@@ -1246,6 +1247,373 @@ async def test_ready_manifest_retries_history_read_without_losing_durable_proof(
         table: [dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()]
         for table in durable_rows
     } == durable_rows
+
+
+@pytest.mark.asyncio
+async def test_verified_ready_manifest_stays_ready_while_history_is_probed(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    conn = init_db(tmp_path / "ready-history-probe.db")
+    execution = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id="discover-local",
+        temporal_run_id="run-ready-history-probe",
+    )
+    job_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:ready-history-probe"))
+    _seed_v7_job(conn, job_id)
+    SqliteDiscoveryExecutionRepository(conn).link_job(
+        execution,
+        job_id,
+        cohort_kind="existing_backlog",
+    )
+    _write_recovery_manifest(
+        conn,
+        execution,
+        state="ready",
+        mode="native",
+        history_event_id=12,
+        expected_memberships=1,
+        persisted_memberships=1,
+        expected_steps=0,
+        persisted_steps=0,
+        key_digest=_recovery_key_digest({job_id}, set()),
+    )
+    ready_updated_at = conn.execute("SELECT updated_at FROM discovery_execution_recoveries").fetchone()[0]
+    probe_started = asyncio.Event()
+    release_probe = asyncio.Event()
+    recovery_states: list[str] = []
+
+    async def normalized_history(_handle, _converter):
+        probe_started.set()
+        await release_probe.wait()
+        return [
+            {
+                "kind": "watermark",
+                "history_event_id": 12,
+                "event_time": "2026-08-13T12:00:00+00:00",
+            }
+        ]
+
+    monkeypatch.setattr(
+        execution_reconciliation,
+        "_normalize_temporal_history",
+        normalized_history,
+    )
+    original_write_manifest = execution_reconciliation._write_recovery_manifest
+
+    def record_manifest_write(*args, **kwargs):
+        recovery_states.append(str(kwargs["state"]))
+        return original_write_manifest(*args, **kwargs)
+
+    monkeypatch.setattr(
+        execution_reconciliation,
+        "_write_recovery_manifest",
+        record_manifest_write,
+    )
+
+    class FakeClient:
+        data_converter = object()
+
+        @staticmethod
+        def get_workflow_handle(_workflow_id, *, run_id):
+            assert run_id == execution.temporal_run_id
+            return object()
+
+    task = asyncio.create_task(
+        execution_reconciliation.reconcile_legacy_discovery_execution(
+            FakeClient(),
+            workflow_id=execution.workflow_id,
+            temporal_run_id=execution.temporal_run_id,
+            conn=conn,
+        )
+    )
+    await probe_started.wait()
+    probing_manifest = conn.execute("SELECT state, updated_at FROM discovery_execution_recoveries").fetchone()
+    assert tuple(probing_manifest) == ("ready", ready_updated_at)
+
+    concurrent_job_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:ready-history-probe-concurrent"))
+    _seed_v7_job(conn, concurrent_job_id)
+    SqliteDiscoveryExecutionRepository(conn).link_job(
+        execution,
+        concurrent_job_id,
+        cohort_kind="observed_this_run",
+        source_family="jobspy",
+    )
+    advanced_manifest = conn.execute(
+        """
+        SELECT state, expected_membership_count, persisted_membership_count
+        FROM discovery_execution_recoveries
+        """
+    ).fetchone()
+    assert tuple(advanced_manifest) == ("ready", 2, 2)
+
+    release_probe.set()
+    await task
+    final_manifest = conn.execute(
+        """
+        SELECT state, expected_membership_count, persisted_membership_count
+        FROM discovery_execution_recoveries
+        """
+    ).fetchone()
+    assert tuple(final_manifest) == ("ready", 2, 2)
+    assert "recovering" not in recovery_states
+
+
+@pytest.mark.asyncio
+async def test_verified_ready_manifest_retries_a_native_write_during_proof_validation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    conn = init_db(tmp_path / "ready-proof-validation-race.db")
+    execution = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id="discover-local",
+        temporal_run_id="run-ready-proof-validation-race",
+    )
+    first_job_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:ready-proof-validation-first"))
+    second_job_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:ready-proof-validation-second"))
+    _seed_v7_job(conn, first_job_id)
+    _seed_v7_job(conn, second_job_id)
+    repository = SqliteDiscoveryExecutionRepository(conn)
+    repository.link_job(
+        execution,
+        first_job_id,
+        cohort_kind="existing_backlog",
+    )
+    _write_recovery_manifest(
+        conn,
+        execution,
+        state="ready",
+        mode="native",
+        history_event_id=12,
+        expected_memberships=1,
+        persisted_memberships=1,
+        expected_steps=0,
+        persisted_steps=0,
+        key_digest=_recovery_key_digest({first_job_id}, set()),
+    )
+    original_membership_keys = execution_reconciliation._persisted_membership_keys
+    inserted = False
+    recovery_states: list[str] = []
+
+    def membership_keys_with_native_write(*args, **kwargs):
+        nonlocal inserted
+        if not inserted:
+            inserted = True
+            repository.link_job(
+                execution,
+                second_job_id,
+                cohort_kind="observed_this_run",
+                source_family="jobspy",
+            )
+        return original_membership_keys(*args, **kwargs)
+
+    monkeypatch.setattr(
+        execution_reconciliation,
+        "_persisted_membership_keys",
+        membership_keys_with_native_write,
+    )
+    original_write_manifest = execution_reconciliation._write_recovery_manifest
+
+    def record_manifest_write(*args, **kwargs):
+        recovery_states.append(str(kwargs["state"]))
+        return original_write_manifest(*args, **kwargs)
+
+    monkeypatch.setattr(
+        execution_reconciliation,
+        "_write_recovery_manifest",
+        record_manifest_write,
+    )
+
+    class FakeClient:
+        data_converter = object()
+
+        @staticmethod
+        def get_workflow_handle(_workflow_id, *, run_id):
+            assert run_id == execution.temporal_run_id
+            return object()
+
+    async def normalized_history(_handle, _converter):
+        return [
+            {
+                "kind": "watermark",
+                "history_event_id": 12,
+                "event_time": "2026-08-13T12:00:00+00:00",
+            }
+        ]
+
+    monkeypatch.setattr(
+        execution_reconciliation,
+        "_normalize_temporal_history",
+        normalized_history,
+    )
+
+    await execution_reconciliation.reconcile_legacy_discovery_execution(
+        FakeClient(),
+        workflow_id=execution.workflow_id,
+        temporal_run_id=execution.temporal_run_id,
+        conn=conn,
+    )
+
+    manifest = conn.execute(
+        """
+        SELECT state, expected_membership_count, persisted_membership_count
+        FROM discovery_execution_recoveries
+        """
+    ).fetchone()
+    assert tuple(manifest) == ("ready", 2, 2)
+    assert "recovering" not in recovery_states
+
+
+def test_native_pipeline_step_fold_advances_ready_recovery_proof(tmp_path) -> None:
+    conn = init_db(tmp_path / "native-step-proof.db")
+    execution = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id="discover-local",
+        temporal_run_id="run-native-step-proof",
+    )
+    job_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:native-step-proof"))
+    _seed_v7_job(conn, job_id)
+    SqliteDiscoveryExecutionRepository(conn).link_job(
+        execution,
+        job_id,
+        cohort_kind="observed_this_run",
+        source_family="jobspy",
+    )
+    _append_native_completed_step(
+        conn,
+        execution,
+        step_kind="source_planning",
+        item_key="plan",
+        detail_code="source_plan",
+    )
+    conn.commit()
+    builder = ProjectionBuilder(
+        conn_factory=lambda: conn,
+        tenant_id=TenantId(execution.tenant_id),
+    )
+    builder.refresh()
+    _write_recovery_manifest(
+        conn,
+        execution,
+        state="ready",
+        mode="native",
+        history_event_id=12,
+        expected_memberships=1,
+        persisted_memberships=1,
+        expected_steps=1,
+        persisted_steps=1,
+        key_digest=_recovery_key_digest(
+            {job_id},
+            {("source_planning", "plan")},
+        ),
+    )
+
+    _append_native_completed_step(
+        conn,
+        execution,
+        step_kind="source_family",
+        item_key="family:jobspy",
+        detail_code="source_family",
+    )
+    conn.commit()
+    builder.refresh()
+
+    manifest = conn.execute("SELECT * FROM discovery_execution_recoveries").fetchone()
+    assert manifest["state"] == "ready"
+    assert manifest["history_event_id"] == 12
+    assert manifest["expected_membership_count"] == 1
+    assert manifest["persisted_membership_count"] == 1
+    assert manifest["expected_step_count"] == 2
+    assert manifest["persisted_step_count"] == 2
+    assert manifest["key_digest"] == _recovery_key_digest(
+        {job_id},
+        {
+            ("source_planning", "plan"),
+            ("source_family", "family:jobspy"),
+        },
+    )
+
+
+@pytest.mark.parametrize("failure_type", [KeyboardInterrupt, sqlite3.OperationalError])
+def test_native_pipeline_step_fold_rolls_back_when_proof_update_fails(
+    tmp_path,
+    monkeypatch,
+    failure_type,
+) -> None:
+    conn = init_db(tmp_path / f"native-step-proof-rollback-{failure_type.__name__}.db")
+    execution = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id="discover-local",
+        temporal_run_id=f"run-native-step-proof-rollback-{failure_type.__name__}",
+    )
+    job_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"jobctrl:{execution.temporal_run_id}"))
+    _seed_v7_job(conn, job_id)
+    SqliteDiscoveryExecutionRepository(conn).link_job(
+        execution,
+        job_id,
+        cohort_kind="observed_this_run",
+        source_family="jobspy",
+    )
+    _append_native_completed_step(
+        conn,
+        execution,
+        step_kind="source_planning",
+        item_key="plan",
+        detail_code="source_plan",
+    )
+    conn.commit()
+    builder = ProjectionBuilder(
+        conn_factory=lambda: conn,
+        tenant_id=TenantId(execution.tenant_id),
+    )
+    builder.refresh()
+    _write_recovery_manifest(
+        conn,
+        execution,
+        state="ready",
+        mode="native",
+        history_event_id=12,
+        expected_memberships=1,
+        persisted_memberships=1,
+        expected_steps=1,
+        persisted_steps=1,
+        key_digest=_recovery_key_digest(
+            {job_id},
+            {("source_planning", "plan")},
+        ),
+    )
+    _append_native_completed_step(
+        conn,
+        execution,
+        step_kind="source_family",
+        item_key="family:jobspy",
+        detail_code="source_family",
+    )
+    conn.commit()
+
+    def fail_proof_update(*_args, **_kwargs):
+        raise failure_type("simulated proof update failure")
+
+    monkeypatch.setattr(
+        projection_builder_module,
+        "advance_ready_native_recovery_manifests_for_tenant",
+        fail_proof_update,
+    )
+    with pytest.raises(failure_type, match="simulated proof update failure"):
+        builder.refresh()
+
+    assert conn.in_transaction is False
+    assert conn.execute("SELECT COUNT(*) FROM pipeline_step_projections WHERE tenant_id = 'local'").fetchone()[0] == 1
+    manifest = conn.execute("SELECT * FROM discovery_execution_recoveries").fetchone()
+    assert manifest["state"] == "ready"
+    assert manifest["expected_step_count"] == 1
+    assert manifest["persisted_step_count"] == 1
+    assert manifest["key_digest"] == _recovery_key_digest(
+        {job_id},
+        {("source_planning", "plan")},
+    )
 
 
 @pytest.mark.asyncio

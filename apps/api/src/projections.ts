@@ -29,6 +29,7 @@ import type {
   PostedCompensationFactResponse,
 } from "./contracts.js";
 import { allRows, getRow, openDatabase, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { advanceReadyNativeRecoveryManifests } from "./discovery-execution-recovery.js";
 import { normalizeJobLocation } from "./location-normalization.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
@@ -631,6 +632,7 @@ function rebuildPipelineStepProjections(db: SqliteDatabase, tenantId: string): v
         projection.lastUpdatedAt,
       );
     }
+    advanceReadyNativeRecoveryManifests(db, tenantId);
   });
   replace();
 }
