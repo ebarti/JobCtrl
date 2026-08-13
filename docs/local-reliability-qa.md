@@ -418,10 +418,10 @@ live tailoring activities, and an approximate activity backlog of 41. Verify:
 
 - the durable checkpoint and operations response remain `recovering`; partial
   row counts, active slots, and fresh telemetry never promote it to `ready`;
-- the UI renders **Restoring pipeline history**, the 15/72 and 4/16 restoration
-  progress, and the live worker/queue/activity facts;
-- selected-run counts, stage percentages, source/reconciliation ledgers, ETAs,
-  **0%**, and **No work remaining** stay hidden until the checkpoint is `ready`;
+- the UI renders **Checking previous run records**, the 15/72 linked-job and
+  4/16 stage-record check progress, and the live worker/queue/activity facts;
+- selected-run counts, source/reconciliation ledgers, ETAs, **0% terminal**,
+  and **No work remaining** stay hidden until the checkpoint is `ready`;
   and
 - a stale `ready` row whose exact key digest no longer matches is downgraded to
   `recovering` by the API and selected for worker repair;

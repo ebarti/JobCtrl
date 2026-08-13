@@ -137,7 +137,9 @@ The workspace deliberately keeps different scopes and units separate:
 - **Execution sweep** is eligible pre-existing backlog that execution adopted.
 - **Global outside execution** is unrelated backlog and is not part of the
   selected execution's completion claim.
-- **Source-family progress** reports source intake; enrichment and preparation
+- **Source-family completion** reports source intake as separate **running**,
+  **waiting**, and **finished** family counts; these are source families, not
+  browser processes or Temporal workers. Enrichment and preparation
   reconciliation report the downstream drain. A finished crawl can therefore
   coexist with preparation that is still running. Broad-board progress also
   reports how many interrupted search units resumed. While a board is active,
@@ -150,19 +152,21 @@ The workspace deliberately keeps different scopes and units separate:
   task-queue depth is not a count of domain jobs.
 
 Per-stage rows expose outcomes, existing backlog, capacity, observation time,
-and ETA. ETA is an observed range with confidence and basis when enough evidence
-exists; calibrating, paused, stale, unavailable, and no-work states stay explicit
-instead of becoming a guessed finish time. Freshness and the bounded active-work
-inventory show whether the operational facts are current.
+and ETA. Their completion bar uses an exact **N of M finished** count rather
+than the internal term “terminal” or a percentage that can look like active
+progress. ETA is an observed range with confidence and basis when enough
+evidence exists; calibrating, paused, stale, unavailable, and no-work states
+stay explicit instead of becoming a guessed finish time. Freshness and the
+bounded active-work inventory show whether the operational facts are current.
 
 Exact selected-run stage tracking is durable. New executions record their
 membership and stage lineage natively. For an execution created by an older
 JobCtrl version, worker startup and heartbeats rebuild the same lineage from the
-exact Temporal workflow/run history. During that bounded repair, Pipelines shows
-**Restoring pipeline history**, keeps fresh shared-worker and queue facts visible,
-and hides selected-run counts, percentages, and ETAs until the recovered key sets
-have been verified. Partial rows or live-worker telemetry never become a false
-completion claim.
+exact Temporal workflow/run history. During that bounded check, Pipelines shows
+**Checking previous run records**, keeps fresh shared-worker and queue facts
+visible, and hides selected-run counts and ETAs until the recovered key sets have
+been verified. The check finishes automatically and needs no restart. Partial
+rows or live-worker telemetry never become a false completion claim.
 
 ### Stop Or Recover A Discover Run
 
@@ -175,11 +179,12 @@ When an execution fails, Pipelines reports whether the runtime inventory shows
 active work before suggesting another run. A positive total tells you to review
 that work first; unavailable inventory is reported as unknown, never as idle.
 If an authoritative history read is temporarily unavailable or cannot yet be
-mapped unambiguously, JobCtrl shows that history repair will retry automatically.
+mapped unambiguously, JobCtrl says that the previous-run check will retry
+automatically.
 It does not present permanent missing tracking, infer completion from partial
 rows, or require a manual retry. Reconnecting to the exact history restores that
 run or records its actual closed outcome. If an older run ended before its
-history recorded every target, JobCtrl marks that run **Historical run
+history recorded every target, JobCtrl marks that run **Previous run
 incomplete**, preserves all exact recovered evidence, and does not invent or
 repeatedly retry the missing remainder. **Set up a new Discover run** is
 appropriate only when the prior execution is closed or genuinely absent and

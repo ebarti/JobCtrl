@@ -69,7 +69,7 @@ import { ToolRow } from "../../shared/ui/tool-row.js";
 const COUNT_FIELDS = [
   ["eligible", "Eligible"],
   ["waiting", "Waiting"],
-  ["processing", "Processing"],
+  ["processing", "Running"],
   ["succeeded", "Succeeded"],
   ["skipped", "Skipped"],
   ["blocked", "Blocked"],
@@ -86,7 +86,7 @@ const COHORT_FIELDS = [
   ["notEligible", "Not eligible"],
   ["pending", "Pending plan"],
   ["failedPlan", "Failed plan"],
-  ["terminal", "Terminal"],
+  ["terminal", "Finished"],
   ["remaining", "Remaining"],
 ] as const;
 
@@ -161,11 +161,11 @@ function recoveryCoverage(
 
 function recoveryStateLabel(snapshot: PipelineOperationsSnapshot): string {
   return snapshot.projectionCoverage?.status === "incomplete"
-    ? "Historical run incomplete"
+    ? "Previous run incomplete"
     : snapshot.projectionCoverage?.status === "retrying"
-    ? "Repair retry scheduled"
+    ? "Check will retry"
     : snapshot.projectionCoverage?.status === "recovering" || snapshot.execution
-      ? "Restoring history"
+      ? "Checking previous run"
       : "No selected execution";
 }
 
@@ -291,16 +291,19 @@ function stageStatusLabel(status: PipelineStageStatus): string {
 }
 
 function CountSummary({ counts }: { readonly counts: PipelineStageCounts }) {
-  const active = counts.waiting + counts.processing;
+  const finished = completedCount(counts);
   const issues = issueCount(counts);
 
   return (
     <span className="pipeline-count-summary" data-typography="body">
       <span>
-        <b data-typography="strong-body">{active}</b> active
+        <b data-typography="strong-body">{counts.processing}</b> running
       </span>
       <span>
-        <b data-typography="strong-body">{counts.succeeded}</b> done
+        <b data-typography="strong-body">{counts.waiting}</b> waiting
+      </span>
+      <span>
+        <b data-typography="strong-body">{finished}</b> finished
       </span>
       {issues > 0 ? (
         <span>
@@ -701,7 +704,7 @@ function StageRows({
                     title={
                       trackingReady
                         ? "No tracked work is available for an ETA."
-                        : "The estimate will appear after pipeline history restoration completes."
+                        : "The estimate will appear after JobCtrl finishes checking the previous run."
                     }
                   />
                 )}
@@ -728,9 +731,11 @@ function PipelineStageRow({
   const counts = stage.currentExecution;
   const progress = stageProgress(counts);
   const status = stageStatus(counts);
-  const hasProgressDenominator = trackedCount(counts) > 0;
+  const tracked = trackedCount(counts);
+  const finished = completedCount(counts);
+  const hasProgressDenominator = tracked > 0;
   const summary = trackingReady
-    ? `${sentenceCase(stage.stage)} · ${activeCount(counts)} active · ${completedCount(counts)} terminal · ${issueCount(counts)} attention${hasProgressDenominator ? ` · ${etaLabel(stage.eta)}` : ""}`
+    ? `${sentenceCase(stage.stage)} · ${counts.processing} running · ${counts.waiting} waiting · ${finished} finished · ${issueCount(counts)} attention${hasProgressDenominator ? ` · ${etaLabel(stage.eta)}` : ""}`
     : `${sentenceCase(stage.stage)} · ${recoveryLabel}`;
 
   return (
@@ -756,12 +761,16 @@ function PipelineStageRow({
               className="pipeline-stage-row__facts"
             >
               <div>
-                <dt data-typography="label">Active</dt>
-                <dd data-typography="strong-body">{activeCount(counts)}</dd>
+                <dt data-typography="label">Running</dt>
+                <dd data-typography="strong-body">{counts.processing}</dd>
               </div>
               <div>
-                <dt data-typography="label">Terminal</dt>
-                <dd data-typography="strong-body">{completedCount(counts)}</dd>
+                <dt data-typography="label">Waiting</dt>
+                <dd data-typography="strong-body">{counts.waiting}</dd>
+              </div>
+              <div>
+                <dt data-typography="label">Finished</dt>
+                <dd data-typography="strong-body">{finished}</dd>
               </div>
               <div>
                 <dt data-typography="label">Attention</dt>
@@ -769,10 +778,13 @@ function PipelineStageRow({
               </div>
             </dl>
             {hasProgressDenominator ? (
-              <Progress value={progress}>
-                <ProgressLabel data-typography="label">Stage progress</ProgressLabel>
+              <Progress
+                aria-valuetext={`${finished} of ${tracked} finished`}
+                value={progress}
+              >
+                <ProgressLabel data-typography="label">Stage completion</ProgressLabel>
                 <ProgressValue data-typography="label">
-                  {progress}% terminal
+                  {finished} of {tracked} finished
                 </ProgressValue>
               </Progress>
             ) : null}
@@ -798,8 +810,8 @@ function PipelineStageRow({
           </>
         ) : (
           <p className="pipeline-stage-row__recovery-copy" data-typography="body">
-            Exact stage counts and estimates will appear automatically when history
-            restoration completes.
+            Completion counts and estimates will appear automatically after JobCtrl
+            finishes checking the previous run.
           </p>
         )}
       </div>
@@ -1016,15 +1028,15 @@ function ProjectionCoverageNotice({
   const canStartNewRun = isIncomplete && canSafelyPrepareNewDiscoverRun(snapshot);
   const membershipProgress =
     coverage.expectedMembershipCount === null
-      ? `${coverage.persistedMembershipCount} membership records restored so far`
-      : `${coverage.persistedMembershipCount} of ${coverage.expectedMembershipCount} membership records restored`;
+      ? `${coverage.persistedMembershipCount} linked jobs checked so far`
+      : `${coverage.persistedMembershipCount} of ${coverage.expectedMembershipCount} linked jobs checked`;
   const stepProgress =
     coverage.expectedStepCount === null
-      ? `${coverage.persistedStepCount} stage records restored so far`
-      : `${coverage.persistedStepCount} of ${coverage.expectedStepCount} stage records restored`;
+      ? `${coverage.persistedStepCount} stage records checked so far`
+      : `${coverage.persistedStepCount} of ${coverage.expectedStepCount} stage records checked`;
   const errorCopy =
     isRetrying && coverage.errorCode
-      ? ` Last safe repair result: ${sentenceCase(coverage.errorCode)}.`
+      ? ` Last check result: ${sentenceCase(coverage.errorCode)}.`
       : "";
 
   return (
@@ -1038,10 +1050,10 @@ function ProjectionCoverageNotice({
       <IconAlertTriangle aria-hidden="true" />
       <AlertTitle>
         {isIncomplete
-          ? "Historical pipeline record is incomplete"
+          ? "Previous run record is incomplete"
           : isRetrying
-          ? "Pipeline history repair will retry automatically"
-          : "Restoring pipeline history"}
+          ? "Previous run check will retry automatically"
+          : "Checking previous run records"}
       </AlertTitle>
       <AlertDescription>
         {isIncomplete ? (
@@ -1055,11 +1067,10 @@ function ProjectionCoverageNotice({
           </>
         ) : (
           <>
-            JobCtrl is rebuilding exact selected-run ownership from durable Temporal
-            history: {membershipProgress}; {stepProgress}. Selected-run percentages and
-            estimates stay hidden until that proof is complete.{errorCopy} Recovery runs
-            at worker startup and on every worker heartbeat; no manual restart is needed.
-            Global worker, queue, and activity facts remain live below.
+            JobCtrl is verifying the previous Discover run before showing its completion
+            counts and estimates: {membershipProgress}; {stepProgress}.{errorCopy} This
+            check finishes automatically and needs no restart. Live worker, queue, and
+            activity facts remain visible below.
           </>
         )}
       </AlertDescription>
@@ -1107,7 +1118,7 @@ function PipelineLiveFlow({
           <p data-typography="body">
             {trackingReady
               ? "Current discovery stages, shared workers, and work that needs attention."
-              : "Shared workers, queue pressure, and active runtime work remain live during recovery."}
+              : "Shared workers, queue pressure, and active runtime work remain visible while the previous run is checked."}
           </p>
         </div>
         {isActive && snapshot.execution?.discoverWorkflowId ? (
@@ -1178,7 +1189,7 @@ function PipelineLiveFlow({
                         snapshot.sourceFamilies.providerProgress,
                     }
                   : {})}
-                recoveryLabel="Restoring history"
+                recoveryLabel="Checking previous run"
                 stage={stage}
                 trackingReady
               />
@@ -1297,9 +1308,9 @@ function PipelineSources({
           : "pending";
   const sourceStatusLabel =
     sources && sourceIssues > 0
-      ? `${sources.counts.succeeded}/${sources.planned} succeeded · ${sourceIssues} need${sourceIssues === 1 ? "s" : ""} attention`
+      ? `${completedCount(sources.counts)} of ${sources.planned} finished · ${sourceIssues} need${sourceIssues === 1 ? "s" : ""} attention`
       : sources
-        ? `${sources.counts.succeeded}/${sources.planned} succeeded`
+        ? `${completedCount(sources.counts)} of ${sources.planned} finished`
         : "";
 
   return (
@@ -1309,10 +1320,10 @@ function PipelineSources({
         !trackingReady
           ? recoveryLabel
           : sources
-          ? `${sources.counts.succeeded}/${sources.planned} source families succeeded`
+          ? `${completedCount(sources.counts)} of ${sources.planned} source families finished`
           : "Source plan unavailable"
       }
-      description="Discovery intake and the terminal enrichment reconciliation are reported independently."
+      description="Discovery intake and the final enrichment check are reported independently."
       title="Source families and enrichment reconciliation"
     >
       <div className="pipeline-source-reconciliation">
@@ -1333,9 +1344,14 @@ function PipelineSources({
           {sources && trackingReady ? (
             <>
               {sources.planned > 0 ? (
-                <Progress value={completion}>
-                  <ProgressLabel>Source-family progress</ProgressLabel>
-                  <ProgressValue>{completion}% terminal</ProgressValue>
+                <Progress
+                  aria-valuetext={`${completedCount(sources.counts)} of ${sources.planned} finished`}
+                  value={completion}
+                >
+                  <ProgressLabel>Source-family completion</ProgressLabel>
+                  <ProgressValue>
+                    {completedCount(sources.counts)} of {sources.planned} finished
+                  </ProgressValue>
                 </Progress>
               ) : null}
               <CountSummary counts={sources.counts} />
@@ -1661,7 +1677,7 @@ function PipelineHeader({
   const recoveryLabel = recoveryStateLabel(snapshot);
   const sourceLabel = trackingReady
     ? snapshot.sourceFamilies
-      ? `${snapshot.sourceFamilies.counts.succeeded}/${snapshot.sourceFamilies.planned}`
+      ? `${completedCount(snapshot.sourceFamilies.counts)} of ${snapshot.sourceFamilies.planned} finished`
       : execution
         ? "Not available"
         : "No selected execution"
@@ -1680,7 +1696,9 @@ function PipelineHeader({
     <div className="pipeline-operations-header">
       <output className="pipeline-phase-message" aria-live="polite" aria-atomic="true">
         <span data-typography="label">Phase</span>
-        <PipelineStatus status={phase}>{sentenceCase(phase)}</PipelineStatus>
+        <PipelineStatus status={phase}>
+          {trackingReady ? sentenceCase(phase) : recoveryLabel}
+        </PipelineStatus>
       </output>
       <dl className="pipeline-summary-strip" aria-label="Pipeline operations summary">
         <div data-summary-priority="primary">

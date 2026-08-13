@@ -178,10 +178,14 @@ must not enter the read model or DOM. Verify event invalidation, bounded polling
 ETA/freshness/capacity/task-queue degraded states, observation time, and active
 inventory without replacing unavailable evidence with a numeric guess. Exact
 stage outcomes must remain available even when the primary view summarizes them
-as terminal and attention totals. Stopping active discovery must refresh the
-pipeline snapshot. Replacement-run setup is allowed only for an exact zero
-active-work inventory, never for a positive or unavailable inventory, and it
-must not dispatch until the user submits the Discover controls.
+as running, waiting, finished, and attention totals. The UI must use **N of M
+finished**, never **N% terminal**, and must keep source-family counts visibly
+separate from worker and browser capacity. A genuine coverage rebuild must say
+**Checking previous run records**, explain that it finishes automatically, and
+must not present the internal recovery state as ongoing work. Stopping active
+discovery must refresh the pipeline snapshot. Replacement-run setup is allowed
+only for an exact zero active-work inventory, never for a positive or unavailable
+inventory, and it must not dispatch until the user submits the Discover controls.
 
 Browser reads may detect installations only to return opaque kinds and labels.
 They must not disclose paths, launch, adopt, or persist a browser. Enablement is
