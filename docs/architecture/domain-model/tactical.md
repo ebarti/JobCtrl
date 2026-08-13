@@ -440,6 +440,12 @@ for human resolution rather than risking a duplicate employer submission (see
 the 2026-07-03 "At-Most-Once Apply" decision in `docs/decisions.md`). The domain
 model carries eleven stage-state variants in total.
 
+`Exhausted` is retained only as a persistence and event compatibility variant.
+Read models project it as `Failed` with
+`failureReason = attempt_budget_exhausted`, and an explicit retry resets the
+attempt count before returning the stage to `Pending`. It is not a distinct
+user-facing lifecycle state.
+
 - `RetryPolicy { maxAttempts: int, backoffMs?: int }`
 
 **Domain Events** (all events carry `tenantId`):

@@ -25,7 +25,7 @@ import { readLlmSpendHealth } from "./worker-health.js";
 const DEFAULT_TENANT = "local";
 const ETA_SAMPLE_LIMIT = 50;
 const ETA_SAMPLE_WINDOW_MS = 14 * 24 * 60 * 60 * 1_000;
-const CURRENT_DISCOVERY_EXECUTION_DECODER_VERSION = 2;
+const CURRENT_DISCOVERY_EXECUTION_DECODER_VERSION = 3;
 
 const JOB_STAGES = ["enrich", "score", "tailor", "cover"] as const;
 const OPERATIONAL_STAGES = [
@@ -1136,7 +1136,7 @@ function addStageState(counts: PipelineStageCounts, state: string | null): void 
       counts.failed += 1;
       break;
     case "exhausted":
-      counts.exhausted += 1;
+      counts.failed += 1;
       break;
     case "canceled":
       counts.canceled += 1;

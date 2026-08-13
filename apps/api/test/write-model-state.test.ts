@@ -114,6 +114,48 @@ describe("exact-v7 write-model stage state", () => {
     expect(row).toEqual({ state: "pending", metadata_json: null });
   });
 
+  it("makes an exhausted stage retryable by resetting its attempt budget", () => {
+    const fixture = createFixture();
+    fixture.db.prepare(
+      `INSERT INTO jobs (tenant_id, job_id, url, title, discovered_at)
+       VALUES ('local', ?, ?, 'Platform Engineer', ?)`,
+    ).run(JOB_ID, JOB_URL, "2026-07-31T09:00:00.000Z");
+    fixture.db.prepare(
+      `INSERT INTO job_stage_states (
+         tenant_id, job_id, stage, state, attempt_count, max_attempts,
+         updated_at, retryable, error_code, error_message
+       ) VALUES ('local', ?, 'tailor', 'exhausted', 3, 3, ?, 0,
+                 'TAILOR_QUALITY_GATE', 'No acceptable candidate')`,
+    ).run(JOB_ID, "2026-07-31T09:00:00.000Z");
+
+    const retried = retryFailedJobs(fixture.db, {
+      allMatching: false,
+      jobKeys: [JOB_ID],
+    });
+    const row = fixture.db.prepare(
+      `SELECT state, attempt_count, retryable, error_code, error_message
+         FROM job_stage_states
+        WHERE tenant_id = 'local' AND job_id = ? AND stage = 'tailor'`,
+    ).get(JOB_ID);
+    const event = fixture.db.prepare(
+      `SELECT payload_json FROM job_events
+        WHERE tenant_id = 'local' AND job_id = ? AND event_type = 'StageReset'`,
+    ).get(JOB_ID) as { payload_json: string };
+
+    expect(retried).toMatchObject({
+      count: 1,
+      targets: [{ jobUrl: JOB_URL, stage: "tailor" }],
+    });
+    expect(row).toMatchObject({
+      state: "pending",
+      attempt_count: 0,
+      retryable: 1,
+      error_code: null,
+      error_message: null,
+    });
+    expect(JSON.parse(event.payload_json)).toMatchObject({ reset_attempts: true });
+  });
+
   it("resets and queues failed stages by tenant and JobId while retaining URL responses", () => {
     const fixture = createFixture();
     fixture.db.prepare(

@@ -74,7 +74,6 @@ const COUNT_FIELDS = [
   ["skipped", "Skipped"],
   ["blocked", "Blocked"],
   ["failed", "Failed"],
-  ["exhausted", "Exhausted"],
   ["canceled", "Canceled"],
   ["needsVerification", "Needs verification"],
   ["stale", "Stale"],

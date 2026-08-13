@@ -35,7 +35,7 @@ describe("stage-state parity (the second-most important test in the app)", () =>
     it(`<StageBadge state> renders a non-default tone for kind=${kind}`, () => {
       const state = serializedFor(kind) as StageState;
       render(<StageBadge state={state} />);
-      const badge = screen.getByText(state);
+      const badge = screen.getByText(kind === "Exhausted" ? "failed" : state);
       expect(badge).toHaveAttribute("data-slot", "status-badge");
       expect(badge.getAttribute("data-status-tone")).toMatch(TONE_PATTERN);
     });

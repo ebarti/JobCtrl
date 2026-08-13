@@ -1,6 +1,6 @@
 import { type MouseEvent, useRef } from "react";
 import type { RowSelectionState } from "@tanstack/react-table";
-import { STAGE_STATES } from "@jobctrl/contracts";
+import { USER_FACING_STAGE_STATES } from "@jobctrl/contracts";
 
 import { ApplyRunBadge } from "../../contexts/apply/components/ApplyRunBadge.js";
 import { isApplyRunStatus } from "../../contexts/apply/lib/apply-run-status.js";
@@ -819,12 +819,17 @@ export function jobColumns(
       getFilterValue: (row) => row.currentState,
       getFilterSearchValue: (row) =>
         `${row.currentSubstage} ${row.currentState}`,
-      filterValues: STAGE_STATES,
+      filterValues: USER_FACING_STAGE_STATES,
       render: (row) => (
         <TitleStack
           primary={<StageBadge state={row.currentState} />}
           secondary={
-            <span data-typography="metadata">{row.currentSubstage} stage</span>
+            <span data-typography="metadata">
+              {row.currentSubstage} stage
+              {row.failureReason === "attempt_budget_exhausted"
+                ? " · attempt budget exhausted"
+                : ""}
+            </span>
           }
         />
       ),

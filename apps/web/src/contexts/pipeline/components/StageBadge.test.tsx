@@ -35,6 +35,16 @@ describe("<StageBadge>", () => {
     );
   });
 
+  it("renders the persisted exhausted marker as a public failed state", () => {
+    render(<StageBadge state="exhausted" />);
+
+    expect(screen.queryByText("exhausted")).not.toBeInTheDocument();
+    expect(screen.getByText("failed")).toHaveAttribute(
+      "data-status-tone",
+      "danger",
+    );
+  });
+
   it.each([
     ["pending", "clock"],
     ["queued", "clock"],

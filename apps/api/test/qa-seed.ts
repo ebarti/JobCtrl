@@ -1117,7 +1117,7 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
       decoder_version, history_event_id, expected_membership_count,
       persisted_membership_count, expected_step_count, persisted_step_count,
       key_digest, last_error_code, updated_at
-    ) VALUES ('local', ?, ?, 'ready', 'native', 2, 107, ?, ?, ?, ?, ?, NULL, ?)`,
+    ) VALUES ('local', ?, ?, 'ready', 'native', 3, 107, ?, ?, ?, ?, ?, NULL, ?)`,
   ).run(
     discoverWorkflowId,
     discoverRunId,

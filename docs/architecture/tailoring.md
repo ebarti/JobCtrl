@@ -726,8 +726,9 @@ once per durable Tailor execution, not once per candidate-repair call; inner
 attempts remain in an append-only generation audit keyed by workflow execution,
 durable attempt, and recorded time, so a later retry or a rerun of the same
 durable attempt cannot overwrite earlier prompts, candidates, validation, or
-judge evidence. A fifth failed durable execution is
-stored as non-retryable `exhausted` until an explicit attempt reset.
+judge evidence. A fifth failed durable execution retains the compatibility
+`exhausted` marker until an explicit attempt reset; product read models expose
+it as a retryable failure with `attempt_budget_exhausted` as the reason.
 
 Tailoring does not silently discard a missing, cross-job, or stale-generation
 requirement-fit report. That condition blocks Tailor on Score before candidate

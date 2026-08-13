@@ -269,8 +269,11 @@ available at `POST /v1/jobs/bulk-delete-permanent` and
 projection rows, and delete/hide tombstones. It does not write a new suppression
 record, so rediscovery can add the same posting again later.
 `POST /v1/jobs/bulk-retry-failed` accepts the same selected-job or
-all-matching bulk mutation body and resets each active failed or exhausted job's
-failed stage to `pending`; non-failed selected jobs are ignored.
+all-matching bulk mutation body and resets each active failed job's failed stage
+to `pending`; non-failed selected jobs are ignored. A persisted legacy
+`exhausted` row is exposed as `state: "failed"` with
+`failureReason: "attempt_budget_exhausted"`, remains retryable, and has its
+attempt count reset atomically by this action.
 
 ## Feedback learning and policy history
 
@@ -428,10 +431,18 @@ attempt without a separate legacy queue event retains its exact attempt and
 start/completion facts with an unknown queue timestamp. A terminal failed
 fanout preserves its exact partial dispatch set as `incomplete`.
 
+Decoder v3 additionally reconciles native activity lifecycle from the exact
+Temporal history. When a workflow is terminal but an activity process stopped
+before its final durable event was recorded, the decoder appends the proven
+failed or completed terminal event and refreshes the projection. It never
+promotes a queued or running event to terminal from workflow status alone.
+
 The canonical stage-count object contains non-negative integers for
 `eligible`, `waiting`, `processing`, `succeeded`, `skipped`, `blocked`,
-`failed`, `exhausted`, `canceled`, `needsVerification`, `stale`, and
-`unknown`. `existingBacklog` is either `{ kind: "domain_jobs", counts }` or
+`failed`, `canceled`, `needsVerification`, `stale`, and `unknown`. The
+`exhausted` numeric member remains in the wire shape for compatibility but is
+always zero; persisted exhausted-attempt rows contribute to `failed`.
+`existingBacklog` is either `{ kind: "domain_jobs", counts }` or
 `{ kind: "not_separate", reason }`; it is never an unlabeled zero.
 
 `stages[]` uses the fixed operational order `source_planning`, `source_family`,
@@ -447,8 +458,8 @@ has one of three scopes:
   cohorts. Orchestration and PDF work are not synthesized as global queues.
 
 Stage counts distinguish `eligible`, `waiting`, `processing`, `succeeded`,
-`skipped`, `blocked`, `failed`, `exhausted`, `canceled`,
-`needsVerification`, `stale`, and `unknown`. Job-stage counts come from
+`skipped`, `blocked`, `failed`, `canceled`, `needsVerification`, `stale`, and
+`unknown`. Job-stage counts come from
 `job_stage_states`; orchestration and PDF counts come from attempt-aware
 `pipeline_step_projections` keyed by the exact execution identity. The
 execution phase is one of `discovering`, `draining`, `completed`,
@@ -1229,7 +1240,9 @@ Current-version preparation maintenance actions are separate endpoints:
   local-only reset and does not require a worker.
 - `POST /v1/jobs/bulk-retry-failed` accepts selected jobs or all matching jobs.
   With the default `runAfter: false` it only resets each retryable failed stage
-  to `pending`. With `runAfter: true`, the API groups reset preparation stages
+  to `pending`. Attempt-budget failures are included even when their legacy
+  stored marker is non-retryable; the same transaction resets the attempt count
+  to zero. With `runAfter: true`, the API groups reset preparation stages
   (`enrich`, `score`, `tailor`, `cover`) and dispatches bounded batch
   `run_stage` workflows with the selected job URLs and requested worker count.
   The route records pipeline workflow metadata plus per-job `StageQueued`

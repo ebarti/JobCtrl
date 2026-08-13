@@ -240,7 +240,10 @@ evidence, qualifications, and the complete capability matrix.
   approximate task-queue pressure, read-model freshness, and active work. An
   active Discover run can be stopped there. A failed run reports whether work
   remains before offering to set up a replacement run; setup never starts work
-  by itself. Runs keeps the durable workflow history; Jobs and route-level
+  by itself. Exact Temporal-history recovery prevents a closed run from staying
+  visible as active work. An exhausted attempt budget is shown as a retryable
+  failure reason, and Retry resets that budget. Runs keeps the durable workflow
+  history; Jobs and route-level
   detail workspaces keep record-specific evidence and actions adjacent.
 - Inspect Discover, preparation, and Apply through the same Runs vocabulary,
   timeline, terminal-state rules, and cancellation control. Repeated cancel

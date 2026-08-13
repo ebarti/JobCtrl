@@ -761,8 +761,7 @@ async def test_decoder_v2_recovers_exact_legacy_fanouts_and_resumes_partial_repl
     assert all(row["work_plan_state"] == "planned" for row in memberships)
     assert all(json.loads(row["required_steps_json"]) == ["score", "tailor", "cover", "pdf"] for row in memberships)
     assert all(
-        row["preparation_workflow_id"] == f"prep-job-{job_index_by_id[str(row['job_id'])]:03d}"
-        for row in memberships
+        row["preparation_workflow_id"] == f"prep-job-{job_index_by_id[str(row['job_id'])]:03d}" for row in memberships
     )
     assert all(row["work_plan_reason"] == _LEGACY_WORK_PLAN_REASON_CODE for row in memberships)
 
@@ -799,7 +798,7 @@ async def test_decoder_v2_recovers_exact_legacy_fanouts_and_resumes_partial_repl
     ready_manifest = dict(conn.execute("SELECT * FROM discovery_execution_recoveries").fetchone())
     assert ready_manifest["state"] == "ready"
     assert ready_manifest["mode"] == "reconstructed"
-    assert ready_manifest["decoder_version"] == 2
+    assert ready_manifest["decoder_version"] == 3
     assert ready_manifest["history_event_id"] == 1_000
     assert ready_manifest["expected_membership_count"] == 72
     assert ready_manifest["persisted_membership_count"] == 72
@@ -1016,6 +1015,7 @@ def test_native_history_excludes_runtime_only_live_enrichment_key() -> None:
     records = [
         {
             "kind": "scheduled",
+            "event_id": 1,
             "activity_type": "discovery_enrichment",
             "payload": {
                 "discovery_execution": execution,
@@ -1025,6 +1025,7 @@ def test_native_history_excludes_runtime_only_live_enrichment_key() -> None:
         },
         {
             "kind": "scheduled",
+            "event_id": 2,
             "activity_type": "discovery_enrichment",
             "payload": {
                 "discovery_execution": execution,
@@ -1091,7 +1092,7 @@ def test_recovery_manifest_upserts_monotonic_history_watermark(tmp_path) -> None
     row = conn.execute("SELECT * FROM discovery_execution_recoveries").fetchone()
     assert row["state"] == "ready"
     assert row["mode"] == "reconstructed"
-    assert row["decoder_version"] == 2
+    assert row["decoder_version"] == 3
     assert row["history_event_id"] == 18
     assert row["key_digest"] == digest
     assert row["last_error_code"] is None
@@ -1796,9 +1797,7 @@ async def test_reconciliation_repairs_stale_ready_manifest(tmp_path, monkeypatch
         persisted_memberships=1,
         expected_steps=0,
         persisted_steps=0,
-        key_digest=_recovery_key_digest(
-            {str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:old"))}, set()
-        ),
+        key_digest=_recovery_key_digest({str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:old"))}, set()),
     )
 
     async def normalized_history(_handle, _converter):
@@ -1880,7 +1879,7 @@ async def test_reconciliation_revalidates_prior_decoder_manifest(tmp_path, monke
 
     row = conn.execute("SELECT * FROM discovery_execution_recoveries").fetchone()
     assert row["state"] == "ready"
-    assert row["decoder_version"] == 2
+    assert row["decoder_version"] == 3
 
 
 @pytest.mark.asyncio
@@ -1957,6 +1956,179 @@ async def test_native_run_is_ready_only_after_declared_step_is_projected(tmp_pat
     assert row["mode"] == "native"
     assert row["history_event_id"] == 2
     assert row["expected_step_count"] == row["persisted_step_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_decoder_v3_repairs_native_timeout_left_running_by_closed_workflow(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    conn = init_db(tmp_path / "native-timeout.db")
+    execution = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id="discover-local",
+        temporal_run_id="run-native-timeout",
+    )
+    tenant_id = TenantId(execution.tenant_id)
+    detail = PipelineStepSafeDetail(code="source_family", item_count=1)
+    for event in (
+        create_pipeline_step_queued(
+            tenant_id,
+            PipelineStepQueuedPayload(
+                execution=execution,
+                step_kind="source_family",
+                item_key="family:jobspy",
+                attempt=3,
+                queued_at="2026-08-12T19:12:00+00:00",
+                detail=detail,
+            ),
+        ),
+        create_pipeline_step_started(
+            tenant_id,
+            PipelineStepStartedPayload(
+                execution=execution,
+                step_kind="source_family",
+                item_key="family:jobspy",
+                attempt=3,
+                started_at="2026-08-12T19:12:01+00:00",
+                detail=detail,
+            ),
+        ),
+    ):
+        record_job_event(
+            conn,
+            None,
+            "workflow",
+            event.event_type,
+            payload=dict(event.payload),
+            occurred_at=event.occurred_at,
+        )
+    conn.commit()
+    ProjectionBuilder(
+        conn_factory=lambda: conn,
+        tenant_id=tenant_id,
+    ).refresh()
+    assert (
+        conn.execute("SELECT state FROM pipeline_step_projections WHERE step_kind = 'source_family'").fetchone()[
+            "state"
+        ]
+        == "running"
+    )
+
+    _ensure_recovery_manifest_table(conn)
+    step_keys = {("source_family", "family:jobspy")}
+    _write_recovery_manifest(
+        conn,
+        execution,
+        state="ready",
+        mode="native",
+        history_event_id=4,
+        expected_memberships=0,
+        persisted_memberships=0,
+        expected_steps=1,
+        persisted_steps=1,
+        key_digest=_recovery_key_digest(set(), step_keys),
+    )
+    # This is the settled checkpoint shipped before native terminal lifecycle
+    # reconciliation was introduced.
+    conn.execute("UPDATE discovery_execution_recoveries SET decoder_version = 2")
+    conn.commit()
+
+    records = [
+        {
+            "kind": "scheduled",
+            "history_event_id": 1,
+            "event_id": 1,
+            "event_time": "2026-08-12T19:11:59+00:00",
+            "activity_type": "discovery_source_family",
+            "payload": {
+                "family": "jobspy",
+                "discovery_execution": {
+                    "tenant_id": execution.tenant_id,
+                    "workflow_id": execution.workflow_id,
+                    "temporal_run_id": execution.temporal_run_id,
+                },
+            },
+        },
+        {
+            "kind": "started",
+            "history_event_id": 2,
+            "scheduled_event_id": 1,
+            "event_time": "2026-08-12T19:12:01+00:00",
+            "attempt": 3,
+        },
+        {
+            "kind": "failed",
+            "history_event_id": 3,
+            "scheduled_event_id": 1,
+            "started_event_id": 2,
+            "event_time": "2026-08-12T19:42:01+00:00",
+            "error_code": "activity_timeout",
+            "retryable": False,
+        },
+        {
+            "kind": "workflow_terminal",
+            "history_event_id": 4,
+            "event_time": "2026-08-12T19:42:02+00:00",
+            "state": "succeeded",
+        },
+    ]
+
+    async def normalized_history(_handle, _converter):
+        return records
+
+    monkeypatch.setattr(execution_reconciliation, "_normalize_temporal_history", normalized_history)
+
+    class FakeClient:
+        data_converter = object()
+
+        @staticmethod
+        def get_workflow_handle(workflow_id, *, run_id):
+            assert workflow_id == execution.workflow_id
+            assert run_id == execution.temporal_run_id
+            return object()
+
+    result = await execution_reconciliation.reconcile_legacy_discovery_execution(
+        FakeClient(),
+        workflow_id=execution.workflow_id,
+        temporal_run_id=execution.temporal_run_id,
+        conn=conn,
+    )
+
+    assert result.activities_recovered == 1
+    step = conn.execute(
+        """
+        SELECT state, attempt, error_code, retryable
+        FROM pipeline_step_projections
+        WHERE step_kind = 'source_family' AND item_key = 'family:jobspy'
+        """
+    ).fetchone()
+    assert dict(step) == {
+        "state": "failed",
+        "attempt": 3,
+        "error_code": "activity-timeout",
+        "retryable": 0,
+    }
+    failed_payload = json.loads(
+        conn.execute("SELECT payload_json FROM job_events WHERE event_type = 'PipelineStepFailed'").fetchone()[
+            "payload_json"
+        ]
+    )
+    assert failed_payload["recoveredFromTemporalHistory"] is True
+    assert "recoveredFromLegacyHistory" not in failed_payload
+    manifest = dict(conn.execute("SELECT * FROM discovery_execution_recoveries").fetchone())
+    assert manifest["state"] == "ready"
+    assert manifest["decoder_version"] == 3
+
+    event_count = conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0]
+    replay = await execution_reconciliation.reconcile_legacy_discovery_execution(
+        FakeClient(),
+        workflow_id=execution.workflow_id,
+        temporal_run_id=execution.temporal_run_id,
+        conn=conn,
+    )
+    assert replay.activities_recovered == 0
+    assert conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == event_count
 
 
 @pytest.mark.asyncio

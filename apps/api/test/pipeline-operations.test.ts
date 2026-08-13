@@ -455,7 +455,7 @@ describe("pipeline operations read model", () => {
     expect(snapshot(fixture).sourceFamilies?.providerProgress).toBeUndefined();
   });
 
-  it("uses every bucket exactly once for the current execution stage scope", () => {
+  it("folds attempt exhaustion into the public failed outcome", () => {
     const fixture = createFixture();
     insertExecution(fixture, { status: "in_progress" });
     const states = [
@@ -485,8 +485,8 @@ describe("pipeline operations read model", () => {
       succeeded: 1,
       skipped: 1,
       blocked: 1,
-      failed: 1,
-      exhausted: 1,
+      failed: 2,
+      exhausted: 0,
       canceled: 1,
       needsVerification: 1,
       stale: 1,
@@ -1337,7 +1337,7 @@ function insertReadyRecoveryCheckpoints(fixture: Fixture): void {
          decoder_version, history_event_id, expected_membership_count,
          persisted_membership_count, expected_step_count, persisted_step_count,
          key_digest, last_error_code, updated_at
-       ) VALUES ('local', ?, ?, 'ready', 'native', 2, 100, ?, ?, ?, ?, ?, NULL, ?)`,
+       ) VALUES ('local', ?, ?, 'ready', 'native', 3, 100, ?, ?, ?, ?, ?, NULL, ?)`,
     ).run(
       execution.workflow_id,
       execution.temporal_run_id,
@@ -1375,7 +1375,7 @@ function insertRecoveryCheckpoint(
     DISCOVER_WORKFLOW_ID,
     DISCOVER_RUN_ID,
     input.state,
-    input.decoderVersion ?? 2,
+    input.decoderVersion ?? 3,
     input.expectedMembershipCount,
     input.persistedMembershipCount,
     input.expectedStepCount,
