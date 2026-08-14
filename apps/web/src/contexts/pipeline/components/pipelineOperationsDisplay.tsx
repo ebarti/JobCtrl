@@ -60,6 +60,33 @@ export function formatSeconds(value: number): string {
   return `${(value / 3_600).toFixed(value < 36_000 ? 1 : 0)} hr`;
 }
 
+function pausedEtaReasonLabel(
+  reason: Extract<PipelineEta, { status: "paused" }>["reason"],
+): string {
+  switch (reason) {
+    case "no_dispatch":
+      return "No recent dispatch activity";
+    case "budget_exceeded":
+      return "Budget limit reached";
+    case "blocked":
+      return "Work is blocked";
+    case "worker_unavailable":
+      return "Worker unavailable";
+  }
+}
+
+export function etaStatusLabel(eta: PipelineEta): string {
+  return eta.status === "paused" ? "No ETA" : sentenceCase(eta.status);
+}
+
+export function etaReasonLabel(
+  eta: Extract<PipelineEta, { status: "paused" | "stale" | "unavailable" }>,
+): string {
+  return eta.status === "paused"
+    ? pausedEtaReasonLabel(eta.reason)
+    : sentenceCase(eta.reason);
+}
+
 export function etaLabel(eta: PipelineEta): string {
   switch (eta.status) {
     case "available":
@@ -67,7 +94,7 @@ export function etaLabel(eta: PipelineEta): string {
     case "calibrating":
       return `Calibrating · ${eta.completedSamples}/${eta.minimumSamples}`;
     case "paused":
-      return `Paused · ${sentenceCase(eta.reason)}`;
+      return `No ETA · ${pausedEtaReasonLabel(eta.reason)}`;
     case "stale":
       return `Stale · ${sentenceCase(eta.reason)}`;
     case "unavailable":
@@ -168,7 +195,7 @@ export function CohortDetails({ cohort, label }: { readonly cohort: PipelineExec
 
 export function EtaDetails({ eta, label }: { readonly eta: PipelineEta; readonly label: string }) {
   const facts: Fact[] = [
-    { label: "Status", value: sentenceCase(eta.status) },
+    { label: "Status", value: etaStatusLabel(eta) },
     ...(eta.status === "available"
       ? [
           { label: "Low", value: formatSeconds(eta.lowSeconds) },
@@ -187,7 +214,7 @@ export function EtaDetails({ eta, label }: { readonly eta: PipelineEta; readonly
         ]
       : []),
     ...(eta.status === "paused" || eta.status === "stale" || eta.status === "unavailable"
-      ? [{ label: "Reason", value: sentenceCase(eta.reason) }]
+      ? [{ label: "Reason", value: etaReasonLabel(eta) }]
       : []),
     { label: "As of", value: formatDateTime(eta.asOf) },
   ];

@@ -532,10 +532,12 @@ function applyModelValue(model: string): (typeof APPLY_MODEL_OPTIONS)[number] {
 
 export interface StageTriggerPanelProps {
   readonly stagePanels?: Partial<Record<PipelineRunStage, ReactNode>>;
+  readonly stageRunBlockReasons?: Partial<Record<PipelineRunStage, string>>;
 }
 
 export function StageTriggerPanel({
   stagePanels = {},
+  stageRunBlockReasons = {},
 }: StageTriggerPanelProps = {}) {
   const { featureFlags } = usePorts();
   const runAvailability = getApiCapabilityAvailability(
@@ -543,6 +545,7 @@ export function StageTriggerPanel({
     "runPipelineStages",
   );
   const unavailableReasonId = useId();
+  const blockedReasonId = useId();
   const runStages = useRunPipelineStagesMutation();
   const [submittedStage, setSubmittedStage] = useState<Stage | null>(null);
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
@@ -556,6 +559,7 @@ export function StageTriggerPanel({
   )
     ? persistedActiveStage
     : "discover";
+  const stageRunBlockReason = stageRunBlockReasons[activeStage] ?? null;
   const config = useStageTriggerStore((state) => state.configs[activeStage]);
   const setActiveStage = useStageTriggerStore((state) => state.setActiveStage);
   const patchStageConfig = useStageTriggerStore(
@@ -638,7 +642,7 @@ export function StageTriggerPanel({
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!runAvailability.available) return;
+    if (!runAvailability.available || stageRunBlockReason) return;
     const workerSnapshot = await health.refetch();
     if (workerSnapshot.data?.worker.status !== "healthy") return;
     setSubmittedStage(activeStage);
@@ -1018,10 +1022,17 @@ export function StageTriggerPanel({
       <div className="stage-trigger-actions">
         <Button
           aria-describedby={
-            runAvailability.available ? undefined : unavailableReasonId
+            !runAvailability.available
+              ? unavailableReasonId
+              : stageRunBlockReason
+                ? blockedReasonId
+                : undefined
           }
           disabled={
-            runStages.isPending || workerUnhealthy || !runAvailability.available
+            runStages.isPending ||
+            workerUnhealthy ||
+            !runAvailability.available ||
+            Boolean(stageRunBlockReason)
           }
           type="submit"
         >
@@ -1056,6 +1067,15 @@ export function StageTriggerPanel({
             Pipeline runs require the local app. <a href="/runs">Review bundled runs</a>
             {" or "}
             <a href={LOCAL_INSTALL_GUIDE_URL}>install JobCtrl</a>.
+          </span>
+        ) : stageRunBlockReason ? (
+          <span
+            className="status-line"
+            data-typography="body"
+            id={blockedReasonId}
+            role="status"
+          >
+            {stageRunBlockReason}
           </span>
         ) : workerUnhealthy ? (
           <span

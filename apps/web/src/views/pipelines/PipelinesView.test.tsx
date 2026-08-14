@@ -135,6 +135,16 @@ describe("PipelinesView", () => {
     expect(
       within(crawl).getByRole("heading", { name: "Provider traversal" }),
     ).toBeInTheDocument();
+    expect(
+      within(crawl)
+        .getByRole("heading", { name: "Provider traversal" })
+        .closest("section"),
+    ).toHaveClass("pipeline-stage-row__provider-progress");
+    expect(
+      within(crawl)
+        .getByRole("heading", { name: "Exact outcomes" })
+        .closest("section"),
+    ).toHaveClass("pipeline-stage-row__outcomes");
     expect(crawl).toHaveTextContent(
       "Indeed · 3 pages completed; provider total unavailable · 42 raw listings seen · 9 jobs emitted · more pages available",
     );
@@ -725,6 +735,15 @@ describe("PipelinesView", () => {
       ...pipelinesCompletedWithIssuesSnapshot,
       activeItemsTotal: 0,
       activeItemsTruncated: false,
+      capacity: {
+        ...pipelinesCompletedWithIssuesSnapshot.capacity,
+        activeSlots: 0,
+        availableSlots:
+          pipelinesCompletedWithIssuesSnapshot.capacity.status === "available"
+            ? pipelinesCompletedWithIssuesSnapshot.capacity.configuredSlots
+            : 0,
+        slotSaturation: 0,
+      },
     }));
     const runPipelineStages = vi.fn();
     useStageTriggerStore.getState().setActiveStage("apply");
@@ -792,6 +811,207 @@ describe("PipelinesView", () => {
 
     expect(screen.queryByRole("button", { name: "Stop discovery" })).not.toBeInTheDocument();
   });
+
+  it("explains that a closed draining run needs a new Discover run instead of resume", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn();
+    useStageTriggerStore.getState().setActiveStage("apply");
+    const pipelineOperations = vi.fn(async () => ({
+      ...pipelinesDiscoveringSnapshot,
+      execution: {
+        ...pipelinesDiscoveringSnapshot.execution!,
+        workflowStatus: "succeeded" as const,
+        phase: "draining" as const,
+        finishedAt: "2026-07-14T12:04:00.000Z",
+      },
+      capacity: {
+        ...pipelinesDiscoveringSnapshot.capacity,
+        activeSlots: 0,
+        availableSlots:
+          pipelinesDiscoveringSnapshot.capacity.status === "available"
+            ? pipelinesDiscoveringSnapshot.capacity.configuredSlots
+            : 0,
+        slotSaturation: 0,
+      },
+      stages: pipelinesDiscoveringSnapshot.stages.map((stage) =>
+        stage.stage === "source_family"
+          ? {
+              ...stage,
+              eta: {
+                status: "paused" as const,
+                reason: "no_dispatch" as const,
+                asOf: stage.asOf,
+              },
+            }
+          : stage,
+      ),
+      activeItems: [],
+      activeItemsTotal: 0,
+      activeItemsTruncated: false,
+      activeStageCounts: [],
+      overallEta: {
+        status: "paused" as const,
+        reason: "no_dispatch" as const,
+        asOf: pipelinesDiscoveringSnapshot.generatedAt,
+      },
+    }));
+    renderWithProviders(<PipelinesView />, {
+      ports: buildTestPorts({ api: { pipelineOperations, runPipelineStages } }),
+    });
+    await screen.findByRole("heading", { name: "Live pipeline" });
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("This Discover run has ended");
+    expect(alert).toHaveTextContent("there is no paused workflow to resume");
+    const restart = within(alert).getByRole("link", {
+      name: "Set up a new Discover run",
+    });
+    expect(restart).toHaveAttribute("href", "#pipeline-actions");
+
+    const crawl = screen.getByRole("region", { name: "Crawl sources stage" });
+    expect(
+      within(crawl).getByRole("button", { name: /Crawl sources/i }),
+    ).toHaveTextContent("No ETA · No recent dispatch activity");
+
+    await user.click(
+      screen.getByRole("button", { name: /Overall completion estimate/i }),
+    );
+    expect(screen.getByLabelText("Overall ETA facts")).toHaveTextContent(
+      "StatusNo ETA",
+    );
+
+    await user.click(restart);
+    expect(runPipelineStages).not.toHaveBeenCalled();
+    expect(screen.getByRole("tab", { name: "Discover" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      await screen.findByRole("button", { name: "Run Discover" }),
+    ).toBeEnabled();
+  });
+
+  it("blocks a manually selected replacement Discover run while shared work is active", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn();
+    useStageTriggerStore.getState().setActiveStage("apply");
+    const pipelineOperations = vi.fn(async () => ({
+      ...pipelinesDiscoveringSnapshot,
+      execution: {
+        ...pipelinesDiscoveringSnapshot.execution!,
+        workflowStatus: "succeeded" as const,
+        phase: "draining" as const,
+        finishedAt: "2026-07-14T12:04:00.000Z",
+      },
+      capacity: {
+        ...pipelinesDiscoveringSnapshot.capacity,
+        activeSlots: 1,
+        availableSlots:
+          pipelinesDiscoveringSnapshot.capacity.status === "available"
+            ? pipelinesDiscoveringSnapshot.capacity.configuredSlots - 1
+            : 0,
+        slotSaturation:
+          pipelinesDiscoveringSnapshot.capacity.status === "available"
+            ? 1 / pipelinesDiscoveringSnapshot.capacity.configuredSlots
+            : 0,
+      },
+      activeItems: [],
+      activeItemsTotal: 0,
+      activeItemsTruncated: false,
+      activeStageCounts: [],
+    }));
+    renderWithProviders(<PipelinesView />, {
+      ports: buildTestPorts({ api: { pipelineOperations, runPipelineStages } }),
+    });
+    await screen.findByRole("heading", { name: "Live pipeline" });
+
+    expect(
+      screen.queryByRole("link", { name: "Set up a new Discover run" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Discover" }));
+
+    const runDiscover = screen.getByRole("button", { name: "Run Discover" });
+    expect(runDiscover).toBeDisabled();
+    expect(runDiscover).toHaveAccessibleDescription(
+      "Wait for active pipeline work to finish before starting a new Discover run.",
+    );
+    await user.click(runDiscover);
+    expect(runPipelineStages).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      capacity: "busy",
+      label: "failed with busy capacity",
+      snapshot: pipelinesFailedHistorySnapshot,
+    },
+    {
+      capacity: "unavailable",
+      label: "failed with unavailable capacity",
+      snapshot: pipelinesFailedHistorySnapshot,
+    },
+    {
+      capacity: "busy",
+      label: "completed with issues and busy capacity",
+      snapshot: pipelinesCompletedWithIssuesSnapshot,
+    },
+    {
+      capacity: "unavailable",
+      label: "completed with issues and unavailable capacity",
+      snapshot: pipelinesCompletedWithIssuesSnapshot,
+    },
+  ])(
+    "blocks the manual Discover bypass for a $label replacement run",
+    async ({ capacity, snapshot }) => {
+      const user = userEvent.setup();
+      const runPipelineStages = vi.fn();
+      useStageTriggerStore.getState().setActiveStage("apply");
+      const pipelineOperations = vi.fn(async () => ({
+        ...snapshot,
+        capacity:
+          capacity === "unavailable"
+            ? pipelinesUnavailableTelemetrySnapshot.capacity
+            : {
+                ...snapshot.capacity,
+                activeSlots: 1,
+                availableSlots:
+                  snapshot.capacity.status === "available"
+                    ? snapshot.capacity.configuredSlots - 1
+                    : 0,
+                slotSaturation:
+                  snapshot.capacity.status === "available"
+                    ? 1 / snapshot.capacity.configuredSlots
+                    : 0,
+              },
+        activeItems: [],
+        activeItemsTotal: 0,
+        activeItemsTruncated: false,
+        activeStageCounts: [],
+      }));
+      renderWithProviders(<PipelinesView />, {
+        ports: buildTestPorts({
+          api: { pipelineOperations, runPipelineStages },
+        }),
+      });
+      await screen.findByRole("heading", { name: "Live pipeline" });
+
+      expect(
+        screen.queryByRole("link", { name: "Set up a new Discover run" }),
+      ).not.toBeInTheDocument();
+      await user.click(screen.getByRole("tab", { name: "Discover" }));
+      const runDiscover = screen.getByRole("button", {
+        name: "Run Discover",
+      });
+      expect(runDiscover).toBeDisabled();
+      expect(runDiscover).toHaveAccessibleDescription(
+        capacity === "unavailable"
+          ? "Shared runtime capacity must be available before starting a new Discover run."
+          : "Wait for active pipeline work to finish before starting a new Discover run.",
+      );
+      await user.click(runDiscover);
+      expect(runPipelineStages).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps source-family progress separate from exactly two reconciliation ledgers", async () => {
     await renderPipelineOperations(pipelinesThreeSourceSixStepSnapshot);

@@ -451,6 +451,12 @@ Pipelines component tests, and the live browser path together. The live pass
 must compare the operations response with the rendered workspace so shared-pool
 telemetry cannot be mistaken for selected-run proof.
 
+When source-family provider traversal is present, expand **Crawl sources** at a
+desktop viewport and assert that its traversal evidence and exact-outcomes
+ledger have disjoint layout rectangles. Repeat below the responsive breakpoint
+and assert that traversal finishes above the outcomes ledger. This is the
+regression guard for multiple evidence blocks sharing one stage detail row.
+
 Also cover the retry and terminal edge cases. A successful fanout retry with
 `attempt > 1` must restore exact membership and steps without inventing a queue
 timestamp. A failed attempt that is waiting to retry, or a later attempt that is
