@@ -196,13 +196,22 @@ function resetResolvedJobStage(
   if (stage === "enrich") {
     resetEnrichmentAggregate(db, LOCAL_TENANT, job.jobId);
   }
+  const current = getRow<{ state: string }>(
+    db,
+    `SELECT state
+       FROM job_stage_states
+      WHERE tenant_id = ? AND job_id = ? AND stage = ?
+      LIMIT 1`,
+    [LOCAL_TENANT, job.jobId, stage],
+  );
+  const resetAttempts = options.resetAttempts || current?.state === "exhausted";
   const stageOptions: Parameters<typeof upsertStageStateById>[5] = {
     retryable: true,
     clearTiming: true,
     clearMetadata: true,
     skipValidation: true,
   };
-  if (options.resetAttempts) {
+  if (resetAttempts) {
     stageOptions.attemptCount = 0;
   }
   upsertStageStateById(db, LOCAL_TENANT, job.jobId, stage, "pending", stageOptions);
@@ -216,7 +225,7 @@ function resetResolvedJobStage(
     eventType: "StageReset",
     level: "info",
     message: `Retry reset requested for ${stage}`,
-    payload: { reset_attempts: options.resetAttempts },
+    payload: { reset_attempts: resetAttempts },
   });
   return { jobUrl: job.jobUrl, stage: getStageStateById(db, LOCAL_TENANT, job.jobId, stage) };
 }
@@ -1695,7 +1704,7 @@ function getStageState(db: SqliteDatabase, jobUrl: string, stage: Stage): StageS
   }
   return {
     stage,
-    state: isStageState(row.state) ? row.state : "pending",
+    state: row.state === "exhausted" ? "failed" : isStageState(row.state) ? row.state : "pending",
     attemptCount: Number(row.attempt_count ?? 0),
     maxAttempts: nullableNumber(row.max_attempts) ?? DEFAULT_MAX_ATTEMPTS[stage],
     startedAt: nullableString(row.started_at),
@@ -1704,9 +1713,18 @@ function getStageState(db: SqliteDatabase, jobUrl: string, stage: Stage): StageS
     durationMs: nullableNumber(row.duration_ms),
     errorCode: nullableString(row.error_code),
     errorMessage: nullableString(row.error_message),
-    retryable: row.retryable === null || row.retryable === undefined ? true : Boolean(row.retryable),
+    failureReason: row.state === "exhausted" ? "attempt_budget_exhausted" : null,
+    retryable:
+      row.state === "exhausted"
+        ? true
+        : row.retryable === null || row.retryable === undefined
+          ? true
+          : Boolean(row.retryable),
     blockedBy: parseStringArray(nullableString(row.blocked_by_json)),
-    nextAction: nullableString(row.next_action),
+    nextAction:
+      row.state === "exhausted"
+        ? "Retry to reset the attempt budget."
+        : nullableString(row.next_action),
   };
 }
 
@@ -1741,7 +1759,8 @@ function currentFailedStage(db: SqliteDatabase, jobUrl: string): Stage | null {
         (row) =>
           STAGES.includes(row.stage) &&
           ["failed", "exhausted"].includes(row.state) &&
-          (row.stage === "enrich" ||
+          (row.state === "exhausted" ||
+            row.stage === "enrich" ||
             (row.retryable !== 0 &&
               latestStageRetryableOverride(db, jobUrl, row.stage) !== false)),
       )
@@ -1892,7 +1911,7 @@ function getStageStateById(db: SqliteDatabase, tenantId: string, jobId: string, 
   }
   return {
     stage,
-    state: isStageState(row.state) ? row.state : "pending",
+    state: row.state === "exhausted" ? "failed" : isStageState(row.state) ? row.state : "pending",
     attemptCount: Number(row.attempt_count ?? 0),
     maxAttempts: nullableNumber(row.max_attempts) ?? DEFAULT_MAX_ATTEMPTS[stage],
     startedAt: nullableString(row.started_at),
@@ -1901,9 +1920,18 @@ function getStageStateById(db: SqliteDatabase, tenantId: string, jobId: string, 
     durationMs: nullableNumber(row.duration_ms),
     errorCode: nullableString(row.error_code),
     errorMessage: nullableString(row.error_message),
-    retryable: row.retryable === null || row.retryable === undefined ? true : Boolean(row.retryable),
+    failureReason: row.state === "exhausted" ? "attempt_budget_exhausted" : null,
+    retryable:
+      row.state === "exhausted"
+        ? true
+        : row.retryable === null || row.retryable === undefined
+          ? true
+          : Boolean(row.retryable),
     blockedBy: parseStringArray(nullableString(row.blocked_by_json)),
-    nextAction: nullableString(row.next_action),
+    nextAction:
+      row.state === "exhausted"
+        ? "Retry to reset the attempt budget."
+        : nullableString(row.next_action),
   };
 }
 
@@ -1932,7 +1960,8 @@ function currentFailedStageById(db: SqliteDatabase, tenantId: string, jobId: str
         (row) =>
           STAGES.includes(row.stage) &&
           ["failed", "exhausted"].includes(row.state) &&
-          (row.stage === "enrich" ||
+          (row.state === "exhausted" ||
+            row.stage === "enrich" ||
             (row.retryable !== 0 &&
               latestStageRetryableOverrideById(db, tenantId, jobId, row.stage) !== false)),
       )

@@ -2,9 +2,9 @@
 
 This module is deliberately a write-side repair controller.  It reads one exact
 Temporal workflow/run history and append-only discovery evidence; it never uses
-global worker telemetry to attribute work to an execution.  Activities that
-already carry ``discovery_execution`` are ignored because their normal activity
-lifecycle owns those rows and events.
+global worker telemetry to attribute work to an execution. Native activities
+normally own their durable lifecycle, while reconciliation closes a lifecycle
+that Temporal proves terminal after the activity process stopped reporting.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ _DISCOVERY_ACTIVITY_TYPES = frozenset(
     }
 )
 _STEP_ORDER = ("score", "tailor", "cover", "pdf")
-_DECODER_VERSION = 2
+_DECODER_VERSION = 3
 _LEGACY_WORK_PLAN_REASON_CODE = "legacy_history_recovery"
 _HISTORY_READ_ERROR_CODE = "temporal-history-read-failed"
 
@@ -119,6 +119,16 @@ def decode_legacy_discovery_history_v1(
     leaving ``queued_at`` absent rather than inventing a retry queue time.
     """
 
+    return _decode_discovery_activity_attempts(records, native=False)
+
+
+def _decode_discovery_activity_attempts(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    native: bool,
+) -> tuple[list[LegacyActivityAttempt], int]:
+    """Decode exact activity attempts for one lineage authority."""
+
     scheduled: dict[int, Mapping[str, Any]] = {}
     started: dict[int, list[tuple[int, Mapping[str, Any]]]] = defaultdict(list)
     terminal: dict[int, list[tuple[int, Mapping[str, Any]]]] = defaultdict(list)
@@ -138,13 +148,14 @@ def decode_legacy_discovery_history_v1(
         if activity_type not in _DISCOVERY_ACTIVITY_TYPES:
             continue
         payload = _mapping(scheduled_record.get("payload"))
-        if _first(payload, "discovery_execution", "discoveryExecution") is not None:
+        has_native_lineage = _first(payload, "discovery_execution", "discoveryExecution") is not None
+        if not native and has_native_lineage:
             skipped_native += 1
             continue
+        if native != has_native_lineage:
+            continue
         started_entry = started.get(scheduled_event_id, [])[-1:]
-        started_position, started_record = (
-            started_entry[0] if started_entry else (-1, None)
-        )
+        started_position, started_record = started_entry[0] if started_entry else (-1, None)
         terminal_record = _terminal_record_for_started(
             started_position,
             started_record,
@@ -160,11 +171,7 @@ def decode_legacy_discovery_history_v1(
                 activity_type=activity_type,
                 payload=payload,
                 result=_mapping(terminal_record.get("result")) if terminal_record else {},
-                queued_at=(
-                    str(scheduled_record.get("event_time") or "")
-                    if attempt == 1
-                    else None
-                ),
+                queued_at=(str(scheduled_record.get("event_time") or "") if attempt == 1 else None),
                 started_at=(str(started_record.get("event_time") or "") if started_record else None),
                 finished_at=(str(terminal_record.get("event_time") or "") if terminal_record else None),
                 attempt=attempt,
@@ -196,9 +203,7 @@ def _terminal_record_for_started(
     started_event_id = _safe_int(started_record.get("history_event_id"))
     candidates: list[Mapping[str, Any]] = []
     for terminal_position, terminal_record in terminals:
-        terminal_started_event_id = _safe_int(
-            terminal_record.get("started_event_id")
-        )
+        terminal_started_event_id = _safe_int(terminal_record.get("started_event_id"))
         if terminal_started_event_id:
             if started_event_id and terminal_started_event_id == started_event_id:
                 candidates.append(terminal_record)
@@ -288,19 +293,35 @@ def _native_step_keys_v1(
 ) -> set[tuple[str, str]]:
     """Derive the exact step identities claimed by native activity inputs."""
 
+    return {
+        (step.step_kind, step.item_key)
+        for step in _native_steps_v3(
+            records,
+            tenant_id=tenant_id,
+            workflow_id=workflow_id,
+            temporal_run_id=temporal_run_id,
+        )
+    }
+
+
+def _native_steps_v3(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    tenant_id: str,
+    workflow_id: str,
+    temporal_run_id: str,
+) -> list[LegacyStep]:
+    """Recover native lifecycle from Temporal without inventing ownership."""
+
     enrichment_pass = 0
     fanout_pass = 0
-    keys: set[tuple[str, str]] = set()
-    for record in records:
-        if record.get("kind") != "scheduled":
-            continue
-        activity_type = str(record.get("activity_type") or "")
-        if activity_type not in _DISCOVERY_ACTIVITY_TYPES:
-            continue
-        payload = _mapping(record.get("payload"))
+    steps: list[LegacyStep] = []
+    attempts, _ = _decode_discovery_activity_attempts(records, native=True)
+    for activity in attempts:
+        activity_type = activity.activity_type
+        payload = activity.payload
+        output = activity.result
         execution = _mapping(_first(payload, "discovery_execution", "discoveryExecution"))
-        if not execution:
-            continue
         if (
             str(_first(execution, "tenant_id", "tenantId") or "") != tenant_id
             or str(_first(execution, "workflow_id", "workflowId") or "") != workflow_id
@@ -308,12 +329,18 @@ def _native_step_keys_v1(
         ):
             raise LegacyDiscoveryRecoveryError("native_execution_reference_mismatch")
         if activity_type == "plan_discovery_sources":
-            keys.add(("source_planning", "plan"))
+            step_kind: PipelineStepKind = "source_planning"
+            item_key = "plan"
+            detail_code: PipelineStepDetailCode = "source_plan"
+            item_count = len(_string_list(_first(output, "families")))
         elif activity_type == "discovery_source_family":
             family = str(_first(payload, "family") or "").strip().lower()
             if not family:
                 raise LegacyDiscoveryRecoveryError("source_family_missing")
-            keys.add(("source_family", f"family:{family}"))
+            step_kind = "source_family"
+            item_key = f"family:{family}"
+            detail_code = "source_family"
+            item_count = 1
         elif activity_type == "discovery_enrichment":
             # The producer-lifetime consumer is runtime telemetry only. It ends
             # through intentional cancellation and deliberately emits no
@@ -327,6 +354,7 @@ def _native_step_keys_v1(
                 )
             ):
                 continue
+            step_kind = "enrichment_pass"
             item_key = str(_first(payload, "pipeline_step_item_key", "pipelineStepItemKey") or "")
             if not item_key:
                 if _safe_int(_first(payload, "progress_total", "progressTotal")) == 0:
@@ -334,16 +362,34 @@ def _native_step_keys_v1(
                     item_key = f"streaming:pass-{enrichment_pass}"
                 else:
                     item_key = "terminal"
-            keys.add(("enrichment_pass", item_key))
+            detail_code_value = str(
+                _first(
+                    payload,
+                    "pipeline_step_detail_code",
+                    "pipelineStepDetailCode",
+                )
+                or ""
+            )
+            detail_code = (
+                detail_code_value
+                if detail_code_value
+                else "streaming_pass"
+                if item_key.startswith("streaming:")
+                else "terminal_reconciliation"
+            )
+            item_count = _safe_int(_first(output, "passes"))
         else:
-            step_kind = str(_first(payload, "pipeline_step_kind", "pipelineStepKind") or "")
+            step_kind_value = str(_first(payload, "pipeline_step_kind", "pipelineStepKind") or "")
+            step_kind = (
+                step_kind_value
+                if step_kind_value
+                else "existing_backlog_sweep"
+                if str(_first(payload, "cohort_kind", "cohortKind") or "") == "existing_backlog"
+                else "preparation_fanout"
+            )
             item_key = str(_first(payload, "pipeline_step_item_key", "pipelineStepItemKey") or "")
             if not step_kind:
-                step_kind = (
-                    "existing_backlog_sweep"
-                    if str(_first(payload, "cohort_kind", "cohortKind") or "") == "existing_backlog"
-                    else "preparation_fanout"
-                )
+                raise LegacyDiscoveryRecoveryError("native_step_kind_missing")
             if not item_key:
                 if step_kind == "existing_backlog_sweep":
                     item_key = "existing_backlog"
@@ -352,8 +398,41 @@ def _native_step_keys_v1(
                     item_key = f"streaming:pass-{fanout_pass}"
                 else:
                     item_key = "terminal"
-            keys.add((step_kind, item_key))
-    return keys
+            detail_code_value = str(
+                _first(
+                    payload,
+                    "pipeline_step_detail_code",
+                    "pipelineStepDetailCode",
+                )
+                or ""
+            )
+            detail_code = (
+                detail_code_value
+                if detail_code_value
+                else "existing_backlog"
+                if step_kind == "existing_backlog_sweep"
+                else "streaming_pass"
+                if item_key.startswith("streaming:")
+                else "terminal_reconciliation"
+            )
+            item_count = _safe_int(_first(output, "targets"))
+        steps.append(
+            LegacyStep(
+                scheduled_event_id=activity.scheduled_event_id,
+                step_kind=step_kind,
+                item_key=item_key,
+                detail_code=detail_code,
+                item_count=item_count,
+                queued_at=activity.queued_at,
+                started_at=activity.started_at,
+                finished_at=activity.finished_at,
+                attempt=activity.attempt,
+                state=activity.state,
+                error_code=activity.error_code,
+                retryable=activity.retryable,
+            )
+        )
+    return steps
 
 
 async def reconcile_legacy_discovery_execution(
@@ -383,14 +462,11 @@ async def reconcile_legacy_discovery_execution(
         """,
         (tenant_id, workflow_id, temporal_run_id),
     ).fetchone()
-    current_manifest_was_verified = (
-        current_manifest is not None
-        and _recovery_manifest_matches_persisted_keys(
-            connection,
-            tenant_id=tenant_id,
-            workflow_id=workflow_id,
-            temporal_run_id=temporal_run_id,
-        )
+    current_manifest_was_verified = current_manifest is not None and _recovery_manifest_matches_persisted_keys(
+        connection,
+        tenant_id=tenant_id,
+        workflow_id=workflow_id,
+        temporal_run_id=temporal_run_id,
     )
     _transition_existing_recovery_manifest(
         connection,
@@ -469,15 +545,19 @@ async def reconcile_legacy_discovery_execution(
             for attempt in attempts
         )
         legacy_recovery_pending = any(
-            attempt.state in {"queued", "running"}
-            or (attempt.state == "failed" and attempt.retryable)
+            attempt.state in {"queued", "running"} or (attempt.state == "failed" and attempt.retryable)
             for attempt in attempts
         )
-        native_step_keys = _native_step_keys_v1(
+        native_steps = _native_steps_v3(
             normalized,
             tenant_id=tenant_id,
             workflow_id=workflow_id,
             temporal_run_id=temporal_run_id,
+        )
+        native_step_keys = {(step.step_kind, step.item_key) for step in native_steps}
+        workflow_terminal = any(record.get("kind") == "workflow_terminal" for record in normalized)
+        native_terminal_lifecycle_missing = workflow_terminal and any(
+            step.state in {"queued", "running"} or (step.state == "failed" and step.retryable) for step in native_steps
         )
         source_memberships = _exact_source_memberships(
             connection,
@@ -587,6 +667,13 @@ async def reconcile_legacy_discovery_execution(
 
         for step in steps:
             recovered_events += _append_missing_step_events(connection, execution, step)
+        for step in native_steps:
+            recovered_events += _append_missing_step_events(
+                connection,
+                execution,
+                step,
+                recovery_source="temporal",
+            )
         connection.commit()
         ProjectionBuilder(
             conn_factory=get_connection if conn is None else (lambda: connection),
@@ -598,7 +685,7 @@ async def reconcile_legacy_discovery_execution(
             raise LegacyDiscoveryRecoveryError("recovery_manifest_set_mismatch")
         final_state: Literal["ready", "recovering", "incomplete"] = (
             "incomplete"
-            if terminal_failed_fanout
+            if terminal_failed_fanout or native_terminal_lifecycle_missing
             else "recovering"
             if legacy_recovery_pending
             else "ready"
@@ -617,6 +704,8 @@ async def reconcile_legacy_discovery_execution(
             error_code=(
                 "legacy-fanout-terminal-failed"
                 if terminal_failed_fanout
+                else "native-terminal-lifecycle-missing"
+                if native_terminal_lifecycle_missing
                 else None
             ),
         )
@@ -688,19 +777,31 @@ async def _normalize_temporal_history(handle: Any, converter: Any) -> list[dict[
                     "kind": "completed" if completed else "failed",
                     "history_event_id": int(event.event_id),
                     "scheduled_event_id": int(attrs.scheduled_event_id),
-                    "started_event_id": _safe_int(
-                        getattr(attrs, "started_event_id", 0)
-                    ),
+                    "started_event_id": _safe_int(getattr(attrs, "started_event_id", 0)),
                     "event_time": event_time,
                     "result": (await _decode_payloads(converter, attrs.result) if completed else {}),
-                    "error_code": (
-                        "activity_canceled" if canceled else _failure_code(failure)
-                    ),
+                    "error_code": ("activity_canceled" if canceled else _failure_code(failure)),
                     "retryable": _failure_retryable(
                         failure,
                         _safe_int(getattr(attrs, "retry_state", 0)),
                         canceled=canceled,
                     ),
+                }
+            )
+        elif kind in {
+            "workflow_execution_completed_event_attributes",
+            "workflow_execution_failed_event_attributes",
+            "workflow_execution_timed_out_event_attributes",
+            "workflow_execution_canceled_event_attributes",
+            "workflow_execution_terminated_event_attributes",
+            "workflow_execution_continued_as_new_event_attributes",
+        }:
+            records.append(
+                {
+                    "kind": "workflow_terminal",
+                    "history_event_id": int(event.event_id),
+                    "event_time": event_time,
+                    "state": kind.removeprefix("workflow_execution_").removesuffix("_event_attributes"),
                 }
             )
         else:
@@ -912,6 +1013,8 @@ def _append_missing_step_events(
     conn: Any,
     execution: DiscoveryExecutionRef,
     step: LegacyStep,
+    *,
+    recovery_source: Literal["legacy", "temporal"] = "legacy",
 ) -> int:
     tenant = TenantId(execution.tenant_id)
     detail = PipelineStepSafeDetail(code=step.detail_code, item_count=step.item_count)
@@ -996,7 +1099,10 @@ def _append_missing_step_events(
             None,
             "workflow",
             event.event_type,
-            payload={**dict(event.payload), "recoveredFromLegacyHistory": True},
+            payload={
+                **dict(event.payload),
+                ("recoveredFromLegacyHistory" if recovery_source == "legacy" else "recoveredFromTemporalHistory"): True,
+            },
             occurred_at=event.occurred_at,
         )
         written += 1

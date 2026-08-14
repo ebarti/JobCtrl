@@ -222,7 +222,7 @@ describe("PipelinesView", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps terminal outcomes honest and exposes every exact stage-state count", async () => {
+  it("keeps terminal outcomes honest and exposes every public stage-state count", async () => {
     const user = userEvent.setup();
     await renderPipelineOperations(pipelinesMixedFailureSnapshot);
 
@@ -243,11 +243,57 @@ describe("PipelinesView", () => {
     expect(outcomes).toHaveTextContent("Skipped0");
     expect(outcomes).toHaveTextContent("Blocked1");
     expect(outcomes).toHaveTextContent("Failed1");
-    expect(outcomes).toHaveTextContent("Exhausted0");
+    expect(outcomes).not.toHaveTextContent("Exhausted");
     expect(outcomes).toHaveTextContent("Canceled1");
     expect(outcomes).toHaveTextContent("Needs verification1");
     expect(outcomes).toHaveTextContent("Stale0");
     expect(outcomes).toHaveTextContent("Unknown0");
+  });
+
+  it("renders a closed timed-out crawl as a terminal failure instead of active work", async () => {
+    const user = userEvent.setup();
+    const closedTimeoutSnapshot: PipelineOperationsSnapshot = {
+      ...pipelinesCompletedWithIssuesSnapshot,
+      sourceFamilies: {
+        ...pipelinesCompletedWithIssuesSnapshot.sourceFamilies!,
+        counts: {
+          ...pipelinesCompletedWithIssuesSnapshot.sourceFamilies!.counts,
+          failed: 1,
+          exhausted: 0,
+        },
+      },
+      stages: pipelinesCompletedWithIssuesSnapshot.stages.map((entry) =>
+        entry.stage === "source_family" && entry.scope === "current_execution"
+          ? {
+              ...entry,
+              currentExecution: {
+                ...entry.currentExecution,
+                eligible: 2,
+                waiting: 0,
+                processing: 0,
+                succeeded: 1,
+                failed: 1,
+              },
+            }
+          : entry,
+      ),
+    };
+    await renderPipelineOperations(closedTimeoutSnapshot);
+
+    const crawl = screen.getByRole("region", { name: "Crawl sources stage" });
+    expect(crawl).toHaveAttribute("data-stage-status", "blocked");
+    expect(within(crawl).getByText("Attention required")).toBeInTheDocument();
+    expect(within(crawl).queryByText("In progress")).not.toBeInTheDocument();
+    expect(crawl).not.toHaveTextContent("50% terminal");
+
+    await user.click(within(crawl).getByRole("button", { name: /Crawl sources/i }));
+    expect(within(crawl).getByRole("progressbar", { name: "Stage progress" })).toHaveAttribute(
+      "aria-valuenow",
+      "100",
+    );
+    expect(crawl).toHaveTextContent("100% terminal");
+    expect(crawl).toHaveTextContent("Failed1");
+    expect(crawl).not.toHaveTextContent("Exhausted");
   });
 
   it("prioritizes four status facts and moves snapshot provenance to the inspector", async () => {

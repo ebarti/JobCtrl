@@ -268,6 +268,9 @@ function stageLabel(stage: StageSummary["stage"]): string {
 function stageDiagnostics(stage: StageSummary): Array<[string, string]> {
   const diagnostics: Array<[string, string]> = [];
   if (["failed", "exhausted", "blocked", "skipped"].includes(stage.state)) {
+    if (stage.failureReason === "attempt_budget_exhausted") {
+      diagnostics.push(["failure reason", "attempt budget exhausted"]);
+    }
     if (stage.errorCode) diagnostics.push(["code", stage.errorCode]);
     if (stage.errorMessage) diagnostics.push(["message", stage.errorMessage]);
     if (stage.state !== "skipped" && (stage.attemptCount || stage.maxAttempts)) {

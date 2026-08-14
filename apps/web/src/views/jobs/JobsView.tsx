@@ -7,7 +7,7 @@ import {
   type JobSortField,
   type JobSummary,
   type SavedTableView,
-  STAGE_STATES,
+  USER_FACING_STAGE_STATES,
 } from "@jobctrl/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { UseMutationResult } from "@tanstack/react-query";
@@ -424,7 +424,7 @@ export function JobsView() {
       const nextStage =
         firstAllowedValue(next.current_stage, JOB_TABLE_STAGE_FILTERS) ?? "all";
       const nextState =
-        firstAllowedValue(next.current_state, STAGE_STATES) ?? "all";
+        firstAllowedValue(next.current_state, USER_FACING_STAGE_STATES) ?? "all";
       const applyFilter = firstAllowedValue(next.apply_status, [
         "applied",
       ] as const);

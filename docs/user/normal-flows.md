@@ -176,8 +176,15 @@ Keep Pipelines open while the run works. Read its scopes separately:
 The source-family plan reports intake separately from the two reconciliation
 steps: the enrichment pass and preparation fanout. The live stage cards make
 waiting, processing, terminal, and attention totals visible first; **All stage
-outcomes** expands the exact succeeded, skipped, blocked, failed, exhausted,
-canceled, needs-verification, stale, and unknown counts. **Backlog and
+outcomes** expands the exact succeeded, skipped, blocked, failed, canceled,
+needs-verification, stale, and unknown counts. An attempt budget that has run
+out is a failed outcome with **attempt budget exhausted** as its reason, not a
+separate lifecycle state. Retrying that failure resets its attempt budget.
+During an active source crawl, planned source families that have not entered
+their bounded execution batch appear as **waiting**, not unknown. Unknown is
+reserved for a planned family whose lifecycle is still missing after the
+Discover workflow has ended.
+**Backlog and
 diagnostics** keeps the execution sweep and unrelated global backlog separate
 from that current-execution flow. Capacity details include configured and active
 slots, internal parallelism when applicable, and approximate task-queue pollers,
@@ -232,7 +239,10 @@ states that the runtime inventory is unavailable; it never turns missing
 inventory into "no work." If the exact history cannot be read or mapped safely
 on one pass, the repair remains in automatic retry instead of becoming a
 permanent tracking mode. Reconnecting to its authoritative history restores that
-run or records its real terminal outcome. If immutable legacy history ended
+run or records its real terminal outcome. The same repair closes native activity
+rows when exact Temporal history proves that a closed workflow timed out or
+failed after its worker stopped reporting, so a closed run cannot remain shown
+as processing. If immutable legacy history ended
 before recording every target, the run is labeled **Historical run incomplete**;
 JobCtrl preserves all exact recovered evidence and does not fabricate or
 continuously retry the unknown remainder. **Set up a new Discover run** is

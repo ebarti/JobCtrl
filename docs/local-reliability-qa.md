@@ -169,9 +169,11 @@ generation must be recorded and fenced, and the next activity must run on fresh
 bounded executor capacity without restarting the worker.
 Repeated Tailor validation/model-repair failures must also keep the inner LLM
 attempt count separate from the durable stage execution count. Each activity
-execution advances the durable count once; the fifth durable failure becomes
-non-retryable `exhausted`, and a later pickup cannot restart it without an
-explicit attempt reset. Run at least two durable failures against the same
+execution advances the durable count once; the fifth durable failure retains
+the non-retryable `exhausted` persistence marker, but product read models must
+show a retryable failed state with reason `attempt_budget_exhausted`. A later
+pickup cannot restart it without an explicit attempt reset. Verify that Retry
+atomically resets the attempt count to zero. Run at least two durable failures against the same
 materials generation and assert that both complete inner-attempt reports remain
 in the append-only audit history.
 When Tailor fails or reaches that exhausted boundary, assert that unstarted
@@ -180,6 +182,14 @@ Cover and Apply rows become non-retryable `blocked` dependencies with the exact
 next action. Repeat reconciliation to prove idempotence, interleave a dependent
 claim immediately before the guarded update to prove ownership preservation,
 and then complete Tailor to prove only the Tailor-owned blocks reset.
+For pipeline operations, seed a closed Temporal workflow whose final native
+activity timed out after recording only queued/running durable events. Startup
+reconciliation must append the exact terminal failure, make the stage 100%
+terminal, and ensure Pipelines never renders it as active or **In progress**.
+Also seed an active two-family source plan with one family running and only one
+durable family row. Pipelines must report one processing and one waiting family,
+with zero unknown. After terminalizing that workflow without recording the
+second family lifecycle, the missing family must become unknown.
 For a current score below the live materials threshold, preparation must persist
 Tailor, Cover, and Apply as non-retryable `skipped` rows with `MIN_SCORE` and the
 exact score/threshold pair. No row may remain `pending` after the workflow has

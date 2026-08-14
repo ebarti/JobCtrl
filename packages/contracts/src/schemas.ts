@@ -28,6 +28,20 @@ export const STAGE_STATES = [
   "stale",
 ] as const;
 export type StageState = (typeof STAGE_STATES)[number];
+export const USER_FACING_STAGE_STATES = [
+  "pending",
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "blocked",
+  "skipped",
+  "needs_verification",
+  "canceled",
+  "stale",
+] as const satisfies readonly StageState[];
+export const STAGE_FAILURE_REASONS = ["attempt_budget_exhausted"] as const;
+export type StageFailureReason = (typeof STAGE_FAILURE_REASONS)[number];
 export const ACTIVE_STATES = [
   "unknown",
   "active",
@@ -2506,6 +2520,7 @@ export interface StageSummary {
   durationMs: number | null;
   errorCode: string | null;
   errorMessage: string | null;
+  failureReason?: StageFailureReason | null;
   retryable: boolean;
   blockedBy: string[];
   nextAction: string | null;
@@ -2905,6 +2920,7 @@ export interface JobSummary {
   currentState: StageState;
   errorCode: string | null;
   errorMessage: string | null;
+  failureReason?: StageFailureReason | null;
   nextAction: string | null;
   artifactCount: number;
   applyStatus: string | null;

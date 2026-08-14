@@ -25,7 +25,7 @@ import { readLlmSpendHealth } from "./worker-health.js";
 const DEFAULT_TENANT = "local";
 const ETA_SAMPLE_LIMIT = 50;
 const ETA_SAMPLE_WINDOW_MS = 14 * 24 * 60 * 60 * 1_000;
-const CURRENT_DISCOVERY_EXECUTION_DECODER_VERSION = 2;
+const CURRENT_DISCOVERY_EXECUTION_DECODER_VERSION = 3;
 
 const JOB_STAGES = ["enrich", "score", "tailor", "cover"] as const;
 const OPERATIONAL_STAGES = [
@@ -256,8 +256,16 @@ export function buildPipelineOperationsSnapshot(
   const runtimeAttribution = buildSelectedRuntimeAttribution(db, tenantId, selected, telemetry);
   const projectionCoverage = loadProjectionCoverage(db, tenantId, selected);
   const selectedCapacity = buildCapacity(telemetry, internalParallelism(selected.row));
-  const currentCounts = stageCountsForCohort(selected.current, selected.steps);
-  const sweepCounts = stageCountsForCohort(selected.sweep, selected.steps);
+  const currentCounts = stageCountsForCohort(
+    selected.current,
+    selected.steps,
+    selected.row.status,
+  );
+  const sweepCounts = stageCountsForCohort(
+    selected.sweep,
+    selected.steps,
+    selected.row.status,
+  );
   const globalCounts = globalStageCounts(db, tenantId, selected);
   const globalRetryability = loadGlobalRetryability(db, tenantId, selected);
   const sourceFamilies = sourceFamilyProgress(
@@ -558,7 +566,7 @@ function phaseFor(
   steps: PipelineStepRow[],
   membershipClosed: boolean,
 ): DiscoveryExecutionSummary["phase"] {
-  if (status === "in_progress" || status === "starting") return "discovering";
+  if (isActiveWorkflowStatus(status)) return "discovering";
   if (status === "canceled") return "canceled";
   if (status === "failed" || status === "timed_out" || status === "terminated") return "failed";
   if (status === "succeeded" || status === "dry_run_complete") {
@@ -996,10 +1004,11 @@ function internalParallelism(row: WorkflowRow): number | null {
 function stageCountsForCohort(
   cohortValue: Cohort,
   steps: PipelineStepRow[],
+  discoverWorkflowStatus: string,
 ): Map<(typeof OPERATIONAL_STAGES)[number], PipelineStageCounts> {
   const counts = new Map<(typeof OPERATIONAL_STAGES)[number], PipelineStageCounts>();
   counts.set("source_planning", projectionCounts(steps.filter((step) => step.step_kind === "source_planning")));
-  counts.set("source_family", sourceFamilyCounts(steps));
+  counts.set("source_family", sourceFamilyCounts(steps, discoverWorkflowStatus));
   counts.set("reconciliation", reconciliationCounts(steps));
   counts.set("pdf_render", pdfCounts(cohortValue, steps));
   for (const stage of JOB_STAGES) {
@@ -1008,10 +1017,17 @@ function stageCountsForCohort(
   return counts;
 }
 
-function sourceFamilyCounts(steps: PipelineStepRow[]): PipelineStageCounts {
+function sourceFamilyCounts(
+  steps: PipelineStepRow[],
+  discoverWorkflowStatus: string,
+): PipelineStageCounts {
   const families = steps.filter((step) => step.step_kind === "source_family");
   const planned = maxDetailCount(steps.filter((step) => step.step_kind === "source_planning"));
-  return projectionCounts(families, planned);
+  return projectionCounts(
+    families,
+    planned,
+    isActiveWorkflowStatus(discoverWorkflowStatus) ? "waiting" : "unknown",
+  );
 }
 
 function reconciliationCounts(steps: PipelineStepRow[]): PipelineStageCounts {
@@ -1058,7 +1074,11 @@ function pdfCounts(cohortValue: Cohort, steps: PipelineStepRow[]): PipelineStage
   return counts;
 }
 
-function projectionCounts(rows: PipelineStepRow[], expectedEligible?: number | null): PipelineStageCounts {
+function projectionCounts(
+  rows: PipelineStepRow[],
+  expectedEligible?: number | null,
+  unobservedState: "waiting" | "unknown" = "unknown",
+): PipelineStageCounts {
   const counts = emptyCounts();
   const expected = expectedEligible ?? rows.length;
   counts.eligible = Math.max(expected, rows.length);
@@ -1066,7 +1086,7 @@ function projectionCounts(rows: PipelineStepRow[], expectedEligible?: number | n
     addPipelineStepState(counts, row.state);
   }
   const known = outcomeSum(counts);
-  if (known < counts.eligible) counts.unknown += counts.eligible - known;
+  if (known < counts.eligible) counts[unobservedState] += counts.eligible - known;
   return counts;
 }
 
@@ -1136,7 +1156,7 @@ function addStageState(counts: PipelineStageCounts, state: string | null): void 
       counts.failed += 1;
       break;
     case "exhausted":
-      counts.exhausted += 1;
+      counts.failed += 1;
       break;
     case "canceled":
       counts.canceled += 1;
@@ -1473,7 +1493,7 @@ function sourceFamilyProgress(
   const sourcePlanRows = selected.steps.filter((step) => step.step_kind === "source_planning");
   if (sourceRows.length === 0 && sourcePlanRows.length === 0) return null;
   const planned = Math.max(maxDetailCount(sourcePlanRows) ?? 0, sourceRows.length);
-  const counts = projectionCounts(sourceRows, planned);
+  const counts = sourceFamilyCounts(selected.steps, selected.row.status);
   const providerProgress = sourceRows.some(
     (step) => step.item_key === "family:jobspy" && step.state === "running",
   )
@@ -2227,6 +2247,10 @@ function memberPreparationWorkflowFailed(
 
 function isFailedTerminalWorkflowStatus(status: string | undefined): boolean {
   return status === "failed" || status === "canceled" || status === "timed_out" || status === "terminated";
+}
+
+function isActiveWorkflowStatus(status: string | undefined): boolean {
+  return status === "in_progress" || status === "starting";
 }
 
 function isTerminalWorkflowStatus(status: string | undefined): boolean {

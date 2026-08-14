@@ -19,10 +19,11 @@ export function StageBadge(props: StageBadgeProps): JSX.Element {
       </Badge>
     );
   }
-  const tone: StageStateTone = stageStateTone(props.state);
+  const publicState = props.state === "exhausted" ? "failed" : props.state;
+  const tone: StageStateTone = stageStateTone(publicState);
   return (
-    <StatusBadge icon={stageStateIcon(props.state)} tone={tone}>
-      {props.state}
+    <StatusBadge icon={stageStateIcon(publicState)} tone={tone}>
+      {publicState}
     </StatusBadge>
   );
 }

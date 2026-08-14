@@ -216,6 +216,47 @@ describe("exact-v7 read model job ids", () => {
     expect(schemaManifest(db, EXACT_V8_SCHEMA_MANIFEST.version)).toEqual(before);
   });
 
+  it("projects attempt exhaustion as a retryable failure reason", () => {
+    const db = seededDatabase();
+    db.prepare(
+      `INSERT INTO job_stage_states (
+         tenant_id, job_id, stage, state, attempt_count, max_attempts,
+         updated_at, finished_at, retryable, version
+       ) VALUES ('local', ?, ?, 'succeeded', 1, 3, ?, ?, 0, 1)`,
+    ).run(JOB_ID, "discover", NOW, NOW);
+    db.prepare(
+      `INSERT INTO job_stage_states (
+         tenant_id, job_id, stage, state, attempt_count, max_attempts,
+         updated_at, finished_at, retryable, version
+       ) VALUES ('local', ?, ?, 'succeeded', 1, 3, ?, ?, 0, 1)`,
+    ).run(JOB_ID, "enrich", NOW, NOW);
+    db.prepare(
+      `UPDATE job_stage_states
+          SET state = 'exhausted', attempt_count = 3, max_attempts = 3,
+              retryable = 0, error_code = 'TAILOR_QUALITY_GATE',
+              error_message = 'No acceptable candidate', next_action = NULL
+        WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'`,
+    ).run(JOB_ID);
+
+    const jobs = listJobs(db, activeJobQuery);
+    const failedJobs = listJobs(db, { ...activeJobQuery, state: "failed" });
+    const score = getJobDetail(db, JOB_ID)?.stages.find((stage) => stage.stage === "score");
+
+    expect(jobs.items[0]).toMatchObject({
+      currentState: "failed",
+      errorCode: "TAILOR_QUALITY_GATE",
+      errorMessage: "No acceptable candidate",
+      failureReason: "attempt_budget_exhausted",
+      nextAction: "Retry to reset the attempt budget.",
+    });
+    expect(failedJobs.items.map((job) => job.jobKey)).toContain(JOB_ID);
+    expect(score).toMatchObject({
+      state: "failed",
+      retryable: true,
+      failureReason: "attempt_budget_exhausted",
+    });
+  });
+
   it("filters hidden and deleted jobs and uses only tenant-scoped events and audit rows", () => {
     const db = seededDatabase();
 

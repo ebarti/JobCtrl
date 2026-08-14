@@ -135,8 +135,7 @@ def test_recovery_candidates_keep_open_runs_and_only_latest_incomplete_terminal(
             )
         else:
             conn.execute(
-                f"INSERT INTO {table} VALUES "
-                "('local', 'discover-open', 'run-open', 'source_planning', 'plan')"
+                f"INSERT INTO {table} VALUES ('local', 'discover-open', 'run-open', 'source_planning', 'plan')"
             )
 
     assert cli._legacy_discovery_recovery_candidates(conn, tenant_id="local") == [
@@ -159,7 +158,7 @@ def test_recovery_candidates_skip_ready_latest_terminal_checkpoint() -> None:
     conn.execute(
         """
         INSERT INTO discovery_execution_recoveries VALUES (
-            'local', 'discover-done', 'run-done', 'ready', 'native', 2, 12,
+            'local', 'discover-done', 'run-done', 'ready', 'native', 3, 12,
             0, 0, 0, 0, ?, NULL, '2026-07-16T09:01:00Z'
         )
         """,
@@ -179,9 +178,7 @@ def test_recovery_candidates_skip_terminal_incomplete_checkpoint() -> None:
                   '2026-07-16T09:00:00Z', 'run-incomplete')
         """
     )
-    digest = execution_reconciliation._recovery_key_digest(
-        {"22222222-2222-4222-8222-222222222222"}, set()
-    )
+    digest = execution_reconciliation._recovery_key_digest({"22222222-2222-4222-8222-222222222222"}, set())
     conn.execute(
         "INSERT INTO discovery_execution_jobs VALUES "
         "('local', 'discover-incomplete', 'run-incomplete', "
@@ -219,9 +216,7 @@ def test_recovery_candidates_repair_stale_ready_checkpoint() -> None:
         )
         """
     )
-    stale_digest = execution_reconciliation._recovery_key_digest(
-        {"44444444-4444-4444-8444-444444444444"}, set()
-    )
+    stale_digest = execution_reconciliation._recovery_key_digest({"44444444-4444-4444-8444-444444444444"}, set())
     conn.execute(
         """
         INSERT INTO discovery_execution_recoveries VALUES (

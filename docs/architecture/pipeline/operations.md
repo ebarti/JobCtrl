@@ -274,6 +274,10 @@ normal operations-projection watermark/rebuild path.
 
 A current-execution membership with `work_plan_state='pending'` and no enrich
 stage row is an expected pre-dispatch state and is projected as **waiting**.
+Likewise, while the Discover workflow is starting or in progress, a planned
+source family whose bounded batch has not been scheduled yet is **waiting**.
+Once that workflow is terminal, a planned family with no durable lifecycle is
+**unknown** because it is then a genuine projection gap.
 Missing stage state after work-plan resolution remains **unknown** and therefore
 actionable; the read model does not hide a genuine projection gap.
 The producer-lifetime live enrichment activity is runtime telemetry, not a
@@ -315,7 +319,11 @@ restore execution membership and work plans. Existing partial rows are merged
 idempotently, so a process kill during repair resumes without duplicate events
 or jobs. Native activities retain ownership of their normal events; mixed
 legacy/native histories merge the two key sets without replaying native work.
-Ambiguous provenance is refused rather than guessed.
+Decoder v3 also reads the exact native activity attempt that Temporal proves
+terminal. If the activity process stopped before recording its final durable
+event, reconciliation appends that missing terminal event and refreshes the
+projection. A terminal workflow therefore cannot leave one of its native steps
+queued or running. Ambiguous provenance is refused rather than guessed.
 
 Reconstructed decoder v2 does not treat `workflow_run_projections` as causal
 evidence because repeated generic workflow-start events can legitimately fold a

@@ -57,6 +57,7 @@ import type {
   ScoringKeywordAggregationResponse,
   SettingsResponse,
   Stage,
+  StageFailureReason,
   StageState,
   StageSummary,
   VoicePassAudit,
@@ -2526,6 +2527,13 @@ export function readSettingsConfig(
 
 function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSummary {
   const jobKey = requireCanonicalJobId(row.job_id);
+  const currentStagePresentation = publicStagePresentation(
+    row.current_state,
+    row.current_error_code,
+    row.current_error_message,
+    row.current_next_action,
+    true,
+  );
   return {
     jobKey,
     url: nullableString(row.url) ?? "",
@@ -2553,10 +2561,11 @@ function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSum
     scoreStaleness: parseScoreStaleness(row),
     currentStage: (isStage(row.current_stage) ? row.current_stage : "discover") as Stage,
     currentSubstage: (isStage(row.current_substage) ? row.current_substage : row.current_stage) as Stage,
-    currentState: (isStageState(row.current_state) ? row.current_state : "pending") as StageState,
-    errorCode: row.current_error_code,
-    errorMessage: row.current_error_message,
-    nextAction: row.current_next_action,
+    currentState: currentStagePresentation.state,
+    errorCode: currentStagePresentation.errorCode,
+    errorMessage: currentStagePresentation.errorMessage,
+    failureReason: currentStagePresentation.failureReason,
+    nextAction: currentStagePresentation.nextAction,
     artifactCount: Number(row.artifact_count ?? 0),
     applyStatus: row.apply_status,
     appliedAt: row.applied_at,
@@ -4500,9 +4509,18 @@ function parseStages(stagesJson: string | undefined): StageSummary[] {
     const stage = String(item.stage ?? "");
     if (!isStage(stage)) continue;
     const state = String(item.state ?? "pending");
+    const presentation = publicStagePresentation(
+      state,
+      nullableString(item.error_code),
+      nullableString(item.error_message),
+      nullableString(item.next_action),
+      item.retryable === undefined || item.retryable === null
+        ? true
+        : Boolean(item.retryable),
+    );
     byStage.set(stage, {
       stage,
-      state: isStageState(state) ? (state as StageState) : "pending",
+      state: presentation.state,
       attemptCount: Number(item.attempt_count ?? 0),
       maxAttempts:
         item.max_attempts === null || item.max_attempts === undefined
@@ -4512,11 +4530,12 @@ function parseStages(stagesJson: string | undefined): StageSummary[] {
       updatedAt: nullableString(item.updated_at),
       finishedAt: nullableString(item.finished_at),
       durationMs: nullableNumber(item.duration_ms),
-      errorCode: nullableString(item.error_code),
-      errorMessage: nullableString(item.error_message),
-      retryable: item.retryable === undefined || item.retryable === null ? true : Boolean(item.retryable),
+      errorCode: presentation.errorCode,
+      errorMessage: presentation.errorMessage,
+      failureReason: presentation.failureReason,
+      retryable: presentation.retryable,
       blockedBy: Array.isArray(item.blocked_by) ? item.blocked_by.map((it) => String(it)) : [],
-      nextAction: nullableString(item.next_action),
+      nextAction: presentation.nextAction,
       applyUrlOutcome: parseApplyUrlOutcome(item.apply_url_outcome),
     });
   }
@@ -4548,6 +4567,7 @@ function reconcileStageRetryability(
   if (retryability.size === 0) return stages;
   return stages.map((stage) => {
     if (!["failed", "exhausted"].includes(stage.state)) return stage;
+    if (stage.failureReason === "attempt_budget_exhausted") return stage;
     if (stage.stage === "enrich") return { ...stage, retryable: true };
     if (retryability.get(stage.stage) !== false) return stage;
     return { ...stage, retryable: false, nextAction: null };
@@ -4663,8 +4683,12 @@ function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue
     params.push(query.stage);
   }
   if (query.state) {
-    clauses.push("job_list_projections.current_state = ?");
-    params.push(query.state);
+    if (query.state === "failed") {
+      clauses.push("job_list_projections.current_state IN ('failed', 'exhausted')");
+    } else {
+      clauses.push("job_list_projections.current_state = ?");
+      params.push(query.state);
+    }
   }
   if (query.applyStatus === "applied") {
     clauses.push("(job_list_projections.applied_at IS NOT NULL OR LOWER(COALESCE(job_list_projections.apply_status, '')) = 'applied')");
@@ -6120,6 +6144,40 @@ function isStageState(value: unknown): value is StageState {
     value === "canceled" ||
     value === "stale"
   );
+}
+
+function publicStagePresentation(
+  rawState: unknown,
+  errorCode: string | null,
+  errorMessage: string | null,
+  nextAction: string | null,
+  retryable: boolean,
+): {
+  state: StageState;
+  errorCode: string | null;
+  errorMessage: string | null;
+  failureReason: StageFailureReason | null;
+  nextAction: string | null;
+  retryable: boolean;
+} {
+  if (rawState === "exhausted") {
+    return {
+      state: "failed",
+      errorCode,
+      errorMessage,
+      failureReason: "attempt_budget_exhausted",
+      nextAction: "Retry to reset the attempt budget.",
+      retryable: true,
+    };
+  }
+  return {
+    state: isStageState(rawState) ? rawState : "pending",
+    errorCode,
+    errorMessage,
+    failureReason: null,
+    nextAction,
+    retryable,
+  };
 }
 
 function stringField(value: unknown): string {
