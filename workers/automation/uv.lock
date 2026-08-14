@@ -591,6 +591,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
+    { name = "certifi" },
     { name = "click" },
     { name = "httpx" },
     { name = "jobstreaming" },
@@ -647,6 +648,7 @@ release-build = [
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
+    { name = "certifi", specifier = ">=2024.2.2" },
     { name = "claude-agent-sdk", marker = "extra == 'providers'", specifier = "==0.2.115" },
     { name = "click", specifier = ">=8.3.3" },
     { name = "cryptography", marker = "extra == 'dev'", specifier = ">=43.0" },

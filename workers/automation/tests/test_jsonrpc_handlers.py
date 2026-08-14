@@ -801,7 +801,7 @@ def test_refresh_compensation_without_observations_uses_euro_top_tech_and_update
     )
     conn.commit()
 
-    def fake_euro_top_tech_observations(*, max_pages: int = 10, http=None):
+    def fake_euro_top_tech_observations(*, max_pages: int = 10, http=None, on_load_outcome=None):
         assert max_pages == 10
         return (
             ReportedCompensationObservation(
@@ -925,7 +925,7 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
     monkeypatch.setenv("JOBCTRL_LEVELS_FYI_OBSERVATIONS_PATH", str(levels_path))
     monkeypatch.setenv("JOBCTRL_GLASSDOOR_OBSERVATIONS_PATH", str(glassdoor_path))
 
-    def fake_euro_top_tech_observations(*, max_pages: int = 10, http=None):
+    def fake_euro_top_tech_observations(*, max_pages: int = 10, http=None, on_load_outcome=None):
         return (
             ReportedCompensationObservation(
                 source_id="euro_top_tech",
@@ -966,6 +966,122 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
     assert estimate["maximum_amount"] == 160_000
     source_ids = {item["source_id"] for item in json.loads(estimate["source_snapshot_json"])}
     assert source_ids == {"levels_fyi", "glassdoor", "euro_top_tech"}
+
+
+def test_active_levels_refresh_keeps_market_projection_in_eur(
+    tmp_db: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = get_connection(tmp_db)
+    job_url = "https://example.com/jobs/london-software-engineer"
+    job_id = _test_job_id(job_url)
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, company, site, location,
+            salary, description, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "local",
+            job_id,
+            job_url,
+            "Software Engineer",
+            "Example Systems",
+            "levels-test",
+            "London, United Kingdom",
+            "",
+            "Synthetic job",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.commit()
+    settings_path = tmp_path / "config.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "compensation_sources": {
+                    "levels_fyi": {
+                        "enabled": True,
+                        "access_mode": "public_markdown",
+                        "europe_coverage_confirmed": False,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    occupation = {
+        "@type": "Occupation",
+        "sampleSize": 42,
+        "mainEntityOfPage": {"lastReviewed": "2026-07-12T13:00:00.000Z"},
+        "estimatedSalary": [
+            {
+                "@type": "MonetaryAmountDistribution",
+                "name": "total",
+                "currency": "GBP",
+                "percentile25": 70_000,
+                "median": 95_000,
+                "percentile75": 130_000,
+            }
+        ],
+    }
+    next_data = {
+        "props": {
+            "pageProps": {
+                "jobFamily": "Software Engineer",
+                "location": "London, United Kingdom",
+                "locationCurrency": "GBP",
+                "locationExchangeRate": 0.8,
+                "totalJobFamilySubmissionCount": 42,
+                "topPayingCompanies": [{"name": "Example Systems", "totalCompensation": 200_000}],
+                "jobFamilyLocationPageOccupationSchema": json.dumps(occupation),
+            }
+        }
+    }
+    public_html = f'<html><script id="__NEXT_DATA__" type="application/json">{json.dumps(next_data)}</script></html>'
+
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(settings_path))
+    monkeypatch.setattr(
+        market_repository_mod,
+        "_levels_fyi_public_fetcher",
+        lambda *_args, **_kwargs: lambda url: "" if url.endswith(".md") else public_html,
+    )
+
+    result = refresh_compensation_facts(
+        tenant_id="local",
+        job_id=job_id,
+        include_euro_top_tech=False,
+    )
+
+    assert result["levelsFyiPublicObservationsLoaded"] == 2
+    estimate = conn.execute(
+        """
+        SELECT currency, period, minimum_amount, maximum_amount
+        FROM job_market_compensation_estimates
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        ("local", job_id),
+    ).fetchone()
+    assert estimate is not None
+    assert estimate["currency"] == "EUR"
+    assert estimate["period"] == "year"
+    assert (estimate["minimum_amount"], estimate["maximum_amount"]) == (
+        187_200,
+        187_200,
+    )
+    projection = conn.execute(
+        """
+        SELECT compensation_summary_json
+        FROM job_list_projections
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        ("local", job_id),
+    ).fetchone()
+    assert projection is not None
+    summary = json.loads(str(projection["compensation_summary_json"]))
+    assert summary["market"]["displayRange"] == "EUR 187200/year"
 
 
 def test_missing_required_param_returns_invalid_params(tmp_db: Path) -> None:

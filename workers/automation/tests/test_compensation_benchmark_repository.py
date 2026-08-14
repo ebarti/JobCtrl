@@ -181,6 +181,36 @@ def test_latest_queries_apply_freshness_and_company_pair_scope(tmp_path: Path) -
         anchor = repository.save_direct(_direct(country="DE", marker="anchor"))
         company_source = repository.save_direct(_direct(country="DE", company="Acme", marker="acme-de"))
         company_target = repository.save_direct(_direct(country="ES", company="Acme", marker="acme-es"))
+        repository.save_direct(
+            _direct(
+                country="DE",
+                company="Acme",
+                marker="acme-berlin",
+                geography=BenchmarkGeography("DE", scope="locality", locality="Berlin"),
+                fetched_at="2026-08-13T08:00:00Z",
+                fresh_until="2026-08-20T08:00:00Z",
+            )
+        )
+        repository.save_direct(
+            _direct(
+                country="ES",
+                company="Acme",
+                marker="acme-madrid",
+                geography=BenchmarkGeography("ES", scope="locality", locality="Madrid"),
+                fetched_at="2026-08-13T08:00:00Z",
+                fresh_until="2026-08-20T08:00:00Z",
+            )
+        )
+        unknown_anchor = repository.save_direct(_direct(country="GB", marker="unknown-gb", seniority_label="unknown"))
+        repository.save_direct(
+            _direct(
+                country="DE",
+                marker="berlin-market",
+                geography=BenchmarkGeography("DE", scope="locality", locality="Berlin"),
+                fetched_at="2026-08-13T08:00:00Z",
+                fresh_until="2026-08-20T08:00:00Z",
+            )
+        )
         source_price = repository.save_price_level(_price(country="DE", index=100, marker="de"))
         target_price = repository.save_price_level(_price(country="ES", index=80, marker="es"))
         pairs = repository.matched_company_pairs(
@@ -206,6 +236,22 @@ def test_latest_queries_apply_freshness_and_company_pair_scope(tmp_path: Path) -
         conn.commit()
 
         assert pairs == (CompanyBenchmarkPair(source=company_source, target=company_target),)
+        assert repository.fresh_market_anchors(
+            tenant_id="local",
+            taxonomy_version=anchor.taxonomy_version,
+            role_family_code=anchor.role_family_code,
+            seniority_label=anchor.seniority_label,
+            component=anchor.component,
+            exclude_country_code="ES",
+            fresh_at="2026-08-15T00:00:00Z",
+        ) == (anchor, unknown_anchor)
+        assert repository.latest_compatible_price_levels(
+            tenant_id="local",
+            source_country_code="DE",
+            target_country_code="ES",
+            category="actual_individual_consumption",
+            fresh_at="2026-08-15T00:00:00Z",
+        ) == (source_price, target_price)
         assert (
             repository.latest_direct(
                 tenant_id="local",
@@ -246,12 +292,21 @@ def test_latest_queries_apply_freshness_and_company_pair_scope(tmp_path: Path) -
         close_connection(db_path)
 
 
-def _direct(*, country: str, marker: str, company: str | None = None):
+def _direct(
+    *,
+    country: str,
+    marker: str,
+    company: str | None = None,
+    seniority_label: str = "senior",
+    geography: BenchmarkGeography | None = None,
+    fetched_at: str = "2026-08-12T08:00:00Z",
+    fresh_until: str = "2026-08-19T08:00:00Z",
+):
     return build_direct_benchmark_fact(
         tenant_id="local",
         role_family_code="software_engineering",
-        seniority_label="senior",
-        geography=BenchmarkGeography(country),
+        seniority_label=seniority_label,
+        geography=geography or BenchmarkGeography(country),
         market_scope="company" if company else "market",
         normalized_company=company,
         component="base_salary",
@@ -272,8 +327,8 @@ def _direct(*, country: str, marker: str, company: str | None = None):
         attribution="Test compensation evidence",
         fx_reference={"rate_to_eur": 1, "reference_id": "eur-identity"},
         as_of_date="2026-08-01",
-        fetched_at="2026-08-12T08:00:00Z",
-        fresh_until="2026-08-19T08:00:00Z",
+        fetched_at=fetched_at,
+        fresh_until=fresh_until,
     )
 
 
@@ -286,7 +341,7 @@ def _price(*, country: str, index: float, marker: str):
         base_geography_code="EU27_2020=100",
         index_value=index,
         source_id="eurostat",
-        source_snapshot_id=f"eurostat-{marker}",
+        source_snapshot_id="eurostat-shared-snapshot",
         source_url="https://ec.europa.eu/eurostat/",
         attribution="Eurostat purchasing power parities",
         as_of_date="2025-12-31",

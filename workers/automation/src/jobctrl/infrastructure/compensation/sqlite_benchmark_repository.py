@@ -451,6 +451,116 @@ class SqliteCompensationBenchmarkRepository:
         row = _fetchone_mapping(self._conn.execute(sql, params))
         return self._extrapolated_from_row(row) if row is not None else None
 
+    def fresh_market_anchors(
+        self,
+        *,
+        tenant_id: str,
+        taxonomy_version: str,
+        role_family_code: str,
+        seniority_label: str,
+        component: str,
+        exclude_country_code: str,
+        fresh_at: str,
+    ) -> tuple[DirectBenchmarkFact, ...]:
+        seniorities = (seniority_label,) if seniority_label == "unknown" else (seniority_label, "unknown")
+        placeholders = ", ".join("?" for _ in seniorities)
+        rows = _fetchall_mappings(
+            self._conn.execute(
+                f"""
+                WITH ranked AS (
+                    SELECT facts.*,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY country_code, seniority_label
+                               ORDER BY fetched_at DESC, confidence_score DESC,
+                                        sample_count DESC, fact_id DESC
+                           ) AS country_rank
+                    FROM compensation_direct_benchmark_facts AS facts
+                    WHERE tenant_id = ?
+                      AND taxonomy_version = ?
+                      AND role_family_code = ?
+                      AND seniority_label IN ({placeholders})
+                      AND component = ?
+                      AND market_scope = 'market'
+                      AND geography_scope = 'country'
+                      AND subdivision_code = ''
+                      AND locality = ''
+                      AND country_code != ?
+                      AND fresh_until >= ?
+                )
+                SELECT *
+                FROM ranked
+                WHERE country_rank = 1
+                ORDER BY CASE WHEN seniority_label = ? THEN 0 ELSE 1 END,
+                         confidence_score DESC, sample_count DESC,
+                         fetched_at DESC, country_code, fact_id
+                """,
+                (
+                    tenant_id,
+                    taxonomy_version,
+                    role_family_code,
+                    *seniorities,
+                    component,
+                    exclude_country_code,
+                    canonical_benchmark_timestamp(fresh_at, "fresh_at"),
+                    seniority_label,
+                ),
+            )
+        )
+        return tuple(_direct_from_row(row) for row in rows)
+
+    def latest_compatible_price_levels(
+        self,
+        *,
+        tenant_id: str,
+        source_country_code: str,
+        target_country_code: str,
+        category: str,
+        fresh_at: str,
+    ) -> tuple[PriceLevelFact, PriceLevelFact] | None:
+        row = _fetchone_mapping(
+            self._conn.execute(
+                """
+                SELECT source.fact_id AS source_fact_id,
+                       target.fact_id AS target_fact_id
+                FROM compensation_price_level_facts AS source
+                JOIN compensation_price_level_facts AS target
+                 ON target.tenant_id = source.tenant_id
+                 AND target.category = source.category
+                 AND target.reference_year = source.reference_year
+                 AND target.base_geography_code = source.base_geography_code
+                 AND target.source_id = source.source_id
+                 AND target.source_snapshot_id = source.source_snapshot_id
+                WHERE source.tenant_id = ?
+                  AND source.country_code = ?
+                  AND target.country_code = ?
+                  AND source.category = ?
+                  AND source.fresh_until >= ?
+                  AND target.fresh_until >= ?
+                ORDER BY source.reference_year DESC,
+                         source.fetched_at DESC,
+                         target.fetched_at DESC,
+                         source.fact_id DESC,
+                         target.fact_id DESC
+                LIMIT 1
+                """,
+                (
+                    tenant_id,
+                    source_country_code,
+                    target_country_code,
+                    category,
+                    canonical_benchmark_timestamp(fresh_at, "fresh_at"),
+                    canonical_benchmark_timestamp(fresh_at, "fresh_at"),
+                ),
+            )
+        )
+        if row is None:
+            return None
+        source = self.get_price_level(tenant_id, str(row["source_fact_id"]))
+        target = self.get_price_level(tenant_id, str(row["target_fact_id"]))
+        if source is None or target is None:  # pragma: no cover - guarded by foreign keys
+            return None
+        return source, target
+
     def matched_company_pairs(
         self,
         *,
@@ -492,6 +602,9 @@ class SqliteCompensationBenchmarkRepository:
                       AND seniority_label = ?
                       AND component = ?
                       AND market_scope = 'company'
+                      AND geography_scope = 'country'
+                      AND subdivision_code = ''
+                      AND locality = ''
                       AND country_code IN (?, ?)
                       {freshness_clause}
                 )

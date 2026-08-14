@@ -9,6 +9,7 @@ payload. It never uses private APIs, credentials, or authenticated sessions.
 from __future__ import annotations
 
 import json
+import math
 import re
 import unicodedata
 from collections.abc import Callable, Iterable
@@ -35,6 +36,17 @@ class LevelsFyiPublicTarget:
 
     role_title: str
     location: str | None
+
+
+@dataclass(frozen=True)
+class LevelsFyiPublicLoadOutcome:
+    requested_pages: int
+    reachable_pages: int
+    parsed_pages: int
+
+    @property
+    def unavailable(self) -> bool:
+        return self.requested_pages > 0 and self.reachable_pages == 0
 
 
 @dataclass(frozen=True)
@@ -149,6 +161,53 @@ _COUNTRY_LOCATION_CODES: dict[str, tuple[str, str]] = {
     "united states": ("united-states", "usa"),
 }
 
+_COUNTRY_ALPHA2_TO_NAME = {
+    "AD": "andorra",
+    "AL": "albania",
+    "AT": "austria",
+    "BA": "bosnia and herzegovina",
+    "BE": "belgium",
+    "BG": "bulgaria",
+    "BY": "belarus",
+    "CA": "canada",
+    "CH": "switzerland",
+    "CY": "cyprus",
+    "CZ": "czechia",
+    "DE": "germany",
+    "DK": "denmark",
+    "EE": "estonia",
+    "ES": "spain",
+    "FI": "finland",
+    "FR": "france",
+    "GB": "united kingdom",
+    "GR": "greece",
+    "HR": "croatia",
+    "HU": "hungary",
+    "IE": "ireland",
+    "IS": "iceland",
+    "IT": "italy",
+    "LI": "liechtenstein",
+    "LT": "lithuania",
+    "LU": "luxembourg",
+    "LV": "latvia",
+    "MC": "monaco",
+    "MD": "moldova",
+    "ME": "montenegro",
+    "MK": "north macedonia",
+    "MT": "malta",
+    "NL": "netherlands",
+    "NO": "norway",
+    "PL": "poland",
+    "PT": "portugal",
+    "RO": "romania",
+    "RS": "serbia",
+    "SE": "sweden",
+    "SI": "slovenia",
+    "SK": "slovakia",
+    "UA": "ukraine",
+    "US": "united states",
+}
+
 _COUNTRY_ALIASES = {
     "es": "spain",
     "esp": "spain",
@@ -164,6 +223,9 @@ _COUNTRY_ALIASES = {
     "usa": "united states",
     "united states of america": "united states",
 }
+_COUNTRY_ALIASES.update(
+    {country_code.casefold(): country_name for country_code, country_name in _COUNTRY_ALPHA2_TO_NAME.items()}
+)
 
 _CITY_LOCATION_SLUGS = {
     "amsterdam": "amsterdam-nld",
@@ -187,7 +249,7 @@ _CITY_LOCATION_SLUGS = {
     "zurich": "zurich-che",
 }
 
-_TO_EUR_RATES = {
+_LEGACY_TO_EUR_RATES = {
     "EUR": 1.0,
     "USD": 0.92,
     "GBP": 1.17,
@@ -205,6 +267,8 @@ def load_levels_fyi_public_observations(
     *,
     fetch_text: TextFetcher,
     max_pages: int = DEFAULT_LEVELS_FYI_PUBLIC_MAX_PAGES,
+    preserve_source_currency: bool = False,
+    on_load_outcome: Callable[[LevelsFyiPublicLoadOutcome], None] | None = None,
 ) -> tuple[ReportedCompensationObservation, ...]:
     """Load attributed public observations for unique job-family/location pages."""
 
@@ -217,16 +281,35 @@ def load_levels_fyi_public_observations(
             canonical_urls.append(canonical_url)
 
     observations: list[ReportedCompensationObservation] = []
+    reachable_pages = 0
+    parsed_pages = 0
     for canonical_url in canonical_urls[: max(0, max_pages)]:
-        markdown = _safe_fetch(fetch_text, f"{canonical_url}.md")
-        page = parse_levels_fyi_markdown(markdown, canonical_url=canonical_url) if markdown else None
+        markdown, markdown_reachable = _fetch_outcome(fetch_text, f"{canonical_url}.md")
+        page = _safe_parse(parse_levels_fyi_markdown, markdown, canonical_url) if markdown else None
         if page is not None and not _page_matches_canonical_location(page, canonical_url):
             page = None
+        html_reachable = False
         if page is None:
-            public_html = _safe_fetch(fetch_text, canonical_url)
-            page = parse_levels_fyi_html(public_html, canonical_url=canonical_url) if public_html else None
+            public_html, html_reachable = _fetch_outcome(fetch_text, canonical_url)
+            page = _safe_parse(parse_levels_fyi_html, public_html, canonical_url) if public_html else None
+        reachable_pages += int(markdown_reachable or html_reachable)
         if page is not None and _page_matches_canonical_location(page, canonical_url):
-            observations.extend(_page_observations(page))
+            parsed_pages += 1
+            observations.extend(
+                _page_observations(
+                    page,
+                    preserve_source_currency=preserve_source_currency,
+                )
+            )
+
+    if on_load_outcome is not None:
+        on_load_outcome(
+            LevelsFyiPublicLoadOutcome(
+                requested_pages=min(len(canonical_urls), max(0, max_pages)),
+                reachable_pages=reachable_pages,
+                parsed_pages=parsed_pages,
+            )
+        )
 
     deduped: dict[tuple[str, str, str, int | None, int | None], ReportedCompensationObservation] = {}
     for observation in observations:
@@ -440,11 +523,16 @@ class _NextDataParser(HTMLParser):
             self._chunks.append(data)
 
 
-def _page_observations(page: _PublicSalaryPage) -> tuple[ReportedCompensationObservation, ...]:
-    minimum = _to_eur(page.minimum_amount, page.currency)
-    maximum = _to_eur(page.maximum_amount, page.currency)
-    if minimum is None or maximum is None:
+def _page_observations(
+    page: _PublicSalaryPage,
+    *,
+    preserve_source_currency: bool,
+) -> tuple[ReportedCompensationObservation, ...]:
+    minimum = page.minimum_amount if preserve_source_currency else _legacy_to_eur(page.minimum_amount, page.currency)
+    maximum = page.maximum_amount if preserve_source_currency else _legacy_to_eur(page.maximum_amount, page.currency)
+    if minimum is None or maximum is None or minimum <= 0 or maximum < minimum:
         return ()
+    currency = page.currency if preserve_source_currency else "EUR"
     snapshot = f"levels-fyi-public-{page.release_year}"
     observations = [
         ReportedCompensationObservation(
@@ -454,7 +542,7 @@ def _page_observations(page: _PublicSalaryPage) -> tuple[ReportedCompensationObs
             role_title=page.role_title,
             minimum_amount=minimum,
             maximum_amount=maximum,
-            currency="EUR",
+            currency=currency,
             period="year",
             component="total_compensation",
             location=page.location,
@@ -467,8 +555,12 @@ def _page_observations(page: _PublicSalaryPage) -> tuple[ReportedCompensationObs
         )
     ]
     for company in page.top_companies:
-        amount = _to_eur(company.median_total_compensation, page.currency)
-        if amount is None:
+        amount = (
+            company.median_total_compensation
+            if preserve_source_currency
+            else _legacy_to_eur(company.median_total_compensation, page.currency)
+        )
+        if amount is None or amount <= 0:
             continue
         observations.append(
             ReportedCompensationObservation(
@@ -478,7 +570,7 @@ def _page_observations(page: _PublicSalaryPage) -> tuple[ReportedCompensationObs
                 role_title=page.role_title,
                 minimum_amount=amount,
                 maximum_amount=amount,
-                currency="EUR",
+                currency=currency,
                 period="year",
                 component="total_compensation",
                 location=page.location,
@@ -501,13 +593,26 @@ def _page_matches_canonical_location(page: _PublicSalaryPage, canonical_url: str
     return levels_fyi_location_slug(page.location) == expected_slug
 
 
-def _safe_fetch(fetch_text: TextFetcher, url: str) -> str | None:
+def _fetch_outcome(fetch_text: TextFetcher, url: str) -> tuple[str | None, bool]:
     try:
         value = fetch_text(url)
     except Exception:  # noqa: BLE001 - one unavailable public page must not block refresh
-        return None
+        return None, False
+    if value is None:
+        return None, False
     text = str(value or "").strip()
-    return text or None
+    return text or None, True
+
+
+def _safe_parse(
+    parser: Callable[..., _PublicSalaryPage | None],
+    text: str,
+    canonical_url: str,
+) -> _PublicSalaryPage | None:
+    try:
+        return parser(text, canonical_url=canonical_url)
+    except Exception:  # noqa: BLE001 - one malformed public page must not discard other pages
+        return None
 
 
 def _markdown_money(text: str, pattern: str) -> int | None:
@@ -525,9 +630,10 @@ def _money(value: Any) -> int | None:
 
 def _integer(value: Any) -> int | None:
     try:
-        return round(float(value))
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    return round(parsed) if math.isfinite(parsed) else None
 
 
 def _positive_float(value: Any) -> float | None:
@@ -535,11 +641,11 @@ def _positive_float(value: Any) -> float | None:
         parsed = float(value)
     except (TypeError, ValueError):
         return None
-    return parsed if parsed > 0 else None
+    return parsed if math.isfinite(parsed) and parsed > 0 else None
 
 
-def _to_eur(amount: int, currency: str) -> int | None:
-    rate = _TO_EUR_RATES.get(currency.upper())
+def _legacy_to_eur(amount: int, currency: str) -> int | None:
+    rate = _LEGACY_TO_EUR_RATES.get(currency.upper())
     return round(amount * rate) if rate is not None else None
 
 

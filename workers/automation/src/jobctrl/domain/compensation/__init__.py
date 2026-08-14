@@ -22,6 +22,7 @@ from jobctrl.domain.compensation.benchmarks import (
     extrapolate_benchmark,
     factor_bound_state,
     normalize_company_name,
+    resolve_benchmark_geography,
     resolve_country_code,
 )
 from jobctrl.domain.compensation.market import (
@@ -99,5 +100,6 @@ __all__ = [
     "not_requested_market_estimate",
     "parse_posted_compensation",
     "resolve_country_code",
+    "resolve_benchmark_geography",
     "sanitize_market_source_snapshot",
 ]

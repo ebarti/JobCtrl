@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import socket
+import ssl
 import urllib.request
 
 import pytest
 
 from jobctrl.infrastructure.network.public_http import (
+    PublicDestinationHTTPSHandler,
     PublicDestinationRedirectHandler,
     UnsafePublicDestinationError,
+    _verified_https_context,
     create_public_connection,
 )
 
@@ -73,6 +76,56 @@ def test_public_connection_rejects_private_dns_answer_without_opening_socket() -
             resolver=_resolver_for("10.0.0.5"),
             socket_factory=socket_factory,  # type: ignore[arg-type]
         )
+
+
+def test_public_https_context_keeps_verification_and_adds_bundled_roots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Context:
+        check_hostname = True
+        verify_mode = ssl.CERT_REQUIRED
+
+        def __init__(self) -> None:
+            self.loaded_cafile: str | None = None
+
+        def load_verify_locations(self, *, cafile: str) -> None:
+            self.loaded_cafile = cafile
+
+    context = _Context()
+    monkeypatch.setattr(ssl, "create_default_context", lambda: context)
+    monkeypatch.setattr("jobctrl.infrastructure.network.public_http.certifi.where", lambda: "/bundled/cacert.pem")
+
+    resolved = _verified_https_context()
+
+    assert resolved is context
+    assert context.check_hostname is True
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.loaded_cafile == "/bundled/cacert.pem"
+
+
+def test_public_https_handler_forwards_verified_context_to_pinned_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = ssl.create_default_context()
+    handler = PublicDestinationHTTPSHandler(
+        resolver=_resolver_for("93.184.216.34"),
+        context=context,
+    )
+    captured: dict[str, object] = {}
+
+    def capture_do_open(connection_class, request, **kwargs):  # noqa: ANN001
+        captured.update({"connection_class": connection_class, "request": request, **kwargs})
+        return object()
+
+    monkeypatch.setattr(handler, "do_open", capture_do_open)
+    request = urllib.request.Request("https://jobs.example/feed")
+
+    handler.https_open(request)
+
+    assert captured["context"] is context
+    assert context.check_hostname is True
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert captured["resolver"] is not None
 
 
 def test_redirect_handler_blocks_private_redirect_target() -> None:

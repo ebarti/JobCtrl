@@ -28,6 +28,7 @@ from jobctrl.infrastructure.network import (
 )
 from jobctrl.infrastructure.compensation.levels_fyi_public import (
     DEFAULT_LEVELS_FYI_PUBLIC_MAX_PAGES,
+    LevelsFyiPublicLoadOutcome,
     LevelsFyiPublicTarget,
     load_levels_fyi_public_observations,
 )
@@ -102,7 +103,7 @@ JsonFeedFetcher = Callable[[str], Any]
 TextFeedFetcher = Callable[[str, str | None], str | None]
 
 
-def _feed_client(
+def compensation_feed_client(
     gateway: PolitenessGateway,
     source_id: str,
     conn: sqlite3.Connection | None,
@@ -132,7 +133,7 @@ def _text_feed_fetcher(
     run_id: str | None,
     opener: Any | None = None,
 ) -> TextFeedFetcher:
-    client = _feed_client(gateway, source_id, conn, run_id, opener=opener)
+    client = compensation_feed_client(gateway, source_id, conn, run_id, opener=opener)
 
     def fetch(url: str, auth_token: str | None) -> str | None:
         headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -147,7 +148,7 @@ def _levels_fyi_public_fetcher(
     run_id: str | None,
     opener: Any | None = None,
 ) -> Callable[[str], str | None]:
-    client = _feed_client(gateway, "levels_fyi", conn, run_id, opener=opener)
+    client = compensation_feed_client(gateway, "levels_fyi", conn, run_id, opener=opener)
 
     def fetch(url: str) -> str | None:
         return client.fetch_text(url, extra_headers={"Accept-Encoding": "gzip"})
@@ -224,10 +225,21 @@ class ReportedCompensationSourceLoad:
     levels_fyi_public_count: int = 0
     glassdoor_count: int = 0
     euro_top_tech_count: int = 0
+    source_errors: tuple[str, ...] = ()
 
     @property
     def licensed_count(self) -> int:
         return max(0, self.levels_fyi_count - self.levels_fyi_public_count) + self.glassdoor_count
+
+
+@dataclass(frozen=True)
+class EuroTopTechLoadOutcome:
+    requested_pages: int
+    parsed_pages: int
+
+    @property
+    def unavailable(self) -> bool:
+        return self.requested_pages > 0 and self.parsed_pages == 0
 
 
 class SqliteMarketCompensationRepository:
@@ -598,6 +610,8 @@ def load_default_reported_compensation_observations(
     recorder_conn: sqlite3.Connection | None = None,
     run_id: str | None = None,
     opener: Any | None = None,
+    default_levels_fyi_public: bool = False,
+    preserve_levels_fyi_source_currency: bool = False,
 ) -> ReportedCompensationSourceLoad:
     """Load every configured reported-compensation source for refresh paths.
 
@@ -610,9 +624,11 @@ def load_default_reported_compensation_observations(
     source_env = _compensation_source_environment(
         env if env is not None else os.environ,
         settings_path=settings_path,
+        default_levels_fyi_public=default_levels_fyi_public,
     )
     active_gateway = gateway if gateway is not None else PolitenessGateway()
     observations: list[ReportedCompensationObservation] = []
+    source_errors: list[str] = []
     local = _load_optional_observation_ref(
         local_observations_path,
         default_source_id=None,
@@ -651,15 +667,20 @@ def load_default_reported_compensation_observations(
         run_id,
         opener=opener,
     )
+    levels_fyi_outcomes: list[LevelsFyiPublicLoadOutcome] = []
     levels_fyi_public = (
         load_levels_fyi_public_observations(
             levels_fyi_targets,
             fetch_text=levels_fyi_public_fetch,
             max_pages=levels_fyi_public_max_pages,
+            preserve_source_currency=preserve_levels_fyi_source_currency,
+            on_load_outcome=levels_fyi_outcomes.append,
         )
         if str(source_env.get("JOBCTRL_LEVELS_FYI_ACCESS_MODE") or "").strip().casefold() == "public_markdown"
         else ()
     )
+    if any(outcome.unavailable for outcome in levels_fyi_outcomes):
+        source_errors.append("levels_fyi_public_unavailable")
     levels_fyi = (*levels_fyi_public, *levels_fyi_licensed)
     glassdoor = _load_configured_provider_observations(
         source_env,
@@ -686,14 +707,28 @@ def load_default_reported_compensation_observations(
             Path.home() / ".jobctrl" / "compensation" / "glassdoor.csv",
         ),
     )
-    eurotoptech = (
-        load_euro_top_tech_observations(
-            max_pages=eurotoptech_max_pages,
-            http=_feed_client(active_gateway, "euro_top_tech", recorder_conn, run_id).fetch_json,
-        )
-        if include_eurotoptech
-        else ()
-    )
+    if include_eurotoptech:
+        eurotoptech_outcomes: list[EuroTopTechLoadOutcome] = []
+        try:
+            eurotoptech = load_euro_top_tech_observations(
+                max_pages=eurotoptech_max_pages,
+                http=compensation_feed_client(
+                    active_gateway,
+                    "euro_top_tech",
+                    recorder_conn,
+                    run_id,
+                    opener=opener,
+                ).fetch_json,
+                on_load_outcome=eurotoptech_outcomes.append,
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve other independent evidence
+            log.warning("Euro Top Tech compensation feed could not be loaded: %s", exc)
+            eurotoptech = ()
+            source_errors.append("euro_top_tech_unavailable")
+        if any(outcome.unavailable for outcome in eurotoptech_outcomes):
+            source_errors.append("euro_top_tech_unavailable")
+    else:
+        eurotoptech = ()
     observations.extend(local)
     observations.extend(levels_fyi)
     observations.extend(glassdoor)
@@ -705,6 +740,7 @@ def load_default_reported_compensation_observations(
         levels_fyi_public_count=len(levels_fyi_public),
         glassdoor_count=len(glassdoor),
         euro_top_tech_count=len(eurotoptech),
+        source_errors=tuple(source_errors),
     )
 
 
@@ -712,6 +748,7 @@ def _compensation_source_environment(
     env: Mapping[str, str],
     *,
     settings_path: Path | str | None,
+    default_levels_fyi_public: bool,
 ) -> dict[str, str]:
     """Translate config.json source preferences into loader runtime inputs."""
 
@@ -724,6 +761,8 @@ def _compensation_source_environment(
         effective.pop(key, None)
     resolved_settings_path = Path(settings_path) if settings_path else get_config_path()
     preferences = _read_compensation_source_preferences(resolved_settings_path)
+    if default_levels_fyi_public and "levels_fyi" not in preferences:
+        effective["JOBCTRL_LEVELS_FYI_ACCESS_MODE"] = "public_markdown"
     _apply_compensation_source_preference(
         effective,
         preferences.get("levels_fyi"),
@@ -942,6 +981,7 @@ def load_euro_top_tech_observations(
     url: str = EURO_TOP_TECH_DATA_ENTRIES_URL,
     max_pages: int = 10,
     http: JsonFeedFetcher | None = None,
+    on_load_outcome: Callable[[EuroTopTechLoadOutcome], None] | None = None,
 ) -> tuple[ReportedCompensationObservation, ...]:
     """Load public Euro Top Tech approved data-entry rows as compensation observations.
 
@@ -951,13 +991,25 @@ def load_euro_top_tech_observations(
     payload means the gateway blocked the page; loaded rows are kept.
     """
 
-    fetch = http if http is not None else _feed_client(PolitenessGateway(), "euro_top_tech", None, None).fetch_json
+    fetch = (
+        http
+        if http is not None
+        else compensation_feed_client(
+            PolitenessGateway(),
+            "euro_top_tech",
+            None,
+            None,
+        ).fetch_json
+    )
     observations: list[ReportedCompensationObservation] = []
     next_url: str | None = url
     seen_urls: set[str] = set()
     pages = 0
+    requested_pages = 0
+    parsed_pages = 0
     while next_url and pages < max(0, max_pages) and next_url not in seen_urls:
         seen_urls.add(next_url)
+        requested_pages += 1
         try:
             payload = fetch(next_url)
         except Exception:
@@ -969,12 +1021,20 @@ def load_euro_top_tech_observations(
         rows = payload.get("rows")
         if not isinstance(rows, list):
             break
+        parsed_pages += 1
         for item in rows:
             if isinstance(item, dict) and (observation := _euro_top_tech_observation(item)) is not None:
                 observations.append(observation)
         pages += 1
         cursor = payload.get("nextCursor") if payload.get("hasMore") else None
         next_url = _cursor_url(url, str(cursor)) if cursor else None
+    if on_load_outcome is not None:
+        on_load_outcome(
+            EuroTopTechLoadOutcome(
+                requested_pages=requested_pages,
+                parsed_pages=parsed_pages,
+            )
+        )
     return tuple(observations)
 
 

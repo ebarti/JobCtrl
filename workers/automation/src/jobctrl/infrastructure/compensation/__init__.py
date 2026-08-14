@@ -16,6 +16,7 @@ from jobctrl.infrastructure.compensation.levels_fyi_public import (
 )
 from jobctrl.infrastructure.compensation.sqlite_market_repository import (
     SqliteMarketCompensationRepository,
+    compensation_feed_client,
     load_default_reported_compensation_observations,
     load_euro_top_tech_observations,
     load_reported_compensation_observations,
@@ -37,6 +38,7 @@ __all__ = [
     "SqliteCompensationBenchmarkRepository",
     "SqliteMarketCompensationRepository",
     "SqlitePostedCompensationRepository",
+    "compensation_feed_client",
     "levels_fyi_location_slug",
     "levels_fyi_public_url",
     "levels_fyi_role_slug",

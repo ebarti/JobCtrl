@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal
 
 from jobctrl.domain.compensation import (
     LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
-    BenchmarkGeography,
     DirectBenchmarkFact,
     ReportedCompensationObservation,
     annualize_and_convert_to_eur,
@@ -15,12 +15,13 @@ from jobctrl.domain.compensation import (
     classify_role,
     classify_seniority,
     normalize_company_name,
-    resolve_country_code,
+    resolve_benchmark_geography,
 )
 
 
 BenchmarkObservationRejectionReason = Literal[
     "employer_posted_is_not_market_evidence",
+    "invalid_observation",
     "missing_amount",
     "missing_country",
     "missing_fx_rate",
@@ -39,8 +40,8 @@ class FxRateToEur:
     def __post_init__(self) -> None:
         if len(self.currency) != 3 or self.currency != self.currency.upper():
             raise ValueError("currency must be an uppercase ISO currency code")
-        if self.rate <= 0:
-            raise ValueError("FX rate must be positive")
+        if not math.isfinite(self.rate) or self.rate <= 0:
+            raise ValueError("FX rate must be finite and positive")
         if not self.source_id.strip() or not self.reference_id.strip():
             raise ValueError("FX source and reference identifiers are required")
 
@@ -82,14 +83,21 @@ def canonicalize_reported_observations(
     facts: list[DirectBenchmarkFact] = []
     rejected: list[BenchmarkObservationRejection] = []
     for index, observation in enumerate(observations):
-        rejection = _canonicalize_one(
-            observation,
-            observation_index=index,
-            tenant_id=tenant_id,
-            fetched_at=fetched_at,
-            fresh_until=fresh_until,
-            rates=rates,
-        )
+        try:
+            rejection = _canonicalize_one(
+                observation,
+                observation_index=index,
+                tenant_id=tenant_id,
+                fetched_at=fetched_at,
+                fresh_until=fresh_until,
+                rates=rates,
+            )
+        except (OverflowError, TypeError, ValueError):
+            rejection = _rejection(
+                observation,
+                index,
+                "invalid_observation",
+            )
         if isinstance(rejection, BenchmarkObservationRejection):
             rejected.append(rejection)
         else:
@@ -125,8 +133,8 @@ def _canonicalize_one(
     classification = classify_role(observation.role_title)
     if classification.role_family_code is None:
         return _rejection(observation, observation_index, "missing_role_family")
-    country_code = resolve_country_code(observation.location)
-    if country_code is None:
+    geography = resolve_benchmark_geography(observation.location)
+    if geography is None:
         return _rejection(observation, observation_index, "missing_country")
     currency = observation.currency.strip().upper()
     rate = rates.get(currency)
@@ -163,7 +171,7 @@ def _canonicalize_one(
         tenant_id=tenant_id,
         role_family_code=classification.role_family_code,
         seniority_label=seniority,
-        geography=BenchmarkGeography(country_code),
+        geography=geography,
         market_scope=market_scope,
         normalized_company=normalized_company,
         component=observation.component,

@@ -25,6 +25,9 @@ from jobctrl.infrastructure.compensation import (
     load_reported_compensation_observations,
 )
 from jobctrl.infrastructure.compensation.sqlite_market_repository import DEFAULT_FACTOR_REASON
+from jobctrl.infrastructure.compensation.sqlite_market_repository import (
+    EuroTopTechLoadOutcome,
+)
 
 
 @pytest.fixture()
@@ -236,7 +239,9 @@ def test_repository_does_not_persist_not_requested_marker(conn: sqlite3.Connecti
             )
         )
 
-    row = conn.execute("SELECT * FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?", ("local", job_id)
+    ).fetchone()
     assert row is None
 
 
@@ -261,8 +266,12 @@ def test_backfill_is_idempotent_and_preserves_existing_salary_and_posted_facts(
     market_rows = conn.execute(
         "SELECT * FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?", ("local", job_id)
     ).fetchall()
-    posted_rows = conn.execute("SELECT * FROM job_posted_compensation_facts WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchall()
-    salary = conn.execute("SELECT salary FROM jobs WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchone()["salary"]
+    posted_rows = conn.execute(
+        "SELECT * FROM job_posted_compensation_facts WHERE tenant_id = ? AND job_id = ?", ("local", job_id)
+    ).fetchall()
+    salary = conn.execute("SELECT salary FROM jobs WHERE tenant_id = ? AND job_id = ?", ("local", job_id)).fetchone()[
+        "salary"
+    ]
 
     assert len(market_rows) == 1
     assert len(posted_rows) == 1
@@ -595,10 +604,19 @@ def test_user_source_settings_enable_tokenless_levels_public_pages(
 
         return fetch
 
-    def load_public(targets, *, fetch_text, max_pages):
+    def load_public(
+        targets,
+        *,
+        fetch_text,
+        max_pages,
+        preserve_source_currency,
+        on_load_outcome,
+    ):
         captured_targets.extend(targets)
         fetch_text("https://www.levels.fyi/t/software-engineer.md")
         assert max_pages > 0
+        assert preserve_source_currency is False
+        assert on_load_outcome is not None
         return (
             ReportedCompensationObservation(
                 source_id="levels_fyi",
@@ -638,6 +656,25 @@ def test_user_source_settings_enable_tokenless_levels_public_pages(
     assert loaded.levels_fyi_count == 1
     assert loaded.levels_fyi_public_count == 1
     assert loaded.licensed_count == 0
+
+
+def test_blocked_levels_public_pages_are_reported_as_source_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.sqlite_market_repository._levels_fyi_public_fetcher",
+        lambda *_args, **_kwargs: lambda _url: None,
+    )
+
+    loaded = load_default_reported_compensation_observations(
+        levels_fyi_targets=(LevelsFyiPublicTarget("Software Engineer", "Spain"),),
+        include_eurotoptech=False,
+        env={},
+        default_levels_fyi_public=True,
+    )
+
+    assert loaded.observations == ()
+    assert loaded.source_errors == ("levels_fyi_public_unavailable",)
 
 
 @pytest.mark.parametrize(
@@ -702,6 +739,146 @@ def test_worker_levels_public_access_mode_semantics(
     assert loaded.levels_fyi_public_count == expected_public_count
     assert loaded.levels_fyi_count == expected_public_count
     assert loaded.licensed_count == 0
+
+
+def test_automatic_refresh_defaults_to_public_levels_when_no_preference_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_path = tmp_path / "config.json"
+    settings_path.write_text(
+        json.dumps({"compensation_sources": {}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.sqlite_market_repository.load_levels_fyi_public_observations",
+        lambda *_args, **_kwargs: (
+            ReportedCompensationObservation(
+                source_id="levels_fyi",
+                source_provenance="public",
+                company_name="Levels.fyi market aggregate",
+                role_title="Software Engineer",
+                location="Madrid, Spain",
+                level_label="all levels",
+                minimum_amount=39_000,
+                maximum_amount=77_000,
+                release_year=2026,
+                snapshot_version="levels-fyi-public-2026",
+                sample_count=599,
+                attribution="Data source: Levels.fyi (https://www.levels.fyi)",
+                source_url="https://www.levels.fyi/t/software-engineer/locations/madrid-esp",
+            ),
+        ),
+    )
+
+    loaded = load_default_reported_compensation_observations(
+        levels_fyi_targets=(LevelsFyiPublicTarget("Software Engineer", "Madrid, Spain"),),
+        include_eurotoptech=False,
+        env={},
+        settings_path=settings_path,
+        default_levels_fyi_public=True,
+    )
+
+    assert loaded.levels_fyi_public_count == 1
+
+
+def test_automatic_refresh_respects_an_explicitly_disabled_levels_preference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_path = tmp_path / "config.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "compensation_sources": {
+                    "levels_fyi": {
+                        "enabled": False,
+                        "access_mode": "public_markdown",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.sqlite_market_repository.load_levels_fyi_public_observations",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("disabled public source must not be called")),
+    )
+
+    loaded = load_default_reported_compensation_observations(
+        levels_fyi_targets=(LevelsFyiPublicTarget("Software Engineer", "Madrid, Spain"),),
+        include_eurotoptech=False,
+        env={},
+        settings_path=settings_path,
+        default_levels_fyi_public=True,
+    )
+
+    assert loaded.levels_fyi_public_count == 0
+
+
+def test_one_public_source_failure_preserves_other_loaded_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_path = tmp_path / "config.json"
+    settings_path.write_text(
+        json.dumps({"compensation_sources": {}}),
+        encoding="utf-8",
+    )
+    observation = ReportedCompensationObservation(
+        source_id="levels_fyi",
+        source_provenance="public",
+        company_name="Levels.fyi market aggregate",
+        role_title="Software Engineer",
+        location="Madrid, Spain",
+        level_label="all levels",
+        minimum_amount=39_000,
+        maximum_amount=77_000,
+        snapshot_version="levels-fyi-public-2026",
+        attribution="Data source: Levels.fyi (https://www.levels.fyi)",
+        source_url="https://www.levels.fyi/t/software-engineer/locations/madrid-esp",
+    )
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.sqlite_market_repository.load_levels_fyi_public_observations",
+        lambda *_args, **_kwargs: (observation,),
+    )
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.sqlite_market_repository.load_euro_top_tech_observations",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("unavailable")),
+    )
+
+    loaded = load_default_reported_compensation_observations(
+        levels_fyi_targets=(LevelsFyiPublicTarget("Software Engineer", "Madrid, Spain"),),
+        include_eurotoptech=True,
+        env={},
+        settings_path=settings_path,
+        default_levels_fyi_public=True,
+    )
+
+    assert loaded.observations == (observation,)
+    assert loaded.source_errors == ("euro_top_tech_unavailable",)
+
+
+def test_blocked_euro_top_tech_first_page_is_reported_as_source_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable_loader(*, on_load_outcome, **_kwargs):
+        on_load_outcome(EuroTopTechLoadOutcome(requested_pages=1, parsed_pages=0))
+        return ()
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.sqlite_market_repository.load_euro_top_tech_observations",
+        unavailable_loader,
+    )
+
+    loaded = load_default_reported_compensation_observations(
+        include_eurotoptech=True,
+        env={},
+    )
+
+    assert loaded.observations == ()
+    assert loaded.source_errors == ("euro_top_tech_unavailable",)
 
 
 def test_user_source_settings_can_disable_a_configured_feed(
@@ -840,6 +1017,20 @@ def test_euro_top_tech_importer_keeps_loaded_rows_when_later_page_is_throttled(
     assert len(observations) == 1
     assert observations[0].source_id == "euro_top_tech"
     assert observations[0].minimum_amount == 242_000
+
+
+def test_euro_top_tech_importer_reports_a_blocked_first_page() -> None:
+    outcomes = []
+
+    observations = load_euro_top_tech_observations(
+        max_pages=2,
+        http=lambda _url: None,
+        on_load_outcome=outcomes.append,
+    )
+
+    assert observations == ()
+    assert outcomes == [EuroTopTechLoadOutcome(requested_pages=1, parsed_pages=0)]
+    assert outcomes[0].unavailable is True
 
 
 def test_persisted_json_contains_safe_reported_source_fields(conn: sqlite3.Connection) -> None:

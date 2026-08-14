@@ -14,6 +14,7 @@ import math
 import re
 import socket
 import urllib.parse
+import unicodedata
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -100,6 +101,8 @@ _LOCAL_PATH_RE = re.compile(
     r"(?:^|[\s\"'=(:])(?:[a-z]:[\\/]|\\\\|/(?!/|\s)|\.\.?[\\/]|~[\\/])",
     re.IGNORECASE,
 )
+_MAX_SUBDIVISION_CODE_LENGTH = 32
+_MAX_LOCALITY_LENGTH = 128
 _SENIORITY_LABELS = {
     "entry",
     "mid",
@@ -332,8 +335,18 @@ class BenchmarkGeography:
 
     def __post_init__(self) -> None:
         country = self.country_code.strip().upper()
-        subdivision = self.subdivision_code.strip()
-        locality = self.locality.strip()
+        subdivision = _canonical_geography_label(
+            self.subdivision_code,
+            "subdivision_code",
+            max_length=_MAX_SUBDIVISION_CODE_LENGTH,
+            allow_empty=True,
+        )
+        locality = _canonical_geography_label(
+            self.locality,
+            "locality",
+            max_length=_MAX_LOCALITY_LENGTH,
+            allow_empty=True,
+        )
         if not _ISO_COUNTRY_RE.fullmatch(country):
             raise ValueError("country_code must be an ISO 3166-1 alpha-2 code")
         if self.scope not in {"country", "country_subdivision", "locality"}:
@@ -754,6 +767,39 @@ def resolve_country_code(location: str | None) -> str | None:
         if _ISO_COUNTRY_RE.fullmatch(part):
             return part
     return None
+
+
+def resolve_benchmark_geography(location: str | None) -> BenchmarkGeography | None:
+    """Resolve country authority without promoting a named locality to country scope."""
+
+    raw_location = str(location or "").strip()
+    if raw_location:
+        _canonical_geography_label(
+            raw_location,
+            "location",
+            max_length=_MAX_LOCALITY_LENGTH * 2,
+        )
+    country_code = resolve_country_code(location)
+    if country_code is None:
+        return None
+    parts = [part.strip() for part in re.split(r"[,/|()]", str(location or "")) if part.strip()]
+    for part in parts:
+        if resolve_country_code(part) is not None:
+            continue
+        locality = re.sub(
+            r"\b(?:hybrid|remote|remoto|teletrabajo|work from home|wfh)\b",
+            " ",
+            part,
+            flags=re.IGNORECASE,
+        )
+        locality = re.sub(r"\s+", " ", locality).strip(" -–—")
+        if locality and _normalized_phrase(locality) not in {"europe", "emea", "worldwide"}:
+            return BenchmarkGeography(
+                country_code,
+                scope="locality",
+                locality=locality,
+            )
+    return BenchmarkGeography(country_code)
 
 
 def normalize_company_name(value: str | None) -> str | None:
@@ -1429,6 +1475,30 @@ def _require_text(value: str, field: str) -> None:
         raise ValueError(f"{field} must not be empty")
 
 
+def _canonical_geography_label(
+    value: str,
+    field: str,
+    *,
+    max_length: int,
+    allow_empty: bool = False,
+) -> str:
+    normalized = re.sub(r"\s+", " ", value.strip())
+    if not normalized:
+        if allow_empty:
+            return ""
+        raise ValueError(f"{field} must not be empty")
+    if len(normalized) > max_length:
+        raise ValueError(f"{field} exceeds the maximum public geography label length")
+    if any(unicodedata.category(character) == "Cc" for character in normalized):
+        raise ValueError(f"{field} must not contain control characters")
+    decoded = urllib.parse.unquote(normalized)
+    if _LOCAL_PATH_RE.search(decoded) or "://" in decoded:
+        raise ValueError(f"{field} must be a public geography label, not a local path or URL")
+    if not any(character.isalpha() for character in normalized):
+        raise ValueError(f"{field} must contain a public geography name")
+    return normalized
+
+
 def _validate_public_url(
     value: str | None,
     field: str,
@@ -1496,4 +1566,5 @@ __all__ = [
     "factor_bound_state",
     "normalize_company_name",
     "resolve_country_code",
+    "resolve_benchmark_geography",
 ]
