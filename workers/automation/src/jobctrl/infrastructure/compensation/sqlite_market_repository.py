@@ -9,7 +9,8 @@ import os
 import re
 import sqlite3
 import urllib.parse
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
@@ -42,7 +43,10 @@ from jobctrl.domain.compensation import (
     estimate_market_compensation,
     sanitize_market_source_snapshot,
 )
+from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.domain.ports.events import EventHandler, Subscription
+from jobctrl.domain.tenant import TenantId
 
 SAFE_FACTOR_NAMES = frozenset(
     {"agreement", "company", "component", "freshness", "level", "location", "role", "sample", "trimodal_tier"}
@@ -203,17 +207,6 @@ EURO_TOP_TECH_EUROPE_COUNTRIES = frozenset(
         "united kingdom",
     }
 )
-EUR_NORMALIZATION_RATES = {
-    "EUR": 1,
-    "USD": 0.92,
-    "GBP": 1.17,
-    "CHF": 1.06,
-    "SEK": 0.09,
-    "NOK": 0.087,
-    "DKK": 0.134,
-    "PLN": 0.235,
-    "CZK": 0.041,
-}
 log = logging.getLogger(__name__)
 
 
@@ -242,6 +235,23 @@ class EuroTopTechLoadOutcome:
         return self.requested_pages > 0 and self.parsed_pages == 0
 
 
+class _BufferedEventPublisher:
+    """Hold notifications until the canonical write has committed."""
+
+    def __init__(self) -> None:
+        self.events: list[DomainEvent] = []
+
+    def publish(self, event: DomainEvent) -> None:
+        self.events.append(event)
+
+    def subscribe(
+        self,
+        _event_type: str | None,
+        _handler: EventHandler,
+    ) -> Subscription:
+        raise RuntimeError("buffered event publisher does not accept subscriptions")
+
+
 class SqliteMarketCompensationRepository:
     """SQLite-backed repository for canonical reported compensation estimates."""
 
@@ -252,6 +262,11 @@ class SqliteMarketCompensationRepository:
         if estimate.estimate_state == "not_requested":
             raise ValueError("not_requested market estimates are read-side markers and must not be persisted")
         estimate = replace(estimate, job_id=canonical_job_id(str(estimate.job_id)))
+        with self._atomic_event_write() as publisher:
+            self._save_estimate_row(estimate)
+            self._record_updated_event(estimate, publisher=publisher)
+
+    def _save_estimate_row(self, estimate: MarketCompensationEstimate) -> None:
         self._conn.execute(
             """
             INSERT INTO job_market_compensation_estimates (
@@ -335,8 +350,6 @@ class SqliteMarketCompensationRepository:
                 estimate.match_scope,
             ),
         )
-        self._conn.commit()
-        self._record_updated_event(estimate)
 
     def get_estimate(self, tenant_id: str, job_id: JobId) -> MarketCompensationEstimate | None:
         job_id = canonical_job_id(str(job_id))
@@ -356,6 +369,59 @@ class SqliteMarketCompensationRepository:
             (tenant_id, job_id),
         ).fetchone()
         return _row_to_estimate(row) if row is not None else None
+
+    def delete_estimate_if_owned_by(
+        self,
+        tenant_id: str,
+        job_id: JobId,
+        *,
+        estimator_version_prefix: str,
+        deleted_at: str,
+    ) -> bool:
+        """Clear a stale projection only when it belongs to the named estimator."""
+
+        job_id = canonical_job_id(str(job_id))
+        with self._atomic_event_write() as publisher:
+            cursor = self._conn.execute(
+                """
+                DELETE FROM job_market_compensation_estimates
+                WHERE tenant_id = ?
+                  AND job_id = ?
+                  AND estimator_version LIKE ?
+                """,
+                (tenant_id, job_id, f"{estimator_version_prefix}%"),
+            )
+            if cursor.rowcount != 1:
+                return False
+            self._record_cleared_event(
+                tenant_id=tenant_id,
+                job_id=job_id,
+                cleared_at=deleted_at,
+                publisher=publisher,
+            )
+            return True
+
+    @contextmanager
+    def _atomic_event_write(self) -> Iterator[_BufferedEventPublisher]:
+        """Commit the canonical mutation and dirty event before notifying."""
+
+        savepoint = "market_compensation_event_write"
+        publisher = _BufferedEventPublisher()
+        self._conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            yield publisher
+        except BaseException:
+            self._conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
+        else:
+            self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            self._conn.commit()
+            from jobctrl.infrastructure.events import get_default_publisher
+
+            destination = get_default_publisher()
+            for event in publisher.events:
+                destination.publish(event)
 
     def estimate_and_save_job(
         self,
@@ -425,7 +491,6 @@ class SqliteMarketCompensationRepository:
     ) -> int:
         if job_id is not None:
             job_id = canonical_job_id(str(job_id))
-        posted_observations = self._posted_salary_observations(tenant_id=tenant_id, job_id=job_id)
         sql = "SELECT job_id, url, title, site, company, location FROM jobs WHERE tenant_id = ?"
         params: list[Any] = [tenant_id]
         if job_id:
@@ -441,106 +506,19 @@ class SqliteMarketCompensationRepository:
             title = str(_row_value(row, "title") or "")
             company = _nullable_str(_row_value(row, "company")) or _nullable_str(_row_value(row, "site"))
             location = _nullable_str(_row_value(row, "location"))
-            estimate: MarketCompensationEstimate | None = None
-            if observations:
-                estimate = self._estimate_job(
-                    tenant_id=tenant_id,
-                    job_id=current_job_id,
-                    title=title,
-                    company=company,
-                    location=location,
-                    observations=observations,
-                    component="total_compensation",
-                    estimated_at=estimated_at,
-                )
-            if estimate is None or (estimate.estimate_state != "estimated_range" and posted_observations):
-                estimate = self._estimate_job(
-                    tenant_id=tenant_id,
-                    job_id=current_job_id,
-                    title=title,
-                    company=company,
-                    location=location,
-                    observations=posted_observations,
-                    component="base_salary",
-                    estimated_at=estimated_at,
-                )
+            estimate = self._estimate_job(
+                tenant_id=tenant_id,
+                job_id=current_job_id,
+                title=title,
+                company=company,
+                location=location,
+                observations=observations,
+                component="total_compensation",
+                estimated_at=estimated_at,
+            )
             self.save_estimate(estimate)
         self._conn.commit()
         return len(rows)
-
-    def _posted_salary_observations(
-        self,
-        *,
-        tenant_id: str,
-        job_id: JobId | None,
-    ) -> tuple[ReportedCompensationObservation, ...]:
-        sql = """
-            SELECT j.url AS posting_url, j.title, j.company, j.site, j.location,
-                   f.currency, f.period, f.minimum_amount, f.maximum_amount,
-                   f.annualized_minimum_amount, f.annualized_maximum_amount,
-                   f.warnings_json, f.source_text, f.parsed_at
-            FROM job_posted_compensation_facts f
-            JOIN jobs j ON j.tenant_id = f.tenant_id AND j.job_id = f.job_id
-            WHERE f.tenant_id = ?
-              AND f.parse_state = 'parsed_range'
-              AND (
-                f.annualized_minimum_amount IS NOT NULL
-                OR f.annualized_maximum_amount IS NOT NULL
-                OR f.minimum_amount IS NOT NULL
-                OR f.maximum_amount IS NOT NULL
-              )
-        """
-        params: list[Any] = [tenant_id]
-        if job_id:
-            sql += " AND f.job_id = ?"
-            params.append(job_id)
-        rows = self._conn.execute(sql, params).fetchall()
-        observations: list[ReportedCompensationObservation] = []
-        for row in rows:
-            currency = _nullable_str(_row_value(row, "currency"))
-            warnings = tuple(str(item) for item in _json_list(_row_value(row, "warnings_json")))
-            minimum = _posted_annualized_eur(
-                annualized_amount=_row_value(row, "annualized_minimum_amount"),
-                raw_amount=_row_value(row, "minimum_amount"),
-                currency=currency,
-                period=_nullable_str(_row_value(row, "period")),
-                warnings=warnings,
-                source_text=_nullable_str(_row_value(row, "source_text")),
-            )
-            maximum = _posted_annualized_eur(
-                annualized_amount=_row_value(row, "annualized_maximum_amount"),
-                raw_amount=_row_value(row, "maximum_amount"),
-                currency=currency,
-                period=_nullable_str(_row_value(row, "period")),
-                warnings=warnings,
-                source_text=_nullable_str(_row_value(row, "source_text")),
-            )
-            company = _nullable_str(_row_value(row, "company")) or _nullable_str(_row_value(row, "site"))
-            role = _nullable_str(_row_value(row, "title"))
-            if not company or not role or (minimum is None and maximum is None):
-                continue
-            observations.append(
-                ReportedCompensationObservation(
-                    source_id="posted_salary_text",
-                    source_provenance="employer_posted",
-                    company_name=company,
-                    role_title=role,
-                    minimum_amount=minimum,
-                    maximum_amount=maximum,
-                    currency="EUR",
-                    period="year",
-                    component="base_salary",
-                    location=_nullable_str(_row_value(row, "location")),
-                    level_label=None,
-                    company_tier="unknown",
-                    release_year=_year(_row_value(row, "parsed_at")),
-                    snapshot_version="jobctrl-posted-compensation-v1",
-                    sample_count=1,
-                    attribution="Employer-posted salary text captured by JobCtrl",
-                    source_url=_safe_evidence_url(_row_value(row, "posting_url")),
-                )
-            )
-        return tuple(observations)
 
     def _posted_annualized_range(self, tenant_id: str, job_id: JobId) -> tuple[int | None, int | None]:
         row = self._conn.execute(
@@ -557,31 +535,63 @@ class SqliteMarketCompensationRepository:
             _row_value(row, "annualized_maximum_amount")
         )
 
-    def _record_updated_event(self, estimate: MarketCompensationEstimate) -> None:
-        try:
-            from jobctrl.state import record_job_event
+    def _record_updated_event(
+        self,
+        estimate: MarketCompensationEstimate,
+        *,
+        publisher: _BufferedEventPublisher,
+    ) -> None:
+        from jobctrl.state import record_job_event
 
-            record_job_event(
-                self._conn,
-                estimate.job_id,
-                "enrich",
-                "CompensationFactsUpdated",
-                tenant_id=estimate.tenant_id,
-                message="Market compensation estimate updated",
-                occurred_at=estimate.estimated_at,
-                payload={
-                    "jobId": str(estimate.job_id),
-                    "changedSections": ["market"],
-                    "postedRecordStatus": None,
-                    "postedParseState": None,
-                    "marketRecordStatus": "recorded",
-                    "marketEstimateState": estimate.estimate_state,
-                    "updatedAt": estimate.estimated_at,
-                },
-            )
-            self._conn.commit()
-        except sqlite3.OperationalError:
-            return
+        record_job_event(
+            self._conn,
+            estimate.job_id,
+            "enrich",
+            "CompensationFactsUpdated",
+            tenant_id=TenantId(estimate.tenant_id),
+            message="Market compensation estimate updated",
+            occurred_at=estimate.estimated_at,
+            publisher=publisher,
+            payload={
+                "jobId": str(estimate.job_id),
+                "changedSections": ["market"],
+                "postedRecordStatus": None,
+                "postedParseState": None,
+                "marketRecordStatus": "recorded",
+                "marketEstimateState": estimate.estimate_state,
+                "updatedAt": estimate.estimated_at,
+            },
+        )
+
+    def _record_cleared_event(
+        self,
+        *,
+        tenant_id: str,
+        job_id: JobId,
+        cleared_at: str,
+        publisher: _BufferedEventPublisher,
+    ) -> None:
+        from jobctrl.state import record_job_event
+
+        record_job_event(
+            self._conn,
+            job_id,
+            "enrich",
+            "CompensationFactsUpdated",
+            tenant_id=TenantId(tenant_id),
+            message="Market compensation estimate cleared",
+            occurred_at=cleared_at,
+            publisher=publisher,
+            payload={
+                "jobId": str(job_id),
+                "changedSections": ["market"],
+                "postedRecordStatus": None,
+                "postedParseState": None,
+                "marketRecordStatus": "not_requested",
+                "marketEstimateState": "not_requested",
+                "updatedAt": cleared_at,
+            },
+        )
 
 
 def load_reported_compensation_observations(
@@ -610,7 +620,6 @@ def load_default_reported_compensation_observations(
     recorder_conn: sqlite3.Connection | None = None,
     run_id: str | None = None,
     opener: Any | None = None,
-    default_levels_fyi_public: bool = False,
     preserve_levels_fyi_source_currency: bool = False,
 ) -> ReportedCompensationSourceLoad:
     """Load every configured reported-compensation source for refresh paths.
@@ -624,7 +633,6 @@ def load_default_reported_compensation_observations(
     source_env = _compensation_source_environment(
         env if env is not None else os.environ,
         settings_path=settings_path,
-        default_levels_fyi_public=default_levels_fyi_public,
     )
     active_gateway = gateway if gateway is not None else PolitenessGateway()
     observations: list[ReportedCompensationObservation] = []
@@ -748,7 +756,6 @@ def _compensation_source_environment(
     env: Mapping[str, str],
     *,
     settings_path: Path | str | None,
-    default_levels_fyi_public: bool,
 ) -> dict[str, str]:
     """Translate config.json source preferences into loader runtime inputs."""
 
@@ -761,8 +768,6 @@ def _compensation_source_environment(
         effective.pop(key, None)
     resolved_settings_path = Path(settings_path) if settings_path else get_config_path()
     preferences = _read_compensation_source_preferences(resolved_settings_path)
-    if default_levels_fyi_public and "levels_fyi" not in preferences:
-        effective["JOBCTRL_LEVELS_FYI_ACCESS_MODE"] = "public_markdown"
     _apply_compensation_source_preference(
         effective,
         preferences.get("levels_fyi"),
@@ -1423,50 +1428,6 @@ def _score(value: Any) -> float:
 def _currency(value: Any) -> str:
     text = str(value or "EUR").strip().upper()
     return text if re.fullmatch(r"[A-Z]{3}", text) else "EUR"
-
-
-def _normalize_annualized_eur(amount: Any, currency: str | None) -> int | None:
-    value = _nullable_int(amount)
-    if value is None:
-        return None
-    rate = EUR_NORMALIZATION_RATES.get(str(currency or "").upper())
-    if rate is None:
-        return None
-    return round(value * rate)
-
-
-def _posted_annualized_eur(
-    *,
-    annualized_amount: Any,
-    raw_amount: Any,
-    currency: str | None,
-    period: str | None,
-    warnings: tuple[str, ...],
-    source_text: str | None,
-) -> int | None:
-    annualized = _normalize_annualized_eur(annualized_amount, currency)
-    if annualized is not None:
-        return annualized
-    value = _nullable_int(raw_amount)
-    if value is None or not _can_assume_annual_period(value, period, warnings, source_text):
-        return None
-    return _normalize_annualized_eur(value, currency)
-
-
-def _can_assume_annual_period(
-    value: int,
-    period: str | None,
-    warnings: tuple[str, ...],
-    source_text: str | None,
-) -> bool:
-    if str(period or "").casefold() != "unknown":
-        return False
-    if value < 30_000:
-        return False
-    if "bonus_component" in warnings or "one_sided_range" in warnings:
-        return False
-    text = str(source_text or "").casefold()
-    return bool(re.search(r"\b(base salaries|base salary|salary|compensation|gross)\b", text))
 
 
 def _year(value: Any) -> int | None:

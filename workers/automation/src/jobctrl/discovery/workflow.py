@@ -21,12 +21,15 @@ with workflow.unsafe.imports_passed_through():
         PipelineStepKind,
     )
     from jobctrl.discovery.activities import (
+        AutomaticCompensationRefreshActivityInput,
+        AutomaticCompensationRefreshActivityOutput,
         DiscoveryEnrichmentActivityInput,
         DiscoveryEnrichmentActivityOutput,
         DiscoveryPreparationFanoutInput,
         DiscoverySourceActivityInput,
         PlanDiscoverySourcesInput,
         PlanDiscoverySourcesOutput,
+        automatic_compensation_refresh_activity,
         discovery_enrichment_activity,
         discovery_preparation_fanout_activity,
         discovery_source_family_activity,
@@ -63,6 +66,9 @@ class DiscoverWorkflowResult:
     preparation_started: int = 0
     enrichment_status: str = "ok"
     enrichment_site_errors: dict[str, Any] = field(default_factory=dict)
+    compensation_refresh_status: str = "skipped"
+    compensation_estimates_written: int = 0
+    compensation_refresh_warnings: list[str] = field(default_factory=list)
     failure: str | None = None
     error_code: str | None = None
 
@@ -90,6 +96,9 @@ _DEFAULT_TIMEOUT = timedelta(minutes=30)
 _DISCOVERY_TIMEOUT = timedelta(hours=6)
 _LIVE_ENRICH_HEARTBEAT_TIMEOUT = timedelta(seconds=5)
 _DEFAULT_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
+_AUTOMATIC_COMPENSATION_REFRESH_PATCH = (
+    "discover-automatic-compensation-refresh-v1"
+)
 
 
 @workflow.defn(name="DiscoverWorkflow")
@@ -270,6 +279,24 @@ class DiscoverWorkflow:
             enrichment_failure = str(exc.cause) if exc.cause else str(exc)
             enrichment_error_code = _activity_error_code(exc)
 
+        compensation_refresh_status = "skipped"
+        compensation_estimates_written = 0
+        compensation_refresh_warnings: list[str] = []
+        try:
+            compensation_result = await _run_automatic_compensation_refresh_activity(
+                payload,
+                discovery_execution,
+            )
+            compensation_refresh_status = compensation_result.status
+            compensation_estimates_written = compensation_result.estimates_written
+            compensation_refresh_warnings = list(compensation_result.warnings)
+        except ActivityError as exc:
+            if _activity_error_was_cancelled(exc):
+                raise CancelledError() from exc
+            compensation_refresh_status = "failed"
+            compensation_refresh_warnings = ["automatic_compensation_refresh_failed"]
+            workflow.logger.warning("Automatic compensation refresh failed; discovery will continue")
+
         preparation_started = 0
         preparation_error: ActivityError | None = None
         try:
@@ -302,17 +329,16 @@ class DiscoverWorkflow:
                 preparation_started=preparation_started,
                 enrichment_status=enrichment_status,
                 enrichment_site_errors=enrichment_site_errors,
+                compensation_refresh_status=compensation_refresh_status,
+                compensation_estimates_written=compensation_estimates_written,
+                compensation_refresh_warnings=compensation_refresh_warnings,
                 failure="; ".join(failures),
                 error_code="discovery_source_failed",
             )
         if enrichment_failure is not None:
             message = enrichment_failure
             if preparation_error is not None:
-                prep_cause = (
-                    str(preparation_error.cause)
-                    if preparation_error.cause
-                    else str(preparation_error)
-                )
+                prep_cause = str(preparation_error.cause) if preparation_error.cause else str(preparation_error)
                 message = f"{enrichment_failure}; preparation also failed: {prep_cause}"
             return DiscoverWorkflowResult(
                 families_completed=completed,
@@ -320,6 +346,9 @@ class DiscoverWorkflow:
                 preparation_started=preparation_started,
                 enrichment_status=enrichment_status,
                 enrichment_site_errors=enrichment_site_errors,
+                compensation_refresh_status=compensation_refresh_status,
+                compensation_estimates_written=compensation_estimates_written,
+                compensation_refresh_warnings=compensation_refresh_warnings,
                 failure=message,
                 error_code=enrichment_error_code or "discovery_enrichment_failed",
             )
@@ -331,6 +360,9 @@ class DiscoverWorkflow:
             preparation_started=preparation_started,
             enrichment_status=enrichment_status,
             enrichment_site_errors=enrichment_site_errors,
+            compensation_refresh_status=compensation_refresh_status,
+            compensation_estimates_written=compensation_estimates_written,
+            compensation_refresh_warnings=compensation_refresh_warnings,
         )
 
     async def _run_family_source(
@@ -466,6 +498,26 @@ async def _run_enrichment_activity(
         start_to_close_timeout=_DISCOVERY_TIMEOUT,
         heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
         retry_policy=_ENRICH_RETRY,
+    )
+
+
+async def _run_automatic_compensation_refresh_activity(
+    payload: DiscoverWorkflowInput,
+    discovery_execution: DiscoveryExecutionRef,
+) -> AutomaticCompensationRefreshActivityOutput:
+    if not workflow.patched(_AUTOMATIC_COMPENSATION_REFRESH_PATCH):
+        return AutomaticCompensationRefreshActivityOutput(status="skipped")
+    return await workflow.execute_activity(
+        automatic_compensation_refresh_activity,
+        AutomaticCompensationRefreshActivityInput(
+            tenant_id=payload.tenant_id,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+            discovery_execution=discovery_execution,
+        ),
+        start_to_close_timeout=_DEFAULT_TIMEOUT,
+        heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
+        retry_policy=_SOURCE_RETRY,
     )
 
 

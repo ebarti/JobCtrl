@@ -120,7 +120,6 @@ def refresh_automatic_compensation_benchmarks(
             recorder_conn=active_conn,
             run_id=run_id,
             opener=opener,
-            default_levels_fyi_public=True,
             preserve_levels_fyi_source_currency=True,
         )
 

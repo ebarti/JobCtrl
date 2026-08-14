@@ -772,7 +772,10 @@ def test_refresh_compensation_core_updates_all_jobs(tmp_db: Path, tmp_path: Path
     assert {row["job_id"] for row in posted_rows} == {first_job_id, second_job_id}
     assert [row["parse_state"] for row in posted_rows] == ["parsed_range", "parsed_range"]
     assert {row["job_id"] for row in estimate_rows} == {first_job_id, second_job_id}
-    assert [row["estimate_state"] for row in estimate_rows] == ["estimated_range", "estimated_range"]
+    assert [row["estimate_state"] for row in estimate_rows] == [
+        "insufficient_evidence",
+        "insufficient_evidence",
+    ]
 
 
 def test_refresh_compensation_without_observations_uses_euro_top_tech_and_updates_market(

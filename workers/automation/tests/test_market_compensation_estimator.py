@@ -198,7 +198,7 @@ def test_executive_titles_use_executive_baseline_not_staff_plus_fallback() -> No
     assert "company_role_fallback" in estimate.warnings
 
 
-def test_executive_titles_do_not_use_staff_plus_posted_salary_fallback() -> None:
+def test_employer_posted_observations_never_enter_market_estimates() -> None:
     estimate = estimate_market_compensation(
         job_id=TEST_JOB_ID,
         company="Different Company",
@@ -216,6 +216,9 @@ def test_executive_titles_do_not_use_staff_plus_posted_salary_fallback() -> None
     assert estimate.estimate_state == "insufficient_evidence"
     assert estimate.minimum_amount is None
     assert estimate.maximum_amount is None
+    assert estimate.sources == ()
+    assert estimate.evidence == ()
+    assert "posted_salary_sample" not in estimate.warnings
 
 
 def test_estimates_company_adjacent_role_with_explicit_fallback_warning() -> None:

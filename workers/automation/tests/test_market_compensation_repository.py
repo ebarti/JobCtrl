@@ -28,6 +28,7 @@ from jobctrl.infrastructure.compensation.sqlite_market_repository import DEFAULT
 from jobctrl.infrastructure.compensation.sqlite_market_repository import (
     EuroTopTechLoadOutcome,
 )
+from jobctrl.infrastructure.events import get_default_publisher, reset_default_publisher
 
 
 @pytest.fixture()
@@ -174,6 +175,51 @@ def test_save_and_read_round_trip_estimated_company_role_range(conn: sqlite3.Con
     assert "reported_compensation_sample" in loaded.warnings
 
 
+def test_save_notifies_commit_capable_subscribers_only_after_commit(
+    conn: sqlite3.Connection,
+) -> None:
+    job_url = _seed_job(conn, url="https://example.com/jobs/committing-subscriber")
+    job_id = _job_id(job_url)
+    estimate = estimate_market_compensation(
+        job_id=job_id,
+        title="Senior Platform Engineer",
+        company="Acme AI",
+        location="Remote Europe",
+        observations=(_levels(), _glassdoor()),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+    reset_default_publisher()
+    publisher = get_default_publisher()
+    observed_rows: list[int] = []
+
+    def commit_capable_subscriber(_event: object) -> None:
+        observed_rows.append(
+            int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM job_market_compensation_estimates WHERE tenant_id = ? AND job_id = ?",
+                    ("local", job_id),
+                ).fetchone()[0]
+            )
+        )
+        conn.commit()
+
+    subscription = publisher.subscribe("CompensationFactsUpdated", commit_capable_subscriber)
+    try:
+        SqliteMarketCompensationRepository(conn).save_estimate(estimate)
+    finally:
+        subscription.unsubscribe()
+        reset_default_publisher()
+
+    assert observed_rows == [1]
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? AND event_type = ?",
+            ("local", job_id, "CompensationFactsUpdated"),
+        ).fetchone()[0]
+        == 1
+    )
+
+
 def test_repository_round_trips_non_range_states(
     conn: sqlite3.Connection,
 ) -> None:
@@ -278,7 +324,7 @@ def test_backfill_is_idempotent_and_preserves_existing_salary_and_posted_facts(
     assert salary == "€100,000-€130,000/year"
 
 
-def test_backfill_derives_market_range_from_posted_salary_fact_and_company_column(
+def test_backfill_keeps_employer_posted_salary_out_of_market_authority(
     conn: sqlite3.Connection,
 ) -> None:
     job_url = "https://example.com/jobs/posted-market"
@@ -315,20 +361,17 @@ def test_backfill_derives_market_range_from_posted_salary_fact_and_company_colum
 
     estimate = repo.get_estimate("local", job_id)
     assert estimate is not None
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.component == "base_salary"
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.component == "total_compensation"
     assert estimate.company_name == "Acme AI"
-    assert estimate.minimum_amount == 100_000
-    assert estimate.maximum_amount == 130_000
-    assert estimate.confidence_interval_minimum_amount is not None
-    assert estimate.confidence_interval_minimum_amount < estimate.minimum_amount
-    assert estimate.confidence_interval_maximum_amount is not None
-    assert estimate.confidence_interval_maximum_amount > estimate.maximum_amount
-    assert estimate.confidence_band == "low"
-    assert "posted_salary_sample" in estimate.warnings
-    assert "low_sample_count" in estimate.warnings
-    assert estimate.sources[0].source_id == "posted_salary_text"
-    assert estimate.sources[0].source_type == "posted_salary"
+    assert estimate.minimum_amount is None
+    assert estimate.maximum_amount is None
+    assert estimate.sources == ()
+    assert "posted_salary_sample" not in estimate.warnings
+    posted = SqlitePostedCompensationRepository(conn).get_fact("local", job_id)
+    assert posted is not None
+    assert posted.annualized_minimum_amount == 100_000
+    assert posted.annualized_maximum_amount == 130_000
 
 
 def test_posted_backfill_extracts_salary_text_from_full_description(
@@ -368,7 +411,7 @@ def test_posted_backfill_extracts_salary_text_from_full_description(
     assert fact.annualized_maximum_amount == 130_000
 
 
-def test_backfill_falls_back_to_posted_salary_when_reported_rows_are_too_weak(
+def test_backfill_never_falls_back_to_posted_salary_when_reported_rows_are_too_weak(
     conn: sqlite3.Connection,
 ) -> None:
     job_url = _seed_job(
@@ -421,14 +464,14 @@ def test_backfill_falls_back_to_posted_salary_when_reported_rows_are_too_weak(
 
     estimate = repo.get_estimate("local", job_id)
     assert estimate is not None
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.component == "base_salary"
-    assert estimate.minimum_amount == 100_000
-    assert estimate.maximum_amount == 130_000
-    assert estimate.sources[0].source_id == "posted_salary_text"
+    assert estimate.estimate_state != "estimated_range"
+    assert estimate.minimum_amount is None
+    assert estimate.maximum_amount is None
+    assert all(source.source_id != "posted_salary_text" for source in estimate.sources)
+    assert "posted_salary_sample" not in estimate.warnings
 
 
-def test_backfill_uses_high_value_missing_period_salary_text_as_annual_market_evidence(
+def test_backfill_keeps_high_value_missing_period_salary_text_posted_only(
     conn: sqlite3.Connection,
 ) -> None:
     job_url = _seed_job(
@@ -452,11 +495,13 @@ def test_backfill_uses_high_value_missing_period_salary_text_as_annual_market_ev
 
     estimate = repo.get_estimate("local", job_id)
     assert estimate is not None
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.minimum_amount == 120_000
-    assert estimate.maximum_amount == 120_000
-    assert estimate.confidence_interval_minimum_amount is not None
-    assert estimate.confidence_interval_minimum_amount < 120_000
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.minimum_amount is None
+    assert estimate.maximum_amount is None
+    assert estimate.sources == ()
+    posted = SqlitePostedCompensationRepository(conn).get_fact("local", job_id)
+    assert posted is not None
+    assert posted.maximum_amount == 120_000
 
 
 def test_backfill_rejects_bonus_only_missing_period_salary_text_as_market_evidence(
@@ -659,8 +704,24 @@ def test_user_source_settings_enable_tokenless_levels_public_pages(
 
 
 def test_blocked_levels_public_pages_are_reported_as_source_unavailable(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    settings_path = tmp_path / "config.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "compensation_sources": {
+                    "levels_fyi": {
+                        "enabled": True,
+                        "access_mode": "public_markdown",
+                        "europe_coverage_confirmed": False,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
         "jobctrl.infrastructure.compensation.sqlite_market_repository._levels_fyi_public_fetcher",
         lambda *_args, **_kwargs: lambda _url: None,
@@ -670,7 +731,7 @@ def test_blocked_levels_public_pages_are_reported_as_source_unavailable(
         levels_fyi_targets=(LevelsFyiPublicTarget("Software Engineer", "Spain"),),
         include_eurotoptech=False,
         env={},
-        default_levels_fyi_public=True,
+        settings_path=settings_path,
     )
 
     assert loaded.observations == ()
@@ -741,7 +802,7 @@ def test_worker_levels_public_access_mode_semantics(
     assert loaded.licensed_count == 0
 
 
-def test_automatic_refresh_defaults_to_public_levels_when_no_preference_exists(
+def test_automatic_refresh_does_not_enable_levels_without_user_opt_in(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -753,22 +814,8 @@ def test_automatic_refresh_defaults_to_public_levels_when_no_preference_exists(
 
     monkeypatch.setattr(
         "jobctrl.infrastructure.compensation.sqlite_market_repository.load_levels_fyi_public_observations",
-        lambda *_args, **_kwargs: (
-            ReportedCompensationObservation(
-                source_id="levels_fyi",
-                source_provenance="public",
-                company_name="Levels.fyi market aggregate",
-                role_title="Software Engineer",
-                location="Madrid, Spain",
-                level_label="all levels",
-                minimum_amount=39_000,
-                maximum_amount=77_000,
-                release_year=2026,
-                snapshot_version="levels-fyi-public-2026",
-                sample_count=599,
-                attribution="Data source: Levels.fyi (https://www.levels.fyi)",
-                source_url="https://www.levels.fyi/t/software-engineer/locations/madrid-esp",
-            ),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Levels must remain disabled until the user opts in")
         ),
     )
 
@@ -777,10 +824,9 @@ def test_automatic_refresh_defaults_to_public_levels_when_no_preference_exists(
         include_eurotoptech=False,
         env={},
         settings_path=settings_path,
-        default_levels_fyi_public=True,
     )
 
-    assert loaded.levels_fyi_public_count == 1
+    assert loaded.levels_fyi_public_count == 0
 
 
 def test_automatic_refresh_respects_an_explicitly_disabled_levels_preference(
@@ -811,7 +857,6 @@ def test_automatic_refresh_respects_an_explicitly_disabled_levels_preference(
         include_eurotoptech=False,
         env={},
         settings_path=settings_path,
-        default_levels_fyi_public=True,
     )
 
     assert loaded.levels_fyi_public_count == 0
@@ -823,7 +868,17 @@ def test_one_public_source_failure_preserves_other_loaded_evidence(
 ) -> None:
     settings_path = tmp_path / "config.json"
     settings_path.write_text(
-        json.dumps({"compensation_sources": {}}),
+        json.dumps(
+            {
+                "compensation_sources": {
+                    "levels_fyi": {
+                        "enabled": True,
+                        "access_mode": "public_markdown",
+                        "europe_coverage_confirmed": False,
+                    }
+                }
+            }
+        ),
         encoding="utf-8",
     )
     observation = ReportedCompensationObservation(
@@ -853,7 +908,6 @@ def test_one_public_source_failure_preserves_other_loaded_evidence(
         include_eurotoptech=True,
         env={},
         settings_path=settings_path,
-        default_levels_fyi_public=True,
     )
 
     assert loaded.observations == (observation,)

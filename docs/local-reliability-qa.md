@@ -249,6 +249,40 @@ and accepted-artifact preservation. The
 [Regression Catalog](developer/qa/regression-catalog.md) explains which layer
 proves each class of invariant; the complete page maps every risk to exact tests.
 
+### Automatic compensation discovery and projection
+
+Use disposable exact-schema databases only. The gate must prove that terminal
+Discovery invokes the replay-patched automatic activity before terminal
+preparation, while histories recorded before the patch schedule no new command.
+An absent or explicitly disabled Levels.fyi preference must perform no Levels
+request; an enabled preference may load it through the policy-routed client.
+
+For benchmark state, prove a missing slice refreshes, a fresh slice skips until
+the seven-day boundary, an unavailable source retries after one day, stale lease
+holders cannot publish, and one broken source preserves independent evidence.
+For geography, prove exact-country direct evidence stays direct, locality rows
+are not promoted to country authority, and a missing country can retain a
+low-confidence cost-of-living-only numeric range with direct/price/company
+lineage. A raw factor outside `0.1x`–`10x` must remain visible with
+`factor_out_of_bounds` in both Python and TypeScript projections. Failed refresh
+must preserve the last good per-job range, and employer-posted facts must never
+become direct or extrapolated market facts.
+
+```bash
+uv --project workers/automation run --extra dev pytest -q \
+  workers/automation/tests/test_workflow_discovery.py \
+  workers/automation/tests/test_automatic_compensation_refresh.py \
+  workers/automation/tests/test_compensation_refresh_state.py \
+  workers/automation/tests/test_compensation_benchmark_materialization.py \
+  workers/automation/tests/test_market_compensation_repository.py \
+  workers/automation/tests/test_levels_fyi_public.py
+corepack pnpm --filter @jobctrl/contracts check
+corepack pnpm api:check
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/market-compensation-estimates.test.ts \
+  test/projections.test.ts
+```
+
 ### Stable JobId v7 and explicit-feedback cumulative gate
 
 Run this gate on the final stack tip with disposable SQLite fixtures only. Do

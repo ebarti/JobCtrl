@@ -11,8 +11,11 @@ from jobctrl.domain.compensation import (
     build_price_level_fact,
 )
 from jobctrl.infrastructure.compensation.automatic_refresh import (
+    AutomaticCompensationRefreshResult,
+    refresh_automatic_compensation_benchmarks,
     run_automatic_compensation_refresh,
 )
+from jobctrl.infrastructure.compensation.levels_fyi_public import LevelsFyiPublicTarget
 from jobctrl.infrastructure.compensation.refresh_state import (
     SqliteCompensationRefreshStateRepository,
     StaleCompensationRefreshLease,
@@ -27,6 +30,64 @@ from jobctrl.infrastructure.compensation.sqlite_market_repository import (
 
 NOW = "2026-08-12T08:00:00Z"
 FRESH_UNTIL = "2026-08-19T08:00:00Z"
+
+
+def test_production_refresh_keeps_levels_disabled_without_user_opt_in(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    settings_path = tmp_path / "config.json"
+    settings_path.write_text('{"compensation_sources": {}}', encoding="utf-8")
+    conn = init_db(db_path)
+    try:
+        monkeypatch.setattr(
+            "jobctrl.infrastructure.compensation.sqlite_market_repository.get_config_path",
+            lambda: settings_path,
+        )
+        monkeypatch.setattr(
+            "jobctrl.infrastructure.compensation.sqlite_market_repository.load_levels_fyi_public_observations",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("production discovery must not fetch Levels without opt-in")
+            ),
+        )
+
+        expected = AutomaticCompensationRefreshResult(
+            status="skipped",
+            jobs_considered=0,
+            slices_discovered=0,
+            slices_claimed=0,
+            direct_results=0,
+            extrapolated_results=0,
+            level_fallback_results=0,
+            insufficient_results=0,
+            failed_results=0,
+            observations_loaded=0,
+            observations_rejected=0,
+            direct_facts_saved=0,
+            price_level_facts_saved=0,
+        )
+
+        def fake_run(_conn, **kwargs):
+            loaded = kwargs["load_observations"]((LevelsFyiPublicTarget("Software Engineer", "ES"),))
+            assert loaded.levels_fyi_public_count == 0
+            return expected
+
+        monkeypatch.setattr(
+            "jobctrl.infrastructure.compensation.automatic_refresh.run_automatic_compensation_refresh",
+            fake_run,
+        )
+
+        result = refresh_automatic_compensation_benchmarks(
+            tenant_id="local",
+            owner="discover-local-policy-test",
+            now=NOW,
+            conn=conn,
+        )
+
+        assert result == expected
+    finally:
+        close_connection(db_path)
 
 
 def test_direct_refresh_is_reused_until_the_seven_day_boundary(tmp_path: Path) -> None:

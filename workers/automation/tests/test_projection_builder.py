@@ -78,9 +78,7 @@ def test_initial_watermark_is_zero(conn: sqlite3.Connection) -> None:
 
 def test_refresh_advances_watermark(conn: sqlite3.Connection) -> None:
     job_id = _seed_job(conn, "https://example.com/a")
-    record_job_event(
-        conn, job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT
-    )
+    record_job_event(conn, job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT)
     conn.commit()
 
     builder = ProjectionBuilder(conn_factory=lambda: conn)
@@ -93,9 +91,7 @@ def test_refresh_advances_watermark(conn: sqlite3.Connection) -> None:
 
 def test_refresh_resumes_from_watermark(conn: sqlite3.Connection) -> None:
     first_job_id = _seed_job(conn, "https://example.com/r1")
-    record_job_event(
-        conn, first_job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT
-    )
+    record_job_event(conn, first_job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT)
     conn.commit()
 
     builder = ProjectionBuilder(conn_factory=lambda: conn)
@@ -106,9 +102,7 @@ def test_refresh_resumes_from_watermark(conn: sqlite3.Connection) -> None:
     repo = SqliteEventWatermarkRepository(conn)
     pre_watermark = repo.get(PROJECTION_NAME)
     second_job_id = _seed_job(conn, "https://example.com/r2")
-    record_job_event(
-        conn, second_job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT
-    )
+    record_job_event(conn, second_job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT)
     conn.commit()
 
     builder.refresh()
@@ -124,9 +118,7 @@ def test_backfill_from_empty(conn: sqlite3.Connection) -> None:
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
-    rows = conn.execute(
-        "SELECT job_id FROM job_list_projections ORDER BY job_id"
-    ).fetchall()
+    rows = conn.execute("SELECT job_id FROM job_list_projections ORDER BY job_id").fetchall()
     assert [row[0] for row in rows] == sorted([str(first_job_id), str(second_job_id)])
 
 
@@ -673,13 +665,131 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
     assert detail is not None
     audit = json.loads(detail["compensation_audit_json"])
     assert audit["posted"]["fact"]["sourceText"] == "USD 70000-90000/year"
-    assert {
-        source["sourceId"] for source in audit["market"]["estimate"]["sources"]
-    } == {"levels_fyi", "glassdoor"}
+    assert {source["sourceId"] for source in audit["market"]["estimate"]["sources"]} == {"levels_fyi", "glassdoor"}
     assert audit["market"]["estimate"]["companyName"] == "ExampleCo"
     assert audit["market"]["estimate"]["matchScope"] == "exact_company_role"
     assert "Glassdoor" in json.dumps(audit)
     assert "/Users/" not in json.dumps(audit)
+
+
+def test_projection_suppresses_historical_posted_as_market_rows(
+    conn: sqlite3.Connection,
+) -> None:
+    job_id = _seed_job(conn, "https://example.com/historical-posted-market")
+    SqliteMarketCompensationRepository(conn).estimate_and_save_job(
+        job_id=job_id,
+        title="Senior Software Developer",
+        company="ExampleCo",
+        location="Madrid, Spain",
+        observations=(
+            ReportedCompensationObservation(
+                source_id="levels_fyi",
+                source_provenance="licensed",
+                company_name="ExampleCo",
+                role_title="Senior Software Developer",
+                level_label="Senior",
+                company_tier="tier_2_ambitious",
+                location="Madrid, Spain",
+                minimum_amount=118_000,
+                maximum_amount=142_000,
+                release_year=2026,
+                sample_count=4,
+                attribution="Levels.fyi reported compensation data",
+            ),
+        ),
+        estimated_at="2026-06-19T10:01:00Z",
+    )
+
+    first_builder = ProjectionBuilder(conn_factory=lambda: conn)
+    assert first_builder.refresh() == 1
+    initial = conn.execute(
+        """
+        SELECT list.compensation_summary_json,
+               detail.compensation_summary_json AS detail_summary_json,
+               detail.compensation_audit_json
+        FROM job_list_projections AS list
+        JOIN job_detail_projections AS detail
+          ON detail.tenant_id = list.tenant_id
+         AND detail.job_id = list.job_id
+        WHERE list.tenant_id = ? AND list.job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert initial is not None
+    assert json.loads(initial["compensation_summary_json"])["market"]["recordStatus"] == "recorded"
+
+    # Model a fully folded v1 database: its event watermark is settled and all
+    # existing list/detail compensation payloads still carry projection v1.
+    for table, column in (
+        ("job_list_projections", "compensation_summary_json"),
+        ("job_detail_projections", "compensation_summary_json"),
+        ("job_detail_projections", "compensation_audit_json"),
+    ):
+        payload = json.loads(
+            conn.execute(
+                f"SELECT {column} FROM {table} WHERE tenant_id = ? AND job_id = ?",
+                (str(LOCAL_TENANT), str(job_id)),
+            ).fetchone()[0]
+        )
+        payload["projectionVersion"] = 1
+        conn.execute(
+            f"UPDATE {table} SET {column} = ? WHERE tenant_id = ? AND job_id = ?",
+            (json.dumps(payload), str(LOCAL_TENANT), str(job_id)),
+        )
+    conn.execute(
+        """
+        UPDATE job_market_compensation_estimates
+        SET source_snapshot_json = ?,
+            warnings_json = ?
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (
+            json.dumps(
+                [
+                    {
+                        "source_id": "posted_salary_text",
+                        "source_provenance": "employer_posted",
+                        "source_type": "posted_salary",
+                    }
+                ]
+            ),
+            json.dumps(["posted_salary_sample"]),
+            str(LOCAL_TENANT),
+            str(job_id),
+        ),
+    )
+    conn.commit()
+
+    # No new event accompanies this pre-upgrade authority mutation. The v2
+    # version marker must still invalidate and rebuild the settled projection.
+    assert ProjectionBuilder(conn_factory=lambda: conn).refresh() == 1
+
+    row = conn.execute(
+        """
+        SELECT list.compensation_summary_json,
+               detail.compensation_summary_json AS detail_summary_json,
+               detail.compensation_audit_json
+        FROM job_list_projections AS list
+        JOIN job_detail_projections AS detail
+          ON detail.tenant_id = list.tenant_id
+         AND detail.job_id = list.job_id
+        WHERE list.tenant_id = ? AND list.job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert row is not None
+    summary = json.loads(row["compensation_summary_json"])
+    detail_summary = json.loads(row["detail_summary_json"])
+    audit = json.loads(row["compensation_audit_json"])
+    assert summary["projectionVersion"] == 2
+    assert detail_summary["projectionVersion"] == 2
+    assert audit["projectionVersion"] == 2
+    assert summary["market"]["recordStatus"] == "not_requested"
+    assert audit["market"] == {
+        "ok": True,
+        "recordStatus": "not_requested",
+        "jobId": str(job_id),
+    }
 
 
 def _insert_score(
@@ -801,9 +911,7 @@ def test_projects_score_correction_json_when_correction_exists(
     job_id = _seed_job(conn, url)
     correction_json = json.dumps(
         {
-            "adjustments": [
-                {"dimension": "experience_fit", "from": 9, "note": "overstated tenure", "to": 6}
-            ],
+            "adjustments": [{"dimension": "experience_fit", "from": 9, "note": "overstated tenure", "to": 6}],
             "corrected_fit_score": 7,
             "original_fit_score": 9,
             "reason": "adversarial_self_correction",
@@ -872,8 +980,7 @@ def test_score_audit_backfill_repopulates_existing_null_rows(conn: sqlite3.Conne
     # Pre-fix projection rows: the old Python upsert never wrote the audit
     # columns, so they default to NULL.
     conn.execute(
-        "INSERT INTO job_list_projections (tenant_id, job_id, title, fit_score) "
-        "VALUES ('local', ?, 'Engineer', 8)",
+        "INSERT INTO job_list_projections (tenant_id, job_id, title, fit_score) VALUES ('local', ?, 'Engineer', 8)",
         (str(job_id),),
     )
     conn.execute(
@@ -950,13 +1057,10 @@ def test_score_audit_backfill_runs_at_most_once(conn: sqlite3.Connection) -> Non
         correction_json=None,
     )
     conn.execute(
-        "INSERT INTO job_list_projections (tenant_id, job_id, title, fit_score) "
-        "VALUES ('local', ?, 'Engineer', 6)",
+        "INSERT INTO job_list_projections (tenant_id, job_id, title, fit_score) VALUES ('local', ?, 'Engineer', 6)",
         (str(later_job_id),),
     )
-    record_job_event(
-        conn, later_job_id, "score", "JobScored", payload=_INERT_CONTEXT
-    )
+    record_job_event(conn, later_job_id, "score", "JobScored", payload=_INERT_CONTEXT)
     latest_event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
     SqliteEventWatermarkRepository(conn).set(PROJECTION_NAME, int(latest_event_id))
     conn.commit()
@@ -1011,9 +1115,7 @@ def test_subscribes_to_event_bus(conn: sqlite3.Connection) -> None:
     builder.subscribe_to(bus)
 
     # Publish via the bus AFTER recording the event in the table.
-    record_job_event(
-        conn, job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT
-    )
+    record_job_event(conn, job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT)
     conn.commit()
     from jobctrl.domain.events.base import create_domain_event
 

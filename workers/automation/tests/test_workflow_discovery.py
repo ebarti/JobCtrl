@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,8 +18,11 @@ from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.cli import _reconcile_discovery_schedule
 from jobctrl.config import DEFAULT_DISCOVERY_SEARCH_CONFIG, load_discovery_schedule_settings
+from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.scheduler import DiscoveryRunProgress
 from jobctrl.discovery.activities import (
+    AutomaticCompensationRefreshActivityInput,
+    AutomaticCompensationRefreshActivityOutput,
     DiscoveryEnrichmentActivityOutput,
     DiscoveryEnrichmentActivityInput,
     DiscoveryPreparationFanoutInput,
@@ -29,13 +32,16 @@ from jobctrl.discovery.activities import (
     PlanDiscoverySourcesInput,
     PlanDiscoverySourcesOutput,
     _build_per_job_handoff,
+    automatic_compensation_refresh_activity,
     discovery_preparation_fanout_activity,
 )
 from jobctrl.discovery.workflow import (
     DiscoverWorkflow,
     DiscoverWorkflowInput,
     DiscoverWorkflowResult,
+    _AUTOMATIC_COMPENSATION_REFRESH_PATCH,
     _activity_error_was_cancelled,
+    _run_automatic_compensation_refresh_activity,
 )
 from jobctrl.infrastructure.temporal.finalize import WorkflowOutcomeInput, WorkflowStartedInput
 from jobctrl.llm import SpendBudgetStatus
@@ -82,6 +88,40 @@ def test_discover_workflow_detects_activity_cancellation_cause() -> None:
     exc.__cause__ = CancelledError("activity canceled")
 
     assert _activity_error_was_cancelled(exc) is True
+
+
+@pytest.mark.asyncio
+async def test_automatic_compensation_refresh_is_patch_gated_for_old_histories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def unexpected_activity(*_args, **_kwargs):
+        raise AssertionError(
+            "unpatched replay must not schedule automatic_compensation_refresh"
+        )
+
+    def unpatched(patch_id: str) -> bool:
+        calls.append(patch_id)
+        return False
+
+    monkeypatch.setattr("jobctrl.discovery.workflow.workflow.patched", unpatched)
+    monkeypatch.setattr(
+        "jobctrl.discovery.workflow.workflow.execute_activity",
+        unexpected_activity,
+    )
+
+    result = await _run_automatic_compensation_refresh_activity(
+        DiscoverWorkflowInput(tenant_id="local"),
+        DiscoveryExecutionRef(
+            tenant_id="local",
+            workflow_id="discover-local",
+            temporal_run_id="pre-patch-run",
+        ),
+    )
+
+    assert calls == [_AUTOMATIC_COMPENSATION_REFRESH_PATCH]
+    assert result == AutomaticCompensationRefreshActivityOutput(status="skipped")
 
 
 @pytest.mark.asyncio
@@ -168,6 +208,7 @@ def _discovery_activities():
         _plan_discovery_sources,
         _discovery_source_family,
         _discovery_enrichment,
+        _automatic_compensation_refresh,
         _discovery_preparation_fanout,
     ]
 
@@ -241,6 +282,34 @@ async def _discovery_enrichment(payload: DiscoveryEnrichmentActivityInput) -> Di
         )
     )
     return DiscoveryEnrichmentActivityOutput(status="ok", passes=1, pending=0)
+
+
+@activity.defn(name="automatic_compensation_refresh")
+async def _automatic_compensation_refresh(
+    payload: AutomaticCompensationRefreshActivityInput,
+) -> AutomaticCompensationRefreshActivityOutput:
+    _EVENTS.append(("compensation_refresh", payload.tenant_id))
+    return AutomaticCompensationRefreshActivityOutput(
+        status="succeeded",
+        slices_discovered=1,
+        slices_claimed=1,
+        direct_results=1,
+        jobs_considered=2,
+        jobs_with_benchmark=2,
+        estimates_written=2,
+    )
+
+
+@activity.defn(name="automatic_compensation_refresh")
+async def _failing_automatic_compensation_refresh(
+    payload: AutomaticCompensationRefreshActivityInput,
+) -> AutomaticCompensationRefreshActivityOutput:
+    _EVENTS.append(("compensation_refresh_failed", payload.tenant_id))
+    raise ApplicationError(
+        "automatic compensation source unavailable",
+        type="compensation_source_unavailable",
+        non_retryable=True,
+    )
 
 
 @activity.defn(name="discovery_enrichment")
@@ -365,13 +434,102 @@ async def test_discovery_preparation_fanout_activity_forwards_score_only(
     assert captured["fanout_kwargs"]["include_pending_tailor"] is False
 
 
-def test_build_per_job_handoff_disabled_returns_none() -> None:
-    assert (
-        _build_per_job_handoff(
-            DiscoveryEnrichmentActivityInput(tenant_id="local", per_job_handoff=False)
+@pytest.mark.asyncio
+async def test_automatic_compensation_refresh_activity_materializes_safe_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    connection = object()
+
+    class SequenceClock:
+        values = iter(
+            (
+                datetime.fromisoformat("2026-08-19T07:59:59+00:00"),
+                datetime.fromisoformat("2026-08-19T08:00:01+00:00"),
+            )
         )
-        is None
+
+        @classmethod
+        def now(cls, _timezone):
+            return next(cls.values)
+
+    async def fake_run_blocking(fn, **kwargs):
+        captured["activity_name"] = kwargs["activity_name"]
+        return fn()
+
+    def fake_refresh(**kwargs):
+        captured["refresh"] = kwargs
+        return SimpleNamespace(
+            status="completed_with_warnings",
+            slices_discovered=3,
+            slices_claimed=2,
+            direct_results=1,
+            extrapolated_results=1,
+            insufficient_results=1,
+            failed_results=0,
+            warnings=("cost_of_living_only",),
+        )
+
+    def fake_materialize(conn, **kwargs):
+        captured["materialize"] = (conn, kwargs)
+        return SimpleNamespace(
+            jobs_considered=4,
+            jobs_with_benchmark=3,
+            estimates_written=2,
+            estimates_unchanged=1,
+            estimates_cleared=0,
+            warnings=(),
+        )
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        lambda **_kwargs: None,
     )
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        fake_run_blocking,
+    )
+    monkeypatch.setattr("jobctrl.database.get_connection", lambda: connection)
+    monkeypatch.setattr("jobctrl.discovery.activities.datetime", SequenceClock)
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.automatic_refresh.refresh_automatic_compensation_benchmarks",
+        fake_refresh,
+    )
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.benchmark_materialization.materialize_automatic_compensation_estimates",
+        fake_materialize,
+    )
+
+    result = await automatic_compensation_refresh_activity(AutomaticCompensationRefreshActivityInput(tenant_id="local"))
+
+    assert result == AutomaticCompensationRefreshActivityOutput(
+        status="completed_with_warnings",
+        slices_discovered=3,
+        slices_claimed=2,
+        direct_results=1,
+        extrapolated_results=1,
+        insufficient_results=1,
+        jobs_considered=4,
+        jobs_with_benchmark=3,
+        estimates_written=2,
+        estimates_unchanged=1,
+        warnings=("cost_of_living_only",),
+    )
+    assert captured["activity_name"] == "discover:automatic-compensation"
+    assert captured["refresh"]["tenant_id"] == "local"
+    assert captured["refresh"]["conn"] is connection
+    assert captured["refresh"]["now"] == "2026-08-19T07:59:59+00:00"
+    assert str(captured["refresh"]["owner"]).startswith("discover:local:")
+    assert captured["materialize"][0] is connection
+    assert captured["materialize"][1]["tenant_id"] == "local"
+    assert (
+        captured["materialize"][1]["materialized_at"]
+        == "2026-08-19T08:00:01+00:00"
+    )
+
+
+def test_build_per_job_handoff_disabled_returns_none() -> None:
+    assert _build_per_job_handoff(DiscoveryEnrichmentActivityInput(tenant_id="local", per_job_handoff=False)) is None
 
 
 def test_build_per_job_handoff_starts_scored_prep_with_params(
@@ -447,6 +605,8 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
     assert result.families_completed == ["jobspy", "workday", "smartextract"]
     assert result.families_failed == []
     assert result.preparation_started == 1
+    assert result.compensation_refresh_status == "succeeded"
+    assert result.compensation_estimates_written == 2
     # One producer-lifetime enrichment pass overlaps source crawling; the
     # per-family score-only fan-outs and terminal reconcile remain backstops.
     kinds = [event[0] for event in _EVENTS]
@@ -461,6 +621,42 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
     assert _EVENTS.index(enrichment_events[-1]) > max(
         index for index, event in enumerate(_EVENTS) if event[0] == "source"
     )
+    compensation_refresh = kinds.index("compensation_refresh")
+    terminal_enrichment = _EVENTS.index(enrichment_events[-1])
+    terminal_fanout = max(index for index, event in enumerate(_EVENTS) if event[0] == "fanout")
+    assert terminal_enrichment < compensation_refresh < terminal_fanout
+    assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
+
+
+@pytest.mark.asyncio
+async def test_compensation_refresh_failure_warns_without_failing_discovery() -> None:
+    _reset_state()
+    queue = f"discover-compensation-failure-{uuid.uuid4()}"
+    activities = [
+        (_failing_automatic_compensation_refresh if item is _automatic_compensation_refresh else item)
+        for item in _discovery_activities()
+    ]
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[DiscoverWorkflow],
+            activities=activities,
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            result = await env.client.execute_workflow(
+                DiscoverWorkflow.run,
+                DiscoverWorkflowInput(tenant_id="local"),
+                id=f"{queue}-workflow",
+                task_queue=queue,
+            )
+
+    assert result.families_completed == ["jobspy", "workday", "smartextract"]
+    assert result.compensation_refresh_status == "failed"
+    assert result.compensation_estimates_written == 0
+    assert result.compensation_refresh_warnings == ["automatic_compensation_refresh_failed"]
+    assert any(event[0] == "fanout" for event in _EVENTS)
     assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
 
 
@@ -513,6 +709,7 @@ async def test_discover_workflow_starts_enrichment_before_source_family_complete
         _plan_discovery_sources,
         _source_waiting_for_live_enrichment,
         _live_enrichment_probe,
+        _automatic_compensation_refresh,
         _discovery_preparation_fanout,
     ]
 
@@ -626,22 +823,14 @@ async def test_discover_workflow_tolerates_partial_source_failure() -> None:
     # fanned out BEFORE the workday family ran and failed. A later family's
     # failure must not undo the earlier family's streaming fan-out.
     kinds = [event[0] for event in _EVENTS]
-    jobspy_source = next(
-        index
-        for index, event in enumerate(_EVENTS)
-        if event[0] == "source" and event[1] == "jobspy"
-    )
+    jobspy_source = next(index for index, event in enumerate(_EVENTS) if event[0] == "source" and event[1] == "jobspy")
     workday_source = next(
-        index
-        for index, event in enumerate(_EVENTS)
-        if event[0] == "source" and event[1] == "workday"
+        index for index, event in enumerate(_EVENTS) if event[0] == "source" and event[1] == "workday"
     )
     # Live enrichment is already active before the failing later source; the
     # completed family's score-only fan-out lands between the two sources.
     live_enrichment = next(
-        index
-        for index, event in enumerate(_EVENTS)
-        if event[0] == "enrichment" and event[2] is True
+        index for index, event in enumerate(_EVENTS) if event[0] == "enrichment" and event[2] is True
     )
     assert live_enrichment < workday_source
     assert "fanout" in kinds[jobspy_source:workday_source]
@@ -660,6 +849,7 @@ def _partial_enrichment_activities():
         _plan_discovery_sources,
         _discovery_source_family,
         _partial_discovery_enrichment,
+        _automatic_compensation_refresh,
         _discovery_preparation_fanout,
     ]
 
@@ -693,9 +883,7 @@ async def test_discover_workflow_preserves_partial_enrichment_site_errors() -> N
             )
 
     assert result.enrichment_status == "partial"
-    assert result.enrichment_site_errors == {
-        "indeed": {"error_class": "RuntimeError", "error_message": "boom"}
-    }
+    assert result.enrichment_site_errors == {"indeed": {"error_class": "RuntimeError", "error_message": "boom"}}
     assert result.preparation_started == 1
     assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
 
@@ -720,6 +908,7 @@ def _all_fail_activities():
         _plan_discovery_sources,
         _always_failing_source_family,
         _discovery_enrichment,
+        _automatic_compensation_refresh,
         _discovery_preparation_fanout,
     ]
 
@@ -780,6 +969,7 @@ def _enrichment_fail_activities():
         _plan_discovery_sources,
         _discovery_source_family,
         _failing_enrichment,
+        _automatic_compensation_refresh,
         _discovery_preparation_fanout,
     ]
 
@@ -851,6 +1041,7 @@ def _resumption_activities():
         _plan_discovery_sources,
         _resumable_source_family,
         _discovery_enrichment,
+        _automatic_compensation_refresh,
         _discovery_preparation_fanout,
     ]
 
@@ -930,9 +1121,9 @@ async def test_discover_workflow_kill_worker_resumption(monkeypatch: pytest.Monk
 
     attempts = [event for event in _EVENTS if event[0] == "source_attempt"]
     assert ("source_attempt", "jobspy", 1) in attempts, "first attempt never started"
-    assert any(
-        event[1] == "jobspy" and event[2] > 1 for event in attempts
-    ), "jobspy was not redelivered to the restarted worker"
+    assert any(event[1] == "jobspy" and event[2] > 1 for event in attempts), (
+        "jobspy was not redelivered to the restarted worker"
+    )
     assert any(event[0] == "enrichment" for event in _EVENTS)
     assert any(event[0] == "fanout" for event in _EVENTS), "prep fan-out did not run after restart"
     assert _EVENTS[-1] == ("workflow_outcome", "succeeded")
@@ -956,12 +1147,8 @@ async def _parallel_tracking_source(payload: DiscoverySourceActivityInput) -> Di
         hold = {"jobspy": 0.15, "workday": 0.10, "smartextract": 0.05}.get(payload.family, 0.05)
         await asyncio.sleep(hold)
         if payload.family == _FAIL_FAMILY:
-            raise ApplicationError(
-                f"{payload.family} unavailable", type="source_unavailable", non_retryable=True
-            )
-        return DiscoverySourceActivityOutput(
-            family=payload.family, status="ok", result={"new": 1}, source_ids=[]
-        )
+            raise ApplicationError(f"{payload.family} unavailable", type="source_unavailable", non_retryable=True)
+        return DiscoverySourceActivityOutput(family=payload.family, status="ok", result={"new": 1}, source_ids=[])
     finally:
         _SOURCE_CONCURRENCY["current"] -= 1
 
@@ -974,6 +1161,7 @@ def _parallel_activities():
         _plan_discovery_sources,
         _parallel_tracking_source,
         _discovery_enrichment,
+        _automatic_compensation_refresh,
         _discovery_preparation_fanout,
     ]
 
@@ -1074,9 +1262,7 @@ async def test_parallel_family_cancellation_cancels_the_run(monkeypatch: pytest.
     parallel cooperatively cancels every in-flight family and terminalizes the
     workflow as canceled."""
     _reset_state()
-    monkeypatch.setattr(
-        "jobctrl.discovery.workflow._DEFAULT_HEARTBEAT_TIMEOUT", timedelta(seconds=2)
-    )
+    monkeypatch.setattr("jobctrl.discovery.workflow._DEFAULT_HEARTBEAT_TIMEOUT", timedelta(seconds=2))
     global _MAX_PARALLEL
     _MAX_PARALLEL = 2
     _RESUME_GATE["all_started"] = asyncio.Event()
@@ -1089,6 +1275,7 @@ async def test_parallel_family_cancellation_cancels_the_run(monkeypatch: pytest.
         _plan_discovery_sources,
         _blocking_cancelable_source,
         _discovery_enrichment,
+        _automatic_compensation_refresh,
         _discovery_preparation_fanout,
     ]
 

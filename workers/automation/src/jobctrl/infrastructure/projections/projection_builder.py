@@ -105,7 +105,7 @@ PROJECTION_NAME = "operations_projections"
 # columns keep NULL criteria/trace/correction. This marker drives a single
 # targeted rebuild of those rows, independent of column creation.
 SCORE_AUDIT_BACKFILL = "score_audit_columns_v1"
-COMPENSATION_PROJECTION_VERSION = 1
+COMPENSATION_PROJECTION_VERSION = 2
 
 _APPLY_URL_OUTCOME_DETAILS: dict[str, tuple[str, bool]] = {
     "APPLY_URL_EXTERNAL_RECOVERED": (
@@ -113,8 +113,7 @@ _APPLY_URL_OUTCOME_DETAILS: dict[str, tuple[str, bool]] = {
         False,
     ),
     "APPLY_URL_LINKEDIN_ONSITE": (
-        "LinkedIn uses an on-site application flow for this posting; "
-        "no external application URL exists.",
+        "LinkedIn uses an on-site application flow for this posting; no external application URL exists.",
         False,
     ),
     "APPLY_URL_CONTROL_MISSING": (
@@ -122,8 +121,7 @@ _APPLY_URL_OUTCOME_DETAILS: dict[str, tuple[str, bool]] = {
         True,
     ),
     "APPLY_URL_EXTERNAL_TARGET_MISSING": (
-        "An application control was visible, but no external application URL "
-        "could be verified.",
+        "An application control was visible, but no external application URL could be verified.",
         True,
     ),
     "APPLY_URL_NAVIGATION_FAILED": (
@@ -131,8 +129,7 @@ _APPLY_URL_OUTCOME_DETAILS: dict[str, tuple[str, bool]] = {
         True,
     ),
     "APPLY_URL_UNSAFE_TARGET": (
-        "JobCtrl rejected the discovered application target because it is not "
-        "a safe public HTTP(S) destination.",
+        "JobCtrl rejected the discovered application target because it is not a safe public HTTP(S) destination.",
         False,
     ),
 }
@@ -181,6 +178,7 @@ def _apply_url_outcome_from_stage_metadata(
         method=method if method in _APPLY_URL_OUTCOME_METHODS else None,
     )
 
+
 # State-bearing workflow lifecycle events fold into
 # ``workflow_run_projections`` keyed by ``workflowId``. The ``WorkflowStarted``
 # marker opens a row; each terminal event maps to a terminal status in the
@@ -198,9 +196,7 @@ WORKFLOW_STATE_EVENT_TYPES: tuple[str, ...] = (
 # audit facts (e.g. a cancellation-requester backfill for a legacy canceled
 # run) materialises nothing, so the stored row is preserved verbatim.
 WORKFLOW_AUDIT_EVENT_TYPES: tuple[str, ...] = ("WorkflowCancellationRequested",)
-WORKFLOW_EVENT_TYPES: tuple[str, ...] = (
-    WORKFLOW_STATE_EVENT_TYPES + WORKFLOW_AUDIT_EVENT_TYPES
-)
+WORKFLOW_EVENT_TYPES: tuple[str, ...] = WORKFLOW_STATE_EVENT_TYPES + WORKFLOW_AUDIT_EVENT_TYPES
 
 PIPELINE_STEP_EVENT_TYPES: frozenset[str] = frozenset(
     {
@@ -260,6 +256,8 @@ class _PipelineStepFold:
     detail_count: int | None
     last_event_id: int
     last_updated_at: str
+
+
 _WORKFLOW_TERMINAL_STATUS: dict[str, str] = {
     "WorkflowCompleted": "succeeded",
     "WorkflowFailed": "failed",
@@ -334,7 +332,12 @@ POSTED_COMPENSATION_WARNING_MESSAGES = {
     "source_text_truncated": "The stored source text was truncated to the bounded salary excerpt limit.",
 }
 MARKET_COMPENSATION_WARNING_MESSAGES = {
+    "benchmark_extrapolated": "The range was extrapolated from direct benchmark evidence in another geography.",
+    "benchmark_level_fallback": "The benchmark uses an all-level fallback because exact seniority evidence was unavailable.",
     "company_role_fallback": "The estimate fell back from exact company-role evidence to adjacent company or tier evidence.",
+    "cost_of_living_only": "The geographic adjustment relies on cost-of-living evidence without a matched-company pay bridge.",
+    "factor_out_of_bounds": "The raw geographic adjustment is outside the supported 0.1x to 10x range and needs careful review.",
+    "limited_matched_company_evidence": "Only limited matched-company cross-country evidence supports the geographic adjustment.",
     "location_mismatch": "Reported compensation locations did not strongly match the job location.",
     "low_sample_count": "Reported compensation sample support is low.",
     "reported_compensation_sample": "The estimate uses reported compensation rows for the job company and role.",
@@ -415,11 +418,29 @@ MARKET_SAFE_AGGREGATE_BUCKETS = {
     "employer-posted trimodal tier compensation",
     "employer-posted trimodal market baseline",
 }
-MARKET_SAFE_GEOGRAPHY_SCOPES = {"Europe", "reported"}
-MARKET_SAFE_FACTOR_NAMES = {"agreement", "company", "component", "freshness", "level", "location", "role", "sample", "trimodal_tier"}
+MARKET_SAFE_GEOGRAPHY_SCOPES = {
+    "Europe",
+    "reported",
+    "country",
+    "country_subdivision",
+    "locality",
+}
+MARKET_SAFE_FACTOR_NAMES = {
+    "agreement",
+    "company",
+    "component",
+    "freshness",
+    "level",
+    "location",
+    "role",
+    "sample",
+    "trimodal_tier",
+}
 MARKET_CONFIDENCE_BANDS = {"high", "medium", "low", "none"}
 MARKET_RECORDED_STATES = {"unsupported", "source_unavailable", "insufficient_evidence", "estimated_range"}
-MARKET_DEFAULT_FACTOR_REASON = "Reported compensation estimate factor recorded by the deterministic company-role estimator."
+MARKET_DEFAULT_FACTOR_REASON = (
+    "Reported compensation estimate factor recorded by the deterministic company-role estimator."
+)
 MARKET_MAX_FACTOR_REASON_LENGTH = 240
 MARKET_UNSAFE_FACTOR_REASON_TERMS = (
     "/users/",
@@ -458,6 +479,7 @@ DEFAULT_MAX_ATTEMPTS: dict[str, int] = {
 def _job_list_stage(stage: str | None, *, has_resume: bool = False) -> str:
     return "apply" if stage == "apply" or (stage == "cover" and has_resume) else "discover"
 
+
 _UNKNOWN_EMPLOYER = "Unknown company"
 
 # Score bands bucket ``fit_score`` by the user-facing scoring criteria in
@@ -470,9 +492,7 @@ APPLY_MODE_ORDER: tuple[str, ...] = ("automated_live", "manual_marked", "externa
 # Outcome kinds that mark an applied job as having reached each funnel stage.
 # Later stages imply earlier ones (an offer implies an interview and a reply), so
 # the sets are cumulative and reply >= interview >= offer holds within each group.
-_REPLY_OUTCOME_KINDS = frozenset(
-    {"recruiter_reply", "interview", "assessment", "offer", "rejection"}
-)
+_REPLY_OUTCOME_KINDS = frozenset({"recruiter_reply", "interview", "assessment", "offer", "rejection"})
 _INTERVIEW_OUTCOME_KINDS = frozenset({"interview", "assessment", "offer"})
 _OFFER_OUTCOME_KINDS = frozenset({"offer"})
 _REJECTION_OUTCOME_KINDS = frozenset({"rejection"})
@@ -566,17 +586,12 @@ def _material_analytics_from_metadata(metadata_json: str | None) -> dict[str, ob
     if not isinstance(template, dict):
         template = {}
     return {
-        "resume_template_id": _projection_text(
-            template.get("templateId") or template.get("template_id")
-        ),
+        "resume_template_id": _projection_text(template.get("templateId") or template.get("template_id")),
         "resume_template_name": _projection_text(
-            template.get("templateName")
-            or template.get("template_name")
-            or template.get("displayName")
+            template.get("templateName") or template.get("template_name") or template.get("displayName")
         ),
         "tailoring_policy_version": _projection_int(
-            metadata.get("tailoring_policy_version")
-            or metadata.get("tailoringPolicyVersion")
+            metadata.get("tailoring_policy_version") or metadata.get("tailoringPolicyVersion")
         ),
     }
 
@@ -594,9 +609,7 @@ def _merge_material_analytics(metadata_jsons: list[str | None]) -> dict[str, obj
         if merged["resume_template_name"] is None:
             merged["resume_template_name"] = next_value.get("resume_template_name")
         if merged["tailoring_policy_version"] is None:
-            merged["tailoring_policy_version"] = next_value.get(
-                "tailoring_policy_version"
-            )
+            merged["tailoring_policy_version"] = next_value.get("tailoring_policy_version")
     return merged
 
 
@@ -618,9 +631,7 @@ def _material_metadata_references(
         if not isinstance(metadata, dict):
             continue
         if base_generation is None:
-            base_generation = _projection_int(
-                metadata.get("base_generation") or metadata.get("baseGeneration")
-            )
+            base_generation = _projection_int(metadata.get("base_generation") or metadata.get("baseGeneration"))
         for key in (
             "base_resume_text_artifact_id",
             "baseResumeTextArtifactId",
@@ -779,11 +790,7 @@ class ProjectionBuilder:
     @property
     def _watermark_name(self) -> str:
         tenant = str(self._tenant_id)
-        return (
-            PROJECTION_NAME
-            if tenant == str(LOCAL_TENANT)
-            else f"{PROJECTION_NAME}:{tenant}"
-        )
+        return PROJECTION_NAME if tenant == str(LOCAL_TENANT) else f"{PROJECTION_NAME}:{tenant}"
 
     # ------------------------------------------------------------ subscription
 
@@ -808,9 +815,7 @@ class ProjectionBuilder:
             # ``log.exception`` (=== ``log.error(..., exc_info=True)``)
             # records the full traceback.  A silent swallow here is
             # what previously hid the cross-thread ProgrammingError.
-            log.exception(
-                "ProjectionBuilder failed to refresh after %s", event.event_type
-            )
+            log.exception("ProjectionBuilder failed to refresh after %s", event.event_type)
 
     # ----------------------------------------------------------- thread-local
 
@@ -818,27 +823,21 @@ class ProjectionBuilder:
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
         if conn is None:
-            raise RuntimeError(
-                "ProjectionBuilder._conn accessed outside a refresh scope"
-            )
+            raise RuntimeError("ProjectionBuilder._conn accessed outside a refresh scope")
         return conn
 
     @property
     def _store(self) -> SqliteProjectionStore:
         store = getattr(self._local, "store", None)
         if store is None:
-            raise RuntimeError(
-                "ProjectionBuilder._store accessed outside a refresh scope"
-            )
+            raise RuntimeError("ProjectionBuilder._store accessed outside a refresh scope")
         return store
 
     @property
     def _watermarks(self) -> SqliteEventWatermarkRepository:
         watermarks = getattr(self._local, "watermarks", None)
         if watermarks is None:
-            raise RuntimeError(
-                "ProjectionBuilder._watermarks accessed outside a refresh scope"
-            )
+            raise RuntimeError("ProjectionBuilder._watermarks accessed outside a refresh scope")
         return watermarks
 
     @contextlib.contextmanager
@@ -961,6 +960,7 @@ class ProjectionBuilder:
         dirty_job_ids.update(self._stale_deleted_projection_jobs())
         dirty_job_ids.update(self._stale_artifact_projection_jobs())
         dirty_job_ids.update(self._stale_stage_projection_jobs())
+        dirty_job_ids.update(self._stale_compensation_projection_jobs())
 
         # One-time score-audit backfill (see SCORE_AUDIT_BACKFILL): rebuild any
         # already-projected scored job whose audit columns are still NULL. This
@@ -1047,9 +1047,7 @@ class ProjectionBuilder:
             if evidence_usage_dirty:
                 self._rebuild_evidence_usage()
             if max_event_id > watermark:
-                self._watermarks.set(
-                    watermark_name, max_event_id, commit=not defer_commit
-                )
+                self._watermarks.set(watermark_name, max_event_id, commit=not defer_commit)
             if not dashboard_exists:
                 self._rebuild_dashboard()
             if audit_backfill_pending:
@@ -1080,9 +1078,7 @@ class ProjectionBuilder:
         self._rebuild_dashboard()
         self._rebuild_evidence_usage()
         if max_event_id > watermark:
-            self._watermarks.set(
-                watermark_name, max_event_id, commit=not defer_commit
-            )
+            self._watermarks.set(watermark_name, max_event_id, commit=not defer_commit)
         if audit_backfill_pending:
             self._mark_score_audit_backfill_done()
         if not defer_commit:
@@ -1462,10 +1458,7 @@ class ProjectionBuilder:
 
         title = _row_str(job_row, "title")
         site = _row_str(job_row, "site")
-        application_url = (
-            enrichment.get("application_url")
-            or _row_nullable_str(job_row, "application_url")
-        )
+        application_url = enrichment.get("application_url") or _row_nullable_str(job_row, "application_url")
         employer = _canonical_employer(job_row)
 
         # currentStage/State: the list view exposes only product stages.
@@ -1593,9 +1586,7 @@ class ProjectionBuilder:
         detail_proj = JobDetailProjection(
             tenant_id=self._tenant_id,
             job_id=job_id,
-            description_preview=_preview_text(
-                full_description or description, 6000
-            ),
+            description_preview=_preview_text(full_description or description, 6000),
             compensation_summary_json=compensation_summary,
             compensation_audit_json=compensation_audit,
             score_breakdown_json=score_breakdown_json,
@@ -1636,9 +1627,7 @@ class ProjectionBuilder:
             )
             for a in artifacts
         ]
-        self._store.replace_artifacts_for_job(
-            str(self._tenant_id), job_id, artifact_projs
-        )
+        self._store.replace_artifacts_for_job(str(self._tenant_id), job_id, artifact_projs)
 
     def _rebuild_evidence_usage(self) -> None:
         tenant_id = str(self._tenant_id)
@@ -1791,9 +1780,7 @@ class ProjectionBuilder:
                 "gaps": [],
             }
 
-    def _load_profile_skill_entries(
-        self, entries: dict[str, dict[str, Any]]
-    ) -> dict[str, list[dict[str, Any]]]:
+    def _load_profile_skill_entries(self, entries: dict[str, dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
         by_name: dict[str, list[dict[str, Any]]] = {}
         if not _table_exists(self._conn, "candidate_profile_skill_items"):
             return by_name
@@ -1853,21 +1840,17 @@ class ProjectionBuilder:
     def _attach_resume_usages(self, entries: dict[str, dict[str, Any]]) -> None:
         if not _table_exists(self._conn, "job_bullet_provenance"):
             return
-        job_metadata = _job_metadata_join_sql(
-            self._conn, "provenance.tenant_id", "provenance.job_id"
-        )
-        lifecycle = _job_lifecycle_exclusion_sql(
-            self._conn, "provenance.tenant_id", "provenance.job_id"
-        )
+        job_metadata = _job_metadata_join_sql(self._conn, "provenance.tenant_id", "provenance.job_id")
+        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "provenance.tenant_id", "provenance.job_id")
         rows = self._conn.execute(
             f"""
             SELECT provenance.job_id, provenance.artifact_id, provenance.generation,
                    provenance.bullet_id, provenance.generated_text, provenance.created_at,
                    provenance.evidence_ids_json,
-                   {job_metadata['select_sql']}
+                   {job_metadata["select_sql"]}
               FROM job_bullet_provenance AS provenance
-              {job_metadata['join_sql']}{lifecycle['join_sql']}
-             WHERE provenance.tenant_id = ?{lifecycle['where_sql']}
+              {job_metadata["join_sql"]}{lifecycle["join_sql"]}
+             WHERE provenance.tenant_id = ?{lifecycle["where_sql"]}
                AND provenance.generation = (
                  SELECT MAX(latest.generation)
                   FROM job_bullet_provenance AS latest
@@ -1904,9 +1887,7 @@ class ProjectionBuilder:
                 entry["resumeUsages"].append(usage)
                 freshness = entry["freshness"]
                 occurred = usage["occurredAt"]
-                if occurred and (
-                    not freshness["lastUsedAt"] or str(occurred) > str(freshness["lastUsedAt"])
-                ):
+                if occurred and (not freshness["lastUsedAt"] or str(occurred) > str(freshness["lastUsedAt"])):
                     freshness["lastUsedAt"] = occurred
 
     def _attach_requirement_usages_and_gaps(
@@ -1918,21 +1899,17 @@ class ProjectionBuilder:
             self._conn, "job_requirement_fit_items"
         ):
             return
-        job_metadata = _job_metadata_join_sql(
-            self._conn, "items.tenant_id", "items.job_id"
-        )
-        lifecycle = _job_lifecycle_exclusion_sql(
-            self._conn, "items.tenant_id", "items.job_id"
-        )
+        job_metadata = _job_metadata_join_sql(self._conn, "items.tenant_id", "items.job_id")
+        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "items.tenant_id", "items.job_id")
         rows = self._conn.execute(
             f"""
             SELECT items.job_id, items.score_version, items.requirement_id,
                    items.requirement_text, items.tier, items.weight,
                    items.fit_json, items.artifact_coverage_json,
-                   {job_metadata['select_sql']}
+                   {job_metadata["select_sql"]}
               FROM job_requirement_fit_items AS items
-              {job_metadata['join_sql']}{lifecycle['join_sql']}
-             WHERE items.tenant_id = ?{lifecycle['where_sql']}
+              {job_metadata["join_sql"]}{lifecycle["join_sql"]}
+             WHERE items.tenant_id = ?{lifecycle["where_sql"]}
                AND items.score_version = (
                  SELECT MAX(report.score_version)
                   FROM job_requirement_fit_reports AS report
@@ -1991,10 +1968,7 @@ class ProjectionBuilder:
                     "weight": _row_float(row, "weight"),
                     "fitKind": fit_kind,
                     "reason": str(
-                        fit.get("reason")
-                        or fit.get("blocker")
-                        or fit.get("gap")
-                        or "Recorded requirement gap."
+                        fit.get("reason") or fit.get("blocker") or fit.get("gap") or "Recorded requirement gap."
                     ),
                     "jobRefs": [usage],
                 }
@@ -2007,15 +1981,13 @@ class ProjectionBuilder:
     ) -> None:
         if not _table_exists(self._conn, "artifact_list_projections"):
             return
-        lifecycle = _job_lifecycle_exclusion_sql(
-            self._conn, "alp.tenant_id", "alp.job_id"
-        )
+        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "alp.tenant_id", "alp.job_id")
         rows = self._conn.execute(
             f"""
             SELECT alp.job_id, alp.job_title, alp.job_employer, alp.artifact_id, alp.generation,
                    alp.coverage_audit_json, alp.created_at
-              FROM artifact_list_projections alp{lifecycle['join_sql']}
-             WHERE alp.tenant_id = ?{lifecycle['where_sql']}
+              FROM artifact_list_projections alp{lifecycle["join_sql"]}
+             WHERE alp.tenant_id = ?{lifecycle["where_sql"]}
                AND alp.coverage_audit_json IS NOT NULL
                AND TRIM(alp.coverage_audit_json) != ''
             """,
@@ -2026,9 +1998,7 @@ class ProjectionBuilder:
             for state in ("covered", "declared"):
                 for keyword in _strings_from_unknown(coverage.get(state)):
                     for entry in skill_entries_by_name.get(keyword.lower(), []):
-                        entry["coverageUsages"].append(
-                            _skill_coverage_usage(row, keyword, state)
-                        )
+                        entry["coverageUsages"].append(_skill_coverage_usage(row, keyword, state))
             for keyword in _strings_from_unknown(coverage.get("missing")):
                 gap = {
                     "gapId": f"{_row_str(row, 'job_id')}#skill#{keyword.lower()}",
@@ -2040,8 +2010,7 @@ class ProjectionBuilder:
                     "weight": None,
                     "fitKind": None,
                     "reason": (
-                        "The generated coverage audit recorded this demanded skill "
-                        "as missing from shipped materials."
+                        "The generated coverage audit recorded this demanded skill as missing from shipped materials."
                     ),
                     "jobRefs": [_skill_coverage_usage(row, keyword, "missing")],
                 }
@@ -2217,6 +2186,8 @@ class ProjectionBuilder:
         estimate_state = _row_str(row, "estimate_state")
         if estimate_state not in MARKET_RECORDED_STATES:
             return {"ok": True, "recordStatus": "not_requested", "jobId": job_id}
+        if _market_uses_employer_posted_authority(_row_str(row, "source_snapshot_json")):
+            return {"ok": True, "recordStatus": "not_requested", "jobId": job_id}
         estimate = _market_estimate_from_row(row, job_id)
         return {"ok": True, "recordStatus": "recorded", "estimate": estimate}
 
@@ -2255,8 +2226,7 @@ class ProjectionBuilder:
                     stage=stage,
                     state=_row_str(row, "state") or "pending",
                     attempt_count=_row_nullable_int(row, "attempt_count") or 0,
-                    max_attempts=_row_nullable_int(row, "max_attempts")
-                    or DEFAULT_MAX_ATTEMPTS.get(stage),
+                    max_attempts=_row_nullable_int(row, "max_attempts") or DEFAULT_MAX_ATTEMPTS.get(stage),
                     started_at=_row_nullable_str(row, "started_at"),
                     updated_at=_row_nullable_str(row, "updated_at"),
                     finished_at=_row_nullable_str(row, "finished_at"),
@@ -2264,13 +2234,9 @@ class ProjectionBuilder:
                     error_code=_row_nullable_str(row, "error_code"),
                     error_message=_row_nullable_str(row, "error_message"),
                     retryable=_row_nullable_int(row, "retryable") != 0,
-                    blocked_by=tuple(str(item) for item in blocked_by)
-                    if isinstance(blocked_by, list)
-                    else (),
+                    blocked_by=tuple(str(item) for item in blocked_by) if isinstance(blocked_by, list) else (),
                     next_action=_row_nullable_str(row, "next_action"),
-                    apply_url_outcome=_apply_url_outcome_from_stage_metadata(
-                        _row_nullable_str(row, "metadata_json")
-                    ),
+                    apply_url_outcome=_apply_url_outcome_from_stage_metadata(_row_nullable_str(row, "metadata_json")),
                 )
             )
         return result
@@ -2403,9 +2369,7 @@ class ProjectionBuilder:
         current = _merge_material_analytics(metadata_jsons)
         if _material_analytics_complete(current):
             return current
-        return _merge_material_analytics(
-            metadata_jsons + self._load_base_material_metadata(job_id, metadata_jsons)
-        )
+        return _merge_material_analytics(metadata_jsons + self._load_base_material_metadata(job_id, metadata_jsons))
 
     def _load_base_material_metadata(
         self,
@@ -2487,9 +2451,7 @@ class ProjectionBuilder:
         )
 
         try:
-            record = SqliteEmployerAnalysisRepository(self._conn).load(
-                self._tenant_id, JobId(job_id)
-            )
+            record = SqliteEmployerAnalysisRepository(self._conn).load(self._tenant_id, JobId(job_id))
         except sqlite3.OperationalError:
             return None
         if record is None:
@@ -2507,9 +2469,7 @@ class ProjectionBuilder:
         from jobctrl.infrastructure.scoring import SqliteRequirementFitReportRepository
 
         try:
-            record = SqliteRequirementFitReportRepository(self._conn).load(
-                self._tenant_id, JobId(job_id)
-            )
+            record = SqliteRequirementFitReportRepository(self._conn).load(self._tenant_id, JobId(job_id))
         except sqlite3.OperationalError:
             return None
         if record is None:
@@ -2828,6 +2788,55 @@ class ProjectionBuilder:
             if (row["job_id"] if not isinstance(row, tuple) else row[0])
         }
 
+    def _stale_compensation_projection_jobs(self) -> set[str]:
+        """Return settled jobs whose compensation read model predates v2.
+
+        Compensation v2 enforces the posted-versus-market authority boundary.
+        Event watermarks cannot invalidate projections that were fully folded
+        before that rule shipped, so the embedded version is a one-time,
+        deterministic rebuild marker shared with the TypeScript projection
+        owner.
+        """
+
+        version_expr = """
+            CASE
+              WHEN json_valid({column})
+              THEN CAST(json_extract({column}, '$.projectionVersion') AS INTEGER)
+            END
+        """
+        list_version = version_expr.format(column="p.compensation_summary_json")
+        detail_summary_version = version_expr.format(column="d.compensation_summary_json")
+        detail_audit_version = version_expr.format(column="d.compensation_audit_json")
+        try:
+            rows = self._conn.execute(
+                f"""
+                SELECT p.job_id
+                  FROM job_list_projections p
+                  LEFT JOIN job_detail_projections d
+                    ON d.tenant_id = p.tenant_id
+                   AND d.job_id = p.job_id
+                 WHERE p.tenant_id = ?
+                   AND (
+                     ({list_version} >= 1 AND {list_version} < ?)
+                     OR ({detail_summary_version} >= 1 AND {detail_summary_version} < ?)
+                     OR ({detail_audit_version} >= 1 AND {detail_audit_version} < ?)
+                   )
+                """,
+                (
+                    str(self._tenant_id),
+                    COMPENSATION_PROJECTION_VERSION,
+                    COMPENSATION_PROJECTION_VERSION,
+                    COMPENSATION_PROJECTION_VERSION,
+                ),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return set()
+        return {
+            str(row["job_id"] if not isinstance(row, tuple) else row[0])
+            for row in rows
+            if (row["job_id"] if not isinstance(row, tuple) else row[0])
+        }
+
     @property
     def _score_audit_backfill_marker(self) -> str:
         # Per-tenant marker so a shared multi-tenant DB backfills each tenant's
@@ -3036,14 +3045,8 @@ class ProjectionBuilder:
         ]
 
         total_jobs = len(active_rows)
-        failures = sum(
-            1
-            for row in active_rows
-            if _row_str(row, "current_state") in {"failed", "exhausted"}
-        )
-        blocked = sum(
-            1 for row in active_rows if _row_str(row, "current_state") == "blocked"
-        )
+        failures = sum(1 for row in active_rows if _row_str(row, "current_state") in {"failed", "exhausted"})
+        blocked = sum(1 for row in active_rows if _row_str(row, "current_state") == "blocked")
         # Mirror TS: a job is "ready" only when it has a resume (has_resume == 1).
         ready = sum(
             1
@@ -3055,8 +3058,7 @@ class ProjectionBuilder:
         applied = sum(
             1
             for row in active_rows
-            if _row_nullable_str(row, "applied_at")
-            or _row_nullable_str(row, "apply_status") == "applied"
+            if _row_nullable_str(row, "applied_at") or _row_nullable_str(row, "apply_status") == "applied"
         )
         # Mirror the TS counter (apps/api/src/projections.ts):
         # exclude dry runs whose underlying job is soft-deleted via
@@ -3154,9 +3156,7 @@ class ProjectionBuilder:
         for row in active_rows:
             source = _row_str(row, "source") or "unknown"
             source_counts[source] = source_counts.get(source, 0) + 1
-        by_source = tuple(
-            sorted(source_counts.items(), key=lambda kv: (-kv[1], kv[0]))
-        )
+        by_source = tuple(sorted(source_counts.items(), key=lambda kv: (-kv[1], kv[0])))
 
         # score_distribution — group by fit_score.
         score_counts: dict[int, int] = {}
@@ -3165,9 +3165,7 @@ class ProjectionBuilder:
             if fit is None:
                 continue
             score_counts[fit] = score_counts.get(fit, 0) + 1
-        score_distribution = tuple(
-            sorted(score_counts.items(), key=lambda kv: kv[0], reverse=True)
-        )
+        score_distribution = tuple(sorted(score_counts.items(), key=lambda kv: kv[0], reverse=True))
 
         dashboard = DashboardProjection(
             tenant_id=self._tenant_id,
@@ -3203,8 +3201,7 @@ class ProjectionBuilder:
         applied_rows = [
             row
             for row in active_rows
-            if _row_nullable_str(row, "applied_at")
-            or _row_nullable_str(row, "apply_status") == "applied"
+            if _row_nullable_str(row, "applied_at") or _row_nullable_str(row, "apply_status") == "applied"
         ]
         outcomes_by_job = self._load_outcomes_by_job()
         suggestion_accuracy = self._load_suggestion_accuracy()
@@ -3267,22 +3264,12 @@ class ProjectionBuilder:
 
         by_source_list = [
             {"source": source, **counts}
-            for source, counts in sorted(
-                by_source.items(), key=lambda kv: (-kv[1]["applied"], kv[0])
-            )
+            for source, counts in sorted(by_source.items(), key=lambda kv: (-kv[1]["applied"], kv[0]))
         ]
-        by_band_list = [
-            {"band": band, **by_band[band]} for band in SCORE_BAND_ORDER if band in by_band
-        ]
-        by_fit_band_list = [
-            {"fitBand": band, **by_fit_band[band]}
-            for band in FIT_BAND_ORDER
-            if band in by_fit_band
-        ]
+        by_band_list = [{"band": band, **by_band[band]} for band in SCORE_BAND_ORDER if band in by_band]
+        by_fit_band_list = [{"fitBand": band, **by_fit_band[band]} for band in FIT_BAND_ORDER if band in by_fit_band]
         by_apply_mode_list = [
-            {"applyMode": mode, **by_apply_mode[mode]}
-            for mode in APPLY_MODE_ORDER
-            if mode in by_apply_mode
+            {"applyMode": mode, **by_apply_mode[mode]} for mode in APPLY_MODE_ORDER if mode in by_apply_mode
         ]
         by_template_list = [
             {
@@ -3340,9 +3327,7 @@ class ProjectionBuilder:
             kind = _row_str(row, "kind")
             if not job_id or not kind:
                 continue
-            grouped.setdefault(job_id, []).append(
-                {"kind": kind, "occurredAt": _row_nullable_str(row, "occurred_at")}
-            )
+            grouped.setdefault(job_id, []).append({"kind": kind, "occurredAt": _row_nullable_str(row, "occurred_at")})
         return {job_id: tuple(outcomes) for job_id, outcomes in grouped.items()}
 
     def _load_suggestion_accuracy(self) -> dict[str, int]:
@@ -3485,11 +3470,7 @@ class ProjectionBuilder:
                 continue
 
             detail_code = event["detail_code"] or current.detail_code
-            detail_count = (
-                event["detail_count"]
-                if event["detail_code"] is not None
-                else current.detail_count
-            )
+            detail_count = event["detail_count"] if event["detail_code"] is not None else current.detail_count
             if next_state == "running":
                 folded[key] = _PipelineStepFold(
                     tenant_id=current.tenant_id,
@@ -3707,9 +3688,7 @@ class ProjectionBuilder:
             attempt=event["attempt"],
             queued_at=event["lifecycle_at"] if state == "queued" else None,
             started_at=event["lifecycle_at"] if state == "running" else None,
-            finished_at=(
-                event["lifecycle_at"] if state in {"succeeded", "failed"} else None
-            ),
+            finished_at=(event["lifecycle_at"] if state in {"succeeded", "failed"} else None),
             duration_ms=event["duration_ms"],
             error_code=event["error_code"],
             retryable=event["retryable"],
@@ -3808,9 +3787,7 @@ class ProjectionBuilder:
             )
         return out
 
-    def _project_workflow_run(
-        self, workflow_id: str, events: list[dict]
-    ) -> WorkflowRunProjection | None:
+    def _project_workflow_run(self, workflow_id: str, events: list[dict]) -> WorkflowRunProjection | None:
         if not events:
             return None
         # An audit-only group (no ``WorkflowStarted`` and no terminal event —
@@ -3820,9 +3797,7 @@ class ProjectionBuilder:
         # stored projection (a canceled run would flip to ``in_progress`` and
         # lose ``started_at``/``finished_at``/``input_summary`` — PR #750
         # review, reproduced). Return ``None`` so the stored row is preserved.
-        if not any(
-            event["event_type"] in WORKFLOW_STATE_EVENT_TYPES for event in events
-        ):
+        if not any(event["event_type"] in WORKFLOW_STATE_EVENT_TYPES for event in events):
             return None
         workflow_type = ""
         status = "in_progress"
@@ -3839,11 +3814,7 @@ class ProjectionBuilder:
         for event in events:
             payload = event["payload"]
             event_type = event["event_type"]
-            workflow_type = str(
-                payload.get("workflowType")
-                or payload.get("workflow_type")
-                or workflow_type
-            )
+            workflow_type = str(payload.get("workflowType") or payload.get("workflow_type") or workflow_type)
             event_run_id = payload.get("temporalRunId") or payload.get("temporal_run_id")
             event_run_id = str(event_run_id) if event_run_id else None
             occurred_at = event.get("occurred_at")
@@ -3906,20 +3877,12 @@ class ProjectionBuilder:
                 # from a superseded execution (the reconciler closing a dead
                 # run after a newer WorkflowStarted already folded) must not
                 # clobber the live run.
-                if (
-                    event_run_id
-                    and temporal_run_id
-                    and event_run_id != temporal_run_id
-                ):
+                if event_run_id and temporal_run_id and event_run_id != temporal_run_id:
                     continue
                 if event_run_id:
                     temporal_run_id = event_run_id
                 status = _WORKFLOW_TERMINAL_STATUS[event_type]
-                finished_at = (
-                    payload.get("finishedAt")
-                    or occurred_at
-                    or finished_at
-                )
+                finished_at = payload.get("finishedAt") or occurred_at or finished_at
                 duration = payload.get("durationMs")
                 if isinstance(duration, (int, float)):
                     duration_ms = int(duration)
@@ -4034,9 +3997,7 @@ class ProjectionBuilder:
         "dry_run_complete": "dry_run_complete",
     }
 
-    def _project_run_from_events(
-        self, run_id: str, events: list[dict]
-    ) -> ApplyRunProjection | None:
+    def _project_run_from_events(self, run_id: str, events: list[dict]) -> ApplyRunProjection | None:
         if not events:
             return None
         job_id = ""
@@ -4063,9 +4024,7 @@ class ProjectionBuilder:
                     else event.get("occurred_at")
                 )
                 model = (
-                    str(payload["model"])
-                    if isinstance(payload.get("model"), str) and payload.get("model")
-                    else model
+                    str(payload["model"]) if isinstance(payload.get("model"), str) and payload.get("model") else model
                 )
                 worker = payload.get("worker_id")
                 if isinstance(worker, (int, float)):
@@ -4087,11 +4046,7 @@ class ProjectionBuilder:
                     continue
                 term_status, term_result = self._TERMINAL_EVENT_STATUS[event_type]
                 status = term_status
-                result = (
-                    str(payload.get("result"))
-                    if isinstance(payload.get("result"), str)
-                    else term_result
-                )
+                result = str(payload.get("result")) if isinstance(payload.get("result"), str) else term_result
                 finished_at = (
                     str(payload.get("finished_at"))
                     if payload.get("finished_at") is not None
@@ -4216,18 +4171,13 @@ def _job_metadata_join_sql(
         return {"select_sql": "NULL AS job_title, NULL AS employer", "join_sql": ""}
     title_sql = _column_or_literal(conn, "jobs", "title", "NULL", "jobs")
     if _has_column(conn, "jobs", "company"):
-        employer_sql = (
-            "COALESCE(NULLIF(TRIM(jobs.company), ''), "
-            f"'{_UNKNOWN_EMPLOYER}')"
-        )
+        employer_sql = f"COALESCE(NULLIF(TRIM(jobs.company), ''), '{_UNKNOWN_EMPLOYER}')"
     else:
         employer_sql = f"'{_UNKNOWN_EMPLOYER}'"
     return {
         "select_sql": f"{title_sql} AS job_title, {employer_sql} AS employer",
         "join_sql": (
-            "LEFT JOIN jobs ON "
-            f"jobs.tenant_id = {tenant_id_expression} "
-            f"AND jobs.job_id = {job_id_expression}"
+            f"LEFT JOIN jobs ON jobs.tenant_id = {tenant_id_expression} AND jobs.job_id = {job_id_expression}"
         ),
     }
 
@@ -4649,13 +4599,24 @@ def _market_sources(value: str) -> list[dict[str, Any]]:
                     provenance,
                     release_year,
                 ),
-                "geographyScope": defaults["geographyScope"],
+                "geographyScope": (
+                    _safe_market_geography_scope(item.get("geography_scope")) or defaults["geographyScope"]
+                ),
                 "aggregateBucket": defaults["aggregateBucket"],
                 "attribution": _market_source_attribution(item.get("attribution"), source_id, provenance),
                 "sampleCount": _nullable_int(item.get("sample_count")),
             }
         )
     return sources
+
+
+def _market_uses_employer_posted_authority(value: str) -> bool:
+    return any(
+        str(item.get("source_id") or "") == "posted_salary_text"
+        or str(item.get("source_type") or "") == "posted_salary"
+        or str(item.get("source_provenance") or "") == "employer_posted"
+        for item in _json_records(value)
+    )
 
 
 def _market_source_provenance(value: object, source_id: str) -> str:
@@ -4968,9 +4929,7 @@ def _camel_score_breakdown(value) -> dict:
         "eligibility": _camel_score_eligibility(data.get("eligibility")),
         "matchedSignals": _string_list(data.get("matched_signals", data.get("matchedSignals"))),
         "missingSignals": _string_list(data.get("missing_signals", data.get("missingSignals"))),
-        "transferableSignals": _string_list(
-            data.get("transferable_signals", data.get("transferableSignals"))
-        ),
+        "transferableSignals": _string_list(data.get("transferable_signals", data.get("transferableSignals"))),
     }
 
 

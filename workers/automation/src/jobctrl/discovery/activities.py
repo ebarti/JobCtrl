@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from temporalio import activity
@@ -112,6 +113,31 @@ class DiscoveryEnrichmentActivityOutput:
 
 
 @dataclass(frozen=True)
+class AutomaticCompensationRefreshActivityInput:
+    tenant_id: str
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
+    discovery_execution: DiscoveryExecutionRef | None = None
+
+
+@dataclass(frozen=True)
+class AutomaticCompensationRefreshActivityOutput:
+    status: str
+    slices_discovered: int = 0
+    slices_claimed: int = 0
+    direct_results: int = 0
+    extrapolated_results: int = 0
+    insufficient_results: int = 0
+    failed_results: int = 0
+    jobs_considered: int = 0
+    jobs_with_benchmark: int = 0
+    estimates_written: int = 0
+    estimates_unchanged: int = 0
+    estimates_cleared: int = 0
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class DiscoveryPreparationFanoutInput:
     tenant_id: str
     expected_app_dir: str | None = None
@@ -170,9 +196,7 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
             families=list(plan.get("families") or []),
             progress_total=int(plan.get("progress_total") or 0),
             start_count=int(plan.get("start_count") or 0),
-            max_parallel_families=max(
-                1, int(plan.get("max_parallel_families") or 1)
-            ),
+            max_parallel_families=max(1, int(plan.get("max_parallel_families") or 1)),
             next_run_settings=dict(plan.get("next_run_settings") or {}),
         )
     except Exception as exc:
@@ -220,9 +244,7 @@ async def discovery_source_family_activity(
     if payload.discovery_execution is not None:
         info = activity.info()
         activity_attempt = info.attempt
-        activity_owner_token = (
-            f"{info.activity_id}:{info.activity_run_id}:{info.attempt}"
-        )
+        activity_owner_token = f"{info.activity_id}:{info.activity_run_id}:{info.attempt}"
 
     try:
         result = await run_blocking_with_heartbeat(
@@ -339,9 +361,7 @@ async def discovery_enrichment_activity(
     try:
         info = activity.info()
         activity_attempt = info.attempt
-        activity_owner_token = (
-            f"{info.activity_id}:{info.activity_run_id}:{info.attempt}"
-        )
+        activity_owner_token = f"{info.activity_id}:{info.activity_run_id}:{info.attempt}"
     except RuntimeError:
         # Direct unit calls have no Temporal activity context.
         activity_attempt = 1
@@ -359,8 +379,7 @@ async def discovery_enrichment_activity(
                 stream_while_discovering=payload.stream_while_discovering,
                 discovery_execution=payload.discovery_execution,
                 recovery_key=(
-                    f"{payload.discovery_execution.workflow_id}:"
-                    f"{payload.discovery_execution.temporal_run_id}"
+                    f"{payload.discovery_execution.workflow_id}:{payload.discovery_execution.temporal_run_id}"
                     if payload.discovery_execution is not None
                     else None
                 ),
@@ -411,6 +430,90 @@ async def discovery_enrichment_activity(
     if lifecycle is not None:
         lifecycle.completed(item_count=output.passes)
     return output
+
+
+@activity.defn(name="automatic_compensation_refresh")
+async def automatic_compensation_refresh_activity(
+    payload: AutomaticCompensationRefreshActivityInput,
+) -> AutomaticCompensationRefreshActivityOutput:
+    """Refresh due benchmarks and attach the latest result to matching jobs."""
+
+    from jobctrl.database import get_connection
+    from jobctrl.infrastructure.compensation.automatic_refresh import (
+        refresh_automatic_compensation_benchmarks,
+    )
+    from jobctrl.infrastructure.compensation.benchmark_materialization import (
+        materialize_automatic_compensation_estimates,
+    )
+    from jobctrl.infrastructure.temporal.run_in_activity import (
+        run_blocking_with_heartbeat,
+    )
+    from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
+
+    assert_activity_runtime(
+        expected_app_dir=payload.expected_app_dir,
+        expected_db_path=payload.expected_db_path,
+    )
+    try:
+        info = activity.info()
+        owner = f"discover:{info.workflow_id}:{info.workflow_run_id}:{info.activity_id}:{info.attempt}"
+    except RuntimeError:
+        # Direct unit calls have no Temporal activity context.
+        owner = f"discover:{payload.tenant_id}:direct"
+
+    def _run() -> AutomaticCompensationRefreshActivityOutput:
+        refresh_started_at = datetime.now(timezone.utc).isoformat()
+        conn = get_connection()
+        refresh = refresh_automatic_compensation_benchmarks(
+            tenant_id=payload.tenant_id,
+            owner=owner,
+            now=refresh_started_at,
+            conn=conn,
+        )
+        materialized_at = datetime.now(timezone.utc).isoformat()
+        materialization = materialize_automatic_compensation_estimates(
+            conn,
+            tenant_id=payload.tenant_id,
+            materialized_at=materialized_at,
+        )
+        warnings = tuple(sorted(set(refresh.warnings).union(materialization.warnings)))
+        if warnings or refresh.insufficient_results or refresh.failed_results:
+            status = "completed_with_warnings"
+        elif (
+            refresh.status == "skipped"
+            and not materialization.estimates_written
+            and not materialization.estimates_cleared
+        ):
+            status = "skipped"
+        else:
+            status = "succeeded"
+        return AutomaticCompensationRefreshActivityOutput(
+            status=status,
+            slices_discovered=refresh.slices_discovered,
+            slices_claimed=refresh.slices_claimed,
+            direct_results=refresh.direct_results,
+            extrapolated_results=refresh.extrapolated_results,
+            insufficient_results=refresh.insufficient_results,
+            failed_results=refresh.failed_results,
+            jobs_considered=materialization.jobs_considered,
+            jobs_with_benchmark=materialization.jobs_with_benchmark,
+            estimates_written=materialization.estimates_written,
+            estimates_unchanged=materialization.estimates_unchanged,
+            estimates_cleared=materialization.estimates_cleared,
+            warnings=warnings,
+        )
+
+    try:
+        return await run_blocking_with_heartbeat(
+            _run,
+            starting_message="automatic compensation refresh starting",
+            progress_message="automatic compensation refresh still running",
+            activity_name="discover:automatic-compensation",
+        )
+    except JobCtrlError as exc:
+        raise to_application_error(exc) from exc
+    except Exception as exc:
+        raise to_application_error(exc) from exc
 
 
 def _build_per_job_handoff(

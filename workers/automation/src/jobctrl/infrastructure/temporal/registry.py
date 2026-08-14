@@ -15,6 +15,7 @@ from jobctrl.apply.workflow import ApplyWorkflow
 from jobctrl.contact.activities import run_contact_research_activity
 from jobctrl.contact.workflow import ContactResearchWorkflow
 from jobctrl.discovery.activities import (
+    automatic_compensation_refresh_activity,
     discovery_enrichment_activity,
     discovery_preparation_fanout_activity,
     discovery_source_family_activity,
@@ -76,6 +77,7 @@ ACTIVITIES: list[Callable[..., Any]] = [
     plan_discovery_sources,
     discovery_source_family_activity,
     discovery_enrichment_activity,
+    automatic_compensation_refresh_activity,
     discovery_preparation_fanout_activity,
     enrich_activity,
     cancel_enrichment_cohort_activity,

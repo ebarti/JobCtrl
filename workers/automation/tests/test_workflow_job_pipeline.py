@@ -25,6 +25,7 @@ from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 from jobctrl.apply.activities import apply_activity
 from jobctrl.apply.workflow import ApplyWorkflow
 from jobctrl.discovery.activities import (
+    AutomaticCompensationRefreshActivityOutput,
     DiscoveryEnrichmentActivityOutput,
     DiscoveryPreparationFanoutOutput,
     PlanDiscoverySourcesOutput,
@@ -74,9 +75,7 @@ from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
 
 def test_selected_batch_timeout_scales_by_worker_waves_and_is_capped() -> None:
-    job_ids = tuple(
-        JobId(f"20000000-0000-4000-8000-{index:012d}") for index in range(20)
-    )
+    job_ids = tuple(JobId(f"20000000-0000-4000-8000-{index:012d}") for index in range(20))
 
     assert _selected_batch_timeout(
         JobPipelineWorkflowInput(
@@ -94,14 +93,17 @@ def test_selected_batch_timeout_scales_by_worker_waves_and_is_capped() -> None:
             workers=4,
         )
     ) == timedelta(minutes=30)
-    assert _selected_batch_timeout(
-        JobPipelineWorkflowInput(
-            tenant_id="local",
-            stages=["tailor"],
-            job_ids=job_ids,
-            workers=1,
+    assert (
+        _selected_batch_timeout(
+            JobPipelineWorkflowInput(
+                tenant_id="local",
+                stages=["tailor"],
+                job_ids=job_ids,
+                workers=1,
+            )
         )
-    ) == _MAX_SELECTED_BATCH_TIMEOUT
+        == _MAX_SELECTED_BATCH_TIMEOUT
+    )
 
     selected_payload = JobPipelineWorkflowInput(
         tenant_id="local",
@@ -147,14 +149,8 @@ def test_global_material_run_freezes_exact_selected_cohort(
     queue_stage: str,
     retailor: bool,
 ) -> None:
-    job_ids = [
-        f"21000000-0000-4000-8000-{index:012d}"
-        for index in range(3)
-    ]
-    rows = [
-        {"tenant_id": "local", "job_id": job_id}
-        for job_id in job_ids
-    ]
+    job_ids = [f"21000000-0000-4000-8000-{index:012d}" for index in range(3)]
+    rows = [{"tenant_id": "local", "job_id": job_id} for job_id in job_ids]
 
     with (
         patch("jobctrl.database.get_connection", return_value=object()) as connection,
@@ -464,14 +460,10 @@ async def test_cancel_owned_enrichment_is_patch_gated_for_replay_safety() -> Non
         workers=1,
     )
     with (
-        patch(
-            "jobctrl.pipeline.workflow.workflow.patched", return_value=False
-        ) as patched,
+        patch("jobctrl.pipeline.workflow.workflow.patched", return_value=False) as patched,
         patch(
             "jobctrl.pipeline.workflow.workflow.execute_activity",
-            side_effect=AssertionError(
-                "unpatched replay must not schedule cancel_enrichment_cohort"
-            ),
+            side_effect=AssertionError("unpatched replay must not schedule cancel_enrichment_cohort"),
         ),
     ):
         await _cancel_owned_enrichment(payload)
@@ -524,6 +516,7 @@ def _all_activities():
         _check_spend_budget,
         _plan_discovery_sources,
         _discovery_enrichment,
+        _automatic_compensation_refresh,
         _discovery_preparation_fanout,
         enrich_activity,
         cancel_enrichment_cohort_activity,
@@ -563,6 +556,13 @@ async def _plan_discovery_sources(_payload) -> PlanDiscoverySourcesOutput:
 @activity.defn(name="discovery_enrichment")
 async def _discovery_enrichment(_payload) -> DiscoveryEnrichmentActivityOutput:
     return DiscoveryEnrichmentActivityOutput(status="ok")
+
+
+@activity.defn(name="automatic_compensation_refresh")
+async def _automatic_compensation_refresh(
+    _payload,
+) -> AutomaticCompensationRefreshActivityOutput:
+    return AutomaticCompensationRefreshActivityOutput(status="skipped")
 
 
 @activity.defn(name="discovery_preparation_fanout")
@@ -1558,24 +1558,26 @@ async def test_pipeline_material_cancel_stops_fanout_and_fences_late_writes(
     assert sorted(fenced) == sorted(started)
     assert late_writes == []
     rows = conn.execute(
-        "SELECT job_id, state FROM job_stage_states "
-        "WHERE tenant_id = 'local' AND stage = ? AND job_id IN (?, ?, ?, ?)",
+        "SELECT job_id, state FROM job_stage_states WHERE tenant_id = 'local' AND stage = ? AND job_id IN (?, ?, ?, ?)",
         (stage, *(str(job_id) for job_id in selected)),
     ).fetchall()
-    assert {str(row["job_id"]): str(row["state"]) for row in rows} == {
-        str(job_id): "canceled" for job_id in selected
-    }
-    assert conn.execute(
-        "SELECT COUNT(*) FROM job_events "
-        "WHERE tenant_id = 'local' AND event_type = 'ForbiddenLateMaterialCommit' "
-        "AND job_id IN (?, ?, ?, ?)",
-        tuple(str(job_id) for job_id in selected),
-    ).fetchone()[0] == 0
-    assert conn.execute(
-        "SELECT COUNT(*) FROM job_materials WHERE tenant_id = 'local' "
-        "AND job_id IN (?, ?, ?, ?)",
-        tuple(str(job_id) for job_id in selected),
-    ).fetchone()[0] == 0
+    assert {str(row["job_id"]): str(row["state"]) for row in rows} == {str(job_id): "canceled" for job_id in selected}
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_events "
+            "WHERE tenant_id = 'local' AND event_type = 'ForbiddenLateMaterialCommit' "
+            "AND job_id IN (?, ?, ?, ?)",
+            tuple(str(job_id) for job_id in selected),
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_materials WHERE tenant_id = 'local' AND job_id IN (?, ?, ?, ?)",
+            tuple(str(job_id) for job_id in selected),
+        ).fetchone()[0]
+        == 0
+    )
 
 
 @pytest.mark.asyncio

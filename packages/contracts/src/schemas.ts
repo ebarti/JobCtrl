@@ -5398,16 +5398,31 @@ export const MARKET_COMPENSATION_FACTOR_NAMES = [
 export type MarketCompensationFactorName = (typeof MARKET_COMPENSATION_FACTOR_NAMES)[number];
 
 export const MARKET_COMPENSATION_WARNING_CODES = [
+  "benchmark_extrapolated",
+  "benchmark_level_fallback",
   "reported_compensation_sample",
   "posted_salary_sample",
   "source_conflict_with_posted_salary",
   "stale_source_snapshot",
   "low_sample_count",
   "company_role_fallback",
+  "cost_of_living_only",
+  "factor_out_of_bounds",
+  "limited_matched_company_evidence",
   "trimodal_tier_inferred",
   "location_mismatch",
 ] as const;
 export type MarketCompensationWarningCode = (typeof MARKET_COMPENSATION_WARNING_CODES)[number];
+
+export const MARKET_COMPENSATION_GEOGRAPHY_SCOPES = [
+  "Europe",
+  "reported",
+  "country",
+  "country_subdivision",
+  "locality",
+] as const;
+export type MarketCompensationGeographyScope =
+  (typeof MARKET_COMPENSATION_GEOGRAPHY_SCOPES)[number];
 
 export const MARKET_COMPENSATION_REASON_CODES = [
   "unsupported_source",
@@ -5449,7 +5464,7 @@ export interface MarketCompensationSourceSnapshot {
   sourceType: "reported_compensation" | "posted_salary";
   releaseYear: number | null;
   snapshotVersion: string;
-  geographyScope: string;
+  geographyScope: MarketCompensationGeographyScope;
   aggregateBucket: string;
   attribution: string;
   sampleCount: number | null;
@@ -5487,7 +5502,7 @@ interface MarketCompensationEstimateBase {
   sourceCount: number;
   sampleCount: number | null;
   aggregateBucket: string | null;
-  geographyScope: string | null;
+  geographyScope: MarketCompensationGeographyScope | null;
   occupationCode: string | null;
   occupationLabel: string | null;
   seniorityLabel: string | null;

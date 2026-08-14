@@ -272,6 +272,109 @@ describe("market compensation estimates API", () => {
     }
   });
 
+  it("preserves canonical extrapolation warnings and geography lineage", async () => {
+    const { app, dbPath, cleanup } = withTempApp();
+    insertEstimate(dbPath, ESTIMATED_JOB_ID, {
+      minimumAmount: 1_200_000,
+      maximumAmount: 1_800_000,
+      confidenceBand: "low",
+      confidenceScore: 0.31,
+      sourceCount: 1,
+      geographyScope: "country",
+      sources: [
+        {
+          source_id: "levels_fyi",
+          source_provenance: "public",
+          source_type: "reported_compensation",
+          release_year: 2026,
+          snapshot_version: "levels-fyi-public-de-2026-08-12",
+          geography_scope: "country",
+          aggregate_bucket: "reported company-role compensation",
+          attribution: "Data source: Levels.fyi (https://www.levels.fyi)",
+          sample_count: 4,
+        },
+      ],
+      warnings: [
+        "benchmark_extrapolated",
+        "cost_of_living_only",
+        "factor_out_of_bounds",
+      ],
+      estimatorVersion:
+        "company-role-reported-compensation-canonical-benchmark-v1:extrapolated:fact-1",
+    });
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${ESTIMATED_JOB_ID}/compensation/market`,
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      const body = response.json() as Extract<
+        MarketCompensationEstimateResponse,
+        { recordStatus: "recorded" }
+      >;
+      expect(body.estimate).toMatchObject({
+        minimumAmount: 1_200_000,
+        maximumAmount: 1_800_000,
+        geographyScope: "country",
+      });
+      expect(body.estimate.sources).toEqual([
+        expect.objectContaining({
+          sourceId: "levels_fyi",
+          provenance: "public",
+          geographyScope: "country",
+        }),
+      ]);
+      expect(body.estimate.warnings.map((warning) => warning.code)).toEqual([
+        "benchmark_extrapolated",
+        "cost_of_living_only",
+        "factor_out_of_bounds",
+      ]);
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("does not expose a historical employer-posted row as a market estimate", async () => {
+    const { app, dbPath, cleanup } = withTempApp();
+    insertEstimate(dbPath, ESTIMATED_JOB_ID, {
+      minimumAmount: 100_000,
+      maximumAmount: 130_000,
+      sources: [
+        {
+          source_id: "posted_salary_text",
+          source_provenance: "employer_posted",
+          source_type: "posted_salary",
+          release_year: 2026,
+          snapshot_version: "jobctrl-posted-compensation-v1",
+          geography_scope: "reported",
+          aggregate_bucket: "employer-posted company-role compensation",
+          attribution: "Employer-posted salary text captured by JobCtrl",
+          sample_count: 1,
+        },
+      ],
+      warnings: ["posted_salary_sample"],
+      estimatorVersion: "company-role-reported-compensation-v2",
+    });
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${ESTIMATED_JOB_ID}/compensation/market`,
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toEqual({
+        ok: true,
+        recordStatus: "not_requested",
+        jobKey: ESTIMATED_JOB_ID,
+      });
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("preserves public and licensed Levels.fyi snapshot provenance", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     insertEstimate(dbPath, ESTIMATED_JOB_ID, {
