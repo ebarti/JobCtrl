@@ -14,8 +14,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Final, Literal
 
-from jobctrl.database import close_connection, open_exact_v7_database
-from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V7_MANIFEST
+from jobctrl.infrastructure.migrations.schema_manifest import (
+    EXACT_V7_MANIFEST,
+    assert_exact_manifest,
+)
 from jobctrl.infrastructure.migrations.v6_to_v7_candidate import (
     populate_v7_candidate,
 )
@@ -105,12 +107,16 @@ def execute_v6_to_v7_candidate(
         source_connection.close()
         source_connection = None
 
-        reopened = open_exact_v7_database(candidate)
+        reopened = sqlite3.connect(
+            f"{candidate.resolve().as_uri()}?mode=ro",
+            uri=True,
+        )
         try:
             if int(reopened.execute("PRAGMA user_version").fetchone()[0]) != EXACT_V7_MANIFEST.version:
                 raise CandidateExecutionError(_GENERIC_FAILURE)
+            assert_exact_manifest(reopened, EXACT_V7_MANIFEST)
         finally:
-            close_connection(candidate)
+            reopened.close()
 
         _fsync_regular_file(candidate)
         _fsync_directory(candidate.parent)
@@ -129,7 +135,6 @@ def execute_v6_to_v7_candidate(
             candidate_connection.close()
         if source_connection is not None:
             source_connection.close()
-        close_connection(candidate)
         if created_identity is not None:
             _remove_created_candidate(candidate, created_identity)
         if isinstance(error, Exception):

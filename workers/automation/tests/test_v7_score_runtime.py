@@ -416,6 +416,7 @@ def test_score_stage_events_carry_owning_workflow_id_under_a_run(
 def test_employer_analysis_event_preserves_tenant_and_job_id(
     conn: sqlite3.Connection,
 ) -> None:
+    _seed_target(conn, tenant_id=_TENANT_B, job_id=_JOB_ID_B)
     event = create_employer_analyzed(
         _TENANT_B,
         EmployerAnalyzedPayload(
@@ -468,6 +469,7 @@ def test_employer_analysis_recorder_skips_cache_hits_when_opted_out(
     """``record_cached_hits=False`` records fresh analyses but never cache
     hits — the score stage resolves the analysis on every pass and must not
     duplicate the timeline row per retry/rescore."""
+    _seed_target(conn, tenant_id=_TENANT_B, job_id=_JOB_ID_B)
     recorder = EmployerAnalyzedEventRecorder(conn, stage="score", record_cached_hits=False)
 
     recorder.publish(_employer_analyzed_event(cached=True))
@@ -484,6 +486,7 @@ def test_employer_analysis_recorder_records_cache_hits_by_default(
     conn: sqlite3.Connection,
 ) -> None:
     """The default recorder (tailor path) keeps recording cache hits."""
+    _seed_target(conn, tenant_id=_TENANT_B, job_id=_JOB_ID_B)
     EmployerAnalyzedEventRecorder(conn, stage="tailor").publish(_employer_analyzed_event(cached=True))
 
     count = conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type = 'EmployerAnalyzed'").fetchone()

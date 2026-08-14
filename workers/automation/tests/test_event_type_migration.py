@@ -19,6 +19,10 @@ def test_migration_renames_legacy_snake_case_event_types(tmp_path: Path) -> None
     conn = init_db(db_path)
     try:
         job_id = generate_job_id()
+        conn.execute(
+            "INSERT INTO jobs (tenant_id, job_id, url) VALUES (?, ?, ?)",
+            (str(LOCAL_TENANT), str(job_id), "https://jobs.example.test/legacy-events"),
+        )
         # Seed historical rows that pre-date the PascalCase rip-and-replace.
         conn.executemany(
             """
@@ -72,6 +76,10 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
     conn = init_db(db_path)
     try:
         job_id = generate_job_id()
+        conn.execute(
+            "INSERT INTO jobs (tenant_id, job_id, url) VALUES (?, ?, ?)",
+            (str(LOCAL_TENANT), str(job_id), "https://jobs.example.test/idempotent-event"),
+        )
         conn.execute(
             """
             INSERT INTO job_events (

@@ -26,6 +26,13 @@ _JOB_ID = JobId("00000000-0000-4000-8000-000000000001")
 def _repo(tmp_path: Path) -> tuple[SqliteOutreachThreadRepository, sqlite3.Connection]:
     conn = init_db(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
+    conn.executemany(
+        "INSERT INTO jobs (tenant_id, job_id, url) VALUES (?, ?, ?)",
+        [
+            ("tenant-a", str(_JOB_ID), "https://jobs.example.test/tenant-a/outreach"),
+            ("tenant-b", str(_JOB_ID), "https://jobs.example.test/tenant-b/outreach"),
+        ],
+    )
     return SqliteOutreachThreadRepository(conn, publisher=InProcessEventBus()), conn
 
 

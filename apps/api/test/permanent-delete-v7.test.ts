@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { openDatabase } from "../src/db.js";
 import { rebuildTenantDeleteProjections } from "../src/projections.js";
-import { schemaManifest, EXACT_V7_SCHEMA_MANIFEST } from "../src/schema-manifest.js";
+import { schemaManifest, EXACT_V8_SCHEMA_MANIFEST } from "../src/schema-manifest.js";
 import { permanentlyDeleteJob } from "../src/write-model.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 
@@ -261,7 +261,7 @@ describe("exact-v7 permanent job deletion", () => {
   it("purges only the local Job aggregate, preserves independent history, and permits rediscovery", () => {
     const db = exactDatabase();
     seedExactV7DeleteGraph(db);
-    const manifestBefore = schemaManifest(db, EXACT_V7_SCHEMA_MANIFEST.version);
+    const manifestBefore = schemaManifest(db, EXACT_V8_SCHEMA_MANIFEST.version);
     const otherJobsBefore = rowSnapshot(db, "jobs", "tenant_id = ? AND job_id = ?", [OTHER_TENANT, JOB_ID]);
     const otherLocatorsBefore = rowSnapshot(db, "job_locators", "tenant_id = ? AND job_id = ?", [OTHER_TENANT, JOB_ID]);
     const otherEvidenceBefore = rowSnapshot(db, "evidence_usage_projections", "tenant_id = ?", [OTHER_TENANT]);
@@ -360,7 +360,7 @@ describe("exact-v7 permanent job deletion", () => {
       expect.objectContaining({ last_event_id: 999 }),
     ]);
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(schemaManifest(db, EXACT_V7_SCHEMA_MANIFEST.version)).toEqual(manifestBefore);
+    expect(schemaManifest(db, EXACT_V8_SCHEMA_MANIFEST.version)).toEqual(manifestBefore);
 
     expect(rowSnapshot(db, "jobs", "tenant_id = ? AND job_id = ?", [OTHER_TENANT, JOB_ID])).toEqual(otherJobsBefore);
     expect(rowSnapshot(db, "job_locators", "tenant_id = ? AND job_id = ?", [OTHER_TENANT, JOB_ID])).toEqual(otherLocatorsBefore);

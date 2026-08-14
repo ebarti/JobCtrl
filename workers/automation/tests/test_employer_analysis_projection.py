@@ -215,6 +215,18 @@ def test_projection_analysis_is_null_when_no_analysis_exists(conn: sqlite3.Conne
 def test_projection_serves_latest_requirement_fit_report_read_model(
     conn: sqlite3.Connection,
 ) -> None:
+    conn.executemany(
+        """
+        INSERT INTO job_scores (
+            tenant_id, job_id, version, fit_score, breakdown_json,
+            keywords_json, scored_at, trace_json
+        ) VALUES (?, ?, ?, 8, '{}', '[]', ?, '{}')
+        """,
+        [
+            (str(LOCAL_TENANT), str(JOB_ID), 1, "2026-05-04T11:00:00+00:00"),
+            (str(LOCAL_TENANT), str(JOB_ID), 2, "2026-05-04T12:00:00+00:00"),
+        ],
+    )
     repo = SqliteRequirementFitReportRepository(conn)
     repo.save(LOCAL_TENANT, _requirement_fit_report(score_version=1))
     latest = _requirement_fit_report(score_version=2)

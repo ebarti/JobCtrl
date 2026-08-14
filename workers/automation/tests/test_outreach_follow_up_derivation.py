@@ -117,6 +117,14 @@ def test_recurring_reminder_can_be_enabled_but_never_sends() -> None:
 def _repo() -> tuple[SqliteOutreachThreadRepository, sqlite3.Connection]:
     conn = init_db(Path(tempfile.mkdtemp()) / "jobctrl.db")
     conn.row_factory = sqlite3.Row
+    conn.execute(
+        "INSERT INTO jobs (tenant_id, job_id, url) VALUES (?, ?, ?)",
+        (
+            str(LOCAL_TENANT),
+            "00000000-0000-4000-8000-000000000001",
+            "https://jobs.example.test/outreach-follow-up",
+        ),
+    )
     return SqliteOutreachThreadRepository(conn, publisher=InProcessEventBus()), conn
 
 

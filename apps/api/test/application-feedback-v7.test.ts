@@ -21,7 +21,7 @@ import {
   recordManualApplicationOutcome,
 } from "../src/application-feedback.js";
 import { InputError } from "../src/write-model.js";
-import { hasExactV7SchemaManifest } from "../src/schema-manifest.js";
+import { hasExactV8SchemaManifest } from "../src/schema-manifest.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000071";
@@ -143,11 +143,11 @@ describe("application feedback exact v7 identity", () => {
 
   it("does not mutate the exact-v7 schema and refuses an invalid job id", () => {
     const db = seededDatabase();
-    expect(hasExactV7SchemaManifest(db)).toBe(true);
+    expect(hasExactV8SchemaManifest(db)).toBe(true);
 
     expect(() =>
       recordManualApplicationOutcome(db, "not-a-canonical-job-id", { kind: "interview" }),
     ).toThrow(InputError);
-    expect(hasExactV7SchemaManifest(db)).toBe(true);
+    expect(hasExactV8SchemaManifest(db)).toBe(true);
   });
 });

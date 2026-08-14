@@ -9,6 +9,13 @@ from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
 from jobctrl.state import record_job_event
 
 
+def _seed_job(conn, job_id) -> None:
+    conn.execute(
+        "INSERT INTO jobs (tenant_id, job_id, url) VALUES (?, ?, ?)",
+        (str(LOCAL_TENANT), str(job_id), f"https://jobs.example.test/{job_id}"),
+    )
+
+
 def test_record_job_event_publishes_through_bus(tmp_path: Path) -> None:
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
@@ -18,6 +25,7 @@ def test_record_job_event_publishes_through_bus(tmp_path: Path) -> None:
 
     try:
         job_id = generate_job_id()
+        _seed_job(conn, job_id)
         record_job_event(
             conn,
             job_id,
@@ -53,6 +61,7 @@ def test_record_job_event_without_publisher_only_persists(tmp_path: Path) -> Non
 
     try:
         job_id = generate_job_id()
+        _seed_job(conn, job_id)
         record_job_event(
             conn,
             job_id,
@@ -79,6 +88,7 @@ def test_record_job_event_typed_subscriber_only_receives_match(tmp_path: Path) -
 
     try:
         job_id = generate_job_id()
+        _seed_job(conn, job_id)
         record_job_event(conn, job_id, "score", "StageStarted", publisher=bus)
         record_job_event(conn, job_id, "score", "StageCompleted", publisher=bus)
         record_job_event(conn, job_id, "score", "StageFailed", publisher=bus)

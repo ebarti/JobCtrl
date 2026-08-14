@@ -21,6 +21,7 @@ final PR, then run product QA on the cumulative stack.
 | Public demo browser workspace | `corepack pnpm --filter @jobctrl/web e2e:demo-workspace` |
 | Public demo edge | `corepack pnpm demo-edge:check`, `corepack pnpm demo-edge:test`, and `corepack pnpm demo-edge:dry-run` |
 | Python worker | `uv --project workers/automation run --extra dev ruff check .` and `uv --project workers/automation run --extra dev pytest -q` |
+| SQLite schema or native migration | Focused Python schema/candidate tests, `corepack pnpm api:check`, `corepack pnpm api:test`, `corepack pnpm launcher:check`, and `corepack pnpm launcher:test` |
 | Any patch | `git diff --check` |
 
 Start the attached full stack with `corepack pnpm dev` when the path needs the
