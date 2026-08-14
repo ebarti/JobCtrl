@@ -144,6 +144,7 @@ _ROLE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "cybersecurity",
             "information security",
             "privacy engineer",
+            "privacy engineering",
             "security",
             "trust and safety",
         ),

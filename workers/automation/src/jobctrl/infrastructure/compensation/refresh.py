@@ -37,7 +37,17 @@ def refresh_compensation_facts(
     if job_id is not None:
         job_id = canonical_job_id(str(job_id))
         row = conn.execute(
-            "SELECT job_id, url, salary, full_description, description FROM jobs WHERE tenant_id = ? AND job_id = ?",
+            """
+            SELECT jobs.job_id, jobs.url, jobs.salary,
+                   enrichments.full_description AS enrichment_description,
+                   jobs.full_description, jobs.description
+            FROM jobs
+            LEFT JOIN job_enrichments AS enrichments
+              ON enrichments.tenant_id = jobs.tenant_id
+             AND enrichments.job_id = jobs.job_id
+             AND enrichments.current_status = 'enriched'
+            WHERE jobs.tenant_id = ? AND jobs.job_id = ?
+            """,
             (tenant_id, job_id),
         ).fetchone()
         if row is None:

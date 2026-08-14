@@ -28,6 +28,15 @@ Start the attached full stack with `corepack pnpm dev` when the path needs the
 API, Temporal, worker, and web app together. Confirm `GET /v1/health` reports a
 healthy worker before starting worker-backed stages.
 
+For compensation changes, the Job Detail product-path check must cover both an
+accepted range and an insufficient-evidence result. Verify that the posted
+amount and market range (or explicit no-reliable-range outcome) are the visual
+headlines; cash is not relabelled as separately mentioned equity; the inferred
+level is correct; evidence/provider counts expand into the actual salary
+evidence records and reported sample counts; reliability percentages explain
+their basis; and the normal focused refresh has no local observation-path
+input.
+
 ## Pick The Right Checklist
 
 | You changed… | Use |

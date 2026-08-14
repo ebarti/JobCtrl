@@ -11,7 +11,7 @@ from typing import Literal
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
-PARSER_VERSION = "posted-compensation-v1"
+PARSER_VERSION = "posted-compensation-v3"
 SOURCE_TEXT_LIMIT = 280
 
 ParseState = Literal["missing", "unparseable", "ambiguous", "parsed_range"]
@@ -75,6 +75,52 @@ _DIRECT_PERIOD_SUFFIX_RE = re.compile(
     r"^\s*(?:(?:/|\bper\s+)(?:hour|hourly|hr|hrs|h|month|monthly|mo|mos|year|yearly|annum|yr|yrs)\b)",
     re.IGNORECASE,
 )
+_PERIOD_CUE_PATTERNS: tuple[
+    tuple[CompensationPeriod, int, re.Pattern[str]],
+    ...,
+] = (
+    (
+        "hour",
+        0,
+        re.compile(r"/(?:h|hr|hrs|hour)\b|\bper\s+(?:h|hr|hrs|hour|hourly)\b"),
+    ),
+    (
+        "month",
+        0,
+        re.compile(r"/(?:mo|mos|month)\b|\bper\s+(?:mo|mos|month|monthly)\b"),
+    ),
+    (
+        "year",
+        0,
+        re.compile(
+            r"/(?:yr|yrs|year)\b|\bper\s+(?:yr|yrs|year|yearly|annum)\b",
+        ),
+    ),
+    ("hour", 1, re.compile(r"\b(?:hour|hourly)\b")),
+    ("month", 1, re.compile(r"\b(?:month|monthly)\b")),
+    (
+        "year",
+        1,
+        re.compile(r"\b(?:year|yearly|annual|annually|annum)\b"),
+    ),
+)
+_BARE_PERIOD_SUFFIX_PATTERNS: tuple[tuple[CompensationPeriod, re.Pattern[str]], ...] = (
+    (
+        "hour",
+        re.compile(
+            r"^(?P<gap>[ \t]{1,3})(?:hr|hrs)\b"
+            r"(?=[ \t]*(?:$|[-–—/,.;:!?()]|[\[\]{}]|\b(?:to|through|plus|and)\b))"
+        ),
+    ),
+    (
+        "year",
+        re.compile(
+            r"^(?P<gap>[ \t]{1,3})(?:yr|yrs)\b"
+            r"(?=[ \t]*(?:$|[-–—/,.;:!?()]|[\[\]{}]|\b(?:to|through|plus|and)\b))"
+        ),
+    ),
+)
+_MAX_PERIOD_CUE_DISTANCE = 64
 
 
 @dataclass(frozen=True)
@@ -154,15 +200,13 @@ def parse_posted_compensation(
         )
 
     lower = bounded.casefold()
-    component = _detect_component(lower)
     warnings.extend(_component_warnings(lower))
     currency = _detect_currency(bounded)
     if currency is None:
         warnings.append("missing_currency")
-    period = _detect_period(lower)
-    warnings.extend(_period_warnings(period))
-
     amounts = _extract_amounts(bounded)
+    period = _detect_period(bounded, amounts)
+    warnings.extend(_period_warnings(period))
     if not amounts:
         return _non_range_fact(
             tenant_id=tenant_id,
@@ -204,6 +248,7 @@ def parse_posted_compensation(
             source_hash=source_hash,
         )
 
+    component = _detect_component(lower, amounts)
     minimum, maximum, one_sided = _range_bounds(amounts, lower)
     if one_sided:
         warnings.append("one_sided_range")
@@ -298,14 +343,50 @@ def _detect_currency(text: str) -> str | None:
     return None
 
 
-def _detect_period(lower: str) -> CompensationPeriod:
-    if re.search(r"(?:/(?:h|hr|hrs|hour)|\b(?:hour|hourly|hr|hrs)\b)", lower):
-        return "hour"
-    if re.search(r"(?:/(?:mo|mos|month)|\b(?:month|monthly)\b)", lower):
-        return "month"
-    if re.search(r"(/|\b)(year|yearly|annual|annually|annum|yr|yrs)\b", lower):
-        return "year"
-    return "unknown"
+def _detect_period(text: str, amounts: list[_Amount]) -> CompensationPeriod:
+    """Resolve the pay period from cues governing the parsed amount.
+
+    Compensation excerpts can contain unrelated abbreviations such as "HR".
+    A period cue therefore has authority only when it is close to one of the
+    parsed amounts. Bare abbreviations additionally remain case-sensitive so
+    human-resources prose cannot become an hourly unit after whitespace
+    normalization. Explicit slash/per forms win a same-distance tie, and
+    conflicting equally-near cues fail closed to ``unknown``.
+    """
+
+    if not amounts:
+        return "unknown"
+    lower = text.casefold()
+    candidates: list[tuple[int, int, CompensationPeriod]] = []
+    for period, priority, pattern in _PERIOD_CUE_PATTERNS:
+        for match in pattern.finditer(lower):
+            distance = min(_distance_between(match.start(), match.end(), amount) for amount in amounts)
+            if distance <= _MAX_PERIOD_CUE_DISTANCE:
+                candidates.append((distance, priority, period))
+    for amount in amounts:
+        suffix = text[amount.end :]
+        for period, pattern in _BARE_PERIOD_SUFFIX_PATTERNS:
+            if match := pattern.match(suffix):
+                candidates.append((len(match.group("gap")), 1, period))
+    if not candidates:
+        return "unknown"
+    winning_distance, winning_priority, _period = min(candidates)
+    winning_periods = {
+        period
+        for distance, priority, period in candidates
+        if distance == winning_distance and priority == winning_priority
+    }
+    if len(winning_periods) != 1:
+        return "unknown"
+    return winning_periods.pop()
+
+
+def _distance_between(start: int, end: int, amount: _Amount) -> int:
+    if end <= amount.start:
+        return amount.start - end
+    if start >= amount.end:
+        return start - amount.end
+    return 0
 
 
 def _period_warnings(period: CompensationPeriod) -> list[WarningCode]:
@@ -318,18 +399,51 @@ def _period_warnings(period: CompensationPeriod) -> list[WarningCode]:
     return []
 
 
-def _detect_component(lower: str) -> CompensationComponent:
-    if re.search(r"\bbase\b|\bsalary\b|\bpay\b|\bwage\b", lower):
-        return "base_salary"
-    if re.search(r"\bote\b|on[- ]target earnings", lower):
-        return "ote"
-    if "commission" in lower:
-        return "commission"
-    if "bonus" in lower:
-        return "bonus"
-    if re.search(r"\bequity\b|\brsu\b|\bstock options?\b", lower):
+def _detect_component(lower: str, amounts: list[_Amount]) -> CompensationComponent:
+    """Bind the amount to its nearest governing compensation cue.
+
+    Description excerpts can mention multiple compensation concepts. Component
+    authority belongs to the cue governing the parsed amount, not to an
+    unrelated word elsewhere in the bounded excerpt.
+    """
+
+    anchor_start = min(amount.start for amount in amounts)
+    anchor_end = max(amount.end for amount in amounts)
+    suffix = lower[anchor_end : anchor_end + 64]
+    additive_equity = re.match(
+        r"^.{0,40}(?:\+|\bplus\b|\band\b).{0,24}\b(?:equity|rsus?|stock options?)\b",
+        suffix,
+    )
+    if additive_equity is None and re.match(
+        r"^.{0,24}\b(?:in|as)\s+(?:equity|rsus?|stock options?)\b",
+        suffix,
+    ):
         return "equity"
-    return "unknown"
+    candidates: list[tuple[int, int, CompensationComponent]] = []
+    cue_patterns: tuple[tuple[CompensationComponent, re.Pattern[str]], ...] = (
+        ("equity", re.compile(r"\b(?:equity|stock) compensation\b")),
+        ("equity", re.compile(r"\b(?:equity|rsus?|stock options?)\b")),
+        ("ote", re.compile(r"\bote\b|on[- ]target earnings")),
+        ("commission", re.compile(r"\bcommission(?:\s+compensation)?\b")),
+        ("bonus", re.compile(r"\bbonus(?:\s+compensation)?\b")),
+        (
+            "base_salary",
+            re.compile(r"\b(?:base salary|base pay|base|pay range|salary|wage|remuneration)\b"),
+        ),
+        ("unknown", re.compile(r"\b(?:total\s+)?compensation(?:\s+range)?\b")),
+    )
+    for priority, (component, pattern) in enumerate(cue_patterns):
+        for match in pattern.finditer(lower):
+            if match.end() <= anchor_start:
+                distance = anchor_start - match.end()
+            elif match.start() >= anchor_end:
+                distance = match.start() - anchor_end
+            else:
+                distance = 0
+            candidates.append((distance, priority, component))
+    if not candidates:
+        return "unknown"
+    return min(candidates)[2]
 
 
 def _component_warnings(lower: str) -> list[WarningCode]:
@@ -362,7 +476,7 @@ def _has_mixed_compensation_components(lower: str) -> bool:
 def _has_additive_component_phrase(lower: str) -> bool:
     return bool(
         re.search(
-            r"(?:\+|\bplus\b|\band\b).{0,24}\b(?:bonus|commission|equity|rsu|ote|on[- ]target earnings)\b",
+            r"(?:\+|\bplus\b|\band\b).{0,24}\b(?:bonus|commission|equity|rsu|stock options?|ote|on[- ]target earnings)\b",
             lower,
         )
     )
@@ -503,7 +617,7 @@ def _confidence(
         return "low"
     if {"hourly_period", "broad_range", "ambiguous_multiple_amounts"} & warning_set:
         return "low"
-    if warning_set:
+    if {"missing_currency", "missing_period", "monthly_period", "one_sided_range"} & warning_set:
         return "medium"
     return "high"
 

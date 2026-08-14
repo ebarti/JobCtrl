@@ -34,6 +34,10 @@ def test_role_and_country_classification_is_deterministic() -> None:
     assert platform.role_family_code == "infrastructure_platform"
     assert platform.seniority_label == "principal"
 
+    privacy_director = classify_role("Privacy Engineering Director")
+    assert privacy_director.role_family_code == "security_privacy"
+    assert privacy_director.seniority_label == "director"
+
     assert resolve_country_code("Remote — Barcelona, Spain") == "ES"
     assert resolve_country_code("London / UK") == "GB"
     assert resolve_country_code("Remote") is None

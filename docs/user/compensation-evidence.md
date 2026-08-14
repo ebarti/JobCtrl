@@ -26,6 +26,11 @@ for comparison:
    Unknown periods are not annualized. Missing currency/period, hourly
    conversion, broad ranges, and ambiguity lower confidence and remain visible
    as warnings.
+4. **Keep cash and equity separate.** When a posting states one cash amount and
+   mentions stock or equity as an additional benefit, the cash amount remains
+   the posted figure and the unpriced equity is not folded into it. Extraction
+   certainty describes the parser only; it is not presented as doubt that the
+   employer stated the amount.
 
 ### Direct and extrapolated market benchmarks
 
@@ -58,7 +63,9 @@ for comparison:
    again after seven days.
 
 Employer-posted facts may be parsed when Discovery ingests or refreshes a job
-and are also reparsed during an explicit compensation refresh. Direct benchmark
+and are also reparsed during an explicit compensation refresh. When the
+deterministic parser changes, worker startup upgrades known older facts in
+bounded, retry-safe batches before rebuilding their read models. Direct benchmark
 discovery and geographic extrapolation run automatically at the end of
 Discover, after terminal enrichment and before terminal preparation fan-out.
 The existing explicit compensation refresh remains available for focused
@@ -71,18 +78,21 @@ passive read of persisted evidence; it does not fetch or recalculate salary.
   minimum and maximum, reported-market estimate, confidence, and warnings. A
   missing value remains visibly missing rather than being guessed.
 - `/jobs/:jobId` opens the full **Compensation evidence** section. It separates
-  the posted-salary parse from the reported company-role market estimate. A
-  direct benchmark names its exact country evidence; an extrapolated benchmark
-  shows the anchor-to-target geography bridge, every direct salary and official
-  price-level input, sample counts, company-evidence weight, raw factor,
-  supported `0.1x` to `10x` bounds, formula version, fact IDs, and freshness.
-  Parse/estimate state, range, confidence, warnings, attribution, source trail,
-  selected evidence, and matching factors remain visible alongside that
-  lineage.
+  the amount stated by the employer from the market salary estimate and leads
+  with those two decision outcomes. If the selected evidence cannot support a
+  trustworthy market range, the screen says that no reliable range is
+  available and explains why instead of surfacing a candidate span. The actual
+  evidence records, reported sample counts, and provider snapshots are
+  available under **Evidence reviewed**. Role/level matching, reliability
+  percentages, warnings, direct benchmark authority, and geographic
+  extrapolation lineage remain available under **How this was assessed**. A
+  reliability percentage is an evidence support input, not a probability that
+  the salary is correct.
 - The Job Detail workspace can still start a focused compensation refresh. The
-  Jobs toolbar can refresh the current backlog. An optional local observation
-  import can be supplied to that explicit refresh; automatic discovery does not
-  infer permission from the presence of a local file.
+  Jobs toolbar can refresh the current backlog. The normal job-detail action
+  uses configured sources and has no per-job file-path field. Advanced local
+  observation imports remain available only through the CLI or API; automatic
+  discovery does not infer permission from the presence of a local file.
 - `/apply-review` shows the persisted compensation summary as context. It is not
   an Apply readiness or approval gate.
 - `/settings` owns **Compensation sources** policy. Enabling or disabling a

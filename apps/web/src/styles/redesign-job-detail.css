@@ -528,10 +528,6 @@
   gap: 7px;
 }
 
-.job-detail-drawer .compensation-refresh-path {
-  min-width: min(248px, 100%);
-}
-
 .job-detail-drawer .compensation-strip {
   gap: 8px 16px;
   padding: 11px 0;
@@ -557,6 +553,8 @@
 
 .job-detail-drawer .compensation-panel {
   gap: 13px;
+  align-content: start;
+  align-self: start;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -573,6 +571,20 @@
   display: grid;
   gap: 4px;
   align-items: start;
+}
+
+.job-detail-drawer .compensation-result-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.job-detail-drawer .compensation-result-header .eyebrow {
+  grid-column: 1 / -1;
+}
+
+.job-detail-drawer .compensation-result-value {
+  font-size: var(--jh-type-metric-size) !important;
+  font-weight: var(--jh-type-metric-weight) !important;
+  line-height: var(--jh-type-metric-line-height) !important;
 }
 
 .job-detail-drawer .compensation-panel header b {

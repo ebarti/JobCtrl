@@ -8,6 +8,7 @@ the bundled headless-shell core.
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -223,3 +224,102 @@ def test_worker_command_aborts_before_temporal_when_browser_missing(
     normalized = " ".join(result.output.split())
     assert "Worker preflight failed" in normalized
     assert "JOBCTRL_SKIP_BROWSER_PREFLIGHT=1" in normalized
+
+
+def test_bootstrap_still_refreshes_and_subscribes_when_posted_reconciliation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr("jobctrl.config.load_env", lambda: calls.append("env"))
+    monkeypatch.setattr("jobctrl.config.ensure_dirs", lambda: calls.append("dirs"))
+    monkeypatch.setattr("jobctrl.database.init_db", lambda: calls.append("db"))
+    monkeypatch.setattr("jobctrl.database.close_connection", lambda: calls.append("close"))
+    monkeypatch.setattr("jobctrl.infrastructure.observability.init_otel", lambda: calls.append("otel"))
+
+    class FailingPostedRepository:
+        def __init__(self, _conn: object) -> None:
+            pass
+
+        def reparse_outdated_facts(self, **_kwargs: object) -> int:
+            calls.append("reconcile")
+            raise sqlite3.OperationalError("maintenance unavailable")
+
+    class RecordingBuilder:
+        def __init__(self, **_kwargs: object) -> None:
+            calls.append("builder")
+
+        def refresh(self) -> int:
+            calls.append("refresh")
+            return 0
+
+        def subscribe_to(self, _publisher: object) -> object:
+            calls.append("subscribe")
+            return object()
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.SqlitePostedCompensationRepository",
+        FailingPostedRepository,
+    )
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.projections.projection_builder.ProjectionBuilder",
+        RecordingBuilder,
+    )
+    monkeypatch.setattr("jobctrl.database.get_connection", lambda: object())
+    monkeypatch.setattr(cli, "_projection_subscription", None)
+
+    cli._bootstrap(reconcile_posted_compensation=True)
+
+    assert calls == [
+        "env",
+        "dirs",
+        "db",
+        "otel",
+        "reconcile",
+        "close",
+        "builder",
+        "refresh",
+        "subscribe",
+    ]
+
+
+def test_bootstrap_rolls_back_failed_projection_refresh_before_rpc_continues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class RecordingConnection:
+        def rollback(self) -> None:
+            calls.append("rollback")
+
+    connection = RecordingConnection()
+
+    class FailingBuilder:
+        def __init__(self, **_kwargs: object) -> None:
+            calls.append("builder")
+
+        def refresh(self) -> int:
+            calls.append("refresh")
+            raise ValueError("malformed legacy projection evidence")
+
+    monkeypatch.setattr("jobctrl.config.load_env", lambda: calls.append("env"))
+    monkeypatch.setattr("jobctrl.config.ensure_dirs", lambda: calls.append("dirs"))
+    monkeypatch.setattr("jobctrl.database.init_db", lambda: calls.append("db"))
+    monkeypatch.setattr("jobctrl.infrastructure.observability.init_otel", lambda: calls.append("otel"))
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.projections.projection_builder.ProjectionBuilder",
+        FailingBuilder,
+    )
+    monkeypatch.setattr("jobctrl.database.get_connection", lambda: connection)
+
+    cli._bootstrap()
+
+    assert calls == [
+        "env",
+        "dirs",
+        "db",
+        "otel",
+        "builder",
+        "refresh",
+        "rollback",
+    ]

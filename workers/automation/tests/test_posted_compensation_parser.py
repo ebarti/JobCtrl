@@ -109,6 +109,69 @@ def test_parses_annual_range_with_currency_and_assumption() -> None:
     assert fact.warnings == ()
 
 
+def test_hr_prose_does_not_override_the_amount_local_annual_period() -> None:
+    fact = parse_posted_compensation(
+        (
+            "anybody (even HR managers) is able to create new integrations. "
+            "Base pay range: €94,300.00/yr - €106,950.00/yr"
+        ),
+        source_field="job_enrichments.full_description",
+        parsed_at="2026-08-12T12:00:00Z",
+    )
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.period == "year"
+    assert fact.minimum_amount == 94_300
+    assert fact.maximum_amount == 106_950
+    assert fact.annualized_minimum_amount == 94_300
+    assert fact.annualized_maximum_amount == 106_950
+    assert fact.annualization_assumption == "Source text states annual compensation."
+    assert "hourly_period" not in fact.warnings
+
+
+def test_amount_adjacent_bare_period_abbreviations_remain_supported() -> None:
+    hourly = parse_posted_compensation("Base pay: $40 hrs")
+    annual = parse_posted_compensation("Base salary: $100,000 yrs")
+    hr_prose = parse_posted_compensation("HR managers benchmark base salary at $100,000 yr")
+
+    assert hourly.period == "hour"
+    assert hourly.annualized_minimum_amount == 83_200
+    assert "hourly_period" in hourly.warnings
+
+    assert annual.period == "year"
+    assert annual.annualized_minimum_amount == 100_000
+
+    assert hr_prose.period == "year"
+    assert hr_prose.annualized_minimum_amount == 100_000
+    assert "hourly_period" not in hr_prose.warnings
+
+
+def test_hr_prose_after_an_amount_is_not_treated_as_a_bare_hour_suffix() -> None:
+    for source in (
+        "Compensation budget approved: $100,000\n\nHR managers will administer this program.",
+        "Compensation budget approved: $100,000\n\nHR, benefits, and finance teams will administer this program.",
+        "Compensation budget approved: $100,000\n\nHR: Managers will administer this program.",
+    ):
+        fact = parse_posted_compensation(source)
+
+        assert fact.parse_state == "parsed_range"
+        assert fact.period == "unknown"
+        assert fact.annualized_minimum_amount is None
+        assert fact.annualized_maximum_amount is None
+        assert "missing_period" in fact.warnings
+        assert "hourly_period" not in fact.warnings
+
+
+def test_parenthesized_bare_period_abbreviations_remain_supported() -> None:
+    hourly = parse_posted_compensation("Base pay: $40 hr (depending on experience)")
+    annual = parse_posted_compensation("Base salary: $100,000 yr (base compensation)")
+
+    assert hourly.period == "hour"
+    assert hourly.annualized_minimum_amount == 83_200
+    assert annual.period == "year"
+    assert annual.annualized_minimum_amount == 100_000
+
+
 def test_parses_monthly_and_hourly_values_with_explicit_assumptions() -> None:
     monthly = parse_posted_compensation("EUR 6,000/month", parsed_at="2026-06-19T10:00:00Z")
     hourly = parse_posted_compensation("€40/hour", parsed_at="2026-06-19T10:00:00Z")
@@ -197,6 +260,75 @@ def test_single_base_amount_with_variable_component_keeps_base_component() -> No
     assert "bonus_component" in bonus.warnings
     assert "commission_component" in commission.warnings
     assert "equity_component" in equity.warnings
+
+
+def test_stated_cash_compensation_is_not_relabelled_as_separate_stock_options() -> None:
+    fact = parse_posted_compensation(
+        (
+            "Compensation is transparent across the organization. "
+            "Compensation: USD 243,800 annually and stock options. "
+            + ("Privacy leadership across the global region. " * 8)
+        ),
+        source_field="jobs.full_description",
+        parsed_at="2026-08-12T10:00:00Z",
+    )
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.currency == "USD"
+    assert fact.period == "year"
+    assert fact.minimum_amount == 243_800
+    assert fact.maximum_amount == 243_800
+    assert fact.component == "unknown"
+    assert fact.confidence == "high"
+    assert "equity_component" in fact.warnings
+    assert "source_text_truncated" in fact.warnings
+
+
+def test_explicit_equity_compensation_remains_equity() -> None:
+    fact = parse_posted_compensation("Equity compensation: USD 100,000/year in stock options.")
+
+    assert fact.component == "equity"
+    assert fact.confidence == "high"
+
+
+def test_nearest_amount_cue_keeps_explicit_equity_distinct_from_earlier_salary() -> None:
+    fact = parse_posted_compensation(
+        "The position offers a competitive base salary. Equity compensation: USD 100,000/year in stock options."
+    )
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.minimum_amount == 100_000
+    assert fact.component == "equity"
+    assert fact.confidence == "high"
+
+
+def test_amount_denomination_in_stock_options_is_equity() -> None:
+    fact = parse_posted_compensation("USD 100,000/year in stock options.")
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.component == "equity"
+
+
+def test_nearer_generic_compensation_cue_keeps_additive_stock_separate() -> None:
+    fact = parse_posted_compensation("Compensation: USD 243,800 annually and stock options.")
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.component == "unknown"
+
+
+def test_equity_denomination_overrides_generic_compensation_cue() -> None:
+    stock = parse_posted_compensation("Compensation: USD 100,000/year in stock options.")
+    equity = parse_posted_compensation("Compensation: USD 100,000/year as equity.")
+
+    assert stock.component == "equity"
+    assert equity.component == "equity"
+
+
+def test_additive_equity_remains_separate_despite_later_stock_denomination() -> None:
+    fact = parse_posted_compensation("Compensation: USD 243,800/year and equity in stock options.")
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.component == "unknown"
 
 
 def test_source_text_is_bounded_and_hashed() -> None:

@@ -198,6 +198,36 @@ def test_executive_titles_use_executive_baseline_not_staff_plus_fallback() -> No
     assert "company_role_fallback" in estimate.warnings
 
 
+def test_director_title_and_same_location_fallback_are_described_truthfully() -> None:
+    estimate = estimate_market_compensation(
+        job_id=TEST_JOB_ID,
+        company="DuckDuckGo",
+        title="Privacy Engineering Director",
+        location="Spain",
+        observations=(
+            _euro_top_tech(
+                company="Euro Top Tech community",
+                role="Principal / Director Software Engineer",
+                level="Principal / Director",
+                minimum=90_000,
+                maximum=140_000,
+                location="Madrid, Spain",
+            ),
+        ),
+        estimated_at="2026-08-12T10:00:00Z",
+    )
+
+    assert estimate.seniority_label == "director"
+    assert estimate.match_scope == "same_location_role_fallback"
+    company_factor = next(factor for factor in estimate.factors if factor.name == "company")
+    level_factor = next(factor for factor in estimate.factors if factor.name == "level")
+    assert company_factor.score == 0.45
+    assert company_factor.reason == (
+        "No direct DuckDuckGo salary row matched; comparable roles in the same location provide 45% company support."
+    )
+    assert "classified as director" in level_factor.reason
+
+
 def test_employer_posted_observations_never_enter_market_estimates() -> None:
     estimate = estimate_market_compensation(
         job_id=TEST_JOB_ID,

@@ -1294,9 +1294,10 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByRole("region", { name: "Compensation" })).toBeInTheDocument();
     expect(screen.getByText("EUR 112000-142000/year")).toBeInTheDocument();
     expect(screen.getByText("geographically extrapolated benchmark")).toBeInTheDocument();
-    expect(screen.getByText(/market confidence medium/i)).toBeInTheDocument();
-    expect(screen.getByText(/2 sources/i)).toBeInTheDocument();
+    expect(screen.getByText(/medium reliability/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 providers/i)).toBeInTheDocument();
     expect(screen.getByText(/7 samples/i)).toBeInTheDocument();
+    expect(screen.queryByText(/market confidence/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/dry_run/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Globex needs a principal engineer/i)).toBeInTheDocument();
     const detailLink = screen.getByRole("link", {

@@ -672,6 +672,180 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
     assert "/Users/" not in json.dumps(audit)
 
 
+def test_posted_parser_reconciliation_rebuilds_settled_list_and_detail_projections(
+    conn: sqlite3.Connection,
+) -> None:
+    job_id = _seed_job(
+        conn,
+        "https://example.com/posted-parser-upgrade",
+        salary="Compensation: USD 243,800 annually and stock options.",
+    )
+    posted_repo = SqlitePostedCompensationRepository(conn)
+    posted_repo.parse_and_save_job_salary(
+        job_id,
+        "Compensation: USD 243,800 annually and stock options.",
+        parsed_at="2026-08-12T10:00:00Z",
+    )
+    conn.execute(
+        """
+        UPDATE job_posted_compensation_facts
+        SET parser_version = 'posted-compensation-v1',
+            component = 'equity',
+            confidence = 'medium'
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    )
+    conn.commit()
+
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
+    assert builder.refresh() == 1
+    settled_watermark = SqliteEventWatermarkRepository(conn).get(PROJECTION_NAME)
+    initial = conn.execute(
+        """
+        SELECT list.compensation_summary_json,
+               detail.compensation_summary_json AS detail_summary_json,
+               detail.compensation_audit_json
+        FROM job_list_projections AS list
+        JOIN job_detail_projections AS detail
+          ON detail.tenant_id = list.tenant_id
+         AND detail.job_id = list.job_id
+        WHERE list.tenant_id = ? AND list.job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert initial is not None
+    initial_list = json.loads(initial["compensation_summary_json"])
+    initial_detail = json.loads(initial["detail_summary_json"])
+    initial_audit = json.loads(initial["compensation_audit_json"])
+    assert initial_list["projectionVersion"] == 3
+    assert initial_detail["projectionVersion"] == 3
+    assert initial_list["posted"]["range"]["component"] == "equity"
+    assert initial_audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v1"
+
+    assert (
+        posted_repo.reparse_outdated_facts(
+            parsed_at="2026-08-12T11:00:00Z",
+        )
+        == 1
+    )
+    assert builder.refresh() == 1
+    assert SqliteEventWatermarkRepository(conn).get(PROJECTION_NAME) > settled_watermark
+
+    rebuilt = conn.execute(
+        """
+        SELECT list.compensation_summary_json,
+               detail.compensation_summary_json AS detail_summary_json,
+               detail.compensation_audit_json
+        FROM job_list_projections AS list
+        JOIN job_detail_projections AS detail
+          ON detail.tenant_id = list.tenant_id
+         AND detail.job_id = list.job_id
+        WHERE list.tenant_id = ? AND list.job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert rebuilt is not None
+    list_summary = json.loads(rebuilt["compensation_summary_json"])
+    detail_summary = json.loads(rebuilt["detail_summary_json"])
+    audit = json.loads(rebuilt["compensation_audit_json"])
+    assert list_summary["posted"]["range"]["component"] == "unknown"
+    assert detail_summary["posted"]["range"]["component"] == "unknown"
+    assert audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v3"
+    assert audit["posted"]["fact"]["component"] == "unknown"
+
+
+def test_posted_parser_reconciliation_corrects_hr_prose_period_in_settled_projections(
+    conn: sqlite3.Connection,
+) -> None:
+    source_text = (
+        "anybody (even HR managers) is able to create new integrations. Base pay range: €94,300.00/yr - €106,950.00/yr"
+    )
+    job_id = _seed_job(
+        conn,
+        "https://example.com/posted-parser-hr-period-upgrade",
+        salary=source_text,
+    )
+    posted_repo = SqlitePostedCompensationRepository(conn)
+    posted_repo.parse_and_save_job_salary(
+        job_id,
+        source_text,
+        parsed_at="2026-08-12T10:00:00Z",
+    )
+    conn.execute(
+        """
+        UPDATE job_posted_compensation_facts
+        SET parser_version = 'posted-compensation-v2',
+            period = 'hour',
+            annualized_minimum_amount = 196144000,
+            annualized_maximum_amount = 222456000,
+            annualization_assumption = 'Hourly amounts annualized by multiplying by 2,080 work hours.',
+            confidence = 'low',
+            warnings_json = '["hourly_period"]'
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    )
+    conn.commit()
+
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
+    assert builder.refresh() == 1
+    settled_watermark = SqliteEventWatermarkRepository(conn).get(PROJECTION_NAME)
+    initial = conn.execute(
+        """
+        SELECT list.compensation_summary_json,
+               detail.compensation_summary_json AS detail_summary_json,
+               detail.compensation_audit_json
+        FROM job_list_projections AS list
+        JOIN job_detail_projections AS detail
+          ON detail.tenant_id = list.tenant_id
+         AND detail.job_id = list.job_id
+        WHERE list.tenant_id = ? AND list.job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert initial is not None
+    assert json.loads(initial["compensation_summary_json"])["posted"]["displayRange"] == ("EUR 94300-106950/hour")
+    assert json.loads(initial["detail_summary_json"])["posted"]["displayRange"] == ("EUR 94300-106950/hour")
+    assert json.loads(initial["compensation_audit_json"])["posted"]["fact"]["parserVersion"] == (
+        "posted-compensation-v2"
+    )
+
+    assert (
+        posted_repo.reparse_outdated_facts(
+            parsed_at="2026-08-12T11:00:00Z",
+        )
+        == 1
+    )
+    assert builder.refresh() == 1
+    assert SqliteEventWatermarkRepository(conn).get(PROJECTION_NAME) > settled_watermark
+
+    rebuilt = conn.execute(
+        """
+        SELECT list.compensation_summary_json,
+               detail.compensation_summary_json AS detail_summary_json,
+               detail.compensation_audit_json
+        FROM job_list_projections AS list
+        JOIN job_detail_projections AS detail
+          ON detail.tenant_id = list.tenant_id
+         AND detail.job_id = list.job_id
+        WHERE list.tenant_id = ? AND list.job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert rebuilt is not None
+    list_summary = json.loads(rebuilt["compensation_summary_json"])
+    detail_summary = json.loads(rebuilt["detail_summary_json"])
+    audit = json.loads(rebuilt["compensation_audit_json"])
+    assert list_summary["posted"]["displayRange"] == "EUR 94300-106950/year"
+    assert detail_summary["posted"]["displayRange"] == "EUR 94300-106950/year"
+    assert audit["posted"]["fact"]["period"] == "year"
+    assert audit["posted"]["fact"]["annualizedMinimumAmount"] == 94_300
+    assert audit["posted"]["fact"]["annualizedMaximumAmount"] == 106_950
+    assert audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v3"
+    assert "hourly_period" not in {warning["code"] for warning in audit["posted"]["fact"]["warnings"]}
+
+
 def test_projection_suppresses_historical_posted_as_market_rows(
     conn: sqlite3.Connection,
 ) -> None:

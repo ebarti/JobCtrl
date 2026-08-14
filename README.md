@@ -184,9 +184,12 @@ evidence, qualifications, and the complete capability matrix.
   seven-day-old slices. When a country has no direct benchmark, it can derive a
   range from an exact foreign anchor using official cost-of-living evidence and
   same-company cross-country pay ratios. The Jobs UI exposes the direct or
-  extrapolated authority, sample size, freshness, exact bridge inputs, formula,
-  confidence, and out-of-bounds warnings instead of presenting an unexplained
-  number. See [Compensation Evidence](docs/user/compensation-evidence.md).
+  extrapolated range as the primary answer. If the evidence is not reliable
+  enough, it withholds the number and explains why. Evidence records, reported
+  sample counts, matching scores, freshness, bridge inputs, formula, and
+  warnings stay inspectable in expandable details rather than competing with
+  the result. See
+  [Compensation Evidence](docs/user/compensation-evidence.md).
 - Keep each job under one tenant-scoped, immutable `JobId`. Posting and
   application URLs are locators resolved only at explicit capture/import/API
   boundaries, so a URL change cannot detach scores, materials, outcomes, or
