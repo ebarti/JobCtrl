@@ -8,11 +8,30 @@ import { Empty } from "../../../shared/ui/empty.js";
 import {
   Field,
   FieldDescription,
-  FieldLabel,
 } from "../../../shared/ui/field.js";
+import {
+  SettingLabelWithHelp,
+  type SettingHelpContent,
+} from "../../../shared/ui/setting-help.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
 import { useSettingsPolicyQuery } from "../../operations/hooks/useSettingsPolicyQueries.js";
 import { useUpdateScoringGuidanceMutation } from "../hooks/useUpdateScoringGuidanceMutation.js";
+
+const SCORING_GUIDE_URL = "https://jobctrl.dev/user/scoring-and-employer-analysis";
+const SCORING_SETTING_HELP = {
+  scoreCriteria: {
+    title: "Scoring priorities",
+    description:
+      "Add guidance describing what strong-fit jobs should demonstrate. It affects newly started scoring work and does not become candidate evidence.",
+    href: `${SCORING_GUIDE_URL}#runtime-setting-scoring-priorities`,
+  },
+  targetCriteria: {
+    title: "Target role guidance",
+    description:
+      "Add role or company guidance for subsequent scoring runs. This supplements, but does not replace, Discovery target-search titles.",
+    href: `${SCORING_GUIDE_URL}#runtime-setting-target-role-guidance`,
+  },
+} satisfies Record<string, SettingHelpContent>;
 
 export function ScoringGuidancePanel() {
   const settingsQuery = useSettingsPolicyQuery();
@@ -107,9 +126,12 @@ export function ScoringGuidancePanel() {
         <form.Field name="scoreCriteria">
           {(field) => (
             <Field className="field">
-              <FieldLabel htmlFor="score-guidance">
+              <SettingLabelWithHelp
+                help={SCORING_SETTING_HELP.scoreCriteria}
+                htmlFor="score-guidance"
+              >
                 Scoring priorities
-              </FieldLabel>
+              </SettingLabelWithHelp>
               <Textarea
                 id="score-guidance"
                 name="scoreCriteria"
@@ -131,9 +153,12 @@ export function ScoringGuidancePanel() {
         <form.Field name="targetCriteria">
           {(field) => (
             <Field className="field">
-              <FieldLabel htmlFor="target-guidance">
+              <SettingLabelWithHelp
+                help={SCORING_SETTING_HELP.targetCriteria}
+                htmlFor="target-guidance"
+              >
                 Target role guidance
-              </FieldLabel>
+              </SettingLabelWithHelp>
               <Textarea
                 id="target-guidance"
                 name="targetCriteria"

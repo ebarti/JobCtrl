@@ -87,6 +87,19 @@ under `/settings/**` is stored in
 | `applyMaxBudgetUsd` | **Settings → General → Application runtime** | `config.json` | `5` | Per-application AI-agent budget cap in USD. |
 | `applyTimeoutSeconds` | **Settings → General → Application runtime** | `config.json` | `900` | Time limit in seconds for one application-agent run. |
 
+### Maximum AI budget per application {#runtime-setting-maximum-ai-budget-per-application}
+
+This setting caps AI-agent spend for one newly started Apply job. `0` is a
+zero-dollar cap, not an unlimited budget. The per-application cap works inside
+the shared [daily LLM budget](configuration.md#runtime-setting-daily-llm-budget);
+neither setting authorizes submission.
+
+### Apply agent timeout {#runtime-setting-apply-agent-timeout}
+
+This setting bounds one newly started application-agent run from 60 to 3,600
+seconds. It is separate from Temporal activity timeouts and does not change the
+standing loop's concurrency.
+
 Combinations matter:
 
 - `autoApply: false`, `applyApprovalRequired: true` is the default supervised

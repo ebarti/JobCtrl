@@ -29,7 +29,9 @@ type StageTriggerConfigs = Record<PipelineRunStage, StageTriggerConfig>;
 interface StageTriggerState {
   activeStage: PipelineRunStage;
   configs: StageTriggerConfigs;
+  internalConcurrency: string;
   setActiveStage: (stage: PipelineRunStage) => void;
+  setInternalConcurrency: (value: string) => void;
   patchStageConfig: (stage: PipelineRunStage, patch: Partial<StageTriggerConfig>) => void;
   reset: () => void;
 }
@@ -131,13 +133,23 @@ function mergeConfigs(value: unknown): StageTriggerConfigs {
 const initialState = {
   activeStage: PIPELINE_RUN_STAGES[0],
   configs: createDefaultConfigs(),
+  internalConcurrency: defaultConfig.workers,
 };
+
+function normalizeInternalConcurrency(value: unknown): string {
+  if (typeof value !== "string") return defaultConfig.workers;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed)
+    ? String(Math.min(16, Math.max(1, parsed)))
+    : defaultConfig.workers;
+}
 
 export const useStageTriggerStore = create<StageTriggerState>()(
   persist(
     (set) => ({
       ...initialState,
       setActiveStage: (stage) => set({ activeStage: stage }),
+      setInternalConcurrency: (value) => set({ internalConcurrency: value }),
       patchStageConfig: (stage, patch) =>
         set((state) => ({
           configs: {
@@ -145,23 +157,45 @@ export const useStageTriggerStore = create<StageTriggerState>()(
             [stage]: { ...state.configs[stage], ...patch },
           },
         })),
-      reset: () => set({ activeStage: initialState.activeStage, configs: createDefaultConfigs() }),
+      reset: () =>
+        set({
+          activeStage: initialState.activeStage,
+          configs: createDefaultConfigs(),
+          internalConcurrency: initialState.internalConcurrency,
+        }),
     }),
     {
       name: "jh:stage-trigger-config",
       storage: createJSONStorage(getStorage),
-      version: 2,
+      version: 3,
       migrate: (persisted) => persisted,
-      partialize: ({ activeStage, configs }) => ({ activeStage, configs }),
+      partialize: ({ activeStage, configs, internalConcurrency }) => ({
+        activeStage,
+        configs,
+        internalConcurrency,
+      }),
       merge: (persisted, current) => {
         const source =
           typeof persisted === "object" && persisted !== null
-            ? (persisted as Partial<Pick<StageTriggerState, "activeStage" | "configs">>)
+            ? (persisted as Partial<
+                Pick<
+                  StageTriggerState,
+                  "activeStage" | "configs" | "internalConcurrency"
+                >
+              >)
             : {};
+        const activeStage = isStage(source.activeStage)
+          ? source.activeStage
+          : current.activeStage;
+        const configs = mergeConfigs(source.configs);
+        const legacyConcurrency = configs[activeStage].workers;
         return {
           ...current,
-          activeStage: isStage(source.activeStage) ? source.activeStage : current.activeStage,
-          configs: mergeConfigs(source.configs),
+          activeStage,
+          configs,
+          internalConcurrency: normalizeInternalConcurrency(
+            source.internalConcurrency ?? legacyConcurrency,
+          ),
         };
       },
     },

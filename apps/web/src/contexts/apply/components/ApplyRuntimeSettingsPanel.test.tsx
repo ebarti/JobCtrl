@@ -32,6 +32,29 @@ describe("<ApplyRuntimeSettingsPanel>", () => {
     ).toBeInTheDocument();
   });
 
+  it("links every application runtime setting to its owning documentation", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ApplyRuntimeSettingsPanel />);
+
+    await screen.findByLabelText("Maximum AI budget per application (USD)");
+    expect(
+      screen.getByRole("button", {
+        name: "Help for Maximum AI budget per application",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Help for Apply agent timeout" }),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Help for Apply agent timeout" }),
+    );
+    expect(screen.getByRole("link", { name: "Open documentation" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/apply#runtime-setting-apply-agent-timeout",
+    );
+  });
+
   it("uses shared field, input, and action primitives", async () => {
     const user = userEvent.setup();
     const { container } = renderWithProviders(<ApplyRuntimeSettingsPanel />);

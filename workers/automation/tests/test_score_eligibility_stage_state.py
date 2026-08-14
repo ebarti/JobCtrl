@@ -471,6 +471,48 @@ def test_score_threshold_skip_preserves_owned_work_and_unrelated_failures(
     )
 
 
+def test_score_threshold_skip_replaces_stale_tailor_dependency_blocks(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_scored_job(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=_JOB_ID,
+        url="https://example.com/job/old-tailor-failure-now-below-threshold",
+    )
+    for stage, code in (
+        ("cover", "UPSTREAM_TAILOR_FAILED"),
+        ("apply", "UPSTREAM_TAILOR_EXHAUSTED"),
+    ):
+        set_stage_state(
+            conn,
+            _JOB_ID,
+            stage,
+            "blocked",
+            tenant_id=_TENANT_A,
+            error_code=code,
+            error_message="Tailor previously failed.",
+            blocked_by=["tailor"],
+            validate_transition=False,
+        )
+
+    changed = reconcile_score_threshold_skips(
+        conn,
+        tenant_id=_TENANT_A,
+        job_id=_JOB_ID,
+        fit_score=5,
+        min_score=7,
+        now="2024-01-04T00:00:00+00:00",
+    )
+
+    assert changed == 3
+    rows = _stage_rows(conn, tenant_id=_TENANT_A, job_id=_JOB_ID)
+    for stage in ("tailor", "cover", "apply"):
+        assert rows[stage]["state"] == "skipped"
+        assert rows[stage]["error_code"] == "MIN_SCORE"
+        assert rows[stage]["blocked_by_json"] is None
+
+
 def test_score_threshold_skip_does_not_overwrite_a_concurrent_claim(
     conn: sqlite3.Connection,
 ) -> None:

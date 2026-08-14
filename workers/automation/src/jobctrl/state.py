@@ -805,7 +805,12 @@ def reconcile_score_threshold_skips(
                    state = 'pending'
                    OR (
                        state = 'blocked'
-                       AND error_code IN ('BLOCKED', ?)
+                       AND error_code IN (
+                           'BLOCKED',
+                           ?,
+                           'UPSTREAM_TAILOR_FAILED',
+                           'UPSTREAM_TAILOR_EXHAUSTED'
+                       )
                    )
                    OR (
                        state = 'skipped'

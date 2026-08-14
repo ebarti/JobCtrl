@@ -222,12 +222,52 @@ officially loadable ADC types (including `authorized_user`) remain supported.
 
 ## LLM Spend Budget
 
+### Daily LLM budget {#runtime-setting-daily-llm-budget}
+
 The daily LLM budget is stored in `config.json` and edited in **Settings →
 General** (`dailyBudgetUsd`, default `25`; `0` means unlimited). Workflows that spend LLM tokens run a
 budget preflight before their heavy activities and stop with a non-retryable
 budget error once the estimated daily spend reaches the ceiling.
 `GET /v1/health` reports today's estimated spend against the configured
 budget.
+
+## Execution Concurrency
+
+Settings separates pipeline parallelism from the worker capacity that executes
+it. Increasing either value does not create provider quota or bypass the daily
+budget.
+
+### Concurrent applications {#runtime-setting-concurrent-applications}
+
+**Concurrent applications** (`applyConcurrency`, default `1`) limits how many
+application jobs the standing Apply loop may process at the same time. The loop
+re-reads the saved value from `config.json` on its next poll. It does not control
+Score, Tailor, Cover, or the number of Temporal activities the worker can run.
+
+### Pipeline internal concurrency {#runtime-setting-pipeline-internal-concurrency}
+
+**Pipeline internal concurrency** (`pipelineInternalConcurrency`, default `1`)
+is one saved value shared by manual Pipeline actions and automatic Score →
+Tailor → Cover preparation after a profile update. Changing the field on the
+Pipelines page saves the same `config.json` value shown under **Settings →
+General**; newly started batches use it. Existing in-flight workflows keep the
+value they started with.
+
+This setting controls parallel work inside a pipeline batch. It does not create
+Temporal activity slots, and effective execution remains bounded by the active
+worker capacity.
+
+### Worker activity slots {#runtime-setting-worker-activity-slots}
+
+**Worker activity slots** (`workerActivitySlots`, default `4`) is the desired
+total Temporal activity capacity for the Python worker. A saved change requires
+a worker restart. The Settings screen shows both the desired value and the
+active value reported by the worker so pending restart state is explicit.
+
+This capacity is distinct from **Pipeline internal concurrency**:
+activity slots bound how many activities can execute at once, while internal
+concurrency bounds parallel work inside an activity or batch. Temporal queues
+work above the active slot count.
 
 ## Compensation Sources
 

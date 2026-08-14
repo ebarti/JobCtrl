@@ -150,6 +150,19 @@ Low confidence means the evidence needs review, not that the fit is necessarily
 low. A high score with evidence you cannot personally support is likewise a
 reason to correct or investigate it.
 
+### Scoring priorities {#runtime-setting-scoring-priorities}
+
+**Settings → General → Scoring guidance → Scoring priorities** adds user
+guidance describing what strong-fit jobs should demonstrate. It is consumed by
+newly started scoring work. It is policy input, not candidate evidence, and it
+does not rewrite historical score versions.
+
+### Target role guidance {#runtime-setting-target-role-guidance}
+
+**Target role guidance** adds role or company preferences to newly started
+scoring work. It supplements the target-search titles owned by Discovery; it
+does not add, remove, or rename those search targets.
+
 ## Source Of Truth And Ownership
 
 - **The posting snapshot owns employer claims.** Analysis evidence spans must

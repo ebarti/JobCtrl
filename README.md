@@ -277,6 +277,10 @@ evidence, qualifications, and the complete capability matrix.
   context-only eligibility/Apply facts. A hybrid or office-attendance rule can
   warn or request confirmation, but it cannot fail resume generation or consume
   a Tailor retry because the resume does not assert it.
+- Keep fit ownership with Score. Tailor may spend one bounded revision trying to
+  improve truthful requirement coverage, but an employer requirement that the
+  profile cannot support remains an inspectable residual gap; it does not force
+  repeated failed generations or invite fabricated experience.
 - Review privacy-bounded learning recommendations on the Dashboard. JobCtrl
   derives them only from explicit reviewed signals, requires compatible
   evidence across jobs, and changes Materials behavior only after you accept a
@@ -674,7 +678,11 @@ The web app centralizes launch configuration across **Settings → General**
 Discovery owns its target, runtime, automation, source, and schedule controls
 in SQLite. Settings owns every non-secret Settings value in `config.json`.
 Saved changes are labeled as live, next poll/run/workflow, or restart-required;
-worker activity slots show desired versus active values.
+worker activity slots show desired versus active values. Pipeline actions and
+automatic profile-update preparation share one saved **Internal concurrency**
+value, while worker activity slots remain the outer execution-capacity bound.
+Every control on **Settings → General** includes contextual help and a link to
+its owning product documentation.
 
 Providers that accept environment credentials can use the plaintext
 `~/.jobctrl/.env` file or the process environment. On macOS, **Settings →

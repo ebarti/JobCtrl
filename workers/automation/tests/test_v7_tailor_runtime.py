@@ -1058,6 +1058,51 @@ def test_tailor_job_by_id_keeps_inner_retry_exhaustion_outer_retryable(
     }
 
 
+def test_tailor_job_by_id_persists_profile_change_as_actionable_retry(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/profile-changed")
+
+    def stale_profile(*_args, **_kwargs) -> dict:
+        raise RuntimeError("tailoring policy advanced before artifact persistence")
+
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", stale_profile)
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+    )
+
+    assert result["status"] == "error"
+    state = conn.execute(
+        "SELECT state, error_code, error_message, retryable FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert tuple(state) == (
+        "failed",
+        "TAILOR_INPUTS_CHANGED",
+        "The profile or tailoring policy changed while Tailor was running.",
+        1,
+    )
+    event_payload = json.loads(
+        conn.execute(
+            "SELECT payload_json FROM job_events "
+            "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor' "
+            "AND event_type = 'StageFailed' ORDER BY event_id DESC LIMIT 1",
+            (str(_TENANT_A), str(_JOB_ID)),
+        ).fetchone()[0]
+    )
+    assert event_payload["failureReason"] == "tailoring_inputs_changed"
+
+
 def test_tailor_job_by_id_marks_fifth_durable_failure_exhausted(
     conn: sqlite3.Connection,
     tmp_path: Path,

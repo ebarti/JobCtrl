@@ -8,11 +8,30 @@ import { Empty } from "../../../shared/ui/empty.js";
 import {
   Field,
   FieldDescription,
-  FieldLabel,
 } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
+import {
+  SettingLabelWithHelp,
+  type SettingHelpContent,
+} from "../../../shared/ui/setting-help.js";
 import { useSettingsPolicyQuery } from "../../operations/hooks/useSettingsPolicyQueries.js";
 import { useUpdateApplyRuntimeSettingsMutation } from "../hooks/useUpdateApplyRuntimeSettingsMutation.js";
+
+const APPLY_GUIDE_URL = "https://jobctrl.dev/user/apply";
+const APPLY_RUNTIME_SETTING_HELP = {
+  applyMaxBudgetUsd: {
+    title: "Maximum AI budget per application",
+    description:
+      "Cap AI-agent spend for one application job. Zero is a zero-dollar cap, not unlimited, and changes apply to newly started Apply jobs.",
+    href: `${APPLY_GUIDE_URL}#runtime-setting-maximum-ai-budget-per-application`,
+  },
+  applyTimeoutSeconds: {
+    title: "Apply agent timeout",
+    description:
+      "Limit one application agent run. This is separate from Temporal activity timeouts and applies to newly started Apply jobs.",
+    href: `${APPLY_GUIDE_URL}#runtime-setting-apply-agent-timeout`,
+  },
+} satisfies Record<string, SettingHelpContent>;
 
 export function ApplyRuntimeSettingsPanel() {
   const settingsQuery = useSettingsPolicyQuery();
@@ -123,9 +142,12 @@ export function ApplyRuntimeSettingsPanel() {
         <form.Field name="applyMaxBudgetUsd">
           {(field) => (
             <Field className="field">
-              <FieldLabel htmlFor="apply-max-budget">
+              <SettingLabelWithHelp
+                help={APPLY_RUNTIME_SETTING_HELP.applyMaxBudgetUsd}
+                htmlFor="apply-max-budget"
+              >
                 Maximum AI budget per application (USD)
-              </FieldLabel>
+              </SettingLabelWithHelp>
               <Input
                 id="apply-max-budget"
                 name="applyMaxBudgetUsd"
@@ -150,9 +172,12 @@ export function ApplyRuntimeSettingsPanel() {
         <form.Field name="applyTimeoutSeconds">
           {(field) => (
             <Field className="field">
-              <FieldLabel htmlFor="apply-timeout">
+              <SettingLabelWithHelp
+                help={APPLY_RUNTIME_SETTING_HELP.applyTimeoutSeconds}
+                htmlFor="apply-timeout"
+              >
                 Apply agent timeout (seconds)
-              </FieldLabel>
+              </SettingLabelWithHelp>
               <Input
                 id="apply-timeout"
                 name="applyTimeoutSeconds"

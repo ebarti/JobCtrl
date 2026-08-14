@@ -1872,6 +1872,7 @@ export type ProfileImportRequest = z.infer<typeof ProfileImportRequestSchema>;
 export const SettingsUpdateRequestSchema = z
   .object({
     applyConcurrency: z.coerce.number().int().min(1).max(16).optional(),
+    pipelineInternalConcurrency: z.coerce.number().int().min(1).max(16).optional(),
     workerActivitySlots: z.coerce.number().int().min(1).max(64).optional(),
     dailyBudgetUsd: z.coerce.number().min(0).optional(),
     analysisLegs: z.array(z.enum(["codex", "claude", "google"])).min(1).optional(),
@@ -4354,6 +4355,7 @@ export type CorrectScoreResponse = JobDetail;
 
 export interface JobCtrlSettings {
   applyConcurrency: number;
+  pipelineInternalConcurrency: number;
   workerActivitySlots: number;
   dailyBudgetUsd: number;
   analysisLegs: ProviderId[];
@@ -4399,6 +4401,7 @@ export type EffectiveSetting<T> = {
 export interface EffectiveJobCtrlSettings {
   dailyBudgetUsd: EffectiveSetting<number>;
   applyConcurrency: EffectiveSetting<number>;
+  pipelineInternalConcurrency: EffectiveSetting<number>;
   workerActivitySlots: EffectiveSetting<number>;
   analysisLegs: EffectiveSetting<ProviderId[]>;
   tailoringGeneratorModels: EffectiveSetting<string[] | null>;
@@ -4416,6 +4419,7 @@ export const SettingsResponseSchema = z
     settings: z
       .object({
         applyConcurrency: z.number(),
+        pipelineInternalConcurrency: z.number(),
         workerActivitySlots: z.number(),
         dailyBudgetUsd: z.number(),
         analysisLegs: z.array(z.enum(ProviderIds)),
@@ -4439,6 +4443,7 @@ export const SettingsResponseSchema = z
       .object({
         dailyBudgetUsd: effectiveSettingSchema(z.number()),
         applyConcurrency: effectiveSettingSchema(z.number()),
+        pipelineInternalConcurrency: effectiveSettingSchema(z.number()),
         workerActivitySlots: effectiveSettingSchema(z.number()),
         analysisLegs: effectiveSettingSchema(z.array(z.enum(ProviderIds))),
         tailoringGeneratorModels: effectiveSettingSchema(z.array(z.string()).nullable()),

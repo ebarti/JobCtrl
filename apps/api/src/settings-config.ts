@@ -7,6 +7,7 @@ import { isRecord, readConfigObject } from "./config-file.js";
 
 export const DEFAULT_JOBCTRL_SETTINGS: JobCtrlSettings = {
   applyConcurrency: 1,
+  pipelineInternalConcurrency: 1,
   workerActivitySlots: 4,
   dailyBudgetUsd: 25,
   analysisLegs: ["claude", "codex", "google"],
@@ -42,6 +43,14 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
     1,
     16,
     "next_poll",
+  );
+  const pipelineInternalConcurrency = persistedInteger(
+    raw,
+    "pipeline_internal_concurrency",
+    DEFAULT_JOBCTRL_SETTINGS.pipelineInternalConcurrency,
+    1,
+    16,
+    "next_workflow",
   );
   const workerActivitySlots = persistedInteger(
     raw,
@@ -84,6 +93,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
   return {
     settings: {
       applyConcurrency: applyConcurrency.value,
+      pipelineInternalConcurrency: pipelineInternalConcurrency.value,
       workerActivitySlots: workerActivitySlots.value,
       dailyBudgetUsd: dailyBudgetUsd.value,
       analysisLegs: analysisLegs.value,
@@ -99,6 +109,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
     effectiveSettings: {
       dailyBudgetUsd,
       applyConcurrency,
+      pipelineInternalConcurrency,
       workerActivitySlots,
       analysisLegs,
       tailoringGeneratorModels,

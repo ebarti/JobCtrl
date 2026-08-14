@@ -10,7 +10,14 @@ import {
   type Stage,
 } from "@jobctrl/contracts";
 import { IconChevronDown, IconPlayerPlay } from "@tabler/icons-react";
-import { type FormEvent, type ReactNode, useId, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 
 import {
   getApiCapabilityAvailability,
@@ -26,8 +33,12 @@ import {
   CardTitle,
 } from "../../../shared/ui/card.js";
 import { Checkbox } from "../../../shared/ui/checkbox.js";
-import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import { Field, FieldDescription, FieldLabel } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
+import {
+  SettingLabelWithHelp,
+  type SettingHelpContent,
+} from "../../../shared/ui/setting-help.js";
 import {
   Popover,
   PopoverContent,
@@ -50,12 +61,14 @@ import {
 import { useDashboardSummaryQuery } from "../../operations/hooks/useDashboardSummaryQuery.js";
 import { useSourceRegistryQuery } from "../../operations/hooks/useDiscoveryProductControlsQuery.js";
 import { useHealthQuery } from "../../operations/hooks/useHealthQuery.js";
+import { useSettingsPolicyQuery } from "../../operations/hooks/useSettingsPolicyQueries.js";
 import type {
   DashboardSummary,
   SourceRegistryEntrySummary,
 } from "../../operations/types.js";
 import { CancelWorkflowRunButton } from "./CancelWorkflowRunButton.js";
 import { useRunPipelineStagesMutation } from "../hooks/useRunPipelineStagesMutation.js";
+import { useUpdatePipelineInternalConcurrencyMutation } from "../hooks/useUpdatePipelineInternalConcurrencyMutation.js";
 import {
   useStageTriggerStore,
   type StageTriggerConfig,
@@ -65,6 +78,12 @@ type StageActivity = DashboardSummary["activity"][number];
 type StageProgress = DashboardSummary["progress"][number];
 
 const MAX_DISCOVERY_SOURCE_SELECTIONS = 50;
+const PIPELINE_INTERNAL_CONCURRENCY_HELP = {
+  title: "Pipeline internal concurrency",
+  description:
+    "Set the shared parallelism used inside manual Pipeline actions and automatic profile-update preparation batches. Worker activity slots remain the outer execution-capacity limit.",
+  href: "https://jobctrl.dev/user/configuration#runtime-setting-pipeline-internal-concurrency",
+} satisfies SettingHelpContent;
 
 function labelForStage(stage: Stage): string {
   return `${stage.charAt(0).toUpperCase()}${stage.slice(1)}`;
@@ -80,6 +99,10 @@ function labelForModel(model: string): string {
 function numberValue(value: string, fallback: number): number {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function boundedInternalConcurrency(value: string): number {
+  return Math.min(16, Math.max(1, numberValue(value, 1)));
 }
 
 function decimalValue(value: string, fallback: number): number {
@@ -551,6 +574,16 @@ export function StageTriggerPanel({
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
   const dashboardSummary = useDashboardSummaryQuery();
   const health = useHealthQuery();
+  const settings = useSettingsPolicyQuery();
+  const updateInternalConcurrency =
+    useUpdatePipelineInternalConcurrencyMutation();
+  const internalConcurrency = useStageTriggerStore(
+    (state) => state.internalConcurrency,
+  );
+  const setInternalConcurrency = useStageTriggerStore(
+    (state) => state.setInternalConcurrency,
+  );
+  const synchronizedInternalConcurrency = useRef(false);
   const persistedActiveStage = useStageTriggerStore(
     (state) => state.activeStage,
   );
@@ -616,6 +649,27 @@ export function StageTriggerPanel({
       : (health.data?.worker.message ??
         "JobCtrl automation worker health is unavailable.");
 
+  useEffect(() => {
+    if (!settings.data || synchronizedInternalConcurrency.current) return;
+    synchronizedInternalConcurrency.current = true;
+    const canonical = settings.data.settings.pipelineInternalConcurrency;
+    const local = boundedInternalConcurrency(internalConcurrency);
+    if (
+      settings.data.effectiveSettings.pipelineInternalConcurrency.source ===
+        "default" &&
+      local !== canonical
+    ) {
+      updateInternalConcurrency.mutate(local);
+      return;
+    }
+    setInternalConcurrency(String(canonical));
+  }, [
+    internalConcurrency,
+    setInternalConcurrency,
+    settings.data,
+    updateInternalConcurrency,
+  ]);
+
   const patchConfig = (patch: Partial<StageTriggerConfig>) => {
     patchStageConfig(activeStage, patch);
   };
@@ -643,6 +697,13 @@ export function StageTriggerPanel({
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!runAvailability.available || stageRunBlockReason) return;
+    const workers = boundedInternalConcurrency(internalConcurrency);
+    setInternalConcurrency(String(workers));
+    try {
+      await updateInternalConcurrency.mutateAsync(workers);
+    } catch {
+      return;
+    }
     const workerSnapshot = await health.refetch();
     if (workerSnapshot.data?.worker.status !== "healthy") return;
     setSubmittedStage(activeStage);
@@ -654,7 +715,7 @@ export function StageTriggerPanel({
     runStages.mutate({
       stages: [activeStage],
       limit: controls.limit ? numberValue(config.limit, 25) : 25,
-      workers: controls.workers ? numberValue(config.workers, 1) : 1,
+      workers: controls.workers ? workers : 1,
       minScore: controls.minScore
         ? stageMinScore(activeStage, config.minScore)
         : 7,
@@ -705,18 +766,37 @@ export function StageTriggerPanel({
         ) : null}
         {controls.workers ? (
           <Field className="field">
-            <FieldLabel htmlFor={fieldId("workers")}>
+            <SettingLabelWithHelp
+              help={PIPELINE_INTERNAL_CONCURRENCY_HELP}
+              htmlFor={fieldId("workers")}
+            >
               Internal concurrency
-            </FieldLabel>
+            </SettingLabelWithHelp>
             <Input
               id={fieldId("workers")}
               name="workers"
               min={1}
               max={16}
               type="number"
-              value={config.workers}
-              onChange={(event) => patchConfig({ workers: event.target.value })}
+              aria-describedby={fieldId("workers-help")}
+              disabled={settings.isPending}
+              value={internalConcurrency}
+              onBlur={() => {
+                const workers = boundedInternalConcurrency(internalConcurrency);
+                setInternalConcurrency(String(workers));
+                updateInternalConcurrency.mutate(workers);
+              }}
+              onChange={(event) => setInternalConcurrency(event.target.value)}
             />
+            <FieldDescription id={fieldId("workers-help")}>
+              {settings.isPending
+                ? "Loading the shared concurrency value..."
+                : updateInternalConcurrency.isError
+                ? "Could not save the shared concurrency value. Try again before starting the run."
+                : updateInternalConcurrency.isPending
+                  ? "Saving the shared concurrency value..."
+                  : "Shared by manual Pipeline actions and automatic profile preparation; worker activity slots remain separate."}
+            </FieldDescription>
           </Field>
         ) : null}
         {controls.discoverySource ? (

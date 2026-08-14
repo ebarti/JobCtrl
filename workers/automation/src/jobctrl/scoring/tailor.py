@@ -91,6 +91,30 @@ from jobctrl.state import (
 log = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = config.DEFAULTS["max_tailor_attempts"]  # durable executions
+_TAILOR_INPUTS_CHANGED_ERRORS = (
+    "tailoring policy advanced before artifact persistence",
+    "tailoring profile snapshot changed before artifact persistence",
+    "tailoring profile disappeared before artifact persistence",
+    "tailoring-relevant profile data changed before artifact persistence",
+)
+
+
+def _tailor_failure_details(result: dict) -> tuple[str, str, str]:
+    """Return bounded canonical diagnostics for one Tailor failure."""
+
+    status = str(result.get("status") or "error")
+    error = str(result.get("error") or "").strip().casefold()
+    if any(message in error for message in _TAILOR_INPUTS_CHANGED_ERRORS):
+        return (
+            "TAILOR_INPUTS_CHANGED",
+            "The profile or tailoring policy changed while Tailor was running.",
+            "tailoring_inputs_changed",
+        )
+    return (
+        status.upper(),
+        f"Tailoring ended with status {status}",
+        "tailoring_generation_failed",
+    )
 
 
 def _split_model_specs(value: str | None) -> tuple[str, ...]:
@@ -678,6 +702,7 @@ def run_tailoring(
                     "path": None,
                     "pdf_path": None,
                     "materials": None,
+                    "error": str(e),
                 }
                 log.error("%d/%d [ERROR] %s -- %s", completed, len(jobs), job["title"][:40], e)
 
@@ -754,6 +779,7 @@ def run_tailoring(
         else:
             exhausted = current_attempt >= MAX_ATTEMPTS
             durable_exhausted += int(exhausted)
+            error_code, error_message, failure_reason = _tailor_failure_details(r)
             set_stage_state(
                 conn,
                 stable_job_id,
@@ -764,8 +790,8 @@ def run_tailoring(
                 max_attempts=MAX_ATTEMPTS,
                 started_at=started_ats.get(stage_key),
                 finished_at=finished_at,
-                error_code=str(r.get("status", "error")).upper(),
-                error_message=f"Tailoring ended with status {r.get('status', 'error')}",
+                error_code=error_code,
+                error_message=error_message,
                 retryable=not exhausted,
                 next_action=(
                     f"jobctrl retry tailor {url} --reset-attempts" if exhausted else f"jobctrl retry tailor {url}"
@@ -779,11 +805,12 @@ def run_tailoring(
                 "StageExhausted" if exhausted else "StageFailed",
                 tenant_id=tenant_id,
                 level="error",
-                message=f"Tailoring ended with status {r.get('status', 'error')}",
+                message=error_message,
                 payload={
                     "attempts": current_attempt,
                     "generationAttempts": generation_attempts,
                     "generationStatus": str(r.get("status") or "error"),
+                    "failureReason": failure_reason,
                     "retryable": not exhausted,
                 },
             )
@@ -1158,6 +1185,7 @@ def tailor_job_by_id(
         else:
             exhausted = current_attempt >= MAX_ATTEMPTS
             durable_exhausted = exhausted
+            error_code, error_message, failure_reason = _tailor_failure_details(result)
             set_stage_state(
                 conn,
                 stable_job_id,
@@ -1168,8 +1196,8 @@ def tailor_job_by_id(
                 max_attempts=MAX_ATTEMPTS,
                 started_at=started_at,
                 finished_at=finished_at,
-                error_code=str(result.get("status", "error")).upper(),
-                error_message=f"Tailoring ended with status {result.get('status', 'error')}",
+                error_code=error_code,
+                error_message=error_message,
                 retryable=not exhausted,
                 next_action=(
                     f"jobctrl retry tailor {job['url']} --reset-attempts"
@@ -1185,11 +1213,12 @@ def tailor_job_by_id(
                 "StageExhausted" if exhausted else "StageFailed",
                 tenant_id=tenant_id,
                 level="error",
-                message=f"Tailoring ended with status {result.get('status', 'error')}",
+                message=error_message,
                 payload={
                     "attempts": current_attempt,
                     "generationAttempts": generation_attempts,
                     "generationStatus": str(result.get("status") or "error"),
+                    "failureReason": failure_reason,
                     "retryable": not exhausted,
                 },
             )

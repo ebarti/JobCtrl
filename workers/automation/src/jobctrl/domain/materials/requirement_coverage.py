@@ -762,6 +762,18 @@ class RevisionDecision:
     prioritized_fixes: tuple[str, ...] = ()
     review_blockers: tuple[str, ...] = ()
 
+    @property
+    def disposition(self) -> str:
+        """Return the single domain outcome represented by the decision facts."""
+
+        if self.review_blocked:
+            return "review_required"
+        if not self.threshold_failed:
+            return "passed"
+        if self.should_revise:
+            return "revise"
+        return "accept_with_residual_gap"
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "threshold_failed", bool(self.threshold_failed))
         object.__setattr__(self, "should_revise", bool(self.should_revise))
@@ -783,6 +795,7 @@ class RevisionDecision:
             "should_revise": self.should_revise,
             "review_blocked": self.review_blocked,
             "enhancement_allowed": self.enhancement_allowed,
+            "disposition": self.disposition,
             "reason": self.reason,
             "attempt": self.attempt,
             "max_revision_attempts": self.max_revision_attempts,

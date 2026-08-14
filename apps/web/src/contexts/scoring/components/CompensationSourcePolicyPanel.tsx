@@ -15,10 +15,13 @@ import {
   FieldContent,
   FieldDescription,
   FieldGroup,
-  FieldLabel,
   FieldLegend,
   FieldSet,
 } from "../../../shared/ui/field.js";
+import {
+  SettingLabelWithHelp,
+  type SettingHelpContent,
+} from "../../../shared/ui/setting-help.js";
 import {
   Select,
   SelectContent,
@@ -32,6 +35,35 @@ import type { StatusTagTone } from "../../../shared/ui/status-tokens.js";
 import { Switch } from "../../../shared/ui/switch.js";
 
 const NOT_CONFIGURED = "not_configured";
+const COMPENSATION_GUIDE_URL = "https://jobctrl.dev/user/compensation-evidence";
+
+function compensationSettingHelp(
+  sourceName: string,
+  kind: "accessMode" | "coverage" | "enabled",
+): SettingHelpContent {
+  if (kind === "accessMode") {
+    return {
+      title: `${sourceName} access mode`,
+      description:
+        "Declare the permitted access basis JobCtrl may use. This policy choice does not connect a provider or supply credentials.",
+      href: `${COMPENSATION_GUIDE_URL}#source-policy-access-mode`,
+    };
+  }
+  if (kind === "coverage") {
+    return {
+      title: `${sourceName} Europe coverage`,
+      description:
+        "Confirm that the configured agreement explicitly permits the European salary data JobCtrl would use.",
+      href: `${COMPENSATION_GUIDE_URL}#source-policy-europe-coverage`,
+    };
+  }
+  return {
+    title: `Enable ${sourceName}`,
+    description:
+      "Allow future compensation refreshes to use this source only after its access and coverage prerequisites are satisfied.",
+    href: `${COMPENSATION_GUIDE_URL}#source-policy-enable-source`,
+  };
+}
 
 export function CompensationSourcePolicyPanel() {
   const query = useCompensationSourcePolicyQuery();
@@ -280,9 +312,13 @@ function CompensationSourceControls({
       </FieldLegend>
       <FieldGroup className="min-w-64 gap-3">
         <Field data-disabled={busy}>
-          <FieldLabel id={accessModeLabelId} htmlFor={accessModeId}>
+          <SettingLabelWithHelp
+            help={compensationSettingHelp(source.displayName, "accessMode")}
+            htmlFor={accessModeId}
+            id={accessModeLabelId}
+          >
             {source.displayName} access mode
-          </FieldLabel>
+          </SettingLabelWithHelp>
           <Select
             items={accessModeItems}
             disabled={busy}
@@ -323,9 +359,13 @@ function CompensationSourceControls({
         {control.europeCoverageRequired ? (
           <Field orientation="horizontal" data-disabled={busy}>
             <FieldContent>
-              <FieldLabel id={coverageLabelId} htmlFor={coverageId}>
+              <SettingLabelWithHelp
+                help={compensationSettingHelp(source.displayName, "coverage")}
+                htmlFor={coverageId}
+                id={coverageLabelId}
+              >
                 Confirm {source.displayName} Europe coverage
-              </FieldLabel>
+              </SettingLabelWithHelp>
               <FieldDescription>
                 Confirm that the configured agreement covers European data.
               </FieldDescription>
@@ -348,9 +388,13 @@ function CompensationSourceControls({
           }
         >
           <FieldContent>
-            <FieldLabel id={enabledLabelId} htmlFor={enabledId}>
+            <SettingLabelWithHelp
+              help={compensationSettingHelp(source.displayName, "enabled")}
+              htmlFor={enabledId}
+              id={enabledLabelId}
+            >
               Enable {source.displayName}
-            </FieldLabel>
+            </SettingLabelWithHelp>
             <FieldDescription id={enabledHelpId}>
               {prerequisitesMet
                 ? source.sourceId === "levels_fyi" &&

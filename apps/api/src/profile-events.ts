@@ -16,6 +16,10 @@ import {
 import { getRow, type SqliteDatabase } from "./db.js";
 import type { ActionDispatchContext, ActionDispatcher } from "./local-actions.js";
 import { readProfileConfig, writeProfileConfig } from "./profile-store.js";
+import {
+  DEFAULT_JOBCTRL_SETTINGS,
+  readJobCtrlSettings,
+} from "./settings-config.js";
 
 interface RecordedProfileUpdated {
   event: ProfileUpdated;
@@ -102,6 +106,9 @@ export async function handleProfileUpdatedEvent(
   actionDispatcher: ActionDispatcher,
   actionContext: ActionDispatchContext,
 ): Promise<void> {
+  const workers = actionContext.configPath
+    ? readJobCtrlSettings(actionContext.configPath).settings.pipelineInternalConcurrency
+    : DEFAULT_JOBCTRL_SETTINGS.pipelineInternalConcurrency;
   const command: ActionCommandPayload = {
     action: "run_stage",
     jobKey: PIPELINE_ACTION_JOB_KEY,
@@ -109,7 +116,7 @@ export async function handleProfileUpdatedEvent(
     stages: ["score", "tailor", "cover"],
     dryRun: false,
     limit: 0,
-    workers: 1,
+    workers,
     minScore: MIN_TAILORING_FIT_SCORE,
     validationMode: "normal",
     retailor: true,

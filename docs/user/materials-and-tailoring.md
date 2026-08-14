@@ -205,7 +205,11 @@ the local-file boundary.
    judge/adversarial, and fabrication controls reject unsupported content and
    feed bounded repair attempts. The detailed order and mode-dependent behavior
    are owned by the [Tailoring Contract](../architecture/tailoring.md), rather
-   than duplicated here.
+   than duplicated here. The post-generation fit pass may request one truthful
+   coverage revision. If a requirement remains uncovered because the profile
+   contains no supporting evidence, Materials accepts the best otherwise-safe
+   candidate with an inspectable residual gap; Score remains the owner of the
+   job-fit decision.
 5. **Render and persist.** An accepted generation writes resume and cover
    records, HTML/PDF artifacts, layout boxes, provenance, coverage, policy
    version, and audit metadata. Operations projects that stored result into

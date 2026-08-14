@@ -46,10 +46,12 @@ from jobctrl.domain.materials.use_cases import (
     TAILORING_JUDGE_RESPONSE_SCHEMA,
     TailoringLlmPolicy,
     TailorResumeUseCase,
+    _TailorCandidate,
     _bullet_limit_overflow_metadata,
     _canonical_claim_location,
     _claim_mapping_binding_errors,
     _claim_mappings_from_payload,
+    _clean_approved_candidate_rank,
     _safe_filename_prefix,
 )
 from jobctrl.domain.ports.events import EventPublisher
@@ -258,6 +260,8 @@ def _analysis_with_keywords(job: dict, keywords: list[str]):
 
 def _coherent_requirement_analysis_and_report(
     job: dict,
+    *,
+    include_unfillable_requirement: bool = False,
 ) -> tuple[Any, RequirementFitReport]:
     """Build the generation-bound Score input that Tailor must consume."""
     from jobctrl.domain.materials.analysis import (
@@ -277,6 +281,31 @@ def _coherent_requirement_analysis_and_report(
         weight=0.9,
         evidence_span="Own Python API reliability.",
     )
+    requirements = [requirement]
+    keywords = [
+        ReasonedKeyword(
+            keyword="Python API reliability",
+            evidence_span="Own Python API reliability.",
+            requirement_ref=requirement.id,
+        )
+    ]
+    if include_unfillable_requirement:
+        requirements.append(
+            Requirement(
+                id="req_payments",
+                text="Own payment infrastructure.",
+                tier="must_have",
+                weight=0.9,
+                evidence_span="Own payment infrastructure.",
+            )
+        )
+        keywords.append(
+            ReasonedKeyword(
+                keyword="payment infrastructure",
+                evidence_span="Own payment infrastructure.",
+                requirement_ref="req_payments",
+            )
+        )
     analysis = EmployerAnalysis.build(
         tenant_id=LOCAL_TENANT,
         job_id=job_id,
@@ -286,20 +315,65 @@ def _coherent_requirement_analysis_and_report(
             role_framing="Backend ownership.",
             inferred_seniority="senior",
             ideal_candidate_narrative="A hands-on backend owner.",
-            requirements=[requirement],
-            keywords=[
-                ReasonedKeyword(
-                    keyword="Python API reliability",
-                    evidence_span="Own Python API reliability.",
-                    requirement_ref=requirement.id,
-                )
-            ],
+            requirements=requirements,
+            keywords=keywords,
         ),
         sub_analyses=(),
         failures=(),
         agreement=AnalysisAgreement(score=1.0),
         legs_attempted=2,
     )
+    assessments = [
+        RequirementFitAssessment(
+            requirement_id=requirement.id,
+            requirement_text=requirement.text,
+            tier=requirement.tier,
+            weight=requirement.weight,
+            job_evidence_span=requirement.evidence_span,
+            fit=RequirementFitStatus(
+                kind="matched",
+                evidence_ids=("ev_latency",),
+                strength="direct",
+            ),
+            contribution=RequirementScoreContribution(
+                max_points=1.125,
+                awarded_points=1.125,
+                weighted_impact=1.125,
+            ),
+            tailoring=RequirementTailoringDirective(
+                action="double_down",
+                priority=0.9,
+                allowed_evidence_ids=("ev_latency",),
+                target_keywords=("Python API reliability",),
+                instruction="Emphasize the verified latency evidence.",
+            ),
+        )
+    ]
+    if include_unfillable_requirement:
+        assessments.append(
+            RequirementFitAssessment(
+                requirement_id="req_payments",
+                requirement_text="Own payment infrastructure.",
+                tier="must_have",
+                weight=0.9,
+                job_evidence_span="Own payment infrastructure.",
+                fit=RequirementFitStatus(
+                    kind="missing",
+                    reason="No grounded payment infrastructure evidence.",
+                ),
+                contribution=RequirementScoreContribution(
+                    max_points=1.125,
+                    awarded_points=0.0,
+                    weighted_impact=0.0,
+                ),
+                tailoring=RequirementTailoringDirective(
+                    action="avoid_claim",
+                    priority=0.9,
+                    prohibited_claims=("payment infrastructure",),
+                    instruction="Do not claim payment infrastructure experience.",
+                ),
+            )
+        )
     report = RequirementFitReport(
         job_id=job_id,
         score_version=2,
@@ -310,33 +384,11 @@ def _coherent_requirement_analysis_and_report(
         resolved_fit_score=FitScore.create(9),
         fit_band="excellent",
         confidence="high",
-        summary=RequirementFitSummary(weighted_fit=1.0, must_have_coverage=1.0),
-        assessments=(
-            RequirementFitAssessment(
-                requirement_id=requirement.id,
-                requirement_text=requirement.text,
-                tier=requirement.tier,
-                weight=requirement.weight,
-                job_evidence_span=requirement.evidence_span,
-                fit=RequirementFitStatus(
-                    kind="matched",
-                    evidence_ids=("ev_latency",),
-                    strength="direct",
-                ),
-                contribution=RequirementScoreContribution(
-                    max_points=1.125,
-                    awarded_points=1.125,
-                    weighted_impact=1.125,
-                ),
-                tailoring=RequirementTailoringDirective(
-                    action="double_down",
-                    priority=0.9,
-                    allowed_evidence_ids=("ev_latency",),
-                    target_keywords=("Python API reliability",),
-                    instruction="Emphasize the verified latency evidence.",
-                ),
-            ),
+        summary=RequirementFitSummary(
+            weighted_fit=0.5 if include_unfillable_requirement else 1.0,
+            must_have_coverage=0.5 if include_unfillable_requirement else 1.0,
         ),
+        assessments=tuple(assessments),
     )
     return analysis, report
 
@@ -1135,6 +1187,54 @@ def test_tailor_use_case_approves_generation_bound_requirement_claims(
     assert quality_plan["coverage_graph"]["coverage_edge_count"] == 1
     fit_decision = outcome.report["post_generation_fit"]["revision_decision"]
     assert fit_decision["threshold_failed"] is False
+
+
+def test_tailor_use_case_accepts_truthful_resume_with_unfillable_fit_gap(
+    tmp_path: Path, job: dict
+) -> None:
+    """Score owns missing experience; Tailor must not retry or fabricate it."""
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "Go"],
+        "full_description": "Own Python API reliability and payment infrastructure.",
+    }
+    analysis, requirement_fit_report = _coherent_requirement_analysis_and_report(
+        job,
+        include_unfillable_requirement=True,
+    )
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([_coherent_requirement_payload(), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        employer_analysis=analysis,
+        requirement_fit_report=requirement_fit_report,
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.is_resume_approved
+    assert len(llm.calls) == 2
+    fit_gate = outcome.report["post_generation_fit"]
+    assert fit_gate["revision_decision"]["threshold_failed"] is True
+    assert fit_gate["revision_decision"]["disposition"] == "accept_with_residual_gap"
+    assert fit_gate["residual_warnings"][0].startswith("Residual job-fit gap:")
+    feedback = outcome.report["review_feedback"]
+    assert feedback["warning_retry_attempted"] is False
+    assert feedback["accepted_with_residual_warnings"] is True
 
 
 def test_tailor_use_case_rejects_partial_skill_group_claim_mapping(
@@ -2242,6 +2342,39 @@ def test_tailor_use_case_tries_multiple_candidate_models_and_separate_judge(
     metadata = outcome.materials.tailored_resume.metadata if outcome.materials.tailored_resume else {}
     assert metadata["selected_model"] == "claude:good-candidate"
     assert metadata["judge"]["judge_model"] == "google:judge"
+
+
+def test_tailor_candidate_ranking_prefers_gap_free_candidate_across_models() -> None:
+    gap_free = _TailorCandidate(
+        payload={},
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(score=0.8),
+        tailored_text="Gap-free candidate",
+        model="claude:gap-free",
+        record={},
+    )
+    residual_gap = _TailorCandidate(
+        payload={},
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(score=0.95),
+        tailored_text="Residual-gap candidate",
+        model="codex:residual-gap",
+        record={},
+    )
+
+    selected, warnings = max(
+        (
+            (gap_free, ()),
+            (
+                residual_gap,
+                ("Residual job-fit gap: missing experience is not in the profile.",),
+            ),
+        ),
+        key=_clean_approved_candidate_rank,
+    )
+
+    assert selected is gap_free
+    assert warnings == ()
 
 
 def test_tailor_use_case_pass_verdict_below_threshold_fails_judge(
@@ -3612,6 +3745,39 @@ def test_cover_letter_use_case_rejects_fabricated_title(
     assert any("Chief" in error for error in errors)
     assert any("never_fabricate_titles" in error for error in errors)
     assert any(item["kind"] == "title" for item in cover.metadata["fabrication_audit"]["findings"])
+
+
+def test_cover_letter_retries_fabricated_title_with_grounded_guidance(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    _seed_approved_cover_materials(repo, job, tmp_path)
+    llm = _ScriptedLlm([
+        _cover_letter_text("As a Chief Technology Officer I scaled the platform."),
+        _cover_letter_text("As a senior engineer I scaled distributed systems."),
+    ])
+    use_case = GenerateCoverLetterUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        max_retries=1,
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        job_id=job["job_id"],
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
+    )
+
+    assert outcome.status == "ok"
+    assert len(llm.calls) == 2
+    retry_system = llm.calls[1][0].content
+    assert "cover_letter_title_grounding_failed" in retry_system
+    assert "company leadership" in retry_system
+    assert "fabrication_detected" in retry_system
+    assert "roles" in retry_system
+    assert "Chief Technology Officer" not in retry_system
 
 
 def test_cover_letter_use_case_accepts_grounded_letter_and_persists_audit(
