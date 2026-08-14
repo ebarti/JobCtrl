@@ -323,6 +323,7 @@ OUTREACH_EVENT_TYPES: frozenset[str] = frozenset(
     }
 )
 POSTED_COMPENSATION_WARNING_MESSAGES = {
+    "annual_period_inferred": "The posting states a high-value salary without a shorter pay period, so JobCtrl treats it as annual.",
     "ambiguous_multiple_amounts": "Multiple compensation amounts were present and the primary range is ambiguous.",
     "bonus_component": "The source text mentions bonus compensation.",
     "broad_range": "The posted range is broad enough to reduce precision.",

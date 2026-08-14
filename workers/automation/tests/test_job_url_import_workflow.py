@@ -204,7 +204,8 @@ def test_custom_careers_page_with_embedded_ats_form_imports_as_a_job(
     )
     posted = conn.execute(
         """
-        SELECT parse_state, currency, minimum_amount, maximum_amount, period, source_field
+        SELECT parse_state, currency, minimum_amount, maximum_amount, period,
+               annualized_maximum_amount, warnings_json, source_field
         FROM job_posted_compensation_facts
         WHERE tenant_id = 'local' AND job_id = ?
         """,
@@ -215,7 +216,9 @@ def test_custom_careers_page_with_embedded_ats_form_imports_as_a_job(
         "USD",
         None,
         356_500,
-        "unknown",
+        "year",
+        356_500,
+        '["source_text_truncated", "equity_component", "annual_period_inferred", "one_sided_range"]',
         "jobs.description",
     )
 

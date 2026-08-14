@@ -188,7 +188,35 @@ def test_parses_monthly_and_hourly_values_with_explicit_assumptions() -> None:
     assert hourly.confidence == "low"
 
 
-def test_truncated_mo_fragment_does_not_make_salary_monthly() -> None:
+def test_wave_high_value_salary_without_explicit_period_is_inferred_annual() -> None:
+    fact = parse_posted_compensation(
+        (
+            "Wave covers all costs. Compensation: Our salaries are competitive "
+            "and are calculated using a transparent formula. For this role, "
+            "depending on your level and location, we offer a salary of up to "
+            "$356,500 USD, plus a generous equity package."
+        ),
+        source_field="jobs.full_description",
+        parsed_at="2026-08-14T10:00:00Z",
+    )
+
+    assert fact.parse_state == "parsed_range"
+    assert fact.currency == "USD"
+    assert fact.period == "year"
+    assert fact.component == "base_salary"
+    assert fact.minimum_amount is None
+    assert fact.maximum_amount == 356_500
+    assert fact.annualized_minimum_amount is None
+    assert fact.annualized_maximum_amount == 356_500
+    assert fact.annualization_assumption == (
+        "High-value employer-stated salary is treated as annual because no shorter pay period was stated."
+    )
+    assert "annual_period_inferred" in fact.warnings
+    assert "missing_period" not in fact.warnings
+    assert fact.confidence == "medium"
+
+
+def test_truncated_month_fragment_does_not_override_inferred_annual_salary() -> None:
     fact = parse_posted_compensation(
         (
             "For this role, depending on your level and location, we offer a "
@@ -196,15 +224,46 @@ def test_truncated_mo_fragment_does_not_make_salary_monthly() -> None:
             "26 weeks of parental leave for mo"
         ),
         source_field="jobs.full_description",
-        parsed_at="2026-06-19T10:00:00Z",
+        parsed_at="2026-08-14T10:00:00Z",
     )
 
     assert fact.parse_state == "parsed_range"
-    assert fact.period == "unknown"
+    assert fact.period == "year"
     assert fact.maximum_amount == 190_900
-    assert fact.annualized_minimum_amount is None
-    assert fact.annualized_maximum_amount is None
-    assert "missing_period" in fact.warnings
+    assert fact.annualized_maximum_amount == 190_900
+    assert "annual_period_inferred" in fact.warnings
+    assert "monthly_period" not in fact.warnings
+
+
+def test_annual_inference_rejects_non_salary_low_value_and_subannual_amounts() -> None:
+    for source in (
+        "Compensation budget approved: $100,000",
+        "Referral bonus: $100,000",
+        "Learning stipend: $20,000. Base salary is competitive.",
+        "Salary up to $5,000",
+        "Salary up to $15,000/week",
+        "Salary up to $15,000 per day",
+        "Salary up to $15,000 a day",
+        "Salary up to $15,000 per diem",
+        "Salary up to $15,000 each week",
+        "Salary up to $15,000 biweekly",
+        "Salary up to $15,000 fortnightly",
+        "Salary up to $15,000 every three weeks",
+        "Salary up to $15,000 each fortnight",
+        "Salary up to $15,000 every 10 days",
+        "Salary up to $15,000 quarterly",
+        "Salary up to $15,000 per pay period",
+        "Salary up to $15,000 every two months",
+        "Salary up to $15,000 semiannually",
+        "Salary up to $15,000 per paycheck",
+    ):
+        fact = parse_posted_compensation(source)
+
+        assert fact.period == "unknown"
+        assert fact.annualized_minimum_amount is None
+        assert fact.annualized_maximum_amount is None
+        assert "annual_period_inferred" not in fact.warnings
+        assert "missing_period" in fact.warnings
 
 
 def test_one_sided_and_broad_ranges_are_warned() -> None:

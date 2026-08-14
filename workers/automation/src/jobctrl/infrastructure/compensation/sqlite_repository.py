@@ -57,6 +57,7 @@ ADDITIVE_EQUITY_AFTER_AMOUNT_RE = re.compile(
 OUTDATED_POSTED_PARSER_VERSIONS = (
     "posted-compensation-v1",
     "posted-compensation-v2",
+    "posted-compensation-v3",
 )
 
 
@@ -123,7 +124,7 @@ class SqlitePostedCompensationRepository:
                  AND enrichments.job_id = jobs.job_id
                  AND enrichments.current_status = 'enriched'
                 WHERE facts.tenant_id = ?
-                  AND facts.parser_version IN (?, ?)
+                  AND facts.parser_version IN (?, ?, ?)
                 ORDER BY jobs.url
                 LIMIT ?
                 """,

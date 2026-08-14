@@ -5255,6 +5255,7 @@ export const POSTED_COMPENSATION_CONFIDENCE = ["none", "low", "medium", "high"] 
 export type PostedCompensationConfidence = (typeof POSTED_COMPENSATION_CONFIDENCE)[number];
 
 export const POSTED_COMPENSATION_WARNING_CODES = [
+  "annual_period_inferred",
   "ambiguous_multiple_amounts",
   "bonus_component",
   "broad_range",
