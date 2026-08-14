@@ -16,6 +16,7 @@ import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 import { REFRESH_EVENT_BATCH_LIMIT, refreshProjections, setWatermark } from "../src/projections.js";
+import { recoveryKeyDigest } from "../src/discovery-execution-recovery.js";
 import { PROJECTION_WATERMARK_NAME } from "../src/contracts.js";
 
 const EVENT_JOB_URL = "https://example.com/jobs/event-driven";
@@ -4013,6 +4014,89 @@ describe("shared watermark discipline", () => {
       .prepare("SELECT last_event_id, updated_at FROM event_watermarks WHERE projection_name = ?")
       .get(PROJECTION_WATERMARK_NAME) as { last_event_id: number; updated_at: string } | undefined;
   }
+
+  it("advances a ready native recovery proof with the pipeline-step fold", () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      const workflowId = "discover-native-proof";
+      const runId = "00000000-0000-4000-8000-000000000090";
+      db.prepare(
+        `INSERT INTO discovery_execution_jobs (
+           tenant_id, discover_workflow_id, discover_run_id, job_id,
+           cohort_kind, work_plan_state, linked_at
+         ) VALUES ('local', ?, ?, ?, 'observed_this_run', 'pending', ?)`,
+      ).run(workflowId, runId, EVENT_JOB_ID, "2026-08-13T12:00:00.000Z");
+      db.prepare(
+        `INSERT INTO discovery_execution_recoveries (
+           tenant_id, discover_workflow_id, discover_run_id, state, mode,
+           decoder_version, history_event_id, expected_membership_count,
+           persisted_membership_count, expected_step_count, persisted_step_count,
+           key_digest, last_error_code, updated_at
+         ) VALUES ('local', ?, ?, 'ready', 'native', 3, 12, 1, 1, 0, 0, ?, NULL, ?)`,
+      ).run(
+        workflowId,
+        runId,
+        recoveryKeyDigest([EVENT_JOB_ID], []),
+        "2026-08-13T12:00:00.000Z",
+      );
+      db.prepare(
+        `INSERT INTO job_events (
+           tenant_id, job_id, identity_version, stage, event_type, level,
+           message, occurred_at, payload_json
+         ) VALUES ('local', NULL, 1, 'discover', 'PipelineStepQueued', 'info',
+                   'source family queued', ?, ?)`,
+      ).run(
+        "2026-08-13T12:00:01.000Z",
+        JSON.stringify({
+          execution: {
+            tenantId: "local",
+            workflowId,
+            temporalRunId: runId,
+          },
+          stepKind: "source_family",
+          itemKey: "family:jobspy",
+          attempt: 1,
+          queuedAt: "2026-08-13T12:00:01.000Z",
+          detail: { code: "source_family", itemCount: 1 },
+        }),
+      );
+
+      refreshProjections(db);
+
+      const manifest = db.prepare(
+        `SELECT state, history_event_id, expected_membership_count,
+                persisted_membership_count, expected_step_count,
+                persisted_step_count, key_digest
+           FROM discovery_execution_recoveries
+          WHERE tenant_id = 'local' AND discover_workflow_id = ? AND discover_run_id = ?`,
+      ).get(workflowId, runId) as {
+        state: string;
+        history_event_id: number;
+        expected_membership_count: number;
+        persisted_membership_count: number;
+        expected_step_count: number;
+        persisted_step_count: number;
+        key_digest: string;
+      };
+      expect(manifest).toEqual({
+        state: "ready",
+        history_event_id: 12,
+        expected_membership_count: 1,
+        persisted_membership_count: 1,
+        expected_step_count: 1,
+        persisted_step_count: 1,
+        key_digest: recoveryKeyDigest(
+          [EVENT_JOB_ID],
+          [["source_family", "family:jobspy"]],
+        ),
+      });
+      db.close();
+    } finally {
+      cleanup();
+    }
+  });
 
   it("never rewinds the watermark and keeps updated_at on a stale write", () => {
     const { dbPath, cleanup } = withTempDb();

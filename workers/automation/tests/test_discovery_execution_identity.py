@@ -7,6 +7,8 @@ import pytest
 from jobctrl.database import close_connection, init_db
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.identifiers import JobId
+from jobctrl.infrastructure.discovery import sqlite_execution_repository
+from jobctrl.infrastructure.discovery.recovery_manifest import recovery_key_digest
 from jobctrl.infrastructure.discovery.sqlite_execution_repository import (
     SqliteDiscoveryExecutionRepository,
 )
@@ -94,6 +96,68 @@ def test_execution_membership_is_tenant_scoped_and_keyed_by_job_id(
     assert tuple(row) == ("local", str(job_id))
 
 
+def test_native_membership_write_advances_ready_recovery_proof_atomically(
+    execution_db,
+    monkeypatch,
+) -> None:
+    first_id = JobId("00000000-0000-4000-8000-000000000011")
+    second_id = JobId("00000000-0000-4000-8000-000000000012")
+    _insert_job(execution_db, first_id)
+    _insert_job(execution_db, second_id)
+    repository = SqliteDiscoveryExecutionRepository(execution_db)
+    execution = _execution()
+    repository.link_job(execution, first_id, cohort_kind="existing_backlog")
+    initial_digest = recovery_key_digest({str(first_id)}, set())
+    execution_db.execute(
+        """
+        INSERT INTO discovery_execution_recoveries (
+            tenant_id, discover_workflow_id, discover_run_id, state, mode,
+            decoder_version, history_event_id, expected_membership_count,
+            persisted_membership_count, expected_step_count,
+            persisted_step_count, key_digest, last_error_code, updated_at
+        ) VALUES (?, ?, ?, 'ready', 'native', 3, 12, 1, 1, 0, 0, ?, NULL, ?)
+        """,
+        (
+            execution.tenant_id,
+            execution.workflow_id,
+            execution.temporal_run_id,
+            initial_digest,
+            "2026-08-13T12:00:00+00:00",
+        ),
+    )
+    execution_db.commit()
+
+    repository.link_job(execution, second_id, cohort_kind="existing_backlog")
+
+    manifest = execution_db.execute("SELECT * FROM discovery_execution_recoveries").fetchone()
+    assert manifest["state"] == "ready"
+    assert manifest["history_event_id"] == 12
+    assert manifest["expected_membership_count"] == 2
+    assert manifest["persisted_membership_count"] == 2
+    assert manifest["expected_step_count"] == 0
+    assert manifest["persisted_step_count"] == 0
+    assert manifest["key_digest"] == recovery_key_digest({str(first_id), str(second_id)}, set())
+
+    def interrupt_proof(*_args, **_kwargs):
+        raise KeyboardInterrupt
+
+    third_id = JobId("00000000-0000-4000-8000-000000000013")
+    _insert_job(execution_db, third_id)
+    monkeypatch.setattr(
+        sqlite_execution_repository,
+        "advance_ready_native_recovery_manifest",
+        interrupt_proof,
+    )
+    with pytest.raises(KeyboardInterrupt):
+        repository.link_job(execution, third_id, cohort_kind="existing_backlog")
+
+    assert repository.get(execution, third_id) is None
+    unchanged = execution_db.execute("SELECT * FROM discovery_execution_recoveries").fetchone()
+    assert unchanged["expected_membership_count"] == 2
+    assert unchanged["persisted_membership_count"] == 2
+    assert unchanged["key_digest"] == manifest["key_digest"]
+
+
 def test_execution_membership_rejects_url_shaped_and_unknown_identity(
     execution_db,
 ) -> None:
@@ -114,9 +178,7 @@ def test_execution_membership_rejects_url_shaped_and_unknown_identity(
             cohort_kind="existing_backlog",
         )
 
-    assert execution_db.execute(
-        "SELECT COUNT(*) FROM discovery_execution_jobs"
-    ).fetchone()[0] == 0
+    assert execution_db.execute("SELECT COUNT(*) FROM discovery_execution_jobs").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize(
@@ -139,9 +201,7 @@ def test_execution_membership_rejects_whitespace_wrapped_identity(
             cohort_kind="existing_backlog",
         )
 
-    assert execution_db.execute(
-        "SELECT COUNT(*) FROM discovery_execution_jobs"
-    ).fetchone()[0] == 0
+    assert execution_db.execute("SELECT COUNT(*) FROM discovery_execution_jobs").fetchone()[0] == 0
 
 
 def test_execution_membership_cannot_cross_tenants(execution_db) -> None:
@@ -156,9 +216,7 @@ def test_execution_membership_cannot_cross_tenants(execution_db) -> None:
             cohort_kind="existing_backlog",
         )
 
-    assert execution_db.execute(
-        "SELECT COUNT(*) FROM discovery_execution_jobs"
-    ).fetchone()[0] == 0
+    assert execution_db.execute("SELECT COUNT(*) FROM discovery_execution_jobs").fetchone()[0] == 0
 
 
 def test_work_plan_retry_is_exact_and_memberships_order_by_job_id(
@@ -198,10 +256,7 @@ def test_work_plan_retry_is_exact_and_memberships_order_by_job_id(
 
     assert replay == planned
     assert planned.required_steps == ("score", "tailor")
-    assert [
-        membership.job_id
-        for membership in repository.list_for_execution(execution)
-    ] == [first_id, second_id]
+    assert [membership.job_id for membership in repository.list_for_execution(execution)] == [first_id, second_id]
     with pytest.raises(ValueError, match="immutable"):
         repository.set_work_plan(
             execution,

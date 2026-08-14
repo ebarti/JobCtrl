@@ -423,6 +423,15 @@ inventory returns `recovering`, never an invented idle or `ready` checkpoint. A
 ready row is accepted only when its exact persisted counts and canonical key
 digest still match the selected execution.
 
+For `mode = "native"`, later execution-membership writes and pipeline-step
+projection folds carrying the same exact workflow/run identity advance the
+ready checkpoint's counts and digest atomically with those canonical keys. The
+`historyEventId` remains the last reconciled history boundary; it is not
+fabricated from a native database write. Reconstructed checkpoints can advance
+only through history reconciliation. Reading a newer history snapshot does not
+temporarily downgrade an already-verified ready checkpoint; `recovering` is
+published only when the durable proof actually needs rebuilding.
+
 Reconstructed decoder v2 treats append-only workflow-start events—not folded
 workflow projections—as preparation-lineage evidence. Each legacy fanout's
 causal workflow count must equal its declared target count before overlapping

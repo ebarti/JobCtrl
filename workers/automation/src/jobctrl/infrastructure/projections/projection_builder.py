@@ -67,6 +67,9 @@ from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.compensation.benchmark_lineage import (
     load_market_benchmark_lineage,
 )
+from jobctrl.infrastructure.discovery.recovery_manifest import (
+    advance_ready_native_recovery_manifests_for_tenant,
+)
 from jobctrl.infrastructure.events.watermark import SqliteEventWatermarkRepository
 from jobctrl.infrastructure.projections.location_normalization import (
     normalize_job_location,
@@ -3531,49 +3534,61 @@ class ProjectionBuilder:
                 last_updated_at=event["occurred_at"],
             )
 
-        self._conn.execute(
-            "DELETE FROM pipeline_step_projections WHERE tenant_id = ?",
-            (str(self._tenant_id),),
-        )
-        insert = self._conn.execute
-        for projection in sorted(
-            folded.values(),
-            key=lambda item: (
-                item.workflow_id,
-                item.temporal_run_id,
-                item.step_kind,
-                item.item_key,
-            ),
-        ):
-            insert(
-                """
-                INSERT INTO pipeline_step_projections (
-                    tenant_id, discover_workflow_id, discover_run_id, step_kind,
-                    item_key, state, attempt, queued_at, started_at, finished_at,
-                    duration_ms, error_code, retryable, detail_code, detail_count,
-                    last_event_id, last_updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    projection.tenant_id,
-                    projection.workflow_id,
-                    projection.temporal_run_id,
-                    projection.step_kind,
-                    projection.item_key,
-                    projection.state,
-                    projection.attempt,
-                    projection.queued_at,
-                    projection.started_at,
-                    projection.finished_at,
-                    projection.duration_ms,
-                    projection.error_code,
-                    1 if projection.retryable else 0,
-                    projection.detail_code,
-                    projection.detail_count,
-                    projection.last_event_id,
-                    projection.last_updated_at,
-                ),
+        savepoint = "pipeline_step_recovery_proof_fold"
+        self._conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            self._conn.execute(
+                "DELETE FROM pipeline_step_projections WHERE tenant_id = ?",
+                (str(self._tenant_id),),
             )
+            insert = self._conn.execute
+            for projection in sorted(
+                folded.values(),
+                key=lambda item: (
+                    item.workflow_id,
+                    item.temporal_run_id,
+                    item.step_kind,
+                    item.item_key,
+                ),
+            ):
+                insert(
+                    """
+                    INSERT INTO pipeline_step_projections (
+                        tenant_id, discover_workflow_id, discover_run_id, step_kind,
+                        item_key, state, attempt, queued_at, started_at, finished_at,
+                        duration_ms, error_code, retryable, detail_code, detail_count,
+                        last_event_id, last_updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        projection.tenant_id,
+                        projection.workflow_id,
+                        projection.temporal_run_id,
+                        projection.step_kind,
+                        projection.item_key,
+                        projection.state,
+                        projection.attempt,
+                        projection.queued_at,
+                        projection.started_at,
+                        projection.finished_at,
+                        projection.duration_ms,
+                        projection.error_code,
+                        1 if projection.retryable else 0,
+                        projection.detail_code,
+                        projection.detail_count,
+                        projection.last_event_id,
+                        projection.last_updated_at,
+                    ),
+                )
+            advance_ready_native_recovery_manifests_for_tenant(
+                self._conn,
+                tenant_id=str(self._tenant_id),
+            )
+        except BaseException:
+            self._conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
+        self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
 
     def _parse_pipeline_step_event(self, row: object) -> dict[str, Any] | None:
         if isinstance(row, tuple):

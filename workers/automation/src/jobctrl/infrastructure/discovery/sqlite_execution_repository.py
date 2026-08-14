@@ -18,6 +18,9 @@ from jobctrl.domain.discovery.execution import (
     validate_work_plan_state,
 )
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.infrastructure.discovery.recovery_manifest import (
+    advance_ready_native_recovery_manifest,
+)
 
 
 _SELECT_COLUMNS = """
@@ -104,6 +107,12 @@ class SqliteDiscoveryExecutionRepository:
                     linked,
                 ),
             )
+            advance_ready_native_recovery_manifest(
+                self._conn,
+                tenant_id=execution.tenant_id,
+                workflow_id=execution.workflow_id,
+                temporal_run_id=execution.temporal_run_id,
+            )
 
         result = self.get(execution, stable_job_id)
         if result is None:  # pragma: no cover - defensive database invariant
@@ -154,9 +163,7 @@ class SqliteDiscoveryExecutionRepository:
             raise KeyError(f"Job is not linked to discovery execution: {stable_job_id}")
 
         desired_steps_json = (
-            json.dumps(list(normalized_steps), separators=(",", ":"))
-            if normalized_steps is not None
-            else None
+            json.dumps(list(normalized_steps), separators=(",", ":")) if normalized_steps is not None else None
         )
         if existing.work_plan_state in {"planned", "not_eligible"}:
             desired = (
@@ -175,10 +182,7 @@ class SqliteDiscoveryExecutionRepository:
                 raise ValueError("A decided discovery execution work plan is immutable")
             return existing
 
-        if (
-            existing.preparation_workflow_id is not None
-            and normalized_workflow_id != existing.preparation_workflow_id
-        ):
+        if existing.preparation_workflow_id is not None and normalized_workflow_id != existing.preparation_workflow_id:
             raise ValueError("preparation_workflow_id is immutable once assigned")
 
         with self._conn:

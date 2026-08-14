@@ -298,8 +298,10 @@ it does not restate telemetry freshness. Its states are:
 
 - `ready`: the worker decoded one exact Temporal workflow/run history, refreshed
   its projections, and verified equality of the expected and persisted
-  membership-key and pipeline-step-key sets at the recorded history-event
-  watermark;
+  membership-key and pipeline-step-key sets. For native runs, later canonical
+  writes carrying that same execution identity advance the verified key-set
+  proof atomically while the history-event watermark remains the last audited
+  history boundary;
 - `recovering`: startup or heartbeat reconciliation is rebuilding those exact
   sets;
 - `retrying`: the latest safe reconciliation attempt refused an ambiguous input
@@ -316,6 +318,16 @@ counts, a digest of both canonical key sets, and a bounded error code. A
 `ready` row is valid only while its counts and digest still match the current
 durable rows. Row counts alone, workflow terminal state, and runtime telemetry
 can never promote an execution to `ready`.
+
+Once a native checkpoint is ready, linking a new execution member and folding a
+new pipeline-step key update that checkpoint's counts and digest in the same
+SQLite transaction as the canonical write. Both the Python and TypeScript
+projection owners apply the identical digest algorithm. A failed proof update
+therefore rolls back the native key write instead of exposing a one-row-ahead
+`recovering` snapshot. Reconstructed checkpoints never use this path; their
+expected sets remain exclusively owned by history reconciliation. A heartbeat
+also keeps an already-verified checkpoint visible while it reads history and
+publishes `recovering` only after it has evidence that repair is needed.
 
 The worker runs reconciliation before accepting activities and again on every
 heartbeat. Legacy activity history is decoded into queued, running, completed,

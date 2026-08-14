@@ -9,7 +9,6 @@ that Temporal proves terminal after the activity process stopped reporting.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import sqlite3
@@ -38,6 +37,10 @@ from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.discovery.sqlite_execution_repository import (
     SqliteDiscoveryExecutionRepository,
 )
+from jobctrl.infrastructure.discovery.recovery_manifest import (
+    CURRENT_DISCOVERY_EXECUTION_DECODER_VERSION,
+    recovery_key_digest,
+)
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobctrl.state import record_job_event
 
@@ -52,7 +55,7 @@ _DISCOVERY_ACTIVITY_TYPES = frozenset(
     }
 )
 _STEP_ORDER = ("score", "tailor", "cover", "pdf")
-_DECODER_VERSION = 3
+_DECODER_VERSION = CURRENT_DISCOVERY_EXECUTION_DECODER_VERSION
 _LEGACY_WORK_PLAN_REASON_CODE = "legacy_history_recovery"
 _HISTORY_READ_ERROR_CODE = "temporal-history-read-failed"
 
@@ -455,24 +458,6 @@ async def reconcile_legacy_discovery_execution(
         temporal_run_id=temporal_run_id,
     )
     repository = SqliteDiscoveryExecutionRepository(connection)
-    current_manifest = connection.execute(
-        """
-        SELECT * FROM discovery_execution_recoveries
-        WHERE tenant_id = ? AND discover_workflow_id = ? AND discover_run_id = ?
-        """,
-        (tenant_id, workflow_id, temporal_run_id),
-    ).fetchone()
-    current_manifest_was_verified = current_manifest is not None and _recovery_manifest_matches_persisted_keys(
-        connection,
-        tenant_id=tenant_id,
-        workflow_id=workflow_id,
-        temporal_run_id=temporal_run_id,
-    )
-    _transition_existing_recovery_manifest(
-        connection,
-        execution,
-        state="recovering",
-    )
     try:
         handle = temporal_client.get_workflow_handle(workflow_id, run_id=temporal_run_id)
         normalized = await _normalize_temporal_history(handle, temporal_client.data_converter)
@@ -486,20 +471,22 @@ async def reconcile_legacy_discovery_execution(
         raise
     history_event_id = max((_safe_int(record.get("history_event_id")) for record in normalized), default=0)
     history_snapshot_at = max((str(record.get("event_time") or "") for record in normalized), default="")
-    existing_membership_keys = _persisted_membership_keys(connection, tenant_id, workflow_id, temporal_run_id)
-    existing_step_keys = _persisted_step_keys(connection, tenant_id, workflow_id, temporal_run_id)
-    if (
-        current_manifest is not None
-        and str(current_manifest["state"]) == "ready"
-        and current_manifest_was_verified
-        and int(current_manifest["decoder_version"]) == _DECODER_VERSION
-        and int(current_manifest["history_event_id"]) >= history_event_id
-        and _recovery_manifest_snapshot_matches_keys(
-            current_manifest,
-            existing_membership_keys,
-            existing_step_keys,
-        )
-    ):
+    # Native writers may advance a ready proof while Temporal history is being
+    # read. Re-read after the await so the fast path validates the current
+    # atomic proof instead of downgrading a newer, still-valid checkpoint.
+    verified_snapshot = _verified_recovery_manifest_snapshot(
+        connection,
+        tenant_id=tenant_id,
+        workflow_id=workflow_id,
+        temporal_run_id=temporal_run_id,
+    )
+    if verified_snapshot is not None:
+        current_manifest, existing_membership_keys, existing_step_keys = verified_snapshot
+    else:
+        current_manifest = None
+        existing_membership_keys = _persisted_membership_keys(connection, tenant_id, workflow_id, temporal_run_id)
+        existing_step_keys = _persisted_step_keys(connection, tenant_id, workflow_id, temporal_run_id)
+    if current_manifest is not None and int(current_manifest["history_event_id"]) >= history_event_id:
         _transition_existing_recovery_manifest(
             connection,
             execution,
@@ -1298,95 +1285,93 @@ def _recovery_manifest_matches_persisted_keys(
 ) -> bool:
     """Return whether a ready manifest still proves the current exact key sets."""
 
-    try:
-        manifest = conn.execute(
-            """
-            SELECT state, mode, decoder_version, history_event_id,
-                   expected_membership_count, persisted_membership_count,
-                   expected_step_count, persisted_step_count, key_digest,
-                   updated_at
-            FROM discovery_execution_recoveries
-            WHERE tenant_id = ? AND discover_workflow_id = ? AND discover_run_id = ?
-            """,
-            (tenant_id, workflow_id, temporal_run_id),
-        ).fetchone()
-        if manifest is None:
-            return False
-        memberships = _persisted_membership_keys(conn, tenant_id, workflow_id, temporal_run_id)
-        steps = _persisted_step_keys(conn, tenant_id, workflow_id, temporal_run_id)
-        manifest_integers = {
-            field: int(manifest[field])
-            for field in (
-                "decoder_version",
-                "history_event_id",
-                "expected_membership_count",
-                "persisted_membership_count",
-                "expected_step_count",
-                "persisted_step_count",
-            )
-        }
-    except (KeyError, TypeError, ValueError, sqlite3.OperationalError):
-        return False
-
-    membership_count = len(memberships)
-    step_count = len(steps)
     return (
-        str(manifest["state"]) == "ready"
-        and str(manifest["mode"]) in {"native", "reconstructed"}
-        and manifest_integers["decoder_version"] == _DECODER_VERSION
-        and manifest_integers["history_event_id"] >= 0
-        and manifest_integers["expected_membership_count"] == membership_count
-        and manifest_integers["persisted_membership_count"] == membership_count
-        and manifest_integers["expected_step_count"] == step_count
-        and manifest_integers["persisted_step_count"] == step_count
-        and str(manifest["key_digest"]) == _recovery_key_digest(memberships, steps)
-        and bool(str(manifest["updated_at"] or "").strip())
+        _verified_recovery_manifest_snapshot(
+            conn,
+            tenant_id=tenant_id,
+            workflow_id=workflow_id,
+            temporal_run_id=temporal_run_id,
+        )
+        is not None
     )
 
 
-def _recovery_manifest_snapshot_matches_keys(
-    manifest: Any,
-    memberships: set[str],
-    steps: set[tuple[str, str]],
-) -> bool:
-    """Revalidate a pre-read ready snapshot after its state was downgraded."""
+def _verified_recovery_manifest_snapshot(
+    conn: Any,
+    *,
+    tenant_id: str,
+    workflow_id: str,
+    temporal_run_id: str,
+) -> tuple[Any, set[str], set[tuple[str, str]]] | None:
+    """Read one internally consistent ready proof without blocking writers.
 
-    try:
-        return (
-            int(manifest["expected_membership_count"]) == len(memberships)
-            and int(manifest["persisted_membership_count"]) == len(memberships)
-            and int(manifest["expected_step_count"]) == len(steps)
-            and int(manifest["persisted_step_count"]) == len(steps)
-            and str(manifest["key_digest"]) == _recovery_key_digest(memberships, steps)
-        )
-    except (KeyError, TypeError, ValueError):
-        return False
+    Native writers update their key and proof atomically, but may commit between
+    individual SELECT statements here. Reading the manifest both before and
+    after its key sets lets us retry that narrow interleaving. A writer that
+    commits after the second read cannot invalidate the captured snapshot: the
+    older manifest and key sets remain mutually consistent and the writer's
+    newer proof is also ready.
+    """
+
+    query = """
+        SELECT state, mode, decoder_version, history_event_id,
+               expected_membership_count, persisted_membership_count,
+               expected_step_count, persisted_step_count, key_digest,
+               updated_at
+        FROM discovery_execution_recoveries
+        WHERE tenant_id = ? AND discover_workflow_id = ? AND discover_run_id = ?
+    """
+    params = (tenant_id, workflow_id, temporal_run_id)
+    for _attempt in range(8):
+        try:
+            before = conn.execute(query, params).fetchone()
+            if before is None:
+                return None
+            memberships = _persisted_membership_keys(conn, tenant_id, workflow_id, temporal_run_id)
+            steps = _persisted_step_keys(conn, tenant_id, workflow_id, temporal_run_id)
+            after = conn.execute(query, params).fetchone()
+            if after is None:
+                return None
+            if tuple(before) != tuple(after):
+                continue
+            manifest_integers = {
+                field: int(after[field])
+                for field in (
+                    "decoder_version",
+                    "history_event_id",
+                    "expected_membership_count",
+                    "persisted_membership_count",
+                    "expected_step_count",
+                    "persisted_step_count",
+                )
+            }
+        except (KeyError, TypeError, ValueError, sqlite3.OperationalError):
+            return None
+
+        membership_count = len(memberships)
+        step_count = len(steps)
+        if (
+            str(after["state"]) == "ready"
+            and str(after["mode"]) in {"native", "reconstructed"}
+            and manifest_integers["decoder_version"] == _DECODER_VERSION
+            and manifest_integers["history_event_id"] >= 0
+            and manifest_integers["expected_membership_count"] == membership_count
+            and manifest_integers["persisted_membership_count"] == membership_count
+            and manifest_integers["expected_step_count"] == step_count
+            and manifest_integers["persisted_step_count"] == step_count
+            and str(after["key_digest"]) == _recovery_key_digest(memberships, steps)
+            and bool(str(after["updated_at"] or "").strip())
+        ):
+            return after, memberships, steps
+        return None
+    return None
 
 
 def _recovery_key_digest(
     memberships: set[str],
     steps: set[tuple[str, str]],
 ) -> str:
-    def key_hex(value: str) -> str:
-        return value.encode("utf-8").hex()
-
-    canonical = json.dumps(
-        {
-            "memberships": sorted(key_hex(value) for value in memberships),
-            "steps": sorted(
-                key_hex(
-                    json.dumps(
-                        [step_kind, item_key],
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
-                )
-                for step_kind, item_key in steps
-            ),
-        },
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return recovery_key_digest(memberships, steps)
 
 
 def _mapping(value: object) -> dict[str, Any]:
