@@ -15,12 +15,21 @@ COMPENSATION_SOURCE_RE = re.compile(
     r"\b(?:salary|compensation|pay range|base pay|base salary|wage|remuneration|ote)\b|on[- ]target earnings",
     re.IGNORECASE,
 )
+BASE_COMPENSATION_SOURCE_RE = re.compile(
+    r"\b(?:salary|pay range|base pay|base salary|wage|remuneration|ote)\b|on[- ]target earnings",
+    re.IGNORECASE,
+)
 COMPENSATION_AMOUNT_RE = re.compile(
     r"(?<![A-Za-z0-9])(?:(?:[€$£]|(?:EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN|CZK)\b)\s*)"
     r"\d{1,3}(?:[,.]\d{3})*(?:[,.]\d+)?\s*(?:k|K)?(?![A-Za-z0-9])"
 )
 NON_COMPENSATION_SCALE_RE = re.compile(
     r"^(?:million|millions|billion|billions|trillion|trillions|mm|bn|b)\b",
+    re.IGNORECASE,
+)
+NON_BASE_COMPENSATION_CONTEXT_RE = re.compile(
+    r"\b(?:bonus|commission|equity|stock|stipend|allowance|learning budget|"
+    r"training budget|wellness|home office|equipment|relocation)\b",
     re.IGNORECASE,
 )
 PAY_PERIOD_RE = re.compile(
@@ -196,12 +205,12 @@ class SqlitePostedCompensationRepository:
 
 
 def posted_compensation_source_from_job(row: Any) -> tuple[str | None, str]:
-    salary = _nonempty_text(_row_value(row, "salary"))
+    salary = _nonempty_text(_job_source_row_value(row, "salary"))
     if salary is not None:
         return salary, "jobs.salary"
 
     for field in ("full_description", "description"):
-        text = _nonempty_text(_row_value(row, field))
+        text = _nonempty_text(_job_source_row_value(row, field))
         if text is None:
             continue
         match = _compensation_source_match(text)
@@ -223,18 +232,65 @@ def _nonempty_text(value: Any) -> str | None:
 
 def _compensation_source_match(text: str) -> re.Match[str] | None:
     keyword_match = COMPENSATION_SOURCE_RE.search(text)
-    if keyword_match is not None:
-        return keyword_match
-
+    generic_candidate: re.Match[str] | None = None
     for amount_match in COMPENSATION_AMOUNT_RE.finditer(text):
         if NON_COMPENSATION_SCALE_RE.match(text[amount_match.end() :].lstrip()):
             continue
         window_start = max(0, amount_match.start() - 40)
         window_end = min(len(text), amount_match.end() + 40)
-        if PAY_PERIOD_RE.search(text[window_start:window_end]):
+        window = text[window_start:window_end]
+        if not PAY_PERIOD_RE.search(window):
+            continue
+        amount_start = amount_match.start() - window_start
+        amount_end = amount_match.end() - window_start
+        base_distance = _nearest_match_distance(
+            BASE_COMPENSATION_SOURCE_RE,
+            window,
+            amount_start,
+            amount_end,
+        )
+        non_base_distance = _nearest_match_distance(
+            NON_BASE_COMPENSATION_CONTEXT_RE,
+            window,
+            amount_start,
+            amount_end,
+        )
+        if base_distance is not None and (
+            non_base_distance is None or base_distance < non_base_distance
+        ):
             return amount_match
+        if (
+            generic_candidate is None
+            and COMPENSATION_SOURCE_RE.search(window)
+            and non_base_distance is None
+        ):
+            generic_candidate = amount_match
 
-    return None
+    return generic_candidate or keyword_match
+
+
+def _nearest_match_distance(
+    pattern: re.Pattern[str],
+    text: str,
+    anchor_start: int,
+    anchor_end: int,
+) -> int | None:
+    distances: list[int] = []
+    for match in pattern.finditer(text):
+        if match.end() <= anchor_start:
+            distances.append(anchor_start - match.end())
+        elif match.start() >= anchor_end:
+            distances.append(match.start() - anchor_end)
+        else:
+            distances.append(0)
+    return min(distances) if distances else None
+
+
+def _job_source_row_value(row: Any, key: str) -> Any:
+    if isinstance(row, sqlite3.Row):
+        return row[key]
+    keys = ("job_id", "salary", "full_description", "description")
+    return row[keys.index(key)]
 
 
 def _row_to_fact(row: sqlite3.Row | tuple[Any, ...]) -> PostedCompensationFact:

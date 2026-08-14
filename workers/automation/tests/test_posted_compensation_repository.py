@@ -10,7 +10,10 @@ import pytest
 from jobctrl.database import init_db
 from jobctrl.domain.compensation import parse_posted_compensation
 from jobctrl.domain.identifiers import JobId
-from jobctrl.infrastructure.compensation import SqlitePostedCompensationRepository
+from jobctrl.infrastructure.compensation import (
+    SqlitePostedCompensationRepository,
+    posted_compensation_source_from_job,
+)
 
 
 @pytest.fixture()
@@ -152,6 +155,47 @@ def test_backfill_records_missing_fact_without_erasing_blank_salary(conn: sqlite
     assert fact.parse_state == "missing"
     assert fact.legacy_raw_salary is None
     assert salary is None
+
+
+def test_backfill_prefers_numeric_compensation_excerpt_over_earlier_generic_cue(
+    conn: sqlite3.Connection,
+) -> None:
+    _job_url, job_id = _seed_job(conn, salary=None)
+    full_description = (
+        "Competitive compensation and benefits. "
+        "In addition to base salary, the annual learning stipend is €2,000 per year. "
+        + ("Lead platform engineering and delivery teams. " * 16)
+        + "Base pay range per year:\n**€80,000 - €95,000**"
+    )
+    conn.execute(
+        "UPDATE jobs SET full_description = ? WHERE tenant_id = ? AND job_id = ?",
+        (full_description, "local", job_id),
+    )
+    conn.commit()
+
+    SqlitePostedCompensationRepository(conn).backfill_from_jobs(
+        parsed_at="2026-06-19T10:00:00Z"
+    )
+
+    fact = SqlitePostedCompensationRepository(conn).get_fact("local", job_id)
+    assert fact is not None
+    assert fact.source_field == "jobs.full_description"
+    assert fact.parse_state == "parsed_range"
+    assert fact.currency == "EUR"
+    assert fact.period == "year"
+    assert fact.annualized_minimum_amount == 80_000
+    assert fact.annualized_maximum_amount == 95_000
+
+
+def test_description_source_selection_supports_tuple_job_rows() -> None:
+    full_description = "Base salary €80,000 - €95,000 per year"
+
+    source_text, source_field = posted_compensation_source_from_job(
+        ("job-id", None, full_description, "")
+    )
+
+    assert source_field == "jobs.full_description"
+    assert source_text == full_description
 
 
 def test_backfill_persists_mixed_component_two_amount_text_as_ambiguous(
