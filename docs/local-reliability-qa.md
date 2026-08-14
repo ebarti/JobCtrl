@@ -573,6 +573,14 @@ Re-importing a legacy direct-URL row whose stored Greenhouse heading is
 `Job Application for <role> at <employer>` must repair the canonical role and
 missing employer without refetching, duplicating the job, or duplicating its
 metadata-correction event.
+An active, non-quarantined import with a usable description but no separate
+application URL must still persist enriched state, record Discover and Enrich
+as succeeded, and start exactly one deterministic root preparation workflow
+containing score, tailor, cover, and PDF—but not Apply. Retrying the import
+before preparation begins must reuse that workflow ID. An incomplete legacy
+import whose canonical description still matches its immutable snapshot proof
+must repair its missing enrichment before the same handoff without refetching;
+an already complete import also opens without refetching.
 An unsafe credential-bearing, loopback, or private URL must perform no worker
 dispatch, navigation, or queue write. Commit-before-ack failures after canonical
 ingestion must converge on retry to one complete discovery event set and one

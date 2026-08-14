@@ -150,11 +150,56 @@ async def job_url_import_activity(
         expected_db_path=payload.expected_db_path,
     )
     return await run_blocking_with_heartbeat(
-        lambda: execute_job_url_import(payload),
+        lambda: _execute_job_url_import_and_start_preparation(payload),
         starting_message="job URL import starting",
         progress_message="job URL import still running",
         activity_name="job_url_import",
     )
+
+
+def _execute_job_url_import_and_start_preparation(
+    payload: JobUrlImportWorkflowInput,
+    *,
+    conn: sqlite3.Connection | None = None,
+    fetcher: Any | None = None,
+    url_validator: Callable[[str], Any] | None = None,
+    workflow_starter: Any | None = None,
+) -> JobUrlImportActivityOutput:
+    """Import one posting and hand a fresh job to durable preparation.
+
+    Import owns intake and enrichment convergence. Preparation remains a
+    separate root workflow so the import workflow may finish without
+    terminating score, tailor, cover-letter, or PDF work. Apply is deliberately
+    absent from that workflow.
+    """
+    from jobctrl.database import get_connection
+    from jobctrl.domain.identifiers import canonical_job_id
+    from jobctrl.domain.tenant import TenantId
+    from jobctrl.pipeline.preparation import start_job_preparation_workflow
+
+    connection = conn or get_connection()
+    output = execute_job_url_import(
+        payload,
+        conn=connection,
+        fetcher=fetcher,
+        url_validator=url_validator,
+    )
+    if (
+        output.outcome == "imported"
+        and output.job_id is not None
+        and _imported_job_needs_preparation(
+            connection,
+            tenant_id=payload.tenant_id,
+            job_id=output.job_id,
+        )
+    ):
+        start_job_preparation_workflow(
+            canonical_job_id(output.job_id),
+            tenant_id=TenantId(payload.tenant_id),
+            workflow_starter=workflow_starter,
+            connection=connection,
+        )
+    return output
 
 
 def execute_job_url_import(
@@ -253,12 +298,29 @@ def execute_job_url_import(
                 job_id=existing.job_id,
                 source_native_id=source_native_id,
             )
-            return _imported_output(
-                existing.job_id,
-                already_existed=True,
-                conn=connection,
-                resolved_urls=(url,),
-            )
+            if _ensure_imported_job_pipeline_state(
+                connection,
+                tenant_id=tenant_id,
+                job_id=existing.job_id,
+                source_native_id=source_native_id,
+            ):
+                return _imported_output(
+                    existing.job_id,
+                    already_existed=True,
+                    conn=connection,
+                    resolved_urls=(url,),
+                )
+            if not _imported_snapshot_is_preparation_eligible(
+                connection,
+                tenant_id=tenant_id,
+                job_id=existing.job_id,
+            ):
+                return _imported_output(
+                    existing.job_id,
+                    already_existed=True,
+                    conn=connection,
+                    resolved_urls=(url,),
+                )
 
     active_fetcher = fetcher or PlaywrightDetailPageFetcher(raise_on_unavailable=True)
     try:
@@ -356,12 +418,29 @@ def execute_job_url_import(
                 job_id=canonical_existing.job_id,
                 source_native_id=source_native_id,
             )
-            return _imported_output(
-                canonical_existing.job_id,
-                already_existed=True,
-                conn=connection,
-                resolved_urls=(url, canonical_url),
-            )
+            if _ensure_imported_job_pipeline_state(
+                connection,
+                tenant_id=tenant_id,
+                job_id=canonical_existing.job_id,
+                source_native_id=source_native_id,
+            ):
+                return _imported_output(
+                    canonical_existing.job_id,
+                    already_existed=True,
+                    conn=connection,
+                    resolved_urls=(url, canonical_url),
+                )
+            if not _imported_snapshot_is_preparation_eligible(
+                connection,
+                tenant_id=tenant_id,
+                job_id=canonical_existing.job_id,
+            ):
+                return _imported_output(
+                    canonical_existing.job_id,
+                    already_existed=True,
+                    conn=connection,
+                    resolved_urls=(url, canonical_url),
+                )
         identity = canonical_existing
         already_existed = True
     else:
@@ -465,6 +544,21 @@ def execute_job_url_import(
         raise ApplicationError(
             "The posting snapshot could not be verified yet.",
             type="job_url_import_snapshot_failed",
+        )
+    pipeline_ready = _ensure_imported_job_pipeline_state(
+        connection,
+        tenant_id=tenant_id,
+        job_id=identity.job_id,
+        source_native_id=source_native_id,
+    )
+    if not pipeline_ready and _imported_snapshot_is_preparation_eligible(
+        connection,
+        tenant_id=tenant_id,
+        job_id=identity.job_id,
+    ):
+        raise ApplicationError(
+            "The imported posting could not enter the preparation pipeline yet.",
+            type="job_url_import_enrichment_failed",
         )
     return _imported_output(
         identity.job_id,
@@ -779,6 +873,281 @@ def _ensure_posted_compensation_fact(
         source_field=source_field,
         parsed_at=datetime.now(timezone.utc).isoformat(),
         event_idempotency_key=f"{_event_prefix(str(tenant_id), source_native_id)}:posted-compensation",
+    )
+
+
+def _ensure_imported_job_pipeline_state(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: Any,
+    job_id: Any,
+    source_native_id: str,
+) -> bool:
+    """Converge one usable import to completed intake and enrichment facts."""
+    from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state
+
+    if not _imported_snapshot_is_preparation_eligible(
+        conn,
+        tenant_id=tenant_id,
+        job_id=job_id,
+    ):
+        return False
+
+    enrichment = _load_or_repair_imported_job_enrichment(
+        conn,
+        tenant_id=tenant_id,
+        job_id=job_id,
+        source_native_id=source_native_id,
+    )
+    if enrichment is None or not enrichment.is_enriched:
+        return False
+    job_row = conn.execute(
+        """
+        SELECT discovered_at
+        FROM jobs
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    if job_row is None:
+        raise RuntimeError("Manual URL import is missing its canonical job row")
+    discovered_at = str((job_row["discovered_at"] if isinstance(job_row, sqlite3.Row) else job_row[0]) or "")
+    finished_at = enrichment.enriched_at or datetime.now(timezone.utc).isoformat()
+    started_at = enrichment.last_attempt.started_at if enrichment.last_attempt is not None else finished_at
+    attempt_count = max(1, enrichment.attempt_count)
+
+    try:
+        ensure_job_stage_rows(
+            conn,
+            job_id,
+            tenant_id=tenant_id,
+            discovered_at=discovered_at or None,
+        )
+        stage_row = conn.execute(
+            """
+            SELECT state
+            FROM job_stage_states
+            WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'
+            """,
+            (str(tenant_id), str(job_id)),
+        ).fetchone()
+        stage_state = str(
+            (stage_row["state"] if isinstance(stage_row, sqlite3.Row) else stage_row[0])
+            if stage_row is not None
+            else ""
+        )
+        if stage_state != "succeeded":
+            if stage_state != "running":
+                try:
+                    set_stage_state(
+                        conn,
+                        job_id,
+                        "enrich",
+                        "running",
+                        tenant_id=tenant_id,
+                        attempt_count=attempt_count,
+                        started_at=started_at,
+                    )
+                except ValueError:
+                    set_stage_state(
+                        conn,
+                        job_id,
+                        "enrich",
+                        "running",
+                        tenant_id=tenant_id,
+                        attempt_count=attempt_count,
+                        started_at=started_at,
+                        validate_transition=False,
+                    )
+            set_stage_state(
+                conn,
+                job_id,
+                "enrich",
+                "succeeded",
+                tenant_id=tenant_id,
+                attempt_count=attempt_count,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+        record_job_event(
+            conn,
+            job_id,
+            "enrich",
+            "StageCompleted",
+            tenant_id=tenant_id,
+            message="Direct URL import completed posting enrichment.",
+            payload={
+                "source": "manual_url_import",
+                "sourceNativeId": source_native_id,
+                "extractionTier": (
+                    enrichment.extraction_tier.value if enrichment.extraction_tier is not None else "unknown"
+                ),
+            },
+            occurred_at=finished_at,
+            publisher=_DeferredEventPublisher(),
+            idempotency_key=(f"{_event_prefix(str(tenant_id), source_native_id)}:enrichment-stage-completed"),
+        )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return True
+
+
+def _load_or_repair_imported_job_enrichment(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: Any,
+    job_id: Any,
+    source_native_id: str,
+) -> Any | None:
+    """Recover legacy imports only when canonical text matches snapshot proof."""
+    from jobctrl.domain.enrichment import ExtractionTier
+    from jobctrl.domain.enrichment.aggregate import JobEnrichment
+    from jobctrl.domain.enrichment.snapshot_value_objects import SnapshotDescriptionHash
+    from jobctrl.domain.enrichment.value_objects import ApplicationUrl, FullDescription
+    from jobctrl.domain.events import JobEnrichedPayload, create_job_enriched
+    from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
+    from jobctrl.infrastructure.enrichment import (
+        SqliteEnrichmentRepository,
+        SqlitePostingSnapshotSetRepository,
+    )
+
+    repository = SqliteEnrichmentRepository(conn)
+    enrichment = repository.load(tenant_id, job_id)
+    if enrichment is not None and enrichment.is_running:
+        return None
+    if enrichment is None or not enrichment.is_enriched:
+        snapshot_set = SqlitePostingSnapshotSetRepository(conn).load(tenant_id, job_id)
+        latest = snapshot_set.latest_snapshot if snapshot_set is not None else None
+        if latest is None or not _imported_snapshot_is_preparation_eligible(
+            conn,
+            tenant_id=tenant_id,
+            job_id=job_id,
+        ):
+            return None
+        row = conn.execute(
+            """
+            SELECT full_description, description
+            FROM jobs
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (str(tenant_id), str(job_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        if isinstance(row, sqlite3.Row):
+            candidates = (row["full_description"], row["description"])
+        else:
+            candidates = (row[0], row[1])
+        description = next(
+            (
+                str(candidate).strip()
+                for candidate in candidates
+                if candidate and SnapshotDescriptionHash.from_text(str(candidate).strip()) == latest.description_hash
+            ),
+            "",
+        )
+        if not description:
+            return None
+        repaired_at = datetime.now(timezone.utc).isoformat()
+        base = enrichment or JobEnrichment.empty(
+            tenant_id=tenant_id,
+            job_id=job_id,
+            updated_at=repaired_at,
+        )
+        if base.is_failed:
+            base = base.reset(reset_at=repaired_at)
+        tier = ExtractionTier.from_optional(latest.extraction_tier) or ExtractionTier.JSON_LD
+        enrichment = base.start_attempt(
+            extraction_tier=tier,
+            started_at=repaired_at,
+        ).succeed_attempt(
+            full_description=FullDescription(text=description),
+            application_url=(ApplicationUrl(value=latest.apply_url.value) if latest.apply_url is not None else None),
+            extraction_tier=tier,
+            finished_at=repaired_at,
+        )
+        repository.save(enrichment)
+
+    if enrichment.full_description is None:
+        return None
+    DurableJobEventPublisher(
+        conn,
+        stage="enrich",
+        idempotency_prefix=_event_prefix(str(tenant_id), source_native_id),
+    ).publish(
+        create_job_enriched(
+            tenant_id,
+            JobEnrichedPayload(
+                job_id=str(job_id),
+                full_description=enrichment.full_description.text,
+                application_url=(enrichment.application_url.value if enrichment.application_url is not None else ""),
+                extraction_tier=(
+                    enrichment.extraction_tier.value if enrichment.extraction_tier is not None else "unknown"
+                ),
+                enriched_at=enrichment.enriched_at or "",
+            ),
+        )
+    )
+    return enrichment
+
+
+def _imported_job_needs_preparation(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    job_id: str,
+) -> bool:
+    """Return True only for a fresh, fully enriched preparation target."""
+    if not _imported_snapshot_is_preparation_eligible(
+        conn,
+        tenant_id=tenant_id,
+        job_id=job_id,
+    ):
+        return False
+
+    rows = conn.execute(
+        """
+        SELECT stage, state
+        FROM job_stage_states
+        WHERE tenant_id = ? AND job_id = ?
+          AND stage IN ('discover', 'enrich', 'score', 'tailor', 'cover')
+        """,
+        (tenant_id, job_id),
+    ).fetchall()
+    states = {
+        str(row["stage"] if isinstance(row, sqlite3.Row) else row[0]): str(
+            row["state"] if isinstance(row, sqlite3.Row) else row[1]
+        )
+        for row in rows
+    }
+    return (
+        states.get("discover") == "succeeded"
+        and states.get("enrich") == "succeeded"
+        and all(states.get(stage) == "pending" for stage in ("score", "tailor", "cover"))
+    )
+
+
+def _imported_snapshot_is_preparation_eligible(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: Any,
+    job_id: Any,
+) -> bool:
+    """Return whether the latest immutable snapshot may feed preparation."""
+    from jobctrl.domain.enrichment.snapshot_value_objects import (
+        ActiveState,
+        QuarantineReason,
+    )
+    from jobctrl.infrastructure.enrichment import SqlitePostingSnapshotSetRepository
+
+    snapshot_set = SqlitePostingSnapshotSetRepository(conn).load(tenant_id, job_id)
+    latest = snapshot_set.latest_snapshot if snapshot_set is not None else None
+    return bool(
+        latest is not None
+        and latest.active_state is ActiveState.ACTIVE
+        and latest.quarantine_reason is QuarantineReason.NONE
     )
 
 

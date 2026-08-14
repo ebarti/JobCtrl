@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -17,12 +18,15 @@ from jobctrl.discovery.job_url_import_workflow import (
     job_url_import_activity,
     job_url_import_workflow_id,
 )
-from jobctrl.domain.enrichment import DetailPage
+from jobctrl.domain.enrichment import ActiveState, DetailPage, QuarantineReason
 from jobctrl.domain.rpc.messages import JsonRpcRequest, WorkflowStartSpec
 from jobctrl.infrastructure.rpc.handlers import register_default_handlers
 from jobctrl.infrastructure.rpc.server import JsonRpcServer
 from jobctrl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
 from jobctrl.infrastructure.enrichment.playwright_fetcher import DetailPageFetchBlocked
+from jobctrl.infrastructure.enrichment.sqlite_repository import (
+    SqlitePostingSnapshotSetRepository,
+)
 from jobctrl.infrastructure.network.url_safety import PublicUrlDecision
 from jobctrl.workflow_specs import build_job_url_import_workflow_spec
 
@@ -84,6 +88,21 @@ def _job_page(*, status: int | None = 200) -> DetailPage:
         json_ld=(posting,),
         status=status,
         fetched_at="2026-08-13T15:00:00+00:00",
+    )
+
+
+def _preparation_job_page() -> DetailPage:
+    page = _job_page()
+    posting = dict(page.json_ld[0])
+    posting["description"] = _DESCRIPTION * 4
+    return DetailPage(
+        url=page.url,
+        final_url=page.final_url,
+        page_title=page.page_title,
+        html=f"<main><article class='job-description'>{_DESCRIPTION * 4}</article></main>",
+        json_ld=(posting,),
+        status=page.status,
+        fetched_at=page.fetched_at,
     )
 
 
@@ -231,6 +250,220 @@ def test_greenhouse_application_heading_is_split_into_role_and_employer(
         (result.job_id,),
     ).fetchone()
     assert tuple(row) == ("Senior Cybersecurity Engineer", "Super Technologies")
+    enrichment = conn.execute(
+        """
+        SELECT current_status, application_url
+        FROM job_enrichments
+        WHERE tenant_id = 'local' AND job_id = ?
+        """,
+        (result.job_id,),
+    ).fetchone()
+    assert tuple(enrichment) == ("enriched", None)
+    stages = dict(
+        conn.execute(
+            """
+            SELECT stage, state
+            FROM job_stage_states
+            WHERE tenant_id = 'local' AND job_id = ?
+            """,
+            (result.job_id,),
+        ).fetchall()
+    )
+    assert stages == {
+        "apply": "pending",
+        "cover": "pending",
+        "discover": "succeeded",
+        "enrich": "succeeded",
+        "score": "pending",
+        "tailor": "pending",
+    }
+
+
+def test_import_dispatches_full_preparation_without_apply_and_reuses_workflow_id(
+    tmp_path: Path,
+) -> None:
+    conn = init_db(tmp_path / "jobctrl.db")
+    requested: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> object:
+        requested.append(spec)
+        return object()
+
+    first = job_url_import._execute_job_url_import_and_start_preparation(
+        _payload(),
+        conn=conn,
+        fetcher=_Fetcher(_preparation_job_page()),
+        url_validator=_allow_public_url,
+        workflow_starter=starter,
+    )
+    second_fetcher = _Fetcher(_preparation_job_page())
+    second = job_url_import._execute_job_url_import_and_start_preparation(
+        _payload(),
+        conn=conn,
+        fetcher=second_fetcher,
+        url_validator=_allow_public_url,
+        workflow_starter=starter,
+    )
+
+    assert second.job_id == first.job_id
+    assert second.already_existed is True
+    assert second_fetcher.calls == []
+    assert len(requested) == 2
+    assert requested[0].workflow_id == requested[1].workflow_id
+    preparation_input = requested[0].args[0]
+    assert preparation_input.job_id == first.job_id
+    assert preparation_input.steps == ["score", "tailor", "cover", "pdf"]
+    assert "apply" not in preparation_input.steps
+
+
+def test_quarantined_import_does_not_dispatch_preparation(tmp_path: Path) -> None:
+    conn = init_db(tmp_path / "jobctrl.db")
+    requested: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> object:
+        requested.append(spec)
+        return object()
+
+    result = job_url_import._execute_job_url_import_and_start_preparation(
+        _payload(),
+        conn=conn,
+        fetcher=_Fetcher(_job_page()),
+        url_validator=_allow_public_url,
+        workflow_starter=starter,
+    )
+
+    assert result.outcome == "imported"
+    assert requested == []
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM job_enrichments WHERE job_id = ?",
+            (result.job_id,),
+        ).fetchone()[0]
+        == 0
+    )
+
+
+@pytest.mark.parametrize(
+    ("active_state", "quarantine_reason"),
+    (
+        (ActiveState.EXPIRED, QuarantineReason.NONE),
+        (ActiveState.ACTIVE, QuarantineReason.LOW_CONFIDENCE_EXTRACTION),
+    ),
+)
+def test_existing_enriched_import_rechecks_latest_snapshot_before_preparation(
+    tmp_path: Path,
+    active_state: ActiveState,
+    quarantine_reason: QuarantineReason,
+) -> None:
+    conn = init_db(tmp_path / "jobctrl.db")
+    first = execute_job_url_import(
+        _payload(),
+        conn=conn,
+        fetcher=_Fetcher(_preparation_job_page()),
+        url_validator=_allow_public_url,
+    )
+    repository = SqlitePostingSnapshotSetRepository(conn)
+    snapshot_set = repository.load("local", first.job_id)
+    assert snapshot_set is not None
+    latest = snapshot_set.latest_snapshot
+    assert latest is not None
+    updated_latest = replace(
+        latest,
+        active_state=active_state,
+        quarantine_reason=quarantine_reason,
+    )
+    repository.save(
+        replace(
+            snapshot_set,
+            snapshots=snapshot_set.snapshots[:-1] + (updated_latest,),
+            latest_active_state=active_state,
+            updated_at="2026-08-13T16:00:00+00:00",
+        )
+    )
+    requested: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> object:
+        requested.append(spec)
+        return object()
+
+    retry_fetcher = _Fetcher(_preparation_job_page())
+    retried = job_url_import._execute_job_url_import_and_start_preparation(
+        _payload(),
+        conn=conn,
+        fetcher=retry_fetcher,
+        url_validator=_allow_public_url,
+        workflow_starter=starter,
+    )
+
+    assert retried.job_id == first.job_id
+    assert retried.already_existed is True
+    assert retry_fetcher.calls == []
+    assert requested == []
+    assert (
+        job_url_import._ensure_imported_job_pipeline_state(
+            conn,
+            tenant_id="local",
+            job_id=first.job_id,
+            source_native_id=_URL,
+        )
+        is False
+    )
+
+
+def test_existing_incomplete_import_repairs_enrichment_and_dispatches_preparation(
+    tmp_path: Path,
+) -> None:
+    conn = init_db(tmp_path / "jobctrl.db")
+    first = execute_job_url_import(
+        _payload(),
+        conn=conn,
+        fetcher=_Fetcher(_preparation_job_page()),
+        url_validator=_allow_public_url,
+    )
+    conn.execute(
+        "DELETE FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?",
+        (first.job_id,),
+    )
+    conn.execute(
+        "DELETE FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ?",
+        (first.job_id,),
+    )
+    conn.commit()
+    requested: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> object:
+        requested.append(spec)
+        return object()
+
+    retry_fetcher = _Fetcher(_preparation_job_page())
+    repaired = job_url_import._execute_job_url_import_and_start_preparation(
+        _payload(),
+        conn=conn,
+        fetcher=retry_fetcher,
+        url_validator=_allow_public_url,
+        workflow_starter=starter,
+    )
+
+    assert repaired.job_id == first.job_id
+    assert repaired.already_existed is True
+    assert retry_fetcher.calls == []
+    assert (
+        conn.execute(
+            "SELECT current_status FROM job_enrichments WHERE job_id = ?",
+            (first.job_id,),
+        ).fetchone()[0]
+        == "enriched"
+    )
+    assert (
+        dict(
+            conn.execute(
+                "SELECT stage, state FROM job_stage_states WHERE job_id = ?",
+                (first.job_id,),
+            ).fetchall()
+        )["enrich"]
+        == "succeeded"
+    )
+    assert len(requested) == 1
 
 
 def test_url_import_is_idempotent_and_does_not_refetch_existing_job(tmp_path: Path) -> None:

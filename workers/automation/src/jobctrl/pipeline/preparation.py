@@ -64,7 +64,7 @@ latest_scores AS (
     SELECT scores.tenant_id,
            scores.job_id,
            scores.fit_score,
-           {score_eligible_for_downstream_sql('scores.breakdown_json')} AS eligible_for_downstream
+           {score_eligible_for_downstream_sql("scores.breakdown_json")} AS eligible_for_downstream
       FROM job_scores scores
       INNER JOIN (
           SELECT tenant_id, job_id, MAX(version) AS version
@@ -256,6 +256,7 @@ def start_job_preparation_workflow(
     tailor_judge_min_score: float | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
     workflow_starter: WorkflowStarter | None = None,
+    connection: sqlite3.Connection | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
     discovery_cohort_kind: DiscoveryExecutionCohortKind = "observed_this_run",
 ) -> bool:
@@ -271,8 +272,13 @@ def start_job_preparation_workflow(
     """
     stable_job_id = canonical_job_id(str(job_id))
     try:
-        conn = get_connection()
+        conn = connection or get_connection()
         target_version = current_scoring_policy_version(conn, tenant_id)
+        source_event_id = _latest_source_event_id(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+        )
         spec = build_preparation_workflow_spec(
             tenant_id=tenant_id,
             job_id=stable_job_id,
@@ -286,6 +292,7 @@ def start_job_preparation_workflow(
             tailor_models=tailor_models,
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,
+            source_event_id=source_event_id,
             discovery_execution=discovery_execution,
             discovery_cohort_kind=(discovery_cohort_kind if discovery_execution is not None else None),
         )

@@ -327,9 +327,7 @@ def test_repeat_capture_does_not_republish_existing_duplicate_candidate() -> Non
 
     assert len(first.duplicate_candidates) == 1
     assert second.duplicate_candidates == ()
-    assert [event.event_type for event in publisher.published].count(
-        "ContentDuplicateCandidateDetected"
-    ) == 1
+    assert [event.event_type for event in publisher.published].count("ContentDuplicateCandidateDetected") == 1
 
 
 def test_render_and_llm_fallback_spans_record_non_sensitive_metadata(in_memory_exporter) -> None:
@@ -442,9 +440,7 @@ def test_failed_capture_still_records_verified_active_state_change() -> None:
 
 def test_low_confidence_capture_is_quarantined_without_override() -> None:
     acquisition = ContentAcquisitionService(
-        fetcher=_CannedFetcher(
-            DetailPage(url="https://x", html="<main>Visible role content</main>", status=200)
-        ),
+        fetcher=_CannedFetcher(DetailPage(url="https://x", html="<main>Visible role content</main>", status=200)),
         extractors=(
             TierExtractor(
                 tier=ExtractionTier.LLM_ASSISTED,
@@ -481,9 +477,7 @@ def test_filter_override_audit_admits_low_confidence_snapshot(caplog) -> None:
     assert "filter_override.applied" in caplog.text
 
     acquisition = ContentAcquisitionService(
-        fetcher=_CannedFetcher(
-            DetailPage(url="https://x", html="<main>Visible role content</main>", status=200)
-        ),
+        fetcher=_CannedFetcher(DetailPage(url="https://x", html="<main>Visible role content</main>", status=200)),
         extractors=(
             TierExtractor(
                 tier=ExtractionTier.LLM_ASSISTED,
@@ -552,9 +546,7 @@ def test_filter_override_rejects_disallowed_policy() -> None:
 
 def test_quarantined_snapshot_does_not_promote_to_job_enrichment() -> None:
     acquisition = ContentAcquisitionService(
-        fetcher=_CannedFetcher(
-            DetailPage(url="https://x", html="<main>Visible role content</main>", status=200)
-        ),
+        fetcher=_CannedFetcher(DetailPage(url="https://x", html="<main>Visible role content</main>", status=200)),
         extractors=(
             TierExtractor(
                 tier=ExtractionTier.LLM_ASSISTED,
@@ -614,6 +606,54 @@ def test_inactive_snapshot_does_not_promote_to_job_enrichment() -> None:
     assert not outcome.promoted_to_job_enrichment
     assert enrichment_repository.load(LOCAL_TENANT, JOB_ID) is None
     assert "JobEnriched" not in [event.event_type for event in publisher.published]
+
+
+def test_active_snapshot_without_application_url_promotes_to_job_enrichment() -> None:
+    acquisition = ContentAcquisitionService(
+        fetcher=_CannedFetcher(
+            DetailPage(
+                url="https://boards.greenhouse.io/acme/jobs/1",
+                html="<main>Visible role content</main>",
+                status=200,
+            )
+        ),
+        extractors=(
+            TierExtractor(
+                tier=ExtractionTier.CSS_SELECTORS,
+                extractor=_StaticExtractor(
+                    ExtractionResult(
+                        ok=True,
+                        full_description=FullDescription(text=_long_description()),
+                        application_url=None,
+                    )
+                ),
+            ),
+        ),
+    )
+    enrichment_repository = _MemoryEnrichmentRepository()
+    publisher = _RecordingPublisher()
+    use_case = CapturePostingSnapshotUseCase(
+        snapshot_repository=_MemorySnapshotRepository(),
+        acquisition_service=acquisition,
+        publisher=publisher,
+        enrichment_repository=enrichment_repository,
+    )
+
+    outcome = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        job_id=JOB_ID,
+        url="https://boards.greenhouse.io/acme/jobs/1",
+        source_id=SOURCE_ID,
+        promote_to_job_enrichment=True,
+    )
+
+    assert outcome.ok
+    assert outcome.promoted_to_job_enrichment
+    saved = enrichment_repository.load(LOCAL_TENANT, JOB_ID)
+    assert saved is not None
+    assert saved.is_enriched
+    assert saved.application_url is None
+    assert "JobEnriched" in [event.event_type for event in publisher.published]
 
 
 def test_later_snapshots_do_not_reopen_enriched_job_enrichment() -> None:

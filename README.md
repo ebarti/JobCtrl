@@ -217,6 +217,9 @@ evidence, qualifications, and the complete capability matrix.
 - Persist normalized scoring keywords per score version. The jobs API filters
   by the canonical normalized key, while `/v1/scoring/keywords` exposes the
   current-version aggregation used by typed clients.
+- Import one public posting URL from Jobs. A usable active posting enters the
+  same durable preparation path as discovery—score, tailor, cover letter, and
+  PDFs—while Apply remains a separate, explicitly guarded action.
 - Generate tailored resumes, cover letters, PDFs, and review artifacts.
 - Triage jobs through the real **Active**, **Deleted**, and **Hidden** queues.
   The default Active view keeps source and warning columns available but hidden,

@@ -73,6 +73,7 @@ which workflow is selected.
 | Surface | Entry point | What it starts |
 | --- | --- | --- |
 | Pipelines UI | `POST /v1/pipeline/actions/run-stage` | The TypeScript API dispatches JSON-RPC `run_stage`. A `discover`-only request starts `DiscoverWorkflow`; anything else starts `JobPipelineWorkflow` (which delegates `discover` and `apply` to child workflows). |
+| Jobs URL import | `POST /v1/jobs/import-url` | Starts `JobUrlImportWorkflow`; an active, policy-admitted posting records completed intake/enrichment and starts a root `JobPreparationWorkflow` for score → tailor → cover → PDF. It never starts Apply. |
 | Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Starts a job-scoped `JobPipelineWorkflow` for one visible `pending` internal substage (`enrich`/`score`/`tailor`/`cover`), gated by the API on observable eligibility. |
 | Jobs bulk pending prep | `POST /v1/jobs/bulk-run-pending-preparation` | Groups selected job URLs by their first eligible pending substage and dispatches bounded `run_stage` workflows. |
 | Jobs bulk failed retry | `POST /v1/jobs/bulk-retry-failed` | Resets retryable failed stages and, with `runAfter: true`, dispatches batch `run_stage` workflows for the reset job URLs. |

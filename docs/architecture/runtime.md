@@ -309,7 +309,9 @@ Current responsibilities:
 - dashboard summary endpoint
 - jobs list/detail endpoints
 - immediate public job-URL import (via JSON-RPC `job_url_import`, which starts
-  `JobUrlImportWorkflow` and awaits either a canonical job or Manual Capture)
+  `JobUrlImportWorkflow`, awaits either a canonical job or Manual Capture, and
+  hands each newly usable import to an idempotent root
+  `JobPreparationWorkflow`; Apply remains separate)
 - artifacts list/detail endpoints
 - artifact open endpoint with known-path validation
 - profile/settings read and write endpoints
