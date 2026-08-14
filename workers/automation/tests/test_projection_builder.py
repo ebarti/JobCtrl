@@ -781,9 +781,9 @@ def test_projection_suppresses_historical_posted_as_market_rows(
     summary = json.loads(row["compensation_summary_json"])
     detail_summary = json.loads(row["detail_summary_json"])
     audit = json.loads(row["compensation_audit_json"])
-    assert summary["projectionVersion"] == 2
-    assert detail_summary["projectionVersion"] == 2
-    assert audit["projectionVersion"] == 2
+    assert summary["projectionVersion"] == 3
+    assert detail_summary["projectionVersion"] == 3
+    assert audit["projectionVersion"] == 3
     assert summary["market"]["recordStatus"] == "not_requested"
     assert audit["market"] == {
         "ok": True,

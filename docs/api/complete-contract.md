@@ -658,6 +658,12 @@ projection concern: supported parsed currencies are converted to EUR/year;
 unsupported or missing currencies leave the normalized min/max empty instead of
 guessing.
 
+The compact market summary includes `benchmarkKind: "direct" |
+"extrapolated" | null`. The value is derived from the canonical fact lineage,
+not from source labels or display text. `null` means the recorded estimate does
+not carry a valid canonical benchmark reference; it does not relabel legacy or
+malformed evidence as direct.
+
 `GET /v1/jobs/:jobKey` also includes top-level `interviewPrep`, sourced from
 `job_detail_projections.interview_prep_json`. The value is `null` until the user
 explicitly generates prep for that job. When present, it is the latest accepted
@@ -697,6 +703,20 @@ observation has a safe public URL, and match scores. Raw benchmark pages,
 credentials, private account payloads, local paths, unsafe/private URLs, and
 user compensation preferences are not returned.
 
+A recorded estimate also carries `benchmarkLineage`. It is `null` for a
+non-canonical estimator reference or when its referenced immutable fact graph
+cannot be read safely. A direct lineage identifies the benchmark fact,
+taxonomy, role family, seniority, target geography, compensation component,
+evidence/freshness dates, and its exact direct salary input. An extrapolated
+lineage adds the anchor geography and fact, method and formula version, raw
+factor, company-evidence shrinkage weight, supported factor bounds and bound
+state, matched-company count, every direct salary input, and every official
+price-level input. Each input carries its immutable fact id, role and weight,
+source snapshot, geography, range or index, sample/confidence data where
+applicable, and freshness dates. The API resolves this graph tenant-locally
+from exact-v8 benchmark authorities; it does not fetch providers, expose raw
+payloads, or infer lineage from the final numeric range.
+
 Temporary write trigger: `jobctrl compensation-refresh` reparses posted salary
 facts from existing `jobs.salary` values and description compensation text,
 imports all configured reported compensation observations, estimates matching
@@ -704,17 +724,16 @@ existing jobs, and refreshes projections without running discovery, scoring,
 tailoring, cover, or apply automation. Explicit `--observations-json <file>`
 imports are additive with enabled tokenless public Levels.fyi pages, configured
 licensed Levels.fyi and Glassdoor feeds, and public Euro Top Tech rows. When
-reported evidence does not match, the estimator falls back to employer-posted
-salary facts already captured by JobCtrl as low-confidence posted-salary
-evidence. It falls back through same company/role, same-location role,
-same-company adjacent-role, trimodal company-tier, and broad market-baseline
-tiers so sparse real evidence still produces a best estimate with a wider
-confidence interval. Fallback matching is seniority-aware, so
+reported evidence does not match exactly, the estimator broadens through same
+company/role, same-location role, same-company adjacent-role, trimodal
+company-tier, and broad market-baseline tiers so sparse real evidence still
+produces a best estimate with a wider confidence interval. Fallback matching is seniority-aware, so
 executive CTO/VP roles do not reuse staff, principal, or director observations
 unless the selected source row is also executive-level. It does not label those rows as Levels.fyi,
 Glassdoor, Euro Top Tech, or manual reported-compensation data unless that
-source actually contributed observations. `--url <job-url>` narrows the refresh
-to one existing job.
+source actually contributed observations. Employer-posted compensation remains
+available only through the separate posted fact and is never used as market
+evidence. `--url <job-url>` narrows the refresh to one existing job.
 
 Manual web/API triggers: `POST
 /v1/jobs/:jobKey/actions/refresh-compensation` dispatches the same focused
@@ -725,13 +744,12 @@ request body may include `{ "observationsJsonPath": "/path/to/export.json" }`
 to import additional reported-compensation observations before estimating market
 evidence, or `{ "includeEuroTopTech": false }` to disable only the public Euro
 Top Tech import. Enabled tokenless public Levels.fyi pages and configured
-licensed Levels.fyi and Glassdoor feeds still load by default. When no reported
-source matches, the estimator still falls back to the selected job's captured
-employer-posted salary facts when they can be safely annualized or when
-high-value base-salary text can be treated as annual evidence without using
-bonus-only or one-sided rows. The refresh dispatches `refresh_compensation`,
-which starts `CompensationRefreshWorkflow`; the response is the standard
-action response with the queued workflow ID.
+licensed Levels.fyi and Glassdoor feeds still load by default. When no permitted
+reported source supports a market range, the estimate remains visibly
+insufficient instead of copying the employer's posted number into the market
+authority. The refresh dispatches `refresh_compensation`, which starts
+`CompensationRefreshWorkflow`; the response is the standard action response
+with the queued workflow ID.
 
 Market estimates also project into the same job list/detail compensation
 summary and detail audit fields, separate from posted facts. The compact

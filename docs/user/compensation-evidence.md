@@ -71,9 +71,14 @@ passive read of persisted evidence; it does not fetch or recalculate salary.
   minimum and maximum, reported-market estimate, confidence, and warnings. A
   missing value remains visibly missing rather than being guessed.
 - `/jobs/:jobId` opens the full **Compensation evidence** section. It separates
-  the posted-salary parse from the reported company-role market estimate and
-  exposes parse/estimate state, range, confidence, warnings, attribution,
-  source trail, selected evidence, and matching factors when recorded.
+  the posted-salary parse from the reported company-role market estimate. A
+  direct benchmark names its exact country evidence; an extrapolated benchmark
+  shows the anchor-to-target geography bridge, every direct salary and official
+  price-level input, sample counts, company-evidence weight, raw factor,
+  supported `0.1x` to `10x` bounds, formula version, fact IDs, and freshness.
+  Parse/estimate state, range, confidence, warnings, attribution, source trail,
+  selected evidence, and matching factors remain visible alongside that
+  lineage.
 - The Job Detail workspace can still start a focused compensation refresh. The
   Jobs toolbar can refresh the current backlog. An optional local observation
   import can be supplied to that explicit refresh; automatic discovery does not

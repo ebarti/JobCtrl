@@ -71,8 +71,13 @@ and layout evidence.
 
 `GET /v1/jobs/:jobKey/compensation/posted` exposes parsed employer-posted facts;
 `GET /v1/jobs/:jobKey/compensation/market` exposes the local estimate and its
-selected evidence. `/v1/compensation/sources` controls permitted source inputs.
-Refresh is an explicit workflow/action, not a read-time side effect.
+selected evidence plus immutable benchmark lineage when the estimate references
+a canonical direct or geographically extrapolated fact. Job list/detail
+summaries identify that authority as `direct`, `extrapolated`, or unknown;
+detail reads expose the role, level, geography, freshness, exact salary and
+price-level inputs, factor bounds, and formula needed to audit the result.
+`/v1/compensation/sources` controls permitted source inputs. Refresh is an
+explicit workflow/action, not a read-time side effect.
 
 ## Apply Review And Outcomes
 

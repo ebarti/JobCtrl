@@ -300,6 +300,12 @@ export function MarketCompensationCell({
 
   const sourceCount =
     market.sourceCount > 0 ? pluralize(market.sourceCount, "source") : null;
+  const benchmarkLabel =
+    market.benchmarkKind === "direct"
+      ? "Direct benchmark"
+      : market.benchmarkKind === "extrapolated"
+        ? "Geo estimate"
+        : null;
   const stateLabel = marketStateLabel(market.estimateState);
   const primary =
     market.estimateState === "estimated_range" && formatEurRange(market.range)
@@ -317,19 +323,25 @@ export function MarketCompensationCell({
       aria-label={[
         marketMissingLabel(market.estimateState),
         primary,
+        benchmarkLabel,
         interval,
         confidenceValueLabel(market),
         sourceCount,
       ]
         .filter(Boolean)
         .join(", ")}
-      title={[primary, interval, confidenceValueLabel(market), sourceCount]
+      title={[primary, benchmarkLabel, interval, confidenceValueLabel(market), sourceCount]
         .filter(Boolean)
         .join(", ")}
     >
       <span className="job-compensation-primary" data-typography="strong-body">
         {primary}
       </span>
+      {benchmarkLabel ? (
+        <span className="job-compensation-meta" data-typography="metadata">
+          {benchmarkLabel}
+        </span>
+      ) : null}
       {interval ? (
         <span className="job-compensation-meta" data-typography="metadata">
           {interval}

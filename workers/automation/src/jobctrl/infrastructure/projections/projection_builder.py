@@ -64,6 +64,9 @@ from jobctrl.domain.operations.projections import (
 )
 from jobctrl.domain.ports.events import EventPublisher, Subscription
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctrl.infrastructure.compensation.benchmark_lineage import (
+    load_market_benchmark_lineage,
+)
 from jobctrl.infrastructure.events.watermark import SqliteEventWatermarkRepository
 from jobctrl.infrastructure.projections.location_normalization import (
     normalize_job_location,
@@ -105,7 +108,7 @@ PROJECTION_NAME = "operations_projections"
 # columns keep NULL criteria/trace/correction. This marker drives a single
 # targeted rebuild of those rows, independent of column creation.
 SCORE_AUDIT_BACKFILL = "score_audit_columns_v1"
-COMPENSATION_PROJECTION_VERSION = 2
+COMPENSATION_PROJECTION_VERSION = 3
 
 _APPLY_URL_OUTCOME_DETAILS: dict[str, tuple[str, bool]] = {
     "APPLY_URL_EXTERNAL_RECOVERED": (
@@ -2082,6 +2085,13 @@ class ProjectionBuilder:
             "market": {
                 "sourceKind": "reported_company_role_market",
                 "recordStatus": market["recordStatus"],
+                "benchmarkKind": (
+                    market["estimate"]["benchmarkLineage"]["kind"]
+                    if market["recordStatus"] == "recorded"
+                    and isinstance(market.get("estimate"), dict)
+                    and isinstance(market["estimate"].get("benchmarkLineage"), dict)
+                    else None
+                ),
                 "estimateState": (
                     market["estimate"]["estimateState"]
                     if market["recordStatus"] == "recorded" and isinstance(market.get("estimate"), dict)
@@ -2188,7 +2198,15 @@ class ProjectionBuilder:
             return {"ok": True, "recordStatus": "not_requested", "jobId": job_id}
         if _market_uses_employer_posted_authority(_row_str(row, "source_snapshot_json")):
             return {"ok": True, "recordStatus": "not_requested", "jobId": job_id}
-        estimate = _market_estimate_from_row(row, job_id)
+        estimate = _market_estimate_from_row(
+            row,
+            job_id,
+            benchmark_lineage=load_market_benchmark_lineage(
+                self._conn,
+                tenant_id=str(self._tenant_id),
+                estimator_version=_row_str(row, "estimator_version"),
+            ),
+        )
         return {"ok": True, "recordStatus": "recorded", "estimate": estimate}
 
     # ------------------------------------------------------------- joiners
@@ -4311,7 +4329,12 @@ def _posted_fact_from_row(row: object, job_id: str) -> dict[str, Any]:
     }
 
 
-def _market_estimate_from_row(row: object, job_id: str) -> dict[str, Any]:
+def _market_estimate_from_row(
+    row: object,
+    job_id: str,
+    *,
+    benchmark_lineage: dict[str, Any] | None,
+) -> dict[str, Any]:
     sources = _market_sources(_row_str(row, "source_snapshot_json"))
     estimate_state = _row_str(row, "estimate_state")
     confidence_band = _confidence_band(_row_get(row, "confidence_band"))
@@ -4338,6 +4361,7 @@ def _market_estimate_from_row(row: object, job_id: str) -> dict[str, Any]:
         "factors": _market_factors(_row_str(row, "factor_reasons_json")),
         "evidence": _market_evidence(_row_str(row, "selected_evidence_json")),
         "warnings": _warnings(_row_str(row, "warnings_json"), MARKET_COMPENSATION_WARNING_MESSAGES),
+        "benchmarkLineage": benchmark_lineage,
         "estimatorVersion": _row_str(row, "estimator_version"),
         "estimatedAt": _row_str(row, "estimated_at"),
     }

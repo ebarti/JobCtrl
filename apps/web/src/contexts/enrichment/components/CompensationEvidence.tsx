@@ -7,8 +7,12 @@ import type {
   JobCompensationSummary,
   JobMarketCompensationSummary,
   JobPostedCompensationSummary,
+  MarketCompensationBenchmarkGeography,
+  MarketCompensationBenchmarkLineage,
+  MarketCompensationDirectBenchmarkInput,
   MarketCompensationEvidenceRow,
   MarketCompensationFactor,
+  MarketCompensationPriceLevelInput,
   MarketCompensationReason,
   MarketCompensationSourceSnapshot,
   MarketCompensationWarning,
@@ -75,8 +79,24 @@ function optionalCount(value: number | null | undefined): number | null {
   return Number.isFinite(value) ? Number(value) : null;
 }
 
-function plural(count: number, singular: string): string {
-  return `${count} ${singular}${count === 1 ? "" : "s"}`;
+function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+function benchmarkSource(market: JobMarketCompensationSummary): string {
+  if (market.benchmarkKind === "direct") return "direct market benchmark";
+  if (market.benchmarkKind === "extrapolated") return "geographically extrapolated benchmark";
+  return "reported company-role market";
+}
+
+function formatGeography(geography: MarketCompensationBenchmarkGeography): string {
+  return [geography.locality, geography.subdivisionCode, geography.countryCode]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function formatMultiplier(value: number): string {
+  return `${Number(value.toFixed(3))}x`;
 }
 
 const amountFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -160,7 +180,7 @@ function primaryCompensation(
   if (summary.market.recordStatus === "recorded" && summary.market.displayRange) {
     return {
       range: summary.market.displayRange,
-      source: "reported company-role market",
+      source: benchmarkSource(summary.market),
       confidence: marketConfidenceText(summary.market),
       tone: confidenceTone(summary.market.confidenceBand),
       warningCount: finiteCount(summary.market.warningCount),
@@ -180,7 +200,7 @@ function primaryCompensation(
   if (summary.market.recordStatus === "recorded") {
     return {
       range: formatToken(summary.market.estimateState) || "market estimate recorded",
-      source: "reported company-role market",
+      source: benchmarkSource(summary.market),
       confidence: marketConfidenceText(summary.market),
       tone: confidenceTone(summary.market.confidenceBand),
       warningCount: finiteCount(summary.market.warningCount),
@@ -230,6 +250,7 @@ export function compensationSearchText(
     primary.confidence,
     formatToken(summary.posted.parseState),
     formatToken(summary.market.estimateState),
+    formatToken(summary.market.benchmarkKind),
     formatToken(summary.market.confidenceBand),
     finiteCount(summary.market.sourceCount) ? plural(finiteCount(summary.market.sourceCount), "source") : null,
     optionalCount(summary.market.sampleCount) === null
@@ -474,6 +495,146 @@ function EvidenceRows({ rows }: { readonly rows: readonly MarketCompensationEvid
   );
 }
 
+function DirectBenchmarkInputs({
+  inputs,
+}: {
+  readonly inputs: readonly MarketCompensationDirectBenchmarkInput[];
+}) {
+  if (!inputs.length) return null;
+  return (
+    <div className="compensation-lineage-inputs">
+      <h5>Direct salary inputs</h5>
+      <div className="compensation-lineage-input-list">
+        {inputs.map((input) => (
+          <article
+            className="compensation-lineage-input"
+            key={`${input.inputRole}:${input.factId}`}
+          >
+            <header>
+              <b>{formatToken(input.inputRole)}</b>
+              <span>
+                EUR {formatAmount(input.minimumAmountEur)}-{formatAmount(input.maximumAmountEur)}/year
+              </span>
+            </header>
+            <dl>
+              <DetailRow label="Geography" value={formatGeography(input.geography)} />
+              <DetailRow label="Company" value={input.normalizedCompany ?? "market aggregate"} />
+              <DetailRow label="Source" value={`${input.sourceId} · ${formatToken(input.sourceProvenance)}`} />
+              <DetailRow label="Snapshot" value={input.sourceSnapshotId} />
+              <DetailRow label="Samples" value={plural(input.sampleCount, "sample")} />
+              <DetailRow label="Confidence" value={formatPercent(input.confidenceScore)} />
+              <DetailRow label="Bridge weight" value={formatPercent(input.weight)} />
+              <DetailRow label="As of" value={input.asOfDate} />
+              <DetailRow label="Fresh through" value={input.freshUntil} />
+              <DetailRow label="Fact ID" value={input.factId} />
+            </dl>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PriceLevelInputs({
+  inputs,
+}: {
+  readonly inputs: readonly MarketCompensationPriceLevelInput[];
+}) {
+  if (!inputs.length) return null;
+  return (
+    <div className="compensation-lineage-inputs">
+      <h5>Cost-of-living inputs</h5>
+      <div className="compensation-lineage-input-list">
+        {inputs.map((input) => (
+          <article
+            className="compensation-lineage-input"
+            key={`${input.inputRole}:${input.factId}`}
+          >
+            <header>
+              <b>{formatToken(input.inputRole)}</b>
+              <span>
+                {input.countryCode} index {Number(input.indexValue.toFixed(2))}
+              </span>
+            </header>
+            <dl>
+              <DetailRow label="Category" value={formatToken(input.category)} />
+              <DetailRow label="Reference year" value={input.referenceYear} />
+              <DetailRow label="Index base" value={input.baseGeographyCode} />
+              <DetailRow label="Source" value={input.sourceId} />
+              <DetailRow label="Snapshot" value={input.sourceSnapshotId} />
+              <DetailRow label="Bridge weight" value={formatPercent(input.weight)} />
+              <DetailRow label="As of" value={input.asOfDate} />
+              <DetailRow label="Fresh through" value={input.freshUntil} />
+              <DetailRow label="Fact ID" value={input.factId} />
+            </dl>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BenchmarkLineage({
+  lineage,
+}: {
+  readonly lineage: MarketCompensationBenchmarkLineage | null;
+}) {
+  if (!lineage) return null;
+  const extrapolated = lineage.kind === "extrapolated" ? lineage : null;
+  const boundTone: TagTone =
+    extrapolated && extrapolated.factorBoundState !== "within_bounds" ? "warn" : "info";
+  return (
+    <section
+      className={`compensation-benchmark-lineage compensation-benchmark-lineage-${lineage.kind}`}
+      aria-label={lineage.kind === "direct" ? "Direct benchmark lineage" : "Geographic extrapolation lineage"}
+    >
+      <header>
+        <div>
+          <span className="eyebrow">Benchmark authority</span>
+          <h4>{lineage.kind === "direct" ? "Direct country benchmark" : "Geographic extrapolation bridge"}</h4>
+        </div>
+        <StatusBadge tone={lineage.kind === "direct" ? "ok" : boundTone}>
+          {lineage.kind === "direct" ? "direct evidence" : "derived estimate"}
+        </StatusBadge>
+      </header>
+      {extrapolated ? (
+        <p className="compensation-bridge-route">
+          <b>{formatGeography(extrapolated.anchorGeography)}</b>
+          <span aria-hidden="true">→</span>
+          <b>{formatGeography(extrapolated.targetGeography)}</b>
+          <span>{formatMultiplier(extrapolated.rawFactor)} raw factor</span>
+        </p>
+      ) : null}
+      <dl className="compensation-detail-grid">
+        <DetailRow label="Role family" value={formatToken(lineage.roleFamilyCode)} />
+        <DetailRow label="Taxonomy" value={lineage.taxonomyVersion} />
+        <DetailRow label="Level" value={formatToken(lineage.seniorityLabel)} />
+        <DetailRow label="Target geography" value={formatGeography(lineage.targetGeography)} />
+        <DetailRow label="Evidence as of" value={lineage.asOfDate} />
+        <DetailRow label="Fresh through" value={lineage.freshUntil} />
+        <DetailRow label="Benchmark fact" value={lineage.factId} />
+        {extrapolated ? (
+          <>
+            <DetailRow label="Raw factor" value={formatMultiplier(extrapolated.rawFactor)} />
+            <DetailRow label="Company evidence weight" value={formatPercent(extrapolated.shrinkageWeight)} />
+            <DetailRow
+              label="Matched companies"
+              value={plural(extrapolated.matchedCompanyCount, "company", "companies")}
+            />
+            <DetailRow
+              label="Review bounds"
+              value={`${formatMultiplier(extrapolated.lowerFactorBound)}-${formatMultiplier(extrapolated.upperFactorBound)} · ${formatToken(extrapolated.factorBoundState)}`}
+            />
+            <DetailRow label="Formula" value={extrapolated.formulaVersion} />
+          </>
+        ) : null}
+      </dl>
+      <DirectBenchmarkInputs inputs={lineage.directInputs} />
+      <PriceLevelInputs inputs={lineage.priceLevelInputs} />
+    </section>
+  );
+}
+
 function PostedPanel({
   posted,
   fact,
@@ -511,15 +672,23 @@ function MarketPanel({
   readonly estimate: JobCompensationAuditMarketEstimate | null;
 }) {
   const score = estimate ? formatPercent(estimate.confidenceScore) : formatPercent(market.confidenceScore);
+  const lineage = estimate?.benchmarkLineage ?? null;
   return (
     <article className="compensation-panel">
       <header>
-        <span className="eyebrow">Reported Company-Role Market</span>
+        <span className="eyebrow">
+          {lineage?.kind === "direct"
+            ? "Direct Market Benchmark"
+            : lineage?.kind === "extrapolated"
+              ? "Extrapolated Market Benchmark"
+              : "Reported Company-Role Market"}
+        </span>
         <b>{market.displayRange || formatToken(market.estimateState) || "not requested"}</b>
         <span className={`tag ${confidenceTone(market.confidenceBand)}`}>{marketConfidenceText(market)}</span>
       </header>
       <dl className="compensation-detail-grid">
         <DetailRow label="State" value={formatToken(market.estimateState)} />
+        <DetailRow label="Benchmark type" value={lineage ? formatToken(lineage.kind) : null} />
         <DetailRow label="Range" value={market.displayRange} />
         <DetailRow label="Confidence interval" value={market.displayConfidenceInterval} />
         <DetailRow label="Confidence score" value={score} />
@@ -534,6 +703,7 @@ function MarketPanel({
       </dl>
       {estimate ? (
         <>
+          <BenchmarkLineage lineage={lineage} />
           <SourceTrail sources={estimate.sources} />
           <EvidenceRows rows={estimate.evidence} />
           <FactorList factors={estimate.factors} />
@@ -625,6 +795,10 @@ export function CompensationAuditSection({
           market: {
             sourceKind: "reported_company_role_market" as const,
             recordStatus: audit.market.recordStatus,
+            benchmarkKind:
+              audit.market.recordStatus === "recorded"
+                ? audit.market.estimate.benchmarkLineage?.kind ?? null
+                : null,
             estimateState: audit.market.recordStatus === "recorded" ? audit.market.estimate.estimateState : "not_requested",
             confidenceBand: audit.market.recordStatus === "recorded" ? audit.market.estimate.confidenceBand : "none",
             confidenceScore: audit.market.recordStatus === "recorded" ? audit.market.estimate.confidenceScore : null,

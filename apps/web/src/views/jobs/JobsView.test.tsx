@@ -439,6 +439,7 @@ describe("<JobsView> compensation source-conflict visibility", () => {
       warningCount: 2,
       market: {
         ...sampleCompensationSummary.market,
+        benchmarkKind: "extrapolated" as const,
         confidenceBand: "medium" as const,
         confidenceScore: 0.74,
         sourceCount: 2,
@@ -491,6 +492,7 @@ describe("<JobsView> compensation source-conflict visibility", () => {
     expect(row.getByText("70,000")).toBeInTheDocument();
     expect(row.getByText("90,000")).toBeInTheDocument();
     expect(row.getByText("112,000-142,000")).toBeInTheDocument();
+    expect(row.getByText("Geo estimate")).toBeInTheDocument();
     expect(row.getByText("Medium")).toBeInTheDocument();
     expect(row.getByText("74%")).toBeInTheDocument();
     expect(row.getByText(/2 sources/)).toBeInTheDocument();

@@ -6697,10 +6697,106 @@ input[type="radio"] {
 .compensation-warning-list,
 .compensation-source-trail,
 .compensation-evidence-rows,
-.compensation-factor-list {
+.compensation-factor-list,
+.compensation-benchmark-lineage,
+.compensation-lineage-inputs {
   display: grid;
   gap: 6px;
   min-width: 0;
+}
+
+.compensation-benchmark-lineage {
+  gap: 10px;
+  border: 1px solid color-mix(in oklch, var(--primary) 32%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in oklch, var(--primary) 4%, var(--card));
+  padding: 10px;
+}
+
+.compensation-benchmark-lineage-extrapolated {
+  border-color: color-mix(in oklch, var(--warning) 42%, var(--border));
+  background: color-mix(in oklch, var(--warning) 5%, var(--card));
+}
+
+.compensation-benchmark-lineage > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: start;
+}
+
+.compensation-benchmark-lineage > header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.compensation-benchmark-lineage h4,
+.compensation-lineage-inputs h5 {
+  margin: 0;
+}
+
+.compensation-bridge-route {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.compensation-bridge-route span:last-child {
+  color: var(--muted-foreground);
+}
+
+.compensation-lineage-input-list {
+  display: grid;
+  gap: 8px;
+}
+
+.compensation-lineage-input {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+
+.compensation-lineage-input > header {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 8px;
+}
+
+.compensation-lineage-input > header > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.compensation-lineage-input dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  margin: 0;
+}
+
+.compensation-lineage-input dl > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.compensation-lineage-input dt {
+  color: var(--muted-foreground);
+  font-size: var(--jh-type-label-size);
+}
+
+.compensation-lineage-input dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .compensation-evidence-rows > summary {
@@ -8057,6 +8153,7 @@ input[type="radio"] {
   .apply-review-workspace,
   .compensation-panels,
   .compensation-detail-grid,
+  .compensation-lineage-input dl,
   .import-panel,
   .resume-template-shell,
   .credential-row,

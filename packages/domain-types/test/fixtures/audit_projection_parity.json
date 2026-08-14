@@ -453,6 +453,7 @@
       "compensation_summary_json": {
         "legacyRawSalary": "EUR 90000-120000/year",
         "market": {
+          "benchmarkKind": null,
           "confidenceBand": "none",
           "confidenceInterval": null,
           "confidenceScore": null,
@@ -475,7 +476,7 @@
           "sourceKind": "posted",
           "warningCount": 0
         },
-        "projectionVersion": 2,
+        "projectionVersion": 3,
         "warningCount": 0
       },
       "current_error_code": null,
@@ -574,11 +575,12 @@
           "ok": true,
           "recordStatus": "not_recorded"
         },
-        "projectionVersion": 2
+        "projectionVersion": 3
       },
       "compensation_summary_json": {
         "legacyRawSalary": "EUR 90000-120000/year",
         "market": {
+          "benchmarkKind": null,
           "confidenceBand": "none",
           "confidenceInterval": null,
           "confidenceScore": null,
@@ -601,7 +603,7 @@
           "sourceKind": "posted",
           "warningCount": 0
         },
-        "projectionVersion": 2,
+        "projectionVersion": 3,
         "warningCount": 0
       },
       "description_preview": "Own the developer platform across the fleet. Build paved paths for product teams.",

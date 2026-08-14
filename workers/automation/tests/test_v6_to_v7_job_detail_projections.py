@@ -334,6 +334,8 @@ def test_rebuilds_from_candidate_uuid_canonical_rows_and_ignores_v6_cache(
         assert _JOB_URL not in json.dumps({"requirement": requirement_fit, "interview": interview})
         compensation_summary = json.loads(str(row[3]))
         compensation_audit = json.loads(str(row[4]))
+        assert compensation_summary["projectionVersion"] == 3
+        assert compensation_audit["projectionVersion"] == 3
         assert compensation_summary["posted"]["displayRange"] == (
             "USD 70000-90000/year"
         )
@@ -352,6 +354,7 @@ def test_rebuilds_from_candidate_uuid_canonical_rows_and_ignores_v6_cache(
         assert compensation_summary["market"]["displayConfidenceInterval"] == (
             "EUR 8500-11500/month"
         )
+        assert compensation_summary["market"]["benchmarkKind"] is None
         assert compensation_audit["market"]["estimate"]["sources"] == [
             {
                 "sourceId": "levels_fyi",
@@ -419,6 +422,74 @@ def test_rebuild_ignores_unaccepted_market_estimator_history(
             "jobId": _JOB_ID,
         }
         assert "token=secret" not in json.dumps(audit)
+    finally:
+        source.close()
+        candidate.close()
+
+
+def test_rebuild_never_projects_employer_posted_salary_as_market_evidence(
+    tmp_path: Path,
+) -> None:
+    source, candidate, _, _ = _databases(tmp_path)
+    try:
+        _seed_canonical(source)
+        job_ids = _hydrate(source, candidate)
+        _seed_candidate_compensation(candidate)
+        candidate.execute(
+            """
+            UPDATE job_market_compensation_estimates
+            SET source_snapshot_json = ?
+            WHERE tenant_id = 'local' AND job_id = ?
+            """,
+            (
+                json.dumps(
+                    [
+                        {
+                            "source_id": "posted_salary_text",
+                            "source_provenance": "employer_posted",
+                            "source_type": "posted_salary",
+                        }
+                    ]
+                ),
+                _JOB_ID,
+            ),
+        )
+
+        rebuild_job_detail_projections(
+            source,
+            candidate,
+            job_ids=job_ids,
+            migration_at=_MIGRATION_AT,
+        )
+
+        row = _detail_row(candidate)
+        summary = json.loads(str(row[3]))
+        audit = json.loads(str(row[4]))
+        assert summary["projectionVersion"] == 3
+        assert summary["market"] == {
+            "sourceKind": "reported_company_role_market",
+            "recordStatus": "not_requested",
+            "benchmarkKind": None,
+            "estimateState": "not_requested",
+            "confidenceBand": "none",
+            "confidenceScore": None,
+            "sourceCount": 0,
+            "sampleCount": None,
+            "warningCount": 0,
+            "range": None,
+            "displayRange": None,
+            "confidenceInterval": None,
+            "displayConfidenceInterval": None,
+        }
+        assert audit == {
+            "projectionVersion": 3,
+            "posted": audit["posted"],
+            "market": {
+                "ok": True,
+                "recordStatus": "not_requested",
+                "jobId": _JOB_ID,
+            },
+        }
     finally:
         source.close()
         candidate.close()

@@ -91,10 +91,44 @@ def test_direct_benchmark_materializes_every_matching_job_idempotently(
         assert projection is not None
         summary = json.loads(projection["compensation_summary_json"])
         assert summary["market"]["recordStatus"] == "recorded"
+        assert summary["market"]["benchmarkKind"] == "direct"
         assert summary["market"]["displayRange"] == "EUR 60000-90000/year"
         audit = json.loads(projection["compensation_audit_json"])
         assert audit["market"]["estimate"]["geographyScope"] == "country"
         assert {source["geographyScope"] for source in audit["market"]["estimate"]["sources"]} == {"country"}
+        lineage = audit["market"]["estimate"]["benchmarkLineage"]
+        assert lineage["kind"] == "direct"
+        assert lineage["roleFamilyCode"] == "software_engineering"
+        assert lineage["seniorityLabel"] == "senior"
+        assert lineage["targetGeography"] == {
+            "countryCode": "ES",
+            "subdivisionCode": None,
+            "locality": None,
+            "scope": "country",
+        }
+        assert lineage["asOfDate"] == "2026-01-01"
+        assert lineage["freshUntil"] == "2026-08-19T08:00:00.000000Z"
+        assert lineage["priceLevelInputs"] == []
+        assert lineage["directInputs"] == [
+            {
+                "factId": lineage["factId"],
+                "inputRole": "anchor",
+                "weight": 1.0,
+                "geography": lineage["targetGeography"],
+                "marketScope": "market",
+                "normalizedCompany": None,
+                "minimumAmountEur": 60_000,
+                "maximumAmountEur": 90_000,
+                "confidenceScore": 0.76,
+                "sampleCount": 20,
+                "sourceId": "levels_fyi",
+                "sourceProvenance": "public",
+                "sourceSnapshotId": "levels-public-spain",
+                "asOfDate": "2026-01-01",
+                "fetchedAt": "2026-08-12T08:00:00.000000Z",
+                "freshUntil": "2026-08-19T08:00:00.000000Z",
+            }
+        ]
 
         event_count = conn.execute(
             """
@@ -354,6 +388,7 @@ def test_out_of_bounds_geographic_extrapolation_remains_visible_with_warnings(
         ).fetchone()
         assert projection is not None
         market = json.loads(projection["compensation_summary_json"])["market"]
+        assert market["benchmarkKind"] == "extrapolated"
         assert market["displayRange"] == "EUR 1200000-1800000/year"
         assert market["warningCount"] >= 3
         audit = json.loads(projection["compensation_audit_json"])["market"]["estimate"]
@@ -364,6 +399,26 @@ def test_out_of_bounds_geographic_extrapolation_remains_visible_with_warnings(
             "cost_of_living_only",
             "factor_out_of_bounds",
         }.issubset({warning["code"] for warning in audit["warnings"]})
+        lineage = audit["benchmarkLineage"]
+        assert lineage["kind"] == "extrapolated"
+        assert lineage["targetGeography"]["countryCode"] == "ES"
+        assert lineage["anchorGeography"]["countryCode"] == "DE"
+        assert lineage["rawFactor"] == 20
+        assert lineage["shrinkageWeight"] == 0
+        assert lineage["lowerFactorBound"] == 0.1
+        assert lineage["upperFactorBound"] == 10
+        assert lineage["factorBoundState"] == "above_upper_bound"
+        assert lineage["matchedCompanyCount"] == 0
+        assert lineage["formulaVersion"] == "geo-shrinkage-v1"
+        assert [
+            (item["inputRole"], item["countryCode"], item["indexValue"]) for item in lineage["priceLevelInputs"]
+        ] == [
+            ("source_price_level", "DE", 100),
+            ("target_price_level", "ES", 2_000),
+        ]
+        assert [(item["inputRole"], item["geography"]["countryCode"]) for item in lineage["directInputs"]] == [
+            ("anchor", "DE")
+        ]
     finally:
         close_connection(db_path)
 

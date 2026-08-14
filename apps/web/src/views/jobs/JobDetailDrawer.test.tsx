@@ -590,6 +590,37 @@ describe("<JobDetailDrawer>", () => {
   });
 
   it("renders compensation audit range, statistical confidence, and reported sources", async () => {
+    if (
+      sampleCompensationAudit.market.recordStatus !== "recorded" ||
+      sampleCompensationAudit.market.estimate.benchmarkLineage?.kind !==
+        "extrapolated"
+    ) {
+      throw new Error(
+        "sample compensation audit must include extrapolated benchmark lineage",
+      );
+    }
+    const benchmarkLineage =
+      sampleCompensationAudit.market.estimate.benchmarkLineage;
+    const compensationAudit = {
+      ...sampleCompensationAudit,
+      market: {
+        ...sampleCompensationAudit.market,
+        estimate: {
+          ...sampleCompensationAudit.market.estimate,
+          benchmarkLineage: {
+            ...benchmarkLineage,
+            rawFactor: 20,
+            factorBoundState: "above_upper_bound" as const,
+            matchedCompanyCount: 0,
+            priceLevelInputs: benchmarkLineage.priceLevelInputs.map((input) =>
+              input.inputRole === "target_price_level"
+                ? { ...input, indexValue: 2000 }
+                : input,
+            ),
+          },
+        },
+      },
+    };
     server.use(
       http.get("*/v1/jobs/:jobKey", ({ params }) => {
         return HttpResponse.json(
@@ -599,9 +630,7 @@ describe("<JobDetailDrawer>", () => {
               jobKey: String(params["jobKey"]),
             },
             {
-              compensationAudit: {
-                ...sampleCompensationAudit,
-              },
+              compensationAudit,
             },
           ),
         );
@@ -623,7 +652,7 @@ describe("<JobDetailDrawer>", () => {
     expect(
       within(compensation).getAllByText(/market confidence medium/i).length,
     ).toBeGreaterThan(0);
-    expect(within(compensation).getByText("82%")).toBeInTheDocument();
+    expect(within(compensation).getAllByText("82%").length).toBeGreaterThan(0);
     expect(
       within(compensation).getAllByText(/2 sources/i).length,
     ).toBeGreaterThan(0);
@@ -632,8 +661,23 @@ describe("<JobDetailDrawer>", () => {
     ).toBeGreaterThan(0);
     expect(within(compensation).getByText("Posted Salary")).toBeInTheDocument();
     expect(
-      within(compensation).getByText("Reported Company-Role Market"),
+      within(compensation).getByText("Extrapolated Market Benchmark"),
     ).toBeInTheDocument();
+    const lineage = within(compensation).getByRole("region", {
+      name: "Geographic extrapolation lineage",
+    });
+    expect(lineage).toHaveTextContent("Geographic extrapolation bridge");
+    expect(lineage).toHaveTextContent("DE→ES");
+    expect(lineage).toHaveTextContent("20x raw factor");
+    expect(lineage).toHaveTextContent("software engineering");
+    expect(lineage).toHaveTextContent("jobctrl-role-family-v1");
+    expect(within(lineage).getByText("Matched companies")).toBeInTheDocument();
+    expect(within(lineage).getByText("0 companies")).toBeInTheDocument();
+    expect(lineage).toHaveTextContent("0.1x-10x · above upper bound");
+    expect(lineage).toHaveTextContent("geo-shrinkage-v1");
+    expect(lineage).toHaveTextContent("EUR 100,000-127,000/year");
+    expect(lineage).toHaveTextContent("DE index 100");
+    expect(lineage).toHaveTextContent("ES index 2000");
     expect(
       within(compensation).getAllByText("Levels.fyi").length,
     ).toBeGreaterThan(0);

@@ -1293,7 +1293,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText(/Dry run completed/i)).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Compensation" })).toBeInTheDocument();
     expect(screen.getByText("EUR 112000-142000/year")).toBeInTheDocument();
-    expect(screen.getByText("reported company-role market")).toBeInTheDocument();
+    expect(screen.getByText("geographically extrapolated benchmark")).toBeInTheDocument();
     expect(screen.getByText(/market confidence medium/i)).toBeInTheDocument();
     expect(screen.getByText(/2 sources/i)).toBeInTheDocument();
     expect(screen.getByText(/7 samples/i)).toBeInTheDocument();
