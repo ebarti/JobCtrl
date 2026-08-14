@@ -1921,7 +1921,9 @@ test("pipeline recovery explains the automatic previous-run check in plain langu
   });
   await page.goto("/pipelines");
 
-  const alert = page.getByRole("alert");
+  const alert = page
+    .getByRole("alert")
+    .filter({ hasText: "Checking previous run records" });
   await expect(alert).toContainText("Checking previous run records");
   await expect(alert).toContainText("15 of 72 linked jobs checked");
   await expect(alert).toContainText("3 of 8 stage records checked");
