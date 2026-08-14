@@ -923,6 +923,59 @@ def _ensure_imported_job_pipeline_state(
             tenant_id=tenant_id,
             discovered_at=discovered_at or None,
         )
+        discovery_row = conn.execute(
+            """
+            SELECT state, attempt_count
+            FROM job_stage_states
+            WHERE tenant_id = ? AND job_id = ? AND stage = 'discover'
+            """,
+            (str(tenant_id), str(job_id)),
+        ).fetchone()
+        discovery_state = str(
+            (discovery_row["state"] if isinstance(discovery_row, sqlite3.Row) else discovery_row[0])
+            if discovery_row is not None
+            else ""
+        )
+        discovery_attempt_count = max(
+            1,
+            int((discovery_row["attempt_count"] if isinstance(discovery_row, sqlite3.Row) else discovery_row[1]) or 0)
+            if discovery_row is not None
+            else 1,
+        )
+        if discovery_state != "succeeded":
+            discovery_finished_at = discovered_at or finished_at
+            if discovery_state != "running":
+                try:
+                    set_stage_state(
+                        conn,
+                        job_id,
+                        "discover",
+                        "running",
+                        tenant_id=tenant_id,
+                        attempt_count=discovery_attempt_count,
+                        started_at=discovery_finished_at,
+                    )
+                except ValueError:
+                    set_stage_state(
+                        conn,
+                        job_id,
+                        "discover",
+                        "running",
+                        tenant_id=tenant_id,
+                        attempt_count=discovery_attempt_count,
+                        started_at=discovery_finished_at,
+                        validate_transition=False,
+                    )
+            set_stage_state(
+                conn,
+                job_id,
+                "discover",
+                "succeeded",
+                tenant_id=tenant_id,
+                attempt_count=discovery_attempt_count,
+                started_at=discovery_finished_at,
+                finished_at=discovery_finished_at,
+            )
         stage_row = conn.execute(
             """
             SELECT state

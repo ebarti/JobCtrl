@@ -466,6 +466,58 @@ def test_existing_incomplete_import_repairs_enrichment_and_dispatches_preparatio
     assert len(requested) == 1
 
 
+def test_existing_legacy_import_repairs_pending_intake_and_dispatches_preparation(
+    tmp_path: Path,
+) -> None:
+    conn = init_db(tmp_path / "jobctrl.db")
+    first = execute_job_url_import(
+        _payload(),
+        conn=conn,
+        fetcher=_Fetcher(_preparation_job_page()),
+        url_validator=_allow_public_url,
+    )
+    conn.execute(
+        "DELETE FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?",
+        (first.job_id,),
+    )
+    conn.execute(
+        """
+        UPDATE job_stage_states
+        SET state = 'pending', attempt_count = 0,
+            started_at = NULL, finished_at = NULL
+        WHERE tenant_id = 'local' AND job_id = ?
+          AND stage IN ('discover', 'enrich')
+        """,
+        (first.job_id,),
+    )
+    conn.commit()
+    requested: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> object:
+        requested.append(spec)
+        return object()
+
+    repaired = job_url_import._execute_job_url_import_and_start_preparation(
+        _payload(),
+        conn=conn,
+        fetcher=_Fetcher(_preparation_job_page()),
+        url_validator=_allow_public_url,
+        workflow_starter=starter,
+    )
+
+    assert repaired.job_id == first.job_id
+    assert repaired.already_existed is True
+    stages = dict(
+        conn.execute(
+            "SELECT stage, state FROM job_stage_states WHERE job_id = ?",
+            (first.job_id,),
+        ).fetchall()
+    )
+    assert stages["discover"] == "succeeded"
+    assert stages["enrich"] == "succeeded"
+    assert len(requested) == 1
+
+
 def test_url_import_is_idempotent_and_does_not_refetch_existing_job(tmp_path: Path) -> None:
     conn = init_db(tmp_path / "jobctrl.db")
     first = execute_job_url_import(
