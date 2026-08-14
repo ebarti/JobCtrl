@@ -5,7 +5,9 @@ test("Settings update: change application concurrency -> save -> reload -> persi
 }) => {
   await page.goto("/settings");
 
-  await expect(page.getByLabel("Concurrent applications")).toBeVisible({
+  await expect(
+    page.getByLabel("Concurrent applications", { exact: true }),
+  ).toBeVisible({
     timeout: 30_000,
   });
   await expect(page.getByLabel("Target role", { exact: true })).toHaveCount(0);
@@ -13,10 +15,12 @@ test("Settings update: change application concurrency -> save -> reload -> persi
   await expect(page.getByText("Exclusions")).toHaveCount(0);
 
   const currentValue = await page
-    .getByLabel("Concurrent applications")
+    .getByLabel("Concurrent applications", { exact: true })
     .inputValue();
   const newValue = currentValue === "4" ? "3" : "4";
-  await page.getByLabel("Concurrent applications").fill(newValue);
+  await page
+    .getByLabel("Concurrent applications", { exact: true })
+    .fill(newValue);
 
   const saveButton = page.getByRole("button", { name: "Save changes" });
   await expect(saveButton).toBeEnabled({ timeout: 10_000 });
@@ -27,12 +31,11 @@ test("Settings update: change application concurrency -> save -> reload -> persi
   });
 
   await page.reload();
-  await expect(page.getByLabel("Concurrent applications")).toHaveValue(
-    newValue,
-    {
-      timeout: 30_000,
-    },
-  );
+  await expect(
+    page.getByLabel("Concurrent applications", { exact: true }),
+  ).toHaveValue(newValue, {
+    timeout: 30_000,
+  });
 });
 
 test("Settings pairing: trusted split-port app loads and rotates the extension token", async ({

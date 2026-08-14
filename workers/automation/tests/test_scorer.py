@@ -19,7 +19,9 @@ from jobctrl.database import init_db
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
+    AnalysisFailure,
     EmployerAnalysis,
+    EnsembleError,
     JobAnalysis,
     ReasonedKeyword,
     Requirement,
@@ -1128,6 +1130,48 @@ def test_run_scoring_fails_before_llm_when_employer_analysis_fails(
     assert stage_row["state"] == "failed"
     assert stage_row["error_code"] == "SCORE_FAILED"
     assert "analysis unavailable" in stage_row["error_message"]
+
+
+def test_run_scoring_records_safe_per_leg_causes_when_analysis_ensemble_fails(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+    monkeypatch,
+) -> None:
+    url = "https://example.com/job/analysis-ensemble-fails"
+    _seed_pending_job(conn, url)
+    analyze = _FailingAnalyzeUseCase(
+        EnsembleError(
+            "all ensemble legs failed",
+            (
+                AnalysisFailure("claude:model-a", "TimeoutError: provider timed out"),
+                AnalysisFailure(
+                    "codex:model-b",
+                    "ValueError: malformed output",
+                    "private raw output",
+                ),
+            ),
+        )
+    )
+    llm = _ScriptedLlm({"score": 9, "keywords": [], "reasoning": "not called"})
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+
+    summary = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=SqliteScoreRepository(conn),
+        llm_port=llm,
+        resume_text="Engineer with Python.",
+        analyze_use_case=analyze,
+    )
+
+    assert summary["errors"] == 1
+    assert llm.calls == 0
+    stage_row = _stage_row(conn, url, "score")
+    assert stage_row["error_message"] == (
+        "Employer analysis failed: all ensemble legs failed "
+        "(claude:model-a: TimeoutError; codex:model-b: ValueError)"
+    )
+    assert "provider timed out" not in stage_row["error_message"]
+    assert "private raw output" not in stage_row["error_message"]
 
 
 def test_run_scoring_reuses_same_content_score_for_duplicate_jobs(

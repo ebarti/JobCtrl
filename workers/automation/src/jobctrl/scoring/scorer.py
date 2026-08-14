@@ -35,7 +35,11 @@ from jobctrl.domain.job_content_identity import (
     role_title_has_reference_suffix,
     role_titles_match_as_repost,
 )
-from jobctrl.domain.materials.analysis import EmployerAnalysis, compute_snapshot_hash
+from jobctrl.domain.materials.analysis import (
+    EmployerAnalysis,
+    EnsembleError,
+    compute_snapshot_hash,
+)
 from jobctrl.domain.materials.analyze_use_case import build_jd_snapshot
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.materials import EmployerAnalysisRepository
@@ -82,6 +86,20 @@ from jobctrl.state import (
 from jobctrl.scoring.employer_analysis import build_analyze_use_case
 
 log = logging.getLogger(__name__)
+
+
+def _employer_analysis_failure_message(exc: Exception) -> str:
+    """Describe an all-leg failure without persisting raw model output."""
+
+    if not isinstance(exc, EnsembleError):
+        return f"Employer analysis failed: {exc}"
+    leg_failures = []
+    for failure in exc.failures:
+        error_kind = failure.error.partition(":")[0].strip() or "Error"
+        leg_failures.append(f"{failure.model_id}: {error_kind}")
+    detail = "; ".join(leg_failures)
+    suffix = f" ({detail})" if detail else ""
+    return f"Employer analysis failed: all ensemble legs failed{suffix}"
 
 
 class AnalyzeJobUseCaseLike(Protocol):
@@ -462,7 +480,7 @@ def run_scoring(
             outcome = ScoreJobOutcome(
                 ok=False,
                 score=None,
-                error=f"Employer analysis failed: {exc}",
+                error=_employer_analysis_failure_message(exc),
             )
             results.append((job, outcome))
             for duplicate_job in duplicate_jobs_by_representative.get(job_url, ()):
@@ -787,26 +805,6 @@ def score_job_by_id(
             tenant_id=tenant_id,
         )
         return ScoreJobOutcome(ok=True, score=existing)
-    if employer_analysis is None:
-        if employer_analysis_repository is None:
-            employer_analysis_repository = SqliteEmployerAnalysisRepository(conn)
-        if analyze_use_case is None and require_employer_analysis:
-            analyze_use_case = build_analyze_use_case(
-                conn=conn,
-                publisher=publisher,
-                event_stage="score",
-                # Score resolves the analysis before EVERY fresh score; cache
-                # hits must not append duplicate job_events timeline rows.
-                record_cached_hits=False,
-            )
-        employer_analysis = _ensure_employer_analysis_for_job(
-            repository=employer_analysis_repository,
-            analyze_use_case=analyze_use_case,
-            tenant_id=tenant_id,
-            job=job,
-            require=require_employer_analysis,
-        )
-
     ensure_job_stage_rows(
         conn,
         stable_job_id,
@@ -848,6 +846,38 @@ def score_job_by_id(
     )
     conn.commit()
 
+    if employer_analysis is None:
+        try:
+            if employer_analysis_repository is None:
+                employer_analysis_repository = SqliteEmployerAnalysisRepository(conn)
+            if analyze_use_case is None and require_employer_analysis:
+                analyze_use_case = build_analyze_use_case(
+                    conn=conn,
+                    publisher=publisher,
+                    event_stage="score",
+                    # Score resolves the analysis before EVERY fresh score; cache
+                    # hits must not append duplicate job_events timeline rows.
+                    record_cached_hits=False,
+                )
+            employer_analysis = _ensure_employer_analysis_for_job(
+                repository=employer_analysis_repository,
+                analyze_use_case=analyze_use_case,
+                tenant_id=tenant_id,
+                job=job,
+                require=require_employer_analysis,
+            )
+        except Exception as exc:  # noqa: BLE001 -- persist one bounded attempt failure
+            error = _employer_analysis_failure_message(exc)
+            _record_score_stage_failed(
+                conn,
+                job=job,
+                tenant_id=tenant_id,
+                started_at=started_at,
+                metadata=metadata,
+                error=error,
+            )
+            return ScoreJobOutcome(ok=False, score=None, error=error)
+
     outcome = score_job(
         profile_snapshot,
         job,
@@ -865,8 +895,8 @@ def score_job_by_id(
         employer_analysis=employer_analysis,
         require_employer_analysis=require_employer_analysis,
     )
-    finished_at = utc_now()
     if outcome.ok and outcome.score is not None:
+        finished_at = utc_now()
         set_stage_state(
             conn,
             stable_job_id,
@@ -894,37 +924,16 @@ def score_job_by_id(
             score=outcome.score,
             now=finished_at,
         )
+        conn.commit()
     else:
-        set_stage_state(
+        _record_score_stage_failed(
             conn,
-            stable_job_id,
-            "score",
-            "failed",
+            job=job,
             tenant_id=tenant_id,
-            attempt_count=_score_attempt_count(
-                conn,
-                tenant_id=tenant_id,
-                job_id=stable_job_id,
-            )
-            + 1,
             started_at=started_at,
-            finished_at=finished_at,
-            error_code="SCORE_FAILED",
-            error_message=outcome.error or "Scoring failed",
-            retryable=True,
-            next_action=f"jobctrl retry score {job.get('url') or stable_job_id}",
-            validate_transition=False,
+            metadata=metadata,
+            error=outcome.error or "Scoring failed",
         )
-        record_job_event(
-            conn,
-            stable_job_id,
-            "score",
-            "StageFailed",
-            tenant_id=tenant_id,
-            level="error",
-            message=outcome.error or "Scoring failed",
-        )
-    conn.commit()
     return outcome
 
 
@@ -1040,6 +1049,52 @@ def _record_score_stage_succeeded(
         job_id=score.job_id,
         score=score,
         now=finished_at,
+    )
+    conn.commit()
+
+
+def _record_score_stage_failed(
+    conn: sqlite3.Connection,
+    *,
+    job: dict[str, Any],
+    tenant_id: TenantId,
+    started_at: str,
+    metadata: dict[str, Any],
+    error: str,
+) -> None:
+    """Persist one bounded, retryable scoring attempt failure."""
+
+    job_id = canonical_job_id(str(job["job_id"]))
+    finished_at = utc_now()
+    set_stage_state(
+        conn,
+        job_id,
+        "score",
+        "failed",
+        tenant_id=tenant_id,
+        attempt_count=_score_attempt_count(
+            conn,
+            tenant_id=tenant_id,
+            job_id=job_id,
+        )
+        + 1,
+        started_at=started_at,
+        finished_at=finished_at,
+        error_code="SCORE_FAILED",
+        error_message=error,
+        retryable=True,
+        next_action=f"jobctrl retry score {job.get('url') or job_id}",
+        metadata=metadata,
+        validate_transition=False,
+    )
+    record_job_event(
+        conn,
+        job_id,
+        "score",
+        "StageFailed",
+        tenant_id=tenant_id,
+        level="error",
+        message=error,
     )
     conn.commit()
 

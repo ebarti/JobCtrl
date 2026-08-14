@@ -470,7 +470,13 @@ The versioned default gates are minimum fit score 8/10, must-have coverage
 allows adjacent translation or draft confirmation, the retry loop receives the
 prioritized fixes and uncovered requirements. Deterministic validators still
 own fact safety: scoring can request revision, but it cannot approve unsupported
-claims.
+claims. The resulting revision decision has one disposition: `passed`,
+`revise`, `review_required`, or `accept_with_residual_gap`. Once the bounded
+revision budget is exhausted—or when canonical profile evidence cannot support
+an enhancement—an otherwise-safe candidate continues through judge,
+adversarial, and fabrication gates with a persisted residual warning. It does
+not fail Tailor or spend more retries trying to manufacture missing experience;
+Scoring remains the owner of fit and eligibility.
 
 Coverage-bearing claims are grounded against the shipped rendered text before
 they count: a claim binds to a shipped line (location + text binding, honoring

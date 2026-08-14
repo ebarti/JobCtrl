@@ -1535,7 +1535,66 @@ def test_score_gated_revision_routes_low_score_when_enhancement_is_allowed() -> 
     assert fit.must_have_coverage == 0.0
     assert decision.should_revise is True
     assert decision.enhancement_allowed is True
+    assert decision.disposition == "revise"
     assert decision.prioritized_fixes[0].startswith("req_python:")
+
+
+def test_score_gated_revision_accepts_truthful_residual_gap_without_enhancement() -> None:
+    controls = adapt_requirement_led_controls(
+        tailoring_policy={"claim_mode": "verified_only"},
+        writing_style={},
+    )
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=_requirement_analysis(),
+        requirement_fit_report=_requirement_fit_report(),
+    )
+    fit = score_generated_resume_against_target(
+        target_profile=plan.target_profile,
+        mappings=(),
+        grounding=ground_claim_mappings((), ()),
+    )
+
+    decision = decide_score_gated_revision(
+        fit_score=fit,
+        controls=controls,
+        attempt=1,
+    )
+
+    assert decision.threshold_failed is True
+    assert decision.should_revise is False
+    assert decision.enhancement_allowed is False
+    assert decision.disposition == "accept_with_residual_gap"
+
+
+def test_score_gated_revision_accepts_residual_gap_after_revision_budget() -> None:
+    controls = adapt_requirement_led_controls(
+        tailoring_policy={"claim_mode": "adjacent_translation"},
+        writing_style={},
+    )
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=_requirement_analysis(),
+        requirement_fit_report=_requirement_fit_report(),
+    )
+    fit = score_generated_resume_against_target(
+        target_profile=plan.target_profile,
+        mappings=(),
+        grounding=ground_claim_mappings((), ()),
+    )
+
+    decision = decide_score_gated_revision(
+        fit_score=fit,
+        controls=controls,
+        attempt=2,
+    )
+
+    assert decision.threshold_failed is True
+    assert decision.should_revise is False
+    assert decision.enhancement_allowed is True
+    assert decision.disposition == "accept_with_residual_gap"
 
 
 def test_score_gated_revision_blocks_draft_claims_for_review() -> None:

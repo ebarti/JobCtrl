@@ -1577,6 +1577,7 @@ export const DEMO_READ_MODEL = {
     ok: true,
     settings: {
       applyConcurrency: 1,
+      pipelineInternalConcurrency: 2,
       workerActivitySlots: 4,
       dailyBudgetUsd: 20,
       analysisLegs: ["claude", "codex", "google"],
@@ -1592,6 +1593,7 @@ export const DEMO_READ_MODEL = {
     effectiveSettings: {
       dailyBudgetUsd: { value: 20, source: "persisted", activation: "live", editable: true },
       applyConcurrency: { value: 1, source: "persisted", activation: "next_poll", editable: true },
+      pipelineInternalConcurrency: { value: 2, source: "persisted", activation: "next_workflow", editable: true },
       workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
       analysisLegs: { value: ["claude", "codex", "google"], source: "default", activation: "next_analysis", editable: true },
       tailoringGeneratorModels: { value: null, source: "default", activation: "next_workflow", editable: true },

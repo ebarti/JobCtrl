@@ -1,4 +1,5 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -30,6 +31,7 @@ describe("<SettingsForm>", () => {
     );
 
     expect(screen.getByLabelText("Concurrent applications")).toHaveValue(2);
+    expect(screen.getByLabelText("Pipeline internal concurrency")).toHaveValue(3);
     expect(screen.getByLabelText("Worker activity slots")).toHaveValue(4);
     expect(screen.getByLabelText("Daily LLM budget (USD)")).toHaveValue(25);
     expect(screen.queryByLabelText("Minimum fit score")).not.toBeInTheDocument();
@@ -48,8 +50,8 @@ describe("<SettingsForm>", () => {
       />,
     );
 
-    expect(container.querySelectorAll('[data-slot="field"]')).toHaveLength(3);
-    expect(container.querySelectorAll('input[data-slot="input"]')).toHaveLength(3);
+    expect(container.querySelectorAll('[data-slot="field"]')).toHaveLength(4);
+    expect(container.querySelectorAll('input[data-slot="input"]')).toHaveLength(4);
     expect(screen.getByLabelText("Daily LLM budget (USD)")).toHaveAttribute(
       "data-slot",
       "input",
@@ -65,6 +67,35 @@ describe("<SettingsForm>", () => {
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Discard changes" })).toBeDisabled();
     expect(container.querySelector(".settings-save-actions")).toHaveAttribute("data-save-state", "saved");
+  });
+
+  it("links every execution setting to its owning documentation", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <SettingsForm
+        initial={sampleSettingsResponse.settings}
+        effectiveSettings={sampleSettingsResponse.effectiveSettings}
+      />,
+    );
+
+    for (const title of [
+      "Daily LLM budget",
+      "Concurrent applications",
+      "Pipeline internal concurrency",
+      "Worker activity slots",
+    ]) {
+      expect(
+        screen.getByRole("button", { name: `Help for ${title}` }),
+      ).toBeInTheDocument();
+    }
+
+    await user.click(
+      screen.getByRole("button", { name: "Help for Worker activity slots" }),
+    );
+    expect(screen.getByRole("link", { name: "Open documentation" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/configuration#runtime-setting-worker-activity-slots",
+    );
   });
 
   it("autosaves execution settings after five seconds", async () => {
@@ -97,6 +128,7 @@ describe("<SettingsForm>", () => {
     expect(updateSettings).toHaveBeenCalledWith({
       applyConcurrency: 4,
       dailyBudgetUsd: 25,
+      pipelineInternalConcurrency: 3,
       workerActivitySlots: 4,
     });
   });

@@ -111,6 +111,24 @@ Sources](configuration.md#compensation-sources) owns where the non-secret policy
 is stored and when a saved value applies. This page owns the source modes,
 access boundaries, attribution, and refresh behavior that policy controls.
 
+### Source policy access mode {#source-policy-access-mode}
+
+An access mode records the permitted basis JobCtrl may use for a compensation
+source, such as attributed public pages or a separately licensed feed. Choosing
+one does not connect a provider, create permission, or store credentials.
+
+### Source policy Europe coverage {#source-policy-europe-coverage}
+
+When a source requires it, explicitly confirm that the configured agreement
+covers European compensation data. JobCtrl keeps the source disabled until the
+access basis and required coverage declaration are both present.
+
+### Enable a compensation source {#source-policy-enable-source}
+
+Enabling a source makes it eligible for future automatic and explicit
+compensation refreshes. It does not fetch immediately, and it never authorizes
+an access mode that the saved policy or provider terms do not permit.
+
 ## Source Of Truth And Ownership
 
 | Record | Authority | Important boundary |

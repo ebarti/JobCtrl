@@ -33,4 +33,25 @@ describe("<ScoringGuidancePanel>", () => {
     expect(screen.getByRole("button", { name: "Save scoring guidance" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Discard changes" })).toBeEnabled();
   });
+
+  it("links every scoring setting to its owning documentation", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ScoringGuidancePanel />);
+    await user.click(screen.getByRole("button", { name: /^Scoring guidance\b/i }));
+
+    expect(
+      screen.getByRole("button", { name: "Help for Scoring priorities" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Help for Target role guidance" }),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Help for Scoring priorities" }),
+    );
+    expect(screen.getByRole("link", { name: "Open documentation" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/scoring-and-employer-analysis#runtime-setting-scoring-priorities",
+    );
+  });
 });

@@ -1770,6 +1770,7 @@ export const sampleSettingsResponse: SettingsResponse = {
   ok: true,
   settings: {
     applyConcurrency: 2,
+    pipelineInternalConcurrency: 3,
     workerActivitySlots: 4,
     dailyBudgetUsd: 25,
     analysisLegs: ["claude", "codex", "google"],
@@ -1785,6 +1786,7 @@ export const sampleSettingsResponse: SettingsResponse = {
   effectiveSettings: {
     dailyBudgetUsd: { value: 25, source: "persisted", activation: "live", editable: true },
     applyConcurrency: { value: 2, source: "persisted", activation: "next_poll", editable: true },
+    pipelineInternalConcurrency: { value: 3, source: "persisted", activation: "next_workflow", editable: true },
     workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
     analysisLegs: { value: ["claude", "codex", "google"], source: "default", activation: "next_analysis", editable: true },
     tailoringGeneratorModels: { value: null, source: "default", activation: "next_workflow", editable: true },

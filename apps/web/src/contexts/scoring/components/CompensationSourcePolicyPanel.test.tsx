@@ -257,6 +257,35 @@ describe("<CompensationSourcePolicyPanel>", () => {
     ).toBeInTheDocument();
   });
 
+  it("links every editable source-policy setting to its owning documentation", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CompensationSourcePolicyPanel />, {
+      ports: buildTestPorts({
+        api: { compensationSources: vi.fn(async () => policyResponse()) },
+      }),
+    });
+
+    await screen.findByRole("switch", { name: "Enable Levels.fyi" });
+    for (const title of [
+      "Levels.fyi access mode",
+      "Enable Levels.fyi",
+      "Glassdoor access mode",
+      "Enable Glassdoor",
+    ]) {
+      expect(
+        screen.getByRole("button", { name: `Help for ${title}` }),
+      ).toBeInTheDocument();
+    }
+
+    await user.click(
+      screen.getByRole("button", { name: "Help for Glassdoor access mode" }),
+    );
+    expect(screen.getByRole("link", { name: "Open documentation" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/compensation-evidence#source-policy-access-mode",
+    );
+  });
+
   it("enables tokenless public Levels.fyi access through the API port", async () => {
     const user = userEvent.setup();
     const updateCompensationSourcePolicy = vi.fn(async () => policyResponse());

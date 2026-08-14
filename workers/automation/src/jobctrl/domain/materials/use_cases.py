@@ -932,20 +932,26 @@ def _post_generation_fit_gate(
         "fit_score": fit_score.to_dict(),
         "revision_decision": decision.to_dict(),
         "grounding": grounding.to_metadata(),
+        "residual_warnings": [],
     }
     errors: list[str] = []
     review_blockers = tuple(decision.review_blockers) if decision.review_blocked else ()
-    if decision.threshold_failed and not decision.review_blocked:
-        if decision.should_revise:
-            errors.append(
-                "Post-generation fit score below revision gate; revise using prioritized fixes: "
-                + "; ".join(decision.prioritized_fixes[:5])
-            )
+    if decision.disposition == "revise":
+        errors.append(
+            "Post-generation fit score below revision gate; revise using prioritized fixes: "
+            + "; ".join(decision.prioritized_fixes[:5])
+        )
+    elif decision.disposition == "accept_with_residual_gap":
+        if decision.enhancement_allowed:
+            reason = "the bounded revision budget was exhausted"
         else:
-            errors.append(
-                "Post-generation fit score below revision gate and enhancement is not allowed: "
-                + "; ".join(decision.prioritized_fixes[:5])
-            )
+            reason = "the missing experience cannot be added from canonical profile evidence"
+        record["residual_warnings"] = [
+            "Residual job-fit gap: "
+            + reason
+            + "; the truthful candidate was preserved for review: "
+            + "; ".join(decision.prioritized_fixes[:5])
+        ]
     return record, tuple(errors), review_blockers
 
 
@@ -1075,6 +1081,11 @@ _RETRY_GUIDANCE: dict[str, str] = {
         "a named skill or tool only when it appears in the provided resume; otherwise "
         "describe grounded work without naming that target-only technology."
     ),
+    "cover_letter_title_grounding_failed": (
+        "Remove every role title that does not appear in the provided resume, including "
+        "titles of target-company stakeholders. Refer to them generically as company "
+        "leadership instead of naming a title such as CEO or CTO."
+    ),
     "fabrication_detected": (
         "Remove unsupported claims and use only metrics, tools, roles, employers, "
         "and dates present in canonical profile evidence."
@@ -1142,6 +1153,25 @@ def _candidate_warning_notes(record: dict[str, Any]) -> tuple[str, ...]:
         notes.extend(_as_string_list(review.get("warnings")))
         notes.extend(_as_string_list(review.get("repair_instructions")))
     return tuple(dict.fromkeys(notes))
+
+
+def _candidate_retry_warning_notes(record: dict[str, Any]) -> tuple[str, ...]:
+    """Return only warnings a later generator attempt can truthfully repair."""
+
+    return tuple(
+        note
+        for note in _candidate_warning_notes(record)
+        if not note.startswith("Residual job-fit gap:")
+    )
+
+
+def _clean_approved_candidate_rank(
+    item: tuple[_TailorCandidate, tuple[str, ...]],
+) -> tuple[bool, float]:
+    """Prefer a genuinely warning-free candidate before comparing judge scores."""
+
+    candidate, warning_notes = item
+    return not warning_notes, candidate.judge_score
 
 
 def _is_label_only_quality_warning(warning: str) -> bool:
@@ -1738,6 +1768,7 @@ VOICE:
 FABRICATION = INSTANT REJECTION:
 The candidate's real tools are ONLY: {skills_str}.
 Do NOT mention ANY tool not in this list. If the job asks for tools not listed, talk about the work you did, not the tools.
+Do NOT mention any role title that is absent from the RESUME, even when the TARGET JOB uses it for a stakeholder. Refer to target-company stakeholders generically as "company leadership" instead of naming titles such as CEO or CTO.
 The TARGET JOB is context, never evidence about the candidate. Do NOT copy any number or date from it into the letter. If a target-job fact is numeric, express only its qualitative meaning.
 
 Sign off: just "{sign_off_name}"
@@ -2420,7 +2451,9 @@ class TailorResumeUseCase:
         last_validation: ValidationResult = ValidationResult.failure(("no attempt yet",))
         last_verdict: JudgeVerdict | None = None
         best_rejected: _TailorCandidate | None = None
-        best_warned_approved: tuple[_TailorCandidate, tuple[str, ...]] | None = None
+        best_warned_approved: (
+            tuple[_TailorCandidate, tuple[str, ...], tuple[str, ...]] | None
+        ) = None
         best_review_required: _TailorCandidate | None = None
 
         def accept_candidate(
@@ -2551,40 +2584,57 @@ class TailorResumeUseCase:
 
             if approved_candidates:
                 approved_with_notes = [
-                    (candidate, _candidate_warning_notes(candidate.record))
+                    (
+                        candidate,
+                        _candidate_warning_notes(candidate.record),
+                        _candidate_retry_warning_notes(candidate.record),
+                    )
                     for candidate in approved_candidates
                 ]
                 clean_approved = [
-                    candidate for candidate, notes in approved_with_notes if not notes
+                    (candidate, notes)
+                    for candidate, notes, retry_notes in approved_with_notes
+                    if not retry_notes
                 ]
                 if clean_approved:
-                    selected = max(clean_approved, key=lambda item: item.judge_score)
-                    return accept_candidate(selected, attempt_record)
+                    selected, warning_notes = max(
+                        clean_approved,
+                        key=_clean_approved_candidate_rank,
+                    )
+                    return accept_candidate(
+                        selected,
+                        attempt_record,
+                        warning_notes=warning_notes,
+                    )
 
-                selected, warning_notes = max(
+                selected, warning_notes, retry_notes = max(
                     approved_with_notes,
-                    key=lambda item: (-len(item[1]), item[0].judge_score),
+                    key=lambda item: (-len(item[2]), item[0].judge_score),
                 )
                 if (
                     best_warned_approved is None
-                    or (-len(warning_notes), selected.judge_score)
+                    or (-len(retry_notes), selected.judge_score)
                     > (
-                        -len(best_warned_approved[1]),
+                        -len(best_warned_approved[2]),
                         best_warned_approved[0].judge_score,
                     )
                 ):
-                    best_warned_approved = (selected, warning_notes)
+                    best_warned_approved = (selected, warning_notes, retry_notes)
                 if attempt < self._max_retries:
-                    avoid_notes.extend(warning_notes)
+                    avoid_notes.extend(retry_notes)
                     retry_reasons.append("residual_quality_warning")
                     report["review_feedback"]["warning_retry_attempted"] = True
                     attempt_record["status"] = "approved_with_warnings_retry"
-                    attempt_record["warning_retry_notes"] = list(warning_notes[:8])
+                    attempt_record["warning_retry_notes"] = list(retry_notes[:8])
                     report["attempt_history"].append(attempt_record)
                     continue
-                best_selected, best_warning_notes = best_warned_approved or (
-                    selected,
-                    warning_notes,
+                best_selected, best_warning_notes, _best_retry_notes = (
+                    best_warned_approved
+                    or (
+                        selected,
+                        warning_notes,
+                        retry_notes,
+                    )
                 )
                 if best_selected is selected:
                     return accept_candidate(
@@ -2632,7 +2682,7 @@ class TailorResumeUseCase:
 
         report["status"] = "exhausted_retries"
         if best_warned_approved is not None:
-            selected, warning_notes = best_warned_approved
+            selected, warning_notes, _retry_notes = best_warned_approved
             return accept_candidate(selected, None, warning_notes=warning_notes)
         if best_review_required is not None:
             return accept_candidate(best_review_required, None, review_required=True)
@@ -2842,6 +2892,11 @@ class TailorResumeUseCase:
                 )
             if fit_gate is not None:
                 record["post_generation_fit"] = fit_gate
+                residual_warnings = _as_string_list(fit_gate.get("residual_warnings"))
+                if residual_warnings and validation.passed:
+                    validation = ValidationResult.success(
+                        warnings=tuple(validation.warnings) + tuple(residual_warnings)
+                    )
             if review_blockers:
                 record["review_required"] = True
                 record["review_blockers"] = list(review_blockers)
@@ -4112,6 +4167,13 @@ class GenerateCoverLetterUseCase:
                 retry_reasons.append("cover_letter_numeric_grounding_failed")
             if any(finding.kind == "skill" for finding in findings):
                 retry_reasons.append("cover_letter_skill_grounding_failed")
+            if any(finding.kind == "title" for finding in findings):
+                retry_reasons.append("cover_letter_title_grounding_failed")
+            if any(
+                finding.kind not in {"numeric", "date", "skill"}
+                for finding in findings
+            ):
+                retry_reasons.append("fabrication_detected")
             retry_reasons.append("cover_letter_validation_failed")
             log.debug(
                 "Cover letter attempt %d/%d failed: %s",

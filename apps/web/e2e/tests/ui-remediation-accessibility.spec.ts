@@ -131,7 +131,9 @@ test("forms expose labels, validation state, and an announced upload error", asy
   await expect(page.getByRole("checkbox", { name: "LinkedIn" })).toBeVisible();
 
   await page.goto("/settings");
-  await expect(page.getByLabel("Concurrent applications")).toBeVisible({
+  await expect(
+    page.getByLabel("Concurrent applications", { exact: true }),
+  ).toBeVisible({
     timeout: 30_000,
   });
 

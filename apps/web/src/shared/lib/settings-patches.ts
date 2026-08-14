@@ -46,6 +46,10 @@ export function patchSettingsResponse(
       current.effectiveSettings.applyConcurrency,
       body.applyConcurrency,
     ),
+    pipelineInternalConcurrency: persistedValue(
+      current.effectiveSettings.pipelineInternalConcurrency,
+      body.pipelineInternalConcurrency,
+    ),
     workerActivitySlots: persistedValue(
       current.effectiveSettings.workerActivitySlots,
       body.workerActivitySlots,
@@ -90,6 +94,9 @@ export function patchSettingsResponse(
       ...current.settings,
       ...(body.applyConcurrency !== undefined
         ? { applyConcurrency: body.applyConcurrency }
+        : {}),
+      ...(body.pipelineInternalConcurrency !== undefined
+        ? { pipelineInternalConcurrency: body.pipelineInternalConcurrency }
         : {}),
       ...(body.workerActivitySlots !== undefined
         ? { workerActivitySlots: body.workerActivitySlots }

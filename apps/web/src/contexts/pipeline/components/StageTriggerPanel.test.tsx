@@ -11,6 +11,7 @@ import { renderWithProviders } from "../../../test/render.js";
 import {
   sampleDashboardSummary,
   sampleHealthResponse,
+  sampleSettingsResponse,
 } from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { useStageTriggerStore } from "../stores/stage-trigger-store.js";
@@ -325,7 +326,7 @@ describe("StageTriggerPanel", () => {
     expect(request).toMatchObject({
       stages: ["discover"],
       limit: 1000,
-      workers: 1,
+      workers: 3,
       minScore: 7,
       validationMode: "normal",
       dryRun: false,
@@ -380,14 +381,17 @@ describe("StageTriggerPanel", () => {
     ).toHaveLength(50);
   });
 
-  it("migrates the persisted single-source trigger selection", async () => {
+  it("migrates legacy source selection and active-stage concurrency", async () => {
     window.localStorage.setItem(
       "jh:stage-trigger-config",
       JSON.stringify({
         state: {
           activeStage: "discover",
           configs: {
-            discover: { discoverySourceId: "jobspy:linkedin" },
+            discover: {
+              discoverySourceId: "jobspy:linkedin",
+              workers: "7",
+            },
           },
         },
         version: 1,
@@ -399,6 +403,7 @@ describe("StageTriggerPanel", () => {
     expect(
       useStageTriggerStore.getState().configs.discover.discoverySourceIds,
     ).toEqual(["jobspy:linkedin"]);
+    expect(useStageTriggerStore.getState().internalConcurrency).toBe("7");
   });
 
   it("shows a stop control for queued pipeline stage runs", async () => {
@@ -489,7 +494,7 @@ describe("StageTriggerPanel", () => {
         command: {
           stages: ["apply"],
           limit: 12,
-          workers: 3,
+          workers: 6,
           minScore: 8,
           validationMode: "normal" as const,
           dryRun: true,
@@ -514,7 +519,7 @@ describe("StageTriggerPanel", () => {
               jobKey: "pipeline",
               stage: "apply",
               limit: 12,
-              workers: 3,
+              workers: 6,
               minScore: 8,
               dryRun: true,
               headless: true,
@@ -526,15 +531,33 @@ describe("StageTriggerPanel", () => {
         ],
       }),
     );
+    const updateSettings = vi.fn(async () => ({
+      ...sampleSettingsResponse,
+      settings: {
+        ...sampleSettingsResponse.settings,
+        pipelineInternalConcurrency: 6,
+      },
+      effectiveSettings: {
+        ...sampleSettingsResponse.effectiveSettings,
+        pipelineInternalConcurrency: {
+          ...sampleSettingsResponse.effectiveSettings.pipelineInternalConcurrency,
+          value: 6,
+          source: "persisted" as const,
+        },
+      },
+    }));
     renderWithProviders(<StageTriggerPanel />, {
-      ports: buildTestPorts({ api: { runPipelineStages } }),
+      ports: buildTestPorts({ api: { runPipelineStages, updateSettings } }),
     });
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Internal concurrency")).toHaveValue(3),
+    );
     await user.clear(screen.getByLabelText("Limit"));
     await user.type(screen.getByLabelText("Limit"), "12");
     await user.clear(screen.getByLabelText("Internal concurrency"));
-    await user.type(screen.getByLabelText("Internal concurrency"), "3");
+    await user.type(screen.getByLabelText("Internal concurrency"), "6");
     await user.clear(screen.getByLabelText("Minimum score"));
     await user.type(screen.getByLabelText("Minimum score"), "8");
     await user.click(screen.getByRole("checkbox", { name: "Headless browser" }));
@@ -544,11 +567,17 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByRole("button", { name: "Run Apply" }));
 
     await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
+    expect(updateSettings).toHaveBeenCalledWith({
+      pipelineInternalConcurrency: 6,
+    });
+    expect(updateSettings.mock.invocationCallOrder[0]).toBeLessThan(
+      runPipelineStages.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
     const request = runPipelineStages.mock.calls[0]?.[0];
     expect(request).toMatchObject({
       stages: ["apply"],
       limit: 12,
-      workers: 3,
+      workers: 6,
       minScore: 8,
       validationMode: "normal",
       dryRun: true,
@@ -566,6 +595,29 @@ describe("StageTriggerPanel", () => {
       await screen.findByText("Apply queued successfully (run apply-run-123)."),
     ).toBeInTheDocument();
   }, 10_000);
+
+  it("does not start a Pipeline action when shared concurrency cannot be saved", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn();
+    const updateSettings = vi.fn(async () => {
+      throw new Error("settings unavailable");
+    });
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { runPipelineStages, updateSettings } }),
+    });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Internal concurrency")).toHaveValue(3),
+    );
+    await user.click(screen.getByRole("button", { name: "Run Discover" }));
+
+    expect(
+      await screen.findByText(
+        "Could not save the shared concurrency value. Try again before starting the run.",
+      ),
+    ).toBeInTheDocument();
+    expect(runPipelineStages).not.toHaveBeenCalled();
+  });
 
   it("does not expose Tailor as a product pipeline stage", () => {
     renderWithProviders(<StageTriggerPanel />);
@@ -918,18 +970,46 @@ describe("StageTriggerPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps separate per-stage tab config and restores it after remount", async () => {
+  it("shares saved internal concurrency while preserving other per-stage options", async () => {
     const user = userEvent.setup();
-    const { unmount } = renderWithProviders(<StageTriggerPanel />);
+    let savedSettings = sampleSettingsResponse;
+    const settings = vi.fn(async () => savedSettings);
+    const updateSettings = vi.fn(async (request) => {
+      const pipelineInternalConcurrency =
+        request.pipelineInternalConcurrency ??
+        savedSettings.settings.pipelineInternalConcurrency;
+      savedSettings = {
+        ...savedSettings,
+        settings: {
+          ...savedSettings.settings,
+          pipelineInternalConcurrency,
+        },
+        effectiveSettings: {
+          ...savedSettings.effectiveSettings,
+          pipelineInternalConcurrency: {
+            ...savedSettings.effectiveSettings.pipelineInternalConcurrency,
+            value: pipelineInternalConcurrency,
+            source: "persisted",
+          },
+        },
+      };
+      return savedSettings;
+    });
+    const ports = buildTestPorts({ api: { settings, updateSettings } });
+    const { unmount } = renderWithProviders(<StageTriggerPanel />, { ports });
 
     expect(screen.getByRole("tab", { name: "Discover" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Internal concurrency")).toHaveValue(3),
+    );
     await user.clear(screen.getByLabelText("Internal concurrency"));
     await user.type(screen.getByLabelText("Internal concurrency"), "5");
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
+    expect(screen.getByLabelText("Internal concurrency")).toHaveValue(5);
     await user.clear(screen.getByLabelText("Limit"));
     await user.type(screen.getByLabelText("Limit"), "13");
     await user.click(screen.getByRole("checkbox", { name: "Headless browser" }));
@@ -937,15 +1017,22 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByRole("tab", { name: "Discover" }));
     expect(screen.getByLabelText("Internal concurrency")).toHaveValue(5);
     expect(screen.queryByRole("checkbox", { name: "Re-tailor" })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({
+        pipelineInternalConcurrency: 5,
+      }),
+    );
 
     unmount();
-    renderWithProviders(<StageTriggerPanel />);
+    renderWithProviders(<StageTriggerPanel />, { ports });
 
     expect(screen.getByRole("tab", { name: "Discover" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
-    expect(screen.getByLabelText("Internal concurrency")).toHaveValue(5);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Internal concurrency")).toHaveValue(5),
+    );
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     expect(screen.getByLabelText("Limit")).toHaveValue(13);

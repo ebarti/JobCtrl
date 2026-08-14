@@ -9,6 +9,9 @@ from jobctrl.infrastructure.temporal import (
     build_worker,
 )
 from jobctrl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
+from jobctrl.infrastructure.temporal.run_in_activity import (
+    shutdown_activity_executors,
+)
 
 
 def test_build_worker_separates_temporal_and_blocking_activity_executors(
@@ -44,21 +47,21 @@ def test_build_worker_separates_temporal_and_blocking_activity_executors(
     assert worker.activity_executor is executors[0]
     assert blocking == [executors[1]]
     assert worker.activity_executor is not blocking[0]
-    assert executors[0].kwargs["thread_name_prefix"] == (
-        "jobctrl-temporal-sync-activity"
-    )
-    assert executors[1].kwargs["thread_name_prefix"] == (
-        "jobctrl-blocking-activity"
-    )
+    assert executors[0].kwargs["thread_name_prefix"] == ("jobctrl-temporal-sync-activity")
+    assert executors[1].kwargs["thread_name_prefix"] == ("jobctrl-blocking-activity")
 
 
 @pytest.mark.asyncio
 async def test_build_worker_binds_to_jobctrl_task_queue():
     async with await WorkflowEnvironment.start_time_skipping() as env:
         worker = build_worker(env.client, workflows=[], activities=[])
-
-        assert JOBCTRL_TASK_QUEUE == "jobctrl-default"
-        assert worker.task_queue == JOBCTRL_TASK_QUEUE
+        try:
+            async with worker:
+                assert JOBCTRL_TASK_QUEUE == "jobctrl-default"
+                assert worker.task_queue == JOBCTRL_TASK_QUEUE
+        finally:
+            shutdown_activity_executors()
+        assert worker.is_shutdown
 
 
 @pytest.mark.asyncio
@@ -70,8 +73,12 @@ async def test_build_worker_accepts_explicit_task_queue_override():
             activities=[],
             task_queue="custom-queue",
         )
-
-        assert worker.task_queue == "custom-queue"
+        try:
+            async with worker:
+                assert worker.task_queue == "custom-queue"
+        finally:
+            shutdown_activity_executors()
+        assert worker.is_shutdown
 
 
 @pytest.mark.asyncio
@@ -91,5 +98,9 @@ async def test_build_worker_validates_real_registry_under_production_sandbox():
             workflows=WORKFLOWS,
             activities=ACTIVITIES,
         )
-
-        assert worker.task_queue == JOBCTRL_TASK_QUEUE
+        try:
+            async with worker:
+                assert worker.task_queue == JOBCTRL_TASK_QUEUE
+        finally:
+            shutdown_activity_executors()
+        assert worker.is_shutdown

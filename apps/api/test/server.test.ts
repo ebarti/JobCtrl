@@ -139,6 +139,7 @@ beforeEach(() => {
       min_fit_score: 8,
       auto_apply: true,
       apply_concurrency: 3,
+      pipeline_internal_concurrency: 5,
       daily_budget_usd: 12.5,
       score_criteria: "Security leadership and platform reliability.",
       target_criteria: "Director-plus infrastructure and security roles.",
@@ -9820,6 +9821,7 @@ describe("local TypeScript API", () => {
         stages: ["score", "tailor", "cover"],
         dryRun: false,
         limit: 0,
+        workers: 5,
         minScore: 6,
         retailor: true,
       }),
@@ -10459,6 +10461,7 @@ describe("local TypeScript API", () => {
       ok: true,
       settings: {
         applyConcurrency: 3,
+        pipelineInternalConcurrency: 5,
         workerActivitySlots: 4,
         dailyBudgetUsd: 12.5,
         scoreCriteria: "Security leadership and platform reliability.",
@@ -10471,6 +10474,7 @@ describe("local TypeScript API", () => {
       effectiveSettings: {
         dailyBudgetUsd: { value: 12.5, source: "persisted", activation: "live", editable: true },
         applyConcurrency: { value: 3, source: "persisted", activation: "next_poll", editable: true },
+        pipelineInternalConcurrency: { value: 5, source: "persisted", activation: "next_workflow", editable: true },
         workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
         analysisLegs: { source: "default", activation: "next_analysis", editable: true },
         applyMaxBudgetUsd: { value: 5, source: "default", activation: "next_apply_job", editable: true },
@@ -10551,6 +10555,7 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       settings: {
         applyConcurrency: 1,
+        pipelineInternalConcurrency: 1,
         workerActivitySlots: 4,
         dailyBudgetUsd: 25,
         analysisLegs: ["claude", "codex", "google"],
@@ -10575,6 +10580,7 @@ describe("local TypeScript API", () => {
       url: "/v1/settings",
       payload: {
         applyConcurrency: 2,
+        pipelineInternalConcurrency: 4,
         workerActivitySlots: 6,
         dailyBudgetUsd: 19.75,
         analysisLegs: ["claude", "google"],
@@ -10593,6 +10599,7 @@ describe("local TypeScript API", () => {
       ok: true,
       settings: {
         applyConcurrency: 2,
+        pipelineInternalConcurrency: 4,
         workerActivitySlots: 6,
         dailyBudgetUsd: 19.75,
         scoreCriteria: "Prioritize platform security, DevSecOps, and leadership scope.",
@@ -10601,6 +10608,7 @@ describe("local TypeScript API", () => {
     });
     expect(JSON.parse(fs.readFileSync(options.configPath, "utf8"))).toMatchObject({
       apply_concurrency: 2,
+      pipeline_internal_concurrency: 4,
       worker_activity_slots: 6,
       daily_budget_usd: 19.75,
       analysis_legs: ["claude", "google"],
@@ -10685,6 +10693,22 @@ describe("local TypeScript API", () => {
     expect(response.statusCode, response.body).toBe(400);
     expect(JSON.parse(fs.readFileSync(options.configPath, "utf8"))).not.toHaveProperty(
       "worker_activity_slots",
+    );
+    await app.close();
+  });
+
+  it("rejects Pipeline internal concurrency outside the public settings contract", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings",
+      payload: { pipelineInternalConcurrency: 17 },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(JSON.parse(fs.readFileSync(options.configPath, "utf8"))).toHaveProperty(
+      "pipeline_internal_concurrency",
+      5,
     );
     await app.close();
   });

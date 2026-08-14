@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from jobctrl.domain.events.materials import (
     create_employer_analyzed,
 )
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.domain.materials.analysis import AnalysisFailure, EnsembleError
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.scoring import ScoringCriteria
@@ -197,6 +199,58 @@ def test_score_by_id_isolates_same_job_id_across_tenants(
         """
     ).fetchone()
     assert tuple(event) == (str(_TENANT_A), str(_JOB_ID_A), 1)
+
+
+def test_score_by_id_persists_analysis_ensemble_failure_as_retryable(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_target(conn, tenant_id=_TENANT_A, job_id=_JOB_ID_A)
+
+    class FailingAnalyzeUseCase:
+        def execute(self, **_kwargs):
+            raise EnsembleError(
+                "all ensemble legs failed",
+                (
+                    AnalysisFailure("claude:model-a", "TimeoutError: provider timed out"),
+                    AnalysisFailure("codex:model-b", "ValueError: private raw output"),
+                ),
+            )
+
+    outcome = scorer_module.score_job_by_id(
+        _JOB_ID_A,
+        tenant_id=_TENANT_A,
+        rescore=True,
+        profile_snapshot=_profile_snapshot(_TENANT_A),
+        resume_text="Python platform engineer.",
+        criteria=ScoringCriteria(),
+        repository=SqliteScoreRepository(conn),
+        llm_port=_StrongLlm(),
+        analyze_use_case=FailingAnalyzeUseCase(),
+        require_employer_analysis=True,
+        workflow_id="score-workflow-run-1",
+    )
+
+    assert outcome.ok is False
+    row = conn.execute(
+        "SELECT state, attempt_count, error_code, error_message, retryable, metadata_json "
+        "FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'score'",
+        (str(_TENANT_A), str(_JOB_ID_A)),
+    ).fetchone()
+    assert row["state"] == "failed"
+    assert row["attempt_count"] == 1
+    assert row["error_code"] == "SCORE_FAILED"
+    assert row["retryable"] == 1
+    assert "claude:model-a: TimeoutError" in row["error_message"]
+    assert "codex:model-b: ValueError" in row["error_message"]
+    assert "provider timed out" not in row["error_message"]
+    assert "private raw output" not in row["error_message"]
+    assert json.loads(row["metadata_json"])["activityOwner"] == "score-workflow-run-1"
+    events = conn.execute(
+        "SELECT event_type FROM job_events WHERE tenant_id = ? AND job_id = ? "
+        "AND stage = 'score' ORDER BY event_id",
+        (str(_TENANT_A), str(_JOB_ID_A)),
+    ).fetchall()
+    assert [event["event_type"] for event in events] == ["StageStarted", "StageFailed"]
 
 
 def test_url_adapter_resolves_locator_inside_requested_tenant(

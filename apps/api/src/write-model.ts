@@ -760,6 +760,9 @@ export function writeSettingsConfig(
     };
 
     if (request.applyConcurrency !== undefined) assign("apply_concurrency", request.applyConcurrency);
+    if (request.pipelineInternalConcurrency !== undefined) {
+      assign("pipeline_internal_concurrency", request.pipelineInternalConcurrency);
+    }
     if (request.workerActivitySlots !== undefined) assign("worker_activity_slots", request.workerActivitySlots);
     if (request.dailyBudgetUsd !== undefined) assign("daily_budget_usd", request.dailyBudgetUsd);
     if (request.analysisLegs !== undefined) assign("analysis_legs", request.analysisLegs);
