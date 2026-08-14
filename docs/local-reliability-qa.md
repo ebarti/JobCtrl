@@ -111,8 +111,14 @@ boundary carrying a private fake cursor. Verify that the worker callback,
 exact-run Operations response, and expanded **Crawl sources** row expose only
 the normalized provider/page counts and continuation state. The private cursor
 must be absent, an event from another Temporal run must not leak into the
-selected execution, and a missing provider total must render as unavailable
-rather than a synthetic percentage:
+selected execution, and a missing provider total must not become a synthetic
+percentage. With two planned families, one active family, five recent
+whole-family duration samples, complete runtime inventory, and an empty task
+queue, the same fixture must produce a bounded `source_rate` range. One
+selected-sweep preparation workflow with several sequential stages must reserve
+one slot and remain bounded when spare capacity exists; queued backlog,
+unbounded retry demand, sweep demand beyond spare slots, or truncated inventory
+still produces `contention_unbounded`:
 
 ```bash
 corepack pnpm --filter @jobctrl/api exec vitest run \

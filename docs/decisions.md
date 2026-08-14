@@ -2145,6 +2145,15 @@ normalized, cursor-free `ProviderProgress` observations are projected under the
 exact Discover workflow/run identity, while provider totals remain nullable and
 separate from JobCtrl acceptance counts and whole-pipeline ETA evidence.
 
+Amended (2026-08-13): a null provider total still forbids a provider-progress
+percentage or remaining-page estimate. It does not forbid a separate
+source-family range derived from recent completed-family durations when the
+planned family count, source concurrency, runtime inventory, and Temporal queue
+are bounded. Dormant global rows outside the selected execution become source
+contention only when they are queued or observed as active work. Selected-run
+sweep demand reserves one slot per remaining preparation workflow and blocks
+the source range only when those workflows exceed currently spare capacity.
+
 ## 2026-07-29: Stable Job Identity And Human-Approved Feedback Learning
 
 Status: accepted

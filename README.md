@@ -173,7 +173,9 @@ evidence, qualifications, and the complete capability matrix.
   Pipelines reports how many units resumed. JobStreaming 0.0.3 also supplies
   cursor-free provider page progress so the active crawl can show completed
   pages, raw listings, emitted jobs, and known continuation without guessing
-  an unavailable provider total or ETA.
+  an unavailable provider total. JobCtrl can separately estimate source-family
+  completion from recent whole-family durations when live queue and capacity
+  observations bound the shared worker contention.
 - Optionally reconcile a local Temporal Schedule for discovery; it is disabled
   by default and uses the configured cron only after you enable it.
 - Enrich postings with full descriptions, canonical posting URLs, and apply

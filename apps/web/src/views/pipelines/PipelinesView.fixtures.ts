@@ -37,6 +37,18 @@ const etaAvailable: PipelineEta = {
   caveat: "Estimate excludes unrelated backlog outside this discovery run.",
 };
 
+const sourceEtaAvailable: PipelineEta = {
+  status: "available",
+  lowSeconds: 1_200,
+  highSeconds: 1_260,
+  confidence: "low",
+  basis: "source_rate",
+  sampleSize: 5,
+  asOf: AS_OF,
+  caveat:
+    "Provider total is unavailable; range uses recent whole-family duration and bounded live capacity.",
+};
+
 const etaCalibrating: PipelineEta = {
   status: "calibrating",
   completedSamples: 2,
@@ -111,7 +123,13 @@ function stage(
 
 const discoveringStages: PipelineOperationalStage[] = [
   stage("source_planning", "Plan sources", "current_execution", counts({ eligible: 1, succeeded: 1 })),
-  stage("source_family", "Crawl sources", "current_execution", counts({ eligible: 3, processing: 2, succeeded: 1 })),
+  stage(
+    "source_family",
+    "Crawl sources",
+    "current_execution",
+    counts({ eligible: 3, processing: 2, succeeded: 1 }),
+    sourceEtaAvailable,
+  ),
   stage("reconciliation", "Enrichment reconciliation", "current_execution", counts({ eligible: 2, waiting: 2 })),
   stage("enrich", "Enrich", "execution_sweep", counts({ eligible: 9, waiting: 5, processing: 2, succeeded: 2 })),
   stage("score", "Score", "execution_sweep", counts({ eligible: 7, waiting: 4, processing: 1, succeeded: 2 })),
@@ -156,7 +174,7 @@ function snapshot(overrides: Partial<PipelineOperationsSnapshot> = {}): Pipeline
     sourceFamilies: {
       planned: 3,
       counts: counts({ eligible: 3, processing: 2, succeeded: 1 }),
-      eta: etaAvailable,
+      eta: sourceEtaAvailable,
       asOf: AS_OF,
       providerProgress: {
         site: "indeed",
