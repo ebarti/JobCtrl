@@ -117,7 +117,7 @@ describe("PipelinesView", () => {
     });
     expect(crawlTrigger).toHaveAttribute("aria-expanded", "false");
     expect(crawlTrigger).toHaveTextContent(
-      "Source family · 2 active · 1 terminal · 0 attention",
+      "Source family · 2 running · 0 waiting · 1 finished · 0 attention",
     );
     expect(crawlTrigger).toHaveTextContent("20 min–21 min");
     await user.click(crawlTrigger);
@@ -125,14 +125,18 @@ describe("PipelinesView", () => {
     expect(
       within(crawl).getByLabelText("Crawl sources stage summary"),
     ).toBeInTheDocument();
-    expect(crawl).toHaveTextContent("Active2");
+    expect(crawl).toHaveTextContent("Running2");
     expect(crawl).toHaveTextContent("Waiting0");
-    expect(crawl).toHaveTextContent("Processing2");
-    expect(crawl).toHaveTextContent("Terminal1");
+    expect(crawl).toHaveTextContent("Finished1");
     expect(crawl).toHaveTextContent("Attention0");
     expect(
-      within(crawl).getByRole("progressbar", { name: "Stage progress" }),
+      within(crawl).getByRole("progressbar", { name: "Stage completion" }),
     ).toHaveAttribute("aria-valuenow", "33");
+    expect(
+      within(crawl).getByRole("progressbar", { name: "Stage completion" }),
+    ).toHaveAttribute("aria-valuetext", "1 of 3 finished");
+    expect(crawl).toHaveTextContent("1 of 3 finished");
+    expect(crawl).not.toHaveTextContent(/terminal/i);
     expect(
       within(crawl).getByRole("heading", { name: "Provider traversal" }),
     ).toBeInTheDocument();
@@ -224,12 +228,12 @@ describe("PipelinesView", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps terminal outcomes honest and exposes every public stage-state count", async () => {
+  it("keeps finished outcomes honest and exposes every public stage-state count", async () => {
     const user = userEvent.setup();
     await renderPipelineOperations(pipelinesMixedFailureSnapshot);
 
     const crawl = screen.getByRole("region", { name: "Crawl sources stage" });
-    expect(crawl).toHaveTextContent("Terminal6");
+    expect(crawl).toHaveTextContent("Finished6");
     expect(crawl).not.toHaveTextContent("Done6");
     expect(crawl).toHaveTextContent("Attention3");
     await user.click(
@@ -240,7 +244,7 @@ describe("PipelinesView", () => {
     );
     expect(outcomes).toHaveTextContent("Eligible8");
     expect(outcomes).toHaveTextContent("Waiting1");
-    expect(outcomes).toHaveTextContent("Processing1");
+    expect(outcomes).toHaveTextContent("Running1");
     expect(outcomes).toHaveTextContent("Succeeded2");
     expect(outcomes).toHaveTextContent("Skipped0");
     expect(outcomes).toHaveTextContent("Blocked1");
@@ -252,7 +256,7 @@ describe("PipelinesView", () => {
     expect(outcomes).toHaveTextContent("Unknown0");
   });
 
-  it("renders a closed timed-out crawl as a terminal failure instead of active work", async () => {
+  it("renders a closed timed-out crawl as a finished failure instead of active work", async () => {
     const user = userEvent.setup();
     const closedTimeoutSnapshot: PipelineOperationsSnapshot = {
       ...pipelinesCompletedWithIssuesSnapshot,
@@ -286,14 +290,15 @@ describe("PipelinesView", () => {
     expect(crawl).toHaveAttribute("data-stage-status", "blocked");
     expect(within(crawl).getByText("Attention required")).toBeInTheDocument();
     expect(within(crawl).queryByText("In progress")).not.toBeInTheDocument();
-    expect(crawl).not.toHaveTextContent("50% terminal");
+    expect(crawl).not.toHaveTextContent("1 of 2 finished");
 
     await user.click(within(crawl).getByRole("button", { name: /Crawl sources/i }));
-    expect(within(crawl).getByRole("progressbar", { name: "Stage progress" })).toHaveAttribute(
+    expect(within(crawl).getByRole("progressbar", { name: "Stage completion" })).toHaveAttribute(
       "aria-valuenow",
       "100",
     );
-    expect(crawl).toHaveTextContent("100% terminal");
+    expect(crawl).toHaveTextContent("2 of 2 finished");
+    expect(crawl).not.toHaveTextContent(/terminal/i);
     expect(crawl).toHaveTextContent("Failed1");
     expect(crawl).not.toHaveTextContent("Exhausted");
   });
@@ -405,29 +410,29 @@ describe("PipelinesView", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps live runtime truth visible while exact history is restored", async () => {
+  it("keeps live runtime truth visible while the previous run is checked", async () => {
     await renderPipelineOperations(pipelinesRecoveringProjectionSnapshot);
 
     const coverageAlert = screen.getByRole("alert");
-    expect(coverageAlert).toHaveTextContent("Restoring pipeline history");
+    expect(coverageAlert).toHaveTextContent("Checking previous run records");
     expect(coverageAlert).toHaveTextContent(
-      "15 of 72 membership records restored",
+      "15 of 72 linked jobs checked",
     );
     expect(coverageAlert).toHaveTextContent(
-      "3 of 8 stage records restored",
+      "3 of 8 stage records checked",
     );
-    expect(coverageAlert).toHaveTextContent("no manual restart is needed");
+    expect(coverageAlert).toHaveTextContent("needs no restart");
     expect(coverageAlert).toHaveTextContent(
-      "Global worker, queue, and activity facts remain live below",
+      "Live worker, queue, and activity facts remain visible below",
     );
     expect(coverageAlert.querySelector("svg")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop discovery" })).toBeEnabled();
 
     const summary = screen.getByLabelText("Pipeline operations summary");
-    expect(summary).toHaveTextContent("Current cohortRestoring history");
-    expect(summary).toHaveTextContent("Execution sweepRestoring history");
-    expect(summary).toHaveTextContent("Source familiesRestoring history");
-    expect(summary).toHaveTextContent("Overall ETARestoring history");
+    expect(summary).toHaveTextContent("Current cohortChecking previous run");
+    expect(summary).toHaveTextContent("Execution sweepChecking previous run");
+    expect(summary).toHaveTextContent("Source familiesChecking previous run");
+    expect(summary).toHaveTextContent("Overall ETAChecking previous run");
     expect(summary).toHaveTextContent("TelemetryFresh");
 
     expect(getLivePipelineMetric("Workers online")).toHaveTextContent(
@@ -443,7 +448,7 @@ describe("PipelinesView", () => {
       "Queue backlog41 queuedOldest queued task 2 min",
     );
 
-    expect(screen.queryByText("0% terminal")).not.toBeInTheDocument();
+    expect(coverageAlert).not.toHaveTextContent(/terminal/i);
     expect(screen.queryByText("No work remaining")).not.toBeInTheDocument();
     expect(screen.queryByText(/tracking unavailable/i)).not.toBeInTheDocument();
     expect(
@@ -474,27 +479,27 @@ describe("PipelinesView", () => {
     expect(activeWork).toHaveTextContent("tailor-runtime-3");
   });
 
-  it("retries history repair automatically without hiding global telemetry or backlog", async () => {
+  it("retries the previous-run check automatically without hiding live telemetry", async () => {
     const user = userEvent.setup();
     await renderPipelineOperations(pipelinesRetryingProjectionSnapshot);
 
     const coverageAlert = screen.getByRole("alert");
     expect(coverageAlert).toHaveTextContent(
-      "Pipeline history repair will retry automatically",
+      "Previous run check will retry automatically",
     );
     expect(coverageAlert).toHaveTextContent(
-      "Last safe repair result: Recovery manifest set mismatch",
+      "Last check result: Recovery manifest set mismatch",
     );
     expect(coverageAlert).toHaveTextContent(
-      "Recovery runs at worker startup and on every worker heartbeat",
+      "This check finishes automatically and needs no restart",
     );
     expect(coverageAlert.querySelector("svg")).toBeInTheDocument();
 
     const summary = screen.getByLabelText("Pipeline operations summary");
-    expect(summary).toHaveTextContent("Current cohortRepair retry scheduled");
-    expect(summary).toHaveTextContent("Execution sweepRepair retry scheduled");
-    expect(summary).toHaveTextContent("Source familiesRepair retry scheduled");
-    expect(summary).toHaveTextContent("Overall ETARepair retry scheduled");
+    expect(summary).toHaveTextContent("Current cohortCheck will retry");
+    expect(summary).toHaveTextContent("Execution sweepCheck will retry");
+    expect(summary).toHaveTextContent("Source familiesCheck will retry");
+    expect(summary).toHaveTextContent("Overall ETACheck will retry");
     expect(summary).toHaveTextContent("TelemetryFresh");
 
     expect(getLivePipelineMetric("Workers online")).toHaveTextContent(
@@ -523,22 +528,22 @@ describe("PipelinesView", () => {
       screen.queryByRole("region", { name: "Global outside execution ledger table" }),
     ).not.toBeInTheDocument();
 
-    expect(screen.queryByText("0% terminal")).not.toBeInTheDocument();
+    expect(screen.queryByText(/terminal/i)).not.toBeInTheDocument();
     expect(screen.queryByText("No work remaining")).not.toBeInTheDocument();
     expect(screen.queryByText(/tracking unavailable/i)).not.toBeInTheDocument();
   });
 
-  it("preserves terminal incomplete history and offers a safe new Discover run", async () => {
+  it("preserves incomplete previous-run history and offers a safe new Discover run", async () => {
     const user = userEvent.setup();
     useStageTriggerStore.getState().setActiveStage("apply");
     await renderPipelineOperations(pipelinesIncompleteProjectionSnapshot);
 
     const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("Historical pipeline record is incomplete");
+    expect(alert).toHaveTextContent("Previous run record is incomplete");
     expect(alert).toHaveTextContent("preserved every exact record it can prove");
     expect(alert).toHaveTextContent("will not be retried automatically");
     expect(alert).not.toHaveTextContent("will retry automatically");
-    expect(screen.queryByText(/0% terminal/i)).not.toBeInTheDocument();
+    expect(alert).not.toHaveTextContent(/terminal/i);
     expect(screen.queryByText(/No work remaining/i)).not.toBeInTheDocument();
 
     const restart = within(alert).getByRole("link", {
@@ -588,15 +593,15 @@ describe("PipelinesView", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("lets recovery dominate a terminal-looking incomplete projection", async () => {
+  it("lets a previous-run check dominate an apparently finished incomplete projection", async () => {
     await renderPipelineOperations(pipelinesTerminalRecoveringProjectionSnapshot);
 
     const coverageAlert = screen.getByRole("alert");
-    expect(coverageAlert).toHaveTextContent("Restoring pipeline history");
+    expect(coverageAlert).toHaveTextContent("Checking previous run records");
     expect(coverageAlert).not.toHaveTextContent("Discovery completed with source issues");
 
     const phase = document.querySelector(".pipeline-phase-message");
-    expect(phase).toHaveTextContent("Recovering");
+    expect(phase).toHaveTextContent("Checking previous run");
     expect(phase).not.toHaveTextContent("Completed with issues");
     expect(
       screen.queryByRole("link", { name: "Set up a new Discover run" }),
@@ -625,10 +630,10 @@ describe("PipelinesView", () => {
     await renderPipelineOperations(pipelinesPartialSweepRecoveringSnapshot);
 
     const summary = screen.getByLabelText("Pipeline operations summary");
-    expect(summary).toHaveTextContent("Current cohortRestoring history");
-    expect(summary).toHaveTextContent("Execution sweepRestoring history");
-    expect(summary).toHaveTextContent("Source familiesRestoring history");
-    expect(summary).toHaveTextContent("Overall ETARestoring history");
+    expect(summary).toHaveTextContent("Current cohortChecking previous run");
+    expect(summary).toHaveTextContent("Execution sweepChecking previous run");
+    expect(summary).toHaveTextContent("Source familiesChecking previous run");
+    expect(summary).toHaveTextContent("Overall ETAChecking previous run");
 
     expect(screen.queryByText("41 remaining")).not.toBeInTheDocument();
     expect(screen.queryByText("83 remaining")).not.toBeInTheDocument();
@@ -693,7 +698,7 @@ describe("PipelinesView", () => {
       within(crawlSources).getByRole("button", { name: /Crawl sources/i }),
     );
     expect(
-      within(crawlSources).getByRole("progressbar", { name: "Stage progress" }),
+      within(crawlSources).getByRole("progressbar", { name: "Stage completion" }),
     ).toHaveAttribute("aria-valuenow", "33");
   });
 
@@ -806,7 +811,7 @@ describe("PipelinesView", () => {
     expect(alert).toHaveTextContent("exact stage outcomes");
     expect(alert).not.toHaveTextContent("source_retry_exhausted");
 
-    const sourceStatus = screen.getByText("2/3 succeeded · 1 needs attention", {
+    const sourceStatus = screen.getByText("3 of 3 finished · 1 needs attention", {
       selector: '[data-slot="status-badge"]',
     });
     expect(sourceStatus).toHaveAttribute("data-status-tone", "warn");
@@ -1071,12 +1076,17 @@ describe("PipelinesView", () => {
       sourceHeading.closest<HTMLElement>(".pipeline-source-ledger");
     if (!sourceLedger) throw new Error("Expected source and reconciliation ledger.");
 
-    expect(sourceLedger).toHaveTextContent("3/3 succeeded");
+    expect(sourceLedger).toHaveTextContent("3 of 3 finished");
     expect(
       within(sourceLedger).getByRole("progressbar", {
-        name: "Source-family progress",
+        name: "Source-family completion",
       }),
     ).toHaveAttribute("aria-valuenow", "100");
+    expect(
+      within(sourceLedger).getByRole("progressbar", {
+        name: "Source-family completion",
+      }),
+    ).toHaveAttribute("aria-valuetext", "3 of 3 finished");
     expect(sourceLedger).toHaveTextContent(
       "Runs one final enrichment pass for stragglers, then hands every ready job to preparation.",
     );

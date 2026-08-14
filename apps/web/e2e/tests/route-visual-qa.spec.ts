@@ -9,7 +9,10 @@ import {
   sampleJob,
   sampleResumeTemplateListResponse,
 } from "../../src/test/fixtures/projections.js";
-import { pipelinesDiscoveringSnapshot } from "../../src/views/pipelines/PipelinesView.fixtures.js";
+import {
+  pipelinesDiscoveringSnapshot,
+  pipelinesRecoveringProjectionSnapshot,
+} from "../../src/views/pipelines/PipelinesView.fixtures.js";
 
 type Density = "compact" | "regular" | "comfy";
 
@@ -1842,7 +1845,14 @@ test("Crawl sources keeps provider traversal separate from exact outcomes", asyn
   const crawl = page.getByRole("region", { name: "Crawl sources stage" });
   const trigger = crawl.getByRole("button", { name: /Crawl sources/i });
   await expect(trigger).toBeVisible({ timeout: 30_000 });
+  await expect(trigger).toContainText(
+    "Source family · 2 running · 0 waiting · 1 finished · 0 attention",
+  );
+  await expect(trigger).not.toContainText(/terminal/i);
   await trigger.click();
+  await expect(crawl.getByRole("progressbar", { name: "Stage completion" })).toBeVisible();
+  await expect(crawl).toContainText("1 of 3 finished");
+  await expect(crawl).not.toContainText(/terminal/i);
 
   const content = crawl.locator(".pipeline-stage-row__content");
   const provider = content.locator(".pipeline-stage-row__provider-progress");
@@ -1900,6 +1910,29 @@ test("Crawl sources keeps provider traversal separate from exact outcomes", asyn
   });
   expect(mobile.overlaps).toBe(false);
   expect(mobile.providerBottom).toBeLessThanOrEqual(mobile.outcomesTop + 1);
+});
+
+test("pipeline recovery explains the automatic previous-run check in plain language", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1491, height: 1245 });
+  await page.route("**/v1/pipeline/operations", async (route) => {
+    await route.fulfill({ json: pipelinesRecoveringProjectionSnapshot });
+  });
+  await page.goto("/pipelines");
+
+  const alert = page
+    .getByRole("alert")
+    .filter({ hasText: "Checking previous run records" });
+  await expect(alert).toContainText("Checking previous run records");
+  await expect(alert).toContainText("15 of 72 linked jobs checked");
+  await expect(alert).toContainText("3 of 8 stage records checked");
+  await expect(alert).toContainText("finishes automatically and needs no restart");
+  await expect(alert).not.toContainText(/restoring history|terminal/i);
+
+  const summary = page.getByLabel("Pipeline operations summary");
+  await expect(summary).toContainText("Checking previous run");
+  await expect(summary).not.toContainText("Restoring history");
 });
 
 test("busy replacement guidance keeps its title readable without an action", async ({
