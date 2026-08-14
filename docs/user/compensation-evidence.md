@@ -21,9 +21,15 @@ for comparison:
    range according to wording such as “up to” or “from.” More than two amounts,
    mixed compensation components, or additive bonus wording becomes ambiguous
    instead of being summed.
-3. **Annualize only with a known period.** Annual amounts stay unchanged,
-   monthly amounts use `12` months, and hourly amounts use `2,080` work hours.
-   Unknown periods are not annualized. Missing currency/period, hourly
+3. **Annualize only with a known or narrowly inferred period.** Annual amounts
+   stay unchanged, monthly amounts use `12` months, and hourly amounts use
+   `2,080` work hours. A currency-backed amount of at least `12,000` governed by
+   a nearby salary, base-pay, or pay-range cue may be treated as annual when no
+   shorter period is stated; the fact records that inference, keeps medium
+   confidence, and exposes it as a warning. Generic compensation, bonuses,
+   equity, low values, and nearby shorter-period rate cues—such as daily,
+   weekly, biweekly, fortnightly, monthly, quarterly, or per-pay-period wording—do not qualify.
+   Other unknown periods are not annualized. Missing currency/period, hourly
    conversion, broad ranges, and ambiguity lower confidence and remain visible
    as warnings.
 4. **Keep cash and equity separate.** When a posting states one cash amount and

@@ -206,7 +206,7 @@ def test_reparse_outdated_facts_is_bounded_idempotent_and_preserves_future_rows(
     )
     conn.execute(
         "UPDATE job_posted_compensation_facts SET parser_version = ? WHERE job_id = ?",
-        ("posted-compensation-v4", future_id),
+        ("posted-compensation-v5", future_id),
     )
     conn.commit()
 
@@ -227,15 +227,15 @@ def test_reparse_outdated_facts_is_bounded_idempotent_and_preserves_future_rows(
 
     first = repo.get_fact("local", first_id)
     assert first is not None
-    assert first.parser_version == "posted-compensation-v3"
+    assert first.parser_version == "posted-compensation-v4"
     assert first.component == "unknown"
     assert first.confidence == "high"
     second = repo.get_fact("local", second_id)
     assert second is not None
-    assert second.parser_version == "posted-compensation-v3"
+    assert second.parser_version == "posted-compensation-v4"
     assert second.period == "year"
     assert second.annualized_minimum_amount == 100_000
-    assert repo.get_fact("local", future_id).parser_version == "posted-compensation-v4"  # type: ignore[union-attr]
+    assert repo.get_fact("local", future_id).parser_version == "posted-compensation-v5"  # type: ignore[union-attr]
     events = conn.execute(
         """
         SELECT job_id, idempotency_key
@@ -246,7 +246,7 @@ def test_reparse_outdated_facts_is_bounded_idempotent_and_preserves_future_rows(
         """
     ).fetchall()
     assert len(events) == 2
-    assert {":".join(str(row["idempotency_key"]).rsplit(":", 2)[-2:]) for row in events} == {"v1:v3", "v2:v3"}
+    assert {":".join(str(row["idempotency_key"]).rsplit(":", 2)[-2:]) for row in events} == {"v1:v4", "v2:v4"}
 
 
 @pytest.mark.parametrize(
@@ -288,7 +288,7 @@ def test_reparse_outdated_facts_rolls_back_fact_when_event_write_fails(
 
     monkeypatch.setattr(state_module, "record_job_event", original)
     assert repo.reparse_outdated_facts(parsed_at="2026-08-12T12:01:00Z") == 1
-    assert repo.get_fact("local", job_id).parser_version == "posted-compensation-v3"  # type: ignore[union-attr]
+    assert repo.get_fact("local", job_id).parser_version == "posted-compensation-v4"  # type: ignore[union-attr]
     assert (
         conn.execute(
             "SELECT COUNT(*) FROM job_events WHERE tenant_id = 'local' AND job_id = ?",
@@ -330,7 +330,7 @@ def test_reparse_corrects_v2_hourly_false_positive_from_following_hr_prose(
 
     fact = repo.get_fact("local", job_id)
     assert fact is not None
-    assert fact.parser_version == "posted-compensation-v3"
+    assert fact.parser_version == "posted-compensation-v4"
     assert fact.period == "unknown"
     assert fact.annualized_minimum_amount is None
     assert fact.annualized_maximum_amount is None
@@ -340,7 +340,7 @@ def test_reparse_corrects_v2_hourly_false_positive_from_following_hr_prose(
         "SELECT idempotency_key FROM job_events WHERE tenant_id = 'local' AND job_id = ?",
         (job_id,),
     ).fetchone()["idempotency_key"]
-    assert str(event_key).endswith(":v2:v3")
+    assert str(event_key).endswith(":v2:v4")
 
 
 def test_reparse_uses_accepted_enrichment_description_and_supports_tuple_rows(

@@ -45,6 +45,7 @@ export const DEMO_CAPABILITY_MANIFEST = {
   discoveryQuarantine: local("Reads synthetic quarantine records."),
   decideDiscoveryQuarantine: local("Decides a synthetic quarantine record locally."),
   manualCaptureQueue: local("Reads the bundled browser-capture fixture."),
+  importJobUrl: unavailable("Direct URL import requires the local worker and browser runtime."),
   importManualCapture: local("Imports a bundled capture fixture locally."),
   dismissManualCapture: local("Dismisses a bundled capture fixture locally."),
   recordDiscoveryFeedback: local("Records feedback only in browser-local state."),

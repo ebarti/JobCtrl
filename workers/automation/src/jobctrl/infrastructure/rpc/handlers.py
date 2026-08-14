@@ -56,6 +56,7 @@ from jobctrl.workflow_specs import (
     build_contact_research_workflow_spec,
     build_interview_prep_workflow_spec,
     build_manual_capture_import_workflow_spec,
+    build_job_url_import_workflow_spec,
     build_pipeline_workflow_spec,
     build_profile_import_workflow_spec,
     build_run_stage_workflow_spec,
@@ -673,6 +674,13 @@ def manual_capture_import(params: dict[str, Any]) -> WorkflowStartSpec:
         raise invalid_params(str(exc)) from exc
 
 
+def job_url_import(params: dict[str, Any]) -> WorkflowStartSpec:
+    try:
+        return build_job_url_import_workflow_spec(params)
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
+
+
 # ---------------------------------------------------------------------------
 # Workflow handlers
 # ---------------------------------------------------------------------------
@@ -1070,6 +1078,7 @@ def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobCtrl method set onto *server*."""
     server.register("profile_import", profile_import, mode="workflow")
+    server.register("job_url_import", job_url_import, mode="workflow")
     server.register("manual_capture_import", manual_capture_import, mode="workflow")
     # Workflow starters.
     server.register("run_stage", run_stage, mode="workflow")

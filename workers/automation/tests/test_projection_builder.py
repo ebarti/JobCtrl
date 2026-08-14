@@ -751,7 +751,7 @@ def test_posted_parser_reconciliation_rebuilds_settled_list_and_detail_projectio
     audit = json.loads(rebuilt["compensation_audit_json"])
     assert list_summary["posted"]["range"]["component"] == "unknown"
     assert detail_summary["posted"]["range"]["component"] == "unknown"
-    assert audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v3"
+    assert audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v4"
     assert audit["posted"]["fact"]["component"] == "unknown"
 
 
@@ -842,8 +842,148 @@ def test_posted_parser_reconciliation_corrects_hr_prose_period_in_settled_projec
     assert audit["posted"]["fact"]["period"] == "year"
     assert audit["posted"]["fact"]["annualizedMinimumAmount"] == 94_300
     assert audit["posted"]["fact"]["annualizedMaximumAmount"] == 106_950
-    assert audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v3"
+    assert audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v4"
     assert "hourly_period" not in {warning["code"] for warning in audit["posted"]["fact"]["warnings"]}
+
+
+def test_posted_parser_reconciliation_infers_wave_salary_as_annual_in_settled_projections(
+    conn: sqlite3.Connection,
+) -> None:
+    source_text = (
+        "Wave covers all costs. Compensation: Our salaries are competitive and "
+        "are calculated using a transparent formula. For this role, depending "
+        "on your level and location, we offer a salary of up to $356,500 USD, "
+        "plus a generous equity package."
+    )
+    job_id = _seed_job(
+        conn,
+        "https://www.wave.com/en/careers/job/6129464004/",
+        salary=source_text,
+    )
+    posted_repo = SqlitePostedCompensationRepository(conn)
+    posted_repo.parse_and_save_job_salary(
+        job_id,
+        source_text,
+        parsed_at="2026-08-14T08:40:15Z",
+    )
+    conn.execute(
+        """
+        UPDATE job_posted_compensation_facts
+        SET parser_version = 'posted-compensation-v3',
+            period = 'unknown',
+            annualized_minimum_amount = NULL,
+            annualized_maximum_amount = NULL,
+            annualization_assumption = NULL,
+            confidence = 'medium',
+            warnings_json = '["source_text_truncated", "missing_period", "one_sided_range"]'
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    )
+    conn.commit()
+
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
+    assert builder.refresh() == 1
+    initial = conn.execute(
+        """
+        SELECT list.compensation_summary_json,
+               detail.compensation_summary_json AS detail_summary_json
+        FROM job_list_projections AS list
+        JOIN job_detail_projections AS detail
+          ON detail.tenant_id = list.tenant_id
+         AND detail.job_id = list.job_id
+        WHERE list.tenant_id = ? AND list.job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert initial is not None
+    assert json.loads(initial["compensation_summary_json"])["posted"]["displayRange"] == ("USD up to 356500/unknown")
+    assert json.loads(initial["detail_summary_json"])["posted"]["displayRange"] == ("USD up to 356500/unknown")
+
+    assert posted_repo.reparse_outdated_facts(parsed_at="2026-08-14T10:00:00Z") == 1
+    assert builder.refresh() == 1
+
+    rebuilt = conn.execute(
+        """
+        SELECT list.compensation_summary_json,
+               detail.compensation_summary_json AS detail_summary_json,
+               detail.compensation_audit_json
+        FROM job_list_projections AS list
+        JOIN job_detail_projections AS detail
+          ON detail.tenant_id = list.tenant_id
+         AND detail.job_id = list.job_id
+        WHERE list.tenant_id = ? AND list.job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert rebuilt is not None
+    list_summary = json.loads(rebuilt["compensation_summary_json"])
+    detail_summary = json.loads(rebuilt["detail_summary_json"])
+    audit = json.loads(rebuilt["compensation_audit_json"])
+    assert list_summary["posted"]["displayRange"] == "USD up to 356500/year"
+    assert detail_summary["posted"]["displayRange"] == "USD up to 356500/year"
+    assert audit["posted"]["fact"]["period"] == "year"
+    assert audit["posted"]["fact"]["annualizedMaximumAmount"] == 356_500
+    assert audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v4"
+    assert "annual_period_inferred" in {warning["code"] for warning in audit["posted"]["fact"]["warnings"]}
+    assert "missing_period" not in {warning["code"] for warning in audit["posted"]["fact"]["warnings"]}
+
+
+def test_posted_parser_reconciliation_preserves_biweekly_as_unannualized(
+    conn: sqlite3.Connection,
+) -> None:
+    source_text = "Salary up to $15,000 biweekly"
+    job_id = _seed_job(
+        conn,
+        "https://example.com/jobs/weekly-salary",
+        salary=source_text,
+    )
+    posted_repo = SqlitePostedCompensationRepository(conn)
+    posted_repo.parse_and_save_job_salary(
+        job_id,
+        source_text,
+        parsed_at="2026-08-14T08:40:15Z",
+    )
+    conn.execute(
+        """
+        UPDATE job_posted_compensation_facts
+        SET parser_version = 'posted-compensation-v3'
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    )
+    conn.commit()
+
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
+    assert builder.refresh() == 1
+    assert posted_repo.reparse_outdated_facts(parsed_at="2026-08-14T10:00:00Z") == 1
+    assert builder.refresh() == 1
+
+    rebuilt = conn.execute(
+        """
+        SELECT list.compensation_summary_json,
+               detail.compensation_summary_json AS detail_summary_json,
+               detail.compensation_audit_json
+        FROM job_list_projections AS list
+        JOIN job_detail_projections AS detail
+          ON detail.tenant_id = list.tenant_id
+         AND detail.job_id = list.job_id
+        WHERE list.tenant_id = ? AND list.job_id = ?
+        """,
+        (str(LOCAL_TENANT), str(job_id)),
+    ).fetchone()
+    assert rebuilt is not None
+    list_summary = json.loads(rebuilt["compensation_summary_json"])
+    detail_summary = json.loads(rebuilt["detail_summary_json"])
+    audit = json.loads(rebuilt["compensation_audit_json"])
+    assert list_summary["posted"]["displayRange"] == "USD up to 15000/unknown"
+    assert detail_summary["posted"]["displayRange"] == "USD up to 15000/unknown"
+    assert audit["posted"]["fact"]["period"] == "unknown"
+    assert audit["posted"]["fact"]["annualizedMaximumAmount"] is None
+    assert audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v4"
+    warning_codes = {warning["code"] for warning in audit["posted"]["fact"]["warnings"]}
+    assert "annual_period_inferred" not in warning_codes
+    assert "missing_period" in warning_codes
 
 
 def test_projection_suppresses_historical_posted_as_market_rows(

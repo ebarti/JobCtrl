@@ -84,9 +84,7 @@ class PostingSnapshotSetRepository(Protocol):
 
     def save(self, snapshot_set: PostingSnapshotSet) -> None: ...
 
-    def index_entries(
-        self, tenant_id: TenantId, *, exclude_job_id: JobId | None = None
-    ) -> Iterable[DedupeIndexEntry]:
+    def index_entries(self, tenant_id: TenantId, *, exclude_job_id: JobId | None = None) -> Iterable[DedupeIndexEntry]:
         """Return the dedupe index — the latest snapshot per other job."""
         ...
 
@@ -153,9 +151,7 @@ class CapturePostingSnapshotUseCase:
     ) -> CapturePostingSnapshotOutcome:
         """Capture one snapshot for ``(tenant, job)``."""
         snapshot_set = self._snapshot_repository.load(tenant_id, job_id) or (
-            PostingSnapshotSet.empty(
-                tenant_id=tenant_id, job_id=job_id, updated_at=_utc_now()
-            )
+            PostingSnapshotSet.empty(tenant_id=tenant_id, job_id=job_id, updated_at=_utc_now())
         )
         previous_active = snapshot_set.latest_active_state
 
@@ -196,11 +192,7 @@ class CapturePostingSnapshotUseCase:
 
         # Dedupe candidates against everything else this tenant has seen.
         duplicate_candidates: list[ContentDuplicateCandidate] = []
-        index = list(
-            self._snapshot_repository.index_entries(
-                tenant_id, exclude_job_id=job_id
-            )
-        )
+        index = list(self._snapshot_repository.index_entries(tenant_id, exclude_job_id=job_id))
         findings = self._dedupe.find_candidates(
             job_id=str(job_id),
             description_hash=result.description_hash,
@@ -231,7 +223,6 @@ class CapturePostingSnapshotUseCase:
             promote_to_job_enrichment
             and self._enrichment_repository is not None
             and result.description is not None
-            and result.apply_url is not None
             and result.active_state is ActiveState.ACTIVE
             and result.quarantine_reason is QuarantineReason.NONE
         ):
@@ -295,10 +286,7 @@ class CapturePostingSnapshotUseCase:
             retryable=result.retryable,
             failed_at=failed_at,
         )
-        active_changed = (
-            result.verification_method != "unknown"
-            and result.active_state is not previous_active
-        )
+        active_changed = result.verification_method != "unknown" and result.active_state is not previous_active
         if active_changed:
             snapshot_set, _ = snapshot_set.mark_active_state(
                 active_state=result.active_state,
@@ -349,9 +337,7 @@ class CapturePostingSnapshotUseCase:
         existing = repo.load(tenant_id, job_id)
         if existing is not None and (existing.is_enriched or existing.is_running):
             return False
-        aggregate = existing or JobEnrichment.empty(
-            tenant_id=tenant_id, job_id=job_id, updated_at=_utc_now()
-        )
+        aggregate = existing or JobEnrichment.empty(tenant_id=tenant_id, job_id=job_id, updated_at=_utc_now())
         if aggregate.is_failed:
             aggregate = aggregate.reset(reset_at=_utc_now())
         try:
@@ -361,10 +347,9 @@ class CapturePostingSnapshotUseCase:
                 started_at=_utc_now(),
             )
             assert result.description is not None
-            assert result.apply_url is not None
             aggregate = aggregate.succeed_attempt(
                 full_description=result.description,
-                application_url=_to_application_url(result.apply_url),
+                application_url=(_to_application_url(result.apply_url) if result.apply_url is not None else None),
                 extraction_tier=tier,
                 finished_at=_utc_now(),
             )
@@ -493,9 +478,7 @@ class CapturePostingSnapshotUseCase:
             )
             self._publisher.publish(event)
         except Exception:  # noqa: BLE001
-            log.exception(
-                "Failed to publish ContentDuplicateCandidateDetected for %s", job_id
-            )
+            log.exception("Failed to publish ContentDuplicateCandidateDetected for %s", job_id)
 
     def _publish_job_enriched(
         self,
@@ -511,11 +494,7 @@ class CapturePostingSnapshotUseCase:
                 JobEnrichedPayload(
                     job_id=str(aggregate.job_id),
                     full_description=aggregate.full_description.text,
-                    application_url=(
-                        aggregate.application_url.value
-                        if aggregate.application_url
-                        else ""
-                    ),
+                    application_url=(aggregate.application_url.value if aggregate.application_url else ""),
                     extraction_tier=tier.value,
                     enriched_at=aggregate.enriched_at or "",
                 ),

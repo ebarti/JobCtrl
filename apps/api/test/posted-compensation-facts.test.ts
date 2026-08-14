@@ -176,6 +176,58 @@ describe("posted compensation facts API", () => {
     }
   });
 
+  it("serves the audited warning for a high-value salary inferred as annual", async () => {
+    const { app, dbPath, cleanup } = withTempApp();
+    insertFact(dbPath, PARSED_JOB_ID, {
+      sourceText: "Salary up to $356,500 USD",
+      legacyRawSalary: "Salary up to $356,500 USD",
+      currency: "USD",
+      period: "year",
+      component: "base_salary",
+      maximumAmount: 356_500,
+      annualizedMaximumAmount: 356_500,
+      annualizationAssumption:
+        "High-value employer-stated salary is treated as annual because no shorter pay period was stated.",
+      confidence: "medium",
+      warnings: ["annual_period_inferred", "one_sided_range"],
+    });
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${PARSED_JOB_ID}/compensation/posted`,
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      const body = response.json() as PostedCompensationFactResponse;
+      expect(body).toMatchObject({
+        ok: true,
+        recordStatus: "recorded",
+        fact: {
+          parseState: "parsed_range",
+          period: "year",
+          annualizedMaximumAmount: 356_500,
+          annualizationAssumption:
+            "High-value employer-stated salary is treated as annual because no shorter pay period was stated.",
+          confidence: "medium",
+          warnings: [
+            {
+              code: "annual_period_inferred",
+              message:
+                "The posting states a high-value salary without a shorter pay period, so JobCtrl treats it as annual.",
+            },
+            {
+              code: "one_sided_range",
+              message: "The posted range is one-sided.",
+            },
+          ],
+        },
+      });
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("serves missing, unparseable, and ambiguous canonical facts without normalized range fields", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     const db = new Database(dbPath);

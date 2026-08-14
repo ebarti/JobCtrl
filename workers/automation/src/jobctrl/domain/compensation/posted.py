@@ -11,7 +11,7 @@ from typing import Literal
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
-PARSER_VERSION = "posted-compensation-v3"
+PARSER_VERSION = "posted-compensation-v4"
 SOURCE_TEXT_LIMIT = 280
 
 ParseState = Literal["missing", "unparseable", "ambiguous", "parsed_range"]
@@ -19,6 +19,7 @@ CompensationComponent = Literal["base_salary", "ote", "bonus", "commission", "eq
 CompensationPeriod = Literal["hour", "month", "year", "unknown"]
 ConfidenceLevel = Literal["none", "low", "medium", "high"]
 WarningCode = Literal[
+    "annual_period_inferred",
     "ambiguous_multiple_amounts",
     "bonus_component",
     "broad_range",
@@ -46,6 +47,7 @@ COMPONENTS: tuple[CompensationComponent, ...] = (
 PERIODS: tuple[CompensationPeriod, ...] = ("hour", "month", "year", "unknown")
 CONFIDENCE_LEVELS: tuple[ConfidenceLevel, ...] = ("none", "low", "medium", "high")
 WARNING_CODES: tuple[WarningCode, ...] = (
+    "annual_period_inferred",
     "ambiguous_multiple_amounts",
     "bonus_component",
     "broad_range",
@@ -121,6 +123,23 @@ _BARE_PERIOD_SUFFIX_PATTERNS: tuple[tuple[CompensationPeriod, re.Pattern[str]], 
     ),
 )
 _MAX_PERIOD_CUE_DISTANCE = 64
+_ANNUAL_SALARY_FLOOR = 12_000
+_MAX_INFERRED_ANNUAL_CUE_DISTANCE = 32
+_BASE_SALARY_CUE_RE = re.compile(
+    r"\b(?:base salary|base pay|pay range|salary|wage|remuneration)\b",
+)
+_NON_SALARY_AMOUNT_CUE_RE = re.compile(
+    r"\b(?:bonus|commission|equity|stock|stipend|allowance|learning budget|"
+    r"training budget|wellness|home office|equipment|relocation)\b",
+)
+_UNSUPPORTED_SUBANNUAL_PERIOD_RE = re.compile(
+    r"/(?:d|day|wk|wks|week)\b|"
+    r"\b(?:hour|hours|hourly|day|days|daily|diem|week|weeks|weekly|workweek|workweeks|"
+    r"fortnight|fortnights|fortnightly|biweekly|semiweekly|"
+    r"month|months|monthly|semimonthly|bimonthly|"
+    r"quarter|quarters|quarterly|semiannual|semiannually|biannual|biannually|"
+    r"pay period|pay periods|pay cycle|pay cycles|paycheck|paychecks)\b",
+)
 
 
 @dataclass(frozen=True)
@@ -249,13 +268,28 @@ def parse_posted_compensation(
         )
 
     component = _detect_component(lower, amounts)
+    annual_period_inferred = period == "unknown" and _should_infer_annual_salary(
+        lower,
+        amounts,
+        currency=currency,
+        component=component,
+    )
+    if annual_period_inferred:
+        period = "year"
+        warnings = [warning for warning in warnings if warning != "missing_period"]
+        warnings.append("annual_period_inferred")
     minimum, maximum, one_sided = _range_bounds(amounts, lower)
     if one_sided:
         warnings.append("one_sided_range")
     if _is_broad_range(minimum, maximum):
         warnings.append("broad_range")
 
-    annual_min, annual_max, assumption = _annualize(minimum, maximum, period)
+    annual_min, annual_max, assumption = _annualize(
+        minimum,
+        maximum,
+        period,
+        inferred_annual=annual_period_inferred,
+    )
     confidence = _confidence(period, currency, warnings)
     return PostedCompensationFact(
         tenant_id=tenant_id,
@@ -397,6 +431,55 @@ def _period_warnings(period: CompensationPeriod) -> list[WarningCode]:
     if period == "unknown":
         return ["missing_period"]
     return []
+
+
+def _should_infer_annual_salary(
+    lower: str,
+    amounts: list[_Amount],
+    *,
+    currency: str | None,
+    component: CompensationComponent,
+) -> bool:
+    """Infer an annual period only for an amount-local high-value salary.
+
+    Some employers state an ordinary professional salary without spelling out
+    "per year". The inference is intentionally narrower than component
+    detection: it requires currency, a salary/base-pay cue governing the
+    amount, and no nearby daily or weekly rate marker. Generic compensation,
+    bonuses, equity, low values, and unsupported subannual rates fail closed.
+    """
+
+    if currency is None or component != "base_salary" or not amounts:
+        return False
+    if any(amount.value < _ANNUAL_SALARY_FLOOR for amount in amounts):
+        return False
+    cue_distance = _nearest_pattern_distance(_BASE_SALARY_CUE_RE, lower, amounts)
+    if cue_distance is None or cue_distance > _MAX_INFERRED_ANNUAL_CUE_DISTANCE:
+        return False
+    non_salary_distance = _nearest_pattern_distance(
+        _NON_SALARY_AMOUNT_CUE_RE,
+        lower,
+        amounts,
+    )
+    if non_salary_distance is not None and non_salary_distance <= cue_distance:
+        return False
+    subannual_distance = _nearest_pattern_distance(
+        _UNSUPPORTED_SUBANNUAL_PERIOD_RE,
+        lower,
+        amounts,
+    )
+    return subannual_distance is None or subannual_distance > _MAX_INFERRED_ANNUAL_CUE_DISTANCE
+
+
+def _nearest_pattern_distance(
+    pattern: re.Pattern[str],
+    text: str,
+    amounts: list[_Amount],
+) -> int | None:
+    distances = [
+        _distance_between(match.start(), match.end(), amount) for match in pattern.finditer(text) for amount in amounts
+    ]
+    return min(distances) if distances else None
 
 
 def _detect_component(lower: str, amounts: list[_Amount]) -> CompensationComponent:
@@ -589,8 +672,16 @@ def _annualize(
     minimum: int | None,
     maximum: int | None,
     period: CompensationPeriod,
+    *,
+    inferred_annual: bool = False,
 ) -> tuple[int | None, int | None, str | None]:
     if period == "year":
+        if inferred_annual:
+            return (
+                minimum,
+                maximum,
+                "High-value employer-stated salary is treated as annual because no shorter pay period was stated.",
+            )
         return minimum, maximum, "Source text states annual compensation."
     if period == "month":
         return _multiply(minimum, 12), _multiply(maximum, 12), "Monthly amounts annualized by multiplying by 12."
@@ -617,7 +708,13 @@ def _confidence(
         return "low"
     if {"hourly_period", "broad_range", "ambiguous_multiple_amounts"} & warning_set:
         return "low"
-    if {"missing_currency", "missing_period", "monthly_period", "one_sided_range"} & warning_set:
+    if {
+        "annual_period_inferred",
+        "missing_currency",
+        "missing_period",
+        "monthly_period",
+        "one_sided_range",
+    } & warning_set:
         return "medium"
     return "high"
 

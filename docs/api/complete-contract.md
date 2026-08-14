@@ -275,6 +275,23 @@ to `pending`; non-failed selected jobs are ignored. A persisted legacy
 `failureReason: "attempt_budget_exhausted"`, remains retryable, and has its
 attempt count reset atomically by this action.
 
+`POST /v1/jobs/import-url` accepts the strict body `{ url: string }`. The URL
+must be public HTTP(S); credential-bearing, private, loopback, unresolved, and unsafe redirect
+destinations fail closed. The API awaits the worker-owned Temporal import and
+returns one of:
+
+- `{ ok: true, status: "imported", jobKey, importedAt, alreadyExisted }` after
+  deterministic page extraction, canonical Discovery ingestion, and snapshot
+  capture; or
+- `{ ok: true, status: "manual_capture_required", itemId, reason }` when a
+  login, bot control, rate limit, robots decision, paywall, or ambiguous page
+  requires user-provided content.
+
+The fallback appends or reopens a pending Manual Capture item and writes no
+placeholder Job. Replaying a URL already owned by a Job returns its stable
+`JobId` without fetching it again. Remote page fetching remains in the Python
+worker, not the TypeScript request process.
+
 ## Feedback learning and policy history
 
 `GET /v1/scoring/keywords` returns `{ ok: true, keywords }`. Each item contains

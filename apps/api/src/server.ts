@@ -45,6 +45,7 @@ import {
   EnsureCurrentResumeMaterialsRequestSchema,
   JobResumeTemplateAssignmentRequestSchema,
   JobListQuerySchema,
+  JobUrlImportRequestSchema,
   LearningRecommendationEvidenceListQuerySchema,
   LearningRecommendationIdSchema,
   TailoringPolicyRevisionListQuerySchema,
@@ -117,6 +118,10 @@ import {
   listContacts,
   updateContact,
 } from "./contacts.js";
+import {
+  validatePublicHttpUrl,
+  type PublicUrlValidator,
+} from "./public-url-safety.js";
 import {
   ContactResearchInputError,
   ContactResearchNotFoundError,
@@ -223,6 +228,11 @@ import {
   ManualCaptureImportError,
   type ManualCaptureImporter,
 } from "./manual-capture-worker.js";
+import {
+  createWorkerJobUrlImporter,
+  JobUrlImportError,
+  type JobUrlImporter,
+} from "./job-url-import-worker.js";
 import {
   createWorkerGmailFeedbackScanner,
   GmailFeedbackScanError,
@@ -377,6 +387,9 @@ export interface BuildAppOptions {
   /** Test seam for provider status and verification over the long-lived RPC worker. */
   providerDispatcher?: JsonRpcDispatcher;
   manualCaptureImporter?: ManualCaptureImporter;
+  jobUrlImporter?: JobUrlImporter;
+  /** Test seam for the pre-dispatch public-destination guard. */
+  jobUrlValidator?: PublicUrlValidator;
   gmailFeedbackScanner?: GmailFeedbackScanner;
   placeValidator?: PlaceValidator;
   profileImporter?: ProfileImporter;
@@ -435,6 +448,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   };
   const manualCaptureImporter =
     options.manualCaptureImporter ?? createWorkerManualCaptureImporter({ pythonRuntime });
+  const jobUrlImporter = options.jobUrlImporter ?? createWorkerJobUrlImporter({ pythonRuntime });
+  const jobUrlValidator = options.jobUrlValidator ?? validatePublicHttpUrl;
   const gmailFeedbackScanner =
     options.gmailFeedbackScanner ?? createWorkerGmailFeedbackScanner(providerDispatcher);
   const profileImporter = options.profileImporter ?? createProfileImporter(pythonRuntime);
@@ -1032,6 +1047,51 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.get("/v1/jobs", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query))),
   );
+
+  app.post("/v1/jobs/import-url", async (request, reply) => {
+    const body = parseBody(reply, JobUrlImportRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    if (!databaseExists(options.dbPath)) {
+      void reply.code(503);
+      return {
+        ok: false,
+        error: "db_not_found",
+        message: `No JobCtrl database found at ${options.dbPath}`,
+      };
+    }
+    const publicUrl = await jobUrlValidator(body.url);
+    if (!publicUrl.allowed) {
+      void reply.code(400);
+      return {
+        ok: false,
+        error: "invalid_job_url",
+        message: publicUrl.reason ?? "Only public HTTP or HTTPS job URLs can be imported.",
+      };
+    }
+    const workerReady = requireWorkerReady(
+      reply,
+      options.dbPath,
+      requireHealthyWorkerForActions,
+    );
+    if (!workerReady) {
+      return undefined;
+    }
+    try {
+      return await jobUrlImporter(body, { appDir, dbPath: options.dbPath });
+    } catch (error) {
+      if (error instanceof JobUrlImportError) {
+        void reply.code(error.statusCode);
+        return {
+          ok: false,
+          error: error.statusCode === 400 ? "invalid_job_url" : "job_url_import_failed",
+          message: error.message,
+        };
+      }
+      throw error;
+    }
+  });
 
   app.get("/v1/evidence-map", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listEvidenceMap(db)),

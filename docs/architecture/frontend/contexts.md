@@ -83,8 +83,9 @@ quarantine, the manual-capture queue, and discovery feedback.
   `useDeleteJobMutation`, `useDeleteJobsBulkMutation`,
   `usePermanentlyDeleteJobsBulkMutation`, `useHideJobsBulkMutation`,
   `useUnhideJobsBulkMutation`, `useRestoreJobMutation`,
-  `useRestoreJobsBulkMutation`, and `useImportJobMutation` (import-by-URL;
-  a stub that throws `NotImplementedError` until the backend endpoint lands).
+  `useRestoreJobsBulkMutation`, and `useImportJobMutation` (worker-backed
+  immediate URL import; invalidates Jobs or Manual Capture according to the
+  typed result).
 - Own discovery-source administration: `useDiscoverySettingsQuery` /
   `useUpdateDiscoverySettingsMutation`, and the product-control mutations
   (`useUpsertDiscoverySourceMutation`, `usePatchDiscoverySourceStateMutation`,

@@ -13,6 +13,7 @@ For field-level schemas and every route variant, use the
 | Route family | What it exposes |
 | --- | --- |
 | `GET /v1/jobs` and `GET /v1/jobs/:jobKey` | List/detail projections, stage state, score summary, and audit links. |
+| `POST /v1/jobs/import-url` | Fetch and import one public posting immediately, or return a typed Manual Capture fallback without creating a placeholder job. |
 | `GET /v1/scoring/keywords` | Current projected score-version keyword aggregation with canonical normalized keys. |
 | `GET /v1/evidence-map` | Canonical career evidence used by scoring and materials. |
 | `POST /v1/jobs/:key/score-correction` | A new score version plus explicit correction rationale. |
@@ -20,6 +21,14 @@ For field-level schemas and every route variant, use the
 
 List and detail endpoints read projection rows. They do not recompute scores,
 parse salary text, or replay events during a request.
+
+`POST /v1/jobs/import-url` accepts `{ url }`, validates that the destination is
+public HTTP(S), and awaits `JobUrlImportWorkflow` on the local worker. A readable
+posting returns `{ ok, status: "imported", jobKey, importedAt,
+alreadyExisted }`. A blocked, login-walled, rate-limited, or ambiguous page
+returns `{ ok, status: "manual_capture_required", itemId, reason }`; that
+outcome creates no Job row. Repeating an already-imported URL resolves the same
+canonical `JobId` without another fetch.
 
 Each job-detail stage may include an optional `applyUrlOutcome` object with the
 allow-listed `code`, user-facing `message`, `retryable`, and resolver `method`

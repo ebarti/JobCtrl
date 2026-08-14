@@ -96,6 +96,19 @@ URLs or content, including browser-extension captures, and preserves that
 origin as provenance. Protected or login-walled pages stay on a manual path
 unless they use the explicit owner-authenticated LinkedIn recovery below.
 
+The Jobs page's **Import job** action applies the same boundary to one explicit
+public URL. A readable page is ingested immediately with its extracted title,
+employer, description, location, and posted salary evidence. A blocked or
+ambiguous page creates a pending Manual Capture item and never a fabricated
+"imported" job. Credential-bearing, private, loopback, and otherwise
+non-public destinations are rejected before worker dispatch or browser
+navigation. When the captured posting is active and clears snapshot policy,
+the import records completed intake and enrichment, then starts the same
+durable per-job preparation used by Discover: score, tailor, cover letter, and
+PDF rendering. A missing separate application URL does not block that
+preparation. Quarantined or inactive captures do not start it, and URL import
+never starts Apply.
+
 After the authenticated-LinkedIn browser capability is explicitly enabled and
 the user selects one detected Chrome profile and separately consents to copy
 it, JobCtrl may use that isolated owned session to recover the full posting and
