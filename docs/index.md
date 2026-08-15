@@ -1,8 +1,8 @@
 ---
 layout: home
-title: "JobCtrl — Local-first job search automation"
+title: "JobCtrl.dev — Local-first job search automation"
 titleTemplate: false
-description: "JobCtrl is a local-first job search application for private discovery, evidence-based fit scoring, truthful resume tailoring, and supervised applications."
+description: "JobCtrl.dev is the open-source, local-first job search application for private discovery, evidence-based fit scoring, truthful resume tailoring, and supervised applications."
 
 hero:
   name: JobCtrl
@@ -57,6 +57,22 @@ features:
     link: /user/product-tour#runs
     linkText: See run history
 ---
+
+## Help test JobCtrl on Apple silicon
+
+JobCtrl.dev is the home of this open-source JobCtrl project. If you use an
+Apple-silicon Mac, spend ten minutes with the synthetic-data demo or current
+public build and tell us where the first-run experience becomes unclear.
+
+1. [Explore the demo](https://demo.jobctrl.dev/) without entering personal data.
+2. [Install the current public build](/user/getting-started) when you are ready
+   to try the local workflow.
+3. [Report the first point of friction](https://github.com/ebarti/JobCtrl/discussions/797),
+   including your macOS version and the step you reached, but no credentials,
+   resumes, application data, logs, or other personal information.
+
+Even a short “I expected X and saw Y” report helps make the next first run
+clearer.
 
 ## Practical JobCtrl Guides
 

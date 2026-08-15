@@ -282,19 +282,26 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
     labels: [
       "Record parse state.",
       "Interpret bounds conservatively.",
-      "Annualize only with a known period.",
-      "Load only permitted evidence.",
-      "Score the weakest factor.",
-      "Build the range and interval.",
-      "Persist uncertainty.",
+      "Annualize only with a known or narrowly inferred period.",
+      "Keep cash and equity separate.",
+      "Discover reusable benchmark slices.",
+      "Refresh only missing or due slices.",
+      "Normalize direct evidence.",
+      "Extrapolate missing geographies audibly.",
+      "Materialize the last good result.",
     ],
     tokens: [
       "parsed_range",
       "2,080",
-      "36 months",
-      "0.55",
-      "0.85",
-      "0.62",
+      "12,000",
+      "seven-day freshness window",
+      "Euro Top Tech",
+      "Levels.fyi",
+      "Glassdoor",
+      "source-dated ECB exchange rates",
+      "0.1x",
+      "10x",
+      "factor_out_of_bounds",
       "Discovery",
       "explicit compensation refresh",
       "passive read",
@@ -458,14 +465,17 @@ async function assertHomepageSearchIdentity(page) {
     (node) => node?.["@type"] === "SoftwareApplication",
   );
   if (
-    identity.title !== "JobCtrl — Local-first job search automation" ||
+    identity.title !== "JobCtrl.dev — Local-first job search automation" ||
     organization?.name !== "JobCtrl" ||
     organization?.url !== "https://jobctrl.dev/" ||
     !organization?.sameAs?.includes("https://github.com/ebarti/JobCtrl") ||
     website?.name !== "JobCtrl" ||
     website?.alternateName !== "jobctrl.dev" ||
+    !website?.disambiguatingDescription?.includes("jobctrl.dev") ||
     website?.url !== "https://jobctrl.dev/" ||
     software?.name !== "JobCtrl" ||
+    software?.alternateName !== "JobCtrl.dev" ||
+    !software?.disambiguatingDescription?.includes("github.com/ebarti/JobCtrl") ||
     software?.applicationSubCategory !== "Job search automation" ||
     software?.offers?.["@type"] !== "Offer" ||
     software?.offers?.price !== "0" ||
@@ -2044,19 +2054,24 @@ try {
         ?.getAttribute("tabindex"),
     };
   });
-  const cardsShareRow =
-    comparisonDesktop.cards.length === 3 &&
+  const cardsFormTwoRows =
+    comparisonDesktop.cards.length === 4 &&
+    Math.abs(
+      comparisonDesktop.cards[0].y - comparisonDesktop.cards[1].y,
+    ) < 2 &&
+    Math.abs(
+      comparisonDesktop.cards[2].y - comparisonDesktop.cards[3].y,
+    ) < 2 &&
+    comparisonDesktop.cards[2].y > comparisonDesktop.cards[0].y &&
     comparisonDesktop.cards.every(
-      (card) =>
-        Math.abs(card.y - comparisonDesktop.cards[0].y) < 2 &&
-        Math.abs(card.width - comparisonDesktop.cards[0].width) < 2,
+      (card) => Math.abs(card.width - comparisonDesktop.cards[0].width) < 2,
     );
   if (
-    !cardsShareRow ||
+    !cardsFormTwoRows ||
     comparisonDesktop.pageOverflows ||
     comparisonDesktop.summaryRegionLabel !== "At-a-glance comparison table" ||
     comparisonDesktop.summaryRegionTabIndex !== "0" ||
-    comparisonDesktop.verdicts.length !== 3 ||
+    comparisonDesktop.verdicts.length !== 4 ||
     !comparisonDesktop.verdicts[0]?.startsWith("Why JobCtrl leads:") ||
     comparisonDesktop.verdicts
       .slice(1)
@@ -2436,7 +2451,7 @@ try {
     };
   });
   const cardsStack =
-    comparisonMobile.cards.length === 3 &&
+    comparisonMobile.cards.length === 4 &&
     comparisonMobile.cards.every(
       (card, index) =>
         Math.abs(card.x - comparisonMobile.cards[0].x) < 2 &&

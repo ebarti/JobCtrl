@@ -14,7 +14,7 @@ on your machine.
 [Install on Apple-silicon macOS](https://jobctrl.dev/user/getting-started) ·
 [Take the product tour](https://jobctrl.dev/user/product-tour) ·
 [Compare approaches](https://jobctrl.dev/comparison) ·
-[Join the discussion](https://github.com/ebarti/JobCtrl/discussions)**
+[Help test JobCtrl](https://github.com/ebarti/JobCtrl/discussions/797)**
 
 [![TypeScript CI](https://github.com/ebarti/JobCtrl/actions/workflows/typescript.yml/badge.svg)](https://github.com/ebarti/JobCtrl/actions/workflows/typescript.yml)
 [![Release Privacy Gate](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml/badge.svg)](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml)
@@ -60,6 +60,15 @@ disabled. Declining returns to `jobctrl.dev`; a later visit asks again. Read the
 entering, and do not type personal data, credentials, or secrets.
 When a deployment updates the canonical synthetic examples, the next demo load
 refreshes that browser-local workspace once; cookie consent is unchanged.
+
+## Help Test JobCtrl
+
+If you use an Apple-silicon Mac, spend ten minutes with the demo or current
+public build and tell us where the first-run experience becomes unclear. Add a
+short “I expected X and saw Y” report to the
+[early-tester discussion](https://github.com/ebarti/JobCtrl/discussions/797).
+Include your macOS version and the step you reached, but do not post
+credentials, resumes, application data, logs, or other personal information.
 
 ## Get Started
 
@@ -151,15 +160,15 @@ summary is pinned to reviewed snapshots; the
 [full comparison](https://jobctrl.dev/comparison) includes source links, issue
 evidence, qualifications, and the complete capability matrix.
 
-| Capability | JobCtrl | Career-Ops | AI Job Search |
-| --- | --- | --- | --- |
-| **Primary surface** | Web app + local API/worker; supporting CLI | Files + AI coding CLIs; terminal dashboard | Claude Code commands/skills + local utilities |
-| **Graphical UI** | **Supported product surface** | **Partial:** optional Next.js alpha | **Partial:** generated offline HTML dashboard |
-| **Tailored documents** | Resume, cover letter, HTML, and PDF | CV/HTML/PDF and cover letter | LaTeX CV, cover letter, and PDF |
-| **Submission boundary** | Browser rehearsal + manual final submit; exact-approval Gmail sends | Form autofill; the user clicks Submit | Reviewed documents; the user submits |
-| **Interrupted work** | Temporal history, retries, stable workflow identities, and checkpointed broad-board discovery | File integrity + resumable batch flags; no workflow engine | No checkpointed apply resumption evidenced |
-| **Missing-salary intelligence** | **Auditable numeric estimate:** automatic role/level/country benchmarks, seven-day refresh, and explicit geographic extrapolation lineage | No missing-range estimate; an absent advertised figure remains absent | BYO salary dataset; the step is skipped without one |
-| **Application-level cost control** | Daily estimated-spend ceiling | Spend tiers, batch pre-screen/cap, dry run, and resume controls | Token-efficiency instructions; no app-level budget evidenced |
+| Capability | JobCtrl | Career-Ops | JobOps | AI Job Search |
+| --- | --- | --- | --- | --- |
+| **Primary surface** | Web app + local API/worker; supporting CLI | Files + AI coding CLIs; terminal dashboard | Self-hosted web app + local API and SQLite | Claude Code commands/skills + local utilities |
+| **Graphical UI** | **Supported product surface** | **Partial:** optional Next.js alpha | **Supported product surface** | **Partial:** generated offline HTML dashboard |
+| **Tailored documents** | Resume, cover letter, HTML, and PDF | CV/HTML/PDF and cover letter | Structured resume tailoring and PDF | LaTeX CV, cover letter, and PDF |
+| **Submission boundary** | Browser rehearsal + manual final submit; exact-approval Gmail sends | Form autofill; the user clicks Submit | Prepared materials; the user applies manually | Reviewed documents; the user submits |
+| **Interrupted work** | Temporal history, retries, stable workflow identities, and checkpointed broad-board discovery | File integrity + resumable batch flags; no workflow engine | Persisted run records; active run state is in memory | No checkpointed apply resumption evidenced |
+| **Missing-salary intelligence** | **Auditable numeric estimate:** automatic role/level/country benchmarks, seven-day refresh, and explicit geographic extrapolation lineage | No automatic missing-range estimate; missing postings skip detailed market rows | Advertised values only; no benchmark discovery or extrapolation evidenced | BYO salary dataset; the step is skipped without one |
+| **Application-level cost control** | Daily estimated-spend ceiling | Spend tiers, batch pre-screen/cap, dry run, and resume controls | Hosted action quotas; no self-hosted spend ceiling evidenced | Token-efficiency instructions; no app-level budget evidenced |
 
 ## What It Does
 
