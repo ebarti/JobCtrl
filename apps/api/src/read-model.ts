@@ -3512,6 +3512,9 @@ function parseVoicePass(value: string | null): VoicePassAudit | null {
     promptVersion: metadataText(record.prompt_version, 64) ?? "",
     proxyDelta,
     reason: metadataText(record.reason, 600) ?? "",
+    summaryRejectionReason: metadataText(record.summary_rejection_reason, 600) ?? "",
+    scopeViolations: metadataTextList(record.scope_violations).slice(0, 20),
+    finalJudge: metadataRecord(record.final_judge),
   };
 }
 

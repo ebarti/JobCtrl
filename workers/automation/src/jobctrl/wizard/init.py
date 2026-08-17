@@ -219,9 +219,9 @@ def _setup_structured_resume(profile: dict) -> None:
             "custom_tailoring_prompt": "",
         },
     }
-    profile["resume_constraints"] = {
-        "real_metrics": profile.get("resume_facts", {}).get("real_metrics", []),
-    }
+    # Compatibility section only. Metrics are derived from each achievement
+    # bullet when the canonical Profile aggregate is constructed.
+    profile["resume_constraints"] = {"real_metrics": []}
 
 
 def _setup_profile() -> dict:
@@ -297,16 +297,14 @@ def _setup_profile() -> dict:
 
     # -- Resume Facts (preserved truths for tailoring) --
     console.print("\n[bold cyan]Resume Facts[/bold cyan]")
-    console.print("[dim]These are preserved exactly during resume tailoring — the AI will never change them.[/dim]")
+    console.print("[dim]These facts help preserve resume structure during tailoring.[/dim]")
     companies = Prompt.ask("Companies to always keep (comma-separated)", default="")
     projects = Prompt.ask("Projects to always keep (comma-separated)", default="")
     school = Prompt.ask("School name(s) to preserve", default="")
-    metrics = Prompt.ask("Real metrics to preserve (e.g. '99.9% uptime, 50k users')", default="")
     profile["resume_facts"] = {
         "preserved_companies": _split_csv(companies),
         "preserved_projects": _split_csv(projects),
         "preserved_school": school.strip(),
-        "real_metrics": _split_csv(metrics),
     }
 
     _setup_structured_resume(profile)

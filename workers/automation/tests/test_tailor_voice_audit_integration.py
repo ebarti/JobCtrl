@@ -40,7 +40,7 @@ from jobctrl.domain.materials.services import (
     ResumeAssembler,
     sanitize_text,
 )
-from jobctrl.domain.materials.use_cases import TailorResumeUseCase
+from jobctrl.domain.materials.use_cases import TailoringLlmPolicy, TailorResumeUseCase
 from jobctrl.domain.materials.value_objects import TransformType
 from jobctrl.domain.materials.voice import VoiceRequest, VoiceResult
 from jobctrl.domain.profile.aggregate import Profile
@@ -179,8 +179,10 @@ class _FakeRequirementFitRepo:
 class _ScriptedLlm:
     def __init__(self, responses: list[str]) -> None:
         self._responses = list(responses)
+        self.calls: list[list[LlmMessage]] = []
 
     def chat(self, messages: list[LlmMessage], **kwargs) -> str:
+        self.calls.append(messages)
         if not self._responses:
             raise RuntimeError("no scripted response left")
         return self._responses.pop(0)
@@ -410,6 +412,9 @@ def _judge_pass() -> str:
                 "required_content_preserved": 1.0,
                 "ats_readability": 0.9,
                 "specificity_and_metrics": 0.85,
+                "semantic_fidelity": 0.95,
+                "bullet_selection_focus": 0.95,
+                "professional_register": 0.95,
             },
             "issues": [],
             "unsupported_claims": [],
@@ -417,6 +422,37 @@ def _judge_pass() -> str:
             "missing_required_evidence": [],
             "repair_instructions": [],
         }
+    )
+
+
+def _judge_fail_semantic_drift() -> str:
+    return json.dumps(
+        {
+            "verdict": "FAIL",
+            "score": 0.62,
+            "criterion_scores": {
+                "relevance_to_job": 0.9,
+                "evidence_support": 0.7,
+                "fabrication_safety": 1.0,
+                "required_content_preserved": 1.0,
+                "ats_readability": 0.9,
+                "specificity_and_metrics": 0.8,
+                "semantic_fidelity": 0.4,
+                "bullet_selection_focus": 0.9,
+                "professional_register": 0.5,
+            },
+            "issues": ["The voice rewrite changed the source claim's agency."],
+            "unsupported_claims": [],
+            "fabrications": [],
+            "missing_required_evidence": [],
+            "repair_instructions": ["Preserve the source actor, action, and agency."],
+        }
+    )
+
+
+def _approved_llm(payload: str, *, final_judge: str | None = None) -> _ScriptedLlm:
+    return _ScriptedLlm(
+        [payload, _judge_pass()] * 4 + [final_judge or _judge_pass()]
     )
 
 
@@ -431,6 +467,7 @@ def _use_case(materials_repo, provenance_repo, llm, publisher, voice) -> TailorR
         requirement_fit_repository=_FakeRequirementFitRepo(_requirement_fit_report()),
         publisher=publisher,
         voice=voice,
+        llm_policy=TailoringLlmPolicy(candidate_models=("fake",), judge_model="fake"),
     )
 
 
@@ -464,7 +501,7 @@ def test_voice_runs_before_audit_and_provenance_anchors_to_voiced_text(tmp_path:
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()
     publisher = _RecordingPublisher()
-    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass()] * 4)
+    llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
     outcome = _use_case(materials_repo, provenance_repo, llm, publisher, voice).execute(
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
@@ -477,11 +514,108 @@ def test_voice_runs_before_audit_and_provenance_anchors_to_voiced_text(tmp_path:
     # The provenance anchors to the VOICED bullet, not the buzzword generator draft.
     assert "spearheaded" not in experience.generated_text.lower()
     assert experience.generated_text == "Owned the API and cut latency 40% with Python."
+    assert outcome.final_payload is not None
+    mapping = next(
+        item for item in outcome.final_payload["generated_claim_mappings"]
+        if item["claim_id"] == "claim_latency"
+    )
+    assert mapping["text"] == experience.generated_text
 
     # The shipped resume text on disk also carries the voiced bullet.
     shipped = Path(outcome.text_path).read_text(encoding="utf-8")
     assert "Owned the API and cut latency 40% with Python." in shipped
     assert "spearheaded" not in shipped.lower()
+
+
+def test_voice_cannot_turn_precise_clean_achievement_into_casual_synonyms(tmp_path: Path) -> None:
+    source_bullet = (
+        "Reduced synthetic warehouse energy spend by £240k (12%) against a £2M+ "
+        "annual budget by renegotiating utility contracts and funding equipment upgrades."
+    )
+    bad_voice_bullet = (
+        "Found £240k (12%) against a £2M+ annual budget by cutting power bills and "
+        "putting the extra cash into more useful equipment."
+    )
+    clean_summary = "Owned platform strategy for Python services and latency improvements."
+    profile = _profile_dict()
+    entry = profile["resume"]["experience_entries"][0]
+    entry["bullets"] = [source_bullet]
+    entry["achievement_evidence"][0].update(
+        {
+            "source_text": source_bullet,
+            "action": "renegotiated utility contracts",
+            "metrics": [],
+            "outcome": "funded equipment upgrades",
+            "tags": ["python", "latency", "platform"],
+        }
+    )
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
+
+    def voice_fn(request: VoiceRequest) -> VoiceResult:
+        return VoiceResult(
+            executive_profile=clean_summary,
+            executive_profile_sentences=(clean_summary,),
+            experience_bullets=(("acme_swe", (bad_voice_bullet,)),),
+        )
+
+    materials_repo = _FakeMaterialsRepo()
+    provenance_repo = _FakeProvenanceRepo()
+    outcome = _use_case(
+        materials_repo,
+        provenance_repo,
+        _approved_llm(_payload(source_bullet, summary=clean_summary)),
+        _RecordingPublisher(),
+        _FunctionVoice(voice_fn),
+    ).execute(job=_job(), profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert outcome.final_payload is not None
+    assert outcome.final_payload["experience_updates"][0]["bullets"] == [source_bullet]
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
+    assert saved is not None and saved.voice is not None
+    assert saved.voice.accepted is False
+    assert saved.voice.reason == "voice_changed_clean_claim"
+    assert saved.voice.scope_violations == (
+        "experience.acme_swe.bullets[0] changed without a banned phrase in the source",
+    )
+
+
+def test_post_voice_judge_rejection_keeps_the_pre_voice_accepted_candidate(tmp_path: Path) -> None:
+    def voice_fn(request: VoiceRequest) -> VoiceResult:
+        return VoiceResult(
+            executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=(
+                "Backend engineer who cut API latency with Python.",
+            ),
+            experience_bullets=(
+                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
+            ),
+        )
+
+    materials_repo = _FakeMaterialsRepo()
+    provenance_repo = _FakeProvenanceRepo()
+    outcome = _use_case(
+        materials_repo,
+        provenance_repo,
+        _approved_llm(
+            _payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY),
+            final_judge=_judge_fail_semantic_drift(),
+        ),
+        _RecordingPublisher(),
+        _FunctionVoice(voice_fn),
+    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert outcome.final_payload is not None
+    assert outcome.final_payload["experience_updates"][0]["bullets"] == [
+        _GENERATOR_BULLET
+    ]
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
+    assert saved is not None and saved.voice is not None
+    assert saved.voice.accepted is False
+    assert saved.voice.reason == "voice_final_judge_rejected"
+    assert saved.voice.final_judge["verdict"] == "FAIL"
+    assert outcome.report["tailoring_quality"]["final_judge"]["verdict"] == "PASS"
 
 
 def test_gate_grounding_and_shipped_fit_persist_with_lifecycle_labels(tmp_path: Path) -> None:
@@ -502,7 +636,7 @@ def test_gate_grounding_and_shipped_fit_persist_with_lifecycle_labels(tmp_path: 
 
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()
-    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass()] * 4)
+    llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
     outcome = _use_case(
         materials_repo, provenance_repo, llm, _RecordingPublisher(), _FunctionVoice(voice_fn)
     ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
@@ -516,8 +650,8 @@ def test_gate_grounding_and_shipped_fit_persist_with_lifecycle_labels(tmp_path: 
     assert gate["grounding"]["claimed_only_requirement_ids"] == []
 
     # The artifact persists the lifecycle-labeled post-voice grounded fit: the
-    # voice pass reworded the claim's bullet, so the claim stays grounded via
-    # the same bullet's pre-voice text and the shipped record passes the gate.
+    # voice pass reworded the claim's bullet and rebound the mapping to the
+    # final text, so no stale pre-voice fallback is needed.
     final = outcome.report["tailoring_quality"]["post_generation_fit_final"]
     assert final["lifecycle"] == "post_voice_shipped"
     assert final["passed"] is True
@@ -555,7 +689,7 @@ def test_voiced_bullet_is_recorded_as_voice_transform(tmp_path: Path) -> None:
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()
     publisher = _RecordingPublisher()
-    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass()] * 4)
+    llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
     _use_case(materials_repo, provenance_repo, llm, publisher, voice).execute(
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
@@ -588,7 +722,7 @@ def test_summary_identity_break_is_recorded_on_the_voice_audit(tmp_path: Path) -
 
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()
-    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass()] * 4)
+    llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
     outcome = _use_case(
         materials_repo, provenance_repo, llm, _RecordingPublisher(), _FunctionVoice(voice_fn)
     ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
@@ -625,7 +759,7 @@ def test_voice_introduced_fabrication_is_rejected_and_pre_voice_ships(tmp_path: 
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()
     publisher = _RecordingPublisher()
-    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass()] * 4)
+    llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
     outcome = _use_case(materials_repo, provenance_repo, llm, publisher, voice).execute(
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
@@ -640,7 +774,7 @@ def test_voice_introduced_fabrication_is_rejected_and_pre_voice_ships(tmp_path: 
     assert all("10m" not in row.generated_text.lower() for row in saved.bullets)
     # The voice pass is recorded as ran-but-not-accepted with a fabrication reason.
     assert saved.voice is not None and saved.voice.ran and not saved.voice.accepted
-    assert "fabricat" in saved.voice.reason.lower()
+    assert "not supported by its mapped achievement evidence" in saved.voice.reason.lower()
     # No row was mislabelled voice — the shipped lines are the pre-voice candidate.
     assert all(row.transform_type is not TransformType.VOICE for row in saved.bullets)
 
@@ -663,7 +797,7 @@ def test_coverage_is_computed_against_rendered_text_and_provenance_backed(tmp_pa
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()
     publisher = _RecordingPublisher()
-    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass()] * 4)
+    llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
     _use_case(materials_repo, provenance_repo, llm, publisher, voice).execute(
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
@@ -697,7 +831,7 @@ def test_round_trip_audited_bullet_text_equals_rendered_text(tmp_path: Path) -> 
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()
     publisher = _RecordingPublisher()
-    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass()] * 4)
+    llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
     outcome = _use_case(materials_repo, provenance_repo, llm, publisher, voice).execute(
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
@@ -745,7 +879,7 @@ def test_round_trip_audited_bullet_text_equals_rendered_html_resume(tmp_path: Pa
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()
     publisher = _RecordingPublisher()
-    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass()] * 4)
+    llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
     profile_snapshot = _snapshot()
     outcome = _use_case(materials_repo, provenance_repo, llm, publisher, voice).execute(
         job=_job(), profile_snapshot=profile_snapshot, tailored_dir=tmp_path
@@ -796,7 +930,7 @@ def test_voice_failure_falls_back_to_pre_voice_candidate(tmp_path: Path) -> None
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()
     publisher = _RecordingPublisher()
-    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass()] * 4)
+    llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
     outcome = _use_case(materials_repo, provenance_repo, llm, publisher, voice).execute(
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
@@ -819,7 +953,7 @@ def test_no_voice_port_keeps_pre_phase3_behaviour(tmp_path: Path) -> None:
     publisher = _RecordingPublisher()
     # A clean (no-buzzword) candidate so the un-voiced path is grounded + approved.
     clean = _payload("Owned the API and cut latency 40% with Python.", summary="Backend engineer.")
-    llm = _ScriptedLlm([clean, _judge_pass()] * 4)
+    llm = _approved_llm(clean)
     outcome = TailorResumeUseCase(
         repository=materials_repo,
         llm=llm,

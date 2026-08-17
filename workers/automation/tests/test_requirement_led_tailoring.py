@@ -392,6 +392,235 @@ def test_tailoring_plan_carries_requirement_led_control_model() -> None:
     assert "allow_adjacent_achievement_drafts" not in metadata
 
 
+def test_tailoring_plan_reserves_pins_for_explicit_required_bullets() -> None:
+    unpinned = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=_employer_analysis("python", "latency"),
+    )
+    assert unpinned.required_evidence_ids == ()
+    assert unpinned.target_profile is not None
+    assert not any(item.pinned for item in unpinned.target_profile.profile_achievements)
+
+    profile = _profile()
+    entry = profile["resume"]["experience_entries"][0]
+    pinned_bullet = entry["bullets"][0]
+    evidence = entry["achievement_evidence"][0]
+    evidence["source_text"] = pinned_bullet
+    evidence["action"] = pinned_bullet
+    evidence["outcome"] = pinned_bullet
+    profile["resume"]["tailoring_rules"]["required_bullets_by_experience_id"] = {
+        "acme_swe": [pinned_bullet]
+    }
+
+    pinned = build_tailoring_plan(
+        profile,
+        _senior_job(),
+        employer_analysis=_employer_analysis("python", "latency"),
+    )
+
+    assert pinned.required_evidence_ids == ("ev_latency",)
+    assert pinned.target_profile is not None
+    assert next(
+        item for item in pinned.target_profile.profile_achievements
+        if item.achievement_evidence_id == "ev_latency"
+    ).pinned is True
+
+
+def test_coverage_graph_selects_one_strongest_achievement_per_requirement() -> None:
+    profile = _profile()
+    profile["resume"]["experience_entries"][0]["achievement_evidence"].append(
+        {
+            "id": "ev_generic",
+            "source_text": "Maintained backend services.",
+            "scope": "one service",
+            "action": "maintenance",
+            "tools": [],
+            "metrics": [],
+            "outcome": "services remained available",
+            "evidence_strength": "supported",
+            "claim_confidence": 0.6,
+            "user_confirmed": False,
+            "tags": [],
+        }
+    )
+    report = _requirement_fit_report(
+        python_fit=RequirementFitStatus(
+            kind="matched",
+            evidence_ids=("ev_generic", "ev_latency"),
+            strength="direct",
+        )
+    )
+
+    plan = build_tailoring_plan(
+        profile,
+        _senior_job(),
+        employer_analysis=_requirement_analysis(),
+        requirement_fit_report=report,
+    )
+
+    assert plan.coverage_graph is not None
+    python_edges = [
+        edge for edge in plan.coverage_graph.coverage_edges
+        if edge.requirement_id == "req_python"
+    ]
+    assert [edge.achievement_evidence_id for edge in python_edges] == ["ev_latency"]
+
+
+def _mapped_payload(
+    *,
+    bullets: list[str],
+    bullet_mappings: list[dict[str, object]],
+) -> dict[str, object]:
+    summary = "Senior backend engineer."
+    return {
+        "executive_profile": summary,
+        "executive_profile_sentences": [summary],
+        "experience_updates": [
+            {"id": "acme_swe", "title": "", "bullets": bullets},
+        ],
+        "skill_category_updates": [
+            {"id": "languages", "items": ["Python", "Go"]},
+        ],
+        "generated_claim_mappings": [
+            {
+                "claim_id": "summary",
+                "location": "executive_profile",
+                "text": summary,
+                "claim_label": "positioning",
+                "coverage_edge_ids": [],
+                "requirement_ids": [],
+                "evidence_ids": [],
+                "non_requirement_reason": "positioning",
+                "review_required": False,
+            },
+            *bullet_mappings,
+            {
+                "claim_id": "skills",
+                "location": "skills.languages",
+                "text": "Python, Go",
+                "claim_label": "structure",
+                "coverage_edge_ids": [],
+                "requirement_ids": [],
+                "evidence_ids": [],
+                "non_requirement_reason": "structure",
+                "review_required": False,
+            },
+        ],
+    }
+
+
+def test_claim_mapping_gate_rejects_positioning_filler_when_role_has_job_evidence() -> None:
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=_requirement_analysis(),
+        requirement_fit_report=_requirement_fit_report(),
+    )
+    assert plan.coverage_graph is not None
+    edge = next(
+        edge for edge in plan.coverage_graph.coverage_edges
+        if edge.requirement_id == "req_python"
+    )
+    relevant = "Reduced API latency 35% by replacing synchronous calls."
+    filler = "Maintained internal planning rituals."
+    payload = _mapped_payload(
+        bullets=[relevant, filler],
+        bullet_mappings=[
+            {
+                "claim_id": "relevant",
+                "location": "experience.acme_swe.bullets[0]",
+                "text": relevant,
+                "claim_label": "evidence_reframed",
+                "coverage_edge_ids": [edge.edge_id],
+                "requirement_ids": [edge.requirement_id],
+                "evidence_ids": [edge.achievement_evidence_id],
+                "non_requirement_reason": "",
+                "review_required": False,
+            },
+            {
+                "claim_id": "filler",
+                "location": "experience.acme_swe.bullets[1]",
+                "text": filler,
+                "claim_label": "positioning",
+                "coverage_edge_ids": [],
+                "requirement_ids": [],
+                "evidence_ids": ["ev_latency"],
+                "non_requirement_reason": "positioning",
+                "review_required": False,
+            },
+        ],
+    )
+
+    errors = _claim_mapping_validation_errors(payload=payload, tailoring_plan=plan)
+
+    assert any("positioning-only bullet" in error for error in errors)
+
+
+def test_claim_metric_must_be_supported_by_that_bullets_mapped_achievement() -> None:
+    profile = _profile()
+    profile["resume_constraints"]["real_metrics"] = ["$123k"]
+    plan = build_tailoring_plan(
+        profile,
+        _senior_job(),
+        employer_analysis=_employer_analysis("python", "latency"),
+    )
+    bullet = "Saved $123k in a synthetic procurement exercise."
+    payload = _mapped_payload(
+        bullets=[bullet],
+        bullet_mappings=[
+            {
+                "claim_id": "wrong-metric",
+                "location": "experience.acme_swe.bullets[0]",
+                "text": bullet,
+                "claim_label": "positioning",
+                "coverage_edge_ids": [],
+                "requirement_ids": [],
+                "evidence_ids": ["ev_latency"],
+                "non_requirement_reason": "positioning",
+                "review_required": False,
+            }
+        ],
+    )
+
+    errors = _claim_mapping_validation_errors(payload=payload, tailoring_plan=plan)
+
+    assert "$123k" not in plan.verified_metrics
+    assert any(
+        "$123k" in error and "mapped achievement evidence" in error
+        for error in errors
+    )
+
+
+def test_bare_number_must_be_supported_by_that_bullets_mapped_achievement() -> None:
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=_employer_analysis("python", "latency"),
+    )
+    bullet = "Reduced synthetic incident volume by 7."
+    payload = _mapped_payload(
+        bullets=[bullet],
+        bullet_mappings=[
+            {
+                "claim_id": "wrong-bare-number",
+                "location": "experience.acme_swe.bullets[0]",
+                "text": bullet,
+                "claim_label": "positioning",
+                "coverage_edge_ids": [],
+                "requirement_ids": [],
+                "evidence_ids": ["ev_latency"],
+                "non_requirement_reason": "positioning",
+                "review_required": False,
+            }
+        ],
+    )
+
+    errors = _claim_mapping_validation_errors(payload=payload, tailoring_plan=plan)
+
+    assert any("metric '7'" in error and "mapped achievement evidence" in error for error in errors)
+
+
 def test_target_profile_adapter_uses_analysis_fit_and_profile_evidence() -> None:
     plan = build_tailoring_plan(
         _profile(),
@@ -417,7 +646,8 @@ def test_target_profile_adapter_uses_analysis_fit_and_profile_evidence() -> None
         "Administer Salesforce.",
     )
     assert target_profile.profile_achievements[0].achievement_evidence_id == "ev_latency"
-    assert target_profile.profile_achievements[0].pinned is True
+    # Relevance is not a hard inclusion control. Only an explicit user pin is.
+    assert target_profile.profile_achievements[0].pinned is False
     assert "python api reliability" in target_profile.ats_keywords
 
 
@@ -1928,7 +2158,7 @@ def test_validators_cover_metrics_prohibited_claims_pins_and_mandatory_edges() -
     assert validate_mandatory_covered_achievements(_graph(), (unmapped,)) == ("ev_latency",)
 
 
-def test_bullet_limit_overflow_records_mandatory_reason() -> None:
+def test_bullet_limit_overflow_records_legacy_audit_reason() -> None:
     assert bullet_limit_overflows(
         experience_entry_id="role_1",
         max_bullets=2,

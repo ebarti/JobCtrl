@@ -9613,6 +9613,92 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("derives achievement metrics and preserves old flat values as unassigned legacy data", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Scoped Metric Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entries = resume.experience_entries as Array<Record<string, unknown>>;
+    entries[0]!.bullets = [
+      "Reduced synthetic warehouse energy spend by £240k (12%) against a £2M+ budget.",
+    ];
+    entries[0]!.achievement_evidence = [];
+    const legacyMetric = "Unassigned synthetic legacy metric: 99.9% uptime";
+    profile.resume_constraints = { real_metrics: ["Caller-only synthetic metric: 77"] };
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().profile.resume_constraints.real_metrics).toEqual([
+      "£240k",
+      "12%",
+      "£2M+",
+    ]);
+    expect(response.json().profile.resume.experience_entries[0].achievement_evidence[0]).toMatchObject({
+      metrics: ["£240k", "12%", "£2M+"],
+    });
+
+    const db = new Database(options.dbPath);
+    try {
+      expect(
+        db.prepare(
+          "SELECT metric_text FROM candidate_profile_resume_constraint_metrics ORDER BY metric_index",
+        ).all(),
+      ).toEqual([
+        { metric_text: "£240k" },
+        { metric_text: "12%" },
+        { metric_text: "£2M+" },
+      ]);
+      db.prepare(
+        `INSERT INTO candidate_profile_resume_constraint_metrics (
+           tenant_id, profile_id, metric_index, metric_text
+         ) VALUES ('local', 'default', 3, ?)`,
+      ).run(legacyMetric);
+    } finally {
+      db.close();
+    }
+
+    const stored = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(stored.statusCode, stored.body).toBe(200);
+    expect(stored.json().profile.resume_constraints.real_metrics).toEqual([
+      "£240k",
+      "12%",
+      "£2M+",
+      legacyMetric,
+    ]);
+    const nextProfile = stored.json().profile as ReturnType<typeof validProfileFixture>;
+    const nextResume = nextProfile.resume as Record<string, unknown>;
+    const nextEntries = nextResume.experience_entries as Array<Record<string, unknown>>;
+    nextEntries[0]!.bullets = [
+      "Reduced synthetic warehouse energy spend by £250k (13%) against a £2M+ budget.",
+    ];
+    nextEntries[0]!.achievement_evidence = [];
+
+    const nextResponse = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: nextProfile },
+    });
+
+    expect(nextResponse.statusCode, nextResponse.body).toBe(200);
+    expect(nextResponse.json().profile.resume_constraints.real_metrics).toEqual([
+      "£250k",
+      "13%",
+      "£2M+",
+      legacyMetric,
+    ]);
+    expect(nextResponse.json().profile.resume_constraints.real_metrics).not.toContain("£240k");
+    expect(nextResponse.json().profile.resume_constraints.real_metrics).not.toContain("12%");
+    expect(nextResponse.json().profile.resume_constraints.real_metrics).not.toContain(
+      "Caller-only synthetic metric: 77",
+    );
+
+    await app.close();
+  });
+
   it("rederives materialized bullet evidence when a profile bullet changes", async () => {
     const app = buildApp(options);
     const profile = validProfileFixture("Updated Bullet Evidence Candidate");

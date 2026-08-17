@@ -592,7 +592,13 @@ class RevisionGates:
 
 @dataclass(frozen=True)
 class ResumeConstraints:
-    """Hard truths the tailor must preserve verbatim — real metrics, etc."""
+    """Deprecated, non-authoritative metric compatibility index.
+
+    Achievement-owned metrics are derived into ``real_metrics``. Unmatched
+    values from older profiles are preserved there as unassigned legacy facts
+    so a profile round-trip is lossless, but they never authorize generated
+    claims. New metrics belong on their achievement evidence instead.
+    """
 
     real_metrics: tuple[str, ...] = ()
 

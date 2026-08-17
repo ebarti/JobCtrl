@@ -92,6 +92,20 @@ def test_from_dict_parses_valid_profile():
     assert profile.resume_constraints.real_metrics == ("40%",)
 
 
+def test_from_dict_preserves_unassigned_legacy_metrics_in_compatibility_index():
+    raw = _valid_profile_dict()
+    raw["resume_constraints"] = {
+        "real_metrics": ["Unassigned synthetic legacy metric: 99.9% uptime"]
+    }
+
+    profile = Profile.from_dict(LOCAL_TENANT, raw)
+
+    assert profile.resume_constraints.real_metrics == (
+        "40%",
+        "Unassigned synthetic legacy metric: 99.9% uptime",
+    )
+
+
 def test_get_achievement_evidence_derives_legacy_bullets_when_explicit_evidence_missing():
     evidence = get_achievement_evidence(_valid_profile_dict())
 

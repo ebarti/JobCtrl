@@ -78,6 +78,13 @@ The profile's main ownership boundaries are:
 - **Candidate Profile owns candidate facts.** A saved experience bullet,
   declared skill, application answer, or achievement record is evidence only
   because it entered through this boundary.
+- **An achievement owns its metrics.** Put a number in the experience bullet or
+  achievement evidence that it qualifies. Profile reads lead the deprecated
+  `resume_constraints.real_metrics` compatibility index with those derived
+  values and preserve unmatched entries already in storage as
+  non-authoritative, unassigned legacy data. New free-floating entries are not
+  accepted, stale derived values disappear when their achievement changes,
+  and a number from one achievement cannot quantify another.
 - **Preferences own permission and presentation policy.** A tailoring toggle or
   writing style can constrain generation, but it cannot create a fact.
 - **Settings own shared choices, not candidate evidence.** Provider/model
@@ -120,6 +127,11 @@ bounded excerpts. Sparse storage keys remain available only from each row's
 This separation is why profile correction, score correction, resume editing,
 and application approval are different actions: each updates the record owned
 by the context where the decision belongs.
+
+Required bullets are explicit hard pins. When none are marked required,
+JobCtrl chooses which achievements to show for the target job. The configured
+maximum bullets per role is only an upper bound; it does not ask Tailoring to
+fill every available slot.
 
 ## Implementation And API Pointers
 

@@ -526,6 +526,10 @@ describe("<StructuredProfileEditor>", () => {
     expect(screen.queryByRole("button", { name: /add proof point/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Evidence ID")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Source text")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Verified resume metrics")).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText(/JobCtrl extracts metrics from the bullet/i).length,
+    ).toBeGreaterThan(0);
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Director of Reliability" } });
 

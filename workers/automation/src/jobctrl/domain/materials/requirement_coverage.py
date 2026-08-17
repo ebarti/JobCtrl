@@ -9,6 +9,11 @@ from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from jobctrl.domain.profile.achievement_metrics import (
+    extract_achievement_metrics,
+    normalize_achievement_metric,
+)
+
 from jobctrl.domain.identifiers import canonical_job_id
 from jobctrl.domain.materials.analysis import EmployerAnalysis
 from jobctrl.domain.materials.policy import RequirementLedTailoringControls
@@ -257,18 +262,6 @@ _LABEL_REQUIRED_POLICY = {
     "adjacent_translation": "adjacent_translation",
     "draft_requires_confirmation": "draft_requires_confirmation",
 }
-_METRIC_RE = re.compile(
-    r"(?ix)"
-    r"(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?)"
-    r"|(?:\b\d+(?:\.\d+)?\s?%)"
-    r"|(?:\b\d+(?:\.\d+)?\s?x\b)"
-    r"|(?:\b\d+(?:[,.]\d+)*(?:\.\d+)?\s?"
-    r"(?:ms|milliseconds?|s|sec|seconds?|minutes?|hours?|days?|weeks?|months?|years?|"
-    r"users?|customers?|engineers?|teams?|services?|systems?|pipelines?|applications?|"
-    r"requests?|req/s|qps|revenue|cost|latency|uptime)\b)"
-)
-
-
 @dataclass(frozen=True)
 class TargetRequirement:
     requirement_id: str
@@ -1073,6 +1066,13 @@ def seed_coverage_graph(
                         rationale=str(getattr(fit, "bridge", "") or getattr(fit, "reason", "") or ""),
                     )
                 )
+    edges = list(
+        _select_strongest_requirement_edges(
+            edges=edges,
+            requirements=requirements,
+            achievements=achievements,
+        )
+    )
     covered_requirements = {edge.requirement_id for edge in edges}
     uncovered = []
     for requirement in target_profile.resume_requirements:
@@ -1327,13 +1327,70 @@ def validate_metric_support(
     *,
     verified_metrics: IterableABC[str],
 ) -> tuple[str, ...]:
-    allowed = " ".join(_normalize_metric(metric) for metric in verified_metrics).lower()
+    allowed = {
+        normalize_achievement_metric(metric)
+        for value in verified_metrics
+        for metric in extract_achievement_metrics(str(value))
+    }
     unsupported: list[str] = []
-    for match in _METRIC_RE.finditer(generated_text.lower()):
-        metric = _normalize_metric(match.group(0))
+    for raw_metric in extract_achievement_metrics(generated_text):
+        metric = normalize_achievement_metric(raw_metric)
         if metric and metric not in allowed:
             unsupported.append(metric)
     return tuple(dict.fromkeys(unsupported))
+
+
+def _select_strongest_requirement_edges(
+    *,
+    edges: IterableABC[CoverageEdge],
+    requirements: IterableABC[RequirementNode],
+    achievements: IterableABC[AchievementNode],
+) -> tuple[CoverageEdge, ...]:
+    """Choose the smallest high-quality evidence set: one edge per requirement.
+
+    The coverage graph is a menu of possible evidence, not an inclusion list.
+    A single achievement may cover several requirements and therefore retain
+    several edges, but multiple achievements are never made mandatory for the
+    same requirement merely because the fit stage returned them all.
+    """
+
+    candidates = tuple(edges)
+    achievement_by_id = {
+        item.achievement_evidence_id: item for item in achievements
+    }
+    selected: list[CoverageEdge] = []
+    selected_evidence_ids: set[str] = set()
+    kind_rank = {"direct": 3, "transferable": 2, "adjacent": 1}
+    strength_rank = {"direct": 4, "strong": 3, "moderate": 2, "weak": 1}
+    evidence_rank = {"verified": 3, "supported": 2, "inferred": 1, "draft": 0}
+
+    for requirement in requirements:
+        options = [
+            edge for edge in candidates
+            if edge.requirement_id == requirement.requirement_id
+        ]
+        if not options:
+            continue
+
+        def rank(edge: CoverageEdge) -> tuple[int, int, int, int, int, int, int, str]:
+            achievement = achievement_by_id.get(edge.achievement_evidence_id)
+            return (
+                -kind_rank.get(edge.coverage_kind, 0),
+                -strength_rank.get(edge.strength, 0),
+                -int(edge.achievement_evidence_id in selected_evidence_ids),
+                -int(bool(achievement and achievement.pinned)),
+                -int(bool(achievement and achievement.user_confirmed)),
+                -evidence_rank.get(
+                    str(achievement.evidence_strength if achievement else ""), 0
+                ),
+                -int(bool(achievement and achievement.metrics)),
+                edge.achievement_evidence_id,
+            )
+
+        best = min(options, key=rank)
+        selected.append(best)
+        selected_evidence_ids.add(best.achievement_evidence_id)
+    return tuple(selected)
 
 
 def validate_prohibited_claims(
@@ -1710,10 +1767,6 @@ def _non_negative_int(value: Any, field_name: str) -> int:
     if parsed < 0:
         raise ValueError(f"{field_name} must be non-negative")
     return parsed
-
-
-def _normalize_metric(value: Any) -> str:
-    return re.sub(r"\s+", " ", str(value or "").strip().lower())
 
 
 def _normalize_claim(value: Any) -> str:

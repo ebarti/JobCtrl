@@ -305,7 +305,8 @@ def test_build_tailoring_plan_maps_legacy_resume_bullets_to_evidence_ids() -> No
 
     assert plan.evidence_items[0].evidence_id == "acme_swe_bullet_1"
     assert plan.evidence_items[0].source_text == "Reduced API latency 35% by replacing synchronous calls."
-    assert "acme_swe_bullet_1" in plan.required_evidence_ids
+    # Relevance does not silently promote an achievement into a hard pin.
+    assert plan.required_evidence_ids == ()
 
 
 def test_quality_counts_fixed_education_in_final_resume_evidence() -> None:
@@ -384,7 +385,7 @@ def test_quality_counts_fixed_education_in_final_resume_evidence() -> None:
         plan,
     )
 
-    assert "education:edu_state" in plan.required_evidence_ids
+    assert plan.required_evidence_ids == ()
     assert "education:edu_state" in result.represented_evidence_ids
     assert "education:edu_state" not in result.missing_evidence_ids
     assert not any("Missing required evidence support" in error for error in result.errors)
@@ -429,8 +430,8 @@ def test_build_tailoring_change_annotations_explain_reframed_resume_sections() -
     ]
     assert "api" in experience["job_signals"]
     assert experience["evidence_ids"] == ["ev_latency"]
-    assert any("35% latency reduction" in note for note in experience["evidence_notes"])
-    assert "ev_latency" in plan.required_evidence_ids
+    assert any("35%" in note for note in experience["evidence_notes"])
+    assert plan.required_evidence_ids == ()
     assert "ev_latency" in plan.seniority_evidence_ids
     assert "python" in plan.job_keywords
     assert "latency" in plan.job_keywords
@@ -510,7 +511,7 @@ def test_build_tailoring_plan_uses_requirement_fit_directives() -> None:
         requirement_fit_report=report,
     )
 
-    assert plan.required_evidence_ids[0] == "ev_latency"
+    assert plan.required_evidence_ids == ()
     assert plan.job_keywords[0] == "python api reliability"
     assert plan.prohibited_claims == ("Direct Salesforce administration.",)
     assert [item.action for item in plan.requirement_directives] == [

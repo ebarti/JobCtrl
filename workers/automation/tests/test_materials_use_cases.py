@@ -627,7 +627,9 @@ def _positioning_claim_mappings(
                 "claim_label": "positioning",
                 "coverage_edge_ids": [],
                 "requirement_ids": [],
-                "evidence_ids": [],
+                # A positioning bullet is still an achievement claim. Keep it
+                # bound to the one source achievement in these fixtures.
+                "evidence_ids": ["ev_latency"],
                 "non_requirement_reason": "positioning",
                 "review_required": False,
             }
@@ -828,6 +830,9 @@ def _judge_pass() -> str:
                 "required_content_preserved": 1.0,
                 "ats_readability": 0.9,
                 "specificity_and_metrics": 0.85,
+                "semantic_fidelity": 0.95,
+                "bullet_selection_focus": 0.95,
+                "professional_register": 0.95,
             },
             "issues": [],
             "unsupported_claims": [],
@@ -853,6 +858,9 @@ def _judge_fail(
                 "fabrication_safety": 0.1,
                 "required_content_preserved": 0.9,
                 "ats_readability": 0.8,
+                "semantic_fidelity": 0.4,
+                "bullet_selection_focus": 0.4,
+                "professional_register": 0.4,
                 "specificity_and_metrics": 0.2,
             },
             "issues": [issue],
@@ -1597,7 +1605,7 @@ def test_tailor_use_case_injects_quality_plan_and_persists_metadata(
     assert "Tailoring mode" not in llm.calls[0][0].content
     assert "Minor inferred phrasing" not in llm.calls[0][0].content
     assert "pinned must-include achievements" in llm.calls[0][0].content
-    assert "result-first CAR/PAR achievements" in llm.calls[0][0].content
+    assert "Select the smallest sufficient set of achievements" in llm.calls[0][0].content
     assert "select and order exact existing skill strings" in llm.calls[0][0].content
     assert "ev_latency" in llm.calls[0][0].content
     assert "TAILORING QUALITY PLAN" in llm.calls[1][0].content
@@ -1607,7 +1615,7 @@ def test_tailor_use_case_injects_quality_plan_and_persists_metadata(
     assert outcome.materials.tailored_resume is not None
     metadata = outcome.materials.tailored_resume.metadata
     assert metadata["quality_plan"]["target_seniority"] == "senior"
-    assert metadata["quality_plan"]["required_evidence_ids"] == ["ev_latency"]
+    assert metadata["quality_plan"]["required_evidence_ids"] == []
     assert "target_profile" in metadata["quality_plan"]
     assert "coverage_graph" in metadata["quality_plan"]
     quality_plan_json = json.dumps(metadata["quality_plan"]).lower()

@@ -16,13 +16,7 @@ from __future__ import annotations
 
 import re
 
-_LEGACY_BULLET_METRIC_RE = re.compile(
-    r"(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?"
-    r"|\d+(?:\.\d+)?%"
-    r"|\d+(?:\.\d+)?x"
-    r"|\d+(?:\.\d+)?\s?(?:ms|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|qps|req/s))",
-    re.IGNORECASE,
-)
+from jobctrl.domain.profile.achievement_metrics import extract_achievement_metrics
 _LEGACY_BULLET_SENIORITY_TERMS = (
     "own",
     "owned",
@@ -443,10 +437,7 @@ def _legacy_bullet_achievement_evidence(
 
 
 def _legacy_bullet_metrics(source_text: str) -> list[str]:
-    return [
-        re.sub(r"\s+", " ", match.group(0).strip())
-        for match in _LEGACY_BULLET_METRIC_RE.finditer(source_text)
-    ]
+    return list(extract_achievement_metrics(source_text))
 
 
 def _text_list(value: object) -> list[str]:
@@ -463,26 +454,11 @@ def tailored_experience_title(entry: dict, update: dict, profile: dict) -> str:
     return str(entry.get("title", ""))
 
 
-_MANDATORY_BULLET_OVERFLOW_KEY = "_allow_mandatory_bullet_overflow"
-
-
 def experience_updates_by_id(tailored_payload: dict) -> dict:
-    """Index tailoring experience updates by entry id for every render path.
+    """Index tailoring experience updates by entry id for every render path."""
 
-    The plain-text assembler, both PDF renderers, and the provenance audit
-    trail must select the identical bullet set, so the mandatory-overflow
-    allowance is injected here once. When the payload carries
-    ``generated_claim_mappings`` the requirement-led validator has already
-    accepted the (possibly over-length) bullet lists, so
-    ``tailored_experience_bullets`` keeps every pinned bullet instead of trimming
-    to ``max_experience_bullets``.
-    """
-    allow_mandatory_overflow = isinstance(tailored_payload.get("generated_claim_mappings"), list)
     return {
-        update.get("id"): {
-            **update,
-            _MANDATORY_BULLET_OVERFLOW_KEY: allow_mandatory_overflow,
-        }
+        update.get("id"): update
         for update in tailored_payload.get("experience_updates") or []
         if isinstance(update, dict) and update.get("id")
     }
@@ -508,16 +484,11 @@ def tailored_experience_bullets(entry: dict, update: dict, profile: dict) -> lis
     if len(bullets) <= max_bullets:
         return bullets
 
-    # Overflow is validated before a candidate is accepted. Rendering must not
-    # trim requirement-covered or pinned bullets after that validator allows it.
-    if isinstance(update, dict) and update.get(_MANDATORY_BULLET_OVERFLOW_KEY):
-        return bullets
-
     required_norm = {_normalize_text(bullet) for bullet in required}
     kept_required = [bullet for bullet in bullets if _normalize_text(bullet) in required_norm]
     kept_other = [bullet for bullet in bullets if _normalize_text(bullet) not in required_norm]
     if len(kept_required) >= max_bullets:
-        return kept_required
+        return kept_required[:max_bullets]
     return kept_required + kept_other[: max_bullets - len(kept_required)]
 
 

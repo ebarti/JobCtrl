@@ -34,7 +34,9 @@ current workflow:
 
 1. builds one deterministic plan from the accepted posting, profile snapshot,
    requirement fit, user permissions, pinned evidence, and writing style;
-2. asks each ready generator for structured content under the same plan;
+2. retains the strongest grounded achievement for each target requirement and
+   asks each ready generator for the smallest sufficient bullet set under the
+   same plan;
 3. resolves referenced experience and skill identifiers against known profile
    data;
 4. assembles and renders each candidate;
@@ -42,8 +44,9 @@ current workflow:
    metrics, seniority, and requirement coverage;
 6. sends repairable failures through a bounded revision attempt;
 7. requires enabled judge and adversarial gates to approve the candidate;
-8. selects the best clean candidate and runs the fabrication gate again after
-   any optional voice refinement;
+8. selects the best clean candidate and, after any optional buzzword-only voice
+   refinement, re-runs claim binding, validation, provenance, fabrication, and
+   the structured judge on the exact final text;
 9. persists the accepted generation, files, provenance, coverage, and audit
    data together.
 
@@ -63,6 +66,9 @@ modes:
   identifiers.
 - **Grounding checks** compare candidate claims with the canonical profile
   evidence they cite.
+- **Achievement-scoped metric checks** require a number to occur in the same
+  evidence item cited by that bullet; a flat metric list cannot lend it to a
+  different accomplishment.
 - **Deterministic text checks** inspect preserved employers, education,
   sections, unsupported metrics, seniority changes, and prohibited claims.
 - **Rendered coverage checks** count a keyword only when it appears in the
@@ -91,6 +97,11 @@ employer requirement, not your accomplishment. A senior title in the target
 role does not upgrade a prior title. If important experience is missing from
 the Candidate Profile, correct the profile from your real evidence and create a
 new version before generating again.
+
+The master profile is an evidence inventory, not the desired length of every
+tailored resume. Unless you explicitly mark a bullet required, JobCtrl may omit
+it when it adds no distinct evidence for the target role. A per-role maximum is
+an upper bound, not a request to fill the resume to that number.
 
 See [Candidate Profile](../user/candidate-profile.md) for evidence ownership and
 [Scoring](../user/scoring-and-employer-analysis.md) for the distinction between

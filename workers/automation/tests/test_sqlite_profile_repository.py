@@ -171,6 +171,56 @@ def test_save_and_load_round_trips_profile_through_relational_rows(tmp_path):
     assert [event.event_type for event in events] == ["ProfileUpdated"]
 
 
+def test_metric_projection_derives_achievement_metrics_and_preserves_legacy_values(tmp_path):
+    repo, conn, _ = _new_repo(tmp_path)
+    raw = _valid_profile()
+    raw["resume"]["experience_entries"][0]["bullets"] = [
+        "Reduced synthetic warehouse energy spend by £240k (12%) against a £2M+ budget."
+    ]
+    legacy_metric = "Unassigned synthetic legacy metric: 99.9% uptime"
+    raw["resume_constraints"] = {"real_metrics": [legacy_metric]}
+
+    snapshot = repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, raw))
+
+    assert snapshot.as_dict()["resume_constraints"]["real_metrics"] == [
+        "£240k",
+        "12%",
+        "£2M+",
+        legacy_metric,
+    ]
+    assert [
+        row["metric_text"]
+        for row in conn.execute(
+            "SELECT metric_text FROM candidate_profile_resume_constraint_metrics "
+            "ORDER BY metric_index"
+        ).fetchall()
+    ] == ["£240k", "12%", "£2M+", legacy_metric]
+
+    loaded = repo.load(LOCAL_TENANT)
+    assert loaded is not None
+    updated = loaded.to_dict()
+    updated["resume"]["experience_entries"][0]["bullets"] = [
+        "Reduced synthetic warehouse energy spend by £250k (13%) against a £2M+ budget."
+    ]
+    stale_round_trip = Profile.from_dict(LOCAL_TENANT, updated)
+
+    refreshed_snapshot = repo.save(LOCAL_TENANT, stale_round_trip)
+
+    assert refreshed_snapshot.as_dict()["resume_constraints"]["real_metrics"] == [
+        "£250k",
+        "13%",
+        "£2M+",
+        legacy_metric,
+    ]
+    assert [
+        row["metric_text"]
+        for row in conn.execute(
+            "SELECT metric_text FROM candidate_profile_resume_constraint_metrics "
+            "ORDER BY metric_index"
+        ).fetchall()
+    ] == ["£250k", "13%", "£2M+", legacy_metric]
+
+
 def test_save_rederives_materialized_achievement_evidence_when_bullets_change(tmp_path):
     repo, _, _ = _new_repo(tmp_path)
 
@@ -193,6 +243,7 @@ def test_save_rederives_materialized_achievement_evidence_when_bullets_change(tm
         "Reduced incidents 55%.",
     ]
     assert refreshed_entry["achievement_evidence"][1]["metrics"] == ["55%"]
+    assert refreshed.resume_constraints.real_metrics == ("55%",)
 
 
 def test_save_and_load_preserves_achievement_evidence_and_tailoring_controls(tmp_path):
