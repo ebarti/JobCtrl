@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Check commit sign-offs
-        uses: KineticCafe/actions-dco@v3.1.0
+        uses: KineticCafe/actions-dco@v3.2.0
         with:
           config: |
             [bot]
