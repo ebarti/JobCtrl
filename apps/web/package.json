@@ -75,7 +75,7 @@
     "jest-axe": "^9.0.0",
     "jsdom": "^26.0.0",
     "msw": "^2.7.0",
-    "msw-storybook-addon": "^2.0.7",
+    "msw-storybook-addon": "^3.0.0",
     "prettier": "^3.4.2",
     "start-server-and-test": "^3.0.2",
     "storybook": "^10.3.6",
