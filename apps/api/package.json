@@ -12,7 +12,7 @@
     "qa:test": "vitest run test/qa-workflow.test.ts"
   },
   "dependencies": {
-    "@fastify/cors": "^11.2.0",
+    "@fastify/cors": "^11.3.0",
     "@jobctrl/contracts": "workspace:*",
     "@jobctrl/domain-types": "workspace:*",
     "better-sqlite3": "^12.9.0",
