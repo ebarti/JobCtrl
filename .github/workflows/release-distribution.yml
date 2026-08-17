@@ -71,7 +71,7 @@ jobs:
       release_key_id: ${{ steps.release-ref.outputs.release_key_id }}
     steps:
       - name: Check out the exact release tag
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.release_tag || github.ref_name }}
           fetch-depth: 0
@@ -183,7 +183,7 @@ jobs:
       EXPECTED_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
     steps:
       - name: Check out the exact audited source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.resolve.outputs.release_ref }}
           fetch-depth: 0
@@ -286,7 +286,7 @@ jobs:
       EXPECTED_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
     steps:
       - name: Check out only the exact audited source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.resolve.outputs.release_ref }}
           fetch-depth: 0
@@ -739,7 +739,7 @@ jobs:
       EXPECTED_FORMULA_SHA256: ${{ needs.sign.outputs.formula_sha256 }}
     steps:
       - name: Check out the exact audited verification source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.resolve.outputs.release_ref }}
           fetch-depth: 0
@@ -907,7 +907,7 @@ jobs:
           test -n "$HOMEBREW_TAP_DEPLOY_KEY"
 
       - name: Check out Homebrew tap
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ebarti/homebrew-tap
           path: homebrew-tap
@@ -1296,7 +1296,7 @@ jobs:
       EXPECTED_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
     steps:
       - name: Check out the exact audited source without credentials
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.resolve.outputs.release_ref }}
           fetch-depth: 0
@@ -1402,7 +1402,7 @@ jobs:
       SOURCE_DATE_EPOCH: ${{ needs.pypi-resolve.outputs.source_date_epoch }}
     steps:
       - name: Check out the exact audited source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.pypi-resolve.outputs.source_commit }}
           fetch-depth: 0
