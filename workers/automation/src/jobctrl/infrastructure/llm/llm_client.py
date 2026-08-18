@@ -8,6 +8,7 @@ Raw OpenAI keys are Codex CLI enrollment input, never a direct model route.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import threading
 import warnings
@@ -15,6 +16,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol
 
 from jobctrl.domain.ports.llm import LlmMessage
+from jobctrl.infrastructure.llm.codex_turn import run_codex_turn
+from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, provider_exception_error
 _DEFAULT_MODEL_SENTINELS = {"", "default"}
 _ROUTED_PROVIDERS = {"claude", "codex", "gemini", "google"}
 
@@ -149,6 +152,15 @@ def _prompt_parts(messages: list[dict[str, str]]) -> tuple[str, str]:
         if item["role"] != "system"
     ]
     return "\n\n".join(systems), "\n\n".join(turns)
+
+
+def _schema_fingerprint(schema: dict | None) -> str | None:
+    """Return a non-reversible fingerprint for structured-output schema identity."""
+
+    if schema is None:
+        return None
+    encoded = json.dumps(schema, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return f"sha256:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
 
 
 def _claude_text(messages: list[Any]) -> str:
@@ -311,7 +323,6 @@ class CodexSdkBackend:
         from jobctrl.infrastructure.analysis.codex_analysis_adapter import (
             _deny_all_approval_mode,
             _load_async_codex_factory,
-            _usage_from_result,
         )
         from jobctrl.infrastructure.analysis.strict_schema import strict_json_schema
         from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
@@ -333,34 +344,47 @@ class CodexSdkBackend:
             effort = "low"
         factory = self._async_codex_factory or _load_async_codex_factory()
         approval = self._approval_mode_factory or _deny_all_approval_mode
+        operation = "chat_json" if response_schema is not None else "chat"
+        schema_fingerprint = _schema_fingerprint(response_schema)
         with llm_generation_span(
             model=self.model,
             messages=messages,
             params={"structured": response_schema is not None, "effort": effort},
             scope_name="jobctrl.llm.codex",
+            schema_fingerprint=schema_fingerprint,
         ) as record:
-            async with factory() as codex:
-                thread = await codex.thread_start(
-                    approval_mode=approval(),
+            try:
+                async with factory() as codex:
+                    thread = await codex.thread_start(
+                        approval_mode=approval(),
+                        model=self.model,
+                        config={"model_reasoning_effort": effort},
+                    )
+                    run_kwargs: dict[str, Any] = {"effort": effort}
+                    if response_schema is not None:
+                        run_kwargs["output_schema"] = strict_json_schema(response_schema)
+                    outcome = await run_codex_turn(
+                        thread,
+                        combined,
+                        model=self.model,
+                        operation=operation,
+                        run_kwargs=run_kwargs,
+                    )
+            except ProviderCallError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - normalize only the provider boundary
+                raise provider_exception_error(
+                    provider="openai",
                     model=self.model,
-                    config={"model_reasoning_effort": effort},
-                )
-                run_kwargs: dict[str, Any] = {"effort": effort}
-                if response_schema is not None:
-                    run_kwargs["output_schema"] = strict_json_schema(response_schema)
-                result = await thread.run(combined, **run_kwargs)
-            status_obj = getattr(result, "status", None)
-            status = str(getattr(status_obj, "value", status_obj) or "")
-            final_response = getattr(result, "final_response", None)
-            if (status and status != "completed") or not isinstance(final_response, str) or not final_response:
-                raise RuntimeError(f"Codex turn failed: status={status!r}")
-            input_tokens, output_tokens = _usage_from_result(result)
+                    operation=operation,
+                    error=exc,
+                ) from exc
             record(
-                final_response,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
+                outcome.final_response,
+                input_tokens=outcome.input_tokens,
+                output_tokens=outcome.output_tokens,
             )
-            return final_response
+            return outcome.final_response
 
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         return _run_sync(

@@ -9,6 +9,7 @@ import type { JobListQuery } from "../src/contracts.js";
 import {
   buildDashboardSummary,
   getJobDetail,
+  getWorkflowRunDetail,
   listActivity,
   listJobs,
   listScoringKeywords,
@@ -255,6 +256,294 @@ describe("exact-v7 read model job ids", () => {
       retryable: true,
       failureReason: "attempt_budget_exhausted",
     });
+  });
+
+  it("projects repeated run-bound provider failures without exposing audit payload content", () => {
+    const db = seededDatabase();
+    const privateSentinel = "PRIVATE_PROVIDER_SDK_DETAILS";
+    const providerError = {
+      provider: "openai",
+      model: "codex-test-model",
+      operation: "chat_json",
+      category: "provider_turn",
+      error_type: "codex_turn_error",
+      code: "builder_error",
+      retryable: true,
+      message_code: "builder_error",
+      additional_detail_code: "schema_validation_failed",
+      additional_details_present: true,
+      codex_error_code: "server_overloaded",
+      candidate_id: "candidate-1",
+      inner_attempt: 4,
+      durable_attempt: 2,
+      prompt_fingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      schema_version: "tailored-resume.v3",
+      trace_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      span_id: "aaaaaaaaaaaaaaaa",
+      raw_sdk_message: privateSentinel,
+      raw_sdk_url: "https://provider.example.test/private",
+    };
+    const matchingCandidates = Array.from({ length: 8 }, () => ({
+      status: "provider_error",
+      provider_error: providerError,
+    }));
+    db.prepare(
+      `UPDATE job_materials
+          SET metadata_json = ?
+        WHERE tenant_id = 'local' AND job_id = ?`,
+    ).run(
+      JSON.stringify({
+        tailoring_attempt_audits: [
+          {
+            // Audits are bound to the Temporal execution, never the logical
+            // workflow ID. This row must not leak into the matching run.
+            execution_id: "prepare-builder-failure",
+            durable_attempt: 1,
+            report: { attempt_history: [{ candidates: [matchingCandidates[0]] }] },
+          },
+          {
+            // A legacy projection without a Temporal run ID must also fail
+            // closed rather than falling back to this logical workflow ID.
+            execution_id: "unrelated-attempt-budget",
+            durable_attempt: 1,
+            report: { attempt_history: [{ candidates: [matchingCandidates[0]] }] },
+          },
+          {
+            execution_id: "temporal-builder-failure-run",
+            durable_attempt: 2,
+            report: {
+              attempt_history: [
+                { candidates: matchingCandidates.slice(0, 4) },
+                { candidates: matchingCandidates.slice(4) },
+              ],
+            },
+          },
+        ],
+        system_prompt: privateSentinel,
+        job_text: privateSentinel,
+      }),
+      JOB_ID,
+    );
+    db.prepare(
+      `INSERT INTO workflow_run_projections (
+         workflow_id, tenant_id, workflow_type, status, input_summary_json,
+         error_code, error_message, retryable, started_at, temporal_run_id, events_json
+       ) VALUES (?, 'local', 'JobPreparationWorkflow', 'failed', ?, ?, ?, 0, ?, ?, '[]')`,
+    ).run(
+      "prepare-builder-failure",
+      JSON.stringify({ jobId: JOB_ID, steps: ["tailor"] }),
+      "attempt_budget_exhausted",
+      "Tailor durable attempt budget exhausted.",
+      NOW,
+      "temporal-builder-failure-run",
+    );
+    db.prepare(
+      `INSERT INTO job_stage_states (
+         tenant_id, job_id, stage, state, updated_at, retryable, version
+       ) VALUES ('local', ?, 'tailor', 'failed', ?, 1, 1)`,
+    ).run(JOB_ID, NOW);
+
+    const detail = getWorkflowRunDetail(db, "prepare-builder-failure");
+
+    expect(detail?.failureDiagnostics).toEqual({
+      automaticRetryable: false,
+      manualRecoveryAvailable: true,
+      providerFailures: {
+        total: 8,
+        counts: [
+          {
+            source: "structured",
+            provider: "openai",
+            model: "codex-test-model",
+            operation: "chat_json",
+            category: "provider_turn",
+            errorType: "codex_turn_error",
+            code: "builder_error",
+            retryable: true,
+            count: 8,
+          },
+        ],
+        latest: expect.objectContaining({
+          source: "structured",
+          code: "builder_error",
+          messageCode: "builder_error",
+          additionalDetailCode: "schema_validation_failed",
+          providerCode: "server_overloaded",
+          innerAttempt: 4,
+          durableAttempt: 2,
+          traceId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          spanId: "aaaaaaaaaaaaaaaa",
+        }),
+      },
+    });
+    expect(JSON.stringify(detail)).not.toContain(privateSentinel);
+    expect(JSON.stringify(detail)).not.toContain("provider.example.test");
+
+    db.prepare(
+      `INSERT INTO workflow_run_projections (
+         workflow_id, tenant_id, workflow_type, status, input_summary_json,
+         error_code, error_message, retryable, started_at, events_json
+       ) VALUES (?, 'local', 'DiscoverWorkflow', 'failed', ?, ?, ?, 0, ?, '[]')`,
+    ).run(
+      "unrelated-attempt-budget",
+      JSON.stringify({ jobId: JOB_ID }),
+      "attempt_budget_exhausted",
+      "Unrelated durable attempt budget exhausted.",
+      NOW,
+    );
+
+    expect(getWorkflowRunDetail(db, "unrelated-attempt-budget")?.failureDiagnostics).toEqual({
+      automaticRetryable: false,
+      manualRecoveryAvailable: false,
+      providerFailures: null,
+    });
+  });
+
+  it("derives manual Tailor recovery from the canonical failed stage state", () => {
+    const db = seededDatabase();
+    db.prepare(
+      `INSERT INTO workflow_run_projections (
+         workflow_id, tenant_id, workflow_type, status, input_summary_json,
+         error_code, error_message, retryable, started_at, temporal_run_id, events_json
+       ) VALUES (?, 'local', 'JobPreparationWorkflow', 'failed', ?, ?, ?, 0, ?, ?, '[]')`,
+    ).run(
+      "prep-preparation:llm-transient",
+      JSON.stringify({ jobId: JOB_ID, steps: ["tailor"] }),
+      "llm_transient",
+      "Tailor activity retries exhausted.",
+      NOW,
+      "temporal-llm-transient-run",
+    );
+    db.prepare(
+      `INSERT INTO job_stage_states (
+         tenant_id, job_id, stage, state, updated_at, retryable, version
+       ) VALUES ('local', ?, 'tailor', 'failed', ?, 1, 1)`,
+    ).run(JOB_ID, NOW);
+
+    const recovery = () => getWorkflowRunDetail(db, "prep-preparation:llm-transient")
+      ?.failureDiagnostics?.manualRecoveryAvailable;
+
+    expect(recovery()).toBe(true);
+    db.prepare(
+      `UPDATE job_stage_states SET state = 'succeeded', retryable = 0
+        WHERE tenant_id = 'local' AND job_id = ? AND stage = 'tailor'`,
+    ).run(JOB_ID);
+    expect(recovery()).toBe(false);
+    db.prepare(
+      `UPDATE job_stage_states SET state = 'running', retryable = 1
+        WHERE tenant_id = 'local' AND job_id = ? AND stage = 'tailor'`,
+    ).run(JOB_ID);
+    expect(recovery()).toBe(false);
+    db.prepare(
+      `UPDATE job_stage_states SET state = 'failed', retryable = 0
+        WHERE tenant_id = 'local' AND job_id = ? AND stage = 'tailor'`,
+    ).run(JOB_ID);
+    expect(recovery()).toBe(false);
+  });
+
+  it("projects only the exact legacy Codex builder-error audit shape for its Temporal execution", () => {
+    const db = seededDatabase();
+    const temporalRunId = "01a014e6-cbfc-70b3-a2c0-0aab28f5c7d4";
+    const legacyCandidate = {
+      model: "codex:gpt-5.6-sol",
+      status: "parse_error",
+      parse_error: "builder error",
+      raw_sdk_message: "PRIVATE_LEGACY_SDK_MESSAGE",
+    };
+    db.prepare(
+      `UPDATE job_materials
+          SET metadata_json = ?
+        WHERE tenant_id = 'local' AND job_id = ?`,
+    ).run(
+      JSON.stringify({
+        tailoring_attempt_audits: [
+          {
+            // The logical workflow ID never qualifies as an execution match.
+            execution_id: "prep-preparation:legacy-builder-error",
+            report: { attempt_history: [{ candidates: [legacyCandidate] }] },
+          },
+          {
+            execution_id: temporalRunId,
+            report: {
+              attempt_history: [
+                {
+                  candidates: [
+                    ...Array.from({ length: 8 }, () => legacyCandidate),
+                    { ...legacyCandidate, parse_error: "builder error " },
+                    { ...legacyCandidate, model: "claude:sonnet" },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      JOB_ID,
+    );
+    db.prepare(
+      `INSERT INTO workflow_run_projections (
+         workflow_id, tenant_id, workflow_type, status, input_summary_json,
+         error_code, error_message, retryable, started_at, temporal_run_id, events_json
+       ) VALUES (?, 'local', 'JobPreparationWorkflow', 'failed', ?, ?, ?, 0, ?, ?, '[]')`,
+    ).run(
+      "prep-preparation:legacy-builder-error",
+      JSON.stringify({ jobId: JOB_ID, steps: ["tailor"] }),
+      "attempt_budget_exhausted",
+      "Tailor durable attempt budget exhausted.",
+      NOW,
+      temporalRunId,
+    );
+    db.prepare(
+      `INSERT INTO job_stage_states (
+         tenant_id, job_id, stage, state, updated_at, retryable, version
+       ) VALUES ('local', ?, 'tailor', 'exhausted', ?, 0, 1)`,
+    ).run(JOB_ID, NOW);
+
+    const detail = getWorkflowRunDetail(db, "prep-preparation:legacy-builder-error");
+
+    expect(detail?.failureDiagnostics).toEqual({
+      automaticRetryable: false,
+      manualRecoveryAvailable: true,
+      providerFailures: {
+        total: 8,
+        counts: [
+          {
+            source: "legacy_inferred",
+            provider: "codex",
+            model: "codex:gpt-5.6-sol",
+            operation: "unknown",
+            category: "legacy_inferred",
+            errorType: "legacy_builder_error",
+            code: "builder_error",
+            retryable: null,
+            count: 8,
+          },
+        ],
+        latest: {
+          source: "legacy_inferred",
+          provider: "codex",
+          model: "codex:gpt-5.6-sol",
+          operation: "unknown",
+          category: "legacy_inferred",
+          errorType: "legacy_builder_error",
+          code: "builder_error",
+          retryable: null,
+          messageCode: null,
+          additionalDetailCode: null,
+          additionalDetailsPresent: null,
+          providerCode: null,
+          httpStatus: null,
+          candidateId: null,
+          innerAttempt: null,
+          durableAttempt: null,
+          promptFingerprint: null,
+          schemaVersion: null,
+          traceId: null,
+          spanId: null,
+        },
+      },
+    });
+    expect(JSON.stringify(detail)).not.toContain("PRIVATE_LEGACY_SDK_MESSAGE");
   });
 
   it("filters hidden and deleted jobs and uses only tenant-scoped events and audit rows", () => {

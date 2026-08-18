@@ -1508,7 +1508,9 @@ def test_tailor_one_job_passes_canonical_id_to_materials_use_case() -> None:
         SimpleNamespace(),
         "normal",
         use_case=FakeUseCase(),
+        audit_execution_id="temporal-run-owned",
     )
 
     assert result["status"] == "approved"
     assert captured["job_id"] == _JOB_ID
+    assert captured["audit_execution_id"] == "temporal-run-owned"

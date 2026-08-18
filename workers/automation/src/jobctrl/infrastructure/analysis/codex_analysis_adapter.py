@@ -3,8 +3,8 @@
 Mirrors the mestre vendor-lane pattern (``mestre/vendor_lane/backends/
 codex_sdk.py``): drive the official ``openai_codex`` Python SDK directly (no
 Node sidecar, no CLI-subprocess wrapper), forcing JSON-schema-constrained
-output via ``output_schema`` on ``thread.run`` and parsing the structured
-result off ``TurnResult.final_response``.
+output via ``output_schema`` and consuming the public turn stream. This keeps
+the SDK's structured ``TurnError`` available without serializing provider text.
 
 Codex isolation + permissions: the live factory redirects the SDK to a
 JobCtrl-owned ``CODEX_HOME`` so Codex app-server state does not pollute the
@@ -18,8 +18,8 @@ resolved through an injectable factory that defaults to a lazy import, so tests
 pass a fake context-manager whose thread returns a canned ``final_response``.
 No live Codex login / app-server is needed in the suite.
 
-No timeout (D-19): ``thread.run`` is awaited to completion; effort is pinned to
-``high`` (D-18). Cancellation = cancel the wrapping asyncio task.
+No timeout (D-19): the public turn stream is awaited to completion; effort is
+pinned to ``high`` (D-18). Cancellation = cancel the wrapping asyncio task.
 """
 
 from __future__ import annotations
@@ -36,6 +36,8 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysisDraft,
 )
 from jobctrl.infrastructure.analysis.strict_schema import strict_json_schema
+from jobctrl.infrastructure.llm.codex_turn import run_codex_turn
+from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, provider_exception_error
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
 from jobctrl.infrastructure.setup_probes import (
     CODEX_NEUTRALIZED_AUTH_ENV,
@@ -259,40 +261,49 @@ class CodexAnalysisAdapter:
         with llm_generation_span(
             model=self._model,
             messages=span_input,
-            params={},
+            params={"structured": True},
             scope_name=_CODEX_SCOPE,
         ) as record:
-            async with factory() as codex:  # reuses existing Codex login (D-04)
-                thread = await codex.thread_start(
-                    # Analysis has no local-tool use case. Never auto-review or
-                    # approve an escalation even if a future runtime exposes a
-                    # tool despite the locked-down feature configuration.
-                    approval_mode=_deny_all_approval_mode(),
+            try:
+                async with factory() as codex:  # reuses existing Codex login (D-04)
+                    thread = await codex.thread_start(
+                        # Analysis has no local-tool use case. Never auto-review or
+                        # approve an escalation even if a future runtime exposes a
+                        # tool despite the locked-down feature configuration.
+                        approval_mode=_deny_all_approval_mode(),
+                        model=self._model,
+                        # Max reasoning effort (D-18). Command filesystem access is
+                        # governed by the configured Codex permissions profile.
+                        config={"model_reasoning_effort": "high"},
+                    )
+                    outcome = await run_codex_turn(
+                        thread,
+                        prompt,
+                        model=self._model,
+                        operation="chat_json",
+                        run_kwargs={
+                            # Codex/OpenAI strict structured output requires every object
+                            # to set additionalProperties:false and list all props in
+                            # required; Pydantic's model_json_schema() emits neither.
+                            "output_schema": strict_json_schema(JobAnalysis.model_json_schema()),
+                            "effort": "high",
+                        },
+                    )
+            except ProviderCallError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - preserve only safe provider fields
+                raise provider_exception_error(
+                    provider="openai",
                     model=self._model,
-                    # Max reasoning effort (D-18). Command filesystem access is
-                    # governed by the configured Codex permissions profile.
-                    config={"model_reasoning_effort": "high"},
-                )
-                result = await thread.run(
-                    prompt,
-                    # Codex/OpenAI strict structured output requires every object to
-                    # set additionalProperties:false and list all props in required;
-                    # Pydantic's model_json_schema() emits neither (live 400 otherwise).
-                    output_schema=strict_json_schema(JobAnalysis.model_json_schema()),
-                    effort="high",
-                )
-            # ``status`` is a ``TurnStatus`` enum whose ``str()`` is
-            # "TurnStatus.completed" — compare its ``.value`` ("completed"), not the
-            # enum repr, or a successful turn is wrongly rejected (live-caught bug).
-            status_obj = getattr(result, "status", None)
-            status = str(getattr(status_obj, "value", status_obj) or "")
-            final_response = getattr(result, "final_response", None)
-            if (status and status != "completed") or not final_response:
-                error = getattr(result, "error", None)
-                raise RuntimeError(f"Codex turn failed: status={status!r} err={error!r}")
-            input_tokens, output_tokens = _usage_from_result(result)
-            record(final_response, input_tokens=input_tokens, output_tokens=output_tokens)
-            analysis = JobAnalysis.model_validate_json(final_response)
+                    operation="chat_json",
+                    error=exc,
+                ) from exc
+            record(
+                outcome.final_response,
+                input_tokens=outcome.input_tokens,
+                output_tokens=outcome.output_tokens,
+            )
+            analysis = JobAnalysis.model_validate_json(outcome.final_response)
             return JobAnalysisDraft(model_id=self._model, **analysis.model_dump())
 
 

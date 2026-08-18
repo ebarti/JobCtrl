@@ -49,6 +49,7 @@ def llm_generation_span(
     messages: list[dict],
     params: dict,
     scope_name: str = "jobctrl.llm",
+    schema_fingerprint: str | None = None,
 ) -> Iterator[RecordResponse]:
     """Open a ``langfuse.observation.type=generation`` span around an LLM call.
 
@@ -66,8 +67,12 @@ def llm_generation_span(
         span.set_attribute("langfuse.observation.type", "generation")
         span.set_attribute("langfuse.observation.model.name", model)
         span.set_attribute("gen_ai.request.model", model)
-        span.set_attribute("gen_ai.operation.name", "chat")
+        operation = "chat_json" if params.get("structured") is True else "chat"
+        span.set_attribute("gen_ai.operation.name", operation)
+        span.set_attribute("jobctrl.llm.operation", operation)
         span.set_attribute("jobctrl.llm.stage", scope_name)
+        if schema_fingerprint is not None:
+            span.set_attribute("jobctrl.llm.schema_fingerprint", schema_fingerprint)
         span.set_attribute("jobctrl.llm.input.message_count", len(messages))
         span.set_attribute(
             "jobctrl.llm.input.character_count",
@@ -115,10 +120,39 @@ def llm_generation_span(
         try:
             yield record
         except Exception as exc:
+            from jobctrl.infrastructure.llm.provider_errors import ProviderCallError
+
             error_type = type(exc).__name__
-            span.set_attribute("error.type", error_type)
+            if isinstance(exc, ProviderCallError):
+                context = span.get_span_context()
+                trace_id = f"{context.trace_id:032x}" if context.is_valid else None
+                span_id = f"{context.span_id:016x}" if context.is_valid else None
+                exc.attach_trace(trace_id=trace_id, span_id=span_id)
+                for key, value in exc.envelope.telemetry_attributes().items():
+                    span.set_attribute(key, value)
+                span.set_attribute("error.type", exc.envelope.error_type)
+                status_description = (
+                    "LLM provider call failed "
+                    f"({exc.envelope.category}:{exc.envelope.code})"
+                )
+            else:
+                span.set_attribute("error.type", error_type)
+                # SDK adapters that do not expose a typed provider error still
+                # need the same bounded, queryable failure dimensions. Do not
+                # serialize their exception text or object graph.
+                for key, value in {
+                    "jobctrl.llm.failure.provider": provider or "unknown",
+                    "jobctrl.llm.failure.model": model,
+                    "jobctrl.llm.failure.operation": operation,
+                    "jobctrl.llm.failure.category": "provider_exception",
+                    "jobctrl.llm.failure.type": error_type,
+                    "jobctrl.llm.failure.code": "sdk_exception",
+                    "jobctrl.llm.failure.retryable": False,
+                }.items():
+                    span.set_attribute(key, value)
+                status_description = f"LLM call failed ({error_type})"
             span.set_attribute("jobctrl.llm.success", False)
-            span.set_status(Status(StatusCode.ERROR, f"LLM call failed ({error_type})"))
+            span.set_status(Status(StatusCode.ERROR, status_description))
             raise
         else:
             span.set_attribute("jobctrl.llm.success", True)

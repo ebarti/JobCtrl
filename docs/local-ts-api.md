@@ -131,6 +131,17 @@ an exact `workflowType` match, inclusive `startedSince`, and exclusive
 optional filter values are ignored. The list response echoes the effective
 filters in its `filter` object (`null` when an optional filter is inactive).
 
+`GET /v1/workflow-runs/:runId` returns `failureDiagnostics` when available.
+`automaticRetryable` describes Temporal retry behavior; `manualRecoveryAvailable`
+describes whether the canonical Tailor stage is failed/retryable or exhausted
+for a failed JobPreparation Tailor run, so a new recovery can be started. Its optional
+`providerFailures` summary is limited to safe provider/model/operation failure
+dimensions, counts, and the latest correlated attempt; it excludes all prompt,
+generated-content, SDK-message, path, URL, and secret data.
+For matching pre-instrumentation Codex records only, the exact legacy
+`parse_error: "builder error"` shape is returned with `source: "legacy_inferred"`;
+per-call retryability and structured provider fields remain unavailable.
+
 Discover, job preparation, and Apply share the same statuses, lifecycle
 timeline, terminal-state rules, and cancellation command. Cancellation is
 cooperative and idempotent: repeated requests do not replace terminal results

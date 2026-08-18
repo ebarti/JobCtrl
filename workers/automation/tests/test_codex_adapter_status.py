@@ -83,5 +83,5 @@ async def test_enum_status_failed_raises() -> None:
         error="boom",
     )
     adapter = CodexAnalysisAdapter(async_codex_factory=_factory(result))
-    with pytest.raises(RuntimeError, match="Codex turn failed"):
+    with pytest.raises(RuntimeError, match="provider_turn:turn_failed"):
         await adapter.draft("system prompt", "JOB: x")

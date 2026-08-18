@@ -45,8 +45,11 @@ Langfuse instance for LLM tracing. The wiring lives under
   `gen_ai.response.model`, `gen_ai.usage.input_tokens`,
   `gen_ai.usage.output_tokens`) so OTel-native dashboards work too. Exported
   LLM attributes are metadata-only: provider/model, operation/scope, outcome,
-  token counts, and safe request/response sizes. Raw messages, parameters,
-  completions, and exception messages are omitted.
+  token counts, and safe request/response sizes. Typed provider failures add
+  bounded `jobctrl.llm.failure.*` dimensions for provider, model, operation,
+  category, type, code, retryability, and an allowlisted provider code or HTTP
+  status; structured calls also carry a schema fingerprint. Raw messages,
+  parameters, completions, SDK objects, and exception messages are omitted.
 
 ## Span Sources
 
