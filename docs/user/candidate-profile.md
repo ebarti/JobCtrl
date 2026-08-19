@@ -59,6 +59,13 @@ moves below the editor and the resize handle disappears. Evidence Map follows
 the same rule: its entry list, selected evidence, and gaps/reusable-stories
 inspector stack instead of compressing the three-pane desktop workspace.
 
+The Plate toolbars on `/profile` and `/preferences` include **Export PDF**. The
+download is rendered from the document currently mounted in the browser, so it
+includes unsaved text and formatting edits while preserving the active
+template's styling, margins, and A4 or Letter page size. Exporting does not save
+those edits, change the canonical profile or template, or register the download
+as a JobCtrl artifact.
+
 Profile and preference forms validate before saving. Their autosave and explicit
 Save buttons use the same mutation path; the exact delay and field contract are
 owned by the [Profile & Settings API](../api/profile-and-settings.md), not by

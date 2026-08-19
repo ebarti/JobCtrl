@@ -236,6 +236,7 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
                 : {})}
               className="profile-resume-plate-editor"
               htmlUrl={profileHtmlPreviewUrl}
+              pdfFilename="baseline-resume.pdf"
               previewStyle={resumePreviewStyle}
               title="Baseline resume editor"
             />

@@ -392,6 +392,7 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
         <ResumeStandalonePlateEditor
           className="resume-template-plate-editor"
           htmlUrl={profileHtmlPreviewUrl}
+          pdfFilename="resume-template-preview.pdf"
           previewStyle={previewStyle}
           title="Resume template preview"
           transformKey={theme ? JSON.stringify(theme) : "loading"}

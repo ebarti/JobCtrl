@@ -50,9 +50,11 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type ReactNode,
+  type RefObject,
   type SetStateAction,
 } from "react";
 
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Input } from "../../../shared/ui/input.js";
@@ -84,6 +86,7 @@ interface ResumePlateEditorProps {
   readonly htmlUrl: string | null;
   readonly layoutBoxes: readonly ResumeLayoutBox[];
   readonly lineTargets: readonly PdfAuditLineTarget[];
+  readonly pdfFilename: string;
   readonly profileSourceFields?: readonly ApplyReviewProfileSourceField[];
   readonly renderError?: string | null;
   readonly renderPending?: boolean;
@@ -2741,6 +2744,65 @@ function ResumeHtmlUnavailable({
   );
 }
 
+function ResumePdfExportControl({
+  disabled,
+  filename,
+  sourceRef,
+}: {
+  readonly disabled: boolean;
+  readonly filename: string;
+  readonly sourceRef: RefObject<HTMLElement | null>;
+}): JSX.Element {
+  const { pdfExport, telemetry } = usePorts();
+  const [exportPending, setExportPending] = useState(false);
+  const [exportError, setExportError] = useState(false);
+  const handleExport = useCallback(async () => {
+    const source =
+      sourceRef.current?.querySelector<HTMLElement>(".resume-plate-document");
+    if (!source || exportPending) return;
+    setExportError(false);
+    setExportPending(true);
+    const startedAt = performance.now();
+    try {
+      await pdfExport.downloadPdf({ filename, source });
+      telemetry.timing("resume_pdf_export", performance.now() - startedAt, {
+        status: "succeeded",
+      });
+    } catch {
+      telemetry.timing("resume_pdf_export", performance.now() - startedAt, {
+        status: "failed",
+      });
+      telemetry.event("resume_pdf_export_failed", {
+        operation: "resume_pdf_export",
+      });
+      setExportError(true);
+    } finally {
+      setExportPending(false);
+    }
+  }, [exportPending, filename, pdfExport, sourceRef, telemetry]);
+
+  return (
+    <>
+      <Button
+        className="tab"
+        disabled={disabled || exportPending}
+        size="sm"
+        type="button"
+        onClick={() => {
+          void handleExport();
+        }}
+      >
+        {exportPending ? "Exporting PDF…" : "Export PDF"}
+      </Button>
+      {exportError ? (
+        <span className="resume-pdf-export-error" role="alert">
+          PDF export failed. Try again.
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 function useResumeHtmlState(
   htmlUrl: string | null,
   htmlTransform?: (html: string) => string,
@@ -2799,6 +2861,7 @@ export function ResumeStandalonePlateEditor({
   className,
   htmlTransform,
   htmlUrl,
+  pdfFilename,
   previewStyle,
   title,
   transformKey,
@@ -2807,6 +2870,7 @@ export function ResumeStandalonePlateEditor({
   readonly className?: string;
   readonly htmlTransform?: ((html: string) => string) | undefined;
   readonly htmlUrl: string | null;
+  readonly pdfFilename: string;
   readonly previewStyle?: CSSProperties | undefined;
   readonly title: string;
   readonly transformKey?: string;
@@ -2829,6 +2893,7 @@ export function ResumeStandalonePlateEditor({
   const [editorVersion, setEditorVersion] = useState(0);
   const formattingApiRef = useRef<ResumeEditorFormattingApi | null>(null);
   const [formattingApiReady, setFormattingApiReady] = useState(false);
+  const exportSourceRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setCurrentPlateValue(initialPlateValue);
@@ -2924,6 +2989,11 @@ export function ResumeStandalonePlateEditor({
           onToggleItalic={handleToggleItalic}
           onToggleUnderline={handleToggleUnderline}
         />
+        <ResumePdfExportControl
+          disabled={!currentPlateValue}
+          filename={pdfFilename}
+          sourceRef={exportSourceRef}
+        />
         <Button
           className="tab"
           disabled={!dirty || !initialPlateValue}
@@ -2944,6 +3014,7 @@ export function ResumeStandalonePlateEditor({
       <div className="resume-plate-scroll" tabIndex={0}>
         {htmlState.status === "ready" && initialPlateValue && currentPlateValue ? (
           <div
+            ref={exportSourceRef}
             className="resume-plate-page"
             aria-label="Editable baseline resume page"
             data-draft-dirty={dirty ? "true" : "false"}
@@ -2987,6 +3058,7 @@ export function ResumePlateEditor({
   htmlUrl,
   layoutBoxes,
   lineTargets,
+  pdfFilename,
   profileSourceFields = [],
   renderError = null,
   renderPending = false,
@@ -3040,6 +3112,7 @@ export function ResumePlateEditor({
   const [formattingApiReady, setFormattingApiReady] = useState(false);
   const [editorVersion, setEditorVersion] = useState(0);
   const [draftSourceVersion, setDraftSourceVersion] = useState(0);
+  const exportSourceRef = useRef<HTMLDivElement | null>(null);
   const initialPlateValue = useMemo<Value | null>(() => {
     const savedValue = draft?.latestRevision?.plateDocument;
     if (isPlateValue(savedValue)) {
@@ -3277,6 +3350,11 @@ export function ResumePlateEditor({
           onToggleItalic={handleToggleItalic}
           onToggleUnderline={handleToggleUnderline}
         />
+        <ResumePdfExportControl
+          disabled={!currentPlateValue}
+          filename={pdfFilename}
+          sourceRef={exportSourceRef}
+        />
         <Button
           className="tab"
           disabled={saveDisabled}
@@ -3331,6 +3409,7 @@ export function ResumePlateEditor({
       <div className="resume-plate-scroll" tabIndex={0}>
         {htmlState.status === "ready" && initialPlateValue && currentPlateValue ? (
           <div
+            ref={exportSourceRef}
             className="resume-plate-page"
             aria-label="Editable resume page"
             data-draft-dirty={draftDirty ? "true" : "false"}

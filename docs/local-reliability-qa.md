@@ -71,6 +71,16 @@ evidence records and reported sample counts; reliability percentages explain
 their basis; and the normal focused refresh has no local observation-path
 input.
 
+For Plate PDF-export changes, exercise the shared control on `/profile`,
+`/preferences`, and `/apply-review`. Edit the mounted document without saving,
+export it, and verify the browser downloads a non-empty PDF containing the live
+edit with the expected surface-specific filename. The PDF must omit JobCtrl
+comment/audit chrome and transient selection styling, preserve non-default
+template typography/colors/margins, and use the mounted template's A4 or Letter
+media box without a trailing blank page. The action must not save the profile,
+template, or review draft; call a generation endpoint; register or replace an
+artifact; or change Apply approval state.
+
 ## Pick The Right Checklist
 
 | You changed… | Use |

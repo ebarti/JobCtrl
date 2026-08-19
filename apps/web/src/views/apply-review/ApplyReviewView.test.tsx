@@ -18,6 +18,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyReviewKeys } from "../../contexts/operations/applyReviewKeys.js";
 import { routeTree } from "../../routeTree.gen.js";
 import {
+  BrowserPdfExportAdapter,
+  type PdfDocumentFactory,
+} from "../../shared/adapters/local/BrowserPdfExportAdapter.js";
+import {
   makeApplyAudit,
   makeRepeatApplicationAssessment,
   makeArtifactDetail,
@@ -1337,6 +1341,53 @@ describe("<ApplyReviewView>", () => {
       expect(comment).toHaveAttribute("data-resume-editor-chrome", "true");
     });
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
+  });
+
+  it("exports the current unsaved tailored resume from the Plate editor", async () => {
+    const save = vi.fn();
+    const html = vi.fn(
+      async (
+        exportSource: HTMLElement,
+        options: Parameters<Awaited<ReturnType<PdfDocumentFactory>>["html"]>[1],
+      ) => {
+        expect(exportSource).toHaveClass("resume-plate-document");
+        expect(exportSource).toHaveTextContent("unsaved tailored export");
+        expect(exportSource.scrollWidth).toBe(1_014);
+        expect(
+          exportSource.querySelector<HTMLElement>(".resume-page")?.scrollWidth,
+        ).toBe(1_014);
+        expect(options.windowWidth).toBe(794);
+      },
+    );
+    const pdfDocumentFactory: PdfDocumentFactory = vi.fn(async () => ({
+      html,
+      save,
+    }));
+    const pdfExport = new BrowserPdfExportAdapter(pdfDocumentFactory);
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({ pdfExport }),
+    });
+
+    const plateEditor = await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    await userEvent.click(plateEditor);
+    await userEvent.type(plateEditor, " unsaved tailored export");
+    const resumePage = plateEditor.querySelector<HTMLElement>(".resume-page");
+    const auditBubble = plateEditor.querySelector<HTMLElement>(
+      ".resume-plate-comment[data-resume-editor-chrome='true']",
+    );
+    expect(resumePage).toBeInstanceOf(HTMLElement);
+    expect(auditBubble).toBeInstanceOf(HTMLElement);
+    Object.defineProperty(resumePage, "scrollWidth", { value: 1_014 });
+    Object.defineProperty(plateEditor, "scrollWidth", { value: 1_014 });
+    await userEvent.click(screen.getByRole("button", { name: "Export PDF" }));
+
+    await waitFor(() => expect(save).toHaveBeenCalledWith("tailored-resume-preview.pdf"));
+    expect(pdfDocumentFactory).toHaveBeenCalledWith({
+      format: "a4",
+      widthMm: 210,
+      widthPx: 794,
+    });
+    expect(html).toHaveBeenCalledTimes(1);
   });
 
   it("labels the grounded shipped fit and revision usage for a grounded audit", async () => {

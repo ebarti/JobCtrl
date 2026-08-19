@@ -2336,6 +2336,11 @@ input[type="radio"] {
   color: #c8c8c8;
 }
 
+.resume-pdf-export-error {
+  color: #fecaca;
+  font-size: var(--jh-type-label-size);
+}
+
 .resume-format-toolbar {
   display: flex;
   position: relative;

@@ -96,8 +96,10 @@ The user-visible surfaces divide the work:
   labeled unavailable and stays accessible under **Technical details** rather
   than being presented as user-facing evidence.
 - `/apply-review` consumes the accepted generation. The editor, revision,
-  replacement-render, and submission-approval lifecycle is owned by
-  [Apply](apply.md#materials-and-resume-rendering).
+  replacement-render, submission-approval lifecycle, and distinction between a
+  local editor export and an approved artifact are owned by
+  [Apply](apply.md#materials-and-resume-rendering). Its Plate toolbar can export
+  the current document, including unsaved edits, directly to a PDF download.
 - `/preferences` owns tailoring permissions, writing style, resume templates,
   and template selection. Template payloads hold style/layout only, not
   candidate or job facts.
@@ -108,6 +110,9 @@ The user-visible surfaces divide the work:
 Generating materials, choosing a default template, revising a resume in Apply
 Review, and approving a live submission are separate decisions. Materials
 hands accepted generations to Apply; it does not own submission approval.
+Likewise, **Export PDF** is a browser-local copy of the current editor state. It
+does not save the draft, render a replacement generation, register an artifact,
+or make the exported file eligible for submission.
 
 Interview prep is an explicit, job-scoped generation from the Job Detail
 workspace. It is not an automatic pipeline stage or live interview assistant.

@@ -1,10 +1,14 @@
+import { readFile } from "node:fs/promises";
+
 import { test, expect } from "@playwright/test";
 import type { ProviderId } from "@jobctrl/contracts";
+import { getDocument, OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 import {
   sampleCredentialsResponse,
   sampleProviderModelsResponse,
   sampleProviderStatusResponse,
+  sampleResumeTemplateListResponse,
   sampleSettingsResponse,
 } from "../../src/test/fixtures/projections.js";
 import {
@@ -93,6 +97,111 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   await expect.poll(() => previewRequests.some((url) => url.includes("/v1/profile/preview.html?v=1")), {
     timeout: 30_000,
   }).toBe(true);
+});
+
+test("Plate baseline editor downloads the current unsaved document as a PDF", async ({
+  page,
+}, testInfo) => {
+  const letterTheme = {
+    ...sampleResumeTemplateListResponse.effectiveDefaultVersion.theme,
+    pageSize: "letter" as const,
+    fontFamily: "times" as const,
+    marginMm: { top: 25, right: 20, bottom: 25, left: 20 },
+    headerLayout: "left" as const,
+    accentColor: "#c00000",
+  };
+  await page.route("**/v1/resume-templates", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...sampleResumeTemplateListResponse,
+        templates: sampleResumeTemplateListResponse.templates.map(
+          (template) => ({
+            ...template,
+            activeVersion: {
+              ...template.activeVersion,
+              theme: letterTheme,
+            },
+          }),
+        ),
+        effectiveDefaultVersion: {
+          ...sampleResumeTemplateListResponse.effectiveDefaultVersion,
+          theme: letterTheme,
+        },
+      }),
+    });
+  });
+  await page.goto("/profile");
+  await page.getByRole("button", { name: "Resume editor" }).click();
+
+  const plateEditor = page.getByRole("textbox", {
+    name: "Baseline resume editor editor",
+  });
+  await expect(plateEditor).toBeVisible({ timeout: 30_000 });
+  const renderedPage = plateEditor.locator(".resume-page");
+  const mountedTheme = await renderedPage.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return {
+      color: style.color,
+      fontFamily: style.fontFamily,
+      height: rect.height,
+      paddingTop: Number.parseFloat(style.paddingTop),
+      width: rect.width,
+    };
+  });
+  expect(mountedTheme.color).toBe("rgb(192, 0, 0)");
+  expect(mountedTheme.fontFamily).toContain("Times New Roman");
+  expect(mountedTheme.width).toBeCloseTo(816, 0);
+  expect(mountedTheme.height).toBeCloseTo(1_056, 0);
+  expect(mountedTheme.paddingTop).toBeCloseTo(94.49, 0);
+  const firstResumeLine = plateEditor
+    .locator("[data-resume-line-number]")
+    .first();
+  await firstResumeLine.click();
+  await expect(firstResumeLine).toHaveClass(/jobctrl-selected-line/);
+  await plateEditor.press("End");
+  await plateEditor.type(" Live browser PDF export proof");
+  await expect(plateEditor).toContainText("Live browser PDF export proof");
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export PDF" }).click();
+  const download = await downloadPromise;
+
+  expect(download.suggestedFilename()).toBe("baseline-resume.pdf");
+  expect(await download.failure()).toBeNull();
+  const pdfPath = testInfo.outputPath("baseline-resume.pdf");
+  await download.saveAs(pdfPath);
+  const pdf = await readFile(pdfPath);
+  expect(pdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+  const pdfDocument = await getDocument({
+    data: new Uint8Array(pdf),
+    verbosity: 0,
+  }).promise;
+  try {
+    expect(pdfDocument.numPages).toBe(1);
+    const pdfPage = await pdfDocument.getPage(1);
+    const viewport = pdfPage.getViewport({ scale: 1 });
+    expect(viewport.width).toBeCloseTo(612, 0);
+    expect(viewport.height).toBeCloseTo(792, 0);
+    const operatorList = await pdfPage.getOperatorList();
+    const renderedColors = operatorList.fnArray
+      .map((operator, index) =>
+        operator === OPS.setFillRGBColor
+          ? operatorList.argsArray[index]?.[0]
+          : null,
+      )
+      .filter((color): color is string => typeof color === "string");
+    expect(renderedColors).toContain("#c00000");
+    expect(renderedColors).not.toContain("#f0f0f0");
+    const textContent = await pdfPage.getTextContent();
+    const exportedText = textContent.items
+      .map((item) => ("str" in item ? item.str : ""))
+      .join(" ");
+    expect(exportedText).toContain("Live browser PDF export proof");
+  } finally {
+    await pdfDocument.destroy();
+  }
 });
 
 test("Credential notices keep a real, contained layout box at mobile width", async ({

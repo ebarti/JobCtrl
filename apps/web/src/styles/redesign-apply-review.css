@@ -700,6 +700,10 @@
   color: var(--foreground);
 }
 
+.apply-review-html-line-review .resume-pdf-export-error {
+  color: var(--destructive-text);
+}
+
 .apply-review-html-line-review .resume-format-button:focus-visible,
 .apply-review-html-line-review .resume-format-select select:focus-visible,
 .apply-review-html-line-review .resume-format-select input:focus-visible,

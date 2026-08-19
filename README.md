@@ -240,6 +240,11 @@ evidence, qualifications, and the complete capability matrix.
 - Review generated resumes in Apply Review as editable rich-text documents:
   change text and formatting, add hyperlinks, save a draft, render the
   replacement PDF, and approve only the exact reviewed artifact.
+- Export the live document from every Plate resume editor in Profile,
+  Preferences, and Apply Review. **Export PDF** downloads the document currently
+  on screen, including unsaved edits and the active template's A4 or Letter
+  layout, without saving those edits, registering a JobCtrl artifact, or
+  changing Apply approval state.
 - Inspect the evidence map to see which profile achievements and skills are
   reused in generated materials, requirement-fit decisions, and recorded gaps.
   Job and artifact audit surfaces show those references as human-readable
