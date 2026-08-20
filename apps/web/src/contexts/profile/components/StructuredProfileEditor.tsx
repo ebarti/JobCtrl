@@ -1530,7 +1530,10 @@ export function StructuredProfileEditor({
               </FieldDescription>
               {experienceEntries.map((entry, index) => {
                 const entryId = textFrom(entry["id"]);
-                const entryLabel = textFrom(entry["title"]) || `Experience ${index + 1}`;
+                const entryLabel =
+                  [textFrom(entry["company"]), textFrom(entry["title"])]
+                    .filter(Boolean)
+                    .join(" - ") || `Experience ${index + 1}`;
                 const bullets = editableTextArrayAt(profile, `resume.experience_entries.${index}.bullets`);
                 const requiredBullets = new Set(
                   asTextArray(

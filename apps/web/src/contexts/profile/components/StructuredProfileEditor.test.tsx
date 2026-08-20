@@ -345,6 +345,9 @@ describe("<StructuredProfileEditor>", () => {
     render(<StatefulEditor />);
 
     expect(screen.getByRole("heading", { name: "Experience entries" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Initech - Director of Platform"),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("Must appear in final resume").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Required").length).toBeGreaterThan(0);
   });
@@ -398,10 +401,22 @@ describe("<StructuredProfileEditor>", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /Experience entries/ }));
-    expect(screen.getByRole("button", { name: "Move Older role up" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Move Recent role down" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", {
+        name: "Move Older company - Older role up",
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", {
+        name: "Move Recent company - Recent role down",
+      }),
+    ).toBeDisabled();
 
-    await user.click(screen.getByRole("button", { name: "Move Current role up" }));
+    await user.click(
+      screen.getByRole("button", {
+        name: "Move Current company - Current role up",
+      }),
+    );
     expect(
       JSON.parse(latestProfile).resume.experience_entries.map((entry: { id: string }) => entry.id),
     ).toEqual(["current", "older", "recent"]);

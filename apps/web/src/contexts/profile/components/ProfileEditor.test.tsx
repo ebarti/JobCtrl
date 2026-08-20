@@ -241,7 +241,9 @@ describe("<ProfileEditor>", () => {
 
     await screen.findByLabelText("Full name");
     await user.click(await screen.findByRole("button", { name: /Experience entries/ }));
-    await user.click(screen.getByRole("button", { name: "Move Current role up" }));
+    await user.click(
+      screen.getByRole("button", { name: "Move Initech - Current role up" }),
+    );
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
 
