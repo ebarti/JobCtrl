@@ -87,8 +87,13 @@ replace an artifact; or change Apply approval state.
 For Profile Plate text projection, edit an experience bullet or non-empty
 position summary in the Plate document, switch to **Profile data**, and verify
 the matching boxed field contains the same unsaved value and the normal Profile
-dirty/save controls appear. Saving must persist that exact field through the
-normal Profile mutation. A formatting-only change or edit to a composite
+dirty/save controls appear. Include deletion plus digits or punctuation so the
+check exercises Plate's model-change path rather than a native browser input
+event. Saving must persist that exact field through the normal Profile mutation.
+While both panes are open, make an unrelated boxed edit before editing Plate
+and verify both changes survive. If the boxed editor removes or changes the
+same bullet first, the Plate projection must preserve the boxed structure and
+surface a conflict. A formatting-only change or edit to a composite
 company/location/title/date line must not create a guessed profile-field edit.
 Verify the Size control displays its relative value as a percentage (100% at
 the resume default) with high-contrast text rather than exposing the internal

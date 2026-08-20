@@ -249,7 +249,10 @@ evidence, qualifications, and the complete capability matrix.
   export action does not register a JobCtrl artifact or change Apply approval
   state. On Profile, direct canonical text edits to the name,
   executive profile, position summaries, and experience bullets enter the same
-  validated form draft as the boxed editor and follow its normal autosave;
+  validated form draft as the boxed editor and follow its normal autosave.
+  Plate projects only fields changed from the mounted baseline; unrelated boxed
+  edits are preserved, and a same-field or structural conflict is surfaced
+  instead of being overwritten;
   formatting and composite layout lines remain local to the mounted document.
   The Profile editor also owns resume experience order: move roles up or down,
   or apply the explicit newest-first sort, and the saved sequence is used by

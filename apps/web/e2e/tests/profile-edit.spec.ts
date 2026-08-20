@@ -99,6 +99,57 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   }).toBe(true);
 });
 
+test("Plate deletion and digit edits update the boxed Profile draft and unsaved state", async ({
+  page,
+}) => {
+  await page.goto("/profile");
+  await page.getByRole("button", { name: "Resume editor" }).click();
+
+  const plateEditor = page.getByRole("textbox", {
+    name: "Baseline resume editor editor",
+  });
+  const plateBullet = plateEditor.locator(
+    '[data-resume-layout-target="experience:qa_platform:bullet:1"]',
+  );
+  await expect(plateBullet).toHaveText(
+    "Led platform reliability and security validation programs.",
+    { timeout: 30_000 },
+  );
+  await plateEditor.focus();
+  await plateBullet.evaluate((element) => {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  await page.keyboard.press("Backspace");
+  await page.keyboard.type(" 40");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.type("5%.");
+  await expect(plateBullet).toHaveText(
+    "Led platform reliability and security validation programs 45%.",
+  );
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Added from Plate.");
+  const projectedBullets = plateEditor.locator(
+    '[data-resume-layout-target="experience:qa_platform:bullet:1"]',
+  );
+  await expect(projectedBullets).toHaveCount(2);
+  await expect(projectedBullets.nth(1)).toHaveText("Added from Plate.");
+
+  await page.getByRole("button", { name: "Profile data" }).click();
+  await page.getByRole("button", { name: /^Experience entries\b/i }).click();
+  await expect(page.getByRole("textbox", { name: "Bullet 1", exact: true })).toHaveValue(
+    "Led platform reliability and security validation programs 45%.",
+  );
+  await expect(page.getByRole("textbox", { name: "Bullet 2", exact: true })).toHaveValue(
+    "Added from Plate.",
+  );
+  await expect(page.getByText("Unsaved changes", { exact: true })).toBeVisible();
+});
+
 test("Plate baseline editor downloads the current unsaved document as a PDF", async ({
   page,
 }, testInfo) => {

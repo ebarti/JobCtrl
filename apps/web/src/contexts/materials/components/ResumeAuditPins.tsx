@@ -196,7 +196,8 @@ type ResumeEditorFontSize = number | ResumeEditorLegacyFontSize;
 
 export interface ResumePlateSemanticTextChange {
   readonly semanticId: string;
-  readonly text: string;
+  readonly baselineTexts: readonly string[];
+  readonly plateTexts: readonly string[];
 }
 
 interface ResumeEditorFormattingApi {
@@ -1062,13 +1063,44 @@ function resumeTextFromPlateValue(value: Value): string {
     .join("\n");
 }
 
-function resumeSemanticTextChangesFromElement(
-  element: HTMLElement,
+function resumeSemanticTextSnapshotFromPlateValue(
+  value: Value,
+): ReadonlyMap<string, readonly string[]> {
+  const textsBySemanticId = new Map<string, string[]>();
+
+  const visit = (node: Descendant): void => {
+    if ("text" in node) return;
+    const semanticId = typeof node.semanticId === "string" ? node.semanticId.trim() : "";
+    if (semanticId) {
+      const texts = textsBySemanticId.get(semanticId) ?? [];
+      texts.push(resumeTextFromPlateNode(node).replace(/\s+/g, " ").trim());
+      textsBySemanticId.set(semanticId, texts);
+    }
+    node.children.forEach(visit);
+  };
+
+  value.forEach(visit);
+  return textsBySemanticId;
+}
+
+export function resumeSemanticTextChangesFromPlateValues(
+  baselineValue: Value,
+  plateValue: Value,
 ): readonly ResumePlateSemanticTextChange[] {
-  return Array.from(element.querySelectorAll<HTMLElement>("[data-resume-layout-target]")).flatMap((node) => {
-    const semanticId = node.dataset.resumeLayoutTarget?.trim();
-    if (!semanticId) return [];
-    return [{ semanticId, text: (node.textContent ?? "").replace(/\s+/g, " ").trim() }];
+  const baseline = resumeSemanticTextSnapshotFromPlateValue(baselineValue);
+  const current = resumeSemanticTextSnapshotFromPlateValue(plateValue);
+  const semanticIds = new Set([...baseline.keys(), ...current.keys()]);
+
+  return Array.from(semanticIds).flatMap((semanticId) => {
+    const baselineTexts = baseline.get(semanticId) ?? [];
+    const plateTexts = current.get(semanticId) ?? [];
+    if (
+      baselineTexts.length === plateTexts.length &&
+      baselineTexts.every((text, index) => text === plateTexts[index])
+    ) {
+      return [];
+    }
+    return [{ semanticId, baselineTexts, plateTexts }];
   });
 }
 
@@ -2631,7 +2663,6 @@ function ResumePlateDocument({
   onReplyToThread,
   onClearLineSelection,
   onFormattingApiChange,
-  onSemanticTextChange,
   onValueChange,
   onSelectLine,
   pins,
@@ -2648,7 +2679,6 @@ function ResumePlateDocument({
   readonly onReplyToThread?: ResumePlateEditorProps["onReplyToThread"];
   readonly onClearLineSelection: () => void;
   readonly onFormattingApiChange?: (api: ResumeEditorFormattingApi | null) => void;
-  readonly onSemanticTextChange?: (changes: readonly ResumePlateSemanticTextChange[]) => void;
   readonly onValueChange: (value: Value) => void;
   readonly onSelectLine: (selection: PdfAuditLineSelection | null) => void;
   readonly pins: readonly ResumeAuditPin[];
@@ -2745,9 +2775,6 @@ function ResumePlateDocument({
           data-rendered-line-count={lines.length}
           role="textbox"
           spellCheck={false}
-          onInput={(event: FormEvent<HTMLDivElement>) => {
-            onSemanticTextChange?.(resumeSemanticTextChangesFromElement(event.currentTarget));
-          }}
         />
       </Plate>
     </ResumePlateRenderContext.Provider>
@@ -2956,6 +2983,17 @@ export function ResumeStandalonePlateEditor({
   const handleClearLineSelection = useCallback(() => {
     setSelectedLine(null);
   }, []);
+  const handlePlateValueChange = useCallback(
+    (value: Value) => {
+      setCurrentPlateValue(value);
+      if (initialPlateValue && onSemanticTextChange) {
+        onSemanticTextChange(
+          resumeSemanticTextChangesFromPlateValues(initialPlateValue, value),
+        );
+      }
+    },
+    [initialPlateValue, onSemanticTextChange],
+  );
   const handleToggleBold = useCallback(() => formattingApiRef.current?.toggleBold(), []);
   const handleToggleItalic = useCallback(() => formattingApiRef.current?.toggleItalic(), []);
   const handleToggleUnderline = useCallback(() => formattingApiRef.current?.toggleUnderline(), []);
@@ -2988,8 +3026,9 @@ export function ResumeStandalonePlateEditor({
   const handleFontSize = useCallback((value: ResumeEditorFontSize) => formattingApiRef.current?.setFontSize(value), []);
   const handleReset = useCallback(() => {
     setCurrentPlateValue(initialPlateValue);
+    onSemanticTextChange?.([]);
     setResetVersion((currentVersion) => currentVersion + 1);
-  }, [initialPlateValue]);
+  }, [initialPlateValue, onSemanticTextChange]);
 
   const unavailableMessage =
     htmlState.status === "legacy" || htmlState.status === "missing" || htmlState.status === "error"
@@ -3061,9 +3100,8 @@ export function ResumeStandalonePlateEditor({
               lines={htmlLines}
               onClearLineSelection={handleClearLineSelection}
               onFormattingApiChange={handleFormattingApiChange}
-              {...(onSemanticTextChange ? { onSemanticTextChange } : {})}
               onSelectLine={handleSelectLine}
-              onValueChange={setCurrentPlateValue}
+              onValueChange={handlePlateValueChange}
               pins={[]}
               replyPending={false}
               risk={risk}

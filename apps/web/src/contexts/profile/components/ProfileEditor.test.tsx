@@ -10,6 +10,7 @@ import {
 } from "../../../test/fixtures/projections.js";
 import { renderWithProviders } from "../../../test/render.js";
 import { FakePdfExportPort, buildTestPorts } from "../../../test/testPorts.js";
+import { resumeSemanticTextChangesFromPlateValues } from "../../materials/components/ResumeAuditPins.js";
 import { ProfileEditor } from "./ProfileEditor.js";
 import { resumeTemplatePreviewStyle } from "./ResumeTemplatePanel.js";
 
@@ -17,7 +18,38 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function semanticBullet(
+  texts: readonly string[],
+): Parameters<typeof resumeSemanticTextChangesFromPlateValues>[0] {
+  return texts.map((text) => ({
+    children: [{ text }],
+    semanticId: "experience:exp-1:bullet:1",
+    tagName: "li",
+    type: "resume_block",
+  })) as Parameters<typeof resumeSemanticTextChangesFromPlateValues>[0];
+}
+
 describe("<ProfileEditor>", () => {
+  it("derives deletion, digit, punctuation, and split deltas from the Plate model", () => {
+    expect(
+      resumeSemanticTextChangesFromPlateValues(
+        semanticBullet(["Scaled the platform 40%."]),
+        semanticBullet(["Scaled the platform 45%.", "Added from Plate."]),
+      ),
+    ).toEqual([
+      {
+        semanticId: "experience:exp-1:bullet:1",
+        baselineTexts: ["Scaled the platform 40%."],
+        plateTexts: ["Scaled the platform 45%.", "Added from Plate."],
+      },
+    ]);
+  });
+
+  it("returns a cumulative empty delta after the Plate text returns to baseline", () => {
+    const baseline = semanticBullet(["Scaled the platform 40%."]);
+    expect(resumeSemanticTextChangesFromPlateValues(baseline, baseline)).toEqual([]);
+  });
+
   it("serializes resume theme tokens without losing print precision", () => {
     const style = resumeTemplatePreviewStyle({
       ...sampleResumeTemplateListResponse.effectiveDefaultVersion.theme,
@@ -114,193 +146,6 @@ describe("<ProfileEditor>", () => {
     );
     expect(screen.queryByText("Baseline resume preview")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /open PDF/i })).not.toBeInTheDocument();
-  });
-
-  it("projects direct Plate bullet edits into the saved structured Profile", async () => {
-    const user = userEvent.setup();
-    const updateProfile = vi.fn(async (body: { profileText: string }) => ({
-      ...sampleProfileResponse,
-      profile: JSON.parse(body.profileText) as typeof sampleProfileResponse.profile,
-    }));
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(
-          `
-            <main class="resume-page">
-              <h1 data-resume-layout-target="personal:full_name">Jordan Candidate</h1>
-              <section class="resume-section">
-                <h2 data-resume-layout-target="section:experience">Experience</h2>
-                <article class="resume-entry">
-                  <ul class="resume-bullets">
-                    <li data-resume-layout-target="experience:exp-1:bullet:1">Scaled the platform 10x.</li>
-                  </ul>
-                </article>
-              </section>
-            </main>
-          `,
-          { headers: { "content-type": "text/html" } },
-        ),
-      ),
-    );
-
-    renderWithProviders(<ProfileEditor />, {
-      ports: buildTestPorts({
-        api: {
-          profile: async () => sampleProfileResponse,
-          profilePreviewHtmlUrl: () => "/v1/profile/preview.html?v=0",
-          resumeTemplates: async () => sampleResumeTemplateListResponse,
-          settings: async () => sampleSettingsResponse,
-          updateProfile,
-        },
-      }),
-      withRouter: true,
-    });
-
-    await user.click(await screen.findByRole("button", { name: "Resume editor" }));
-    const plateBullet = await waitFor(() => {
-      const element = document.querySelector<HTMLElement>(
-        '[data-resume-layout-target="experience:exp-1:bullet:1"]',
-      );
-      expect(element).toBeTruthy();
-      return element!;
-    });
-    await user.click(plateBullet);
-    await user.type(screen.getByRole("textbox", { name: "Baseline resume editor editor" }), " Updated in Plate.");
-    await waitFor(() => expect(plateBullet).toHaveTextContent("Scaled the platform 10x. Updated in Plate."));
-    await waitFor(() => expect(screen.getByText("Unsaved changes")).toBeInTheDocument());
-
-    await user.click(screen.getByRole("button", { name: "Profile data" }));
-    await user.click(screen.getByRole("button", { name: /Experience entries/ }));
-    await waitFor(() =>
-      expect(screen.getByLabelText("Bullet 1")).toHaveValue("Scaled the platform 10x. Updated in Plate."),
-    );
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
-    expect(
-      JSON.parse(updateProfile.mock.calls[0]![0].profileText).resume.experience_entries[0].bullets[0],
-    ).toBe("Scaled the platform 10x. Updated in Plate.");
-  });
-
-  it("inserts a new Plate bullet without replacing or dropping existing Profile bullets", async () => {
-    const user = userEvent.setup();
-    const profileResponse = {
-      ...sampleProfileResponse,
-      profile: ProfileSchema.parse(sampleProfileResponse.profile),
-    };
-    profileResponse.profile.resume.experience_entries[0]!.bullets.push(
-      "Preserved outside the rendered Plate subset.",
-    );
-    const updateProfile = vi.fn(async (body: { profileText: string }) => ({
-      ...profileResponse,
-      profile: JSON.parse(body.profileText) as typeof profileResponse.profile,
-    }));
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response(
-            `
-            <main class="resume-page">
-              <section class="resume-section">
-                <h2 data-resume-layout-target="section:experience">Experience</h2>
-                <article class="resume-entry">
-                  <ul class="resume-bullets">
-                    <li data-resume-layout-target="experience:exp-1:bullet:1">Scaled the platform 10x.</li>
-                    <li data-resume-layout-target="experience:exp-1:bullet:2">Led the SRE org.</li>
-                  </ul>
-                </article>
-              </section>
-            </main>
-          `,
-            { headers: { "content-type": "text/html" } },
-          ),
-      ),
-    );
-
-    renderWithProviders(<ProfileEditor />, {
-      ports: buildTestPorts({
-        api: {
-          profile: async () => profileResponse,
-          profilePreviewHtmlUrl: () => "/v1/profile/preview.html?v=0",
-          resumeTemplates: async () => sampleResumeTemplateListResponse,
-          settings: async () => sampleSettingsResponse,
-          updateProfile,
-        },
-      }),
-      withRouter: true,
-    });
-
-    await user.click(
-      await screen.findByRole("button", { name: "Resume editor" }),
-    );
-    const firstPlateBullet = await waitFor(() => {
-      const element = document.querySelector<HTMLElement>(
-        '[data-resume-layout-target="experience:exp-1:bullet:1"]',
-      );
-      expect(element).toBeTruthy();
-      return element!;
-    });
-    const insertedPlateBullet = firstPlateBullet.cloneNode(true) as HTMLElement;
-    insertedPlateBullet.textContent = "Added";
-    firstPlateBullet.after(insertedPlateBullet);
-    fireEvent.input(
-      screen.getByRole("textbox", { name: "Baseline resume editor editor" }),
-    );
-    insertedPlateBullet.textContent = "Added from Plate.";
-    fireEvent.input(
-      screen.getByRole("textbox", { name: "Baseline resume editor editor" }),
-    );
-    expect(
-      Array.from(
-        document.querySelectorAll<HTMLElement>(".resume-bullets > li"),
-      ).map((element) => ({
-        semanticId: element.dataset.resumeLayoutTarget,
-        text: element.textContent,
-      })),
-    ).toEqual([
-      {
-        semanticId: "experience:exp-1:bullet:1",
-        text: "Scaled the platform 10x.",
-      },
-      {
-        semanticId: "experience:exp-1:bullet:1",
-        text: "Added from Plate.",
-      },
-      {
-        semanticId: "experience:exp-1:bullet:2",
-        text: "Led the SRE org.",
-      },
-    ]);
-
-    await user.click(screen.getByRole("button", { name: "Profile data" }));
-    await user.click(
-      screen.getByRole("button", { name: /Experience entries/ }),
-    );
-    await waitFor(() => {
-      expect(screen.getByLabelText("Bullet 1")).toHaveValue(
-        "Scaled the platform 10x.",
-      );
-      expect(screen.getByLabelText("Bullet 2")).toHaveValue(
-        "Added from Plate.",
-      );
-      expect(screen.getByLabelText("Bullet 3")).toHaveValue("Led the SRE org.");
-      expect(screen.getByLabelText("Bullet 4")).toHaveValue(
-        "Preserved outside the rendered Plate subset.",
-      );
-    });
-
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
-    expect(
-      JSON.parse(updateProfile.mock.calls[0]![0].profileText).resume
-        .experience_entries[0].bullets,
-    ).toEqual([
-      "Scaled the platform 10x.",
-      "Added from Plate.",
-      "Led the SRE org.",
-      "Preserved outside the rendered Plate subset.",
-    ]);
   });
 
   it("persists the manually reordered experience sequence through the Profile mutation", async () => {

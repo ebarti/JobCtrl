@@ -2262,6 +2262,14 @@ rendered company/location/title/date row or treating visual formatting as a
 candidate fact would be ambiguous and unsafe. Semantic IDs provide a stable,
 explicit bridge for the direct fields without introducing a shadow profile.
 
+Amended (2026-08-21): projection is driven by committed Plate model values,
+not native DOM `input` events. Each update carries only semantic text that
+differs from the mounted HTML baseline, including ordered duplicate semantic
+IDs created by a bullet split. The form applies those deltas as a per-target
+three-way merge. Unrelated boxed draft changes survive; if the same target or
+its bullet structure no longer matches the rendered baseline or the last
+Plate-applied value, the boxed value wins and the UI surfaces the conflict.
+
 ## 2026-08-20: Profile Experience Sequence Owns Resume Presentation Order
 
 Status: accepted
