@@ -286,7 +286,7 @@ def test_build_resume_html_matches_moderncv_contact_and_experience_layout() -> N
     assert html.index("experience:acme_swe:summary") < html.index("experience:acme_swe:bullet:1")
 
 
-def test_resume_orders_experience_newest_first_and_places_education_degree_below_institution() -> None:
+def test_resume_preserves_profile_experience_order_and_places_education_degree_below_institution() -> None:
     profile = _profile()
     profile["resume"]["experience_entries"] = [
         {
@@ -319,16 +319,12 @@ def test_resume_orders_experience_newest_first_and_places_education_degree_below
     text = ResumeAssembler().assemble_resume_text({}, profile)
     html = build_resume_html(document)
 
-    assert [entry["id"] for entry in document["experience"]] == [
-        "current",
-        "recent",
-        "older",
-    ]
+    assert [entry["id"] for entry in document["experience"]] == ["older", "current", "recent"]
+    assert text.index("Older role | Older company") < text.index(
+        "Current role | Current company"
+    )
     assert text.index("Current role | Current company") < text.index(
         "Recent role | Recent company"
-    )
-    assert text.index("Recent role | Recent company") < text.index(
-        "Older role | Older company"
     )
     assert (
         '<span class="resume-entry-row resume-entry-education-row"><span class="resume-entry-main '
@@ -349,6 +345,18 @@ def test_build_resume_html_omits_empty_position_summary() -> None:
 
     assert 'data-resume-layout-target="experience:acme_swe:summary"' not in html
     assert '<p class="resume-entry-summary"' not in html
+
+
+def test_build_resume_html_compacts_experience_without_bullets() -> None:
+    profile = _profile()
+    profile["resume"]["experience_entries"][0]["bullets"] = []
+
+    html = build_resume_html(build_resume_document({}, profile))
+
+    assert '<article class="resume-entry resume-entry--no-bullets">' in html
+    assert '<ul class="resume-bullets">' not in html
+    assert ".resume-entry.resume-entry--no-bullets" in html
+    assert ".resume-entry--no-bullets .resume-entry-summary:last-child" in html
 
 
 def test_position_summary_matches_sanitized_text_and_html_ordering() -> None:

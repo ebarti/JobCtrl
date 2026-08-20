@@ -1,3 +1,4 @@
+import { ProfileSchema } from "@jobctrl/contracts";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -179,6 +180,76 @@ describe("<ProfileEditor>", () => {
     expect(
       JSON.parse(updateProfile.mock.calls[0]![0].profileText).resume.experience_entries[0].bullets[0],
     ).toBe("Scaled the platform 10x. Updated in Plate.");
+  });
+
+  it("persists the manually reordered experience sequence through the Profile mutation", async () => {
+    const user = userEvent.setup();
+    const profileResponse = {
+      ...sampleProfileResponse,
+      profile: ProfileSchema.parse(sampleProfileResponse.profile),
+    };
+    const baseEntry = profileResponse.profile.resume.experience_entries[0]!;
+    profileResponse.profile.resume.experience_entries = [
+      {
+        ...baseEntry,
+        id: "older",
+        title: "Older role",
+        date_range: "Jan 2018 - Dec 2020",
+      },
+      {
+        ...baseEntry,
+        id: "current",
+        title: "Current role",
+        date_range: "Mar 2024 - Present",
+      },
+      {
+        ...baseEntry,
+        id: "recent",
+        title: "Recent role",
+        date_range: "Jun 2021 - Feb 2024",
+      },
+    ];
+    profileResponse.profile.resume.tailoring_rules.required_experience_entry_ids = [
+      "older",
+      "current",
+      "recent",
+    ];
+    const updateProfile = vi.fn(async (body: { profileText: string }) => ({
+      ...profileResponse,
+      profile: JSON.parse(body.profileText) as typeof profileResponse.profile,
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response('<main class="resume-page"><p>Resume</p></main>', {
+          headers: { "content-type": "text/html" },
+        }),
+      ),
+    );
+
+    renderWithProviders(<ProfileEditor />, {
+      ports: buildTestPorts({
+        api: {
+          profile: async () => profileResponse,
+          profilePreviewHtmlUrl: () => "/v1/profile/preview.html?v=0",
+          settings: async () => sampleSettingsResponse,
+          updateProfile,
+        },
+      }),
+      withRouter: true,
+    });
+
+    await screen.findByLabelText("Full name");
+    await user.click(await screen.findByRole("button", { name: /Experience entries/ }));
+    await user.click(screen.getByRole("button", { name: "Move Current role up" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+
+    expect(
+      JSON.parse(updateProfile.mock.calls[0]![0].profileText).resume.experience_entries.map(
+        (entry: { id: string }) => entry.id,
+      ),
+    ).toEqual(["current", "older", "recent"]);
   });
 
   it("renders preferences without the PDF preview pane", async () => {

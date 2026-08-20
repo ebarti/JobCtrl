@@ -349,6 +349,69 @@ describe("<StructuredProfileEditor>", () => {
     expect(screen.getAllByText("Required").length).toBeGreaterThan(0);
   });
 
+  it("reorders experience entries manually and with the explicit newest-first action", async () => {
+    const user = userEvent.setup();
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    initialProfile.resume.experience_entries = [
+      {
+        id: "older",
+        date_range: "Jan 2018 - Dec 2020",
+        title: "Older role",
+        company: "Older company",
+        location: "",
+        summary: "",
+        bullets: ["Older work."],
+      },
+      {
+        id: "current",
+        date_range: "Mar 2024 - Present",
+        title: "Current role",
+        company: "Current company",
+        location: "",
+        summary: "",
+        bullets: ["Current work."],
+      },
+      {
+        id: "recent",
+        date_range: "Jun 2021 - Feb 2024",
+        title: "Recent role",
+        company: "Recent company",
+        location: "",
+        summary: "",
+        bullets: ["Recent work."],
+      },
+    ];
+    initialProfile.resume.tailoring_rules.required_experience_entry_ids = [
+      "older",
+      "current",
+      "recent",
+    ];
+    let latestProfile = JSON.stringify(initialProfile, null, 2);
+
+    render(
+      <StatefulEditor
+        initialProfile={initialProfile}
+        onLatestProfile={(value) => {
+          latestProfile = value;
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Experience entries/ }));
+    expect(screen.getByRole("button", { name: "Move Older role up" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move Recent role down" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Move Current role up" }));
+    expect(
+      JSON.parse(latestProfile).resume.experience_entries.map((entry: { id: string }) => entry.id),
+    ).toEqual(["current", "older", "recent"]);
+
+    await user.click(screen.getByRole("button", { name: "Sort newest first" }));
+    expect(
+      JSON.parse(latestProfile).resume.experience_entries.map((entry: { id: string }) => entry.id),
+    ).toEqual(["current", "recent", "older"]);
+  });
+
   it("renders bullet standards as a combined fixed set", () => {
     render(<StatefulEditor mode="preferences" />);
 

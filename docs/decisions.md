@@ -2261,3 +2261,24 @@ boxed Profile editor and follow the same save boundary, while splitting a
 rendered company/location/title/date row or treating visual formatting as a
 candidate fact would be ambiguous and unsafe. Semantic IDs provide a stable,
 explicit bridge for the direct fields without introducing a shadow profile.
+
+## 2026-08-20: Profile Experience Sequence Owns Resume Presentation Order
+
+Status: accepted
+
+Decision: `resume.experience_entries` order in the saved Candidate Profile is
+the single presentation order for baseline HTML, canonical resume text,
+tailored HTML/PDF, and the Profile Plate preview. The Profile editor exposes
+accessible move-up and move-down controls plus an explicit newest-first action;
+all three update the existing TanStack form draft and normal Profile save path.
+Resume assembly and rendering preserve the resulting sequence and do not apply
+an implicit date sort. An experience with no rendered bullets is marked as
+such by the semantic renderer so browser and server CSS omit empty-list and
+full bullet-bearing spacing.
+
+Rationale: SQLite already persists each experience's `position_index`, so an
+output-time date sort discarded deliberate user state and made UI reordering
+impossible. Keeping the ordering operation at the Profile boundary gives the
+user both a one-click chronological default and a durable custom override,
+while one canonical sequence keeps text, HTML, Plate, and PDF artifacts in
+parity.

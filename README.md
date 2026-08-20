@@ -248,6 +248,9 @@ evidence, qualifications, and the complete capability matrix.
   executive profile, position summaries, and experience bullets enter the same
   validated form draft as the boxed editor and follow its normal autosave;
   formatting and composite layout lines remain local to the mounted document.
+  The Profile editor also owns resume experience order: move roles up or down,
+  or apply the explicit newest-first sort, and the saved sequence is used by
+  baseline and tailored resumes.
 - Inspect the evidence map to see which profile achievements and skills are
   reused in generated materials, requirement-fit decisions, and recorded gaps.
   Job and artifact audit surfaces show those references as human-readable

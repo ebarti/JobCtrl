@@ -35,7 +35,6 @@ from jobctrl.resume_profile import (
     get_resume_master,
     get_skill_categories,
     get_tailoring_policy,
-    sort_experience_entries_by_date,
     tailored_experience_bullets,
     tailored_experience_title,
     tailored_skill_items,
@@ -227,6 +226,13 @@ body {
 }
 .resume-entry.compact {
   margin-block-end: 2.2mm;
+}
+.resume-entry.resume-entry--no-bullets {
+  margin-block-end: 1.6mm;
+}
+.resume-entry--no-bullets .resume-entry-heading:last-child,
+.resume-entry--no-bullets .resume-entry-summary:last-child {
+  margin-block-end: 0;
 }
 .resume-entry-heading {
   display: grid;
@@ -642,14 +648,11 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
     all_education_entries = get_education_entries(profile)
     all_skill_categories = get_skill_categories(profile)
 
-    experience_entries = sort_experience_entries_by_date(
-        [
-            entry
-            for entry in all_experience_entries
-            if not required_experience_ids or entry.get("id") in required_experience_ids
-        ]
-        or all_experience_entries
-    )
+    experience_entries = [
+        entry
+        for entry in all_experience_entries
+        if not required_experience_ids or entry.get("id") in required_experience_ids
+    ] or all_experience_entries
     education_entries = [
         entry
         for entry in all_education_entries
@@ -852,7 +855,9 @@ def build_resume_html(
                 + (f'<span class="resume-entry-date">{date_range_html}</span>' if date_range else "")
                 + "</span>"
             )
-            section.append('<article class="resume-entry">')
+            bullets = list(entry.get("bullets", []))
+            entry_class = "resume-entry" if bullets else "resume-entry resume-entry--no-bullets"
+            section.append(f'<article class="{entry_class}">')
             section.append(
                 target(
                     f"experience:{entry_id}:heading",
@@ -875,10 +880,12 @@ def build_resume_html(
                         class_name="resume-entry-summary",
                     )
                 )
-            section.append('<ul class="resume-bullets">')
-            for bullet in entry.get("bullets", []):
-                section.append(target(str(bullet.get("id", "")), str(bullet.get("text", "")), tag="li"))
-            section.extend(["</ul>", "</article>"])
+            if bullets:
+                section.append('<ul class="resume-bullets">')
+                for bullet in bullets:
+                    section.append(target(str(bullet.get("id", "")), str(bullet.get("text", "")), tag="li"))
+                section.append("</ul>")
+            section.append("</article>")
         section.append("</section>")
         return section
 

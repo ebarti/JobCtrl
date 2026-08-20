@@ -6,7 +6,14 @@ import {
   type ReactNode,
   type TextareaHTMLAttributes,
 } from "react";
-import { IconExternalLink, IconPlus, IconTrash } from "@tabler/icons-react";
+import {
+  IconArrowDown,
+  IconArrowUp,
+  IconExternalLink,
+  IconPlus,
+  IconSortDescending,
+  IconTrash,
+} from "@tabler/icons-react";
 
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import {
@@ -74,6 +81,7 @@ import {
   textFrom,
 } from "../lib/json-record.js";
 import {
+  compareProfileDateRangesNewestFirst,
   emptyProfileMonth,
   formatProfileDateRange,
   formatProfileMonth,
@@ -407,6 +415,37 @@ export function StructuredProfileEditor({
         items.filter((_, itemIndex) => itemIndex !== index),
       );
     });
+  };
+
+  const moveExperienceEntry = (index: number, offset: -1 | 1) => {
+    const targetIndex = index + offset;
+    if (targetIndex < 0 || targetIndex >= experienceEntries.length) {
+      return;
+    }
+    updateProfileDraft((draft) => {
+      const path = "resume.experience_entries";
+      const items = recordArrayAt(draft, path);
+      const next = [...items];
+      [next[index], next[targetIndex]] = [next[targetIndex]!, next[index]!];
+      setPathValue(draft, path, next);
+    });
+  };
+
+  const sortExperienceEntriesNewestFirst = () => {
+    const ordered = experienceEntries
+      .map((entry, index) => ({ entry, index }))
+      .sort(
+        (left, right) =>
+          compareProfileDateRangesNewestFirst(
+            textFrom(left.entry["date_range"]),
+            textFrom(right.entry["date_range"]),
+          ) || left.index - right.index,
+      )
+      .map(({ entry }) => entry);
+    if (ordered.every((entry, index) => entry === experienceEntries[index])) {
+      return;
+    }
+    updateProfileDraft((draft) => setPathValue(draft, "resume.experience_entries", ordered));
   };
 
   const addBullet = (entryIndex: number) => {
@@ -1463,6 +1502,17 @@ export function StructuredProfileEditor({
           </DisclosureSection>
 
           <DisclosureSection
+            actions={
+              <Button
+                onClick={sortExperienceEntriesNewestFirst}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <IconSortDescending aria-hidden="true" size={14} />
+                Sort newest first
+              </Button>
+            }
             className="profile-disclosure profile-disclosure--experience"
             collapsedSummary={`${experienceEntries.length} ${
               experienceEntries.length === 1 ? "entry" : "entries"
@@ -1474,8 +1524,13 @@ export function StructuredProfileEditor({
             title="Experience entries"
           >
             <FieldGroup className="repeat-list">
+              <FieldDescription className="experience-order-description">
+                The resume follows this order. Sort by date, or move individual roles into a custom
+                sequence.
+              </FieldDescription>
               {experienceEntries.map((entry, index) => {
                 const entryId = textFrom(entry["id"]);
+                const entryLabel = textFrom(entry["title"]) || `Experience ${index + 1}`;
                 const bullets = editableTextArrayAt(profile, `resume.experience_entries.${index}.bullets`);
                 const requiredBullets = new Set(
                   asTextArray(
@@ -1484,13 +1539,42 @@ export function StructuredProfileEditor({
                 );
                 const requiredEntryId = editorControlId("profile", `experience-${index}`, "required");
                 return (
-                  <Fragment key={`${entryId || "experience"}-${index}`}>
+                  <Fragment key={entryId || `experience-${index}`}>
                     {index > 0 ? <Separator className="repeat-section-separator" /> : null}
-                    <FieldSet className="repeat-section">
-                      <FieldLegend>
-                        {textFrom(entry["title"]) || `Experience ${index + 1}`}
+                    <FieldSet className="repeat-section experience-repeat-section">
+                      <FieldLegend className="experience-entry-legend">
+                        <span aria-hidden="true" className="experience-order-index">
+                          {index + 1}
+                        </span>
+                        <span>{entryLabel}</span>
                       </FieldLegend>
                       <div className="repeat-controls">
+                        <div aria-label={`Order ${entryLabel}`} className="experience-order-controls" role="group">
+                          <Button
+                            aria-label={`Move ${entryLabel} up`}
+                            className="experience-order-button"
+                            disabled={index === 0}
+                            onClick={() => moveExperienceEntry(index, -1)}
+                            size="icon"
+                            title="Move up"
+                            type="button"
+                            variant="outline"
+                          >
+                            <IconArrowUp aria-hidden="true" size={14} />
+                          </Button>
+                          <Button
+                            aria-label={`Move ${entryLabel} down`}
+                            className="experience-order-button"
+                            disabled={index === experienceEntries.length - 1}
+                            onClick={() => moveExperienceEntry(index, 1)}
+                            size="icon"
+                            title="Move down"
+                            type="button"
+                            variant="outline"
+                          >
+                            <IconArrowDown aria-hidden="true" size={14} />
+                          </Button>
+                        </div>
                         <Field
                           className="choice"
                           data-disabled={!entryId || undefined}

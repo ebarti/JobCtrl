@@ -90,7 +90,11 @@ company/location/title/date line must not create a guessed profile-field edit.
 Verify the Size control displays its relative value as a percentage (100% at
 the resume default) with high-contrast text rather than exposing the internal
 unitless scale. Verify experience entries render newest-first and education
-aligns the completion year with the institution above the degree.
+aligns the completion year with the institution above the degree. Then move an
+experience manually, save, reload, and verify both the boxed order and Plate
+order preserve the saved sequence. Apply **Sort newest first** and verify it
+restores current/latest roles first. A role with a summary but no bullets must
+not render an empty list or the full bullet-bearing entry gap.
 
 ## Pick The Right Checklist
 

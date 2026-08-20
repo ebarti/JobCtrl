@@ -68,8 +68,12 @@ formatting-only changes are not split heuristically into profile facts; they
 remain local to the mounted Plate document. The Preferences Plate editor also
 remains a presentation-only draft.
 
-The resume presentation orders experience entries newest-first by their end
-date, with current roles first. Education entries place the institution and
+The resume presentation follows the experience sequence saved in Profile. Each
+role has **Move up** and **Move down** controls for a custom sequence, and
+**Sort newest first** applies the date-based order explicitly, with current
+roles first. The reordered list follows the normal Profile save and autosave
+path. Roles without achievement bullets render compactly instead of reserving
+space for an empty bullet list. Education entries place the institution and
 completion year on the first row and the degree directly underneath.
 
 The download is rendered from the document currently mounted in the browser,

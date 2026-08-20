@@ -480,6 +480,72 @@
   padding: 0;
 }
 
+.profile-layout .profile-disclosure--experience .repeat-list {
+  gap: 12px;
+  padding-top: 14px;
+}
+
+.profile-layout .profile-disclosure--experience .repeat-section-separator {
+  display: none;
+}
+
+.profile-layout .profile-disclosure--experience .experience-order-description {
+  margin: 0;
+  color: var(--foreground);
+}
+
+.profile-layout .profile-disclosure--experience .experience-repeat-section {
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 12px 16px;
+  border: 1px solid var(--configuration-rule);
+  border-radius: 8px;
+  background: var(--configuration-subtle);
+  padding: 14px 16px 16px;
+}
+
+.profile-layout .profile-disclosure--experience .experience-entry-legend {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+}
+
+.profile-layout .profile-disclosure--experience .experience-order-index {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: var(--jh-type-label-size);
+  font-weight: var(--jh-type-component-title-weight);
+}
+
+.profile-layout .profile-disclosure--experience .experience-repeat-section > .repeat-controls {
+  justify-content: flex-start;
+}
+
+.profile-layout .profile-disclosure--experience .experience-order-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.profile-layout .profile-disclosure--experience .experience-order-button {
+  width: 32px;
+  height: 32px;
+  background: var(--card);
+  color: var(--foreground);
+}
+
+.profile-layout .profile-disclosure--experience .bullet-row textarea {
+  min-height: 68px;
+}
+
 .profile-layout .bullet-row,
 .profile-layout .skill-row {
   border: 0;
@@ -1680,6 +1746,10 @@
   }
 
   .profile-layout .repeat-section {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .profile-layout .profile-disclosure--experience .experience-repeat-section {
     grid-template-columns: minmax(0, 1fr);
   }
 
