@@ -2242,3 +2242,22 @@ then apply the same v9 step; no intermediate becomes the live database. Every
 route preserves the paired backup, owner-private candidate and intermediate
 files, atomic activation, exact-source rollback, interrupted-transition
 cleanup, and no-mixed-runtime invariants above.
+
+## 2026-08-20: Profile Plate Direct-Text Projection Uses The Canonical Form Draft
+
+Status: accepted
+
+Decision: the Profile Plate surface may project only rendered text with an
+unambiguous Candidate Profile semantic owner—full name, executive profile,
+position summary, and experience bullet—into the existing TanStack Profile
+form draft. It does not create a second profile store or bypass validation,
+undo, autosave, mutation invalidation, profile versioning, or downstream
+replacement safeguards. Composite display lines are not parsed back into
+multiple facts, and rich formatting remains local to the Plate document. The
+**Export PDF** command has no additional persistence side effect.
+
+Rationale: a direct edit to a canonical bullet must remain visible in the
+boxed Profile editor and follow the same save boundary, while splitting a
+rendered company/location/title/date row or treating visual formatting as a
+candidate fact would be ambiguous and unsafe. Semantic IDs provide a stable,
+explicit bridge for the direct fields without introducing a shadow profile.

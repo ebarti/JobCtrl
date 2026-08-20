@@ -286,6 +286,61 @@ def test_build_resume_html_matches_moderncv_contact_and_experience_layout() -> N
     assert html.index("experience:acme_swe:summary") < html.index("experience:acme_swe:bullet:1")
 
 
+def test_resume_orders_experience_newest_first_and_places_education_degree_below_institution() -> None:
+    profile = _profile()
+    profile["resume"]["experience_entries"] = [
+        {
+            "id": "older",
+            "date_range": "Jan 2018 - Dec 2020",
+            "title": "Older role",
+            "company": "Older company",
+            "location": "",
+            "bullets": ["Older work."],
+        },
+        {
+            "id": "current",
+            "date_range": "Mar 2024 - Present",
+            "title": "Current role",
+            "company": "Current company",
+            "location": "",
+            "bullets": ["Current work."],
+        },
+        {
+            "id": "recent",
+            "date_range": "Jun 2021 - Feb 2024",
+            "title": "Recent role",
+            "company": "Recent company",
+            "location": "",
+            "bullets": ["Recent work."],
+        },
+    ]
+
+    document = build_resume_document({}, profile)
+    text = ResumeAssembler().assemble_resume_text({}, profile)
+    html = build_resume_html(document)
+
+    assert [entry["id"] for entry in document["experience"]] == [
+        "current",
+        "recent",
+        "older",
+    ]
+    assert text.index("Current role | Current company") < text.index(
+        "Recent role | Recent company"
+    )
+    assert text.index("Recent role | Recent company") < text.index(
+        "Older role | Older company"
+    )
+    assert (
+        '<span class="resume-entry-row resume-entry-education-row"><span class="resume-entry-main '
+        'resume-entry-institution">State | City</span><span class="resume-entry-date">2015</span></span>'
+        in html
+    )
+    assert html.index('data-resume-layout-target="education:edu:subtitle"') < html.index(
+        'data-resume-layout-target="education:edu:degree"'
+    )
+    assert text.index("State | City | 2015") < text.index("BS CS")
+
+
 def test_build_resume_html_omits_empty_position_summary() -> None:
     profile = _profile()
     profile["resume"]["experience_entries"][0]["summary"] = ""

@@ -194,6 +194,11 @@ type ResumeEditorFontFamily = ResumeTemplateTheme["fontFamily"] | "resume" | "mo
 type ResumeEditorLegacyFontSize = "resume" | "small" | "large" | "heading";
 type ResumeEditorFontSize = number | ResumeEditorLegacyFontSize;
 
+export interface ResumePlateSemanticTextChange {
+  readonly semanticId: string;
+  readonly text: string;
+}
+
 interface ResumeEditorFormattingApi {
   readonly align: (value: ResumeEditorTextAlign) => void;
   readonly clearLink: () => void;
@@ -233,6 +238,10 @@ const RESUME_EDITOR_DEFAULT_SIZE_SCALE = 1;
 const RESUME_EDITOR_MIN_SIZE_SCALE = 0.75;
 const RESUME_EDITOR_MAX_SIZE_SCALE = 1.5;
 const RESUME_EDITOR_SIZE_SCALE_STEP = 0.05;
+const RESUME_EDITOR_DEFAULT_SIZE_PERCENT = RESUME_EDITOR_DEFAULT_SIZE_SCALE * 100;
+const RESUME_EDITOR_MIN_SIZE_PERCENT = RESUME_EDITOR_MIN_SIZE_SCALE * 100;
+const RESUME_EDITOR_MAX_SIZE_PERCENT = RESUME_EDITOR_MAX_SIZE_SCALE * 100;
+const RESUME_EDITOR_SIZE_PERCENT_STEP = RESUME_EDITOR_SIZE_SCALE_STEP * 100;
 const RESUME_EDITOR_CHROME_SELECTOR = '[data-resume-editor-chrome="true"]';
 const RESUME_LINE_SELECTOR = "[data-resume-line-number]";
 
@@ -1051,6 +1060,16 @@ function resumeTextFromPlateValue(value: Value): string {
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .join("\n");
+}
+
+function resumeSemanticTextChangesFromElement(
+  element: HTMLElement,
+): readonly ResumePlateSemanticTextChange[] {
+  return Array.from(element.querySelectorAll<HTMLElement>("[data-resume-layout-target]")).flatMap((node) => {
+    const semanticId = node.dataset.resumeLayoutTarget?.trim();
+    if (!semanticId) return [];
+    return [{ semanticId, text: (node.textContent ?? "").replace(/\s+/g, " ").trim() }];
+  });
 }
 
 function resumeLineTextsFromPlateNode(node: Descendant): string[] {
@@ -2274,7 +2293,8 @@ function ResumeEditorToolbarControls({
   const linkInputId = useId();
   const linkErrorId = useId();
   const linkPopoverId = useId();
-  const [fontSizeScale, setFontSizeScale] = useState(String(RESUME_EDITOR_DEFAULT_SIZE_SCALE));
+  const fontSizeDescriptionId = useId();
+  const [fontSizePercent, setFontSizePercent] = useState(String(RESUME_EDITOR_DEFAULT_SIZE_PERCENT));
   const [linkUrl, setLinkUrl] = useState("");
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
@@ -2328,33 +2348,33 @@ function ResumeEditorToolbarControls({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [disabled, openLinkPopover]);
-  const applyFontSizeScale = useCallback(
+  const applyFontSizePercent = useCallback(
     (rawValue: string) => {
       const value = Number(rawValue);
       if (
         !Number.isFinite(value) ||
-        value < RESUME_EDITOR_MIN_SIZE_SCALE ||
-        value > RESUME_EDITOR_MAX_SIZE_SCALE
+        value < RESUME_EDITOR_MIN_SIZE_PERCENT ||
+        value > RESUME_EDITOR_MAX_SIZE_PERCENT
       ) {
         return;
       }
-      onFontSize(Number(value.toFixed(2)));
+      onFontSize(Number((value / 100).toFixed(2)));
     },
     [onFontSize],
   );
-  const normalizeFontSizeScale = useCallback(() => {
-    const value = Number(fontSizeScale);
+  const normalizeFontSizePercent = useCallback(() => {
+    const value = Number(fontSizePercent);
     if (
       !Number.isFinite(value) ||
-      value < RESUME_EDITOR_MIN_SIZE_SCALE ||
-      value > RESUME_EDITOR_MAX_SIZE_SCALE
+      value < RESUME_EDITOR_MIN_SIZE_PERCENT ||
+      value > RESUME_EDITOR_MAX_SIZE_PERCENT
     ) {
-      setFontSizeScale(String(RESUME_EDITOR_DEFAULT_SIZE_SCALE));
+      setFontSizePercent(String(RESUME_EDITOR_DEFAULT_SIZE_PERCENT));
       onFontSize(RESUME_EDITOR_DEFAULT_SIZE_SCALE);
       return;
     }
-    setFontSizeScale(String(Number(value.toFixed(2))));
-  }, [fontSizeScale, onFontSize]);
+    setFontSizePercent(String(Number(value.toFixed(0))));
+  }, [fontSizePercent, onFontSize]);
   const applyLink = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
@@ -2536,22 +2556,29 @@ function ResumeEditorToolbarControls({
       </label>
       <label className="resume-format-select" htmlFor={fontSizeId}>
         <span>Size</span>
-        <Input
-          aria-label="Size"
-          disabled={disabled}
-          id={fontSizeId}
-          max={RESUME_EDITOR_MAX_SIZE_SCALE}
-          min={RESUME_EDITOR_MIN_SIZE_SCALE}
-          step={RESUME_EDITOR_SIZE_SCALE_STEP}
-          title="1 uses the resume default size."
-          type="number"
-          value={fontSizeScale}
-          onBlur={normalizeFontSizeScale}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => {
-            setFontSizeScale(event.currentTarget.value);
-            applyFontSizeScale(event.currentTarget.value);
-          }}
-        />
+        <span className="resume-format-size-control">
+          <Input
+            aria-describedby={fontSizeDescriptionId}
+            aria-label="Size"
+            disabled={disabled}
+            id={fontSizeId}
+            max={RESUME_EDITOR_MAX_SIZE_PERCENT}
+            min={RESUME_EDITOR_MIN_SIZE_PERCENT}
+            step={RESUME_EDITOR_SIZE_PERCENT_STEP}
+            title="100% uses the resume default size."
+            type="number"
+            value={fontSizePercent}
+            onBlur={normalizeFontSizePercent}
+            onChange={(event: ChangeEvent<HTMLInputElement>) => {
+              setFontSizePercent(event.currentTarget.value);
+              applyFontSizePercent(event.currentTarget.value);
+            }}
+          />
+          <span aria-hidden="true">%</span>
+        </span>
+        <span className="sr-only" id={fontSizeDescriptionId}>
+          Percentage of the resume default size.
+        </span>
       </label>
       <div className="resume-format-button-group" aria-label="Alignment">
         <Button
@@ -2604,6 +2631,7 @@ function ResumePlateDocument({
   onReplyToThread,
   onClearLineSelection,
   onFormattingApiChange,
+  onSemanticTextChange,
   onValueChange,
   onSelectLine,
   pins,
@@ -2620,6 +2648,7 @@ function ResumePlateDocument({
   readonly onReplyToThread?: ResumePlateEditorProps["onReplyToThread"];
   readonly onClearLineSelection: () => void;
   readonly onFormattingApiChange?: (api: ResumeEditorFormattingApi | null) => void;
+  readonly onSemanticTextChange?: (changes: readonly ResumePlateSemanticTextChange[]) => void;
   readonly onValueChange: (value: Value) => void;
   readonly onSelectLine: (selection: PdfAuditLineSelection | null) => void;
   readonly pins: readonly ResumeAuditPin[];
@@ -2716,6 +2745,9 @@ function ResumePlateDocument({
           data-rendered-line-count={lines.length}
           role="textbox"
           spellCheck={false}
+          onInput={(event: FormEvent<HTMLDivElement>) => {
+            onSemanticTextChange?.(resumeSemanticTextChangesFromElement(event.currentTarget));
+          }}
         />
       </Plate>
     </ResumePlateRenderContext.Provider>
@@ -2866,6 +2898,7 @@ export function ResumeStandalonePlateEditor({
   title,
   transformKey,
   workspaceControls,
+  onSemanticTextChange,
 }: {
   readonly className?: string;
   readonly htmlTransform?: ((html: string) => string) | undefined;
@@ -2875,6 +2908,7 @@ export function ResumeStandalonePlateEditor({
   readonly title: string;
   readonly transformKey?: string;
   readonly workspaceControls?: ReactNode;
+  readonly onSemanticTextChange?: (changes: readonly ResumePlateSemanticTextChange[]) => void;
 }): JSX.Element {
   const htmlState = useResumeHtmlState(htmlUrl, htmlTransform, transformKey);
   const layoutBoxes = useMemo<readonly ResumeLayoutBox[]>(() => [], []);
@@ -3027,6 +3061,7 @@ export function ResumeStandalonePlateEditor({
               lines={htmlLines}
               onClearLineSelection={handleClearLineSelection}
               onFormattingApiChange={handleFormattingApiChange}
+              {...(onSemanticTextChange ? { onSemanticTextChange } : {})}
               onSelectLine={handleSelectLine}
               onValueChange={setCurrentPlateValue}
               pins={[]}

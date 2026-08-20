@@ -35,6 +35,7 @@ from jobctrl.resume_profile import (
     get_resume_master,
     get_skill_categories,
     get_tailoring_policy,
+    sort_experience_entries_by_date,
     tailored_experience_bullets,
     tailored_experience_title,
     tailored_skill_items,
@@ -243,6 +244,7 @@ body {
   min-inline-size: 0;
 }
 .resume-entry-company,
+.resume-entry-institution,
 .resume-entry-location {
   color: #111111;
   font-weight: 700;
@@ -251,6 +253,9 @@ body {
   color: #111111;
   font-style: italic;
   font-weight: 400;
+}
+.resume-education-degree {
+  margin: 0 0 1mm;
 }
 .resume-entry-date {
   color: #111111;
@@ -404,6 +409,7 @@ body {{
 .resume-contact a,
 .resume-section-title,
 .resume-entry-company,
+.resume-entry-institution,
 .resume-entry-title,
 .resume-entry-date,
 .resume-entry-location,
@@ -636,11 +642,14 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
     all_education_entries = get_education_entries(profile)
     all_skill_categories = get_skill_categories(profile)
 
-    experience_entries = [
-        entry
-        for entry in all_experience_entries
-        if not required_experience_ids or entry.get("id") in required_experience_ids
-    ] or all_experience_entries
+    experience_entries = sort_experience_entries_by_date(
+        [
+            entry
+            for entry in all_experience_entries
+            if not required_experience_ids or entry.get("id") in required_experience_ids
+        ]
+        or all_experience_entries
+    )
     education_entries = [
         entry
         for entry in all_education_entries
@@ -883,19 +892,29 @@ def build_resume_html(
             location = str(entry.get("location", "")).strip()
             subtitle = " | ".join(part for part in [institution, location] if part)
             heading_html = (
-                f'<span class="resume-entry-main"><span class="resume-entry-title">{degree}</span></span>'
+                '<span class="resume-entry-row resume-entry-education-row">'
+                f'<span class="resume-entry-main resume-entry-institution">{html.escape(subtitle)}</span>'
                 + (f'<span class="resume-entry-date">{date}</span>' if date else "")
+                + "</span>"
             )
             section.append('<article class="resume-entry compact">')
             section.append(
                 target(
-                    f"education:{entry_id}:degree",
-                    " | ".join(part for part in [entry.get("degree", ""), entry.get("date", "")] if part),
+                    f"education:{entry_id}:subtitle",
+                    " | ".join(part for part in [institution, location, entry.get("date", "")] if part),
                     class_name="resume-entry-heading",
                     inner_html=heading_html,
                 )
             )
-            section.append(target(f"education:{entry_id}:subtitle", subtitle, class_name="resume-meta"))
+            section.append(
+                target(
+                    f"education:{entry_id}:degree",
+                    str(entry.get("degree", "")),
+                    tag="p",
+                    class_name="resume-entry-title resume-education-degree",
+                    inner_html=degree,
+                )
+            )
             section.append(
                 target(f"education:{entry_id}:details", str(entry.get("details", "")), class_name="resume-meta")
             )

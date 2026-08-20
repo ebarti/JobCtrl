@@ -2434,6 +2434,24 @@ input[type="radio"] {
   inline-size: 64px;
 }
 
+.resume-format-size-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.resume-format-size-control input {
+  inline-size: 72px;
+  background: #242424 !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff;
+}
+
+.resume-format-size-control > span {
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
 .resume-link-popover {
   display: grid;
   position: absolute;
@@ -2748,6 +2766,7 @@ input[type="radio"] {
 }
 
 .resume-plate-document .resume-entry-company,
+.resume-plate-document .resume-entry-institution,
 .resume-plate-document .resume-entry-location {
   font-weight: 700;
 }
@@ -2756,6 +2775,10 @@ input[type="radio"] {
   color: var(--resume-template-accent, var(--resume-template-default-accent));
   font-style: italic;
   font-weight: 400;
+}
+
+.resume-plate-document .resume-education-degree {
+  margin: 0 0 1mm;
 }
 
 .resume-plate-document .resume-entry-date {

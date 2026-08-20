@@ -29,6 +29,28 @@ _LEGACY_BULLET_METRIC_RE_V1 = re.compile(
     r"|\d+(?:\.\d+)?\s?(?:ms|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|qps|req/s))",
     re.IGNORECASE,
 )
+
+_RESUME_MONTH_NUMBER = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
+_RESUME_DATE_TOKEN_RE = re.compile(
+    r"(?:(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|"
+    r"dec(?:ember)?)\.?\s+)?((?:19|20)\d{2})",
+    re.IGNORECASE,
+)
+_RESUME_CURRENT_DATE_RE = re.compile(r"(?:present|current|now)\s*$", re.IGNORECASE)
 _LEGACY_BULLET_SENIORITY_TERMS = (
     "own",
     "owned",
@@ -79,6 +101,27 @@ def get_resume_constraints(profile: dict) -> dict:
 def get_experience_entries(profile: dict) -> list[dict]:
     """Return canonical experience entries from the structured resume schema."""
     return list(get_resume_master(profile).get("experience_entries", []))
+
+
+def sort_experience_entries_by_date(entries: list[dict]) -> list[dict]:
+    """Return experience entries newest-first while preserving ties and unknown dates."""
+
+    return sorted(entries, key=lambda entry: _experience_date_sort_key(str(entry.get("date_range", ""))), reverse=True)
+
+
+def _experience_date_sort_key(value: str) -> tuple[int, int, int, int]:
+    matches = list(_RESUME_DATE_TOKEN_RE.finditer(value))
+    start_year, start_month = _resume_date_match_value(matches[0]) if matches else (0, 0)
+    if _RESUME_CURRENT_DATE_RE.search(value):
+        return (9999, 12, start_year, start_month)
+    end_year, end_month = _resume_date_match_value(matches[-1]) if matches else (0, 0)
+    return (end_year, end_month, start_year, start_month)
+
+
+def _resume_date_match_value(match: re.Match[str]) -> tuple[int, int]:
+    month_name = (match.group(1) or "").lower()[:3]
+    month = _RESUME_MONTH_NUMBER.get(month_name, 12)
+    return (int(match.group(2)), month)
 
 
 def get_education_entries(profile: dict) -> list[dict]:

@@ -1969,7 +1969,7 @@ describe("<ApplyReviewView>", () => {
 
     const sizeInput = screen.getByLabelText("Size");
     await userEvent.clear(sizeInput);
-    fireEvent.change(sizeInput, { target: { value: "1.1" } });
+    fireEvent.change(sizeInput, { target: { value: "110" } });
     fireEvent.blur(sizeInput);
     await waitFor(() =>
       expect(shadowElementWithText(shadow, "Owned platform reliability improvements for incident response.").style.fontSize).toBe(

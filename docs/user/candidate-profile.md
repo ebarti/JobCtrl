@@ -59,12 +59,24 @@ moves below the editor and the resize handle disappears. Evidence Map follows
 the same rule: its entry list, selected evidence, and gaps/reusable-stories
 inspector stack instead of compressing the three-pane desktop workspace.
 
-The Plate toolbars on `/profile` and `/preferences` include **Export PDF**. The
-download is rendered from the document currently mounted in the browser, so it
-includes unsaved text and formatting edits while preserving the active
-template's styling, margins, and A4 or Letter page size. Exporting does not save
-those edits, change the canonical profile or template, or register the download
-as a JobCtrl artifact.
+The Plate toolbars on `/profile` and `/preferences` include **Export PDF**. On
+`/profile`, direct text edits with an unambiguous canonical owner—full name,
+executive profile, position summary, or experience bullet—update the same form
+draft shown by the boxed editor and follow its normal validation, undo, and
+autosave path. Combined display lines such as company/location/title/date and
+formatting-only changes are not split heuristically into profile facts; they
+remain local to the mounted Plate document. The Preferences Plate editor also
+remains a presentation-only draft.
+
+The resume presentation orders experience entries newest-first by their end
+date, with current roles first. Education entries place the institution and
+completion year on the first row and the degree directly underneath.
+
+The download is rendered from the document currently mounted in the browser,
+so it includes live text and formatting while preserving the active template's
+styling, margins, and A4 or Letter page size. The **Export PDF** action itself
+does not save a profile or template, register the download as a JobCtrl
+artifact, or change Apply approval state.
 
 Profile and preference forms validate before saving. Their autosave and explicit
 Save buttons use the same mutation path; the exact delay and field contract are

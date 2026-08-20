@@ -115,6 +115,72 @@ describe("<ProfileEditor>", () => {
     expect(screen.queryByRole("link", { name: /open PDF/i })).not.toBeInTheDocument();
   });
 
+  it("projects direct Plate bullet edits into the saved structured Profile", async () => {
+    const user = userEvent.setup();
+    const updateProfile = vi.fn(async (body: { profileText: string }) => ({
+      ...sampleProfileResponse,
+      profile: JSON.parse(body.profileText) as typeof sampleProfileResponse.profile,
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          `
+            <main class="resume-page">
+              <h1 data-resume-layout-target="personal:full_name">Jordan Candidate</h1>
+              <section class="resume-section">
+                <h2 data-resume-layout-target="section:experience">Experience</h2>
+                <article class="resume-entry">
+                  <ul class="resume-bullets">
+                    <li data-resume-layout-target="experience:exp-1:bullet:1">Scaled the platform 10x.</li>
+                  </ul>
+                </article>
+              </section>
+            </main>
+          `,
+          { headers: { "content-type": "text/html" } },
+        ),
+      ),
+    );
+
+    renderWithProviders(<ProfileEditor />, {
+      ports: buildTestPorts({
+        api: {
+          profile: async () => sampleProfileResponse,
+          profilePreviewHtmlUrl: () => "/v1/profile/preview.html?v=0",
+          resumeTemplates: async () => sampleResumeTemplateListResponse,
+          settings: async () => sampleSettingsResponse,
+          updateProfile,
+        },
+      }),
+      withRouter: true,
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Resume editor" }));
+    const plateBullet = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>(
+        '[data-resume-layout-target="experience:exp-1:bullet:1"]',
+      );
+      expect(element).toBeTruthy();
+      return element!;
+    });
+    await user.click(plateBullet);
+    await user.type(screen.getByRole("textbox", { name: "Baseline resume editor editor" }), " Updated in Plate.");
+    await waitFor(() => expect(plateBullet).toHaveTextContent("Scaled the platform 10x. Updated in Plate."));
+    await waitFor(() => expect(screen.getByText("Unsaved changes")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Profile data" }));
+    await user.click(screen.getByRole("button", { name: /Experience entries/ }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Bullet 1")).toHaveValue("Scaled the platform 10x. Updated in Plate."),
+    );
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    expect(
+      JSON.parse(updateProfile.mock.calls[0]![0].profileText).resume.experience_entries[0].bullets[0],
+    ).toBe("Scaled the platform 10x. Updated in Plate.");
+  });
+
   it("renders preferences without the PDF preview pane", async () => {
     const user = userEvent.setup();
     const pdfExport = new FakePdfExportPort();
@@ -184,6 +250,8 @@ describe("<ProfileEditor>", () => {
     expect(screen.getByRole("option", { name: "Resume" })).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.getByLabelText("Size")).toHaveAttribute("type", "number");
+    expect(screen.getByLabelText("Size")).toHaveValue(100);
+    expect(screen.getByLabelText("Size")).toHaveAccessibleDescription("Percentage of the resume default size.");
     expect(screen.queryByLabelText("Resize profile and resume editor panes")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Export PDF" }));
     await waitFor(() =>

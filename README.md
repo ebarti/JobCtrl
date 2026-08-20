@@ -242,9 +242,12 @@ evidence, qualifications, and the complete capability matrix.
   replacement PDF, and approve only the exact reviewed artifact.
 - Export the live document from every Plate resume editor in Profile,
   Preferences, and Apply Review. **Export PDF** downloads the document currently
-  on screen, including unsaved edits and the active template's A4 or Letter
-  layout, without saving those edits, registering a JobCtrl artifact, or
-  changing Apply approval state.
+  on screen, including live formatting and the active template's A4 or Letter
+  layout, without the export action registering a JobCtrl artifact or changing
+  Apply approval state. On Profile, direct canonical text edits to the name,
+  executive profile, position summaries, and experience bullets enter the same
+  validated form draft as the boxed editor and follow its normal autosave;
+  formatting and composite layout lines remain local to the mounted document.
 - Inspect the evidence map to see which profile achievements and skills are
   reused in generated materials, requirement-fit decisions, and recorded gaps.
   Job and artifact audit surfaces show those references as human-readable

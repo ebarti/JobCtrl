@@ -81,6 +81,17 @@ media box without a trailing blank page. The action must not save the profile,
 template, or review draft; call a generation endpoint; register or replace an
 artifact; or change Apply approval state.
 
+For Profile Plate text projection, edit an experience bullet or non-empty
+position summary in the Plate document, switch to **Profile data**, and verify
+the matching boxed field contains the same unsaved value and the normal Profile
+dirty/save controls appear. Saving must persist that exact field through the
+normal Profile mutation. A formatting-only change or edit to a composite
+company/location/title/date line must not create a guessed profile-field edit.
+Verify the Size control displays its relative value as a percentage (100% at
+the resume default) with high-contrast text rather than exposing the internal
+unitless scale. Verify experience entries render newest-first and education
+aligns the completion year with the institution above the degree.
+
 ## Pick The Right Checklist
 
 | You changed… | Use |

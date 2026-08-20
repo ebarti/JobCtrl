@@ -47,6 +47,7 @@ from jobctrl.resume_profile import (
     get_skill_categories,
     get_tailoring_policy,
     require_resume_master,
+    sort_experience_entries_by_date,
     tailored_experience_bullets,
     tailored_experience_title,
     tailored_skill_items,
@@ -519,10 +520,14 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
     all_experience_entries = get_experience_entries(profile)
     all_education_entries = get_education_entries(profile)
     all_skill_categories = get_skill_categories(profile)
-    experience_entries = [
-        entry for entry in all_experience_entries
-        if not required_experience_ids or entry.get("id") in required_experience_ids
-    ] or all_experience_entries
+    experience_entries = sort_experience_entries_by_date(
+        [
+            entry
+            for entry in all_experience_entries
+            if not required_experience_ids or entry.get("id") in required_experience_ids
+        ]
+        or all_experience_entries
+    )
     education_entries = [
         entry for entry in all_education_entries
         if not required_education_ids or entry.get("id") in required_education_ids
@@ -583,11 +588,11 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
 
     lines.append("EDUCATION")
     for entry in education_entries:
-        lines.append(sanitize_text(str(entry.get("degree", ""))))
         subtitle_parts = [entry.get("institution", ""), entry.get("location", ""), entry.get("date", "")]
         subtitle = " | ".join(part for part in subtitle_parts if part)
         if subtitle:
             lines.append(sanitize_text(subtitle))
+        lines.append(sanitize_text(str(entry.get("degree", ""))))
         if entry.get("details"):
             lines.append(sanitize_text(str(entry["details"])))
         lines.append("")

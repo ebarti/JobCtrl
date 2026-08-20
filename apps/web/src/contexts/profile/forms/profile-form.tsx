@@ -5,7 +5,7 @@ import {
 } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ProfileConfigResponse } from "../../operations/types.js";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
@@ -29,8 +29,18 @@ export interface ProfileFormValues {
 
 export interface ProfileFormProps {
   initial: ProfileConfigResponse;
+  onPlateTextControllerChange?: (controller: ProfilePlateTextController | null) => void;
   section?: ProfileSection;
   showSectionHeading?: boolean;
+}
+
+export interface ProfilePlateTextChange {
+  readonly semanticId: string;
+  readonly text: string;
+}
+
+export interface ProfilePlateTextController {
+  readonly apply: (changes: readonly ProfilePlateTextChange[]) => void;
 }
 
 export function toProfileFormValues(profile: ProfileConfigResponse): ProfileFormValues {
@@ -95,8 +105,66 @@ function serializeProfileValues(values: ProfileFormValues): string {
   return JSON.stringify(values);
 }
 
+function profileTextWithPlateChanges(
+  profileText: string,
+  changes: readonly ProfilePlateTextChange[],
+): string {
+  const parsed = tryParseJson(profileText);
+  if (!parsed.ok) return profileText;
+  const profileResult = ProfileSchema.safeParse(parsed.value);
+  if (!profileResult.success) return profileText;
+
+  const profile = structuredClone(profileResult.data);
+  let changed = false;
+  const replace = (current: string, next: string, update: () => void): void => {
+    if (current === next) return;
+    update();
+    changed = true;
+  };
+
+  for (const change of changes) {
+    if (change.semanticId === "personal:full_name") {
+      replace(profile.personal.full_name ?? "", change.text, () => {
+        profile.personal.full_name = change.text;
+      });
+      continue;
+    }
+    if (change.semanticId === "summary") {
+      replace(profile.resume.executive_profile.baseline_text ?? "", change.text, () => {
+        profile.resume.executive_profile.baseline_text = change.text;
+      });
+      continue;
+    }
+
+    const bulletMatch = /^experience:(.+):bullet:([1-9]\d*)$/.exec(change.semanticId);
+    if (bulletMatch) {
+      const entry = profile.resume.experience_entries.find((candidate) => candidate.id === bulletMatch[1]);
+      const bulletIndex = Number(bulletMatch[2]) - 1;
+      if (entry && bulletIndex < entry.bullets.length) {
+        replace(entry.bullets[bulletIndex] ?? "", change.text, () => {
+          entry.bullets[bulletIndex] = change.text;
+        });
+      }
+      continue;
+    }
+
+    const summaryMatch = /^experience:(.+):summary$/.exec(change.semanticId);
+    if (summaryMatch) {
+      const entry = profile.resume.experience_entries.find((candidate) => candidate.id === summaryMatch[1]);
+      if (entry) {
+        replace(entry.summary, change.text, () => {
+          entry.summary = change.text;
+        });
+      }
+    }
+  }
+
+  return changed ? JSON.stringify(profile, null, 2) : profileText;
+}
+
 export function ProfileForm({
   initial,
+  onPlateTextControllerChange,
   section = "profile",
   showSectionHeading = true,
 }: ProfileFormProps) {
@@ -114,12 +182,12 @@ export function ProfileForm({
         ? "Discovery settings saved"
         : "Preferences saved";
 
-  const clearTransientStatus = () => {
+  const clearTransientStatus = useCallback(() => {
     setStatusMessage("");
     if (updateProfile.error) {
       updateProfile.reset();
     }
-  };
+  }, [updateProfile.error, updateProfile.reset]);
 
   const form = useForm({
     defaultValues: toProfileFormValues(initial),
@@ -146,6 +214,23 @@ export function ProfileForm({
       }
     },
   });
+
+  const applyPlateTextChanges = useCallback(
+    (changes: readonly ProfilePlateTextChange[]) => {
+      const currentProfileText = form.state.values.profileText;
+      const nextProfileText = profileTextWithPlateChanges(currentProfileText, changes);
+      if (nextProfileText === currentProfileText) return;
+      clearTransientStatus();
+      form.setFieldValue("profileText", nextProfileText);
+    },
+    [clearTransientStatus, form],
+  );
+
+  useEffect(() => {
+    if (!onPlateTextControllerChange) return;
+    onPlateTextControllerChange({ apply: applyPlateTextChanges });
+    return () => onPlateTextControllerChange(null);
+  }, [applyPlateTextChanges, onPlateTextControllerChange]);
 
   useEffect(() => {
     if (form.state.isDirty || form.state.isSubmitting) {
