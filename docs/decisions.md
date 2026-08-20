@@ -2233,3 +2233,12 @@ no-mixed-runtime invariants above. V8 adds versioned role-family taxonomy and
 physically separate append-only authorities for direct benchmarks, price-level
 inputs, and geographic extrapolations; per-job market estimates remain derived
 materialized output rather than benchmark authority.
+
+Amended (2026-08-20): exact schema v9 supersedes v8 as the sole runtime
+contract. Exact-v8 sources receive an additive stopped-runtime migration that
+adds the optional per-position summary field. Retained v6 and exact-v7 sources
+compose their existing private migrations through an exact-v8 intermediate and
+then apply the same v9 step; no intermediate becomes the live database. Every
+route preserves the paired backup, owner-private candidate and intermediate
+files, atomic activation, exact-source rollback, interrupted-transition
+cleanup, and no-mixed-runtime invariants above.

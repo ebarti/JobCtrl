@@ -1,4 +1,4 @@
-"""Immutable manifest for the exact v7 database."""
+"""Immutable manifests for the supported exact database schemas."""
 
 from __future__ import annotations
 
@@ -34,6 +34,14 @@ EXACT_V8_MANIFEST = SchemaManifest(
     object_count=272,
     table_count=117,
     fingerprint="3705f7c7d90454bbeaa85227a9d4ce87c12efd14935e0d14afc830939e80ff31",
+)
+
+
+EXACT_V9_MANIFEST = SchemaManifest(
+    version=9,
+    object_count=272,
+    table_count=117,
+    fingerprint="ee90d737238c162f34d69f5becf01f15897d4bbeb2c4b2c51d41526ec6343621",
 )
 
 

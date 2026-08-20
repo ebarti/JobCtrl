@@ -87,27 +87,33 @@ licensed-feed coverage policy. Public Levels.fyi Markdown needs no credential.
 Credentials, feed paths/URLs, feed contents, and provider payloads do not belong
 in the settings file.
 
-### Exact v8 runtime and compatible cutovers
+### Exact v9 runtime and compatible cutovers
 
-Schema v8 is the exact runtime contract. The native lifecycle upgrades admitted
-v6 and exact-v7 installations only while the application is stopped. It creates
-a paired backup of `jobctrl.db` and Temporal state before building an isolated
-candidate. A v6 source first runs the existing identity rewrite into an
-owner-private exact-v7 intermediate and then applies v8; the intermediate is
-deleted and never becomes live. An exact-v7 source receives only the additive
-v8 schema. The v6 path retains the Temporal quiescence proof required before
-URL-rooted job rows and foreign references are mapped to stable tenant-scoped
-JobIds.
+Schema v9 is the exact runtime contract. The native lifecycle upgrades admitted
+v6, exact-v7, and exact-v8 installations only while the application is stopped.
+It creates a paired backup of `jobctrl.db` and Temporal state before building an
+isolated candidate. A v6 source first runs the existing identity rewrite into
+an owner-private exact-v7 intermediate and then applies v8; an exact-v7 source
+starts at the private v8 step. Both paths then add v9, while an exact-v8 source
+receives only the additive optional `summary` column on Candidate Profile
+experience rows. Intermediates are deleted and never become live. The v6 path
+retains the Temporal quiescence proof required before URL-rooted job rows and
+foreign references are mapped to stable tenant-scoped JobIds.
 
 Activation happens only after exact-manifest, row/reference, foreign-key,
 integrity, source-preservation, file-permission, digest, and paired-state
-verification succeeds. The verified v8 candidate replaces the live database
+verification succeeds. The verified v9 candidate replaces the live database
 atomically. Any failed build, verification, activation, or readiness check
 restores the paired backup and leaves the previous version runnable. There is
 no mixed-version runtime, rolling deployment, dual-write path, or permanent
-compatibility layer: the TypeScript API and Python worker accept exact v8 and
-reject direct v6/v7 operation. Runtime projections read registered persisted
+compatibility layer: the TypeScript API and Python worker accept exact v9 and
+reject direct v6/v7/v8 operation. Runtime projections read registered persisted
 artifacts only and do not reconstruct legacy URL-shaped fallback rows.
+
+V9 adds one optional per-position summary to normalized Candidate Profile
+experience rows. Existing rows receive the empty-string default; empty values
+render nothing, while non-empty values appear between the role heading and its
+achievement bullets.
 
 V8 adds a versioned JobCtrl role-family taxonomy plus physically separate
 authorities for directly observed market benchmarks, price-level inputs, and

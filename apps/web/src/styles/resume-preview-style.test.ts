@@ -65,6 +65,7 @@ describe("resume preview style contract", () => {
     const contactItemRule = cssRuleContaining(".resume-plate-document .resume-contact-item");
     const entryHeadingRule = cssRuleContaining(".resume-plate-document .resume-entry-heading");
     const entryRowRule = cssRuleContaining(".resume-plate-document .resume-entry-row");
+    const entrySummaryRule = cssRuleContaining(".resume-plate-document .resume-entry-summary");
     const titleRule = cssRuleContaining(".resume-plate-document .resume-entry-title");
 
     expect(contactRule).toContain("display: inline-flex;");
@@ -74,6 +75,10 @@ describe("resume preview style contract", () => {
     expect(contactItemRule).toContain("display: inline-flex;");
     expect(entryHeadingRule).toContain("display: grid;");
     expect(entryRowRule).toContain("grid-template-columns: minmax(0, 1fr) max-content;");
+    expect(entrySummaryRule).toContain(
+      "text-align: var(--resume-template-body-align, var(--resume-template-default-body-align));",
+    );
+    expect(entrySummaryRule).toContain("break-inside: avoid;");
     expect(titleRule).toContain("font-style: italic;");
     expect(globalsCss).toContain(
       ".resume-plate-document .resume-entry-location {\n  color: var(--resume-template-accent, var(--resume-template-default-accent));\n  text-align: end;",

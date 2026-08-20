@@ -717,6 +717,17 @@ describe("application feedback API", () => {
       "Experienced platform leader with reliable operations depth.",
       NOW,
     );
+    db.prepare(
+      `INSERT INTO candidate_profile_experience_entries (
+         tenant_id, profile_id, entry_id, position_index, date_range, title, company, location, summary
+       ) VALUES ('local', 'default', 'northstar_director', 0, ?, ?, ?, ?, ?)`,
+    ).run(
+      "Mar 2024 - Present",
+      "Director of Engineering",
+      "Northstar Labs",
+      "Harbor City (Remote)",
+      "Owned engineering, security, and platform operations.",
+    );
     db.close();
     const app = buildApp(options);
 
@@ -743,6 +754,12 @@ describe("application feedback API", () => {
           label: "Profile > Resume baseline > Executive profile baseline",
           value: "Experienced platform leader with reliable operations depth.",
           section: "profile_summary",
+        },
+        {
+          path: "resume.experience_entries.0.summary",
+          label: "Profile > Experience entries > Director of Engineering at Northstar Labs > Position summary",
+          value: "Owned engineering, security, and platform operations.",
+          section: "profile_experience",
         },
       ]),
     );

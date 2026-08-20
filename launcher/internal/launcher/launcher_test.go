@@ -648,7 +648,7 @@ func runLauncherCommand(t *testing.T, commandPath, directory string, environment
 
 func runLauncherThroughShellPATH(t *testing.T, directory string, environment []string, args ...string) (string, error) {
 	t.Helper()
-	commandArgs := []string{"-lc", `exec jobctrl "$@"`, "jobctrl"}
+	commandArgs := []string{"-fc", `exec jobctrl "$@"`, "jobctrl"}
 	commandArgs = append(commandArgs, args...)
 	command := exec.Command("/bin/zsh", commandArgs...)
 	command.Dir, command.Env = directory, environment

@@ -86,7 +86,7 @@ func migrationIntegrationPython(t *testing.T) string {
 			t.Skip("python3 unavailable for the native migration integration test")
 		}
 	}
-	probe := exec.Command(python, "-I", "-B", "-c", "import jobctrl.infrastructure.migrations.v6_to_v8_execute")
+	probe := exec.Command(python, "-I", "-B", "-c", "import jobctrl.infrastructure.migrations.legacy_to_v9_execute")
 	if output, err := probe.CombinedOutput(); err != nil {
 		if os.Getenv("CI") != "" || os.Getenv("JOBCTRL_MIGRATION_TEST_PYTHON") != "" {
 			t.Fatalf("native migration integration Python is not provisioned: %v %s", err, output)
@@ -112,12 +112,12 @@ create_shipped_v6_database(pathlib.Path(sys.argv[2]))`
 	}
 }
 
-func reopenMigratedV8WithCandidateRuntime(ctx launchContext, database string) error {
+func reopenMigratedV9WithCandidateRuntime(ctx launchContext, database string) error {
 	python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
 	code := `import sys
-from jobctrl.database import close_connection, open_exact_v8_database
+from jobctrl.database import close_connection, open_exact_v9_database
 path=sys.argv[1]
-connection=open_exact_v8_database(path)
+connection=open_exact_v9_database(path)
 try:
     row=connection.execute("SELECT job_id,url FROM jobs").fetchone()
     if row is None or not row[0] or row[0] == row[1] or row[1] != "https://jobs.example/shipped-v6":
@@ -127,12 +127,12 @@ finally:
 	command := exec.Command(python, "-I", "-B", "-c", code, database)
 	command.Env = ctx.Environment
 	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("candidate runtime failed to reopen exact v8: %w: %s", err, output)
+		return fmt.Errorf("candidate runtime failed to reopen exact v9: %w: %s", err, output)
 	}
 	return nil
 }
 
-func reopenMigratedV8WithTypeScriptAPI(database string) error {
+func reopenMigratedV9WithTypeScriptAPI(database string) error {
 	apiRoot, err := filepath.Abs(filepath.Join("..", "..", "..", "apps", "api"))
 	if err != nil {
 		return err
@@ -145,11 +145,11 @@ func reopenMigratedV8WithTypeScriptAPI(database string) error {
 			return fmt.Errorf("locate Node.js for TypeScript API reopen probe: %w", err)
 		}
 	}
-	probe := filepath.Join(apiRoot, "test", "support", "reopen-exact-v8.ts")
+	probe := filepath.Join(apiRoot, "test", "support", "reopen-exact-v9.ts")
 	command := exec.Command(runner, "--import", "tsx", probe, database)
 	command.Dir = apiRoot
 	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("TypeScript API failed to reopen exact v8: %w: %s", err, output)
+		return fmt.Errorf("TypeScript API failed to reopen exact v9: %w: %s", err, output)
 	}
 	return nil
 }
@@ -375,7 +375,7 @@ func TestV6ToV7ActivationMigratesAndExplicitRollbackReopensV6Pair(t *testing.T) 
 	}
 }
 
-func TestV6ToV8NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T) {
+func TestV6ToV9NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T) {
 	preserveMigrationSeams(t)
 	python := migrationIntegrationPython(t)
 	fixture := newV6ActivationFixtureWithPython(t, python)
@@ -384,19 +384,19 @@ func TestV6ToV8NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T)
 		t.Fatal(err)
 	}
 	createShippedV6Fixture(t, python, database)
-	next := installLifecycleRelease(t, fixture.runtime, "local-v8-next-build-0003", 3, python)
+	next := installLifecycleRelease(t, fixture.runtime, "local-v9-next-build-0003", 3, python)
 
 	// Temporal quiescence has its own real gated-process regression below. This
 	// test keeps that network boundary closed while crossing the production Go
-	// candidate builder, private Python module, atomic install, runtime reopen,
+	// v9 candidate builder, private Python module, atomic install, runtime reopen,
 	// retained-pair rollback, and prior-runtime reopen in one transaction.
 	temporalQuiescenceProof = func(_, _ launchContext) error { return nil }
 	migrationBuilds := 0
 	sealedV7CandidateBuilder = func(candidate launchContext, pair databasePair, journalID string) (string, error) {
 		migrationBuilds++
-		return buildSealedV8Candidate(candidate, pair, journalID)
+		return buildSealedV9Candidate(candidate, pair, journalID)
 	}
-	sealedV7CandidateInstaller = installSealedV8Candidate
+	sealedV7CandidateInstaller = installSealedV9Candidate
 	candidateStarts, oldStarts := 0, 0
 	startReleaseCommand = func(base launchContext, receipt release.Receipt, journalID string) error {
 		if journalID == "" {
@@ -410,10 +410,10 @@ func TestV6ToV8NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T)
 		switch receipt.BuildID {
 		case fixture.candidate.BuildID, next.BuildID:
 			candidateStarts++
-			if err := reopenMigratedV8WithCandidateRuntime(runtimeContext, database); err != nil {
+			if err := reopenMigratedV9WithCandidateRuntime(runtimeContext, database); err != nil {
 				return err
 			}
-			return reopenMigratedV8WithTypeScriptAPI(database)
+			return reopenMigratedV9WithTypeScriptAPI(database)
 		case fixture.old.BuildID:
 			oldStarts++
 			return reopenRestoredV6WithPriorRuntime(runtimeContext, database)
@@ -424,11 +424,11 @@ func TestV6ToV8NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T)
 
 	var output bytes.Buffer
 	if err := promoteExisting(fixture.ctx, fixture.store, fixture.active, fixture.candidate.BuildID, "update", &output); err != nil {
-		t.Fatalf("native v6-to-v8 activation: %v", err)
+		t.Fatalf("native v6-to-v9 activation: %v", err)
 	}
 	active, err := fixture.store.ReadActive()
 	if err != nil || active.Receipt != fixture.candidate || candidateStarts != 1 || oldStarts != 0 || migrationBuilds != 1 {
-		t.Fatalf("native v8 activation = active:%#v candidate starts:%d old starts:%d migration builds:%d err:%v", active, candidateStarts, oldStarts, migrationBuilds, err)
+		t.Fatalf("native v9 activation = active:%#v candidate starts:%d old starts:%d migration builds:%d err:%v", active, candidateStarts, oldStarts, migrationBuilds, err)
 	}
 	pair, err := retainedPairForReceipt(fixture.state, fixture.old)
 	if err != nil {
@@ -450,11 +450,11 @@ func TestV6ToV8NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T)
 		t.Fatalf("paired backup did not preserve the shipped v6 source: %v", err)
 	}
 	if err := promoteExisting(fixture.ctx, fixture.store, active, next.BuildID, "update", &output); err != nil {
-		t.Fatalf("native exact-v8 promotion: %v", err)
+		t.Fatalf("native exact-v9 promotion: %v", err)
 	}
 	active, err = fixture.store.ReadActive()
 	if err != nil || active.Receipt != next || candidateStarts != 2 || oldStarts != 0 || migrationBuilds != 1 {
-		t.Fatalf("native exact-v8 promotion = active:%#v candidate starts:%d old starts:%d migration builds:%d err:%v", active, candidateStarts, oldStarts, migrationBuilds, err)
+		t.Fatalf("native exact-v9 promotion = active:%#v candidate starts:%d old starts:%d migration builds:%d err:%v", active, candidateStarts, oldStarts, migrationBuilds, err)
 	}
 
 	if err := rollbackExisting(fixture.ctx, fixture.store, active, fixture.old.BuildID, &output); err != nil {
@@ -469,7 +469,7 @@ func TestV6ToV8NativePrivateExecutorMigratesAndRollsBackRealSchema(t *testing.T)
 	}
 }
 
-func TestV6ToV8NativeVerificationFailureRestoresAndReopensV6(t *testing.T) {
+func TestV6ToV9NativeVerificationFailureRestoresAndReopensV6(t *testing.T) {
 	preserveMigrationSeams(t)
 	python := migrationIntegrationPython(t)
 	fixture := newV6ActivationFixtureWithPython(t, python)
@@ -481,7 +481,7 @@ func TestV6ToV8NativeVerificationFailureRestoresAndReopensV6(t *testing.T) {
 
 	temporalQuiescenceProof = func(_, _ launchContext) error { return nil }
 	sealedV7CandidateBuilder = postStampFailureCandidateBuilder()
-	sealedV7CandidateInstaller = installSealedV8Candidate
+	sealedV7CandidateInstaller = installSealedV9Candidate
 	candidateStarts, oldStarts := 0, 0
 	startReleaseCommand = func(base launchContext, receipt release.Receipt, journalID string) error {
 		if journalID == "" {
@@ -498,10 +498,10 @@ func TestV6ToV8NativeVerificationFailureRestoresAndReopensV6(t *testing.T) {
 			return reopenRestoredV6WithPriorRuntime(runtimeContext, database)
 		case fixture.candidate.BuildID:
 			candidateStarts++
-			if err := reopenMigratedV8WithCandidateRuntime(runtimeContext, database); err != nil {
+			if err := reopenMigratedV9WithCandidateRuntime(runtimeContext, database); err != nil {
 				return err
 			}
-			return reopenMigratedV8WithTypeScriptAPI(database)
+			return reopenMigratedV9WithTypeScriptAPI(database)
 		default:
 			return fmt.Errorf("unexpected release start %s", receipt.BuildID)
 		}
@@ -531,7 +531,7 @@ func TestV6ToV8NativeVerificationFailureRestoresAndReopensV6(t *testing.T) {
 		t.Fatalf("post-stamp rollback did not restore exact v6 bytes: backup=%s restored=%s err=%v", backupDigest, restoredDigest, err)
 	}
 
-	sealedV7CandidateBuilder = buildSealedV8Candidate
+	sealedV7CandidateBuilder = buildSealedV9Candidate
 	if err := promoteExisting(fixture.ctx, fixture.store, active, fixture.candidate.BuildID, "update", &output); err != nil {
 		t.Fatalf("native retry after post-stamp failure: %v", err)
 	}

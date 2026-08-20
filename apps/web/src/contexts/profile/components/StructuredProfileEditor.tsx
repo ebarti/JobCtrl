@@ -1468,7 +1468,7 @@ export function StructuredProfileEditor({
               experienceEntries.length === 1 ? "entry" : "entries"
             }`}
             defaultOpen={false}
-            description="Roles, dates, bullets, and required content"
+            description="Roles, dates, optional position summaries, bullets, and required content"
             headingLevel={3}
             id="profile-experience"
             title="Experience entries"
@@ -1524,6 +1524,14 @@ export function StructuredProfileEditor({
                         {textField(`resume.experience_entries.${index}.title`, "Title")}
                         {textField(`resume.experience_entries.${index}.company`, "Company")}
                         {textField(`resume.experience_entries.${index}.location`, "Location")}
+                        <AdaptiveFieldSpan span="full">
+                          {textareaField(
+                            `resume.experience_entries.${index}.summary`,
+                            "Position summary (optional)",
+                            "Briefly summarize the role, scope, or mandate shown before its achievements.",
+                            { rows: 3 },
+                          )}
+                        </AdaptiveFieldSpan>
                       </AdaptiveFieldGrid>
                       <Separator />
                       <FieldGroup className="bullet-list">

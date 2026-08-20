@@ -572,6 +572,9 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
         subtitle = " | ".join(part for part in subtitle_parts if part)
         if subtitle:
             lines.append(sanitize_text(subtitle))
+        summary = sanitize_text(str(entry.get("summary", "")))
+        if summary:
+            lines.append(summary)
 
         bullets = tailored_experience_bullets(entry, update, profile)
         for bullet in bullets:

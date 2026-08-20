@@ -540,6 +540,32 @@ describe("<StructuredProfileEditor>", () => {
     );
   });
 
+  it("edits an optional position summary independently from achievement bullets", () => {
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    let latestProfile = JSON.stringify(initialProfile, null, 2);
+    render(
+      <StatefulEditor
+        onLatestProfile={(value) => {
+          latestProfile = value;
+        }}
+      />,
+    );
+
+    const summary = screen.getByLabelText("Position summary (optional)");
+    expect(summary).toHaveValue("");
+    fireEvent.change(summary, {
+      target: { value: "Led the platform and reliability mandate." },
+    });
+
+    const profile = JSON.parse(latestProfile);
+    expect(profile.resume.experience_entries[0].summary).toBe(
+      "Led the platform and reliability mandate.",
+    );
+    expect(profile.resume.experience_entries[0].bullets).toEqual(
+      initialProfile.resume.experience_entries[0].bullets,
+    );
+  });
+
   it("hides state/province for non-US profiles", () => {
     const baseProfile = sampleProfileResponse.profile as ProfileFixture;
     const initialProfile = {

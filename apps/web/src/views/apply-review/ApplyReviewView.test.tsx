@@ -2975,6 +2975,74 @@ describe("<ApplyReviewView>", () => {
     ).not.toContain("No Profile source field mapping was recorded for this selected resume line.");
   });
 
+  it("resolves position summaries to their exact Profile source field", async () => {
+    const positionSummary = "Owned engineering, security, and platform operations.";
+    const queueWithPositionSummary = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              materialsPreview: {
+                ...item.materialsPreview,
+                resumeText: [
+                  "Jordan Candidate",
+                  "",
+                  "EXPERIENCE",
+                  "Director of Engineering | Northstar Labs",
+                  "Harbor City (Remote) | Mar 2024 - Present",
+                  positionSummary,
+                  "- Owned platform reliability improvements for incident response.",
+                ].join("\n"),
+                profileSourceFields: [
+                  ...item.materialsPreview.profileSourceFields,
+                  {
+                    path: "resume.experience_entries.0.summary",
+                    label:
+                      "Profile > Experience entries > Director of Engineering at Northstar Labs > Position summary",
+                    value: positionSummary,
+                    section: "profile_experience",
+                  },
+                ],
+              },
+            }
+          : item,
+      ),
+    };
+    const artifact = vi.fn(async (artifactId: string) => ({
+      ok: true as const,
+      artifact: {
+        ...sampleArtifact,
+        artifactId,
+        jobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+        title: "Principal Platform Engineer Resume",
+        company: sampleApplyReviewQueue.items[0]!.company,
+      },
+      layoutBoxes: [],
+      tailoringExplanation: sampleTailoringExplanation,
+    }));
+    htmlPreviewResumeText = queueWithPositionSummary.items[0]!.materialsPreview.resumeText;
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => queueWithPositionSummary),
+          artifact,
+        },
+      }),
+    });
+
+    await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
+    const shadow = await findResumeShadowRoot();
+    await selectResumeLine(shadow, positionSummary);
+    await waitFor(() => expect(shadowText(shadow)).toContain("Profile source field"));
+    expect(shadowText(shadow)).toContain("Position summary");
+    expect(shadowText(shadow)).toContain(positionSummary);
+    expect(shadowText(shadow)).not.toContain(
+      "No Profile source field mapping was recorded for this selected resume line.",
+    );
+  });
+
   it("feeds resume text line targets into the resume audit viewer", async () => {
     const queueWithModernCvResumeText = {
       ...sampleApplyReviewQueue,

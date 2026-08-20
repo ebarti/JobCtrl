@@ -375,10 +375,20 @@ class SqliteProfileRepository:
                 """
                 INSERT INTO candidate_profile_experience_entries (
                     tenant_id, profile_id, entry_id, position_index,
-                    date_range, title, company, location
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    date_range, title, company, location, summary
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (tenant_id, profile_id, entry.id, index, entry.date_range, entry.title, entry.company, entry.location),
+                (
+                    tenant_id,
+                    profile_id,
+                    entry.id,
+                    index,
+                    entry.date_range,
+                    entry.title,
+                    entry.company,
+                    entry.location,
+                    entry.summary,
+                ),
             )
             for bullet_index, bullet in enumerate(entry.bullets):
                 self._conn.execute(
@@ -595,7 +605,7 @@ class SqliteProfileRepository:
     def _experience_entries(self, tenant_id: str, profile_id: str) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             """
-            SELECT entry_id, date_range, title, company, location
+            SELECT entry_id, date_range, title, company, location, summary
             FROM candidate_profile_experience_entries
             WHERE tenant_id = ? AND profile_id = ?
             ORDER BY position_index, entry_id
@@ -611,6 +621,7 @@ class SqliteProfileRepository:
                     "title": row["title"],
                     "company": row["company"],
                     "location": row["location"],
+                    "summary": row["summary"],
                     "bullets": self._ordered_values(
                         "candidate_profile_experience_bullets",
                         "bullet_text",

@@ -70,7 +70,7 @@ def test_init_db_rejects_legacy_apply_tables_without_mutating_them(
     pre.commit()
     pre.close()
 
-    with pytest.raises(SchemaMigrationRequiredError, match="exact schema v8"):
+    with pytest.raises(SchemaMigrationRequiredError, match="exact schema v9"):
         init_db(fresh_db)
 
     verified = sqlite3.connect(str(fresh_db))

@@ -274,6 +274,7 @@ export function ensureProfileTables(db: SqliteDatabase): void {
       title TEXT NOT NULL DEFAULT '',
       company TEXT NOT NULL DEFAULT '',
       location TEXT NOT NULL DEFAULT '',
+      summary TEXT NOT NULL DEFAULT '',
       PRIMARY KEY (tenant_id, profile_id, entry_id)
     );
     CREATE TABLE IF NOT EXISTS candidate_profile_experience_bullets (
@@ -518,8 +519,8 @@ function insertChildren(
   const experienceEntries = asRecordArray(record(profile.resume).experience_entries);
   const insertExperience = db.prepare(`
     INSERT INTO candidate_profile_experience_entries (
-      tenant_id, profile_id, entry_id, position_index, date_range, title, company, location
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      tenant_id, profile_id, entry_id, position_index, date_range, title, company, location, summary
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertBullet = db.prepare(`
     INSERT INTO candidate_profile_experience_bullets (
@@ -545,6 +546,7 @@ function insertChildren(
       text(entry.title),
       text(entry.company),
       text(entry.location),
+      text(entry.summary),
     );
     asTextArray(entry.bullets).forEach((bullet, bulletIndex) => {
       insertBullet.run(TENANT_ID, PROFILE_ID, entryId, bulletIndex, bullet);
@@ -1068,7 +1070,7 @@ function textAtPath(value: unknown, path: string): string {
 
 function experienceRows(db: SqliteDatabase): Array<Record<string, unknown>> {
   const rows = db.prepare(`
-    SELECT entry_id, date_range, title, company, location
+    SELECT entry_id, date_range, title, company, location, summary
     FROM candidate_profile_experience_entries
     WHERE tenant_id = ? AND profile_id = ?
     ORDER BY position_index, entry_id
@@ -1079,6 +1081,7 @@ function experienceRows(db: SqliteDatabase): Array<Record<string, unknown>> {
     title: text(row.title),
     company: text(row.company),
     location: text(row.location),
+    summary: text(row.summary),
     bullets: orderedValues(db, "candidate_profile_experience_bullets", "bullet_text", "bullet_index", "entry_id = ?", [text(row.entry_id)]),
     achievement_evidence: achievementEvidenceRows(db, text(row.entry_id)),
   }));

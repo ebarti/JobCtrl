@@ -47,7 +47,7 @@ Use the current web routes according to the kind of change you are making:
 
 | Route | What it owns |
 | --- | --- |
-| `/profile` | Personal information, baseline resume content, experience, education, skills, achievement evidence, and voluntary EEO data. The same page renders the real editable baseline resume beside the editor. |
+| `/profile` | Personal information, baseline resume content, experience, optional position summaries, education, skills, achievement evidence, and voluntary EEO data. The same page renders the real editable baseline resume beside the editor. |
 | `/profile/import/upload` | The start of the three-step PDF import flow. You choose whether to import profile data, resume style, or both before confirming. |
 | `/preferences` | Application defaults, writing and tailoring controls, resume style, and resume-template selection and editing. |
 | `/evidence-map` | A read-only map from canonical achievements and skills to their uses in scores, requirement fit, generated bullets, and coverage gaps. |
@@ -83,8 +83,10 @@ runtime authority. There is no second JSON-backed profile that can silently win.
 The profile's main ownership boundaries are:
 
 - **Candidate Profile owns candidate facts.** A saved experience bullet,
-  declared skill, application answer, or achievement record is evidence only
-  because it entered through this boundary.
+  position summary, declared skill, application answer, or achievement record
+  is evidence only because it entered through this boundary. A non-empty
+  position summary appears below that role's title/date heading and before its
+  achievement bullets; an empty summary adds no resume content or spacing.
 - **An achievement owns its metrics.** Put a number in the experience bullet or
   achievement evidence that it qualifies. Profile reads lead the deprecated
   `resume_constraints.real_metrics` compatibility index with those derived

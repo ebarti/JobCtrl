@@ -275,7 +275,7 @@ def test_v4_search_unit_tables_require_an_explicit_v7_upgrade(
     conn.commit()
     close_connection(db_path)
 
-    with pytest.raises(SchemaMigrationRequiredError, match="exact schema v8"):
+    with pytest.raises(SchemaMigrationRequiredError, match="exact schema v9"):
         init_db(db_path)
 
 

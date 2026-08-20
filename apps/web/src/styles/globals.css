@@ -2780,6 +2780,14 @@ input[type="radio"] {
   line-height: var(--resume-template-meta-line-height, var(--resume-template-default-meta-line-height));
 }
 
+.resume-plate-document .resume-entry-summary {
+  margin: 0 0 1.1mm;
+  color: var(--resume-template-accent, var(--resume-template-default-accent));
+  line-height: var(--resume-template-meta-line-height, var(--resume-template-default-meta-line-height));
+  text-align: var(--resume-template-body-align, var(--resume-template-default-body-align));
+  break-inside: avoid;
+}
+
 .resume-plate-document .resume-bullets {
   list-style: disc outside;
   margin: var(--resume-template-list-gap, var(--resume-template-default-list-gap)) 0 0 4.2mm;

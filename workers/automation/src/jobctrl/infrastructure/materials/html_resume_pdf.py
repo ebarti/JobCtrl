@@ -270,6 +270,13 @@ body {
   line-height: 1.22;
   margin: 0 0 1mm;
 }
+.resume-entry-summary {
+  color: #111111;
+  line-height: 1.22;
+  margin: 0 0 1.1mm;
+  text-align: justify;
+  break-inside: avoid;
+}
 .resume-bullets {
   list-style: disc outside;
   margin: 1.1mm 0 0 4.2mm;
@@ -401,10 +408,12 @@ body {{
 .resume-entry-date,
 .resume-entry-location,
 .resume-entry-subtitle,
+.resume-entry-summary,
 .resume-meta {{
   color: {accent};
 }}
 .resume-summary,
+.resume-entry-summary,
 .resume-bullets li,
 .resume-skills-list li {{
   text-align: {alignment};
@@ -416,6 +425,7 @@ body {{
   margin-block-end: {density["entry"]:.2f}mm;
 }}
 .resume-entry-subtitle,
+.resume-entry-summary,
 .resume-meta {{
   line-height: {density["meta_line"]:.3f};
 }}
@@ -671,6 +681,7 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
                 "location": location,
                 "date_range": date_range,
                 "subtitle": sanitize_text(" | ".join(part for part in subtitle_parts if part)),
+                "summary": sanitize_text(str(entry.get("summary", ""))),
                 "bullets": [
                     {
                         "id": f"experience:{entry_id}:bullet:{index + 1}",
@@ -845,6 +856,16 @@ def build_resume_html(
                     inner_html=heading_html,
                 )
             )
+            summary = str(entry.get("summary", "")).strip()
+            if summary:
+                section.append(
+                    target(
+                        f"experience:{entry_id}:summary",
+                        summary,
+                        tag="p",
+                        class_name="resume-entry-summary",
+                    )
+                )
             section.append('<ul class="resume-bullets">')
             for bullet in entry.get("bullets", []):
                 section.append(target(str(bullet.get("id", "")), str(bullet.get("text", "")), tag="li"))

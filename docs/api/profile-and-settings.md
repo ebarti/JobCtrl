@@ -21,6 +21,11 @@ Profile writes are explicit saves/autosaves of canonical candidate data. A job
 tailoring run consumes a versioned snapshot; it does not silently mutate the
 profile to fit a posting.
 
+Each `resume.experience_entries[]` record may include `summary`. The field
+defaults to an empty string, remains optional for existing and new roles, and
+renders as non-bulleted position context between the role heading and its
+achievement bullets only when non-empty.
+
 Achievement numbers are authored with the experience bullet or its structured
 achievement evidence. `resume_constraints.real_metrics` remains in the profile
 wire shape only as a non-authoritative compatibility projection. Derived
