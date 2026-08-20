@@ -16,7 +16,6 @@ from jobctrl.database import (
 from jobctrl.infrastructure.migrations import schema_v9
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V7_MANIFEST,
-    EXACT_V8_MANIFEST,
     EXACT_V9_MANIFEST,
     SchemaManifestError,
     assert_exact_manifest,

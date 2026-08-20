@@ -434,7 +434,8 @@ def build_evidence_corpus(profile: dict) -> EvidenceCorpus:
       * profile experience metadata — total years, current role/company, target
         role context;
       * resume baseline summary — canonical source-profile positioning text;
-      * experience entries — titles, companies, date ranges, locations, bullets;
+      * experience entries — titles, companies, date ranges, locations,
+        position summaries, bullets;
       * achievement evidence items — source text, metrics, tools, outcomes,
         scope, seniority signals;
       * education entries — degrees, institutions, dates.
@@ -459,6 +460,7 @@ def build_evidence_corpus(profile: dict) -> EvidenceCorpus:
                     "company": entry.get("company"),
                     "location": entry.get("location"),
                     "date_range": entry.get("date_range"),
+                    "summary": entry.get("summary"),
                     "bullets": entry.get("bullets"),
                 },
                 fragments,
