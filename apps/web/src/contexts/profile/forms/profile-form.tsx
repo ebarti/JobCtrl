@@ -108,14 +108,25 @@ function serializeProfileValues(values: ProfileFormValues): string {
 function profileTextWithPlateChanges(
   profileText: string,
   changes: readonly ProfilePlateTextChange[],
+  plateBaselineProfileText = profileText,
 ): string {
   const parsed = tryParseJson(profileText);
   if (!parsed.ok) return profileText;
   const profileResult = ProfileSchema.safeParse(parsed.value);
   if (!profileResult.success) return profileText;
+  const parsedBaseline = tryParseJson(plateBaselineProfileText);
+  const baselineResult = parsedBaseline.ok
+    ? ProfileSchema.safeParse(parsedBaseline.value)
+    : null;
+  const baselineProfile = baselineResult?.success
+    ? baselineResult.data
+    : profileResult.data;
 
   const profile = structuredClone(profileResult.data);
   let changed = false;
+  // Slate block splits copy the source element's semantic ID. Preserve every
+  // ordered occurrence so a split bullet becomes replacement + insertion.
+  const bulletChangesByEntryId = new Map<string, Map<number, string[]>>();
   const replace = (current: string, next: string, update: () => void): void => {
     if (current === next) return;
     update();
@@ -136,15 +147,20 @@ function profileTextWithPlateChanges(
       continue;
     }
 
-    const bulletMatch = /^experience:(.+):bullet:([1-9]\d*)$/.exec(change.semanticId);
+    const bulletMatch = /^experience:(.+):bullet:([1-9]\d*)$/.exec(
+      change.semanticId,
+    );
     if (bulletMatch) {
-      const entry = profile.resume.experience_entries.find((candidate) => candidate.id === bulletMatch[1]);
-      const bulletIndex = Number(bulletMatch[2]) - 1;
-      if (entry && bulletIndex < entry.bullets.length) {
-        replace(entry.bullets[bulletIndex] ?? "", change.text, () => {
-          entry.bullets[bulletIndex] = change.text;
-        });
-      }
+      const entryId = bulletMatch[1];
+      const bulletOrdinal = bulletMatch[2];
+      if (!entryId || !bulletOrdinal) continue;
+      const bulletIndex = Number(bulletOrdinal) - 1;
+      const changesByIndex =
+        bulletChangesByEntryId.get(entryId) ?? new Map<number, string[]>();
+      const texts = changesByIndex.get(bulletIndex) ?? [];
+      texts.push(change.text);
+      changesByIndex.set(bulletIndex, texts);
+      bulletChangesByEntryId.set(entryId, changesByIndex);
       continue;
     }
 
@@ -159,7 +175,38 @@ function profileTextWithPlateChanges(
     }
   }
 
+  for (const [entryId, changesByIndex] of bulletChangesByEntryId) {
+    const entry = profile.resume.experience_entries.find(
+      (candidate) => candidate.id === entryId,
+    );
+    const baselineEntry = baselineProfile.resume.experience_entries.find(
+      (candidate) => candidate.id === entryId,
+    );
+    if (!entry) continue;
+    const baselineBullets = baselineEntry?.bullets ?? entry.bullets;
+    const nextBullets = baselineBullets.flatMap((bullet, bulletIndex) => {
+      const texts = changesByIndex.get(bulletIndex);
+      if (!texts) return [bullet];
+      if (texts.length > 1 && texts.some((text) => !text.trim())) {
+        return [bullet];
+      }
+      return texts;
+    });
+    if (
+      entry.bullets.length !== nextBullets.length ||
+      entry.bullets.some((bullet, index) => bullet !== nextBullets[index])
+    ) {
+      entry.bullets = nextBullets;
+      changed = true;
+    }
+  }
+
   return changed ? JSON.stringify(profile, null, 2) : profileText;
+}
+
+interface PlateProfileProjectionState {
+  readonly baselineProfileText: string;
+  readonly lastAppliedProfileText: string;
 }
 
 export function ProfileForm({
@@ -172,6 +219,7 @@ export function ProfileForm({
   const [statusMessage, setStatusMessage] = useState("");
   const [resetToken, setResetToken] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
+  const plateProfileProjectionRef = useRef<PlateProfileProjectionState | null>(null);
   const isProfileSection = section === "profile";
   const saveLabel = "Save changes";
   const discardLabel = "Discard changes";
@@ -207,6 +255,7 @@ export function ProfileForm({
         ? await updateProfile.mutateAsync(toUpdateRequest(value))
         : initial;
       if (serializeProfileValues(formApi.state.values) === submittedValues) {
+        plateProfileProjectionRef.current = null;
         formApi.reset(toProfileFormValues(profileResponse));
         setStatusMessage(savedMessage);
       } else {
@@ -218,7 +267,22 @@ export function ProfileForm({
   const applyPlateTextChanges = useCallback(
     (changes: readonly ProfilePlateTextChange[]) => {
       const currentProfileText = form.state.values.profileText;
-      const nextProfileText = profileTextWithPlateChanges(currentProfileText, changes);
+      const previousProjection = plateProfileProjectionRef.current;
+      // Reapply Plate's complete semantic snapshot to one stable baseline.
+      // Otherwise every keystroke in an inserted split node would insert it again.
+      const baselineProfileText =
+        previousProjection?.lastAppliedProfileText === currentProfileText
+          ? previousProjection.baselineProfileText
+          : currentProfileText;
+      const nextProfileText = profileTextWithPlateChanges(
+        currentProfileText,
+        changes,
+        baselineProfileText,
+      );
+      plateProfileProjectionRef.current = {
+        baselineProfileText,
+        lastAppliedProfileText: nextProfileText,
+      };
       if (nextProfileText === currentProfileText) return;
       clearTransientStatus();
       form.setFieldValue("profileText", nextProfileText);
@@ -236,6 +300,7 @@ export function ProfileForm({
     if (form.state.isDirty || form.state.isSubmitting) {
       return;
     }
+    plateProfileProjectionRef.current = null;
     form.reset(toProfileFormValues(initial));
     setResetToken((token) => token + 1);
   }, [form, initial]);
@@ -250,6 +315,7 @@ export function ProfileForm({
       }}
       onReset={(event) => {
         event.preventDefault();
+        plateProfileProjectionRef.current = null;
         form.reset(toProfileFormValues(initial));
         setResetToken((token) => token + 1);
         clearTransientStatus();
