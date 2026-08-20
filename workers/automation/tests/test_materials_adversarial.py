@@ -59,3 +59,28 @@ def test_adversarial_review_result_merges_persona_blockers() -> None:
     assert result.personas[0].score_rationale == "Metric support is missing from profile evidence."
     assert result.to_dict()["personas"][0]["prompt_rubric"]
     assert any("Metric support is missing" in item for item in result.to_dict()["personas"][0]["score_basis"])
+
+
+def test_voice_pass_adversarial_record_omits_llm_prompt_audit() -> None:
+    result = AdversarialReviewResult.from_response(
+        {
+            "verdict": "PASS",
+            "score": 0.9,
+            "score_rationale": "All bounded review facts passed.",
+            "blockers": [],
+            "warnings": [],
+            "repair_instructions": [],
+            "personas": [],
+        },
+        threshold=0.8,
+        normalized_fit_score=0.9,
+        model="judge-a",
+        prompt_messages=(
+            {"role": "user", "content": "FULL PROFILE SECRET and full resume"},
+        ),
+    )
+
+    assert "llm_audit" in result.to_dict()
+    voice_record = result.to_voice_pass_dict()
+    assert "llm_audit" not in voice_record
+    assert "FULL PROFILE SECRET" not in str(voice_record)

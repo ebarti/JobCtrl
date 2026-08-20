@@ -302,6 +302,19 @@ class AdversarialReviewResult:
             },
         }
 
+    def to_voice_pass_dict(self) -> dict[str, Any]:
+        """Return the bounded review facts safe to embed in a voice audit.
+
+        The artifact-level adversarial audit remains the canonical home for the
+        LLM request/response. A voice record is duplicated onto every provenance
+        row and exposed through Apply Review, so it must not duplicate prompt
+        messages containing the full profile, job, or generated resume.
+        """
+
+        record = self.to_dict()
+        record.pop("llm_audit", None)
+        return record
+
 
 def normalized_job_fit_score(job: Mapping[str, Any]) -> float | None:
     """Return a 0..1 fit score from current 1..10 or explicit normalized fields."""

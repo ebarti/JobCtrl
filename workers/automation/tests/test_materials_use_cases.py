@@ -39,6 +39,7 @@ from jobctrl.domain.materials.requirement_coverage import (
 )
 from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
 from jobctrl.domain.materials.use_cases import (
+    ArtifactBudgetInfeasibleError,
     COVER_LETTER_COMPLETION_MARKER,
     GenerateCoverLetterUseCase,
     RenderPdfUseCase,
@@ -2312,10 +2313,69 @@ def test_tailor_use_case_failed_validation_persists_rejected_artifact(
         job=job, profile_snapshot=snapshot, tailored_dir=tmp_path
     )
     assert outcome.status == "failed_validation"
+    assert outcome.materials is not None
+    assert outcome.materials.last_verdict is None
+    assert outcome.report["final_judge"] is None
+    assert outcome.materials.tailored_resume is not None
+    assert outcome.materials.tailored_resume.metadata["judge"] is None
+    assert outcome.materials.tailored_resume.metadata["final_judge"] is None
+    assert outcome.materials.tailored_resume.metadata["voice_pass"]["final_judge"] == {}
     audit = repo.saved[-1].metadata["tailoring_attempt_audit"]
     assert audit["status"] == "failed_validation"
     assert audit["attempts"] == 4
     assert len(audit["attempt_history"]) == 4
+
+
+def test_tailor_use_case_rejects_infeasible_required_bullets_before_llm(
+    tmp_path: Path,
+    job: dict,
+) -> None:
+    profile = _profile_with_evidence_dict()
+    entry = profile["resume"]["experience_entries"][0]
+    bullets = [f"Owned required achievement {index}." for index in range(1, 6)]
+    entry["bullets"] = bullets
+    entry["achievement_evidence"] = [
+        {
+            "id": f"ev_{index}",
+            "source_text": bullet,
+            "scope": "backend platform",
+            "action": bullet,
+            "tools": [],
+            "metrics": [],
+            "outcome": bullet,
+            "seniority_signal": "ownership",
+            "evidence_strength": "verified",
+            "claim_confidence": 0.95,
+            "user_confirmed": True,
+            "tags": [],
+        }
+        for index, bullet in enumerate(bullets, start=1)
+    ]
+    profile["resume"]["tailoring_rules"]["required_bullets_by_experience_id"] = {
+        entry["id"]: bullets
+    }
+    profile_snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, profile)
+    )
+    llm = _ScriptedLlm([])
+    use_case = TailorResumeUseCase(
+        repository=_FakeRepository(),
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    with pytest.raises(ArtifactBudgetInfeasibleError) as raised:
+        use_case.execute(
+            job=job,
+            profile_snapshot=profile_snapshot,
+            tailored_dir=tmp_path,
+        )
+
+    assert llm.calls == []
+    assert raised.value.violations[0].required_achievement_count == 5
+    assert raised.value.violations[0].ceiling == 4
 
 
 def test_tailor_use_case_tries_multiple_candidate_models_and_separate_judge(

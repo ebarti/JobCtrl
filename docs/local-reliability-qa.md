@@ -604,7 +604,11 @@ retained only as non-authoritative, unassigned legacy data. Then tailor a synthe
 with no required bullets: the accepted artifact must never exceed the per-role
 maximum, contain no uncovered filler, and preserve the exact agency
 and causal meaning of every selected achievement through the final voice/judge
-audit. Never run this check against a real application or submit anything.
+audit. Also configure one synthetic role whose distinct pinned plus
+requirement-covered achievements exceed that maximum: Tailor must block before
+any generator call, keep the durable attempt count unchanged, and report the
+role, required count, and ceiling. Never run this check against a real
+application or submit anything.
 
 For direct URL import, exercise the Jobs-page dialog through the product API
 and worker boundary. A readable JSON-LD posting must create one canonical job,

@@ -17,6 +17,7 @@ from jobctrl.domain.materials.services import (
     ResumeAssembler,
     sanitize_text,
 )
+from jobctrl.resume_profile import mark_current_artifact_budget
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +167,10 @@ def test_resume_assembler_caps_covered_payload_defensively() -> None:
         for index, bullet in enumerate(payload["experience_updates"][0]["bullets"])
     ]
 
-    rendered = _ASSEMBLER.assemble_resume_text(payload, _profile())
+    rendered = _ASSEMBLER.assemble_resume_text(
+        mark_current_artifact_budget(payload),
+        _profile(),
+    )
 
     assert "- Covered requirement four." in rendered
     assert "- Covered requirement five." not in rendered

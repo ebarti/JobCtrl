@@ -246,6 +246,39 @@ def test_save_rederives_materialized_achievement_evidence_when_bullets_change(tm
     assert refreshed.resume_constraints.real_metrics == ("55%",)
 
 
+def test_save_rederives_precanonical_materialized_evidence_when_bullet_changes(tmp_path):
+    repo, conn, _ = _new_repo(tmp_path)
+    raw = _valid_profile()
+    raw["resume"]["experience_entries"][0]["bullets"][0] = (
+        "Scaled the platform to 200 users."
+    )
+    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, raw))
+
+    # Simulate the exact auto-derived row written before count metrics such as
+    # "200 users" were recognized. The old extractor stored an empty list.
+    conn.execute(
+        "UPDATE candidate_profile_achievement_evidence SET metrics_json = '[]' "
+        "WHERE evidence_id = 'role_1_bullet_1'"
+    )
+    conn.commit()
+
+    loaded = repo.load(LOCAL_TENANT)
+    assert loaded is not None
+    updated = loaded.to_dict()
+    updated["resume"]["experience_entries"][0]["bullets"][0] = (
+        "Scaled the platform to 250 users."
+    )
+    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, updated))
+
+    refreshed = repo.load(LOCAL_TENANT)
+    assert refreshed is not None
+    evidence = refreshed.to_dict()["resume"]["experience_entries"][0][
+        "achievement_evidence"
+    ][0]
+    assert evidence["source_text"] == "Scaled the platform to 250 users."
+    assert evidence["metrics"] == ["250 users"]
+
+
 def test_save_and_load_preserves_achievement_evidence_and_tailoring_controls(tmp_path):
     repo, conn, _ = _new_repo(tmp_path)
     raw = _valid_profile()

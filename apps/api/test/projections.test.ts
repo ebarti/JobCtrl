@@ -2946,6 +2946,28 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         prompt_version: "voice-pass-v1",
         proxy_delta: { improved: true, buzzword_density_reduced: true },
         reason: "",
+        final_judge: {
+          passed: true,
+          verdict: "PASS",
+          score: 0.91,
+          judge_model: "judge-a",
+          adversarial_review: {
+            ran: true,
+            passed: true,
+            score: 0.9,
+            blockers: [],
+            warnings: [],
+            repair_instructions: [],
+            personas: [],
+            llm_audit: {
+              model: "judge-a",
+              prompt_messages: [
+                { role: "user", content: "FULL PROFILE SECRET and complete resume text" },
+              ],
+            },
+          },
+          unbounded_internal_record: "FULL PROFILE SECRET",
+        },
       });
       const insertProvenance = db.prepare(
         `INSERT INTO job_bullet_provenance (
@@ -2991,7 +3013,16 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           accepted: true,
           model: "claude-opus-4-8",
           promptVersion: "voice-pass-v1",
+          finalJudge: {
+            passed: true,
+            verdict: "PASS",
+            score: 0.91,
+            judge_model: "judge-a",
+            adversarial_review: expect.objectContaining({ ran: true, audit: null }),
+          },
         });
+        expect(JSON.stringify(explanation.voicePass)).not.toContain("FULL PROFILE SECRET");
+        expect(explanation.voicePass.finalJudge).not.toHaveProperty("unbounded_internal_record");
         // The voiced bullet is served with transformType "voice".
         expect(explanation.bulletProvenance[0].transformType).toBe("voice");
 

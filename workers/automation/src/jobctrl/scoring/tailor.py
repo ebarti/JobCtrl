@@ -39,6 +39,7 @@ from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
 from jobctrl.domain.materials.use_cases import (
+    ArtifactBudgetInfeasibleError,
     TailorOutcome,
     TailoringLlmPolicy,
     TailoringPrerequisiteError,
@@ -678,7 +679,7 @@ def run_tailoring(
             job = future_to_job[future]
             try:
                 result = future.result()
-            except TailoringPrerequisiteError as error:
+            except (TailoringPrerequisiteError, ArtifactBudgetInfeasibleError) as error:
                 result = {
                     "job_id": str(canonical_job_id(str(job["job_id"]))),
                     "url": job["url"],
@@ -739,6 +740,15 @@ def run_tailoring(
         prerequisite_error = r.get("prerequisite_error")
         if isinstance(prerequisite_error, TailoringPrerequisiteError):
             _record_tailor_requirement_fit_block(
+                conn,
+                job_id=stable_job_id,
+                tenant_id=tenant_id,
+                error=prerequisite_error,
+                attempt_count=current_attempt - 1,
+                metadata=activity_metadata.get(stage_key) or None,
+            )
+        elif isinstance(prerequisite_error, ArtifactBudgetInfeasibleError):
+            _record_tailor_artifact_budget_block(
                 conn,
                 job_id=stable_job_id,
                 tenant_id=tenant_id,
@@ -1103,6 +1113,24 @@ def tailor_job_by_id(
         with SqliteUnitOfWork(conn):
             commit_guard()
             _record_tailor_requirement_fit_block(
+                conn,
+                job_id=stable_job_id,
+                tenant_id=tenant_id,
+                error=exc,
+                attempt_count=prior_attempts,
+                metadata=metadata,
+            )
+        return {
+            "url": target["url"],
+            "job_id": str(stable_job_id),
+            "status": "skipped",
+            "reason": exc.reason,
+            "error": str(exc),
+        }
+    except ArtifactBudgetInfeasibleError as exc:
+        with SqliteUnitOfWork(conn):
+            commit_guard()
+            _record_tailor_artifact_budget_block(
                 conn,
                 job_id=stable_job_id,
                 tenant_id=tenant_id,
@@ -1532,6 +1560,58 @@ def _record_tailor_requirement_fit_block(
             "errorCode": error.error_code,
             "employerAnalysisGeneration": error.analysis_generation,
             "requirementFitGeneration": error.report_generation,
+        },
+    )
+
+
+def _record_tailor_artifact_budget_block(
+    conn: sqlite3.Connection,
+    *,
+    job_id: JobId,
+    tenant_id: TenantId,
+    error: ArtifactBudgetInfeasibleError,
+    attempt_count: int,
+    metadata: dict[str, object] | None,
+) -> None:
+    """Block an impossible profile constraint without consuming an LLM retry."""
+
+    message = str(error)
+    violations = [item.to_dict() for item in error.violations]
+    set_stage_state(
+        conn,
+        job_id,
+        "tailor",
+        "blocked",
+        tenant_id=tenant_id,
+        attempt_count=attempt_count,
+        max_attempts=MAX_ATTEMPTS,
+        error_code=error.error_code,
+        error_message=message,
+        retryable=False,
+        blocked_by=[],
+        next_action=(
+            "Reduce the required achievements for the named role or raise "
+            "max_experience_bullets, then run Tailor again."
+        ),
+        metadata={
+            **(metadata or {}),
+            "condition": error.reason,
+            "violations": violations,
+        },
+        validate_transition=False,
+    )
+    record_job_event(
+        conn,
+        job_id,
+        "tailor",
+        "StageBlocked",
+        tenant_id=tenant_id,
+        level="warning",
+        message=message,
+        payload={
+            "reason": error.reason,
+            "errorCode": error.error_code,
+            "violations": violations,
         },
     )
 

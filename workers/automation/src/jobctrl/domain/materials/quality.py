@@ -35,6 +35,7 @@ from jobctrl.resume_profile import (
     get_custom_tailoring_prompt,
     get_education_entries,
     get_experience_entries,
+    get_max_experience_bullets,
     get_required_bullets_by_experience_id,
     get_required_experience_entry_ids,
     get_required_skills_by_category_id,
@@ -499,6 +500,117 @@ class TailoringPrerequisiteError(ValueError):
         if self.reason == "requirement_fit_missing":
             return "REQUIREMENT_FIT_MISSING"
         return "REQUIREMENT_FIT_STALE"
+
+
+@dataclass(frozen=True)
+class ArtifactBudgetViolation:
+    """One role whose mandatory achievement set cannot fit its bullet ceiling."""
+
+    experience_entry_id: str
+    role: str
+    required_achievement_count: int
+    ceiling: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "experience_entry_id": self.experience_entry_id,
+            "role": self.role,
+            "required_achievement_count": self.required_achievement_count,
+            "ceiling": self.ceiling,
+        }
+
+
+class ArtifactBudgetInfeasibleError(ValueError):
+    """Profile pins and required coverage cannot fit the configured artifact."""
+
+    reason = "artifact_budget_infeasible"
+    error_code = "ARTIFACT_BUDGET_INFEASIBLE"
+
+    def __init__(self, violations: tuple[ArtifactBudgetViolation, ...]) -> None:
+        if not violations:
+            raise ValueError("ArtifactBudgetInfeasibleError requires a violation")
+        self.violations = violations
+        details = "; ".join(
+            f"{item.role} ({item.experience_entry_id}) requires "
+            f"{item.required_achievement_count} achievements but the ceiling is {item.ceiling}"
+            for item in violations
+        )
+        super().__init__(f"Resume artifact budget is infeasible: {details}.")
+
+
+def require_artifact_budget_feasible(profile: dict, plan: TailoringPlan) -> None:
+    """Reject impossible per-role plans before any generator model is called.
+
+    A single rendered bullet represents one canonical achievement. Explicit
+    user pins and seeded requirement coverage are both mandatory, but an
+    achievement that satisfies both consumes only one slot.
+    """
+
+    ceiling = get_max_experience_bullets(profile)
+    experience_entries = {
+        str(entry.get("id") or ""): entry
+        for entry in get_experience_entries(profile)
+        if str(entry.get("id") or "")
+    }
+    mandatory_by_entry: dict[str, set[str]] = {
+        entry_id: set() for entry_id in experience_entries
+    }
+    evidence_by_id = plan.evidence_by_id
+
+    for evidence_id in plan.required_evidence_ids:
+        evidence = evidence_by_id.get(evidence_id)
+        if evidence is not None and evidence.experience_entry_id in mandatory_by_entry:
+            mandatory_by_entry[evidence.experience_entry_id].add(f"evidence:{evidence_id}")
+
+    if plan.coverage_graph is not None:
+        for edge in plan.coverage_graph.coverage_edges:
+            evidence = evidence_by_id.get(edge.achievement_evidence_id)
+            if evidence is not None and evidence.experience_entry_id in mandatory_by_entry:
+                mandatory_by_entry[evidence.experience_entry_id].add(
+                    f"evidence:{edge.achievement_evidence_id}"
+                )
+
+    pinned_bullets = plan.requirement_led_controls.required_content_pins.bullets_by_experience_id
+    for entry_id, bullets in pinned_bullets.items():
+        if entry_id not in mandatory_by_entry:
+            continue
+        for bullet in bullets:
+            mapped = _select_required_evidence_ids(
+                evidence_items=plan.evidence_items,
+                required_bullets_by_experience_id={entry_id: [bullet]},
+            )
+            token = (
+                f"evidence:{mapped[0]}"
+                if mapped
+                else f"pinned:{_normalize_space(bullet).casefold()}"
+            )
+            mandatory_by_entry[entry_id].add(token)
+
+    required_roles = set(
+        plan.requirement_led_controls.required_content_pins.experience_entry_ids
+    )
+    for entry_id in required_roles:
+        if entry_id in mandatory_by_entry and not mandatory_by_entry[entry_id]:
+            mandatory_by_entry[entry_id].add(f"positioning:{entry_id}")
+
+    violations: list[ArtifactBudgetViolation] = []
+    for entry_id, mandatory in mandatory_by_entry.items():
+        if len(mandatory) <= ceiling:
+            continue
+        entry = experience_entries[entry_id]
+        title = _normalize_space(str(entry.get("title") or ""))
+        company = _normalize_space(str(entry.get("company") or ""))
+        role = " — ".join(part for part in (company, title) if part) or entry_id
+        violations.append(
+            ArtifactBudgetViolation(
+                experience_entry_id=entry_id,
+                role=role,
+                required_achievement_count=len(mandatory),
+                ceiling=ceiling,
+            )
+        )
+    if violations:
+        raise ArtifactBudgetInfeasibleError(tuple(violations))
 
 
 def build_tailoring_plan(
@@ -1758,6 +1870,8 @@ def _text_list(value: object) -> list[str]:
 
 
 __all__ = [
+    "ArtifactBudgetInfeasibleError",
+    "ArtifactBudgetViolation",
     "STOCK_PHRASE_MARKERS",
     "EvidencePlanItem",
     "TailoringPlan",
@@ -1766,4 +1880,5 @@ __all__ = [
     "build_tailoring_change_annotations",
     "build_tailoring_plan",
     "evaluate_tailoring_quality",
+    "require_artifact_budget_feasible",
 ]

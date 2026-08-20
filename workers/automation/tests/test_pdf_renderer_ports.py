@@ -488,13 +488,13 @@ def _html_experience_bullets(payload: dict, profile: dict) -> list[str]:
     return [bullet["text"] for entry in document["experience"] for bullet in entry["bullets"]]
 
 
-def test_html_pdf_renderer_caps_requirement_covered_overflow_like_txt() -> None:
-    """Coverage mappings never override the configured per-role hard ceiling."""
+def test_html_pdf_renderer_preserves_legacy_approved_mandatory_overflow_like_txt() -> None:
+    """Render-only refresh never truncates a previously approved mapped payload."""
     profile = _profile()
     payload = _overflow_payload(mapped=True)
 
     txt_bullets = _txt_experience_bullets(payload, profile)
-    assert txt_bullets == _OVERFLOW_BULLETS[:4]
+    assert txt_bullets == _OVERFLOW_BULLETS
 
     assert _html_experience_bullets(payload, profile) == txt_bullets
 

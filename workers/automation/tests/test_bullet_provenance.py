@@ -51,6 +51,7 @@ from jobctrl.infrastructure.materials.bullet_provenance_repository import (
 from jobctrl.infrastructure.materials.html_resume_pdf import build_resume_document
 from jobctrl.infrastructure.materials.unit_of_work import SqliteUnitOfWork
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctrl.resume_profile import mark_current_artifact_budget
 
 JOB_URL = "https://example.com/senior-backend"
 PERSISTED_JOB_ID = JobId("00000000-0000-4000-8000-000000000041")
@@ -401,6 +402,7 @@ def test_provenance_caps_covered_bullets_to_match_shipped_resume() -> None:
         }
         for index, bullet in enumerate(bullets)
     ]
+    payload = mark_current_artifact_budget(payload)
 
     rows = _build(profile, payload, _analysis())
     experience_texts = [row.generated_text for row in rows if row.section == "experience"]

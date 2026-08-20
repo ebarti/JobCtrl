@@ -9749,6 +9749,46 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("rederives precanonical materialized bullet evidence when a profile bullet changes", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Precanonical Bullet Evidence Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entries = resume.experience_entries as Array<Record<string, unknown>>;
+    entries[0]!.bullets = ["Scaled the platform to 200 users."];
+
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile },
+    });
+    expect(initial.statusCode, initial.body).toBe(200);
+
+    const materializedProfile = initial.json().profile as Record<string, unknown>;
+    const materializedResume = materializedProfile.resume as Record<string, unknown>;
+    const materializedEntries = materializedResume.experience_entries as Array<Record<string, unknown>>;
+    const staleEvidence = materializedEntries[0]!.achievement_evidence as Array<Record<string, unknown>>;
+    // The extractor used by the previous release did not recognize count metrics.
+    staleEvidence[0]!.metrics = [];
+    materializedEntries[0]!.bullets = ["Scaled the platform to 250 users."];
+
+    const updated = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: materializedProfile },
+    });
+
+    expect(updated.statusCode, updated.body).toBe(200);
+    expect(updated.json().profile.resume.experience_entries[0].achievement_evidence).toEqual([
+      expect.objectContaining({
+        id: "role_1_bullet_1",
+        source_text: "Scaled the platform to 250 users.",
+        metrics: ["250 users"],
+      }),
+    ]);
+
+    await app.close();
+  });
+
   it("keeps explicit claim policy when legacy strict mode is present", async () => {
     const app = buildApp(options);
     const profile = validProfileFixture("Explicit Claim Policy Candidate");

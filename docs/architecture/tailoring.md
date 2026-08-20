@@ -348,6 +348,17 @@ can say, for example:
 
 ## Attempt Loop And Candidate Selection
 
+Before `_run_attempts()` builds or sends any generator message, the domain
+computes the distinct mandatory achievement set for each experience role. User
+pins and requirement-coverage edges share one slot when they reference the same
+canonical evidence. If that union exceeds `max_experience_bullets`, Tailor
+blocks with `ARTIFACT_BUDGET_INFEASIBLE`, records the role, required count, and
+ceiling, preserves the durable attempt count, and asks the user to reduce pins
+or raise the ceiling. An impossible profile configuration never consumes model
+or retry budget. Selected payloads receive an internal artifact-budget version;
+render-only refreshes preserve mandatory overflow on older accepted mapped
+payloads that predate that marker instead of silently changing reviewed text.
+
 `_run_attempts()` owns the generator retry loop.
 
 For each attempt:
@@ -772,6 +783,11 @@ generation, preserves the durable Tailor attempt count, records both generation
 identities, and asks for a fresh score. Scoring resolves employer analysis
 through its complete cache identity first, so the replacement fit report and
 the Tailoring coverage graph describe the same posting snapshot.
+
+Tailoring also does not retry an impossible artifact budget. The stage is
+blocked non-retryably before candidate generation, with bounded per-role
+violation facts and no synthetic judge result. Once the profile constraint is
+changed, a new Tailor execution can proceed normally.
 
 ## How To Change Tailoring Safely
 

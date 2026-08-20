@@ -25,6 +25,7 @@ from pathlib import Path
 
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.materials.aggregate import MaterialsSet
+from jobctrl.domain.materials.adversarial import AdversarialReviewResult
 from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
@@ -616,6 +617,62 @@ def test_post_voice_judge_rejection_keeps_the_pre_voice_accepted_candidate(tmp_p
     assert saved.voice.reason == "voice_final_judge_rejected"
     assert saved.voice.final_judge["verdict"] == "FAIL"
     assert outcome.report["tailoring_quality"]["final_judge"]["verdict"] == "PASS"
+
+
+def test_persisted_voice_final_judge_omits_adversarial_prompt_messages(
+    tmp_path: Path,
+) -> None:
+    def voice_fn(request: VoiceRequest) -> VoiceResult:
+        return VoiceResult(
+            executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=(
+                "Backend engineer who cut API latency with Python.",
+            ),
+            experience_bullets=(
+                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
+            ),
+        )
+
+    review = AdversarialReviewResult.from_response(
+        {
+            "verdict": "PASS",
+            "score": 0.9,
+            "score_rationale": "All personas passed.",
+            "blockers": [],
+            "warnings": [],
+            "repair_instructions": [],
+            "personas": [],
+        },
+        threshold=0.8,
+        normalized_fit_score=0.9,
+        model="judge-a",
+        prompt_messages=(
+            {"role": "user", "content": "FULL PROFILE SECRET and complete resume"},
+        ),
+    )
+    materials_repo = _FakeMaterialsRepo()
+    provenance_repo = _FakeProvenanceRepo()
+    use_case = _use_case(
+        materials_repo,
+        provenance_repo,
+        _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)),
+        _RecordingPublisher(),
+        _FunctionVoice(voice_fn),
+    )
+    use_case._adversarial_review = lambda **_kwargs: review  # type: ignore[method-assign]
+
+    outcome = use_case.execute(
+        job=_job(),
+        profile_snapshot=_snapshot(),
+        tailored_dir=tmp_path,
+    )
+
+    assert outcome.status == "approved"
+    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
+    assert saved is not None and saved.voice is not None
+    adversarial = saved.voice.final_judge["adversarial_review"]
+    assert "llm_audit" not in adversarial
+    assert "FULL PROFILE SECRET" not in json.dumps(saved.voice.to_dict())
 
 
 def test_gate_grounding_and_shipped_fit_persist_with_lifecycle_labels(tmp_path: Path) -> None:

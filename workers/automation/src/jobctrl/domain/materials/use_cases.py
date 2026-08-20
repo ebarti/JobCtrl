@@ -114,11 +114,13 @@ from jobctrl.domain.materials.claim_grounding import (
     ground_claim_mappings,
 )
 from jobctrl.domain.materials.quality import (
+    ArtifactBudgetInfeasibleError,
     TailoringPlan,
     TailoringPrerequisiteError,
     build_tailoring_change_annotations,
     build_tailoring_plan,
     evaluate_tailoring_quality,
+    require_artifact_budget_feasible,
 )
 from jobctrl.domain.materials.requirement_coverage import (
     GeneratedClaimMapping,
@@ -177,6 +179,7 @@ from jobctrl.resume_profile import (
     get_skill_categories,
     get_tailoring_policy,
     get_writing_style,
+    mark_current_artifact_budget,
     require_resume_master,
 )
 
@@ -2190,6 +2193,10 @@ class TailorResumeUseCase:
             employer_analysis=employer_analysis,
             requirement_fit_report=requirement_fit_report,
         )
+        require_artifact_budget_feasible(
+            profile_snapshot.as_dict(),
+            tailoring_plan,
+        )
         tailor_prompt_base = build_master_tailor_prompt(
             profile_snapshot,
             tailoring_plan=tailoring_plan,
@@ -2236,6 +2243,8 @@ class TailorResumeUseCase:
                 report=report,
                 error="No parseable JSON in any attempt",
             )
+
+        parsed_payload = mark_current_artifact_budget(parsed_payload)
 
         # Phase 3: run the explicit voice pass on the SELECTED candidate BEFORE the
         # final audit (VOICE-03), then compute provenance + coverage against the
@@ -3727,7 +3736,7 @@ class TailorResumeUseCase:
         VoicePassRecord,
         str | None,
         ClaimGrounding,
-        JudgeVerdict,
+        JudgeVerdict | None,
     ]:
         """Run the voice pass before the final audit (VOICE-01/02/03 + GROUND-06).
 
@@ -3748,7 +3757,8 @@ class TailorResumeUseCase:
             deterministic detector / FK gate (the pre-voice candidate itself was
             ungrounded), so ``execute`` hard-rejects it exactly as in Phase 2.
           * ``grounding`` — exact claim-to-final-rendered-line bindings.
-          * ``final_verdict`` — the judge verdict for the payload that ships.
+          * ``final_verdict`` — the judge verdict for the payload that ships, or
+            ``None`` when validation rejected the candidate before judging ran.
 
         The pre-voice candidate is always audited first; the voiced payload is only
         adopted only when it edits an eligible line, reduces buzzwords, and survives
@@ -3756,8 +3766,6 @@ class TailorResumeUseCase:
         applicable adversarial gate. Semantic or register regressions therefore
         fall back to the already accepted candidate.
         """
-        if base_verdict is None:
-            base_verdict = JudgeVerdict.failed(notes="selected candidate has no judge verdict")
         base_rows, base_error, _base_findings = self._compute_provenance(
             profile_snapshot=profile_snapshot,
             job=job,
@@ -3771,13 +3779,13 @@ class TailorResumeUseCase:
         # No voice port, or the pre-voice candidate is already ungrounded: keep the
         # pre-voice payload (the fabrication gate will reject it upstream if needed).
         # Coverage is still computed canonically over whatever grounded rows exist.
-        if self._voice is None or base_error is not None:
+        if base_verdict is None or self._voice is None or base_error is not None:
             base_rows, base_grounding = self._grounded_rows(tailored_payload, base_rows)
             coverage = self._coverage_for(base_rows, employer_analysis, base_error, corpus)
             record = (
-                VoicePassRecord.skipped("no_voice_port")
-                if self._voice is None
-                else VoicePassRecord.skipped("pre_voice_candidate_rejected")
+                VoicePassRecord.skipped("pre_voice_candidate_rejected")
+                if base_verdict is None or base_error is not None
+                else VoicePassRecord.skipped("no_voice_port")
             )
             return (
                 tailored_payload,
@@ -3923,14 +3931,18 @@ class TailorResumeUseCase:
                     job=job,
                     validation_mode=validation_mode,
                 )
-                final_judge_record["adversarial_review"] = adversarial_review.to_dict()
+                final_judge_record["adversarial_review"] = (
+                    adversarial_review.to_voice_pass_dict()
+                )
                 if not adversarial_review.passed:
                     final_verdict = self._adversarial_failed_verdict(
                         final_verdict,
                         adversarial_review,
                     )
                     final_judge_record = self._judge_record(final_verdict) or final_judge_record
-                    final_judge_record["adversarial_review"] = adversarial_review.to_dict()
+                    final_judge_record["adversarial_review"] = (
+                        adversarial_review.to_voice_pass_dict()
+                    )
         if not final_verdict.approved:
             rejected = replace(
                 voice_record,
@@ -4774,6 +4786,7 @@ __all__ = [
     "SuppressTailoredArtifactsOutcome",
     "SuppressTailoredArtifactsUseCase",
     "TailorOutcome",
+    "ArtifactBudgetInfeasibleError",
     "TailoringPrerequisiteError",
     "TailorResumeUseCase",
     "build_cover_letter_prompt",

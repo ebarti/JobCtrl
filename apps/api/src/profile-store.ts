@@ -54,6 +54,10 @@ const DEFAULT_STYLE = {
 const DEFAULT_RESUME_TEMPLATE = "{{ personal_data }}\n\n{{ resume_body }}\n";
 const ACHIEVEMENT_METRIC_PATTERN =
   /(?:[$€£]\s?\d+(?:[,.]\d+)*(?:\s?(?:k|m|b|million|billion))?\+?|\b\d+(?:[,.]\d+)*\+?\s?(?:bps|basis\s+points?)\b|\b\d+(?:[,.]\d+)*\s?%|\b\d+(?:[,.]\d+)*\s?x\b|\b\d+(?:[,.]\d+)*(?:k|m|b)?\+?\s?(?:users?|customers?|requests?|req\/s|qps|events?|engineers?|developers?|teams?|services?|systems?|pipelines?|applications?|apps?|employees?|incidents?|deployments?|releases?|countries?|markets?|regions?|clients?|accounts?|features?|projects?|products?|servers?|nodes?|transactions?|records?|tickets?|ms|milliseconds?|seconds?|secs?|minutes?|hours?|days?|weeks?|months?|years?|revenue|savings|costs?|budget|latency|uptime|availability|throughput)\b|\b24\/7\b|\b(?!(?:19|20)\d{2}\b)\d+(?:[,.]\d+)*\+?\b)/gi;
+// Recognition-only compatibility for auto-derived evidence written before the
+// canonical extractor above. New rows never use this narrower pattern.
+const LEGACY_BULLET_METRIC_PATTERN_V1 =
+  /(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?|\d+(?:\.\d+)?%|\d+(?:\.\d+)?x|\d+(?:\.\d+)?\s?(?:ms|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|qps|req\/s))/gi;
 const LEGACY_BULLET_SENIORITY_TERMS = [
   "own",
   "owned",
@@ -696,7 +700,10 @@ function isMaterializedLegacyBulletEvidence(evidence: Record<string, unknown>, e
   return text(evidence.action).trim() === sourceText
     && text(evidence.outcome).trim() === sourceText
     && asTextArray(evidence.tools).length === 0
-    && arraysEqual(asTextArray(evidence.metrics), extractedAchievementMetrics(sourceText))
+    && (
+      arraysEqual(asTextArray(evidence.metrics), extractedAchievementMetrics(sourceText))
+      || arraysEqual(asTextArray(evidence.metrics), extractedLegacyBulletMetricsV1(sourceText))
+    )
     && text(evidence.evidence_strength, "supported").trim() === "supported"
     && confidenceNumber(evidence.claim_confidence) === 0.8
     && boolValue(evidence.user_confirmed, false)
@@ -791,6 +798,20 @@ function extractedAchievementMetrics(sourceText: string): string[] {
   const seen = new Set<string>();
   const metrics: string[] = [];
   for (const match of sourceText.matchAll(ACHIEVEMENT_METRIC_PATTERN)) {
+    const metric = match[0].trim().replace(/\s+/g, " ");
+    const key = metric.toLocaleLowerCase();
+    if (metric && !seen.has(key)) {
+      seen.add(key);
+      metrics.push(metric);
+    }
+  }
+  return metrics;
+}
+
+function extractedLegacyBulletMetricsV1(sourceText: string): string[] {
+  const seen = new Set<string>();
+  const metrics: string[] = [];
+  for (const match of sourceText.matchAll(LEGACY_BULLET_METRIC_PATTERN_V1)) {
     const metric = match[0].trim().replace(/\s+/g, " ");
     const key = metric.toLocaleLowerCase();
     if (metric && !seen.has(key)) {
