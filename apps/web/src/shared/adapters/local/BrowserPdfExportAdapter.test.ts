@@ -3,14 +3,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BrowserPdfExportAdapter,
   type PdfDocumentFactory,
+  type PdfPageRasterizer,
 } from "./BrowserPdfExportAdapter.js";
 
 afterEach(() => {
   document.body.replaceChildren();
 });
 
+function pdfDocumentDouble() {
+  return {
+    addPage: vi.fn(),
+    addPageImage: vi.fn(),
+    addSearchableText: vi.fn(),
+    save: vi.fn(),
+    setPage: vi.fn(),
+  };
+}
+
 describe("BrowserPdfExportAdapter", () => {
-  it("downloads the live Plate document as a cleaned A4 PDF", async () => {
+  it("downloads a cleaned, browser-rasterized A4 PDF with searchable punctuation", async () => {
     const exportRoot = document.createElement("div");
     exportRoot.className = "resume-plate-page";
     exportRoot.style.setProperty("--resume-template-accent", "#123456");
@@ -18,10 +29,7 @@ describe("BrowserPdfExportAdapter", () => {
       "--resume-template-font-family",
       '"Custom Resume", serif',
     );
-    exportRoot.style.setProperty(
-      "--resume-template-page-padding",
-      "12mm 14mm",
-    );
+    exportRoot.style.setProperty("--resume-template-page-padding", "12mm 14mm");
     const source = document.createElement("div");
     source.className = "resume-plate-document";
     source.style.letterSpacing = "0.01em";
@@ -29,7 +37,14 @@ describe("BrowserPdfExportAdapter", () => {
     source.contentEditable = "true";
     source.innerHTML = `
       <main class="resume-page" style="inline-size: 210mm; min-block-size: 297mm">
-        <p class="jobctrl-review-line has-jobctrl-comment jobctrl-selected-line">Unsaved live edit</p>
+        <p class="resume-contact" data-resume-line-number="1">
+          <span class="resume-contact-item resume-contact-phone"><a>+1 555-0100</a></span>
+          <span class="resume-contact-separator">•</span>
+          <span class="resume-contact-item resume-contact-email"><a>person@example.com</a></span>
+          <span class="resume-contact-separator">•</span>
+          <span class="resume-contact-item resume-contact-website"><a>example.com</a></span>
+        </p>
+        <p class="resume-entry-summary jobctrl-review-line has-jobctrl-comment jobctrl-selected-line" data-resume-line-number="2">Presented the plan; led the rollout.</p>
         <aside class="resume-plate-comment" data-resume-editor-chrome="true">Audit-only comment</aside>
       </main>
     `;
@@ -41,12 +56,9 @@ describe("BrowserPdfExportAdapter", () => {
     exportRoot.append(source);
     document.body.append(exportRoot);
 
-    const save = vi.fn();
-    const html = vi.fn(
-      async (
-        exportSource: HTMLElement,
-        options: Parameters<Awaited<ReturnType<PdfDocumentFactory>>["html"]>[1],
-      ) => {
+    const pageCanvas = document.createElement("canvas");
+    const rasterizer: PdfPageRasterizer = vi.fn(
+      async (exportSource, options) => {
         expect(exportSource).toHaveAttribute(
           "data-resume-pdf-export-source",
           "true",
@@ -60,10 +72,13 @@ describe("BrowserPdfExportAdapter", () => {
         expect(
           exportSource.style.getPropertyValue("--resume-template-page-padding"),
         ).toBe("12mm 14mm");
+        expect(options.windowWidth).toBe(794);
+        expect(options.pageHeightPx).toBe(1_123);
+
         const clonedDocument =
           document.implementation.createHTMLDocument("PDF clone");
         clonedDocument.body.innerHTML = exportSource.outerHTML;
-        options.html2canvas.onclone(clonedDocument);
+        options.onclone(clonedDocument);
         expect(
           clonedDocument.documentElement.style.getPropertyValue(
             "background-color",
@@ -77,30 +92,41 @@ describe("BrowserPdfExportAdapter", () => {
         expect(
           clonedDocument.body.style.getPropertyValue("background-color"),
         ).toBe("rgb(255, 255, 255)");
-        expect(
-          clonedDocument.body.style.getPropertyValue("color"),
-        ).toBe("rgb(17, 17, 17)");
+        expect(clonedDocument.body.style.getPropertyValue("color")).toBe(
+          "rgb(17, 17, 17)",
+        );
         const clone = clonedDocument.querySelector<HTMLElement>(
           ".resume-plate-document",
         );
         expect(clone?.style.getPropertyValue("--resume-template-accent")).toBe(
           "#123456",
         );
-        expect(clone?.textContent).toContain("Unsaved live edit");
+        expect(clone?.textContent).toContain(
+          "Presented the plan; led the rollout.",
+        );
         expect(clone?.textContent).not.toContain("Audit-only comment");
         expect(clone?.hasAttribute("contenteditable")).toBe(false);
-        expect([...clone!.querySelector("p")!.classList]).not.toEqual(
+        expect([
+          ...clone!.querySelector(".resume-entry-summary")!.classList,
+        ]).not.toEqual(
           expect.arrayContaining([
             "jobctrl-review-line",
             "has-jobctrl-comment",
             "jobctrl-selected-line",
           ]),
         );
+        return [
+          {
+            canvas: pageCanvas,
+            slice: { endPx: 1_123, startPx: 0 },
+          },
+        ];
       },
     );
-    const factory: PdfDocumentFactory = vi.fn(async () => ({ html, save }));
+    const pdf = pdfDocumentDouble();
+    const factory: PdfDocumentFactory = vi.fn(async () => pdf);
 
-    await new BrowserPdfExportAdapter(factory).downloadPdf({
+    await new BrowserPdfExportAdapter(factory, rasterizer).downloadPdf({
       filename: "Résumé live?.pdf",
       source,
     });
@@ -108,89 +134,111 @@ describe("BrowserPdfExportAdapter", () => {
     expect(factory).toHaveBeenCalledTimes(1);
     expect(factory).toHaveBeenCalledWith({
       format: "a4",
+      heightMm: 297,
+      heightPx: 1_123,
       widthMm: 210,
       widthPx: 794,
     });
-    expect(html).toHaveBeenCalledWith(
-      source,
+    expect(pdf.addPage).not.toHaveBeenCalled();
+    expect(pdf.setPage).toHaveBeenCalledWith(1);
+    expect(pdf.addPageImage).toHaveBeenCalledWith(pageCanvas, "resume-page-1");
+    expect(pdf.addSearchableText).toHaveBeenCalledWith(
       expect.objectContaining({
-        autoPaging: "text",
-        margin: [0, 0, 0, 0],
-        width: 209.9,
-        windowWidth: 794,
+        pageNumber: 1,
+        text: "+1 555-0100 | person@example.com | example.com",
       }),
     );
-    expect(save).toHaveBeenCalledWith("Resume-live.pdf");
+    expect(pdf.addSearchableText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pageNumber: 1,
+        text: "Presented the plan; led the rollout.",
+      }),
+    );
+    expect(pdf.save).toHaveBeenCalledWith("Resume-live.pdf");
     expect(source).not.toHaveAttribute("data-resume-pdf-export-source");
     expect(source.getAttribute("style")).toBe(originalSourceStyle);
     expect(exportRoot).not.toHaveAttribute("data-resume-pdf-export-source");
-    expect(source).toHaveTextContent("Unsaved live edit");
+    expect(source).toHaveTextContent("Presented the plan; led the rollout.");
     expect(source).toHaveTextContent("Audit-only comment");
   });
 
-  it("preserves Letter media geometry from the mounted Plate page", async () => {
+  it("preserves Letter media geometry across multiple raster pages", async () => {
     const exportRoot = document.createElement("div");
     exportRoot.className = "resume-plate-page";
-    exportRoot.style.setProperty(
-      "--resume-template-page-inline-size",
-      "8.5in",
-    );
-    exportRoot.style.setProperty(
-      "--resume-template-page-block-size",
-      "11in",
-    );
+    exportRoot.style.setProperty("--resume-template-page-inline-size", "8.5in");
+    exportRoot.style.setProperty("--resume-template-page-block-size", "11in");
     const source = document.createElement("div");
     source.className = "resume-plate-document";
     source.innerHTML = `
       <main class="resume-page" style="inline-size: 8.5in; min-block-size: 11in">
-        <p>Letter resume</p>
+        <p data-resume-line-number="1">Letter resume</p>
       </main>
     `;
     exportRoot.append(source);
     document.body.append(exportRoot);
 
-    const save = vi.fn();
-    const html = vi.fn(async () => undefined);
-    const factory: PdfDocumentFactory = vi.fn(async () => ({ html, save }));
+    const firstCanvas = document.createElement("canvas");
+    const secondCanvas = document.createElement("canvas");
+    const rasterizer: PdfPageRasterizer = vi.fn(async (_source, options) => {
+      expect(options.windowWidth).toBe(816);
+      expect(options.pageHeightPx).toBe(1_056);
+      return [
+        {
+          canvas: firstCanvas,
+          slice: { endPx: 1_056, startPx: 0 },
+        },
+        {
+          canvas: secondCanvas,
+          slice: { endPx: 1_400, startPx: 1_056 },
+        },
+      ];
+    });
+    const pdf = pdfDocumentDouble();
+    const factory: PdfDocumentFactory = vi.fn(async () => pdf);
 
-    await new BrowserPdfExportAdapter(factory).downloadPdf({
+    await new BrowserPdfExportAdapter(factory, rasterizer).downloadPdf({
       filename: "letter-resume.pdf",
       source,
     });
 
     expect(factory).toHaveBeenCalledWith({
       format: "letter",
+      heightMm: 279.4,
+      heightPx: 1_056,
       widthMm: 215.9,
       widthPx: 816,
     });
-    expect(html).toHaveBeenCalledWith(
-      source,
-      expect.objectContaining({
-        width: 215.8,
-        windowWidth: 816,
-      }),
+    expect(pdf.addPage).toHaveBeenCalledTimes(1);
+    expect(pdf.addPageImage).toHaveBeenNthCalledWith(
+      1,
+      firstCanvas,
+      "resume-page-1",
     );
-    expect(save).toHaveBeenCalledWith("letter-resume.pdf");
+    expect(pdf.addPageImage).toHaveBeenNthCalledWith(
+      2,
+      secondCanvas,
+      "resume-page-2",
+    );
+    expect(pdf.save).toHaveBeenCalledWith("letter-resume.pdf");
     expect(source).not.toHaveAttribute("style");
     expect(source).not.toHaveAttribute("data-resume-pdf-export-source");
   });
 
   it("rejects a detached Plate document before loading the PDF runtime", async () => {
-    const factory: PdfDocumentFactory = vi.fn(async () => ({
-      html: vi.fn(async () => undefined),
-      save: vi.fn(),
-    }));
+    const factory: PdfDocumentFactory = vi.fn(async () => pdfDocumentDouble());
+    const rasterizer: PdfPageRasterizer = vi.fn(async () => []);
 
     await expect(
-      new BrowserPdfExportAdapter(factory).downloadPdf({
+      new BrowserPdfExportAdapter(factory, rasterizer).downloadPdf({
         filename: "resume.pdf",
         source: document.createElement("div"),
       }),
     ).rejects.toThrow("no longer available");
     expect(factory).not.toHaveBeenCalled();
+    expect(rasterizer).not.toHaveBeenCalled();
   });
 
-  it("restores the live DOM marker when PDF generation fails", async () => {
+  it("restores the live DOM marker when rasterization fails", async () => {
     const exportRoot = document.createElement("div");
     exportRoot.className = "resume-plate-page";
     const source = document.createElement("div");
@@ -200,25 +248,20 @@ describe("BrowserPdfExportAdapter", () => {
     const originalSourceStyle = source.getAttribute("style");
     exportRoot.append(source);
     document.body.append(exportRoot);
-    const factory: PdfDocumentFactory = vi.fn(async () => {
-      expect(source).toHaveAttribute(
-        "data-resume-pdf-export-source",
-        "true",
-      );
-      throw new Error("PDF runtime failed");
+    const factory: PdfDocumentFactory = vi.fn(async () => pdfDocumentDouble());
+    const rasterizer: PdfPageRasterizer = vi.fn(async () => {
+      expect(source).toHaveAttribute("data-resume-pdf-export-source", "true");
+      throw new Error("PDF rasterization failed");
     });
 
     await expect(
-      new BrowserPdfExportAdapter(factory).downloadPdf({
+      new BrowserPdfExportAdapter(factory, rasterizer).downloadPdf({
         filename: "resume.pdf",
         source,
       }),
-    ).rejects.toThrow("PDF runtime failed");
+    ).rejects.toThrow("PDF rasterization failed");
     expect(exportRoot).not.toHaveAttribute("data-resume-pdf-export-source");
-    expect(source).toHaveAttribute(
-      "data-resume-pdf-export-source",
-      "existing",
-    );
+    expect(source).toHaveAttribute("data-resume-pdf-export-source", "existing");
     expect(source.getAttribute("style")).toBe(originalSourceStyle);
   });
 });

@@ -20,6 +20,8 @@ import { routeTree } from "../../routeTree.gen.js";
 import {
   BrowserPdfExportAdapter,
   type PdfDocumentFactory,
+  type PdfPageRasterizer,
+  type PdfRasterizationOptions,
 } from "../../shared/adapters/local/BrowserPdfExportAdapter.js";
 import {
   makeApplyAudit,
@@ -1345,11 +1347,9 @@ describe("<ApplyReviewView>", () => {
 
   it("exports the current unsaved tailored resume from the Plate editor", async () => {
     const save = vi.fn();
-    const html = vi.fn(
-      async (
-        exportSource: HTMLElement,
-        options: Parameters<Awaited<ReturnType<PdfDocumentFactory>>["html"]>[1],
-      ) => {
+    const pageCanvas = document.createElement("canvas");
+    const rasterizer: PdfPageRasterizer = vi.fn(
+      async (exportSource: HTMLElement, options: PdfRasterizationOptions) => {
         expect(exportSource).toHaveClass("resume-plate-document");
         expect(exportSource).toHaveTextContent("unsaved tailored export");
         expect(exportSource.scrollWidth).toBe(1_014);
@@ -1357,13 +1357,23 @@ describe("<ApplyReviewView>", () => {
           exportSource.querySelector<HTMLElement>(".resume-page")?.scrollWidth,
         ).toBe(1_014);
         expect(options.windowWidth).toBe(794);
+        expect(options.pageHeightPx).toBe(1_123);
+        return [
+          {
+            canvas: pageCanvas,
+            slice: { endPx: 1_123, startPx: 0 },
+          },
+        ];
       },
     );
     const pdfDocumentFactory: PdfDocumentFactory = vi.fn(async () => ({
-      html,
+      addPage: vi.fn(),
+      addPageImage: vi.fn(),
+      addSearchableText: vi.fn(),
       save,
+      setPage: vi.fn(),
     }));
-    const pdfExport = new BrowserPdfExportAdapter(pdfDocumentFactory);
+    const pdfExport = new BrowserPdfExportAdapter(pdfDocumentFactory, rasterizer);
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({ pdfExport }),
     });
@@ -1384,10 +1394,12 @@ describe("<ApplyReviewView>", () => {
     await waitFor(() => expect(save).toHaveBeenCalledWith("tailored-resume-preview.pdf"));
     expect(pdfDocumentFactory).toHaveBeenCalledWith({
       format: "a4",
+      heightMm: 297,
+      heightPx: 1_123,
       widthMm: 210,
       widthPx: 794,
     });
-    expect(html).toHaveBeenCalledTimes(1);
+    expect(rasterizer).toHaveBeenCalledTimes(1);
   });
 
   it("labels the grounded shipped fit and revision usage for a grounded audit", async () => {

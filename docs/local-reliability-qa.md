@@ -77,9 +77,12 @@ export it, and verify the browser downloads a non-empty PDF containing the live
 edit with the expected surface-specific filename. The PDF must omit JobCtrl
 comment/audit chrome and transient selection styling, preserve non-default
 template typography/colors/margins, and use the mounted template's A4 or Letter
-media box without a trailing blank page. The action must not save the profile,
-template, or review draft; call a generation endpoint; register or replace an
-artifact; or change Apply approval state.
+media box without a trailing blank page. Compare the mounted Plate document to
+the downloaded PDF and confirm Unicode contact glyphs and separators are
+visually unchanged, punctuation-adjacent word spaces do not collapse, and text
+search/extraction still returns the live edit. The action must not save the
+profile, template, or review draft; call a generation endpoint; register or
+replace an artifact; or change Apply approval state.
 
 For Profile Plate text projection, edit an experience bullet or non-empty
 position summary in the Plate document, switch to **Profile data**, and verify

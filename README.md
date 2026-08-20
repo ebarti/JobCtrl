@@ -243,8 +243,11 @@ evidence, qualifications, and the complete capability matrix.
 - Export the live document from every Plate resume editor in Profile,
   Preferences, and Apply Review. **Export PDF** downloads the document currently
   on screen, including live formatting and the active template's A4 or Letter
-  layout, without the export action registering a JobCtrl artifact or changing
-  Apply approval state. On Profile, direct canonical text edits to the name,
+  layout. The browser-rasterized visual layer preserves the mounted document's
+  glyphs, punctuation spacing, typography, and line wrapping, while a separate
+  invisible text layer keeps the download searchable and extractable. The
+  export action does not register a JobCtrl artifact or change Apply approval
+  state. On Profile, direct canonical text edits to the name,
   executive profile, position summaries, and experience bullets enter the same
   validated form draft as the boxed editor and follow its normal autosave;
   formatting and composite layout lines remain local to the mounted document.

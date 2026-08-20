@@ -78,9 +78,11 @@ completion year on the first row and the degree directly underneath.
 
 The download is rendered from the document currently mounted in the browser,
 so it includes live text and formatting while preserving the active template's
-styling, margins, and A4 or Letter page size. The **Export PDF** action itself
-does not save a profile or template, register the download as a JobCtrl
-artifact, or change Apply approval state.
+styling, margins, glyphs, punctuation spacing, line wrapping, and A4 or Letter
+page size. Its visible pages use the browser's rendered output; a separate
+invisible text layer keeps the PDF searchable and extractable. The **Export
+PDF** action itself does not save a profile or template, register the download
+as a JobCtrl artifact, or change Apply approval state.
 
 Profile and preference forms validate before saving. Their autosave and explicit
 Save buttons use the same mutation path; the exact delay and field contract are

@@ -185,15 +185,7 @@ test("Plate baseline editor downloads the current unsaved document as a PDF", as
     expect(viewport.width).toBeCloseTo(612, 0);
     expect(viewport.height).toBeCloseTo(792, 0);
     const operatorList = await pdfPage.getOperatorList();
-    const renderedColors = operatorList.fnArray
-      .map((operator, index) =>
-        operator === OPS.setFillRGBColor
-          ? operatorList.argsArray[index]?.[0]
-          : null,
-      )
-      .filter((color): color is string => typeof color === "string");
-    expect(renderedColors).toContain("#c00000");
-    expect(renderedColors).not.toContain("#f0f0f0");
+    expect(operatorList.fnArray).toContain(OPS.paintImageXObject);
     const textContent = await pdfPage.getTextContent();
     const exportedText = textContent.items
       .map((item) => ("str" in item ? item.str : ""))

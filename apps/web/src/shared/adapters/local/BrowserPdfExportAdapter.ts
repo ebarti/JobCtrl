@@ -1,12 +1,14 @@
+import type { Options as Html2CanvasOptions } from "html2canvas";
+
 import type {
   PdfExportPort,
   PdfExportRequest,
 } from "../../ports/PdfExportPort.js";
 
 const PDF_EXPORT_SOURCE_ATTRIBUTE = "data-resume-pdf-export-source";
-// Keep CSS-pixel conversion rounding from spilling an otherwise exact page
-// boundary onto an empty trailing PDF page.
-const PDF_RENDER_WIDTH_EPSILON_MM = 0.1;
+const PDF_BITMAP_SCALE = 2;
+const PDF_PAGE_SLICE_EPSILON_PX = 1;
+const PDF_SEARCH_TEXT_FONT_SIZE_PT = 6;
 const EDITOR_CHROME_SELECTOR = '[data-resume-editor-chrome="true"]';
 const EDITOR_STATE_CLASSES = [
   "has-jobctrl-comment",
@@ -41,39 +43,76 @@ const TEMPLATE_STYLE_PROPERTIES = [
 
 interface PdfPageGeometry {
   readonly format: "a4" | "letter";
+  readonly heightMm: number;
+  readonly heightPx: number;
   readonly widthMm: number;
   readonly widthPx: number;
 }
 
-const PDF_PAGE_GEOMETRIES: Record<PdfPageGeometry["format"], PdfPageGeometry> = {
-  a4: { format: "a4", widthMm: 210, widthPx: 794 },
-  letter: { format: "letter", widthMm: 215.9, widthPx: 816 },
-};
-
-interface PdfHtmlOptions {
-  readonly autoPaging: "text";
-  readonly html2canvas: {
-    readonly backgroundColor: string;
-    readonly ignoreElements: (element: Element) => boolean;
-    readonly logging: boolean;
-    readonly onclone: (clonedDocument: Document) => void;
-    readonly useCORS: boolean;
+const PDF_PAGE_GEOMETRIES: Record<PdfPageGeometry["format"], PdfPageGeometry> =
+  {
+    a4: {
+      format: "a4",
+      heightMm: 297,
+      heightPx: 1_123,
+      widthMm: 210,
+      widthPx: 794,
+    },
+    letter: {
+      format: "letter",
+      heightMm: 279.4,
+      heightPx: 1_056,
+      widthMm: 215.9,
+      widthPx: 816,
+    },
   };
-  readonly margin: [number, number, number, number];
-  readonly width: number;
+
+export interface PdfPageSlice {
+  readonly endPx: number;
+  readonly startPx: number;
+}
+
+export interface PdfVerticalInterval {
+  readonly bottomPx: number;
+  readonly topPx: number;
+}
+
+export interface PdfRasterizedPage {
+  readonly canvas: HTMLCanvasElement;
+  readonly slice: PdfPageSlice;
+}
+
+export interface PdfRasterizationOptions {
+  readonly ignoreElements: (element: Element) => boolean;
+  readonly lineIntervals: readonly PdfVerticalInterval[];
+  readonly onclone: (clonedDocument: Document) => void;
+  readonly pageHeightPx: number;
   readonly windowWidth: number;
-  readonly x: number;
-  readonly y: number;
+}
+
+interface PdfSearchableTextLine {
+  readonly pageNumber: number;
+  readonly text: string;
+  readonly xMm: number;
+  readonly yMm: number;
 }
 
 interface PdfDocument {
-  html(source: HTMLElement, options: PdfHtmlOptions): Promise<unknown>;
+  addPage(): void;
+  addPageImage(image: HTMLCanvasElement, alias: string): void;
+  addSearchableText(line: PdfSearchableTextLine): void;
   save(filename: string): void;
+  setPage(pageNumber: number): void;
 }
 
 export type PdfDocumentFactory = (
   page: PdfPageGeometry,
 ) => Promise<PdfDocument>;
+
+export type PdfPageRasterizer = (
+  source: HTMLElement,
+  options: PdfRasterizationOptions,
+) => Promise<readonly PdfRasterizedPage[]>;
 
 async function createPdfDocument(page: PdfPageGeometry): Promise<PdfDocument> {
   const { jsPDF } = await import("jspdf");
@@ -85,11 +124,33 @@ async function createPdfDocument(page: PdfPageGeometry): Promise<PdfDocument> {
     unit: "mm",
   });
   return {
-    html: async (source, options) => {
-      await pdf.html(source, options);
+    addPage: () => {
+      pdf.addPage(page.format, "portrait");
+    },
+    addPageImage: (image, alias) => {
+      pdf.addImage(
+        image,
+        "PNG",
+        0,
+        0,
+        page.widthMm,
+        page.heightMm,
+        alias,
+        "FAST",
+      );
+    },
+    addSearchableText: (line) => {
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(PDF_SEARCH_TEXT_FONT_SIZE_PT);
+      pdf.text(line.text, line.xMm, line.yMm, {
+        renderingMode: "invisible",
+      });
     },
     save: (filename) => {
       pdf.save(filename);
+    },
+    setPage: (pageNumber) => {
+      pdf.setPage(pageNumber);
     },
   };
 }
@@ -149,6 +210,24 @@ function pdfWindowWidth(
   return Math.max(pageGeometry.widthPx, Math.ceil(physicalWidth));
 }
 
+function pdfPageHeight(
+  source: HTMLElement,
+  pageGeometry: PdfPageGeometry,
+): number {
+  const page = source.querySelector<HTMLElement>(".resume-page");
+  if (!page) return pageGeometry.heightPx;
+  const style = getComputedStyle(page);
+  const physicalHeight = positiveCssNumber(
+    style,
+    "min-block-size",
+    "min-height",
+  );
+  return Math.max(
+    pageGeometry.heightPx,
+    Math.ceil(physicalHeight ?? pageGeometry.heightPx),
+  );
+}
+
 function inheritedTemplateValue(
   source: HTMLElement,
   computedStyle: CSSStyleDeclaration,
@@ -172,7 +251,10 @@ function applyTemplateContext(source: HTMLElement): void {
   const properties = new Set<string>([
     ...TEMPLATE_STYLE_PROPERTIES,
     ...TEMPLATE_STYLE_PROPERTIES.map((property) =>
-      property.replace(TEMPLATE_STYLE_PREFIX, `${TEMPLATE_STYLE_PREFIX}default-`),
+      property.replace(
+        TEMPLATE_STYLE_PREFIX,
+        `${TEMPLATE_STYLE_PREFIX}default-`,
+      ),
     ),
   ]);
   for (let index = 0; index < computedStyle.length; index += 1) {
@@ -250,9 +332,233 @@ function preparePdfClone(clonedDocument: Document): void {
   }
 }
 
+function collectTextLineIntervals(
+  source: HTMLElement,
+): readonly PdfVerticalInterval[] {
+  const page = source.querySelector<HTMLElement>(".resume-page") ?? source;
+  const sourceRect = source.getBoundingClientRect();
+  const ownerDocument = source.ownerDocument;
+  const showText = ownerDocument.defaultView?.NodeFilter.SHOW_TEXT ?? 4;
+  const walker = ownerDocument.createTreeWalker(page, showText);
+  const intervals: PdfVerticalInterval[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!node.textContent?.trim()) continue;
+    const parent = node.parentElement;
+    if (!parent || parent.closest(EDITOR_CHROME_SELECTOR)) continue;
+    const range = ownerDocument.createRange();
+    range.selectNodeContents(node);
+    if (typeof range.getClientRects !== "function") continue;
+    for (const rect of Array.from(range.getClientRects())) {
+      if (rect.height <= 0 || rect.width <= 0) continue;
+      intervals.push({
+        bottomPx: rect.bottom - sourceRect.top,
+        topPx: rect.top - sourceRect.top,
+      });
+    }
+  }
+  return intervals.sort((left, right) => left.topPx - right.topPx);
+}
+
+function pdfPageSlices(
+  totalHeightPx: number,
+  pageHeightPx: number,
+  lineIntervals: readonly PdfVerticalInterval[],
+): readonly PdfPageSlice[] {
+  const slices: PdfPageSlice[] = [];
+  let startPx = 0;
+  while (startPx < totalHeightPx - PDF_PAGE_SLICE_EPSILON_PX) {
+    let endPx = Math.min(startPx + pageHeightPx, totalHeightPx);
+    if (endPx < totalHeightPx - PDF_PAGE_SLICE_EPSILON_PX) {
+      const crossingLines = lineIntervals.filter(
+        (interval) => interval.topPx < endPx && interval.bottomPx > endPx,
+      );
+      if (crossingLines.length > 0) {
+        const safeEndPx = Math.floor(
+          Math.min(...crossingLines.map((interval) => interval.topPx)),
+        );
+        if (safeEndPx > startPx + PDF_PAGE_SLICE_EPSILON_PX) {
+          endPx = safeEndPx;
+        }
+      }
+    }
+    if (endPx <= startPx + PDF_PAGE_SLICE_EPSILON_PX) {
+      endPx = Math.min(startPx + pageHeightPx, totalHeightPx);
+    }
+    slices.push({ endPx, startPx });
+    startPx = endPx;
+  }
+  return slices.length > 0
+    ? slices
+    : [{ endPx: Math.max(1, totalHeightPx), startPx: 0 }];
+}
+
+async function rasterizePdfPages(
+  source: HTMLElement,
+  options: PdfRasterizationOptions,
+): Promise<readonly PdfRasterizedPage[]> {
+  const { default: html2canvasModule } = await import("html2canvas");
+  const html2canvas = html2canvasModule as unknown as (
+    element: HTMLElement,
+    options?: Partial<Html2CanvasOptions>,
+  ) => Promise<HTMLCanvasElement>;
+  const continuousCanvas = await html2canvas(source, {
+    backgroundColor: "#ffffff",
+    ignoreElements: options.ignoreElements,
+    logging: false,
+    onclone: options.onclone,
+    scale: PDF_BITMAP_SCALE,
+    useCORS: true,
+    width: options.windowWidth,
+    windowWidth: options.windowWidth,
+  });
+  const canvasScale = Math.max(
+    Number.EPSILON,
+    continuousCanvas.width / options.windowWidth,
+  );
+  const pageHeightCanvasPx = Math.max(
+    1,
+    Math.round(options.pageHeightPx * canvasScale),
+  );
+  const scaledLineIntervals = options.lineIntervals.map((interval) => ({
+    bottomPx: interval.bottomPx * canvasScale,
+    topPx: interval.topPx * canvasScale,
+  }));
+  const slices = pdfPageSlices(
+    continuousCanvas.height,
+    pageHeightCanvasPx,
+    scaledLineIntervals,
+  );
+
+  return slices.map((slice) => {
+    const pageCanvas = source.ownerDocument.createElement("canvas");
+    pageCanvas.width = continuousCanvas.width;
+    pageCanvas.height = pageHeightCanvasPx;
+    const context = pageCanvas.getContext("2d", { alpha: false });
+    if (!context) {
+      throw new Error("The browser could not prepare a PDF page canvas.");
+    }
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+    const sliceHeightPx = Math.max(1, slice.endPx - slice.startPx);
+    context.drawImage(
+      continuousCanvas,
+      0,
+      slice.startPx,
+      continuousCanvas.width,
+      sliceHeightPx,
+      0,
+      0,
+      continuousCanvas.width,
+      sliceHeightPx,
+    );
+    return {
+      canvas: pageCanvas,
+      slice: {
+        endPx: slice.endPx / canvasScale,
+        startPx: slice.startPx / canvasScale,
+      },
+    };
+  });
+}
+
+const SEARCHABLE_TEXT_FALLBACK_SELECTOR = [
+  ".resume-name",
+  ".resume-address",
+  ".resume-contact",
+  ".resume-section-title",
+  ".resume-summary",
+  ".resume-entry-company",
+  ".resume-entry-title",
+  ".resume-entry-date",
+  ".resume-entry-location",
+  ".resume-entry-summary",
+  ".resume-bullets li",
+  ".resume-skills-list li",
+].join(", ");
+
+function searchableTextElements(source: HTMLElement): readonly HTMLElement[] {
+  const semanticLines = Array.from(
+    source.querySelectorAll<HTMLElement>("[data-resume-line-number]"),
+  ).filter(
+    (element) =>
+      !element.closest(EDITOR_CHROME_SELECTOR) &&
+      !element.querySelector("[data-resume-line-number]"),
+  );
+  if (semanticLines.length > 0) return semanticLines;
+  return Array.from(
+    source.querySelectorAll<HTMLElement>(SEARCHABLE_TEXT_FALLBACK_SELECTOR),
+  ).filter(
+    (element) =>
+      !element.closest(EDITOR_CHROME_SELECTOR) &&
+      !element.querySelector(SEARCHABLE_TEXT_FALLBACK_SELECTOR),
+  );
+}
+
+function normalizedSearchableText(element: HTMLElement): string {
+  if (element.matches(".resume-contact")) {
+    const contactItems = Array.from(
+      element.querySelectorAll<HTMLElement>(".resume-contact-item"),
+    )
+      .map((item) => item.textContent?.replace(/\s+/g, " ").trim() ?? "")
+      .filter(Boolean);
+    if (contactItems.length > 0) return contactItems.join(" | ");
+  }
+  return (element.innerText || element.textContent || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/[•·]/g, " | ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function searchableTextLayer(
+  source: HTMLElement,
+  pages: readonly PdfRasterizedPage[],
+  geometry: PdfPageGeometry,
+): readonly PdfSearchableTextLine[] {
+  const sourceRect = source.getBoundingClientRect();
+  const pageRect =
+    source
+      .querySelector<HTMLElement>(".resume-page")
+      ?.getBoundingClientRect() ?? sourceRect;
+  const pageWidthPx = pageRect.width > 0 ? pageRect.width : geometry.widthPx;
+  const lines: PdfSearchableTextLine[] = [];
+  for (const element of searchableTextElements(source)) {
+    const text = normalizedSearchableText(element);
+    if (!text) continue;
+    const rect = element.getBoundingClientRect();
+    const topPx = rect.top - sourceRect.top;
+    const matchingPageIndex = pages.findIndex(
+      (page, index) =>
+        topPx >= page.slice.startPx &&
+        (topPx < page.slice.endPx || index === pages.length - 1),
+    );
+    const pageIndex =
+      matchingPageIndex >= 0
+        ? matchingPageIndex
+        : Math.max(0, pages.length - 1);
+    const page = pages[pageIndex] ?? pages[0];
+    if (!page) continue;
+    const relativeTopPx = Math.max(0, topPx - page.slice.startPx);
+    const xMm = Math.min(
+      geometry.widthMm - 0.5,
+      Math.max(
+        0.5,
+        ((rect.left - pageRect.left) / pageWidthPx) * geometry.widthMm,
+      ),
+    );
+    const yMm = Math.min(
+      geometry.heightMm - 0.5,
+      Math.max(1, (relativeTopPx / geometry.heightPx) * geometry.heightMm + 1),
+    );
+    lines.push({ pageNumber: pageIndex + 1, text, xMm, yMm });
+  }
+  return lines;
+}
+
 export class BrowserPdfExportAdapter implements PdfExportPort {
   constructor(
     private readonly pdfDocumentFactory: PdfDocumentFactory = createPdfDocument,
+    private readonly pdfPageRasterizer: PdfPageRasterizer = rasterizePdfPages,
   ) {}
 
   async downloadPdf({ filename, source }: PdfExportRequest): Promise<void> {
@@ -266,23 +572,30 @@ export class BrowserPdfExportAdapter implements PdfExportPort {
     try {
       applyTemplateContext(source);
       const pageGeometry = pdfPageGeometry(source);
+      const windowWidth = pdfWindowWidth(source, pageGeometry);
+      const pageHeightPx = pdfPageHeight(source, pageGeometry);
+      const lineIntervals = collectTextLineIntervals(source);
       source.setAttribute(PDF_EXPORT_SOURCE_ATTRIBUTE, "true");
       const pdf = await this.pdfDocumentFactory(pageGeometry);
-      await pdf.html(source, {
-        autoPaging: "text",
-        html2canvas: {
-          backgroundColor: "#ffffff",
-          ignoreElements: (element) => element.matches(EDITOR_CHROME_SELECTOR),
-          logging: false,
-          onclone: preparePdfClone,
-          useCORS: true,
-        },
-        margin: [0, 0, 0, 0],
-        width: pageGeometry.widthMm - PDF_RENDER_WIDTH_EPSILON_MM,
-        windowWidth: pdfWindowWidth(source, pageGeometry),
-        x: 0,
-        y: 0,
+      const pages = await this.pdfPageRasterizer(source, {
+        ignoreElements: (element) => element.matches(EDITOR_CHROME_SELECTOR),
+        lineIntervals,
+        onclone: preparePdfClone,
+        pageHeightPx,
+        windowWidth,
       });
+      if (pages.length === 0) {
+        throw new Error("The browser produced no resume pages to export.");
+      }
+      pages.forEach((page, index) => {
+        if (index > 0) pdf.addPage();
+        pdf.setPage(index + 1);
+        pdf.addPageImage(page.canvas, `resume-page-${index + 1}`);
+      });
+      for (const line of searchableTextLayer(source, pages, pageGeometry)) {
+        pdf.setPage(line.pageNumber);
+        pdf.addSearchableText(line);
+      }
       pdf.save(pdfFilename(filename));
     } finally {
       restoreAttribute(source, PDF_EXPORT_SOURCE_ATTRIBUTE, originalMarker);

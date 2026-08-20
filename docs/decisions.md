@@ -2282,3 +2282,25 @@ impossible. Keeping the ordering operation at the Profile boundary gives the
 user both a one-click chronological default and a durable custom override,
 while one canonical sequence keeps text, HTML, Plate, and PDF artifacts in
 parity.
+
+## 2026-08-20: Plate PDF Export Uses Browser-Raster Visual Fidelity
+
+Status: accepted
+
+Decision: direct Plate exports use the browser-rendered page as the PDF's
+visible layer, sliced at physical A4 or Letter page boundaries without cutting
+through a text line. A separate invisible, normalized text layer preserves
+search and extraction. The clean render clone carries the mounted template
+context and removes editor-only selection, comment, and audit chrome before
+capture.
+
+Rationale: routing HTML through jsPDF's text renderer substituted its built-in
+fonts for the browser's active fonts. Unsupported glyphs changed or vanished,
+and the substituted glyph metrics did not match the browser-positioned words,
+so punctuation-adjacent spacing could collapse. Making the browser render the
+visual authority preserves the exact mounted appearance; keeping text as a
+separate invisible layer avoids trading that fidelity for a picture-only PDF.
+
+Consequences: `PdfExportPort` remains browser-local and receives only the
+currently mounted Plate element. Export does not persist the editor, call a
+generation endpoint, register or replace an artifact, or change approval state.
