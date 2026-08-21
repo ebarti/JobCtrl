@@ -77,7 +77,8 @@ export it, and verify the browser downloads a non-empty PDF containing the live
 edit with the expected surface-specific filename. The PDF must omit JobCtrl
 comment/audit chrome and transient selection styling, preserve non-default
 template typography/colors/margins, and use the mounted template's A4 or Letter
-media box without a trailing blank page. Compare the mounted Plate document to
+media box without a trailing blank page or a rendered text line split across a
+page boundary. Compare the mounted Plate document to
 the downloaded PDF and confirm Unicode contact glyphs and separators are
 visually unchanged, punctuation-adjacent word spaces do not collapse, and text
 search/extraction still returns the live edit. The action must not save the

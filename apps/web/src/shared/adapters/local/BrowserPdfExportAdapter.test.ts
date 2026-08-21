@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   BrowserPdfExportAdapter,
+  pdfPageSlices,
   type PdfDocumentFactory,
   type PdfPageRasterizer,
 } from "./BrowserPdfExportAdapter.js";
@@ -21,6 +22,28 @@ function pdfDocumentDouble() {
 }
 
 describe("BrowserPdfExportAdapter", () => {
+  it("moves a bitmap page cut above a text line that crosses the boundary", () => {
+    const crossingLine = {
+      bottomPx: 2_261.906,
+      topPx: 2_225.906,
+    };
+
+    const slices = pdfPageSlices(4_373, 2_246, [crossingLine]);
+
+    expect(slices).toEqual([
+      { endPx: 2_225, startPx: 0 },
+      { endPx: 4_373, startPx: 2_225 },
+    ]);
+    expect(slices[1]?.startPx).toBe(slices[0]?.endPx);
+    expect(
+      slices.some(
+        (slice) =>
+          crossingLine.topPx < slice.endPx &&
+          crossingLine.bottomPx > slice.endPx,
+      ),
+    ).toBe(false);
+  });
+
   it("downloads a cleaned, browser-rasterized A4 PDF with searchable punctuation", async () => {
     const exportRoot = document.createElement("div");
     exportRoot.className = "resume-plate-page";

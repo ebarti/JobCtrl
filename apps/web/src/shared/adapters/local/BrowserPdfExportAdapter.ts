@@ -359,7 +359,7 @@ function collectTextLineIntervals(
   return intervals.sort((left, right) => left.topPx - right.topPx);
 }
 
-function pdfPageSlices(
+export function pdfPageSlices(
   totalHeightPx: number,
   pageHeightPx: number,
   lineIntervals: readonly PdfVerticalInterval[],
