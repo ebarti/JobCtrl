@@ -71,6 +71,42 @@ evidence records and reported sample counts; reliability percentages explain
 their basis; and the normal focused refresh has no local observation-path
 input.
 
+For Plate PDF-export changes, exercise the shared control on `/profile`,
+`/preferences`, and `/apply-review`. Edit the mounted document without saving,
+export it, and verify the browser downloads a non-empty PDF containing the live
+edit with the expected surface-specific filename. The PDF must omit JobCtrl
+comment/audit chrome and transient selection styling, preserve non-default
+template typography/colors/margins, and use the mounted template's A4 or Letter
+media box without a trailing blank page or a rendered text line split across a
+page boundary. Compare the mounted Plate document to
+the downloaded PDF and confirm Unicode contact glyphs and separators are
+visually unchanged, punctuation-adjacent word spaces do not collapse, and text
+search/extraction still returns the live edit. Drag-selection must follow the
+rendered word and line geometry without offset, oversized, or cross-line
+highlight boxes. The action must not save the
+profile, template, or review draft; call a generation endpoint; register or
+replace an artifact; or change Apply approval state.
+
+For Profile Plate text projection, edit an experience bullet or non-empty
+position summary in the Plate document, switch to **Profile data**, and verify
+the matching boxed field contains the same unsaved value and the normal Profile
+dirty/save controls appear. Include deletion plus digits or punctuation so the
+check exercises Plate's model-change path rather than a native browser input
+event. Saving must persist that exact field through the normal Profile mutation.
+While both panes are open, make an unrelated boxed edit before editing Plate
+and verify both changes survive. If the boxed editor removes or changes the
+same bullet first, the Plate projection must preserve the boxed structure and
+surface a conflict. A formatting-only change or edit to a composite
+company/location/title/date line must not create a guessed profile-field edit.
+Verify the Size control displays its relative value as a percentage (100% at
+the resume default) with high-contrast text rather than exposing the internal
+unitless scale. Verify experience entries render newest-first and education
+aligns the completion year with the institution above the degree. Then move an
+experience manually, save, reload, and verify both the boxed order and Plate
+order preserve the saved sequence. Apply **Sort newest first** and verify it
+restores current/latest roles first. A role with a summary but no bullets must
+not render an empty list or the full bullet-bearing entry gap.
+
 ## Pick The Right Checklist
 
 | You changed… | Use |

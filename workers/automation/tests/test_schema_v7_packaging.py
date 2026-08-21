@@ -13,6 +13,7 @@ _AUTOMATION_ROOT = Path(__file__).resolve().parents[1]
 _SCHEMA_MEMBERS = {
     "jobctrl/infrastructure/migrations/schema_v7.sql",
     "jobctrl/infrastructure/migrations/schema_v8.sql",
+    "jobctrl/infrastructure/migrations/schema_v9.sql",
 }
 
 

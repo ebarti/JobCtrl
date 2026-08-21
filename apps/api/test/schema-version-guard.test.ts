@@ -17,7 +17,9 @@ import {
 import {
   EXACT_V7_SCHEMA_MANIFEST,
   EXACT_V8_SCHEMA_MANIFEST,
+  EXACT_V9_SCHEMA_MANIFEST,
   hasExactV8SchemaManifest,
+  hasExactV9SchemaManifest,
   schemaManifest,
 } from "../src/schema-manifest.js";
 
@@ -30,8 +32,8 @@ function makeDbWithUserVersion(userVersion: number): { dbPath: string; cleanup: 
   return { dbPath, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
-function makeExactV8Database(): { dbPath: string; cleanup: () => void } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-exact-v8-"));
+function makeExactV9Database(): { dbPath: string; cleanup: () => void } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-exact-v9-"));
   const dbPath = path.join(dir, "jobs.db");
   const migrations = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -40,6 +42,7 @@ function makeExactV8Database(): { dbPath: string; cleanup: () => void } {
   const db = new Database(dbPath);
   db.exec(fs.readFileSync(path.join(migrations, "schema_v7.sql"), "utf8"));
   db.exec(fs.readFileSync(path.join(migrations, "schema_v8.sql"), "utf8"));
+  db.exec(fs.readFileSync(path.join(migrations, "schema_v9.sql"), "utf8"));
   db.pragma(`user_version = ${SUPPORTED_SCHEMA_VERSION}`);
   db.close();
   return { dbPath, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
@@ -55,7 +58,7 @@ function tableColumns(db: Database.Database, tableName: string): string[] {
 }
 
 describe("schema version guard at DB open", () => {
-  it.each([0, 6, 7, 9])("refuses schema version %i before runtime writes", (userVersion) => {
+  it.each([0, 6, 7, 8, 10])("refuses schema version %i before runtime writes", (userVersion) => {
     const { dbPath, cleanup } = makeDbWithUserVersion(userVersion);
     try {
       const token = "job" + "ctl";
@@ -84,8 +87,8 @@ describe("schema version guard at DB open", () => {
     }
   });
 
-  it("opens the exact v8 schema", () => {
-    const { dbPath, cleanup } = makeExactV8Database();
+  it("opens the exact v9 schema", () => {
+    const { dbPath, cleanup } = makeExactV9Database();
     try {
       openDatabase(dbPath).close();
       openReadOnlyDatabase(dbPath).close();
@@ -94,7 +97,7 @@ describe("schema version guard at DB open", () => {
     }
   });
 
-  it("rejects a merely stamped v8 database before runtime writes", () => {
+  it("rejects a merely stamped v9 database before runtime writes", () => {
     const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
     try {
       expect(() => openDatabase(dbPath)).toThrow(IncompatibleSchemaManifestError);
@@ -111,7 +114,7 @@ describe("schema version guard at DB open", () => {
     }
   });
 
-  it("rejects a malformed v8 database without running legacy tombstone migration", () => {
+  it("rejects a malformed v9 database without running legacy tombstone migration", () => {
     const { dbPath, cleanup } = makeDbWithUserVersion(SUPPORTED_SCHEMA_VERSION);
     try {
       const token = "job" + "ctl";
@@ -162,10 +165,18 @@ describe("schema version guard at DB open", () => {
     expect(pythonManifest).toContain("table_count=117,");
     expect(pythonManifest).toContain(`fingerprint="${EXACT_V8_SCHEMA_MANIFEST.fingerprint}",`);
     expect(EXACT_V8_SCHEMA_MANIFEST).toEqual({
-      version: SUPPORTED_SCHEMA_VERSION,
+      version: 8,
       objectCount: 272,
       tableCount: 117,
       fingerprint: "3705f7c7d90454bbeaa85227a9d4ce87c12efd14935e0d14afc830939e80ff31",
+    });
+    expect(pythonManifest).toContain("version=9,");
+    expect(pythonManifest).toContain(`fingerprint="${EXACT_V9_SCHEMA_MANIFEST.fingerprint}",`);
+    expect(EXACT_V9_SCHEMA_MANIFEST).toEqual({
+      version: SUPPORTED_SCHEMA_VERSION,
+      objectCount: 272,
+      tableCount: 117,
+      fingerprint: "ee90d737238c162f34d69f5becf01f15897d4bbeb2c4b2c51d41526ec6343621",
     });
   });
 
@@ -182,6 +193,26 @@ describe("schema version guard at DB open", () => {
       db.exec(fs.readFileSync(path.join(migrations, "schema_v8.sql"), "utf8"));
       expect(schemaManifest(db, EXACT_V8_SCHEMA_MANIFEST.version)).toEqual(EXACT_V8_SCHEMA_MANIFEST);
       expect(hasExactV8SchemaManifest(db)).toBe(true);
+    } finally {
+      db.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("computes the exact v9 manifest from the frozen v8 schema plus the additive summary column", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-exact-v9-"));
+    const dbPath = path.join(dir, "jobs.db");
+    const migrations = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../../workers/automation/src/jobctrl/infrastructure/migrations",
+    );
+    const db = new Database(dbPath);
+    try {
+      db.exec(fs.readFileSync(path.join(migrations, "schema_v7.sql"), "utf8"));
+      db.exec(fs.readFileSync(path.join(migrations, "schema_v8.sql"), "utf8"));
+      db.exec(fs.readFileSync(path.join(migrations, "schema_v9.sql"), "utf8"));
+      expect(schemaManifest(db, EXACT_V9_SCHEMA_MANIFEST.version)).toEqual(EXACT_V9_SCHEMA_MANIFEST);
+      expect(hasExactV9SchemaManifest(db)).toBe(true);
     } finally {
       db.close();
       fs.rmSync(dir, { recursive: true, force: true });

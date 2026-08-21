@@ -72,7 +72,7 @@ export function emptyProfileMonth(): ProfileMonthValue {
 
 export function parseProfileMonth(value: string): ProfileMonthValue {
   const trimmed = value.trim();
-  if (!trimmed || /^(present|current)$/i.test(trimmed)) {
+  if (!trimmed || /^(present|current|now)$/i.test(trimmed)) {
     return emptyProfileMonth();
   }
 
@@ -123,10 +123,10 @@ export function parseProfileDateRange(value: string): ProfileDateRangeValue {
 
   const spacedSingleDashRange = /^(.+?)\s+-\s+(.+)$/.exec(trimmed);
   const spacedRange = spacedSingleDashRange ?? /^(.+?)\s*(?:--|–|—)\s*(.+)$/.exec(trimmed);
-  const compactYearRange = /^(\d{4})-(\d{4}|present|current)$/i.exec(trimmed);
+  const compactYearRange = /^(\d{4})-(\d{4}|present|current|now)$/i.exec(trimmed);
   const startText = spacedRange?.[1] ?? compactYearRange?.[1] ?? trimmed;
   const endText = spacedRange?.[2] ?? compactYearRange?.[2] ?? "";
-  const present = /^(present|current)$/i.test(endText.trim());
+  const present = /^(present|current|now)$/i.test(endText.trim());
 
   return {
     start: parseProfileMonth(startText),
@@ -166,6 +166,34 @@ export function isProfileDateRangeChronological(value: ProfileDateRangeValue): b
     return true;
   }
   return endMonth >= startMonth;
+}
+
+/**
+ * Compare persisted profile date ranges for an explicit newest-first reorder.
+ * Current roles lead, followed by the latest end date and then latest start
+ * date. Unknown ranges remain at the end, and callers retain stable ties.
+ */
+export function compareProfileDateRangesNewestFirst(left: string, right: string): number {
+  const leftKey = profileDateRangeSortKey(left);
+  const rightKey = profileDateRangeSortKey(right);
+
+  for (let index = 0; index < leftKey.length; index += 1) {
+    const difference = (rightKey[index] ?? 0) - (leftKey[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return 0;
+}
+
+function profileDateRangeSortKey(value: string): readonly number[] {
+  const range = parseProfileDateRange(value);
+  const startYear = Number(range.start.year) || 0;
+  const startMonth = Number(range.start.month) || (startYear ? 12 : 0);
+  const endYear = range.present ? 0 : Number(range.end.year) || 0;
+  const endMonth = range.present ? 0 : Number(range.end.month) || (endYear ? 12 : 0);
+
+  return [range.present ? 1 : 0, endYear, endMonth, startYear, startMonth];
 }
 
 function normalizeMonthNumber(value: string): string {

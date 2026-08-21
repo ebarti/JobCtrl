@@ -1,4 +1,5 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { ProfileSchema } from "@jobctrl/contracts";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -8,7 +9,8 @@ import {
   sampleSettingsResponse,
 } from "../../../test/fixtures/projections.js";
 import { renderWithProviders } from "../../../test/render.js";
-import { buildTestPorts } from "../../../test/testPorts.js";
+import { FakePdfExportPort, buildTestPorts } from "../../../test/testPorts.js";
+import { resumeSemanticTextChangesFromPlateValues } from "../../materials/components/ResumeAuditPins.js";
 import { ProfileEditor } from "./ProfileEditor.js";
 import { resumeTemplatePreviewStyle } from "./ResumeTemplatePanel.js";
 
@@ -16,7 +18,38 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function semanticBullet(
+  texts: readonly string[],
+): Parameters<typeof resumeSemanticTextChangesFromPlateValues>[0] {
+  return texts.map((text) => ({
+    children: [{ text }],
+    semanticId: "experience:exp-1:bullet:1",
+    tagName: "li",
+    type: "resume_block",
+  })) as Parameters<typeof resumeSemanticTextChangesFromPlateValues>[0];
+}
+
 describe("<ProfileEditor>", () => {
+  it("derives deletion, digit, punctuation, and split deltas from the Plate model", () => {
+    expect(
+      resumeSemanticTextChangesFromPlateValues(
+        semanticBullet(["Scaled the platform 40%."]),
+        semanticBullet(["Scaled the platform 45%.", "Added from Plate."]),
+      ),
+    ).toEqual([
+      {
+        semanticId: "experience:exp-1:bullet:1",
+        baselineTexts: ["Scaled the platform 40%."],
+        plateTexts: ["Scaled the platform 45%.", "Added from Plate."],
+      },
+    ]);
+  });
+
+  it("returns a cumulative empty delta after the Plate text returns to baseline", () => {
+    const baseline = semanticBullet(["Scaled the platform 40%."]);
+    expect(resumeSemanticTextChangesFromPlateValues(baseline, baseline)).toEqual([]);
+  });
+
   it("serializes resume theme tokens without losing print precision", () => {
     const style = resumeTemplatePreviewStyle({
       ...sampleResumeTemplateListResponse.effectiveDefaultVersion.theme,
@@ -39,6 +72,7 @@ describe("<ProfileEditor>", () => {
 
   it("renders the Profile baseline resume through the Plate editor pane", async () => {
     const user = userEvent.setup();
+    const pdfExport = new FakePdfExportPort();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -56,14 +90,16 @@ describe("<ProfileEditor>", () => {
       ),
     );
 
+    const ports = buildTestPorts({
+      api: {
+        profile: async () => sampleProfileResponse,
+        profilePreviewHtmlUrl: () => "/v1/profile/preview.html?v=0",
+        settings: async () => sampleSettingsResponse,
+      },
+      pdfExport,
+    });
     renderWithProviders(<ProfileEditor />, {
-      ports: buildTestPorts({
-        api: {
-          profile: async () => sampleProfileResponse,
-          profilePreviewHtmlUrl: () => "/v1/profile/preview.html?v=0",
-          settings: async () => sampleSettingsResponse,
-        },
-      }),
+      ports,
       withRouter: true,
     });
 
@@ -74,6 +110,26 @@ describe("<ProfileEditor>", () => {
     expect(await screen.findByText("Baseline resume editor")).toBeInTheDocument();
     expect(await screen.findByText("Plate HTML/CSS editor")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Bold" })).toBeInTheDocument();
+    const plateEditor = await screen.findByRole("textbox", { name: "Baseline resume editor editor" });
+    await user.click(plateEditor);
+    await user.type(plateEditor, " unsaved export edit");
+    await user.click(screen.getByRole("button", { name: "Export PDF" }));
+    await waitFor(() => expect(pdfExport.downloadPdf).toHaveBeenCalledTimes(1));
+    expect(pdfExport.downloadPdf).toHaveBeenCalledWith({
+      filename: "baseline-resume.pdf",
+      source: expect.any(HTMLElement),
+    });
+    const baselineExport = pdfExport.downloadPdf.mock.calls[0]?.[0];
+    expect(baselineExport?.source).toHaveClass("resume-plate-document");
+    expect(baselineExport?.source).toHaveTextContent("unsaved export edit");
+    pdfExport.downloadPdf.mockRejectedValueOnce(new Error("internal renderer path /private/resume"));
+    await user.click(screen.getByRole("button", { name: "Export PDF" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("PDF export failed. Try again.");
+    expect(screen.queryByText(/internal renderer path/i)).not.toBeInTheDocument();
+    expect(ports.telemetry.event).toHaveBeenCalledWith("resume_pdf_export_failed", {
+      operation: "resume_pdf_export",
+    });
+    expect(ports.telemetry.error).not.toHaveBeenCalled();
     expect(document.querySelector("main.resume-page")).toBeNull();
     expect(document.querySelector("div.resume-page")).toBeInTheDocument();
     const baselineEditor = document.querySelector<HTMLElement>(
@@ -92,8 +148,81 @@ describe("<ProfileEditor>", () => {
     expect(screen.queryByRole("link", { name: /open PDF/i })).not.toBeInTheDocument();
   });
 
+  it("persists the manually reordered experience sequence through the Profile mutation", async () => {
+    const user = userEvent.setup();
+    const profileResponse = {
+      ...sampleProfileResponse,
+      profile: ProfileSchema.parse(sampleProfileResponse.profile),
+    };
+    const baseEntry = profileResponse.profile.resume.experience_entries[0]!;
+    profileResponse.profile.resume.experience_entries = [
+      {
+        ...baseEntry,
+        id: "older",
+        title: "Older role",
+        date_range: "Jan 2018 - Dec 2020",
+      },
+      {
+        ...baseEntry,
+        id: "current",
+        title: "Current role",
+        date_range: "Mar 2024 - Present",
+      },
+      {
+        ...baseEntry,
+        id: "recent",
+        title: "Recent role",
+        date_range: "Jun 2021 - Feb 2024",
+      },
+    ];
+    profileResponse.profile.resume.tailoring_rules.required_experience_entry_ids = [
+      "older",
+      "current",
+      "recent",
+    ];
+    const updateProfile = vi.fn(async (body: { profileText: string }) => ({
+      ...profileResponse,
+      profile: JSON.parse(body.profileText) as typeof profileResponse.profile,
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response('<main class="resume-page"><p>Resume</p></main>', {
+          headers: { "content-type": "text/html" },
+        }),
+      ),
+    );
+
+    renderWithProviders(<ProfileEditor />, {
+      ports: buildTestPorts({
+        api: {
+          profile: async () => profileResponse,
+          profilePreviewHtmlUrl: () => "/v1/profile/preview.html?v=0",
+          settings: async () => sampleSettingsResponse,
+          updateProfile,
+        },
+      }),
+      withRouter: true,
+    });
+
+    await screen.findByLabelText("Full name");
+    await user.click(await screen.findByRole("button", { name: /Experience entries/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Move Initech - Current role up" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+
+    expect(
+      JSON.parse(updateProfile.mock.calls[0]![0].profileText).resume.experience_entries.map(
+        (entry: { id: string }) => entry.id,
+      ),
+    ).toEqual(["current", "older", "recent"]);
+  });
+
   it("renders preferences without the PDF preview pane", async () => {
     const user = userEvent.setup();
+    const pdfExport = new FakePdfExportPort();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -117,6 +246,7 @@ describe("<ProfileEditor>", () => {
           profile: async () => sampleProfileResponse,
           settings: async () => sampleSettingsResponse,
         },
+        pdfExport,
       }),
     });
 
@@ -159,7 +289,16 @@ describe("<ProfileEditor>", () => {
     expect(screen.getByRole("option", { name: "Resume" })).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.getByLabelText("Size")).toHaveAttribute("type", "number");
+    expect(screen.getByLabelText("Size")).toHaveValue(100);
+    expect(screen.getByLabelText("Size")).toHaveAccessibleDescription("Percentage of the resume default size.");
     expect(screen.queryByLabelText("Resize profile and resume editor panes")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Export PDF" }));
+    await waitFor(() =>
+      expect(pdfExport.downloadPdf).toHaveBeenCalledWith({
+        filename: "resume-template-preview.pdf",
+        source: expect.any(HTMLElement),
+      }),
+    );
   });
 
   it("uses the exact pinned resume template version instead of the latest revision", async () => {

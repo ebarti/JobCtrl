@@ -50,6 +50,7 @@ def _valid_profile_dict() -> dict:
                     "company": "Acme",
                     "date_range": "2022 -- Present",
                     "location": "Remote",
+                    "summary": "Owned the backend platform mandate.",
                     "bullets": ["Built APIs.", "Reduced incidents 40%."],
                 }
             ],
@@ -86,6 +87,7 @@ def test_from_dict_parses_valid_profile():
     assert profile.compensation.salary_expectation == "120000"
     assert profile.experience_metadata.years_of_experience_total == "5"
     assert len(profile.experience_entries) == 1
+    assert profile.experience_entries[0].summary == "Owned the backend platform mandate."
     assert profile.experience_entries[0].bullets == ("Built APIs.", "Reduced incidents 40%.")
     assert profile.experience_entries[0].achievement_evidence == ()
     assert profile.tailoring_rules.max_experience_bullets == 3

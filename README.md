@@ -240,6 +240,23 @@ evidence, qualifications, and the complete capability matrix.
 - Review generated resumes in Apply Review as editable rich-text documents:
   change text and formatting, add hyperlinks, save a draft, render the
   replacement PDF, and approve only the exact reviewed artifact.
+- Export the live document from every Plate resume editor in Profile,
+  Preferences, and Apply Review. **Export PDF** downloads the document currently
+  on screen, including live formatting and the active template's A4 or Letter
+  layout. The browser-rasterized visual layer preserves the mounted document's
+  glyphs, punctuation spacing, typography, and line wrapping, while a separate
+  invisible text layer keeps the download searchable and extractable. The
+  export action does not register a JobCtrl artifact or change Apply approval
+  state. On Profile, direct canonical text edits to the name,
+  executive profile, position summaries, and experience bullets enter the same
+  validated form draft as the boxed editor and follow its normal autosave.
+  Plate projects only fields changed from the mounted baseline; unrelated boxed
+  edits are preserved, and a same-field or structural conflict is surfaced
+  instead of being overwritten;
+  formatting and composite layout lines remain local to the mounted document.
+  The Profile editor also owns resume experience order: move roles up or down,
+  or apply the explicit newest-first sort, and the saved sequence is used by
+  baseline and tailored resumes.
 - Inspect the evidence map to see which profile achievements and skills are
   reused in generated materials, requirement-fit decisions, and recorded gaps.
   Job and artifact audit surfaces show those references as human-readable
@@ -548,14 +565,15 @@ This writes `~/.jobctrl/backups/jobctrl-<timestamp>.db` via SQLite
 `VACUUM INTO` and never deletes anything (`--output <path>` to choose a
 target).
 
-The native exact-v8 update performs its own paired migration safeguard. It
+The native exact-v9 update performs its own paired migration safeguard. It
 stops JobCtrl and backs up both `jobctrl.db` and bundled Temporal state. An
 admitted v6 installation is quiesced and transformed through a private exact-v7
-intermediate before v8 is sealed; an exact-v7 installation receives only the
-additive v8 schema. The intermediate is never installed. Any failed build,
-verification, activation, or readiness check restores the previous pair. The
-API and worker run exact v8 only; there is no mixed-version, dual-write, or
-permanent fallback runtime.
+and then exact-v8 intermediate before v9 is sealed; an exact-v7 installation
+starts at the private v8 step, while an exact-v8 installation receives only
+the additive optional position-summary column. Intermediates are never
+installed. Any failed build, verification, activation, or readiness check
+restores the previous pair. The API and worker run exact v9 only; there is no
+mixed-version, dual-write, or permanent fallback runtime.
 
 <details>
 <summary><b>Restore steps</b></summary>

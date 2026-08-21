@@ -65,6 +65,7 @@ describe("Profile types", () => {
       company: "Acme",
       dateRange: "2022 -- Present",
       location: "Remote",
+      summary: "Owned the service delivery mandate.",
       bullets: ["Shipped APIs."],
       achievementEvidence: [
         {
@@ -183,6 +184,7 @@ describe("Profile types", () => {
     };
 
     expect(profile.experienceEntries[0]?.id).toBe("role_1");
+    expect(profile.experienceEntries[0]?.summary).toBe("Owned the service delivery mandate.");
     expect(profile.experienceEntries[0]?.achievementEvidence[0]?.id).toBe("ev_role_1_latency");
     expect(profile.tailoringRules.tailoringPolicy.mode).toBe("balanced");
   });

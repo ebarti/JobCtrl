@@ -11,3 +11,4 @@ export type { ClipboardPort } from "./ClipboardPort.js";
 export type { OpenInOsPort } from "./OpenInOsPort.js";
 export type { TelemetryAttributes, TelemetryPort } from "./TelemetryPort.js";
 export type { FeatureFlagPort } from "./FeatureFlagPort.js";
+export type { PdfExportPort, PdfExportRequest } from "./PdfExportPort.js";

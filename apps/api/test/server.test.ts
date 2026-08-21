@@ -9383,6 +9383,9 @@ describe("local TypeScript API", () => {
     const app = buildApp(options);
     const originalStrayProfile = fs.readFileSync(strayProfileExportPath, "utf8");
     const validProfile = validProfileFixture("Taylor Updated");
+    const resume = validProfile.resume as Record<string, unknown>;
+    const entries = resume.experience_entries as Array<Record<string, unknown>>;
+    entries[0]!.summary = "Owned the platform and reliability mandate.";
     const response = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
@@ -9400,6 +9403,9 @@ describe("local TypeScript API", () => {
       style: { moderncv_style: "classic" },
       templateText: INERT_RESUME_TEMPLATE,
     });
+    expect(response.json().profile.resume.experience_entries[0].summary).toBe(
+      "Owned the platform and reliability mandate.",
+    );
     expect(fs.readFileSync(strayProfileExportPath, "utf8")).toBe(originalStrayProfile);
     const db = new Database(options.dbPath);
     try {
@@ -9415,6 +9421,9 @@ describe("local TypeScript API", () => {
       expect(db.prepare("SELECT COUNT(*) AS count FROM candidate_profile_experience_bullets").get()).toMatchObject({
         count: 1,
       });
+      expect(
+        db.prepare("SELECT summary FROM candidate_profile_experience_entries").get(),
+      ).toMatchObject({ summary: "Owned the platform and reliability mandate." });
     } finally {
       db.close();
     }

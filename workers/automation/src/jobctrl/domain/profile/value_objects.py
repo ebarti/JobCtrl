@@ -353,6 +353,7 @@ class ExperienceEntry:
     company: str = ""
     date_range: str = ""
     location: str = ""
+    summary: str = ""
     bullets: tuple[str, ...] = ()
     achievement_evidence: tuple[AchievementEvidence, ...] = ()
 
@@ -370,6 +371,7 @@ class ExperienceEntry:
             company=_str(data.get("company"), ""),
             date_range=_str(data.get("date_range"), ""),
             location=_str(data.get("location"), ""),
+            summary=_str(data.get("summary"), ""),
             bullets=_str_tuple(data.get("bullets")),
             achievement_evidence=evidence,
         )
@@ -381,6 +383,7 @@ class ExperienceEntry:
             "title": self.title,
             "company": self.company,
             "location": self.location,
+            "summary": self.summary,
             "bullets": list(self.bullets),
             "achievement_evidence": [item.to_dict() for item in self.achievement_evidence],
         }

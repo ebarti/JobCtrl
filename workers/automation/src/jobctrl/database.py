@@ -19,7 +19,7 @@ from typing import Any
 
 from jobctrl.config import DB_PATH, DEFAULTS
 from jobctrl.infrastructure.migrations.schema_manifest import (
-    EXACT_V8_MANIFEST,
+    EXACT_V9_MANIFEST,
     SchemaManifestError,
     assert_exact_manifest,
     schema_dump,
@@ -31,8 +31,9 @@ from jobctrl.scoring.eligibility_sql import (
 
 # Schema version stamped into the SQLite ``user_version`` header. Runtime opens
 # only this exact schema and refuses databases written by newer code. The only
-# supported upgrades are the explicit stopped-runtime v6-to-v8 composite and
-# v7-to-v8 additive cutovers.
+# supported upgrades are explicit stopped-runtime cutovers. Older v6/v7
+# databases retain their identity-to-v8 path before the additive v9 step; exact
+# v8 databases receive only the optional position-summary column.
 #
 # v2 (Contact & Outreach): generic ``entity_kind``/``entity_ref`` columns on
 # ``job_events`` so contact-only events carry honest identity without
@@ -48,9 +49,10 @@ from jobctrl.scoring.eligibility_sql import (
 # one-attempt consumption, and immutable protection audit records.
 # v7 replaced URL-shaped storage identity with canonical ``(tenant_id,
 # job_id)`` keys. v8 adds reusable direct and extrapolated compensation facts
-# without changing any v7 table. Posting URLs remain unique locators, never
-# aggregate identity.
-SCHEMA_VERSION = 8
+# without changing any v7 table. v9 adds the optional per-position summary to
+# Candidate Profile experience rows. Posting URLs remain unique locators,
+# never aggregate identity.
+SCHEMA_VERSION = 9
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -185,24 +187,24 @@ def _assert_schema_version_supported(
     return current
 
 
-def create_exact_v8_database(
+def create_exact_v9_database(
     db_path: Path | str | None = None,
 ) -> sqlite3.Connection:
-    """Create a brand-new database directly from the exact v8 schema."""
+    """Create a brand-new database directly from the exact v9 schema."""
     path = Path(db_path or DB_PATH)
     if path.exists():
         raise FileExistsError(
-            f"exact v8 creation requires a missing database path, found {path}"
+            f"exact v9 creation requires a missing database path, found {path}"
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = get_connection(path)
     try:
         if schema_dump(conn):
-            raise SchemaManifestError("fresh v8 creation found pre-existing schema")
+            raise SchemaManifestError("fresh v9 creation found pre-existing schema")
 
-        from jobctrl.infrastructure.migrations.schema_v8 import create_exact_v8_schema
+        from jobctrl.infrastructure.migrations.schema_v9 import create_exact_v9_schema
 
-        create_exact_v8_schema(conn)
+        create_exact_v9_schema(conn)
         conn.commit()
         return conn
     except BaseException:
@@ -217,36 +219,36 @@ def create_exact_v8_database(
         raise
 
 
-def open_exact_v8_database(
+def open_exact_v9_database(
     db_path: Path | str | None = None,
 ) -> sqlite3.Connection:
-    """Open an existing exact-v8 database without performing any writes."""
+    """Open an existing exact-v9 database without performing any writes."""
     path = Path(db_path or DB_PATH)
     if not path.exists():
         raise FileNotFoundError(f"No database to open at {path}")
     conn = get_connection(path, enable_wal=False)
     current_version = _assert_schema_version_supported(conn)
-    if current_version in (6, 7):
+    if current_version in (6, 7, 8):
         raise SchemaMigrationRequiredError(
             f"JobCtrl database is schema v{current_version}. Run `jobctrl update` so "
             "the native lifecycle can stop JobCtrl, create the paired backup, "
-            "and activate schema v8 before starting the runtime."
+            "and activate schema v9 before starting the runtime."
         )
     if current_version != SCHEMA_VERSION:
         raise SchemaMigrationRequiredError(
-            "JobCtrl can only open the exact schema v8 at runtime; "
+            "JobCtrl can only open the exact schema v9 at runtime; "
             f"found schema version {current_version}."
         )
-    assert_exact_manifest(conn, EXACT_V8_MANIFEST)
+    assert_exact_manifest(conn, EXACT_V9_MANIFEST)
     return conn
 
 
 def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
-    """Create a missing v8 database or read-only validate an existing one."""
+    """Create a missing v9 database or read-only validate an existing one."""
     path = Path(db_path or DB_PATH)
     if not path.exists():
-        return create_exact_v8_database(path)
-    return open_exact_v8_database(path)
+        return create_exact_v9_database(path)
+    return open_exact_v9_database(path)
 
 
 def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> list[str]:
@@ -740,6 +742,7 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             title           TEXT NOT NULL DEFAULT '',
             company         TEXT NOT NULL DEFAULT '',
             location        TEXT NOT NULL DEFAULT '',
+            summary         TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (tenant_id, profile_id, entry_id)
         )
         """

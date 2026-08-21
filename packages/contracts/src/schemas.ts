@@ -1672,6 +1672,7 @@ const ProfileExperienceEntrySchema = z.object({
   company: z.string().min(1),
   date_range: z.string().default(""),
   location: z.string().default(""),
+  summary: z.string().default(""),
   bullets: z.array(z.string()).default([]),
   achievement_evidence: z.array(ProfileAchievementEvidenceSchema).default([]),
 });

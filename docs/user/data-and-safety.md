@@ -34,6 +34,7 @@ For a plain-language overview, read
 | Does application-submission browser automation run continuously? | ✕ **No.** It starts only through apply/dry-run work you initiate or a standing loop you explicitly enable. |
 | Does JobCtrl submit applications or send employer-facing email by default? | ✕ **No.** Browser submission and Gmail application sending are explicit guarded actions. |
 | Does Outreach send messages automatically? | ✕ **No.** Drafts end at copy/export; send logs are user attestations. |
+| Does Plate PDF export upload or register my edited resume? | ✕ **No.** The browser renders the currently visible Plate document into a download; it does not call a generation provider, save the edits, or register a JobCtrl artifact. |
 
 Local-first does not mean offline. Discovery fetches sources, generation calls
 models, and live apply contacts an employer only when you use those features.
@@ -145,6 +146,11 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | `backups/` | Timestamped SQLite snapshots created by `jobctrl backup`. |
 | `gmail/` | Gmail OAuth client and token files. |
 | Baseline/legacy resume files | `resume.txt`, `resume.pdf`, and older local style/template files. |
+
+PDFs created with a Plate editor's **Export PDF** control are ordinary browser
+downloads, so their destination is the download location selected by the
+browser or operating system rather than `JOBCTRL_DIR`. JobCtrl does not register
+that copy as a material artifact or use it to replace an accepted generation.
 
 The development launcher writes PIDs and logs under the checkout's `.dev/`
 directory; treat those logs as sensitive too.

@@ -94,7 +94,15 @@ export function lines(value: string): string[] {
 
 export function defaultRepeatItem(path: string): JsonRecord {
   if (path === "resume.experience_entries") {
-    return { id: "", date_range: "", title: "", company: "", location: "", bullets: [""] };
+    return {
+      id: "",
+      date_range: "",
+      title: "",
+      company: "",
+      location: "",
+      summary: "",
+      bullets: [""],
+    };
   }
   if (path === "resume.education_entries") {
     return { id: "", date: "", degree: "", institution: "", location: "" };

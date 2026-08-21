@@ -160,7 +160,7 @@ Identity: (TenantId, ProfileId)
 3. Never deleted (but can be reset).
 
 **Entities (non-root):**
-- `ExperienceEntry { id, dateRange, title, company, location, bullets[], achievementEvidence[] }`
+- `ExperienceEntry { id, dateRange, title, company, location, summary?, bullets[], achievementEvidence[] }`
 - `EducationEntry { id, date, degree, institution, location }`
 - `SkillCategory { id, label, items[] }`
 

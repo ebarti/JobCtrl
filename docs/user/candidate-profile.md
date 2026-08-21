@@ -47,7 +47,7 @@ Use the current web routes according to the kind of change you are making:
 
 | Route | What it owns |
 | --- | --- |
-| `/profile` | Personal information, baseline resume content, experience, education, skills, achievement evidence, and voluntary EEO data. The same page renders the real editable baseline resume beside the editor. |
+| `/profile` | Personal information, baseline resume content, experience, optional position summaries, education, skills, achievement evidence, and voluntary EEO data. The same page renders the real editable baseline resume beside the editor. |
 | `/profile/import/upload` | The start of the three-step PDF import flow. You choose whether to import profile data, resume style, or both before confirming. |
 | `/preferences` | Application defaults, writing and tailoring controls, resume style, and resume-template selection and editing. |
 | `/evidence-map` | A read-only map from canonical achievements and skills to their uses in scores, requirement fit, generated bullets, and coverage gaps. |
@@ -58,6 +58,31 @@ side only while both remain readable; at narrower working widths the preview
 moves below the editor and the resize handle disappears. Evidence Map follows
 the same rule: its entry list, selected evidence, and gaps/reusable-stories
 inspector stack instead of compressing the three-pane desktop workspace.
+
+The Plate toolbars on `/profile` and `/preferences` include **Export PDF**. On
+`/profile`, direct text edits with an unambiguous canonical owner—full name,
+executive profile, position summary, or experience bullet—update the same form
+draft shown by the boxed editor and follow its normal validation, undo, and
+autosave path. Combined display lines such as company/location/title/date and
+formatting-only changes are not split heuristically into profile facts; they
+remain local to the mounted Plate document. The Preferences Plate editor also
+remains a presentation-only draft.
+
+The resume presentation follows the experience sequence saved in Profile. Each
+role has **Move up** and **Move down** controls for a custom sequence, and
+**Sort newest first** applies the date-based order explicitly, with current
+roles first. The reordered list follows the normal Profile save and autosave
+path. Roles without achievement bullets render compactly instead of reserving
+space for an empty bullet list. Education entries place the institution and
+completion year on the first row and the degree directly underneath.
+
+The download is rendered from the document currently mounted in the browser,
+so it includes live text and formatting while preserving the active template's
+styling, margins, glyphs, punctuation spacing, line wrapping, and A4 or Letter
+page size. Its visible pages use the browser's rendered output; a separate
+invisible text layer keeps the PDF searchable and extractable. The **Export
+PDF** action itself does not save a profile or template, register the download
+as a JobCtrl artifact, or change Apply approval state.
 
 Profile and preference forms validate before saving. Their autosave and explicit
 Save buttons use the same mutation path; the exact delay and field contract are
@@ -76,8 +101,10 @@ runtime authority. There is no second JSON-backed profile that can silently win.
 The profile's main ownership boundaries are:
 
 - **Candidate Profile owns candidate facts.** A saved experience bullet,
-  declared skill, application answer, or achievement record is evidence only
-  because it entered through this boundary.
+  position summary, declared skill, application answer, or achievement record
+  is evidence only because it entered through this boundary. A non-empty
+  position summary appears below that role's title/date heading and before its
+  achievement bullets; an empty summary adds no resume content or spacing.
 - **An achievement owns its metrics.** Put a number in the experience bullet or
   achievement evidence that it qualifies. Profile reads lead the deprecated
   `resume_constraints.real_metrics` compatibility index with those derived

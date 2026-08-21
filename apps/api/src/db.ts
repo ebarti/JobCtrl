@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import Database from "better-sqlite3";
 
-import { EXACT_V8_SCHEMA_MANIFEST, hasExactV8SchemaManifest } from "./schema-manifest.js";
+import { EXACT_V9_SCHEMA_MANIFEST, hasExactV9SchemaManifest } from "./schema-manifest.js";
 
 export type SqliteDatabase = Database.Database;
 export type SqliteValue = string | number | bigint | null;
@@ -11,7 +11,7 @@ export type SqliteValue = string | number | bigint | null;
 // writer that stamps ``PRAGMA user_version``; the API only admits the exact
 // migrated schema shape. Bump both constants together whenever the schema
 // shape changes.
-export const SUPPORTED_SCHEMA_VERSION = EXACT_V8_SCHEMA_MANIFEST.version;
+export const SUPPORTED_SCHEMA_VERSION = EXACT_V9_SCHEMA_MANIFEST.version;
 
 export class IncompatibleSchemaVersionError extends Error {
   constructor(current: number) {
@@ -28,7 +28,7 @@ export class IncompatibleSchemaVersionError extends Error {
 export class IncompatibleSchemaManifestError extends Error {
   constructor() {
     super(
-      "JobCtrl database schema does not match the exact v8 manifest; restore "
+      "JobCtrl database schema does not match the exact v9 manifest; restore "
         + "a compatible backup or complete the documented stopped-runtime migration.",
     );
     this.name = "IncompatibleSchemaManifestError";
@@ -38,13 +38,13 @@ export class IncompatibleSchemaManifestError extends Error {
 function assertExactSchemaVersion(db: SqliteDatabase): void {
   // The API never writes ``user_version`` — the Python worker owns stamping so
   // the schema marker has a single writer. Stopped-runtime migration is the
-  // only upgrade path; runtime admission accepts only the completed v8 shape.
+  // only upgrade path; runtime admission accepts only the completed v9 shape.
   const current = db.pragma("user_version", { simple: true }) as number;
   if (current !== SUPPORTED_SCHEMA_VERSION) {
     db.close();
     throw new IncompatibleSchemaVersionError(current);
   }
-  if (!hasExactV8SchemaManifest(db)) {
+  if (!hasExactV9SchemaManifest(db)) {
     db.close();
     throw new IncompatibleSchemaManifestError();
   }

@@ -31,5 +31,25 @@ describe("ProfileSchema application attestations", () => {
       additional: { can_travel: null },
     });
     expect(parsed.application_preferences).toEqual({ how_heard: "Referral" });
+    expect(parsed.resume.experience_entries[0]?.summary).toBe("");
+  });
+
+  it("preserves an optional position summary", () => {
+    const parsed = ProfileSchema.parse({
+      resume: {
+        experience_entries: [
+          {
+            id: "role",
+            title: "Engineering Director",
+            company: "Example",
+            summary: "Led the platform and reliability mandate.",
+          },
+        ],
+      },
+    });
+
+    expect(parsed.resume.experience_entries[0]?.summary).toBe(
+      "Led the platform and reliability mandate.",
+    );
   });
 });

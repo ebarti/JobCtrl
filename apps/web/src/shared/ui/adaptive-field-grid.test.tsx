@@ -74,20 +74,43 @@ describe("<AdaptiveFieldGrid>", () => {
     );
   });
 
-  it("keeps Profile date ranges compact instead of stretching across a card", () => {
+  it("keeps Profile date rows full-width while their short controls remain compact", () => {
     const css = readFileSync(
       resolve(process.cwd(), "src/styles/redesign-configuration.css"),
       "utf8",
     );
 
     expect(css).toContain(
-      ".profile-layout .date-range-body {\n  inline-size: fit-content;\n  max-inline-size: 100%;",
+      ".profile-layout .date-range-body {\n  inline-size: 100%;\n  max-inline-size: 100%;",
     );
     expect(css).toContain(
-      ".profile-layout .date-range-body > .month-selector {\n  inline-size: min(280px, 100%);",
+      ".profile-layout .date-range-body > .month-selector {\n  inline-size: auto;\n  min-inline-size: 0;\n  flex: 0 0 auto;",
+    );
+    expect(css).toContain(
+      ".profile-layout\n  .date-range-body\n  .month-selector-controls\n  > button:first-of-type {\n  inline-size: 68px;\n  flex: 0 0 68px;",
+    );
+    expect(css).toContain(
+      ".profile-layout\n  .date-range-body\n  .month-selector-controls\n  > button:last-of-type {\n  inline-size: 84px;\n  flex: 0 0 84px;",
     );
     expect(css).toContain(
       ".profile-layout .date-range-body > .date-range-present,\n.profile-layout .date-range-body > button {\n  inline-size: auto;\n  flex: 0 0 auto;",
+    );
+  });
+
+  it("uses the full experience card width for one compact action row", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/styles/redesign-configuration.css"),
+      "utf8",
+    );
+
+    expect(css).toContain(
+      ".profile-layout .profile-disclosure--experience .experience-repeat-section {\n  grid-template-columns: minmax(0, 1fr);",
+    );
+    expect(css).toContain(
+      ".profile-layout\n  .profile-disclosure--experience\n  .experience-repeat-section\n  > .repeat-controls {\n  grid-column: 1;\n  grid-row: 2;\n  min-width: 0;\n  flex-wrap: nowrap;",
+    );
+    expect(css).toContain(
+      ".experience-repeat-section\n  > .repeat-controls\n  > .choice {\n  inline-size: auto;\n  flex: 0 0 auto;",
     );
   });
 });

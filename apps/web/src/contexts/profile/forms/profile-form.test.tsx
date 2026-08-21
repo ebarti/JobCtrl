@@ -7,7 +7,10 @@ import {
 } from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { renderWithProviders } from "../../../test/render.js";
-import { ProfileForm } from "./profile-form.js";
+import {
+  ProfileForm,
+  type ProfilePlateTextController,
+} from "./profile-form.js";
 
 async function openExperienceEntries(user: ReturnType<typeof userEvent.setup>) {
   const disclosure = await screen.findByRole("button", {
@@ -64,6 +67,81 @@ describe("<ProfileForm>", () => {
 
     expect(fullName).toHaveValue(initialFullName);
     expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+  });
+
+  it("merges a Plate delta without reverting unrelated boxed Profile edits", async () => {
+    const user = userEvent.setup();
+    let plateController: ProfilePlateTextController | null = null;
+    renderWithProviders(
+      <ProfileForm
+        initial={sampleProfileResponse}
+        onPlateTextControllerChange={(controller) => {
+          plateController = controller;
+        }}
+      />,
+      { withRouter: true },
+    );
+
+    const fullName = await screen.findByLabelText("Full name");
+    await user.clear(fullName);
+    await user.type(fullName, "Boxed Profile Name");
+    await waitFor(() => expect(plateController).not.toBeNull());
+    act(() => {
+      plateController?.apply([
+        {
+          semanticId: "experience:exp-1:bullet:1",
+          baselineTexts: ["Scaled the platform 10x."],
+          plateTexts: ["Scaled the platform 11x.", "Added from Plate."],
+        },
+      ]);
+    });
+
+    await openExperienceEntries(user);
+    expect(screen.getByLabelText("Full name")).toHaveValue("Boxed Profile Name");
+    expect(screen.getByLabelText("Bullet 1")).toHaveValue("Scaled the platform 11x.");
+    expect(screen.getByLabelText("Bullet 2")).toHaveValue("Added from Plate.");
+    expect(screen.getByLabelText("Bullet 3")).toHaveValue("Led the SRE org.");
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+
+    act(() => {
+      plateController?.apply([]);
+    });
+    expect(screen.getByLabelText("Full name")).toHaveValue("Boxed Profile Name");
+    expect(screen.getByLabelText("Bullet 1")).toHaveValue("Scaled the platform 10x.");
+    expect(screen.getByLabelText("Bullet 2")).toHaveValue("Led the SRE org.");
+  });
+
+  it("preserves and surfaces a structural Profile conflict instead of overwriting it from Plate", async () => {
+    const user = userEvent.setup();
+    let plateController: ProfilePlateTextController | null = null;
+    renderWithProviders(
+      <ProfileForm
+        initial={sampleProfileResponse}
+        onPlateTextControllerChange={(controller) => {
+          plateController = controller;
+        }}
+      />,
+      { withRouter: true },
+    );
+
+    await openExperienceEntries(user);
+    await user.click(screen.getByRole("button", { name: "Remove bullet 1" }));
+    expect(screen.getByLabelText("Bullet 1")).toHaveValue("Led the SRE org.");
+    await waitFor(() => expect(plateController).not.toBeNull());
+    act(() => {
+      plateController?.apply([
+        {
+          semanticId: "experience:exp-1:bullet:1",
+          baselineTexts: ["Scaled the platform 10x."],
+          plateTexts: ["Scaled the platform 11x."],
+        },
+      ]);
+    });
+
+    expect(screen.getByLabelText("Bullet 1")).toHaveValue("Led the SRE org.");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Some resume editor changes were not applied because the matching Profile data changed.",
+    );
   });
 
   it("keeps the address field editable when Google Maps is not configured", async () => {

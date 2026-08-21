@@ -227,6 +227,13 @@ body {
 .resume-entry.compact {
   margin-block-end: 2.2mm;
 }
+.resume-entry.resume-entry--no-bullets {
+  margin-block-end: 1.6mm;
+}
+.resume-entry--no-bullets .resume-entry-heading:last-child,
+.resume-entry--no-bullets .resume-entry-summary:last-child {
+  margin-block-end: 0;
+}
 .resume-entry-heading {
   display: grid;
   gap: 0.2mm;
@@ -243,6 +250,7 @@ body {
   min-inline-size: 0;
 }
 .resume-entry-company,
+.resume-entry-institution,
 .resume-entry-location {
   color: #111111;
   font-weight: 700;
@@ -251,6 +259,9 @@ body {
   color: #111111;
   font-style: italic;
   font-weight: 400;
+}
+.resume-education-degree {
+  margin: 0 0 1mm;
 }
 .resume-entry-date {
   color: #111111;
@@ -269,6 +280,13 @@ body {
   font-size: 8.9pt;
   line-height: 1.22;
   margin: 0 0 1mm;
+}
+.resume-entry-summary {
+  color: #111111;
+  line-height: 1.22;
+  margin: 0 0 1.1mm;
+  text-align: justify;
+  break-inside: avoid;
 }
 .resume-bullets {
   list-style: disc outside;
@@ -397,14 +415,17 @@ body {{
 .resume-contact a,
 .resume-section-title,
 .resume-entry-company,
+.resume-entry-institution,
 .resume-entry-title,
 .resume-entry-date,
 .resume-entry-location,
 .resume-entry-subtitle,
+.resume-entry-summary,
 .resume-meta {{
   color: {accent};
 }}
 .resume-summary,
+.resume-entry-summary,
 .resume-bullets li,
 .resume-skills-list li {{
   text-align: {alignment};
@@ -416,6 +437,7 @@ body {{
   margin-block-end: {density["entry"]:.2f}mm;
 }}
 .resume-entry-subtitle,
+.resume-entry-summary,
 .resume-meta {{
   line-height: {density["meta_line"]:.3f};
 }}
@@ -671,6 +693,7 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
                 "location": location,
                 "date_range": date_range,
                 "subtitle": sanitize_text(" | ".join(part for part in subtitle_parts if part)),
+                "summary": sanitize_text(str(entry.get("summary", ""))),
                 "bullets": [
                     {
                         "id": f"experience:{entry_id}:bullet:{index + 1}",
@@ -832,7 +855,9 @@ def build_resume_html(
                 + (f'<span class="resume-entry-date">{date_range_html}</span>' if date_range else "")
                 + "</span>"
             )
-            section.append('<article class="resume-entry">')
+            bullets = list(entry.get("bullets", []))
+            entry_class = "resume-entry" if bullets else "resume-entry resume-entry--no-bullets"
+            section.append(f'<article class="{entry_class}">')
             section.append(
                 target(
                     f"experience:{entry_id}:heading",
@@ -845,10 +870,22 @@ def build_resume_html(
                     inner_html=heading_html,
                 )
             )
-            section.append('<ul class="resume-bullets">')
-            for bullet in entry.get("bullets", []):
-                section.append(target(str(bullet.get("id", "")), str(bullet.get("text", "")), tag="li"))
-            section.extend(["</ul>", "</article>"])
+            summary = str(entry.get("summary", "")).strip()
+            if summary:
+                section.append(
+                    target(
+                        f"experience:{entry_id}:summary",
+                        summary,
+                        tag="p",
+                        class_name="resume-entry-summary",
+                    )
+                )
+            if bullets:
+                section.append('<ul class="resume-bullets">')
+                for bullet in bullets:
+                    section.append(target(str(bullet.get("id", "")), str(bullet.get("text", "")), tag="li"))
+                section.append("</ul>")
+            section.append("</article>")
         section.append("</section>")
         return section
 
@@ -862,19 +899,29 @@ def build_resume_html(
             location = str(entry.get("location", "")).strip()
             subtitle = " | ".join(part for part in [institution, location] if part)
             heading_html = (
-                f'<span class="resume-entry-main"><span class="resume-entry-title">{degree}</span></span>'
+                '<span class="resume-entry-row resume-entry-education-row">'
+                f'<span class="resume-entry-main resume-entry-institution">{html.escape(subtitle)}</span>'
                 + (f'<span class="resume-entry-date">{date}</span>' if date else "")
+                + "</span>"
             )
             section.append('<article class="resume-entry compact">')
             section.append(
                 target(
-                    f"education:{entry_id}:degree",
-                    " | ".join(part for part in [entry.get("degree", ""), entry.get("date", "")] if part),
+                    f"education:{entry_id}:subtitle",
+                    " | ".join(part for part in [institution, location, entry.get("date", "")] if part),
                     class_name="resume-entry-heading",
                     inner_html=heading_html,
                 )
             )
-            section.append(target(f"education:{entry_id}:subtitle", subtitle, class_name="resume-meta"))
+            section.append(
+                target(
+                    f"education:{entry_id}:degree",
+                    str(entry.get("degree", "")),
+                    tag="p",
+                    class_name="resume-entry-title resume-education-degree",
+                    inner_html=degree,
+                )
+            )
             section.append(
                 target(f"education:{entry_id}:details", str(entry.get("details", "")), class_name="resume-meta")
             )

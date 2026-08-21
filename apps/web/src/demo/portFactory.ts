@@ -4,6 +4,7 @@ import { LocalSessionAdapter } from "../shared/adapters/local/LocalSessionAdapte
 import { LocalStorageAdapter } from "../shared/adapters/local/LocalStorageAdapter.js";
 import { NavigatorClipboardAdapter } from "../shared/adapters/local/NavigatorClipboardAdapter.js";
 import { OpenArtifactAdapter } from "../shared/adapters/local/OpenArtifactAdapter.js";
+import { BrowserPdfExportAdapter } from "../shared/adapters/local/BrowserPdfExportAdapter.js";
 import { SseEventStreamAdapter } from "../shared/adapters/local/SseEventStreamAdapter.js";
 import { StaticFeatureFlagAdapter } from "../shared/adapters/local/StaticFeatureFlagAdapter.js";
 import type { Ports } from "../shared/providers/PortsProvider.js";
@@ -62,6 +63,7 @@ export function createLocalPorts(apiBaseUrl = ""): Ports {
     session: new LocalSessionAdapter(),
     clipboard: new NavigatorClipboardAdapter(),
     openInOs: new OpenArtifactAdapter(api),
+    pdfExport: new BrowserPdfExportAdapter(),
     telemetry: new ConsoleTelemetryAdapter(),
     featureFlags: new StaticFeatureFlagAdapter(),
   };
@@ -101,6 +103,7 @@ export async function createAppComposition(
       session: new DemoSessionAdapter(),
       clipboard: new NavigatorClipboardAdapter(),
       openInOs: new DemoOpenInOsAdapter(api),
+      pdfExport: new BrowserPdfExportAdapter(),
       telemetry: options.demoTelemetry ?? new ConsoleTelemetryAdapter(),
       featureFlags: new DemoFeatureFlagAdapter(),
     },

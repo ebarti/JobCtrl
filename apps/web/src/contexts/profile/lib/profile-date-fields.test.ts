@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  compareProfileDateRangesNewestFirst,
   formatProfileDateRange,
   formatProfileMonth,
   isProfileDateRangeChronological,
@@ -46,5 +47,23 @@ describe("profile date field helpers", () => {
     expect(isProfileDateRangeChronological(parseProfileDateRange("Sep 2020 -- Oct 2020"))).toBe(
       true,
     );
+  });
+
+  it("compares date ranges for an explicit current-then-newest sort", () => {
+    const ranges = [
+      "Jan 2018 - Dec 2020",
+      "",
+      "Mar 2024 - Present",
+      "Jun 2021 - Feb 2024",
+      "2022 - 2022",
+    ];
+
+    expect([...ranges].sort(compareProfileDateRangesNewestFirst)).toEqual([
+      "Mar 2024 - Present",
+      "Jun 2021 - Feb 2024",
+      "2022 - 2022",
+      "Jan 2018 - Dec 2020",
+      "",
+    ]);
   });
 });

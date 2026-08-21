@@ -5,7 +5,7 @@ import {
 } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ProfileConfigResponse } from "../../operations/types.js";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
@@ -29,8 +29,19 @@ export interface ProfileFormValues {
 
 export interface ProfileFormProps {
   initial: ProfileConfigResponse;
+  onPlateTextControllerChange?: (controller: ProfilePlateTextController | null) => void;
   section?: ProfileSection;
   showSectionHeading?: boolean;
+}
+
+export interface ProfilePlateTextChange {
+  readonly semanticId: string;
+  readonly baselineTexts: readonly string[];
+  readonly plateTexts: readonly string[];
+}
+
+export interface ProfilePlateTextController {
+  readonly apply: (changes: readonly ProfilePlateTextChange[]) => void;
 }
 
 export function toProfileFormValues(profile: ProfileConfigResponse): ProfileFormValues {
@@ -95,15 +106,229 @@ function serializeProfileValues(values: ProfileFormValues): string {
   return JSON.stringify(values);
 }
 
+interface AppliedPlateTarget {
+  readonly bulletIndex?: number;
+  readonly texts: readonly string[];
+}
+
+interface PlateProfileProjectionState {
+  readonly activeChanges: ReadonlyMap<string, ProfilePlateTextChange>;
+  readonly appliedTargets: ReadonlyMap<string, AppliedPlateTarget>;
+}
+
+interface PlateProfileProjectionResult {
+  readonly conflictCount: number;
+  readonly profileText: string;
+  readonly state: PlateProfileProjectionState;
+}
+
+function normalizedPlateText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function plateTextArraysEqual(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (text, index) => normalizedPlateText(text) === normalizedPlateText(right[index] ?? ""),
+    )
+  );
+}
+
+function matchingTextSequenceIndexes(
+  values: readonly string[],
+  sequence: readonly string[],
+): number[] {
+  if (!sequence.length || sequence.length > values.length) return [];
+  const matches: number[] = [];
+  for (let index = 0; index <= values.length - sequence.length; index += 1) {
+    if (plateTextArraysEqual(values.slice(index, index + sequence.length), sequence)) {
+      matches.push(index);
+    }
+  }
+  return matches;
+}
+
+function profileTextWithPlateChanges(
+  profileText: string,
+  changes: readonly ProfilePlateTextChange[],
+  previousState: PlateProfileProjectionState | null,
+): PlateProfileProjectionResult {
+  const activeChanges = new Map(changes.map((change) => [change.semanticId, change]));
+  const appliedTargets = new Map(previousState?.appliedTargets ?? []);
+  const unchangedResult = (conflictCount = 0): PlateProfileProjectionResult => ({
+    conflictCount,
+    profileText,
+    state: { activeChanges, appliedTargets },
+  });
+  const parsed = tryParseJson(profileText);
+  if (!parsed.ok) return unchangedResult();
+  const profileResult = ProfileSchema.safeParse(parsed.value);
+  if (!profileResult.success) return unchangedResult();
+
+  const profile = structuredClone(profileResult.data);
+  let changed = false;
+  let conflictCount = 0;
+  const effectiveChanges = [...activeChanges.values()];
+  for (const [semanticId, previousChange] of previousState?.activeChanges ?? []) {
+    if (
+      !activeChanges.has(semanticId) &&
+      previousState?.appliedTargets.has(semanticId)
+    ) {
+      effectiveChanges.push({
+        semanticId,
+        baselineTexts: previousChange.baselineTexts,
+        plateTexts: previousChange.baselineTexts,
+      });
+    }
+  }
+
+  const applySingleText = (
+    change: ProfilePlateTextChange,
+    current: string,
+    update: (value: string) => void,
+  ): void => {
+    const previousTarget = appliedTargets.get(change.semanticId);
+    const expectedTexts = previousTarget?.texts ?? change.baselineTexts;
+    const desiredText = normalizedPlateText(change.plateTexts.join(" "));
+    const currentTexts = [current];
+    const desiredTexts = [desiredText];
+    const matchesExpected = plateTextArraysEqual(currentTexts, expectedTexts);
+    const alreadyDesired = plateTextArraysEqual(currentTexts, desiredTexts);
+    if (!matchesExpected && !alreadyDesired) {
+      appliedTargets.delete(change.semanticId);
+      conflictCount += 1;
+      return;
+    }
+    if (current !== desiredText) {
+      update(desiredText);
+      changed = true;
+    }
+    if (activeChanges.has(change.semanticId)) {
+      appliedTargets.set(change.semanticId, { texts: desiredTexts });
+    } else {
+      appliedTargets.delete(change.semanticId);
+    }
+  };
+
+  for (const change of effectiveChanges) {
+    if (change.semanticId === "personal:full_name") {
+      applySingleText(change, profile.personal.full_name ?? "", (value) => {
+        profile.personal.full_name = value;
+      });
+      continue;
+    }
+    if (change.semanticId === "summary") {
+      applySingleText(
+        change,
+        profile.resume.executive_profile.baseline_text ?? "",
+        (value) => {
+          profile.resume.executive_profile.baseline_text = value;
+        },
+      );
+      continue;
+    }
+
+    const summaryMatch = /^experience:(.+):summary$/.exec(change.semanticId);
+    if (summaryMatch) {
+      const entry = profile.resume.experience_entries.find(
+        (candidate) => candidate.id === summaryMatch[1],
+      );
+      if (!entry) {
+        appliedTargets.delete(change.semanticId);
+        conflictCount += 1;
+        continue;
+      }
+      applySingleText(change, entry.summary, (value) => {
+        entry.summary = value;
+      });
+      continue;
+    }
+
+    const bulletMatch = /^experience:(.+):bullet:([1-9]\d*)$/.exec(
+      change.semanticId,
+    );
+    if (bulletMatch) {
+      const entryId = bulletMatch[1];
+      const bulletOrdinal = bulletMatch[2];
+      if (!entryId || !bulletOrdinal) continue;
+      const entry = profile.resume.experience_entries.find(
+        (candidate) => candidate.id === entryId,
+      );
+      if (!entry) {
+        appliedTargets.delete(change.semanticId);
+        conflictCount += 1;
+        continue;
+      }
+      const previousTarget = appliedTargets.get(change.semanticId);
+      const expectedTexts = previousTarget?.texts ?? change.baselineTexts;
+      const desiredTexts = change.plateTexts
+        .map(normalizedPlateText)
+        .filter(Boolean);
+      let bulletIndex: number | null = null;
+      if (
+        previousTarget?.bulletIndex !== undefined &&
+        plateTextArraysEqual(
+          entry.bullets.slice(
+            previousTarget.bulletIndex,
+            previousTarget.bulletIndex + expectedTexts.length,
+          ),
+          expectedTexts,
+        )
+      ) {
+        bulletIndex = previousTarget.bulletIndex;
+      } else {
+        const matches = matchingTextSequenceIndexes(entry.bullets, expectedTexts);
+        if (matches.length === 1) {
+          bulletIndex = matches[0] ?? null;
+        }
+      }
+      if (bulletIndex === null) {
+        appliedTargets.delete(change.semanticId);
+        conflictCount += 1;
+        continue;
+      }
+      const currentTexts = entry.bullets.slice(
+        bulletIndex,
+        bulletIndex + expectedTexts.length,
+      );
+      if (!plateTextArraysEqual(currentTexts, desiredTexts)) {
+        entry.bullets.splice(bulletIndex, expectedTexts.length, ...desiredTexts);
+        changed = true;
+      }
+      if (activeChanges.has(change.semanticId)) {
+        appliedTargets.set(change.semanticId, {
+          bulletIndex,
+          texts: desiredTexts,
+        });
+      } else {
+        appliedTargets.delete(change.semanticId);
+      }
+    }
+  }
+
+  return {
+    conflictCount,
+    profileText: changed ? JSON.stringify(profile, null, 2) : profileText,
+    state: { activeChanges, appliedTargets },
+  };
+}
+
 export function ProfileForm({
   initial,
+  onPlateTextControllerChange,
   section = "profile",
   showSectionHeading = true,
 }: ProfileFormProps) {
   const updateProfile = useUpdateProfileMutation();
   const [statusMessage, setStatusMessage] = useState("");
+  const [statusTone, setStatusTone] = useState<"saved" | "warning">("saved");
   const [resetToken, setResetToken] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
+  const plateProfileProjectionRef = useRef<PlateProfileProjectionState | null>(null);
   const isProfileSection = section === "profile";
   const saveLabel = "Save changes";
   const discardLabel = "Discard changes";
@@ -114,12 +339,13 @@ export function ProfileForm({
         ? "Discovery settings saved"
         : "Preferences saved";
 
-  const clearTransientStatus = () => {
+  const clearTransientStatus = useCallback(() => {
     setStatusMessage("");
+    setStatusTone("saved");
     if (updateProfile.error) {
       updateProfile.reset();
     }
-  };
+  }, [updateProfile.error, updateProfile.reset]);
 
   const form = useForm({
     defaultValues: toProfileFormValues(initial),
@@ -139,18 +365,52 @@ export function ProfileForm({
         ? await updateProfile.mutateAsync(toUpdateRequest(value))
         : initial;
       if (serializeProfileValues(formApi.state.values) === submittedValues) {
+        plateProfileProjectionRef.current = null;
         formApi.reset(toProfileFormValues(profileResponse));
+        setStatusTone("saved");
         setStatusMessage(savedMessage);
       } else {
+        setStatusTone("warning");
         setStatusMessage("Saved; newer changes pending");
       }
     },
   });
 
+  const applyPlateTextChanges = useCallback(
+    (changes: readonly ProfilePlateTextChange[]) => {
+      const currentProfileText = form.state.values.profileText;
+      const projection = profileTextWithPlateChanges(
+        currentProfileText,
+        changes,
+        plateProfileProjectionRef.current,
+      );
+      plateProfileProjectionRef.current = projection.state;
+      if (projection.conflictCount > 0) {
+        setStatusTone("warning");
+        setStatusMessage(
+          "Some resume editor changes were not applied because the matching Profile data changed. Save or discard those Profile changes, then reopen the resume editor.",
+        );
+      } else {
+        clearTransientStatus();
+      }
+      if (projection.profileText !== currentProfileText) {
+        form.setFieldValue("profileText", projection.profileText);
+      }
+    },
+    [clearTransientStatus, form],
+  );
+
+  useEffect(() => {
+    if (!onPlateTextControllerChange) return;
+    onPlateTextControllerChange({ apply: applyPlateTextChanges });
+    return () => onPlateTextControllerChange(null);
+  }, [applyPlateTextChanges, onPlateTextControllerChange]);
+
   useEffect(() => {
     if (form.state.isDirty || form.state.isSubmitting) {
       return;
     }
+    plateProfileProjectionRef.current = null;
     form.reset(toProfileFormValues(initial));
     setResetToken((token) => token + 1);
   }, [form, initial]);
@@ -165,6 +425,7 @@ export function ProfileForm({
       }}
       onReset={(event) => {
         event.preventDefault();
+        plateProfileProjectionRef.current = null;
         form.reset(toProfileFormValues(initial));
         setResetToken((token) => token + 1);
         clearTransientStatus();
@@ -173,9 +434,9 @@ export function ProfileForm({
       {statusMessage ? (
         <div
           className="status-line profile-save-status"
-          data-state="saved"
+          data-state={statusTone}
           data-typography="metadata"
-          role="status"
+          role={statusTone === "warning" ? "alert" : "status"}
         >
           {statusMessage}
         </div>
