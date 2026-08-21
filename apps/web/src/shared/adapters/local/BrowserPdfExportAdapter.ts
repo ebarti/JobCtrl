@@ -9,7 +9,8 @@ const PDF_EXPORT_SOURCE_ATTRIBUTE = "data-resume-pdf-export-source";
 const PDF_BITMAP_SCALE = 2;
 const PDF_PAGE_SLICE_EPSILON_PX = 1;
 const PDF_PAGE_SLICE_RASTER_MINIMUM_BLANK_BAND_CSS_PX = 4;
-const PDF_PAGE_SLICE_RASTER_SEARCH_RADIUS_CSS_PX = 6;
+const PDF_PAGE_SLICE_RASTER_SEARCH_RADIUS_CSS_PX = 96;
+const PDF_PAGE_SLICE_RASTER_SCAN_CHUNK_ROWS = 128;
 const PDF_PAGE_SLICE_RASTER_WHITE_CHANNEL = 255;
 const PDF_SEARCH_TEXT_FALLBACK_FONT_SIZE_PT = 6;
 const EDITOR_CHROME_SELECTOR = '[data-resume-editor-chrome="true"]';
@@ -414,19 +415,20 @@ export function pdfPageSlices(
       const crossingLines = lineIntervals.filter(
         (interval) => interval.topPx < endPx && interval.bottomPx > endPx,
       );
-      if (crossingLines.length > 0) {
-        const safeEndPx = Math.floor(
-          Math.min(...crossingLines.map((interval) => interval.topPx)),
-        );
-        if (safeEndPx > startPx + PDF_PAGE_SLICE_EPSILON_PX) {
-          const resolvedEndPx =
-            resolveSafeCut?.(safeEndPx, startPx, endPx) ?? safeEndPx;
-          endPx =
-            resolvedEndPx > startPx + PDF_PAGE_SLICE_EPSILON_PX &&
-            resolvedEndPx <= endPx
-              ? resolvedEndPx
-              : safeEndPx;
-        }
+      const candidatePx =
+        crossingLines.length > 0
+          ? Math.floor(
+              Math.min(...crossingLines.map((interval) => interval.topPx)),
+            )
+          : endPx;
+      if (candidatePx > startPx + PDF_PAGE_SLICE_EPSILON_PX) {
+        const resolvedEndPx =
+          resolveSafeCut?.(candidatePx, startPx, endPx) ?? candidatePx;
+        endPx =
+          resolvedEndPx > startPx + PDF_PAGE_SLICE_EPSILON_PX &&
+          resolvedEndPx <= endPx
+            ? resolvedEndPx
+            : candidatePx;
       }
     }
     if (endPx <= startPx + PDF_PAGE_SLICE_EPSILON_PX) {
@@ -524,6 +526,46 @@ function canvasBlankRowPredicate(
   };
 }
 
+function canvasContentHeight(canvas: HTMLCanvasElement): number {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return canvas.height;
+  try {
+    for (
+      let chunkBottomPx = canvas.height;
+      chunkBottomPx > 0;
+      chunkBottomPx -= PDF_PAGE_SLICE_RASTER_SCAN_CHUNK_ROWS
+    ) {
+      const chunkTopPx = Math.max(
+        0,
+        chunkBottomPx - PDF_PAGE_SLICE_RASTER_SCAN_CHUNK_ROWS,
+      );
+      const chunkHeightPx = chunkBottomPx - chunkTopPx;
+      const pixels = context.getImageData(
+        0,
+        chunkTopPx,
+        canvas.width,
+        chunkHeightPx,
+      ).data;
+      for (let rowOffsetPx = chunkHeightPx - 1; rowOffsetPx >= 0; rowOffsetPx -= 1) {
+        const rowStart = rowOffsetPx * canvas.width * 4;
+        const rowEnd = rowStart + canvas.width * 4;
+        for (let offset = rowStart; offset < rowEnd; offset += 4) {
+          if (
+            pixels[offset]! < PDF_PAGE_SLICE_RASTER_WHITE_CHANNEL ||
+            pixels[offset + 1]! < PDF_PAGE_SLICE_RASTER_WHITE_CHANNEL ||
+            pixels[offset + 2]! < PDF_PAGE_SLICE_RASTER_WHITE_CHANNEL
+          ) {
+            return chunkTopPx + rowOffsetPx + 1;
+          }
+        }
+      }
+    }
+    return 1;
+  } catch {
+    return canvas.height;
+  }
+}
+
 async function rasterizePdfPages(
   source: HTMLElement,
   options: PdfRasterizationOptions,
@@ -557,7 +599,7 @@ async function rasterizePdfPages(
   }));
   const isBlankRow = canvasBlankRowPredicate(continuousCanvas);
   const slices = pdfPageSlices(
-    continuousCanvas.height,
+    canvasContentHeight(continuousCanvas),
     pageHeightCanvasPx,
     scaledLineIntervals,
     isBlankRow

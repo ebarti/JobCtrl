@@ -1048,6 +1048,40 @@ function resumeTextFromPlateNode(node: Descendant): string {
     .trim();
 }
 
+function rawResumeTextFromPlateNode(node: Descendant): string {
+  if ("text" in node) {
+    return typeof node.text === "string" ? node.text : "";
+  }
+  return node.children
+    .map((child) => {
+      const text = rawResumeTextFromPlateNode(child);
+      return "text" in child || child.type !== "resume_block"
+        ? text
+        : `\n${text}\n`;
+    })
+    .join("");
+}
+
+function resumeSemanticTextsFromPlateNode(node: Descendant): readonly string[] {
+  const texts = rawResumeTextFromPlateNode(node)
+    .split(/\r?\n/u)
+    .map((text) => text.replace(/\s+/g, " ").trim());
+  return texts.length > 0 ? texts : [""];
+}
+
+function resumeBulletSemanticId(node: Descendant): string {
+  if ("text" in node || typeof node.semanticId !== "string") return "";
+  const semanticId = node.semanticId.trim();
+  return /^experience:.+:bullet:[1-9]\d*$/u.test(semanticId)
+    ? semanticId
+    : "";
+}
+
+function isResumeBulletContainer(node: Descendant): boolean {
+  if ("text" in node || typeof node.className !== "string") return false;
+  return node.className.split(/\s+/u).includes("resume-bullets");
+}
+
 function resumeTextFromPlateValue(value: Value): string {
   const lines = value
     .flatMap(resumeLineTextsFromPlateNode)
@@ -1068,13 +1102,32 @@ function resumeSemanticTextSnapshotFromPlateValue(
 ): ReadonlyMap<string, readonly string[]> {
   const textsBySemanticId = new Map<string, string[]>();
 
+  const append = (semanticId: string, node: Descendant): void => {
+    const texts = textsBySemanticId.get(semanticId) ?? [];
+    texts.push(...resumeSemanticTextsFromPlateNode(node));
+    textsBySemanticId.set(semanticId, texts);
+  };
+
   const visit = (node: Descendant): void => {
     if ("text" in node) return;
+    if (isResumeBulletContainer(node)) {
+      let previousSemanticId = "";
+      node.children.forEach((child, index) => {
+        if ("text" in child) return;
+        const ownSemanticId = resumeBulletSemanticId(child);
+        const nextSemanticId = node.children
+          .slice(index + 1)
+          .map(resumeBulletSemanticId)
+          .find(Boolean);
+        const semanticId = ownSemanticId || previousSemanticId || nextSemanticId || "";
+        if (semanticId) append(semanticId, child);
+        if (ownSemanticId) previousSemanticId = ownSemanticId;
+      });
+      return;
+    }
     const semanticId = typeof node.semanticId === "string" ? node.semanticId.trim() : "";
     if (semanticId) {
-      const texts = textsBySemanticId.get(semanticId) ?? [];
-      texts.push(resumeTextFromPlateNode(node).replace(/\s+/g, " ").trim());
-      textsBySemanticId.set(semanticId, texts);
+      append(semanticId, node);
     }
     node.children.forEach(visit);
   };

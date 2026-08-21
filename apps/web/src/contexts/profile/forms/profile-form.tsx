@@ -265,7 +265,9 @@ function profileTextWithPlateChanges(
       }
       const previousTarget = appliedTargets.get(change.semanticId);
       const expectedTexts = previousTarget?.texts ?? change.baselineTexts;
-      const desiredTexts = change.plateTexts.map(normalizedPlateText);
+      const desiredTexts = change.plateTexts
+        .map(normalizedPlateText)
+        .filter(Boolean);
       let bulletIndex: number | null = null;
       if (
         previousTarget?.bulletIndex !== undefined &&
