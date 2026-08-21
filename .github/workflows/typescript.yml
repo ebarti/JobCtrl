@@ -185,6 +185,8 @@ jobs:
           cache: pnpm
       - name: Install locked dependencies
         run: corepack pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: corepack pnpm --filter @jobctrl/extension exec playwright install --with-deps chromium
       - name: Check, test, build, and exercise extension
         run: |
           corepack pnpm extension:check

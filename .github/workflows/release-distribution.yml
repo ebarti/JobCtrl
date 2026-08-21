@@ -125,11 +125,13 @@ jobs:
           sha="$(git rev-parse HEAD)"
           source_date_epoch="$(git show -s --format=%ct HEAD)"
           release_build_id="${RELEASE_TAG#v}-${sha}-darwin-arm64"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "source_date_epoch=$source_date_epoch" >> "$GITHUB_OUTPUT"
-          echo "release_build_id=$release_build_id" >> "$GITHUB_OUTPUT"
-          echo "release_public_key=$JOBCTRL_RELEASE_PUBLIC_KEY" >> "$GITHUB_OUTPUT"
-          echo "release_key_id=$JOBCTRL_RELEASE_KEY_ID" >> "$GITHUB_OUTPUT"
+          {
+            echo "sha=$sha"
+            echo "source_date_epoch=$source_date_epoch"
+            echo "release_build_id=$release_build_id"
+            echo "release_public_key=$JOBCTRL_RELEASE_PUBLIC_KEY"
+            echo "release_key_id=$JOBCTRL_RELEASE_KEY_ID"
+          } >> "$GITHUB_OUTPUT"
           test "$(jq -r '.stableReleaseStatus' packaging/distribution/signing-policy.json)" = blocked-awaiting-credentials
           test "$(jq -r '.manifestSigning.publicKeyStatus' packaging/distribution/signing-policy.json)" = unprovisioned
           test "$(jq -r '.appleSigning.teamIdStatus' packaging/distribution/signing-policy.json)" = unprovisioned
@@ -1226,7 +1228,7 @@ jobs:
             gh release edit "$RELEASE_TAG" --draft=false
           fi
           immutable=false
-          for attempt in {1..10}; do
+          for (( attempt = 0; attempt < 10; attempt++ )); do
             immutable="$(gh release view "$RELEASE_TAG" --json isImmutable --jq '.isImmutable' || true)"
             [[ "$immutable" = true ]] && break
             sleep 3
@@ -1234,7 +1236,7 @@ jobs:
           test "$immutable" = true
           for asset in "${assets[@]}" "$smoke"; do
             verified=false
-            for attempt in {1..10}; do
+            for (( attempt = 0; attempt < 10; attempt++ )); do
               if gh release verify-asset "$RELEASE_TAG" "$asset"; then
                 verified=true
                 break

@@ -93,6 +93,23 @@ describe("TypeScript CI browser provisioning contract", () => {
     );
     expect(workflow.indexOf(e2eCommand)).toBeGreaterThan(workflow.indexOf(pythonChromiumInstall));
   });
+
+  it("installs Chromium before exercising the browser extension", () => {
+    const workflow = readFileSync(workflowPath, "utf8");
+    const extensionStart = workflow.indexOf("\n  extension:");
+    const extensionEnd = workflow.indexOf("\n  demo-edge:", extensionStart);
+    const extensionJob = workflow.slice(extensionStart, extensionEnd);
+    const chromiumInstall =
+      "corepack pnpm --filter @jobctrl/extension exec playwright install --with-deps chromium";
+    const extensionE2e = "corepack pnpm extension:e2e";
+
+    expect(extensionStart).toBeGreaterThanOrEqual(0);
+    expect(extensionEnd).toBeGreaterThan(extensionStart);
+    expect(extensionJob).toContain(chromiumInstall);
+    expect(extensionJob.indexOf(extensionE2e)).toBeGreaterThan(
+      extensionJob.indexOf(chromiumInstall),
+    );
+  });
 });
 
 describe("TypeScript CI shared package ownership", () => {
