@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   BrowserPdfExportAdapter,
+  collectSearchableTextFragments,
+  pdfInvisibleTextOptions,
   pdfPageSlices,
+  safeBlankRasterCut,
+  searchableTextLayer,
   type PdfDocumentFactory,
   type PdfPageRasterizer,
 } from "./BrowserPdfExportAdapter.js";
@@ -22,6 +26,65 @@ function pdfDocumentDouble() {
 }
 
 describe("BrowserPdfExportAdapter", () => {
+  it("uses top-anchored invisible PDF text scaled to each measured word", () => {
+    expect(pdfInvisibleTextOptions(20, 10)).toEqual({
+      baseline: "top",
+      horizontalScale: 0.5,
+      renderingMode: "invisible",
+    });
+    expect(pdfInvisibleTextOptions(0, 10)).toEqual({
+      baseline: "top",
+      horizontalScale: 1,
+      renderingMode: "invisible",
+    });
+  });
+
+  it("snaps a shifted page cut onto blank raster rows after glyph bleed", () => {
+    const inkRows = new Set([
+      2_223, 2_224, 2_225, 2_226, 2_227, 2_241, 2_242,
+    ]);
+
+    expect(
+      safeBlankRasterCut(
+        2_225,
+        0,
+        2_246,
+        12,
+        8,
+        (row) => !inkRows.has(row),
+      ),
+    ).toBe(2_232);
+  });
+
+  it("keeps a raster cut outside a crossing line with disconnected ink", () => {
+    const crossingLine = { bottomPx: 111, topPx: 100 };
+    const inkRows = new Set([100, 101, 104, 105, 106, 107, 108, 109, 110]);
+
+    const slices = pdfPageSlices(180, 105, [crossingLine], (
+      candidate,
+      minimum,
+      maximum,
+    ) =>
+      safeBlankRasterCut(
+        candidate,
+        minimum,
+        maximum,
+        12,
+        8,
+        (row) => !inkRows.has(row),
+      ),
+    );
+
+    expect(slices[0]?.endPx).toBe(96);
+    expect(
+      slices.some(
+        (slice) =>
+          crossingLine.topPx < slice.endPx &&
+          crossingLine.bottomPx > slice.endPx,
+      ),
+    ).toBe(false);
+  });
+
   it("moves a bitmap page cut above a text line that crosses the boundary", () => {
     const crossingLine = {
       bottomPx: 2_261.906,
@@ -42,6 +105,126 @@ describe("BrowserPdfExportAdapter", () => {
           crossingLine.bottomPx > slice.endPx,
       ),
     ).toBe(false);
+  });
+
+  it("maps rendered word boxes through shifted PDF page slices", () => {
+    const source = document.createElement("div");
+    source.className = "resume-plate-document";
+    source.innerHTML = `
+      <main class="resume-page">
+        <p><span>First line second line</span></p>
+      </main>
+    `;
+    document.body.append(source);
+    vi.spyOn(source, "getBoundingClientRect").mockReturnValue({
+      bottom: 220,
+      height: 200,
+      left: 10,
+      right: 210,
+      top: 20,
+      width: 200,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    });
+    const page = source.querySelector<HTMLElement>(".resume-page")!;
+    vi.spyOn(page, "getBoundingClientRect").mockReturnValue({
+      bottom: 220,
+      height: 200,
+      left: 10,
+      right: 210,
+      top: 20,
+      width: 200,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    });
+
+    const rectsByOffset = new Map<string, DOMRect>([
+      ["0:5", DOMRect.fromRect({ height: 12, width: 30, x: 20, y: 30 })],
+      ["6:10", DOMRect.fromRect({ height: 12, width: 24, x: 55, y: 30 })],
+      ["11:17", DOMRect.fromRect({ height: 12, width: 40, x: 20, y: 40 })],
+      ["18:22", DOMRect.fromRect({ height: 12, width: 24, x: 65, y: 40 })],
+    ]);
+    const rangePrototype = document.defaultView!.Range.prototype as Range & {
+      getClientRects?: () => DOMRectList;
+    };
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      rangePrototype,
+      "getClientRects",
+    );
+    Object.defineProperty(rangePrototype, "getClientRects", {
+      configurable: true,
+      value(this: Range) {
+        const rect = rectsByOffset.get(
+          `${this.startOffset}:${this.endOffset}`,
+        );
+        return (rect ? [rect] : []) as unknown as DOMRectList;
+      },
+    });
+
+    try {
+      const measured = collectSearchableTextFragments(source);
+      expect(measured).toEqual([
+        { heightPx: 12, leftPx: 10, text: "First", topPx: 10, widthPx: 30 },
+        { heightPx: 12, leftPx: 45, text: "line", topPx: 10, widthPx: 24 },
+        {
+          heightPx: 12,
+          leftPx: 10,
+          text: "second",
+          topPx: 20,
+          widthPx: 40,
+        },
+        { heightPx: 12, leftPx: 55, text: "line", topPx: 20, widthPx: 24 },
+      ]);
+      const positioned = searchableTextLayer(
+        source,
+        [
+          {
+            canvas: document.createElement("canvas"),
+            slice: { endPx: 25, startPx: 0 },
+          },
+          {
+            canvas: document.createElement("canvas"),
+            slice: { endPx: 200, startPx: 25 },
+          },
+        ],
+        {
+          format: "a4",
+          heightMm: 100,
+          heightPx: 200,
+          widthMm: 100,
+          widthPx: 200,
+        },
+      );
+      expect(positioned).toHaveLength(4);
+      expect(positioned[0]).toEqual({
+        fontSizePt: expect.closeTo(17.0079, 3),
+        pageNumber: 1,
+        text: "First",
+        widthMm: 15,
+        xMm: 5,
+        yMm: 5,
+      });
+      expect(positioned[2]).toEqual({
+        fontSizePt: expect.closeTo(17.0079, 3),
+        pageNumber: 2,
+        text: "second",
+        widthMm: 20,
+        xMm: 5,
+        yMm: 0.1,
+      });
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(
+          rangePrototype,
+          "getClientRects",
+          originalDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(rangePrototype, "getClientRects");
+      }
+    }
   });
 
   it("downloads a cleaned, browser-rasterized A4 PDF with searchable punctuation", async () => {

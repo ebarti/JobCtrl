@@ -81,7 +81,9 @@ media box without a trailing blank page or a rendered text line split across a
 page boundary. Compare the mounted Plate document to
 the downloaded PDF and confirm Unicode contact glyphs and separators are
 visually unchanged, punctuation-adjacent word spaces do not collapse, and text
-search/extraction still returns the live edit. The action must not save the
+search/extraction still returns the live edit. Drag-selection must follow the
+rendered word and line geometry without offset, oversized, or cross-line
+highlight boxes. The action must not save the
 profile, template, or review draft; call a generation endpoint; register or
 replace an artifact; or change Apply approval state.
 

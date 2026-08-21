@@ -8,7 +8,10 @@ import type {
 const PDF_EXPORT_SOURCE_ATTRIBUTE = "data-resume-pdf-export-source";
 const PDF_BITMAP_SCALE = 2;
 const PDF_PAGE_SLICE_EPSILON_PX = 1;
-const PDF_SEARCH_TEXT_FONT_SIZE_PT = 6;
+const PDF_PAGE_SLICE_RASTER_MINIMUM_BLANK_BAND_CSS_PX = 4;
+const PDF_PAGE_SLICE_RASTER_SEARCH_RADIUS_CSS_PX = 6;
+const PDF_PAGE_SLICE_RASTER_WHITE_CHANNEL = 255;
+const PDF_SEARCH_TEXT_FALLBACK_FONT_SIZE_PT = 6;
 const EDITOR_CHROME_SELECTOR = '[data-resume-editor-chrome="true"]';
 const EDITOR_STATE_CLASSES = [
   "has-jobctrl-comment",
@@ -90,17 +93,33 @@ export interface PdfRasterizationOptions {
   readonly windowWidth: number;
 }
 
-interface PdfSearchableTextLine {
+interface PdfSearchableTextFragment {
+  readonly fontSizePt: number;
   readonly pageNumber: number;
   readonly text: string;
+  readonly widthMm: number;
   readonly xMm: number;
   readonly yMm: number;
+}
+
+export interface PdfInvisibleTextOptions {
+  readonly baseline: "top";
+  readonly horizontalScale: number;
+  readonly renderingMode: "invisible";
+}
+
+export interface PdfMeasuredTextFragment {
+  readonly heightPx: number;
+  readonly leftPx: number;
+  readonly text: string;
+  readonly topPx: number;
+  readonly widthPx: number;
 }
 
 interface PdfDocument {
   addPage(): void;
   addPageImage(image: HTMLCanvasElement, alias: string): void;
-  addSearchableText(line: PdfSearchableTextLine): void;
+  addSearchableText(fragment: PdfSearchableTextFragment): void;
   save(filename: string): void;
   setPage(pageNumber: number): void;
 }
@@ -113,6 +132,20 @@ export type PdfPageRasterizer = (
   source: HTMLElement,
   options: PdfRasterizationOptions,
 ) => Promise<readonly PdfRasterizedPage[]>;
+
+export function pdfInvisibleTextOptions(
+  naturalWidthMm: number,
+  measuredWidthMm: number,
+): PdfInvisibleTextOptions {
+  return {
+    baseline: "top",
+    horizontalScale:
+      naturalWidthMm > 0 && Number.isFinite(naturalWidthMm)
+        ? measuredWidthMm / naturalWidthMm
+        : 1,
+    renderingMode: "invisible",
+  };
+}
 
 async function createPdfDocument(page: PdfPageGeometry): Promise<PdfDocument> {
   const { jsPDF } = await import("jspdf");
@@ -139,12 +172,16 @@ async function createPdfDocument(page: PdfPageGeometry): Promise<PdfDocument> {
         "FAST",
       );
     },
-    addSearchableText: (line) => {
+    addSearchableText: (fragment) => {
       pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(PDF_SEARCH_TEXT_FONT_SIZE_PT);
-      pdf.text(line.text, line.xMm, line.yMm, {
-        renderingMode: "invisible",
-      });
+      pdf.setFontSize(fragment.fontSizePt);
+      const naturalWidthMm = pdf.getTextWidth(fragment.text);
+      pdf.text(
+        fragment.text,
+        fragment.xMm,
+        fragment.yMm,
+        pdfInvisibleTextOptions(naturalWidthMm, fragment.widthMm),
+      );
     },
     save: (filename) => {
       pdf.save(filename);
@@ -363,6 +400,11 @@ export function pdfPageSlices(
   totalHeightPx: number,
   pageHeightPx: number,
   lineIntervals: readonly PdfVerticalInterval[],
+  resolveSafeCut?: (
+    candidatePx: number,
+    minimumPx: number,
+    maximumPx: number,
+  ) => number,
 ): readonly PdfPageSlice[] {
   const slices: PdfPageSlice[] = [];
   let startPx = 0;
@@ -377,7 +419,13 @@ export function pdfPageSlices(
           Math.min(...crossingLines.map((interval) => interval.topPx)),
         );
         if (safeEndPx > startPx + PDF_PAGE_SLICE_EPSILON_PX) {
-          endPx = safeEndPx;
+          const resolvedEndPx =
+            resolveSafeCut?.(safeEndPx, startPx, endPx) ?? safeEndPx;
+          endPx =
+            resolvedEndPx > startPx + PDF_PAGE_SLICE_EPSILON_PX &&
+            resolvedEndPx <= endPx
+              ? resolvedEndPx
+              : safeEndPx;
         }
       }
     }
@@ -390,6 +438,90 @@ export function pdfPageSlices(
   return slices.length > 0
     ? slices
     : [{ endPx: Math.max(1, totalHeightPx), startPx: 0 }];
+}
+
+export function safeBlankRasterCut(
+  candidatePx: number,
+  minimumPx: number,
+  maximumPx: number,
+  searchRadiusPx: number,
+  minimumBlankRows: number,
+  isBlankRow: (rowPx: number) => boolean,
+): number {
+  const centerPx = Math.round(candidatePx);
+  const requiredBlankRows = Math.max(2, Math.ceil(minimumBlankRows));
+  const firstPx = Math.max(
+    Math.floor(minimumPx) + 1,
+    centerPx - Math.max(0, Math.floor(searchRadiusPx)),
+  );
+  const lastPx = Math.min(
+    Math.ceil(maximumPx) - 1,
+    centerPx + Math.max(0, Math.floor(searchRadiusPx)),
+  );
+  let forwardRunStartPx: number | null = null;
+  for (let rowPx = Math.max(firstPx, centerPx); rowPx <= lastPx; rowPx += 1) {
+    if (!isBlankRow(rowPx)) {
+      forwardRunStartPx = null;
+      continue;
+    }
+    forwardRunStartPx ??= rowPx;
+    if (rowPx - forwardRunStartPx + 1 >= requiredBlankRows) {
+      return forwardRunStartPx + Math.floor(requiredBlankRows / 2);
+    }
+  }
+
+  let backwardRunEndPx: number | null = null;
+  for (
+    let rowPx = Math.min(lastPx, centerPx - 1);
+    rowPx >= firstPx;
+    rowPx -= 1
+  ) {
+    if (!isBlankRow(rowPx)) {
+      backwardRunEndPx = null;
+      continue;
+    }
+    backwardRunEndPx ??= rowPx;
+    if (backwardRunEndPx - rowPx + 1 >= requiredBlankRows) {
+      return rowPx + Math.ceil(requiredBlankRows / 2);
+    }
+  }
+  return candidatePx;
+}
+
+function canvasBlankRowPredicate(
+  canvas: HTMLCanvasElement,
+): ((rowPx: number) => boolean) | undefined {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return undefined;
+  const cachedRows = new Map<number, boolean>();
+  let readable = true;
+  return (rowPx) => {
+    const row = Math.trunc(rowPx);
+    if (!readable || row < 0 || row >= canvas.height) return false;
+    const cached = cachedRows.get(row);
+    if (cached !== undefined) return cached;
+    try {
+      const pixels = context.getImageData(0, row, canvas.width, 1).data;
+      let blank = true;
+      for (let offset = 0; offset < pixels.length; offset += 4) {
+        if (
+          pixels[offset]! < PDF_PAGE_SLICE_RASTER_WHITE_CHANNEL ||
+          pixels[offset + 1]! < PDF_PAGE_SLICE_RASTER_WHITE_CHANNEL ||
+          pixels[offset + 2]! < PDF_PAGE_SLICE_RASTER_WHITE_CHANNEL
+        ) {
+          blank = false;
+          break;
+        }
+      }
+      cachedRows.set(row, blank);
+      return blank;
+    } catch {
+      // A cross-origin image can make a browser canvas unreadable. Preserve the
+      // DOM-line fallback instead of failing an otherwise valid PDF export.
+      readable = false;
+      return false;
+    }
+  };
 }
 
 async function rasterizePdfPages(
@@ -423,10 +555,22 @@ async function rasterizePdfPages(
     bottomPx: interval.bottomPx * canvasScale,
     topPx: interval.topPx * canvasScale,
   }));
+  const isBlankRow = canvasBlankRowPredicate(continuousCanvas);
   const slices = pdfPageSlices(
     continuousCanvas.height,
     pageHeightCanvasPx,
     scaledLineIntervals,
+    isBlankRow
+      ? (candidatePx, minimumPx, maximumPx) =>
+          safeBlankRasterCut(
+            candidatePx,
+            minimumPx,
+            maximumPx,
+            PDF_PAGE_SLICE_RASTER_SEARCH_RADIUS_CSS_PX * canvasScale,
+            PDF_PAGE_SLICE_RASTER_MINIMUM_BLANK_BAND_CSS_PX * canvasScale,
+            isBlankRow,
+          )
+      : undefined,
   );
 
   return slices.map((slice) => {
@@ -510,27 +654,204 @@ function normalizedSearchableText(element: HTMLElement): string {
     .trim();
 }
 
-function searchableTextLayer(
+function normalizedSearchableFragmentText(text: string): string {
+  return text
+    .replace(/\u00a0/g, " ")
+    .replace(/[•·]/g, "|")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function visibleRangeRects(range: Range): readonly DOMRect[] {
+  if (typeof range.getClientRects !== "function") return [];
+  return Array.from(range.getClientRects()).filter(
+    (rect) => rect.height > 0 && rect.width > 0,
+  );
+}
+
+function appendMeasuredTextFragment(
+  fragments: PdfMeasuredTextFragment[],
+  range: Range,
+  node: Node,
+  startOffset: number,
+  endOffset: number,
+  sourceRect: DOMRect,
+): void {
+  const text = normalizedSearchableFragmentText(
+    (node.textContent ?? "").slice(startOffset, endOffset),
+  );
+  if (!text) return;
+  range.setStart(node, startOffset);
+  range.setEnd(node, endOffset);
+  const rects = visibleRangeRects(range);
+  if (rects.length === 0) return;
+  const left = Math.min(...rects.map((rect) => rect.left));
+  const right = Math.max(...rects.map((rect) => rect.right));
+  const top = Math.min(...rects.map((rect) => rect.top));
+  const bottom = Math.max(...rects.map((rect) => rect.bottom));
+  fragments.push({
+    heightPx: bottom - top,
+    leftPx: left - sourceRect.left,
+    text,
+    topPx: top - sourceRect.top,
+    widthPx: right - left,
+  });
+}
+
+function appendWrappedTokenFragments(
+  fragments: PdfMeasuredTextFragment[],
+  range: Range,
+  node: Node,
+  startOffset: number,
+  endOffset: number,
+  sourceRect: DOMRect,
+): void {
+  let fragmentStart = startOffset;
+  let fragmentEnd = startOffset;
+  let fragmentTop: number | null = null;
+  for (let offset = startOffset; offset < endOffset; ) {
+    const codePoint = node.textContent?.codePointAt(offset);
+    const codeUnitLength = codePoint !== undefined && codePoint > 0xffff ? 2 : 1;
+    const nextOffset = Math.min(endOffset, offset + codeUnitLength);
+    range.setStart(node, offset);
+    range.setEnd(node, nextOffset);
+    const rect = visibleRangeRects(range)[0];
+    if (!rect) {
+      if (fragmentEnd > fragmentStart) {
+        appendMeasuredTextFragment(
+          fragments,
+          range,
+          node,
+          fragmentStart,
+          fragmentEnd,
+          sourceRect,
+        );
+      }
+      fragmentStart = nextOffset;
+      fragmentEnd = nextOffset;
+      fragmentTop = null;
+      offset = nextOffset;
+      continue;
+    }
+    if (fragmentTop !== null && Math.abs(rect.top - fragmentTop) > 0.75) {
+      appendMeasuredTextFragment(
+        fragments,
+        range,
+        node,
+        fragmentStart,
+        fragmentEnd,
+        sourceRect,
+      );
+      fragmentStart = offset;
+    }
+    fragmentTop = rect.top;
+    fragmentEnd = nextOffset;
+    offset = nextOffset;
+  }
+  if (fragmentEnd > fragmentStart) {
+    appendMeasuredTextFragment(
+      fragments,
+      range,
+      node,
+      fragmentStart,
+      fragmentEnd,
+      sourceRect,
+    );
+  }
+}
+
+export function collectSearchableTextFragments(
+  source: HTMLElement,
+): readonly PdfMeasuredTextFragment[] {
+  const sourceRect = source.getBoundingClientRect();
+  const ownerDocument = source.ownerDocument;
+  const page = source.querySelector<HTMLElement>(".resume-page") ?? source;
+  const showText = ownerDocument.defaultView?.NodeFilter.SHOW_TEXT ?? 4;
+  const walker = ownerDocument.createTreeWalker(page, showText);
+  const range = ownerDocument.createRange();
+  if (typeof range.getClientRects !== "function") return [];
+  const fragments: PdfMeasuredTextFragment[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    const nodeText = node.textContent ?? "";
+    if (!parent || parent.closest(EDITOR_CHROME_SELECTOR) || !nodeText.trim()) {
+      continue;
+    }
+    for (const match of nodeText.matchAll(/\S+/gu)) {
+      const startOffset = match.index;
+      const endOffset = startOffset + match[0].length;
+      range.setStart(node, startOffset);
+      range.setEnd(node, endOffset);
+      const rects = visibleRangeRects(range);
+      if (rects.length <= 1) {
+        appendMeasuredTextFragment(
+          fragments,
+          range,
+          node,
+          startOffset,
+          endOffset,
+          sourceRect,
+        );
+      } else {
+        appendWrappedTokenFragments(
+          fragments,
+          range,
+          node,
+          startOffset,
+          endOffset,
+          sourceRect,
+        );
+      }
+    }
+  }
+  return fragments;
+}
+
+function fallbackSearchableTextFragments(
+  source: HTMLElement,
+): readonly PdfMeasuredTextFragment[] {
+  const sourceRect = source.getBoundingClientRect();
+  return searchableTextElements(source).flatMap((element) => {
+    const text = normalizedSearchableText(element);
+    if (!text) return [];
+    const rect = element.getBoundingClientRect();
+    return [
+      {
+        heightPx: rect.height,
+        leftPx: rect.left - sourceRect.left,
+        text,
+        topPx: rect.top - sourceRect.top,
+        widthPx: rect.width,
+      },
+    ];
+  });
+}
+
+export function searchableTextLayer(
   source: HTMLElement,
   pages: readonly PdfRasterizedPage[],
   geometry: PdfPageGeometry,
-): readonly PdfSearchableTextLine[] {
+): readonly PdfSearchableTextFragment[] {
   const sourceRect = source.getBoundingClientRect();
   const pageRect =
     source
       .querySelector<HTMLElement>(".resume-page")
       ?.getBoundingClientRect() ?? sourceRect;
   const pageWidthPx = pageRect.width > 0 ? pageRect.width : geometry.widthPx;
-  const lines: PdfSearchableTextLine[] = [];
-  for (const element of searchableTextElements(source)) {
-    const text = normalizedSearchableText(element);
-    if (!text) continue;
-    const rect = element.getBoundingClientRect();
-    const topPx = rect.top - sourceRect.top;
+  const pageLeftPx = pageRect.left - sourceRect.left;
+  const measuredFragments = collectSearchableTextFragments(source);
+  const textFragments =
+    measuredFragments.length > 0
+      ? measuredFragments
+      : fallbackSearchableTextFragments(source);
+  const fragments: PdfSearchableTextFragment[] = [];
+  for (const fragment of textFragments) {
+    const topPx = fragment.topPx;
+    const centerPx = topPx + fragment.heightPx / 2;
     const matchingPageIndex = pages.findIndex(
       (page, index) =>
-        topPx >= page.slice.startPx &&
-        (topPx < page.slice.endPx || index === pages.length - 1),
+        centerPx >= page.slice.startPx &&
+        (centerPx < page.slice.endPx || index === pages.length - 1),
     );
     const pageIndex =
       matchingPageIndex >= 0
@@ -540,19 +861,42 @@ function searchableTextLayer(
     if (!page) continue;
     const relativeTopPx = Math.max(0, topPx - page.slice.startPx);
     const xMm = Math.min(
-      geometry.widthMm - 0.5,
+      geometry.widthMm - 0.1,
       Math.max(
-        0.5,
-        ((rect.left - pageRect.left) / pageWidthPx) * geometry.widthMm,
+        0.1,
+        ((fragment.leftPx - pageLeftPx) / pageWidthPx) * geometry.widthMm,
+      ),
+    );
+    const widthMm = Math.min(
+      geometry.widthMm - xMm,
+      Math.max(
+        0.1,
+        (fragment.widthPx / pageWidthPx) * geometry.widthMm,
       ),
     );
     const yMm = Math.min(
-      geometry.heightMm - 0.5,
-      Math.max(1, (relativeTopPx / geometry.heightPx) * geometry.heightMm + 1),
+      geometry.heightMm - 0.1,
+      Math.max(
+        0.1,
+        (relativeTopPx / geometry.heightPx) * geometry.heightMm,
+      ),
     );
-    lines.push({ pageNumber: pageIndex + 1, text, xMm, yMm });
+    const heightMm =
+      (fragment.heightPx / geometry.heightPx) * geometry.heightMm;
+    const fontSizePt =
+      heightMm > 0
+        ? Math.max(1, (heightMm * 72) / 25.4)
+        : PDF_SEARCH_TEXT_FALLBACK_FONT_SIZE_PT;
+    fragments.push({
+      fontSizePt,
+      pageNumber: pageIndex + 1,
+      text: fragment.text,
+      widthMm,
+      xMm,
+      yMm,
+    });
   }
-  return lines;
+  return fragments;
 }
 
 export class BrowserPdfExportAdapter implements PdfExportPort {
