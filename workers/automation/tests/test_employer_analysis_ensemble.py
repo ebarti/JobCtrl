@@ -357,7 +357,7 @@ class TestCodexAdapter:
         adapter = CodexAnalysisAdapter(
             async_codex_factory=lambda: _FakeAsyncCodex("", status="failed"),
         )
-        with pytest.raises(RuntimeError, match="Codex turn failed"):
+        with pytest.raises(RuntimeError, match="provider_turn:turn_failed"):
             await adapter.draft("system", JD)
 
     async def test_draft_opens_generation_span_with_model_and_tokens(self, in_memory_exporter) -> None:

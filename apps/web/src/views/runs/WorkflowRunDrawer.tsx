@@ -349,6 +349,15 @@ function FailureDetails({
   readonly run: WorkflowRunDetail;
   readonly eventMessage: string | null;
 }) {
+  const failureDiagnostics = run.failureDiagnostics ?? {
+    automaticRetryable: run.retryable,
+    manualRecoveryAvailable: false,
+    providerFailures: null,
+  };
+  const providerFailures = failureDiagnostics.providerFailures;
+  const hasLegacyProviderFailures = Boolean(
+    providerFailures?.counts.some((failure) => failure.source === "legacy_inferred"),
+  );
   const showProjectedMessage = Boolean(
     run.errorMessage && run.errorMessage !== eventMessage,
   );
@@ -369,10 +378,68 @@ function FailureDetails({
           </div>
         ) : null}
         <div>
-          <dt data-typography="label">Retryable</dt>
-          <dd data-typography="body">{run.retryable ? "Yes" : "No"}</dd>
+          <dt data-typography="label">Automatic retry</dt>
+          <dd data-typography="body">
+            {failureDiagnostics.automaticRetryable ? "Yes" : "No"}
+          </dd>
         </div>
+        {failureDiagnostics.manualRecoveryAvailable ? (
+          <div>
+            <dt data-typography="label">Manual recovery</dt>
+            <dd data-typography="body">Available</dd>
+          </div>
+        ) : null}
       </dl>
+      {providerFailures ? (
+        <div className="workflow-run-failure__provider-diagnostics">
+          <h4 data-typography="component-title">Provider diagnostics</h4>
+          <p data-typography="body">
+            {providerFailures.total} provider {providerFailures.total === 1 ? "failure" : "failures"} recorded
+          </p>
+          {hasLegacyProviderFailures ? (
+            <p data-typography="body">
+              Legacy-inferred diagnostics: this execution was recorded before structured provider
+              instrumentation, so structured provider details were unavailable.
+            </p>
+          ) : null}
+          {providerFailures.latest ? (
+            <dl>
+              <div>
+                <dt data-typography="label">Latest provider call</dt>
+                <dd data-typography="code">
+                  {providerFailures.latest.provider} / {providerFailures.latest.model} / {providerFailures.latest.operation}
+                </dd>
+              </div>
+              <div>
+                <dt data-typography="label">Latest failure</dt>
+                <dd data-typography="code">
+                  {providerFailures.latest.category}: {providerFailures.latest.code}
+                </dd>
+              </div>
+              {providerFailures.latest.source === "legacy_inferred" ? (
+                <div>
+                  <dt data-typography="label">Diagnostic source</dt>
+                  <dd data-typography="body">Legacy inferred</dd>
+                </div>
+              ) : null}
+              {providerFailures.latest.innerAttempt ? (
+                <div>
+                  <dt data-typography="label">Candidate attempt</dt>
+                  <dd data-typography="body">{providerFailures.latest.innerAttempt}</dd>
+                </div>
+              ) : null}
+            </dl>
+          ) : null}
+          <ul aria-label="Provider failure counts">
+            {providerFailures.counts.map((failure) => (
+              <li key={`${failure.source}-${failure.provider}-${failure.model}-${failure.operation}-${failure.category}-${failure.code}`}>
+                <code>{failure.count}</code> {failure.provider} / {failure.model} / {failure.operation}: {failure.category}: {failure.code}
+                {failure.source === "legacy_inferred" ? " (legacy inferred)" : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </section>
   );
 }

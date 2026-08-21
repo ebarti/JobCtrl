@@ -59,6 +59,7 @@ from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, ProviderFailureEnvelope
 from jobctrl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
@@ -492,6 +493,36 @@ class _ScriptedLlm:
 
     def ask(self, prompt: str, **kwargs) -> str:
         return self.chat([LlmMessage(role="user", content=prompt)], **kwargs)
+
+
+class _ProviderFailingLlm:
+    """Raises an application-owned provider error for every candidate call."""
+
+    def __init__(self, private_provider_text: str) -> None:
+        self.private_provider_text = private_provider_text
+        self.calls = 0
+
+    def chat_json(self, messages: list[LlmMessage], **kwargs) -> dict:
+        self.calls += 1
+        error = ProviderCallError(
+            ProviderFailureEnvelope(
+                provider="openai",
+                model="codex-test-model",
+                operation="chat_json",
+                category="provider_turn",
+                error_type="codex_turn_error",
+                code="builder_error",
+                retryable=True,
+                message_code="builder_error",
+                additional_detail_code="schema_validation_failed",
+                additional_details_present=True,
+                codex_error_code="server_overloaded",
+            )
+        )
+        # Simulate a provider SDK object carrying sensitive diagnostics. The
+        # use case must persist only the envelope, never arbitrary fields.
+        error.raw_provider_message = self.private_provider_text
+        raise error
 
 
 class _RecordingPublisher:
@@ -2519,6 +2550,65 @@ def test_tailor_use_case_exhausted_when_no_parseable_json(
     assert audit["attempt_history"][0]["system_prompt"]
     assert audit["attempt_history"][0]["candidates"][0]["status"] == "parse_error"
     assert any(getattr(e, "event_type", "") == "ResumeFailed" for e in publisher.events)
+
+
+def test_tailor_use_case_persists_safe_provider_failures_without_calling_them_parse_errors(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    private_sentinel = "PRIVATE_CODEX_ADDITIONAL_DETAILS"
+    repo = _FakeRepository()
+    llm = _ProviderFailingLlm(private_sentinel)
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        audit_execution_id="temporal-run-builder-error",
+        durable_attempt=2,
+    )
+
+    assert outcome.status == "provider_error"
+    assert outcome.error == "All candidate provider calls failed"
+    assert llm.calls == 4
+    audit_entry = repo.saved[-1].metadata["tailoring_attempt_audits"][-1]
+    assert audit_entry["execution_id"] == "temporal-run-builder-error"
+    assert audit_entry["durable_attempt"] == 2
+    audit = audit_entry["report"]
+    assert audit["status"] == "provider_error"
+    candidates = [
+        attempt["candidates"][0]
+        for attempt in audit["attempt_history"]
+    ]
+    assert [candidate["status"] for candidate in candidates] == ["provider_error"] * 4
+    provider_error = candidates[-1]["provider_error"]
+    assert provider_error.items() >= {
+        "provider": "openai",
+        "model": "codex-test-model",
+        "operation": "chat_json",
+        "category": "provider_turn",
+        "error_type": "codex_turn_error",
+        "code": "builder_error",
+        "retryable": True,
+        "message_code": "builder_error",
+        "additional_detail_code": "schema_validation_failed",
+        "additional_details_present": True,
+        "codex_error_code": "server_overloaded",
+        "inner_attempt": 4,
+        "workflow_run_id": "temporal-run-builder-error",
+        "durable_attempt": 2,
+        "schema_version": "tailored-resume.v3",
+    }.items()
+    assert provider_error["candidate_id"]
+    assert provider_error["prompt_fingerprint"]
+    assert "parse_error" not in provider_error
+    assert private_sentinel not in json.dumps(audit, sort_keys=True)
 
 
 def test_tailor_use_case_preserves_attempt_audit_across_durable_executions(

@@ -122,7 +122,70 @@ def test_llm_generation_span_records_content_free_failure(caplog, in_memory_expo
     assert span.status.status_code == StatusCode.ERROR
     assert span.status.description == "LLM call failed (RuntimeError)"
     assert attrs["error.type"] == "RuntimeError"
+    assert attrs["jobctrl.llm.failure.provider"] == "unknown"
+    assert attrs["jobctrl.llm.failure.model"] == "m"
+    assert attrs["jobctrl.llm.failure.operation"] == "chat"
+    assert attrs["jobctrl.llm.failure.category"] == "provider_exception"
+    assert attrs["jobctrl.llm.failure.type"] == "RuntimeError"
+    assert attrs["jobctrl.llm.failure.code"] == "sdk_exception"
+    assert attrs["jobctrl.llm.failure.retryable"] is False
     assert attrs["jobctrl.llm.success"] is False
     assert span.events == ()
     assert private_sentinel not in _exported_span_text(span)
     assert private_sentinel not in caplog.text
+
+
+def test_llm_generation_span_exports_safe_provider_failure_attributes(in_memory_exporter):
+    from opentelemetry.trace import StatusCode
+
+    from jobctrl.infrastructure.llm.provider_errors import (
+        ProviderCallError,
+        ProviderFailureEnvelope,
+    )
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+
+    private_sentinel = "PRIVATE_PROVIDER_ERROR_TEXT"
+    failure = ProviderCallError(
+        ProviderFailureEnvelope(
+            provider="openai",
+            model="codex-test-model",
+            operation="chat_json",
+            category="provider_turn",
+            error_type="codex_turn_error",
+            code="builder_error",
+            retryable=True,
+            message_code="builder_error",
+            additional_detail_code="schema_validation_failed",
+            additional_details_present=True,
+            codex_error_code="server_overloaded",
+        )
+    )
+
+    with pytest.raises(ProviderCallError):
+        with llm_generation_span(
+            model="codex-test-model",
+            messages=[{"role": "user", "content": private_sentinel}],
+            params={"structured": True},
+            scope_name="jobctrl.llm.codex",
+            schema_fingerprint="schema-safe-fingerprint",
+        ):
+            raise failure
+
+    span = in_memory_exporter.get_finished_spans()[0]
+    attrs = _attrs(span)
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.status.description == "LLM provider call failed (provider_turn:builder_error)"
+    assert attrs["jobctrl.llm.operation"] == "chat_json"
+    assert attrs["jobctrl.llm.schema_fingerprint"] == "schema-safe-fingerprint"
+    assert attrs["jobctrl.llm.failure.provider"] == "openai"
+    assert attrs["jobctrl.llm.failure.model"] == "codex-test-model"
+    assert attrs["jobctrl.llm.failure.operation"] == "chat_json"
+    assert attrs["jobctrl.llm.failure.category"] == "provider_turn"
+    assert attrs["jobctrl.llm.failure.type"] == "codex_turn_error"
+    assert attrs["jobctrl.llm.failure.code"] == "builder_error"
+    assert attrs["jobctrl.llm.failure.retryable"] is True
+    assert attrs["jobctrl.llm.failure.additional_details_present"] is True
+    assert attrs["jobctrl.llm.failure.provider_code"] == "server_overloaded"
+    assert failure.envelope.trace_id is not None
+    assert failure.envelope.span_id is not None
+    assert private_sentinel not in _exported_span_text(span)

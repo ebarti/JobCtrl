@@ -2478,6 +2478,62 @@ export interface WorkflowRunTimelineEvent {
   readonly message: string | null;
 }
 
+/**
+ * Privacy-safe aggregation of provider failures recorded for one tailoring
+ * workflow. No prompts, provider messages, SDK objects, or generated content
+ * cross this boundary.
+ */
+export interface WorkflowRunProviderFailureCount {
+  /** Whether this count came from a structured envelope or the narrow legacy bridge. */
+  readonly source: "structured" | "legacy_inferred";
+  readonly provider: string;
+  readonly model: string;
+  readonly operation: string;
+  readonly category: string;
+  readonly errorType: string;
+  readonly code: string;
+  /** Per-call retryability is unavailable in legacy audit records. */
+  readonly retryable: boolean | null;
+  readonly count: number;
+}
+
+export interface WorkflowRunProviderFailureDiagnostic {
+  /** Structured provider envelope, or the exact legacy Codex builder-error bridge. */
+  readonly source: "structured" | "legacy_inferred";
+  readonly provider: string;
+  readonly model: string;
+  readonly operation: string;
+  readonly category: string;
+  readonly errorType: string;
+  readonly code: string;
+  /** Per-call retryability is unavailable in legacy audit records. */
+  readonly retryable: boolean | null;
+  readonly messageCode: string | null;
+  readonly additionalDetailCode: string | null;
+  readonly additionalDetailsPresent: boolean | null;
+  readonly providerCode: string | null;
+  readonly httpStatus: number | null;
+  readonly candidateId: string | null;
+  readonly innerAttempt: number | null;
+  readonly durableAttempt: number | null;
+  readonly promptFingerprint: string | null;
+  readonly schemaVersion: string | null;
+  readonly traceId: string | null;
+  readonly spanId: string | null;
+}
+
+export interface WorkflowRunFailureDiagnostics {
+  /** Whether Temporal will automatically retry this workflow failure. */
+  readonly automaticRetryable: boolean;
+  /** Whether the operator can start a new Tailor recovery attempt. */
+  readonly manualRecoveryAvailable: boolean;
+  readonly providerFailures: {
+    readonly total: number;
+    readonly counts: readonly WorkflowRunProviderFailureCount[];
+    readonly latest: WorkflowRunProviderFailureDiagnostic | null;
+  } | null;
+}
+
 export interface WorkflowRunDetail {
   readonly workflowId: string;
   readonly runId: string;
@@ -2491,7 +2547,9 @@ export interface WorkflowRunDetail {
   readonly result: string | null;
   readonly errorCode: string | null;
   readonly errorMessage: string | null;
+  /** @deprecated Use failureDiagnostics.automaticRetryable for the exact meaning. */
   readonly retryable: boolean;
+  readonly failureDiagnostics?: WorkflowRunFailureDiagnostics;
   readonly inputSummary: Record<string, unknown>;
   readonly temporalRunId: string | null;
   readonly startedAt: string | null;

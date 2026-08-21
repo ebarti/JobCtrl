@@ -203,6 +203,19 @@ and task-queue observations are runtime telemetry, not domain events.
 /v1/workflow-runs/:runId` returns the projection-backed detail and timeline.
 `POST /v1/workflow-runs/:runId/actions/cancel` requests Temporal cancellation.
 
+Run detail separates `failureDiagnostics.automaticRetryable` from
+`failureDiagnostics.manualRecoveryAvailable`; the latter means an operator can
+start a new Tailor recovery attempt and is not a Temporal automatic retry. It
+is derived from the canonical failed/retryable or exhausted Tailor stage for a
+failed JobPreparation Tailor run, rather than from the workflow error code. For
+a matching tailoring execution, `failureDiagnostics.providerFailures` contains
+only bounded provider failure counts plus the latest safe diagnostic
+(provider/model/operation/category/type/code, retryability, attempt and
+correlation identifiers). A `source` of `legacy_inferred` is the narrowly
+allowlisted pre-instrumentation Codex `parse_error: "builder error"` record;
+its per-call retryability and structured provider fields are unavailable. It never returns prompts, resume/job content,
+provider messages, raw SDK fields, paths, URLs, or secrets.
+
 Discover, job preparation, and Apply use this same history contract: one status
 vocabulary, ordered lifecycle timeline, terminal-state interpretation, and
 cancellation boundary. Product views may present different workflow details,

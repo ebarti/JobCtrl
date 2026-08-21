@@ -1985,6 +1985,11 @@ export const sampleWorkflowRunDetail: WorkflowRunDetail = {
   errorCode: "activity_error",
   errorMessage: "discover activity failed",
   retryable: true,
+  failureDiagnostics: {
+    automaticRetryable: true,
+    manualRecoveryAvailable: false,
+    providerFailures: null,
+  },
   inputSummary: { stages: ["discover"] },
   temporalRunId: "temporal-run-1",
   startedAt: "2026-05-06T05:00:00Z",

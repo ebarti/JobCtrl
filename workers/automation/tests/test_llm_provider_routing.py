@@ -17,6 +17,7 @@ from jobctrl.infrastructure.llm.llm_client import (
     GoogleSdkBackend,
     SdkControlNormalizationWarning,
 )
+from jobctrl.infrastructure.llm.provider_errors import ProviderCallError
 
 
 class ResultMessage:
@@ -58,6 +59,34 @@ class _CodexThread:
         )
 
 
+class _FailedCodexTurnHandle:
+    id = "turn-builder-error"
+
+    async def stream(self):
+        # This mirrors the public SDK stream shape closely enough to prove we
+        # retain TurnError fields that AsyncThread.run() otherwise discards.
+        yield SimpleNamespace(
+            payload=SimpleNamespace(
+                turn=SimpleNamespace(
+                    id=self.id,
+                    status=SimpleNamespace(value="failed"),
+                    error=SimpleNamespace(
+                        message="builder error",
+                        additional_details="schema validation failed",
+                        codex_error_info=SimpleNamespace(
+                            root=SimpleNamespace(value="serverOverloaded")
+                        ),
+                    ),
+                )
+            )
+        )
+
+
+class _FailedCodexThread:
+    async def turn(self, prompt: str, **kwargs: Any) -> _FailedCodexTurnHandle:
+        return _FailedCodexTurnHandle()
+
+
 class _Codex:
     def __init__(self, calls: dict[str, Any] | None = None) -> None:
         self.calls = calls
@@ -72,6 +101,11 @@ class _Codex:
         if self.calls is not None:
             self.calls["thread_start"] = kwargs
         return _CodexThread(self.calls)
+
+
+class _FailedCodex(_Codex):
+    async def thread_start(self, **kwargs: Any) -> _FailedCodexThread:
+        return _FailedCodexThread()
 
 
 class _GoogleResponse:
@@ -261,6 +295,36 @@ def test_codex_sdk_maps_thinking_to_effort_and_normalizes_unsupported_controls()
     assert calls["run"]["effort"] == "medium"
     assert "temperature" not in calls["run"]
     assert "max_tokens" not in calls["run"]
+
+
+def test_codex_sdk_retains_safe_builder_error_fields_from_failed_turn() -> None:
+    backend = CodexSdkBackend(
+        model="codex-test-model",
+        async_codex_factory=lambda: _FailedCodex(),
+        approval_mode_factory=lambda: "deny",
+    )
+
+    with pytest.raises(ProviderCallError) as raised:
+        backend.chat_json(
+            [{"role": "user", "content": "synthetic request"}],
+            response_schema={"type": "object", "properties": {"answer": {"type": "integer"}}},
+        )
+
+    envelope = raised.value.envelope.to_dict()
+    assert envelope.items() >= {
+        "provider": "openai",
+        "model": "codex-test-model",
+        "operation": "chat_json",
+        "category": "provider_turn",
+        "error_type": "codex_turn_error",
+        "code": "builder_error",
+        "retryable": True,
+        "message_code": "builder_error",
+        "additional_detail_code": "schema_validation_failed",
+        "additional_details_present": True,
+        "codex_error_code": "server_overloaded",
+    }.items()
+    assert "schema validation failed" not in repr(envelope)
 
 
 def test_google_sdk_maps_thinking_level_and_normalizes_unsupported_controls(
