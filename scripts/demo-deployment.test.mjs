@@ -56,8 +56,8 @@ test("deployment workflow pins Wrangler, gates production, and deploys in safe o
   assert.equal(edgePackage.devDependencies.wrangler, "4.107.0");
   assert.match(workflow, /wrangler@4\.107\.0 pages deploy/);
   assert.match(workflow, /- "scripts\/demo-\*\.mjs"/);
-  const setupNode = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0";
-  assert.equal(workflow.split(setupNode).length - 1, 3);
+  const setupNodeUses = workflow.match(/uses: actions\/setup-node@[a-f0-9]{40} # v\d+\.\d+\.\d+/g) ?? [];
+  assert.equal(setupNodeUses.length, 3);
   assert.equal((workflow.match(/node-version: 22\.21\.1/g) ?? []).length, 3);
   assert.doesNotMatch(workflow, /node-version: "20\.19"/);
   assert.match(workflow, /vars\.DEMO_DEPLOY_ENABLED == 'true'/);
@@ -65,8 +65,11 @@ test("deployment workflow pins Wrangler, gates production, and deploys in safe o
   assert.doesNotMatch(workflow, /pull_request_target/);
 
   const previewJob = workflow.slice(workflow.indexOf("  preview:"), workflow.indexOf("  production:"));
-  assert.match(previewJob, /uses: actions\/checkout@v4/);
-  assert.ok(previewJob.indexOf("actions/checkout@v4") < previewJob.indexOf("pnpm/action-setup@v4"));
+  const checkoutIndex = previewJob.indexOf("uses: actions/checkout@");
+  const packageManagerIndex = previewJob.indexOf("uses: pnpm/action-setup@");
+  assert.ok(checkoutIndex >= 0);
+  assert.ok(packageManagerIndex >= 0);
+  assert.ok(checkoutIndex < packageManagerIndex);
   assert.match(previewJob, /^\s+HEAD_REF: \$\{\{ github\.head_ref \}\}$/m);
   assert.match(previewJob, /run: .*--branch="\$HEAD_REF"/);
   assert.doesNotMatch(previewJob, /run: .*\$\{\{\s*github\.head_ref\s*\}\}/);

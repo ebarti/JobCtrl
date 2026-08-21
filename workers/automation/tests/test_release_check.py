@@ -866,7 +866,7 @@ def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> No
     assert build.index(sync) < build.index(build_command) < build.index(
         "python3 scripts/release_check.py --strict-prompt"
     ) < build.index("shasum -a 256 packages/* > SHA256SUMS") < build.index(
-        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
     )
     assert "jobctrl-pypi-distributions-" in build
     assert "pypi-build-a" not in workflow
@@ -880,7 +880,7 @@ def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> No
         "needs.pypi-build.result == 'success' }}" in publish
     )
     assert "id-token: write" in publish
-    assert "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" in publish
+    assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in publish
     assert "actions/checkout@" not in publish
     assert "actions/setup-python@" not in publish
     assert "actions/setup-node@" not in publish
@@ -897,8 +897,8 @@ def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> No
     assert "packages-dir: ${{ runner.temp }}/jobctrl-pypi-dists/packages" in publish
     assert "SHA256SUMS" in publish
     assert "jobctrl-pypi-distributions-" in publish
-    assert "uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b" in publish
-    assert "uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d" not in publish
+    assert "uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33" in publish
+    assert "uses: pypa/gh-action-pypi-publish@a892a5a61159132606e93a2fa6f4358831b04d26" not in publish
 
 
 def test_pypi_no_isolation_backend_is_exactly_pinned_and_locked() -> None:
@@ -912,26 +912,31 @@ def test_pypi_no_isolation_backend_is_exactly_pinned_and_locked() -> None:
     assert 'requires = ["hatchling==1.29.0"]' in pyproject
     assert '"hatchling==1.29.0"' in pyproject
     assert 'release-build = ["build==1.4.3", "hatchling==1.29.0"]' in pyproject
-    assert 'exclude-newer = "7 days"' in pyproject
-    assert 'exclude-newer-span = "P7D"' in lock
+    assert 'exclude-newer = "7 days"' not in pyproject
+    assert "exclude-newer-span" not in lock
     assert 'name = "build"\nversion = "1.4.3"' in lock
     assert 'name = "hatchling"\nversion = "1.29.0"' in lock
     assert release_check._pypi_build_backend_findings(release_check.ROOT) == []
 
 
-def test_pypi_lock_cutoff_span_must_match_the_pyproject_policy(tmp_path: Path) -> None:
+def test_pypi_lock_rejects_a_time_relative_global_cutoff(tmp_path: Path) -> None:
     pyproject = (release_check.ROOT / release_check.PYTHON_PROJECT_PATH).read_text(
         encoding="utf-8"
-    )
+    ).replace('[tool.uv]\n', '[tool.uv]\nexclude-newer = "7 days"\n', 1)
     lock = (release_check.ROOT / release_check.PYTHON_LOCK_PATH).read_text(
         encoding="utf-8"
-    ).replace('exclude-newer-span = "P7D"', 'exclude-newer-span = "P8D"', 1)
+    ).replace(
+        '[options.exclude-newer-package]\n',
+        '[options]\nexclude-newer-span = "P7D"\n\n[options.exclude-newer-package]\n',
+        1,
+    )
     _write(tmp_path / release_check.PYTHON_PROJECT_PATH, pyproject)
     _write(tmp_path / release_check.PYTHON_LOCK_PATH, lock)
 
     findings = release_check._pypi_build_backend_findings(tmp_path)
 
-    assert any("relative dependency cutoff must match" in item for item in findings)
+    assert any("rolling dependency cooldown" in item for item in findings)
+    assert any("time-relative global dependency cutoff" in item for item in findings)
 
 
 def test_pypi_workflow_static_contract_is_clean() -> None:
@@ -1234,7 +1239,22 @@ def test_release_privacy_workflow_enforces_strict_prompt_gate() -> None:
         release_check.ROOT / ".github/workflows/release-check.yml"
     ).read_text(encoding="utf-8")
 
-    assert "python3 scripts/release_check.py --strict-prompt" in workflow
+    sync = "uv --project workers/automation sync --locked --only-group release-check"
+    scan = (
+        "uv --project workers/automation run --locked --only-group release-check "
+        "python scripts/release_check.py --strict-prompt"
+    )
+    self_test = (
+        "uv --project workers/automation run --locked --only-group release-check "
+        "pytest -q -c /dev/null -p no:cacheprovider --noconftest "
+        "workers/automation/tests/test_release_check.py"
+    )
+
+    assert sync in workflow
+    assert scan in workflow
+    assert self_test in workflow
+    assert workflow.index(sync) < workflow.index(scan) < workflow.index(self_test)
+    assert "pip install" not in workflow
 
 
 def test_release_privacy_workflow_scans_every_pull_request() -> None:

@@ -1075,8 +1075,8 @@ def _release_distribution_findings(root: Path) -> list[str]:
         "--if-none-match '*'": "does not protect immutable R2 object creation",
         "channel-promotion-evidence.json": "does not retain channel-promotion recovery evidence",
         "immutableDescriptorUrl": "does not smoke the immutable candidate descriptor before promotion",
-        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02": "does not hand signed assets across clean jobs as artifacts",
-        "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093": "does not consume signed assets through an artifact handoff",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a": "does not hand signed assets across clean jobs as artifacts",
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c": "does not consume signed assets through an artifact handoff",
         "gh release create \"$RELEASE_TAG\"": "does not create a draft release after exact asset verification",
         "targetCommitish": "does not bind a rerun draft release to the audited commit",
         "gh release edit \"$RELEASE_TAG\" --draft=false": "does not publish only after smoke and Homebrew gates",
@@ -1542,13 +1542,13 @@ def _pypi_release_workflow_findings(workflow: str) -> list[str]:
         "jobctrl-pypi-distributions-": "does not consume only the checksum-bound build artifact",
         "EXPECTED_SOURCE_COMMIT: ${{ needs.pypi-resolve.outputs.source_commit }}": "does not bind publication to the resolved source commit",
         "packages-dir: ${{ runner.temp }}/jobctrl-pypi-dists/packages": "does not limit PyPI to the verified package directory",
-        "uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b": "does not use the peeled v1.14.0 PyPI publisher commit",
+        "uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33": "does not use the reviewed peeled v1.14.2 PyPI publisher commit",
     }.items():
         if marker not in publish:
             findings.append(f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: {message}")
-    if "pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d" in publish:
+    if "pypa/gh-action-pypi-publish@a892a5a61159132606e93a2fa6f4358831b04d26" in publish:
         findings.append(
-            f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: PyPI publisher must pin the peeled v1.14.0 commit, not its annotated tag object"
+            f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: PyPI publisher must pin the peeled v1.14.2 commit, not its annotated tag object"
         )
     for marker, message in {
         "actions/checkout@": "must not check out source in the OIDC publication job",
@@ -1586,9 +1586,9 @@ def _pypi_build_backend_findings(root: Path) -> list[str]:
         findings.append(
             f"{PYTHON_PROJECT_PATH}: release-build group must contain only build==1.4.3 and hatchling==1.29.0"
         )
-    if not re.search(r'(?m)^exclude-newer\s*=\s*"7 days"\s*$', pyproject_text):
+    if re.search(r'(?m)^exclude-newer\s*=', pyproject_text):
         findings.append(
-            f"{PYTHON_PROJECT_PATH}: broad dependency cutoff must remain exactly seven days"
+            f"{PYTHON_PROJECT_PATH}: rolling dependency cooldown must be owned by Dependabot, not a time-relative uv input"
         )
     try:
         lock_text = lock_path.read_text(encoding="utf-8")
@@ -1606,9 +1606,9 @@ def _pypi_build_backend_findings(root: Path) -> list[str]:
     ]
     if len(build_blocks) != 1 or not re.search(r'(?m)^version\s*=\s*"1\.4\.3"\s*$', build_blocks[0]):
         findings.append(f"{PYTHON_LOCK_PATH}: must lock build==1.4.3 for release-build")
-    if not re.search(r'(?m)^exclude-newer-span\s*=\s*"P7D"\s*$', lock_text):
+    if re.search(r'(?m)^exclude-newer(?:-span)?\s*=', lock_text):
         findings.append(
-            f"{PYTHON_LOCK_PATH}: relative dependency cutoff must match the seven-day pyproject policy"
+            f"{PYTHON_LOCK_PATH}: must not retain a time-relative global dependency cutoff"
         )
     return findings
 

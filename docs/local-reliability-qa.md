@@ -20,13 +20,50 @@ final PR, then run product QA on the cumulative stack.
 | Browser flow | `corepack pnpm --filter @jobctrl/web e2e -- tests/<flow>.spec.ts` |
 | Public demo browser workspace | `corepack pnpm --filter @jobctrl/web e2e:demo-workspace` |
 | Public demo edge | `corepack pnpm demo-edge:check`, `corepack pnpm demo-edge:test`, and `corepack pnpm demo-edge:dry-run` |
-| Python worker | `uv --project workers/automation run --extra dev ruff check .` and `uv --project workers/automation run --extra dev pytest -q` |
+| Python worker | `uv --project workers/automation run --locked --all-extras ruff check .` and `uv --project workers/automation run --locked --all-extras pytest -q` |
 | SQLite schema or native migration | Focused Python schema/candidate tests, `corepack pnpm api:check`, `corepack pnpm api:test`, `corepack pnpm launcher:check`, and `corepack pnpm launcher:test` |
 | Any patch | `git diff --check` |
 
 Start the attached full stack with `corepack pnpm dev` when the path needs the
 API, Temporal, worker, and web app together. Confirm `GET /v1/health` reports a
 healthy worker before starting worker-backed stages.
+
+## Pull-request CI routing
+
+Every pull request receives the stable `CI / required` result. A cheap planner
+compares the cumulative `main...HEAD` diff and routes only the surfaces that
+own changed inputs; for a stack, dependency execution belongs to the trusted
+top layer. Lower stack layers and external forks keep a visible no-dependency
+result. Changes to the router itself deliberately exercise every route.
+
+Python CI syncs `workers/automation/uv.lock` with `--locked --all-extras`; it
+must never resolve the floating ranges in `pyproject.toml` in place of the
+candidate graph. The suite is split into core, Temporal-lifecycle, and v6-to-v7
+migration shards for each supported Python version. Each test has a three-minute
+timeout, each job has a hard workflow timeout, and every shard reports its seed,
+slowest tests, and JUnit artifact. Reproduce the two specialized shards with:
+
+```bash
+uv --project workers/automation run --locked --all-extras pytest \
+  workers/automation/tests -q -m temporal --durations=50
+uv --project workers/automation run --locked --all-extras pytest \
+  workers/automation/tests -q -m migration --durations=50
+```
+
+The native migration gate is intentionally cross-runtime: the Go launcher
+opens the candidate with the locked Python migration runtime and then reopens
+the same database through the TypeScript API. Changes to the worker lock or
+metadata, the API package closure, or the API database/schema reopen probe
+therefore route the macOS launcher job as real executable inputs. Ordinary
+root documentation dependencies do not.
+
+The distribution gate runs once, separately from docs, demo, and native
+launcher builds. Exact direct-dependency and package-file counts remain reviewed
+release contracts. Raw pnpm and uv package-record totals are closure evidence,
+not correctness invariants: CI reports the added and removed package identities
+for review without failing solely because a transitive record count changed.
+Dependabot staggers package-manager batches, groups compatible minor and patch
+updates, and applies the rolling cooldown before a candidate lockfile is opened.
 
 For compensation changes, the Job Detail product-path check must cover both an
 accepted range and an insufficient-evidence result. Verify that the posted

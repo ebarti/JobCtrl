@@ -6,12 +6,7 @@ import { promisify } from "node:util";
 
 const workflowPath = fileURLToPath(new URL("../.github/workflows/python.yml", import.meta.url));
 const workflow = await readFile(workflowPath, "utf8");
-
-// Parse the real YAML the same way scripts/stacked-ci-workflows.test.mjs does
-// (Ruby ships on the hosted runners; this step installs no Node dependencies),
-// so the trigger contract holds for what GitHub will actually evaluate rather
-// than for one canonical spelling. A string match false-passes on flow-style
-// lists, unquoted entries, or reordered keys.
+const ciWorkflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
 const execFileAsync = promisify(execFile);
 const rubyYamlToJson = String.raw`
 document = YAML.safe_load(
@@ -31,75 +26,35 @@ const { stdout } = await execFileAsync(
 );
 const parsed = JSON.parse(stdout);
 
-// Every layer of a GitHub stack must instantiate this workflow so that layer
-// gets a check record; a filtered-out workflow reports nothing at all rather
-// than reporting a skip. Cost belongs on the job-level trusted-cumulative-head
-// `if:`, which is the pattern GitHub documents for stacks.
-// scripts/stacked-ci-workflows.test.mjs asserts the same invariant; this keeps
-// it enforced by the workflow's own contract step too. A bare `pull_request:`
-// parses to null; a missing trigger or any filter (`branches`, `paths`,
-// `types`, ...) parses to something else and fails.
-assert.equal(
-  parsed.on.pull_request,
-  null,
-  "Python CI must trigger on every pull request, with no branches or paths filter; every stack layer needs a check record.",
-);
+assert.equal(parsed.on.workflow_call, null, "Python CI must be callable by the cumulative PR router.");
+assert.equal(parsed.on.pull_request, undefined, "Python PR execution must have one owner: the aggregate CI router.");
+assert.match(ciWorkflow, /uses: \.\/\.github\/workflows\/python\.yml/);
+assert.match(ciWorkflow, /if: needs\.plan\.outputs\.python == 'true'/);
 
-// `packages/**` holds the shared cross-runtime parity fixtures and the
-// domain-event sources; `packaging/**` holds provider-packs.lock.json and
-// capability-policy.json; the apps/ entries are the outreach sources scanned by
-// the INV-1 no-send-transport guard; package.json, README.md, LICENSE, and
-// NOTICE feed the byline/attribution tests; the release-scan tests read
-// workflow files. All sit outside workers/ and scripts/, so dropping any of
-// them would let a push that breaks Python CI land on main without ever
-// running it.
-const pushPaths = parsed.on.push?.paths ?? [];
-for (const required of [
-  "workers/**",
-  "scripts/**",
-  "packages/**",
-  "packaging/**",
-  "apps/web/src/contexts/outreach/**",
-  "apps/web/src/views/outreach/**",
-  "apps/api/src/outreach.ts",
-  "package.json",
-  "README.md",
-  "LICENSE",
-  "NOTICE",
-  ".github/workflows/**",
-]) {
-  assert.ok(
-    pushPaths.includes(required),
-    `Python CI must run when a push changes ${required}; the suite reads files from it.`,
-  );
-}
+const quality = parsed.jobs.quality;
+const tests = parsed.jobs.tests;
+assert.equal(quality["timeout-minutes"], 10);
+assert.equal(tests["timeout-minutes"], 20);
+assert.equal(tests.strategy["fail-fast"], false);
+assert.deepEqual(tests.strategy.matrix["python-version"], ["3.11", "3.12", "3.13"]);
+assert.deepEqual(tests.strategy.matrix.shard, ["core", "temporal", "migration"]);
 
-assert.doesNotMatch(
-  workflow,
-  /(?:Install LaTeX|texlive-)/,
-  "Python CI must not install the retired LaTeX renderer toolchain.",
-);
-const setupStep = `      - name: Enable Linux user namespaces for Bubblewrap
-        if: \${{ runner.os == 'Linux' && runner.environment == 'github-hosted' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-`;
-const usernsGuard = `          current_userns="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
-          if [ -n "$current_userns" ] && [ "$current_userns" != "1" ]; then
-            echo "Enabling kernel.unprivileged_userns_clone for Bubblewrap."
-            sudo sysctl -w kernel.unprivileged_userns_clone=1
-          fi`;
-const apparmorGuard = `          current_apparmor="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
-          if [ -n "$current_apparmor" ] && [ "$current_apparmor" != "0" ]; then
-            echo "Disabling kernel.apparmor_restrict_unprivileged_userns for Bubblewrap."
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi`;
+assert.doesNotMatch(workflow, /cache:\s*pip|pip install -e/);
+assert.equal((workflow.match(/sync --locked --all-extras/g) ?? []).length, 2);
+assert.match(workflow, /cache-dependency-glob: workers\/automation\/uv\.lock/);
+assert.match(workflow, /uv --project workers\/automation tree --locked/);
+assert.match(workflow, /--randomly-seed="\$PYTEST_RANDOMLY_SEED"/);
+assert.match(workflow, /--durations=50/);
+assert.match(workflow, /--junitxml=/);
+assert.match(workflow, /if: always\(\)/);
+assert.match(workflow, /\/dev\/shm\/jobctrl-/);
+assert.match(workflow, /test_v6_to_v7_preflight\.py/);
+assert.doesNotMatch(workflow, /name: Release scan/);
+assert.equal((workflow.match(/name: Build package once/g) ?? []).length, 1);
+assert.match(workflow, /python -m build --no-isolation workers\/automation/);
 
-assert.ok(workflow.includes(setupStep), "Python CI must scope Bubblewrap sysctl setup to hosted Linux.");
-assert.ok(workflow.includes(usernsGuard), "Python CI must guard and enable unprivileged user namespaces.");
-assert.ok(workflow.includes(apparmorGuard), "Python CI must guard and disable Ubuntu AppArmor userns restriction.");
+const setupIndex = workflow.indexOf("      - name: Enable Linux user namespaces for Bubblewrap\n");
+const testIndex = workflow.indexOf("      - name: Test shard\n");
+assert.ok(setupIndex >= 0 && setupIndex < testIndex, "Bubblewrap setup must precede every Python test shard.");
 
-const setupIndex = workflow.indexOf(setupStep);
-const testIndex = workflow.indexOf("      - name: Test\n");
-assert.ok(setupIndex >= 0 && setupIndex < testIndex, "Bubblewrap setup must precede the Python test step.");
+console.log("python workflow contract passed: locked graph, bounded shards, deterministic diagnostics");

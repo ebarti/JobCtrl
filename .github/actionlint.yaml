@@ -1,0 +1,6 @@
+paths:
+  .github/workflows/ci.yml:
+    ignore:
+      # GitHub's stacked-PR public preview emits this documented pull_request
+      # activity, but actionlint v1.7.12 predates the preview event schema.
+      - 'invalid activity type "stacked" for "pull_request" Webhook event'

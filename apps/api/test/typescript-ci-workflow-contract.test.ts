@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const workflowPath = new URL("../../../.github/workflows/typescript.yml", import.meta.url);
+const ciWorkflowPath = new URL("../../../.github/workflows/ci.yml", import.meta.url);
 
 /**
  * Collects the `paths` filter of a single `on:` trigger without a YAML parser,
@@ -38,26 +39,18 @@ describe("TypeScript CI trigger contract", () => {
     return workflow.slice(workflow.indexOf("\non:"), workflow.indexOf("\njobs:"));
   };
 
-  it("leaves pull requests entirely unfiltered", () => {
+  it("gives pull requests one cumulative routing owner", () => {
     const block = onBlock();
-    const triggerStart = block.indexOf("\n  pull_request:");
+    const ciWorkflow = readFileSync(ciWorkflowPath, "utf8");
 
-    // Deleting the trigger outright is the strongest violation of this
-    // invariant — the workflow would stop instantiating for pull requests
-    // altogether — so an absent trigger must fail here, not pass vacuously
-    // (indexOf would return -1, slicing the block's last character, and
-    // triggerPaths would report an absent trigger as "no filter").
-    expect(triggerStart).toBeGreaterThanOrEqual(0);
-    const pullRequest = block.slice(triggerStart);
-
-    // Every layer of a GitHub stack must instantiate this workflow so that layer
-    // gets a check record; a filtered-out workflow reports nothing at all rather
-    // than reporting a skip. Cost belongs at the job level, on the trusted
-    // cumulative-head `if:`, which is the pattern GitHub documents for stacks.
-    // scripts/stacked-ci-workflows.test.mjs asserts the same invariant by
-    // parsing the YAML; this keeps it visible to the suite that owns the file.
-    expect(pullRequest).not.toContain("branches:");
-    expect(triggerPaths(block, "pull_request")).toHaveLength(0);
+    // The stable aggregate workflow must instantiate for every PR. It computes
+    // the cumulative main...HEAD ownership plan and calls this workflow only
+    // when one of its independently gated TypeScript surfaces changed.
+    expect(block).toContain("\n  workflow_call:");
+    expect(block).not.toContain("\n  pull_request:");
+    expect(ciWorkflow).toContain("\n  pull_request:");
+    expect(ciWorkflow).toContain("uses: ./.github/workflows/typescript.yml");
+    expect(ciWorkflow).toContain("if: needs.plan.outputs.typescript == 'true'");
   });
 
   it("pushes run whenever a file the suite reads can change", () => {
@@ -69,7 +62,9 @@ describe("TypeScript CI trigger contract", () => {
     // and packages/, so without them a push that breaks this suite would land on
     // main without ever running it.
     for (const required of [
-      "apps/**",
+      "apps/api/**",
+      "apps/web/**",
+      "apps/extension/**",
       "packages/**",
       "workers/**",
       "scripts/**",
@@ -77,6 +72,7 @@ describe("TypeScript CI trigger contract", () => {
     ]) {
       expect(pushPaths).toContain(required);
     }
+    expect(pushPaths).not.toContain("apps/demo-edge/**");
   });
 });
 
@@ -84,16 +80,26 @@ describe("TypeScript CI browser provisioning contract", () => {
   it("installs the Python Playwright Chromium revision before browser E2E", () => {
     const workflow = readFileSync(workflowPath, "utf8");
     const nodeChromiumInstall =
-      "pnpm --filter @jobctrl/web exec playwright install --with-deps chromium";
-    const pythonChromiumInstall = "uv --project workers/automation run playwright install chromium";
-    const e2eCommand = "pnpm --filter @jobctrl/web e2e";
+      "corepack pnpm --filter @jobctrl/web exec playwright install --with-deps chromium";
+    const pythonChromiumInstall =
+      "uv --project workers/automation run --locked --all-extras playwright install chromium";
+    const e2eCommand = "corepack pnpm web:e2e";
 
-    expect(workflow).toContain("- name: Install Python Playwright Chromium");
+    expect(workflow).toContain("- name: Install Playwright browsers");
     expect(workflow).toContain(pythonChromiumInstall);
     expect(workflow.indexOf(nodeChromiumInstall)).toBeGreaterThanOrEqual(0);
     expect(workflow.indexOf(pythonChromiumInstall)).toBeGreaterThan(
       workflow.indexOf(nodeChromiumInstall),
     );
     expect(workflow.indexOf(e2eCommand)).toBeGreaterThan(workflow.indexOf(pythonChromiumInstall));
+  });
+});
+
+describe("TypeScript CI shared package ownership", () => {
+  it("checks and tests the domain-types package directly", () => {
+    const workflow = readFileSync(workflowPath, "utf8");
+
+    expect(workflow).toContain("corepack pnpm --filter @jobctrl/domain-types check");
+    expect(workflow).toContain("corepack pnpm --filter @jobctrl/domain-types test");
   });
 });

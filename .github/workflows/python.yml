@@ -1,22 +1,5 @@
 name: Python CI
 
-# `push` is filtered to the files this suite actually reads. Beyond workers/ and
-# scripts/, `packages/**` holds the shared cross-runtime parity fixtures and the
-# domain-event sources, `packaging/**` holds provider-packs.lock.json and
-# capability-policy.json, the INV-1 no-send-transport guard
-# (test_outreach_no_send_transport.py) scans the TypeScript outreach sources
-# under apps/, the byline/attribution tests read root package.json, README.md,
-# LICENSE, and NOTICE, and the release-scan tests read workflow files under
-# `.github/workflows/**`. A push that changed any of those without these entries
-# would skip the suite covering it.
-#
-# `pull_request` deliberately takes no filter at all — no `branches`, no
-# `paths`. Every layer of a GitHub stack must instantiate this workflow so it
-# produces a check record for that layer; a filtered-out workflow reports
-# nothing rather than reporting a skip. Cost is controlled at the job level
-# instead, by the `if:` below that admits only a trusted cumulative head, which
-# is the pattern GitHub documents for stacked pull requests. Enforced by
-# scripts/stacked-ci-workflows.test.mjs — do not add a filter here.
 on:
   push:
     branches: ["main"]
@@ -32,73 +15,144 @@ on:
       - "README.md"
       - "LICENSE"
       - "NOTICE"
-      - "pyproject.toml"
-      - ".github/workflows/**"
-  pull_request:
+      - ".github/workflows/python.yml"
+  workflow_call:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: python-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
-  python:
-    # Run hosted dependencies and product tests only for the trusted cumulative
-    # head. Lower stack layers retain their no-cost skipped check record.
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size) }}
-    name: Python (workers/automation)
+  quality:
+    name: Python static and package
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: 0.11.7
+          enable-cache: true
+          cache-dependency-glob: workers/automation/uv.lock
+          cache-suffix: py3.12-quality
+      - name: Sync the exact candidate graph
+        run: uv --project workers/automation sync --locked --all-extras
+      - name: Record the locked graph
+        run: uv --project workers/automation tree --locked --depth 1
+      - name: Lint
+        run: uv --project workers/automation run --locked --all-extras ruff check workers/automation/src workers/automation/tests
+      - name: Validate Python workflow contract
+        run: node scripts/check-python-workflow-contract.mjs
+      - name: Build package once
+        run: uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation
+
+  tests:
+    name: Python ${{ matrix.python-version }} / ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
-      # A failure in one top compatibility lane must not cancel the others;
-      # every supported Python version owns an independent product result.
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
+        shard: ["core", "temporal", "migration"]
+    env:
+      PYTHONFAULTHANDLER: "1"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: workers/automation/pyproject.toml
-
-      - name: Install dependencies
-        run: pip install -e "workers/automation[dev,providers]"
-
-      - name: Lint
-        run: ruff check workers/automation/src workers/automation/tests
-
-      - name: Release scan
-        run: python scripts/release_check.py
-
-      - name: Validate Python workflow contract
-        run: node scripts/check-python-workflow-contract.mjs
-
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: 0.11.7
+          enable-cache: true
+          cache-dependency-glob: workers/automation/uv.lock
+          cache-suffix: py${{ matrix.python-version }}
+      - name: Sync the exact candidate graph
+        run: uv --project workers/automation sync --locked --all-extras
+      - name: Record deterministic test seed
+        shell: bash
+        run: |
+          set -euo pipefail
+          seed=$((GITHUB_RUN_ID % 4294967295))
+          echo "PYTEST_RANDOMLY_SEED=$seed" >> "$GITHUB_ENV"
+          printf 'pytest-randomly seed: %s\n' "$seed" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Use memory-backed storage for migration fixtures
+        if: matrix.shard == 'migration'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -d /dev/shm && -w /dev/shm ]]; then
+            tmpdir="/dev/shm/jobctrl-${GITHUB_RUN_ID}-${GITHUB_JOB}-${{ matrix.python-version }}"
+            mkdir -p "$tmpdir"
+            echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
+            echo "Migration shard temp root: \`$tmpdir\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Enable Linux user namespaces for Bubblewrap
         if: ${{ runner.os == 'Linux' && runner.environment == 'github-hosted' }}
         shell: bash
         run: |
           set -euo pipefail
-
-          # Bubblewrap needs unprivileged user namespaces on GitHub-hosted Linux
-          # runners. This step runs in each Python matrix lane before the
-          # sandboxed Codex SDK regression test.
           current_userns="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
-          if [ -n "$current_userns" ] && [ "$current_userns" != "1" ]; then
-            echo "Enabling kernel.unprivileged_userns_clone for Bubblewrap."
+          if [[ -n "$current_userns" && "$current_userns" != "1" ]]; then
             sudo sysctl -w kernel.unprivileged_userns_clone=1
           fi
-
-          # Ubuntu 24.04+ can additionally block unprivileged user namespaces
-          # via AppArmor, which prevents Bubblewrap from configuring loopback.
           current_apparmor="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
-          if [ -n "$current_apparmor" ] && [ "$current_apparmor" != "0" ]; then
-            echo "Disabling kernel.apparmor_restrict_unprivileged_userns for Bubblewrap."
+          if [[ -n "$current_apparmor" && "$current_apparmor" != "0" ]]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
-
-      - name: Test
-        run: pytest workers/automation/tests -v
-
-      - name: Build package
-        run: python -m build workers/automation
+      - name: Test shard
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.shard }}" in
+            core) marker='not temporal and not migration' ;;
+            temporal) marker='temporal' ;;
+            migration) marker='migration' ;;
+            *) echo "unknown shard: ${{ matrix.shard }}" >&2; exit 2 ;;
+          esac
+          uv --project workers/automation run --locked --all-extras pytest \
+            workers/automation/tests \
+            -q -m "$marker" \
+            --randomly-seed="$PYTEST_RANDOMLY_SEED" \
+            --durations=50 \
+            --junitxml="$RUNNER_TEMP/python-${{ matrix.python-version }}-${{ matrix.shard }}.xml"
+      - name: Run one disk-backed migration smoke
+        if: matrix.python-version == '3.12' && matrix.shard == 'migration'
+        env:
+          TMPDIR: ${{ runner.temp }}/jobctrl-migration-disk-smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          uv --project workers/automation run --locked --all-extras pytest \
+            workers/automation/tests/test_v6_to_v7_preflight.py \
+            -q --randomly-seed="$PYTEST_RANDOMLY_SEED" \
+            --durations=20 \
+            --junitxml="$RUNNER_TEMP/python-3.12-migration-disk-smoke.xml"
+      - name: Upload Python diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-${{ matrix.python-version }}-${{ matrix.shard }}-diagnostics
+          path: ${{ runner.temp }}/python-${{ matrix.python-version }}-${{ matrix.shard }}*.xml
+          if-no-files-found: warn
+          retention-days: 14

@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const workflow = await readFile(new URL("../.github/workflows/docs-site.yml", import.meta.url), "utf8");
+const ciWorkflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
 const config = await readFile(new URL("../docs/.vitepress/config.ts", import.meta.url), "utf8");
 
 const onBlock = workflow.slice(workflow.indexOf("\non:"), workflow.indexOf("\npermissions:"));
 
 /**
  * Collects the `paths` filter of a single `on:` trigger. Returns an empty list
- * when the trigger is absent or carries no filter, so a bare `pull_request:`
- * fails the contract.
+ * when the trigger is absent or carries no filter.
  */
 function triggerPaths(trigger) {
   const triggerStart = onBlock.indexOf(`\n  ${trigger}:`);
@@ -34,25 +34,46 @@ function triggerPaths(trigger) {
   return entries;
 }
 
-const pullRequestPaths = triggerPaths("pull_request");
+const pushPaths = triggerPaths("push");
 
-// A bare `pull_request:` trigger would build the site for every pull request,
-// including ones that change no documentation at all.
-assert.ok(
-  pullRequestPaths.length > 0,
-  "Docs Site must filter pull requests by path, not run on every pull request.",
+assert.match(onBlock, /\n  workflow_call:\n/, "Docs Site must be callable by the cumulative CI router.");
+assert.doesNotMatch(onBlock, /\n  pull_request:/, "Docs pull requests must route through the stable aggregate CI workflow.");
+assert.match(ciWorkflow, /uses: \.\/\.github\/workflows\/docs-site\.yml/);
+assert.match(
+  onBlock,
+  /workflow_call:\n    inputs:\n      deploy:[\s\S]*?default: false[\s\S]*?type: boolean/,
+  "Reusable Docs validation must default to no deployment.",
 );
-assert.deepEqual(
-  pullRequestPaths,
-  triggerPaths("push"),
-  "Docs Site must filter pull requests and pushes by the same paths.",
+assert.match(
+  onBlock,
+  /workflow_dispatch:\n    inputs:\n      deploy:[\s\S]*?default: true[\s\S]*?type: boolean/,
+  "A direct manual Docs run must explicitly own its deployment default.",
 );
+assert.match(
+  ciWorkflow,
+  /uses: \.\/\.github\/workflows\/docs-site\.yml\n    with:\n      deploy: false/,
+  "Aggregate CI must call Docs as validation-only.",
+);
+assert.match(
+  workflow,
+  /\(github\.event_name == 'push' \|\| inputs\.deploy\)/,
+  "Docs publication must require a push or an explicit deploy input.",
+);
+assert.ok(pushPaths.length > 0, "Docs Site must retain a focused post-merge push trigger.");
 
 // Dropping `docs/**` would leave the published site with no dead-link gate.
 assert.ok(
-  pullRequestPaths.includes("docs/**"),
+  pushPaths.includes("docs/**"),
   "Docs Site must run when docs/** changes; that is the tree it builds.",
 );
+for (const requiredInput of [
+  "pnpm-workspace.yaml",
+  "scripts/check-docs-site-links.mjs",
+  "scripts/check-docs-site-redirects.mjs",
+  "scripts/check-docs-workflow-contract.mjs",
+]) {
+  assert.ok(pushPaths.includes(requiredInput), `Docs Site must run when ${requiredInput} changes.`);
+}
 
 // The excluded directories must be exactly the directories VitePress refuses to
 // build. Excluding a directory the site *does* publish would ship dead links;
@@ -67,19 +88,11 @@ assert.ok(srcExclude.startsWith("srcExclude: ["), "docs/.vitepress/config.ts mus
 const unpublishedDirs = [...srcExclude.matchAll(/"([^"]+\/\*\*)"/g)].map((match) => `!docs/${match[1]}`);
 assert.ok(unpublishedDirs.length > 0, "srcExclude must list at least one unpublished directory.");
 assert.deepEqual(
-  pullRequestPaths.filter((entry) => entry.startsWith("!")).sort(),
+  pushPaths.filter((entry) => entry.startsWith("!")).sort(),
   [...unpublishedDirs].sort(),
   "Docs Site must exclude exactly the directories srcExclude keeps out of the built site.",
 );
 
-// Stacked pull requests target their parent branch rather than main, so a
-// `branches` filter here would silently skip every stacked layer.
-assert.doesNotMatch(
-  onBlock.slice(onBlock.indexOf("\n  pull_request:")),
-  /branches:/,
-  "Docs Site must not restrict pull requests to a base branch; stacked PRs target their parent.",
-);
-
 console.log(
-  `docs workflow contract passed: ${pullRequestPaths.length} path filters, ${unpublishedDirs.length} unpublished directories excluded.`,
+  `docs workflow contract passed: ${pushPaths.length} post-merge inputs, ${unpublishedDirs.length} unpublished directories excluded.`,
 );

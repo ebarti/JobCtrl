@@ -59,6 +59,7 @@ dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.23",
     "pytest-randomly>=4.0",
+    "pytest-timeout>=2.4,<3",
     "ruff==0.15.8",
 ]
 providers = [
@@ -81,6 +82,9 @@ provider-runtime = [
     "google-antigravity==0.1.2",
 ]
 release-build = ["build==1.4.3", "hatchling==1.29.0"]
+# The always-on privacy gate uses only this locked tool slice; it must not
+# resolve an independent floating pytest environment on every pull request.
+release-check = ["pytest>=7.0"]
 
 [project.scripts]
 jobctrl = "jobctrl.cli:app"
@@ -112,8 +116,14 @@ line-length = 120
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
+faulthandler_timeout = 180
+timeout = 180
+timeout_method = "signal"
 markers = [
+    "core: hermetic tests that do not own a Temporal test server or migration fixture",
+    "migration: database migration and copy tests routed to memory-backed CI storage",
     "system_browser: opt-in smoke requiring a real local system Chrome/Chromium; set JOBCTRL_RUN_SYSTEM_BROWSER_TESTS=1",
+    "temporal: tests whose file owns a Temporal WorkflowEnvironment lifecycle",
 ]
 
 [tool.pyright]
@@ -126,9 +136,8 @@ pythonVersion = "3.11"
 [tool.uv]
 default-groups = ["provider-runtime"]
 
-# Delay broad dependency updates by seven days so new releases have a short
-# community-vetting window. uv records the resolved timestamp and P7D span in
-# the lockfile whenever the graph is refreshed. Provider runtimes and the
-# audited JobStreaming integration retain their explicit reviewed cutoffs.
-exclude-newer = "7 days"
+# Dependabot owns the rolling community-vetting delay. Keeping that delay here
+# as a relative timestamp would make an unchanged lockfile fail `uv --locked`
+# as time passes. Provider runtimes and the audited JobStreaming integration
+# retain their explicit reviewed cutoffs.
 exclude-newer-package = { "google-antigravity" = "2026-06-04T21:19:27Z", "claude-agent-sdk" = "2026-07-10T00:00:00Z", "jobstreaming" = "2026-08-10T23:59:59Z" }

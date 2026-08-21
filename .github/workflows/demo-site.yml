@@ -1,15 +1,11 @@
 name: Demo Site
 
 on:
-  pull_request:
-    paths:
-      - "apps/web/**"
-      - "apps/demo-edge/**"
-      - "packages/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "scripts/demo-*.mjs"
-      - ".github/workflows/demo-site.yml"
+  workflow_call:
+    inputs:
+      verify_edge:
+        type: boolean
+        default: false
   push:
     branches: ["main"]
     paths:
@@ -18,9 +14,15 @@ on:
       - "packages/**"
       - "package.json"
       - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - "scripts/demo-*.mjs"
       - ".github/workflows/demo-site.yml"
   workflow_dispatch:
+    inputs:
+      verify_edge:
+        description: Validate edge workers before a direct manual deployment
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -33,34 +35,41 @@ jobs:
   build:
     name: Build and verify demo
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.21.1
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: corepack pnpm install --frozen-lockfile
 
       - name: Verify deployment contracts
-        run: pnpm scripts:test
+        run: corepack pnpm scripts:test:demo
 
       - name: Verify edge workers
-        run: pnpm demo-edge:check && pnpm demo-edge:test && pnpm demo-edge:dry-run
+        # Pull requests and merge groups run these commands in the independently
+        # routed TypeScript demo-edge job. Main/manual deployment keeps the gate
+        # here so production cannot publish ahead of its own edge validation.
+        if: ${{ github.event_name == 'push' || inputs.verify_edge }}
+        run: corepack pnpm demo-edge:check && corepack pnpm demo-edge:test && corepack pnpm demo-edge:dry-run
 
       - name: Build browser-local demo
-        run: pnpm demo:build
+        run: corepack pnpm demo:build
 
       - name: Upload demo artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: demo-site-dist
           path: dist/web
@@ -74,21 +83,24 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       vars.DEMO_PREVIEW_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.21.1
 
       - name: Download demo artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: demo-site-dist
           path: dist/web
@@ -104,30 +116,33 @@ jobs:
     name: Deploy production demo
     needs: build
     if: >-
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.verify_edge)) &&
       github.ref == 'refs/heads/main' &&
       vars.DEMO_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: demo-production
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.21.1
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: corepack pnpm install --frozen-lockfile
 
       - name: Download demo artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: demo-site-dist
           path: dist/web
@@ -157,6 +172,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
       - name: Smoke production consent boundary
-        run: pnpm demo:smoke
+        run: corepack pnpm demo:smoke
         env:
           DEMO_BASE_URL: https://demo.jobctrl.dev

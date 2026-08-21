@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import test from "node:test";
 
 const execFileAsync = promisify(execFile);
 const rubyYamlToJson = String.raw`
@@ -17,172 +18,145 @@ document["on"] = events
 puts JSON.generate(document)
 `;
 
-const parseWorkflow = async (name) => {
-  const path = fileURLToPath(
-    new URL(`../.github/workflows/${name}.yml`, import.meta.url),
-  );
+async function parseWorkflow(name) {
+  const workflowPath = fileURLToPath(new URL(`../.github/workflows/${name}.yml`, import.meta.url));
   const { stdout } = await execFileAsync(
     "ruby",
-    ["-ryaml", "-rjson", "-e", rubyYamlToJson, path],
-    { maxBuffer: 1024 * 1024 },
+    ["-ryaml", "-rjson", "-e", rubyYamlToJson, workflowPath],
+    { maxBuffer: 4 * 1024 * 1024 },
   );
   return JSON.parse(stdout);
-};
+}
 
-const sameRepositoryPullRequest =
-  "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository";
-const topOfStack =
-  "github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size";
-const trustedTopOfStack = `(${sameRepositoryPullRequest}) && (${topOfStack})`;
+test("one unfiltered CI workflow owns every pull-request check record", async () => {
+  const ci = await parseWorkflow("ci");
+  assert.deepEqual(ci.on.pull_request.types, ["opened", "synchronize", "reopened", "stacked"]);
+  assert.equal(ci.on.merge_group, null);
+  assert.ok(ci.jobs.plan);
+  assert.equal(ci.jobs.required.name, "CI / required");
+  assert.equal(ci.jobs.required.if, "always()");
+  assert.equal(ci.concurrency["cancel-in-progress"], true);
 
-const findStep = (job, name) => {
-  const step = job.steps.find((candidate) => candidate.name === name);
-  assert.ok(step, `missing ${name} step`);
-  return step;
-};
-
-test("stacked pull requests always instantiate the Python and TypeScript admission workflows", async () => {
-  const specs = [
-    { workflowName: "python", jobName: "python" },
-    { workflowName: "typescript", jobName: "typescript" },
-  ];
-
-  for (const spec of specs) {
-    const workflow = await parseWorkflow(spec.workflowName);
-    assert.equal(
-      workflow.on.pull_request,
-      null,
-      `${spec.workflowName} must not suppress stacked PRs by their direct base branch or changed paths`,
-    );
-    assert.equal(
-      workflow.jobs[spec.jobName].if,
-      `\${{ ${trustedTopOfStack} }}`,
-      `${spec.workflowName} must run hosted dependencies only on a trusted cumulative head`,
-    );
+  for (const workflowName of ["python", "typescript", "docs-site", "demo-site", "launcher"]) {
+    const workflow = await parseWorkflow(workflowName);
+    assert.equal(workflow.on.pull_request, undefined, `${workflowName} must not independently admit pull requests`);
+    assert.ok(Object.hasOwn(workflow.on, "workflow_call"), `${workflowName} must be callable by CI`);
   }
 });
 
-test("stack metadata gates cumulative Python product coverage", async () => {
-  const workflow = await parseWorkflow("python");
-  const job = workflow.jobs.python;
-  assert.equal(
-    job.strategy["fail-fast"],
-    false,
-    "one Python compatibility failure must not cancel the remaining top lanes",
-  );
-  assert.deepEqual(job.strategy.matrix["python-version"], ["3.11", "3.12", "3.13"]);
-  assert.deepEqual(
-    findStep(job, "Set up Python ${{ matrix.python-version }}").with,
-    {
-      "python-version": "${{ matrix.python-version }}",
-      cache: "pip",
-      "cache-dependency-path": "workers/automation/pyproject.toml",
-    },
-    "the full Python lane must reuse pip downloads across top runs",
-  );
-  for (const productStep of [
-    "Lint",
-    "Release scan",
-    "Validate Python workflow contract",
-    "Test",
-    "Build package",
-  ]) {
-    assert.equal(
-      findStep(job, productStep).if,
-      undefined,
-      `${productStep} must run when the trusted-top Python job is admitted`,
-    );
-  }
+test("the plan rejects forks and lower stack layers before dependency execution", async () => {
+  const ci = await parseWorkflow("ci");
+  const steps = ci.jobs.plan.steps;
+  const admission = steps.find((step) => step.id === "admission");
+  const checkout = steps.find((step) => step.name === "Checkout cumulative head");
+  const base = steps.find((step) => step.id === "base");
+  assert.match(admission.run, /SAME_REPOSITORY.*!= true/s);
+  assert.match(admission.run, /STACK_POSITION.*!=.*STACK_SIZE/s);
+  assert.equal(checkout.if, "steps.admission.outputs.admitted == 'true'");
+  assert.equal(base.if, "steps.admission.outputs.admitted == 'true'");
+  assert.match(base.run, /git merge-base "origin\/\$DEFAULT_BRANCH" HEAD/);
 });
 
-test("stack metadata gates cumulative TypeScript product suites", async () => {
+test("the aggregate result depends on every conditionally routed workflow", async () => {
+  const ci = await parseWorkflow("ci");
+  assert.deepEqual(ci.jobs.required.needs, [
+    "plan",
+    "meta",
+    "distribution",
+    "python",
+    "typescript",
+    "docs",
+    "demo",
+    "launcher",
+  ]);
+  assert.equal(ci.jobs.python.uses, "./.github/workflows/python.yml");
+  assert.equal(ci.jobs.typescript.uses, "./.github/workflows/typescript.yml");
+  assert.equal(ci.jobs.docs.uses, "./.github/workflows/docs-site.yml");
+  assert.equal(ci.jobs.demo.uses, "./.github/workflows/demo-site.yml");
+  assert.equal(ci.jobs.launcher.uses, "./.github/workflows/launcher.yml");
+
+  const checkout = ci.jobs.required.steps.find((step) => step.name === "Checkout result validator");
+  const admitted = ci.jobs.required.steps.find((step) => step.name === "Require every routed surface to pass");
+  const notAdmitted = ci.jobs.required.steps.find((step) => step.name === "Require a dependency-free non-admitted result");
+  assert.equal(checkout.if, "needs.plan.outputs.admitted == 'true'");
+  assert.equal(admitted.if, "needs.plan.outputs.admitted == 'true'");
+  assert.equal(notAdmitted.if, "needs.plan.outputs.admitted != 'true'");
+  assert.match(notAdmitted.run, /non-admitted route .* must be false/);
+});
+
+test("TypeScript surface inputs gate independent parallel jobs", async () => {
+  const ci = await parseWorkflow("ci");
   const workflow = await parseWorkflow("typescript");
-  const job = workflow.jobs.typescript;
-
-  assert.equal(
-    findStep(job, "Set up Node").with.cache,
-    "pnpm",
-    "the full TypeScript lane must reuse the pnpm store across top runs",
-  );
-
-  for (const productStep of [
-    "Check",
-    "Set up Python",
-    "Install uv",
-    "Test",
-    "Test web",
-    "Test web types",
-    "Build web",
-    "Build web storybook",
-    "Install Playwright Chromium",
-    "Install Python Playwright Chromium",
-    "Test web e2e",
-    "Test web storybook",
-  ]) {
+  const expected = {
+    api: "inputs.api",
+    web: "inputs.web",
+    storybook: "inputs.storybook",
+    e2e: "inputs.e2e",
+    extension: "inputs.extension",
+    "demo-edge": "inputs.demo_edge",
+  };
+  for (const [jobName, input] of Object.entries(expected)) {
+    assert.match(workflow.jobs[jobName].if, new RegExp(input.replace(".", "\\.")));
+    assert.ok(workflow.jobs[jobName]["timeout-minutes"] <= 20);
+    const callerInput = jobName === "demo-edge" ? "demo_edge" : jobName;
     assert.equal(
-      findStep(job, productStep).if,
-      undefined,
-      `${productStep} must run when the trusted-top TypeScript job is admitted`,
+      ci.jobs.typescript.with[callerInput],
+      `\${{ needs.plan.outputs.${callerInput} == 'true' }}`,
+      `${callerInput} route must reach the reusable TypeScript workflow`,
     );
   }
 });
 
-test("stack routing keeps per-layer correctness and cumulative top coverage", () => {
-  const routes = [
-    {
-      name: "push",
-      eventName: "push",
-      trusted: true,
-      stack: null,
-      expectedPython: ["3.11", "3.12", "3.13"],
-      expectedCumulative: true,
-    },
-    {
-      name: "ordinary same-repository pull request",
-      eventName: "pull_request",
-      trusted: true,
-      stack: null,
-      expectedPython: ["3.11", "3.12", "3.13"],
-      expectedCumulative: true,
-    },
-    {
-      name: "lower stack layer",
-      eventName: "pull_request",
-      trusted: true,
-      stack: { position: 2, size: 3 },
-      expectedPython: [],
-      expectedCumulative: false,
-    },
-    {
-      name: "top stack layer",
-      eventName: "pull_request",
-      trusted: true,
-      stack: { position: 3, size: 3 },
-      expectedPython: ["3.11", "3.12", "3.13"],
-      expectedCumulative: true,
-    },
-    {
-      name: "public fork pull request",
-      eventName: "pull_request",
-      trusted: false,
-      stack: null,
-      expectedPython: [],
-      expectedCumulative: false,
-    },
+test("demo edge validation has one owner per automatic event", async () => {
+  const typescript = await parseWorkflow("typescript");
+  const demo = await parseWorkflow("demo-site");
+  const demoEdgeStep = demo.jobs.build.steps.find((step) => step.name === "Verify edge workers");
+
+  assert.equal(typescript.jobs["demo-edge"].if, "${{ github.event_name == 'workflow_dispatch' || inputs.demo_edge }}");
+  assert.equal(demoEdgeStep.if, "${{ github.event_name == 'push' || inputs.verify_edge }}");
+  assert.equal(demo.on.workflow_call.inputs.verify_edge.default, false);
+  assert.equal(demo.on.workflow_dispatch.inputs.verify_edge.default, true);
+  assert.ok(!typescript.on.push.paths.includes("apps/demo-edge/**"));
+
+  const ci = await parseWorkflow("ci");
+  assert.equal(ci.jobs.demo.with.verify_edge, false);
+});
+
+test("aggregate docs validation cannot publish", async () => {
+  const docs = await parseWorkflow("docs-site");
+  const ci = await parseWorkflow("ci");
+
+  assert.equal(docs.on.workflow_call.inputs.deploy.default, false);
+  assert.equal(docs.on.workflow_dispatch.inputs.deploy.default, true);
+  assert.equal(ci.jobs.docs.with.deploy, false);
+  assert.match(docs.jobs.deploy.if, /github\.event_name == 'push' \|\| inputs\.deploy/);
+});
+
+test("routing policy admits only trusted standalone or cumulative top heads", () => {
+  const admitted = ({ eventName, trusted, stack }) =>
+    eventName !== "pull_request" || (trusted && (stack === null || stack.position === stack.size));
+  assert.equal(admitted({ eventName: "pull_request", trusted: true, stack: null }), true);
+  assert.equal(admitted({ eventName: "pull_request", trusted: true, stack: { position: 3, size: 3 } }), true);
+  assert.equal(admitted({ eventName: "pull_request", trusted: true, stack: { position: 2, size: 3 } }), false);
+  assert.equal(admitted({ eventName: "pull_request", trusted: false, stack: null }), false);
+});
+
+test("stack attachment cancels and reclassifies the provisional opened run", async () => {
+  const ci = await parseWorkflow("ci");
+  const actionlint = await readFile(new URL("../.github/actionlint.yaml", import.meta.url), "utf8");
+  assert.equal(ci.concurrency.group, "ci-${{ github.event.pull_request.number || github.ref }}");
+  assert.equal(ci.concurrency["cancel-in-progress"], true);
+
+  const admitted = (stack) => stack === null || stack.position === stack.size;
+  const lowerLayerEvents = [
+    { action: "opened", stack: null },
+    { action: "stacked", stack: { position: 1, size: 2 } },
   ];
-
-  for (const route of routes) {
-    const admitted =
-      (route.eventName !== "pull_request" || route.trusted) &&
-      (route.eventName !== "pull_request" ||
-        route.stack === null ||
-        route.stack.position === route.stack.size);
-    const pythonVersions = admitted
-      ? ["3.11", "3.12", "3.13"]
-      : [];
-    const cumulative = admitted;
-
-    assert.deepEqual(pythonVersions, route.expectedPython, route.name);
-    assert.equal(cumulative, route.expectedCumulative, route.name);
-  }
+  assert.deepEqual(lowerLayerEvents.map(({ stack }) => admitted(stack)), [true, false]);
+  assert.ok(ci.on.pull_request.types.includes("stacked"));
+  assert.match(
+    actionlint,
+    /\.github\/workflows\/ci\.yml:[\s\S]+invalid activity type "stacked" for "pull_request" Webhook event/,
+    "the temporary linter exception must stay scoped to the one preview event in ci.yml",
+  );
 });

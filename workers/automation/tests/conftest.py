@@ -34,6 +34,31 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         shutil.rmtree(_TEST_APP_DIR, ignore_errors=True)
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Assign every test file to exactly one observable CI shard.
+
+    Migration files take precedence because they amplify hosted-runner storage
+    latency. Any file that owns a Temporal ``WorkflowEnvironment`` lifecycle is
+    isolated next; everything else is the hermetic core shard. Reading source
+    here keeps the routing future-proof when a new Temporal test file is added.
+    """
+
+    source_by_path: dict[Path, str] = {}
+    for item in items:
+        item_path = Path(str(item.path))
+        if item_path.name.startswith("test_v6_to_v7_"):
+            item.add_marker(pytest.mark.migration)
+            continue
+        source = source_by_path.get(item_path)
+        if source is None:
+            source = item_path.read_text(encoding="utf-8")
+            source_by_path[item_path] = source
+        if "WorkflowEnvironment." in source:
+            item.add_marker(pytest.mark.temporal)
+        else:
+            item.add_marker(pytest.mark.core)
+
+
 @pytest.fixture(autouse=True)
 def disable_langfuse_network_export_by_default(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
     """Keep routine tests from exporting spans to a real Langfuse project.

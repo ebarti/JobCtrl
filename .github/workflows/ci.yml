@@ -1,0 +1,269 @@
+name: CI
+
+# Every pull request gets one stable required result. The route plan is cheap;
+# expensive work runs only for a trusted cumulative head and only for surfaces
+# owned by the main...HEAD diff. Lower stack layers and external forks retain a
+# visible, no-dependency check rather than silently losing a check record.
+on:
+  pull_request:
+    # A newly opened PR has no stack metadata yet. GitHub follows it with the
+    # public-preview `stacked` activity when the PR joins a stack; the shared
+    # concurrency group then cancels the provisional run and reclassifies the
+    # layer with its final stack position.
+    types: [opened, synchronize, reopened, stacked]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Plan cumulative validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      admitted: ${{ steps.admission.outputs.admitted }}
+      base_sha: ${{ steps.base.outputs.base_sha }}
+      plan_json: ${{ steps.route.outputs.plan_json || steps.route_all.outputs.plan_json || steps.not_admitted.outputs.plan_json }}
+      meta: ${{ steps.route.outputs.meta || steps.route_all.outputs.meta || steps.not_admitted.outputs.meta }}
+      distribution: ${{ steps.route.outputs.distribution || steps.route_all.outputs.distribution || steps.not_admitted.outputs.distribution }}
+      python: ${{ steps.route.outputs.python || steps.route_all.outputs.python || steps.not_admitted.outputs.python }}
+      api: ${{ steps.route.outputs.api || steps.route_all.outputs.api || steps.not_admitted.outputs.api }}
+      web: ${{ steps.route.outputs.web || steps.route_all.outputs.web || steps.not_admitted.outputs.web }}
+      storybook: ${{ steps.route.outputs.storybook || steps.route_all.outputs.storybook || steps.not_admitted.outputs.storybook }}
+      e2e: ${{ steps.route.outputs.e2e || steps.route_all.outputs.e2e || steps.not_admitted.outputs.e2e }}
+      extension: ${{ steps.route.outputs.extension || steps.route_all.outputs.extension || steps.not_admitted.outputs.extension }}
+      demo_edge: ${{ steps.route.outputs.demo_edge || steps.route_all.outputs.demo_edge || steps.not_admitted.outputs.demo_edge }}
+      demo: ${{ steps.route.outputs.demo || steps.route_all.outputs.demo || steps.not_admitted.outputs.demo }}
+      docs: ${{ steps.route.outputs.docs || steps.route_all.outputs.docs || steps.not_admitted.outputs.docs }}
+      launcher: ${{ steps.route.outputs.launcher || steps.route_all.outputs.launcher || steps.not_admitted.outputs.launcher }}
+      typescript: ${{ steps.route.outputs.typescript || steps.route_all.outputs.typescript || steps.not_admitted.outputs.typescript }}
+
+    steps:
+      - name: Admit only a trusted cumulative head
+        id: admission
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          STACK_POSITION: ${{ github.event.pull_request.stack.position }}
+          STACK_SIZE: ${{ github.event.pull_request.stack.size }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          admitted=true
+          reason="trusted non-PR event"
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            reason="trusted standalone pull request"
+            if [[ "$SAME_REPOSITORY" != true ]]; then
+              admitted=false
+              reason="external fork: dependency execution is disabled"
+            elif [[ -n "$STACK_POSITION" && -n "$STACK_SIZE" && "$STACK_POSITION" != "$STACK_SIZE" ]]; then
+              admitted=false
+              reason="lower stack layer: cumulative validation belongs to the top layer"
+            elif [[ -n "$STACK_POSITION" ]]; then
+              reason="trusted top-of-stack pull request"
+            fi
+          fi
+          echo "admitted=$admitted" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          printf '## CI admission\n\n%s\n' "$reason" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout cumulative head
+        if: steps.admission.outputs.admitted == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve the cumulative default-branch base
+        if: steps.admission.outputs.admitted == 'true'
+        id: base
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          base_sha="$(git merge-base "origin/$DEFAULT_BRANCH" HEAD)"
+          test -n "$base_sha"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "Cumulative diff base: \`$base_sha\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Classify changed surfaces
+        if: steps.admission.outputs.admitted == 'true' && github.event_name != 'workflow_dispatch'
+        id: route
+        run: node scripts/ci-plan.mjs --base "${{ steps.base.outputs.base_sha }}" --head HEAD
+
+      - name: Route every surface for a manual validation
+        if: steps.admission.outputs.admitted == 'true' && github.event_name == 'workflow_dispatch'
+        id: route_all
+        run: node scripts/ci-plan.mjs --all
+
+      - name: Record an intentionally empty route
+        if: steps.admission.outputs.admitted != 'true'
+        id: not_admitted
+        shell: bash
+        run: |
+          set -euo pipefail
+          for route in meta distribution python api web storybook e2e extension demo_edge demo docs launcher typescript; do
+            echo "$route=false" >> "$GITHUB_OUTPUT"
+          done
+          echo 'plan_json={"schemaVersion":1,"files":[],"routes":{"meta":false,"distribution":false,"python":false,"api":false,"web":false,"storybook":false,"e2e":false,"extension":false,"demo_edge":false,"demo":false,"docs":false,"launcher":false,"typescript":false},"reasons":{}}' >> "$GITHUB_OUTPUT"
+
+  meta:
+    name: Workflow and routing contracts
+    needs: plan
+    if: needs.plan.outputs.meta == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+      - name: Set up Go for actionlint
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.4
+          cache: false
+      - name: Install locked workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Test workflow and Dependabot contracts
+        run: corepack pnpm scripts:test:ci-meta
+      - name: Lint GitHub Actions workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+  distribution:
+    name: Dependency and distribution contracts
+    needs: plan
+    if: needs.plan.outputs.distribution == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: 0.11.7
+          enable-cache: true
+          cache-dependency-glob: workers/automation/uv.lock
+      - name: Install locked workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Report exact dependency closure changes
+        run: node scripts/dependency-lock-diff.mjs --base "${{ needs.plan.outputs.base_sha }}" --head HEAD
+      - name: Test distribution scripts
+        run: corepack pnpm scripts:test:distribution
+      - name: Audit release distribution contracts
+        run: corepack pnpm distribution:audit
+
+  python:
+    name: Python
+    needs: plan
+    if: needs.plan.outputs.python == 'true'
+    uses: ./.github/workflows/python.yml
+
+  typescript:
+    name: TypeScript surfaces
+    needs: plan
+    if: needs.plan.outputs.typescript == 'true'
+    uses: ./.github/workflows/typescript.yml
+    with:
+      api: ${{ needs.plan.outputs.api == 'true' }}
+      web: ${{ needs.plan.outputs.web == 'true' }}
+      storybook: ${{ needs.plan.outputs.storybook == 'true' }}
+      e2e: ${{ needs.plan.outputs.e2e == 'true' }}
+      extension: ${{ needs.plan.outputs.extension == 'true' }}
+      demo_edge: ${{ needs.plan.outputs.demo_edge == 'true' }}
+
+  docs:
+    name: Docs
+    needs: plan
+    if: needs.plan.outputs.docs == 'true'
+    uses: ./.github/workflows/docs-site.yml
+    with:
+      deploy: false
+
+  demo:
+    name: Demo
+    needs: plan
+    if: needs.plan.outputs.demo == 'true'
+    uses: ./.github/workflows/demo-site.yml
+    with:
+      verify_edge: false
+    secrets: inherit
+
+  launcher:
+    name: Native launcher
+    needs: plan
+    if: needs.plan.outputs.launcher == 'true'
+    uses: ./.github/workflows/launcher.yml
+
+  required:
+    name: CI / required
+    if: always()
+    needs: [plan, meta, distribution, python, typescript, docs, demo, launcher]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout result validator
+        if: needs.plan.outputs.admitted == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every routed surface to pass
+        if: needs.plan.outputs.admitted == 'true'
+        env:
+          CI_PLAN_JSON: ${{ needs.plan.outputs.plan_json }}
+          CI_RESULTS_JSON: >-
+            {"plan":"${{ needs.plan.result }}","meta":"${{ needs.meta.result }}","distribution":"${{ needs.distribution.result }}","python":"${{ needs.python.result }}","typescript":"${{ needs.typescript.result }}","docs":"${{ needs.docs.result }}","demo":"${{ needs.demo.result }}","launcher":"${{ needs.launcher.result }}"}
+        run: node scripts/ci-required.mjs
+      - name: Require a dependency-free non-admitted result
+        if: needs.plan.outputs.admitted != 'true'
+        env:
+          CI_PLAN_JSON: ${{ needs.plan.outputs.plan_json }}
+          CI_RESULTS_JSON: >-
+            {"plan":"${{ needs.plan.result }}","meta":"${{ needs.meta.result }}","distribution":"${{ needs.distribution.result }}","python":"${{ needs.python.result }}","typescript":"${{ needs.typescript.result }}","docs":"${{ needs.docs.result }}","demo":"${{ needs.demo.result }}","launcher":"${{ needs.launcher.result }}"}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const plan = JSON.parse(process.env.CI_PLAN_JSON ?? "{}");
+          const results = JSON.parse(process.env.CI_RESULTS_JSON ?? "{}");
+          const expectedRoutes = [
+            "meta", "distribution", "python", "api", "web", "storybook",
+            "e2e", "extension", "demo_edge", "demo", "docs", "launcher", "typescript",
+          ];
+          if (results.plan !== "success") throw new Error(`route plan did not succeed: ${results.plan}`);
+          if (plan.schemaVersion !== 1 || Object.keys(plan.routes ?? {}).sort().join() !== [...expectedRoutes].sort().join()) {
+            throw new Error("non-admitted route plan is incomplete");
+          }
+          for (const route of expectedRoutes) {
+            if (plan.routes[route] !== false) throw new Error(`non-admitted route ${route} must be false`);
+          }
+          for (const job of ["meta", "distribution", "python", "typescript", "docs", "demo", "launcher"]) {
+            if (results[job] !== "skipped") throw new Error(`non-admitted ${job} result was ${results[job]}`);
+          }
+          NODE

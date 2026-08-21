@@ -17,6 +17,8 @@ import {
   validateLicenseReview,
   validateNodeLicenseEvidenceLocks,
   validatePythonLicenseEvidenceLocks,
+  validateUvLockPolicy,
+  validateSourceDependencyCounts,
   validateSigningPolicy,
 } from "./distribution-manifest.mjs";
 
@@ -103,6 +105,32 @@ test("distribution contracts are complete and every version source resolves", as
   assert.equal(report.versions["font-jetbrains-mono"], "5.2.8");
   assert.equal(report.versions["pdfjs-renderer"], "5.7.284");
   assert.equal(report.versions["claude-agent-sdk"], "0.2.115");
+  assert.equal(typeof report.sourceDependencyReview.hasRecordDrift, "boolean");
+  for (const entry of Object.values(report.sourceDependencyReview.recordCounts)) {
+    assert.equal(Number.isInteger(entry.baseline), true);
+    assert.equal(Number.isInteger(entry.current), true);
+    assert.equal(typeof entry.drift, "boolean");
+  }
+});
+
+test("raw lock-record totals report drift without pretending it is compatibility", () => {
+  const baseline = {
+    javascriptPackageFiles: 9,
+    javascriptUniqueDirect: 74,
+    pnpmPackageRecords: 1452,
+    uvPackageRecords: 102,
+  };
+  const review = validateSourceDependencyCounts(baseline, {
+    ...baseline,
+    pnpmPackageRecords: 1454,
+    uvPackageRecords: 100,
+  });
+  assert.equal(review.hasRecordDrift, true);
+  assert.deepEqual(review.recordCounts.pnpmPackageRecords, { baseline: 1452, current: 1454, drift: true });
+  assert.throws(
+    () => validateSourceDependencyCounts(baseline, { ...baseline, javascriptUniqueDirect: 75 }),
+    /javascriptUniqueDirect drifted from 74 to 75/,
+  );
 });
 
 test("manifest validation accepts the complete local core closure", async () => {
@@ -383,6 +411,20 @@ test("license evidence locks are closed, immutable, exact, and bound to dependen
   assert.throws(
     () => validateNodeLicenseEvidenceLocks(nodeLicenseEvidenceLocks, ""),
     /not exactly pinned in the pnpm lock closure/,
+  );
+});
+
+test("distribution audit rejects environment-contaminated global uv cutoffs", async () => {
+  const uvLock = await readFile(path.join(process.cwd(), "workers", "automation", "uv.lock"), "utf8");
+  assert.equal(validateUvLockPolicy(uvLock), true);
+  assert.throws(
+    () => validateUvLockPolicy(
+      uvLock.replace(
+        "[options]\n",
+        '[options]\nexclude-newer = "0001-01-01T00:00:00Z"\nexclude-newer-span = "P8D"\n',
+      ),
+    ),
+    /must not retain a global dependency cutoff/,
   );
 });
 
