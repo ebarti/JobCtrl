@@ -873,7 +873,7 @@ async def test_preparation_tailor_failure_owns_the_temporal_execution_id(
     )
     logical_workflow_id = f"prep-{payload.idempotency_key}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
