@@ -5,6 +5,6 @@
   "description": "Isolated lock owner for the bundled Playwright MCP runtime closure",
   "license": "AGPL-3.0-only",
   "dependencies": {
-    "@playwright/mcp": "0.0.77"
+    "@playwright/mcp": "0.0.79"
   }
 }
