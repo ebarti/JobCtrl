@@ -4,9 +4,7 @@ on:
   push:
     branches: ["main"]
     paths:
-      - "apps/api/**"
-      - "apps/web/**"
-      - "apps/extension/**"
+      - "apps/**"
       - "packages/**"
       - "workers/**"
       - "scripts/**"
@@ -14,26 +12,16 @@ on:
       - "package.json"
       - "pnpm-workspace.yaml"
       - ".github/workflows/typescript.yml"
-  workflow_call:
-    inputs:
-      api:
-        type: boolean
-        default: false
-      web:
-        type: boolean
-        default: false
-      storybook:
-        type: boolean
-        default: false
-      e2e:
-        type: boolean
-        default: false
-      extension:
-        type: boolean
-        default: false
-      demo_edge:
-        type: boolean
-        default: false
+  pull_request:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "workers/**"
+      - "scripts/**"
+      - "pnpm-lock.yaml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/typescript.yml"
   workflow_dispatch:
 
 permissions:
@@ -45,7 +33,6 @@ concurrency:
 
 jobs:
   api:
-    if: ${{ github.event_name != 'pull_request' || inputs.api }}
     name: API checks and tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -73,9 +60,10 @@ jobs:
         run: corepack pnpm --filter @jobctrl/domain-types test
       - name: Test API
         run: corepack pnpm api:test
+      - name: Test scripts
+        run: corepack pnpm scripts:test
 
   web:
-    if: ${{ github.event_name != 'pull_request' || inputs.web }}
     name: Web unit, types, and build
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -103,7 +91,6 @@ jobs:
         run: corepack pnpm web:build
 
   storybook:
-    if: ${{ github.event_name != 'pull_request' || inputs.storybook }}
     name: Storybook build and browser tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -129,7 +116,6 @@ jobs:
         run: corepack pnpm web:storybook:test
 
   e2e:
-    if: ${{ github.event_name != 'pull_request' || inputs.e2e }}
     name: Web end-to-end
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -167,7 +153,6 @@ jobs:
         run: corepack pnpm web:e2e
 
   extension:
-    if: ${{ github.event_name != 'pull_request' || inputs.extension }}
     name: Browser extension
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -193,30 +178,3 @@ jobs:
           corepack pnpm extension:test
           corepack pnpm extension:build
           corepack pnpm extension:e2e
-
-  demo-edge:
-    # Reusable PR/merge validation owns this surface; the Demo workflow owns
-    # the same deployment gate on main pushes.
-    if: ${{ github.event_name == 'workflow_dispatch' || inputs.demo_edge }}
-    name: Demo edge workers
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.21.1
-          cache: pnpm
-      - name: Install locked dependencies
-        run: corepack pnpm install --frozen-lockfile
-      - name: Check, test, and dry-run edge workers
-        run: |
-          corepack pnpm demo-edge:check
-          corepack pnpm demo-edge:test
-          corepack pnpm demo-edge:dry-run

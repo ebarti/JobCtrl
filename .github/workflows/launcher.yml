@@ -1,9 +1,34 @@
 name: Native Launcher CI
 
+# The launcher's migration boundary is cross-runtime: the Go launcher opens the
+# database with the locked Python migration runtime and reopens it through the
+# TypeScript API probe, so worker lock/schema and API reopen-probe files are
+# real inputs here alongside launcher/**.
 on:
-  workflow_call:
   push:
     branches: ["main"]
+    paths:
+      - "launcher/**"
+      - "workers/automation/src/jobctrl/database.py"
+      - "workers/automation/src/jobctrl/domain/**"
+      - "workers/automation/src/jobctrl/infrastructure/migrations/**"
+      - "workers/automation/src/jobctrl/infrastructure/projections/**"
+      - "workers/automation/src/jobctrl/infrastructure/scoring/**"
+      - "workers/automation/src/jobctrl/infrastructure/temporal/**"
+      - "workers/automation/tests/fixtures/shipped_v6_schema.sql"
+      - "workers/automation/tests/v6_migration_fixture.py"
+      - "workers/automation/pyproject.toml"
+      - "workers/automation/uv.lock"
+      - "apps/api/package.json"
+      - "apps/api/tsconfig.json"
+      - "apps/api/src/db.ts"
+      - "apps/api/src/schema-manifest.ts"
+      - "apps/api/test/support/reopen-exact-v8.ts"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "packages/tsconfig/**"
+      - ".github/workflows/launcher.yml"
+  pull_request:
     paths:
       - "launcher/**"
       - "workers/automation/src/jobctrl/database.py"

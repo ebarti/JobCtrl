@@ -1,11 +1,6 @@
 name: Demo Site
 
 on:
-  workflow_call:
-    inputs:
-      verify_edge:
-        type: boolean
-        default: false
   push:
     branches: ["main"]
     paths:
@@ -17,12 +12,17 @@ on:
       - "pnpm-workspace.yaml"
       - "scripts/demo-*.mjs"
       - ".github/workflows/demo-site.yml"
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - "apps/demo-edge/**"
+      - "packages/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "scripts/demo-*.mjs"
+      - ".github/workflows/demo-site.yml"
   workflow_dispatch:
-    inputs:
-      verify_edge:
-        description: Validate edge workers before a direct manual deployment
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -55,14 +55,7 @@ jobs:
       - name: Install dependencies
         run: corepack pnpm install --frozen-lockfile
 
-      - name: Verify deployment contracts
-        run: corepack pnpm scripts:test:demo
-
       - name: Verify edge workers
-        # Pull requests and merge groups run these commands in the independently
-        # routed TypeScript demo-edge job. Main/manual deployment keeps the gate
-        # here so production cannot publish ahead of its own edge validation.
-        if: ${{ github.event_name == 'push' || inputs.verify_edge }}
         run: corepack pnpm demo-edge:check && corepack pnpm demo-edge:test && corepack pnpm demo-edge:dry-run
 
       - name: Build browser-local demo
@@ -116,7 +109,7 @@ jobs:
     name: Deploy production demo
     needs: build
     if: >-
-      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.verify_edge)) &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main' &&
       vars.DEMO_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest

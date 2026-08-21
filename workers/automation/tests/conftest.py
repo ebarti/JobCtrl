@@ -35,12 +35,12 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Assign every test file to exactly one observable CI shard.
+    """Assign every test file exactly one suite marker for targeted runs.
 
-    Migration files take precedence because they amplify hosted-runner storage
-    latency. Any file that owns a Temporal ``WorkflowEnvironment`` lifecycle is
-    isolated next; everything else is the hermetic core shard. Reading source
-    here keeps the routing future-proof when a new Temporal test file is added.
+    Migration files take precedence, then any file that owns a Temporal
+    ``WorkflowEnvironment`` lifecycle, then the hermetic core. Reading source
+    keeps the assignment current when a new Temporal test file is added, so
+    ``-m temporal`` / ``-m migration`` / ``-m core`` stay exact selectors.
     """
 
     source_by_path: dict[Path, str] = {}

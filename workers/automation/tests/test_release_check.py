@@ -1268,10 +1268,9 @@ def test_release_privacy_workflow_scans_every_pull_request() -> None:
     also rejects the ``branches-ignore``/``paths-ignore`` spellings and
     ``types`` narrowing such as ``types: [opened]``, which would leave every
     later push to an open pull request unscanned. A bare ``pull_request:`` key
-    parses to YAML null, the same invariant ``scripts/stacked-ci-workflows.test.mjs``
-    asserts as ``on.pull_request === null``; string equality is used here
-    because this suite also runs in the gate workflow itself, whose
-    environment installs only pytest and has no YAML parser.
+    parses to YAML null; string equality is used here because this suite also
+    runs in the gate workflow itself, whose environment installs only pytest
+    and has no YAML parser.
     """
     workflow = (
         release_check.ROOT / ".github/workflows/release-check.yml"

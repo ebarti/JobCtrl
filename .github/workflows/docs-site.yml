@@ -1,18 +1,8 @@
 name: Docs Site
 
-# Pull requests reach this workflow only through the cumulative CI router.
-# Direct pushes retain focused paths for the published artifact; the negated
-# directories match docs/.vitepress/config.ts `srcExclude` and cannot enter the
-# built site. The contract check below keeps commands and declared inputs in
-# sync.
+# The negated directories match docs/.vitepress/config.ts `srcExclude`: nothing
+# under them can enter the built site, so building for them is pure cost.
 on:
-  workflow_call:
-    inputs:
-      deploy:
-        description: Publish the verified artifact after a successful build
-        required: false
-        default: false
-        type: boolean
   push:
     branches: ["main"]
     paths:
@@ -25,7 +15,19 @@ on:
       - "scripts/check-install-asset.mjs"
       - "scripts/check-docs-site-links.mjs"
       - "scripts/check-docs-site-redirects.mjs"
-      - "scripts/check-docs-workflow-contract.mjs"
+      - "scripts/get"
+      - ".github/workflows/docs-site.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "!docs/plans/**"
+      - "!docs/incidents/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "scripts/check-install-asset.mjs"
+      - "scripts/check-docs-site-links.mjs"
+      - "scripts/check-docs-site-redirects.mjs"
       - "scripts/get"
       - ".github/workflows/docs-site.yml"
   workflow_dispatch:
@@ -45,7 +47,6 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: Build (dead-link gate)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -67,14 +68,8 @@ jobs:
           node-version: "22.21.1"
           cache: pnpm
 
-      - name: Validate docs workflow contract
-        run: node scripts/check-docs-workflow-contract.mjs
-
       - name: Install dependencies
         run: corepack pnpm install --frozen-lockfile
-
-      - name: Test documentation scripts
-        run: corepack pnpm scripts:test:docs
 
       - name: Build docs site
         run: corepack pnpm docs:build
@@ -95,7 +90,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       vars.DOCS_DEPLOY_ENABLED == 'true' &&
-      (github.event_name == 'push' || inputs.deploy)
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.deploy))
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
