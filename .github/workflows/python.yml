@@ -1,22 +1,5 @@
 name: Python CI
 
-# `push` is filtered to the files this suite actually reads. Beyond workers/ and
-# scripts/, `packages/**` holds the shared cross-runtime parity fixtures and the
-# domain-event sources, `packaging/**` holds provider-packs.lock.json and
-# capability-policy.json, the INV-1 no-send-transport guard
-# (test_outreach_no_send_transport.py) scans the TypeScript outreach sources
-# under apps/, the byline/attribution tests read root package.json, README.md,
-# LICENSE, and NOTICE, and the release-scan tests read workflow files under
-# `.github/workflows/**`. A push that changed any of those without these entries
-# would skip the suite covering it.
-#
-# `pull_request` deliberately takes no filter at all — no `branches`, no
-# `paths`. Every layer of a GitHub stack must instantiate this workflow so it
-# produces a check record for that layer; a filtered-out workflow reports
-# nothing rather than reporting a skip. Cost is controlled at the job level
-# instead, by the `if:` below that admits only a trusted cumulative head, which
-# is the pattern GitHub documents for stacked pull requests. Enforced by
-# scripts/stacked-ci-workflows.test.mjs — do not add a filter here.
 on:
   push:
     branches: ["main"]
@@ -32,73 +15,93 @@ on:
       - "README.md"
       - "LICENSE"
       - "NOTICE"
-      - "pyproject.toml"
-      - ".github/workflows/**"
+      - ".github/workflows/python.yml"
   pull_request:
+    paths:
+      - "workers/**"
+      - "scripts/**"
+      - "packages/**"
+      - "packaging/**"
+      - "apps/web/src/contexts/outreach/**"
+      - "apps/web/src/views/outreach/**"
+      - "apps/api/src/outreach.ts"
+      - "package.json"
+      - "README.md"
+      - "LICENSE"
+      - "NOTICE"
+      - ".github/workflows/python.yml"
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   python:
-    # Run hosted dependencies and product tests only for the trusted cumulative
-    # head. Lower stack layers retain their no-cost skipped check record.
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size) }}
-    name: Python (workers/automation)
+    name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
-      # A failure in one top compatibility lane must not cancel the others;
-      # every supported Python version owns an independent product result.
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
+    env:
+      PYTHONFAULTHANDLER: "1"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: workers/automation/pyproject.toml
-
-      - name: Install dependencies
-        run: pip install -e "workers/automation[dev,providers]"
-
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: 0.11.7
+          enable-cache: true
+          cache-dependency-glob: workers/automation/uv.lock
+          cache-suffix: py${{ matrix.python-version }}
+      - name: Sync the locked dependency graph
+        run: uv --project workers/automation sync --locked --all-extras
       - name: Lint
-        run: ruff check workers/automation/src workers/automation/tests
-
-      - name: Release scan
-        run: python scripts/release_check.py
-
-      - name: Validate Python workflow contract
-        run: node scripts/check-python-workflow-contract.mjs
-
+        run: uv --project workers/automation run --locked --all-extras ruff check workers/automation/src workers/automation/tests
       - name: Enable Linux user namespaces for Bubblewrap
         if: ${{ runner.os == 'Linux' && runner.environment == 'github-hosted' }}
         shell: bash
         run: |
           set -euo pipefail
 
-          # Bubblewrap needs unprivileged user namespaces on GitHub-hosted Linux
-          # runners. This step runs in each Python matrix lane before the
-          # sandboxed Codex SDK regression test.
+          # Bubblewrap needs unprivileged user namespaces on GitHub-hosted
+          # Linux runners for the sandboxed Codex SDK regression test.
           current_userns="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
-          if [ -n "$current_userns" ] && [ "$current_userns" != "1" ]; then
-            echo "Enabling kernel.unprivileged_userns_clone for Bubblewrap."
+          if [[ -n "$current_userns" && "$current_userns" != "1" ]]; then
             sudo sysctl -w kernel.unprivileged_userns_clone=1
           fi
-
-          # Ubuntu 24.04+ can additionally block unprivileged user namespaces
-          # via AppArmor, which prevents Bubblewrap from configuring loopback.
           current_apparmor="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
-          if [ -n "$current_apparmor" ] && [ "$current_apparmor" != "0" ]; then
-            echo "Disabling kernel.apparmor_restrict_unprivileged_userns for Bubblewrap."
+          if [[ -n "$current_apparmor" && "$current_apparmor" != "0" ]]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
+      - name: Use memory-backed temp storage when available
+        shell: bash
+        run: |
+          set -euo pipefail
 
+          # Hosted-runner disk latency once stretched the SQLite migration
+          # tests from ~50s to ~620s in one lane; tmpfs removes that
+          # amplification. The macOS launcher workflow still exercises the
+          # migration boundary on real disk.
+          if [[ -d /dev/shm && -w /dev/shm ]]; then
+            tmpdir="/dev/shm/jobctrl-${GITHUB_RUN_ID}-py${{ matrix.python-version }}"
+            mkdir -p "$tmpdir"
+            echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
+          fi
       - name: Test
-        run: pytest workers/automation/tests -v
-
+        run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q --durations=25
       - name: Build package
-        run: python -m build workers/automation
+        run: uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation

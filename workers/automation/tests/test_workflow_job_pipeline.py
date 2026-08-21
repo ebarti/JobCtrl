@@ -19,7 +19,7 @@ from temporalio import activity, workflow
 from temporalio.client import WorkflowFailureError
 from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, CancelledError
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.apply.activities import apply_activity
@@ -578,7 +578,7 @@ async def test_pipeline_workflow_runs_requested_stages_in_order():
         "jobctrl.pipeline.runner._run_stage_observed",
         return_value=_OK_OBSERVED,
     ) as observed_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -642,7 +642,7 @@ async def test_selected_pipeline_scores_only_canonically_enriched_subset():
             side_effect=fake_score_job_by_id,
         ),
     ):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -672,7 +672,7 @@ async def test_pipeline_workflow_rejects_unknown_stage_as_non_retryable():
     """Unknown stage names surface as a non-retryable ``ApplicationError``."""
     queue = f"pipeline-unknown-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -704,7 +704,7 @@ async def test_pipeline_workflow_runs_apply_as_child_workflow():
     workflow_id = f"pipeline-apply-wf-{uuid.uuid4()}"
 
     with patch("jobctrl.apply.launcher.main", return_value=(1, 0)) as apply_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -751,7 +751,7 @@ async def test_pipeline_workflow_preserves_canonical_apply_target():
     workflow_id = f"pipeline-apply-target-wf-{uuid.uuid4()}"
 
     with patch("jobctrl.apply.launcher.main", return_value=(0, 0)) as apply_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -781,7 +781,7 @@ async def test_pipeline_rejects_present_legacy_apply_selector_before_child_start
     queue = f"pipeline-apply-selector-{uuid.uuid4()}"
 
     with patch("jobctrl.apply.launcher.main", return_value=(0, 0)) as apply_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -908,7 +908,7 @@ async def test_pipeline_workflow_records_failed_stage_and_stops():
         return _OK_OBSERVED
 
     with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_runner):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -952,7 +952,7 @@ async def test_pipeline_workflow_records_failed_stage_output_and_stops():
         return _OK_OBSERVED
 
     with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_runner) as observed_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -984,7 +984,7 @@ async def test_pipeline_workflow_records_failed_apply_child_result_and_stops():
     queue = f"pipeline-apply-output-fail-{uuid.uuid4()}"
 
     with patch("jobctrl.apply.launcher.main", return_value=(0, 1)) as apply_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -1017,7 +1017,7 @@ async def test_pipeline_workflow_forwards_validation_mode_to_tailor_and_cover():
         "jobctrl.pipeline.runner._run_stage_observed",
         return_value=_OK_OBSERVED,
     ) as observed_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -1059,7 +1059,7 @@ async def test_job_scoped_tailor_continuation_runs_cover_for_same_job_after_succ
         patch("jobctrl.scoring.tailor.tailor_job_by_id", side_effect=fake_tailor_job_by_id),
         patch("jobctrl.scoring.cover_letter.cover_letter_by_id", side_effect=fake_cover_letter_by_id),
     ):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -1119,7 +1119,7 @@ async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
         patch("jobctrl.scoring.tailor.tailor_job_by_id", side_effect=fake_tailor_job_by_id),
         patch("jobctrl.scoring.cover_letter.cover_letter_by_id", side_effect=fake_cover_letter_by_id),
     ):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -1163,7 +1163,7 @@ async def test_frozen_current_policy_cohort_uses_selected_tailor_path():
         ),
         patch("jobctrl.scoring.tailor.tailor_job_by_id", side_effect=fake_tailor_job_by_id),
     ):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -1210,7 +1210,7 @@ async def test_selected_tailor_partial_continues_cover_for_approved_subset():
         patch("jobctrl.scoring.tailor.tailor_job_by_id", side_effect=fake_tailor_job_by_id),
         patch("jobctrl.scoring.cover_letter.cover_letter_by_id", side_effect=fake_cover_letter_by_id),
     ):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -1242,7 +1242,7 @@ async def test_pipeline_workflow_preserves_stage_options():
         "jobctrl.pipeline.runner._run_stage_observed",
         return_value=_OK_OBSERVED,
     ) as observed_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -1321,7 +1321,7 @@ async def test_workflow_cancel_propagates_to_activity_as_cancelled_error():
     _cancel_observed = False
     queue = f"cancel-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -1395,7 +1395,7 @@ async def test_pipeline_enrich_cancel_terminalizes_exact_selected_cohort():
     queue = f"pipeline-enrich-cancel-{uuid.uuid4()}"
     workflow_id = f"pipeline-enrich-cancel-wf-{uuid.uuid4()}"
     with patch("jobctrl.enrichment.detail.scrape_site_batch", side_effect=blocking_batch):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -1523,7 +1523,7 @@ async def test_pipeline_material_cancel_stops_fanout_and_fences_late_writes(
     queue = f"pipeline-{stage}-cancel-{uuid.uuid4()}"
     workflow_id = f"pipeline-{stage}-cancel-wf-{uuid.uuid4()}"
     with patch(runner_patch, side_effect=blocking_material_job):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -1650,7 +1650,7 @@ async def test_pipeline_enrich_timeout_retries_without_false_cancellation():
             timedelta(seconds=1),
         ),
     ):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,

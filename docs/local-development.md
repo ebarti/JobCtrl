@@ -52,7 +52,10 @@ corepack pnpm dev:setup
 `uv --project workers/automation sync --extra dev`, which installs the Python
 worker, the pinned `jobstreaming==0.0.3` provider, its locked transitive
 dependencies, and the Python dev tools used by local checks. It does not install Temporal or
-Playwright browser binaries. System Chrome/Chromium is optional; contributor
+Playwright browser binaries. Do not set `UV_EXCLUDE_NEWER` (or a global uv
+`exclude-newer` config): it makes uv treat `uv.lock` as needing re-resolution,
+so every `--locked` command in this repository fails or, worse, rewrites the
+lockfile. System Chrome/Chromium is optional; contributor
 testing of apply behavior must explicitly enable a browser capability first.
 
 The source installer downloads separate web/E2E and Python-worker Playwright

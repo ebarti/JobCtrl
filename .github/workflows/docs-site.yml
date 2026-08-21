@@ -1,15 +1,7 @@
 name: Docs Site
 
-# This workflow exists to build the published site and gate its dead links, so
-# it should run exactly when the published site can change. The directories
-# negated below are listed in the `srcExclude` of docs/.vitepress/config.ts:
-# VitePress never builds a page from them, links into them are rewritten to
-# absolute GitHub URLs, and check-docs-site-links.mjs only walks the emitted
-# dist and skips absolute URLs. Nothing under them can reach the artifact, so
-# building for them is pure cost. Both lists must stay in sync, and the
-# negations must stay in step with `srcExclude` — the workflow contract check
-# below enforces both. No `branches` filter on `pull_request`: stacked PRs
-# target their parent branch, not main, and would otherwise skip this gate.
+# The negated directories match docs/.vitepress/config.ts `srcExclude`: nothing
+# under them can enter the built site, so building for them is pure cost.
 on:
   push:
     branches: ["main"]
@@ -19,7 +11,10 @@ on:
       - "!docs/incidents/**"
       - "package.json"
       - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - "scripts/check-install-asset.mjs"
+      - "scripts/check-docs-site-links.mjs"
+      - "scripts/check-docs-site-redirects.mjs"
       - "scripts/get"
       - ".github/workflows/docs-site.yml"
   pull_request:
@@ -29,47 +24,58 @@ on:
       - "!docs/incidents/**"
       - "package.json"
       - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - "scripts/check-install-asset.mjs"
+      - "scripts/check-docs-site-links.mjs"
+      - "scripts/check-docs-site-redirects.mjs"
       - "scripts/get"
       - ".github/workflows/docs-site.yml"
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Publish the verified artifact after a successful build
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
 
+concurrency:
+  group: docs-site-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   build:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: Build (dead-link gate)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history so VitePress lastUpdated timestamps are real.
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20.19"
+          node-version: "22.21.1"
           cache: pnpm
 
-      - name: Validate docs workflow contract
-        run: node scripts/check-docs-workflow-contract.mjs
-
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: corepack pnpm install --frozen-lockfile
 
       - name: Build docs site
-        run: pnpm docs:build
+        run: corepack pnpm docs:build
 
       - name: Upload site artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: docs-site-dist
           path: docs/.vitepress/dist
@@ -81,18 +87,22 @@ jobs:
     # Deploys only from main, and only once the repository variable
     # DOCS_DEPLOY_ENABLED is set to "true" alongside the two Cloudflare
     # secrets. Until then this job skips cleanly and the workflow stays green.
-    if: github.ref == 'refs/heads/main' && vars.DOCS_DEPLOY_ENABLED == 'true'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      vars.DOCS_DEPLOY_ENABLED == 'true' &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.deploy))
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Download site artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: docs-site-dist
           path: docs/.vitepress/dist
 
       - name: Publish to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

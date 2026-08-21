@@ -1,18 +1,5 @@
 name: TypeScript CI
 
-# `push` is filtered to the files this suite actually reads. Beyond apps/ and
-# packages/, `workers/**` supplies schema_v7.sql, schema_manifest.py, and
-# config.py to the cross-runtime parity and schema-guard tests, and `scripts/**`
-# supplies the install script the install contract test executes. A push that
-# changed either without those entries would skip the suite covering it.
-#
-# `pull_request` deliberately takes no filter at all — no `branches`, no
-# `paths`. Every layer of a GitHub stack must instantiate this workflow so it
-# produces a check record for that layer; a filtered-out workflow reports
-# nothing rather than reporting a skip. Cost is controlled at the job level
-# instead, by the `if:` below that admits only a trusted cumulative head, which
-# is the pattern GitHub documents for stacked pull requests. Enforced by
-# scripts/stacked-ci-workflows.test.mjs — do not add a filter here.
 on:
   push:
     branches: ["main"]
@@ -26,66 +13,166 @@ on:
       - "pnpm-workspace.yaml"
       - ".github/workflows/typescript.yml"
   pull_request:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "workers/**"
+      - "scripts/**"
+      - "pnpm-lock.yaml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/typescript.yml"
   workflow_dispatch:
 
-jobs:
-  typescript:
-    # Run hosted dependencies and product tests only for the trusted cumulative
-    # head. Lower stack layers retain their no-cost skipped check record.
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.stack == null || github.event.pull_request.stack.position == github.event.pull_request.stack.size) }}
-    name: TypeScript (apps + packages)
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+concurrency:
+  group: typescript-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  api:
+    name: API checks and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20.19"
+          node-version: 22.21.1
           cache: pnpm
+      - name: Install locked dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Check shared contracts and API
+        run: |
+          corepack pnpm --filter @jobctrl/contracts check
+          corepack pnpm --filter @jobctrl/api-client check
+          corepack pnpm --filter @jobctrl/domain-types check
+          corepack pnpm api:check
+      - name: Test shared domain types
+        run: corepack pnpm --filter @jobctrl/domain-types test
+      - name: Test API
+        run: corepack pnpm api:test
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+  web:
+    name: Web unit, types, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: "3.11"
-
-      - name: Install uv
-        run: python -m pip install uv
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Check
-        run: pnpm -r check
-
-      - name: Test
-        run: pnpm --filter @jobctrl/api test
-
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+      - name: Install locked dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Check web
+        run: corepack pnpm web:check
       - name: Test web
-        run: pnpm --filter @jobctrl/web test
-
-      - name: Test web types
-        run: pnpm --filter @jobctrl/web test-d
-
+        run: corepack pnpm web:test
+      - name: Test public web types
+        run: corepack pnpm web:test-d
       - name: Build web
-        run: pnpm --filter @jobctrl/web build
+        run: corepack pnpm web:build
 
-      - name: Build web storybook
-        run: pnpm --filter @jobctrl/web storybook:build
-
+  storybook:
+    name: Storybook build and browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+      - name: Install locked dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Build Storybook
+        run: corepack pnpm web:storybook:build
       - name: Install Playwright Chromium
-        run: pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
+        run: corepack pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
+      - name: Test Storybook
+        run: corepack pnpm web:storybook:test
 
-      - name: Install Python Playwright Chromium
-        run: uv --project workers/automation run playwright install chromium
+  e2e:
+    name: Web end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: 0.11.7
+          enable-cache: true
+          cache-dependency-glob: workers/automation/uv.lock
+      - name: Install locked dependencies
+        run: |
+          corepack pnpm install --frozen-lockfile
+          uv --project workers/automation sync --locked --all-extras
+      - name: Install Playwright browsers
+        run: |
+          corepack pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
+          uv --project workers/automation run --locked --all-extras playwright install chromium
+      - name: Test web end-to-end
+        run: corepack pnpm web:e2e
 
-      - name: Test web e2e
-        run: pnpm --filter @jobctrl/web e2e
-
-      - name: Test web storybook
-        run: pnpm --filter @jobctrl/web storybook:test
+  extension:
+    name: Browser extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+      - name: Install locked dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: corepack pnpm --filter @jobctrl/extension exec playwright install --with-deps chromium
+      - name: Check, test, build, and exercise extension
+        run: |
+          corepack pnpm extension:check
+          corepack pnpm extension:test
+          corepack pnpm extension:build
+          corepack pnpm extension:e2e

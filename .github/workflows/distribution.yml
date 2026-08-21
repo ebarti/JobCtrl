@@ -1,0 +1,67 @@
+name: Distribution
+
+# Fail-closed release contracts (provider locks, manifest counts, license,
+# payload, and direct-dependency baselines) for changes that move dependency
+# locks or packaging inputs — the surface Dependabot PRs touch.
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "package.json"
+      - "apps/*/package.json"
+      - "packages/*/package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "workers/automation/pyproject.toml"
+      - "workers/automation/uv.lock"
+      - "packaging/**"
+      - "scripts/distribution-*"
+      - ".github/workflows/distribution.yml"
+  pull_request:
+    paths:
+      - "package.json"
+      - "apps/*/package.json"
+      - "packages/*/package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "workers/automation/pyproject.toml"
+      - "workers/automation/uv.lock"
+      - "packaging/**"
+      - "scripts/distribution-*"
+      - ".github/workflows/distribution.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: distribution-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  audit:
+    name: Release distribution contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: 0.11.7
+          enable-cache: true
+          cache-dependency-glob: workers/automation/uv.lock
+      - name: Install locked workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Audit release distribution contracts
+        run: corepack pnpm distribution:audit
