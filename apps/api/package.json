@@ -12,12 +12,12 @@
     "qa:test": "vitest run test/qa-workflow.test.ts"
   },
   "dependencies": {
-    "@fastify/cors": "^11.2.0",
+    "@fastify/cors": "^11.3.0",
     "@jobctrl/contracts": "workspace:*",
     "@jobctrl/domain-types": "workspace:*",
     "better-sqlite3": "^12.9.0",
-    "fastify": "^5.8.5",
-    "ipaddr.js": "2.4.0",
+    "fastify": "^5.12.0",
+    "ipaddr.js": "2.5.0",
     "zod": "^4.4.1"
   },
   "devDependencies": {
@@ -25,7 +25,7 @@
     "@jobctrl/tsconfig": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
-    "tsx": "^4.22.4",
+    "tsx": "^4.23.12",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
   }
