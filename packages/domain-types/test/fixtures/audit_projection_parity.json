@@ -1298,7 +1298,9 @@
         "improved": true
       },
       "reason": "",
-      "summary_rejection_reason": ""
+      "summary_rejection_reason": "",
+      "scope_violations": [],
+      "final_judge": {}
     }
   },
   "locationCases": [

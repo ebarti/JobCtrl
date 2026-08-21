@@ -105,19 +105,22 @@ from jobctrl.domain.materials.voice import (
     apply_voice_to_payload,
     build_voice_request,
     summary_voice_rejection_reason,
+    voice_scope_violations,
 )
-from jobctrl.domain.materials.voice_metrics import measure_voice_delta
+from jobctrl.domain.materials.voice_metrics import BUZZWORD_LEXICON, measure_voice_delta
 from jobctrl.domain.materials.claim_grounding import (
     ClaimGrounding,
     enrich_provenance_requirements,
     ground_claim_mappings,
 )
 from jobctrl.domain.materials.quality import (
+    ArtifactBudgetInfeasibleError,
     TailoringPlan,
     TailoringPrerequisiteError,
     build_tailoring_change_annotations,
     build_tailoring_plan,
     evaluate_tailoring_quality,
+    require_artifact_budget_feasible,
 )
 from jobctrl.domain.materials.requirement_coverage import (
     GeneratedClaimMapping,
@@ -157,6 +160,11 @@ from jobctrl.domain.ports.materials import (
     VoicePort,
 )
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
+from jobctrl.domain.profile.achievement_metrics import (
+    extract_achievement_metrics,
+    merge_achievement_metrics,
+    normalize_achievement_metric,
+)
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.resume_profile import (
@@ -167,19 +175,19 @@ from jobctrl.resume_profile import (
     get_required_bullets_by_experience_id,
     get_required_experience_entry_ids,
     get_required_skill_category_ids,
-    get_resume_constraints,
     get_resume_master,
     get_skill_categories,
     get_tailoring_policy,
     get_writing_style,
+    mark_current_artifact_budget,
     require_resume_master,
 )
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v5.explicit-summary-sentences"
+TAILORING_PROMPT_VERSION = "tailor.v6.minimal-achievement-set"
 TAILORING_SCHEMA_VERSION = "tailored-resume.v3"
-TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v1"
+TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v2.final-semantic-fidelity"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
     "relevance_to_job",
     "evidence_support",
@@ -187,6 +195,9 @@ TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
     "required_content_preserved",
     "ats_readability",
     "specificity_and_metrics",
+    "semantic_fidelity",
+    "bullet_selection_focus",
+    "professional_register",
 )
 COVER_LETTER_COMPLETION_MARKER = "END_OF_COVER_LETTER"
 
@@ -877,6 +888,19 @@ def _claim_mapping_validation_errors(
                 tailoring_plan=tailoring_plan,
             )
         )
+        errors.extend(
+            _claim_metric_binding_errors(
+                mappings=mappings,
+                tailoring_plan=tailoring_plan,
+            )
+        )
+        errors.extend(
+            _experience_bullet_curation_errors(
+                payload=payload,
+                mappings=mappings,
+                tailoring_plan=tailoring_plan,
+            )
+        )
     graph = tailoring_plan.coverage_graph
     if graph is not None:
         errors.extend(
@@ -890,6 +914,176 @@ def _claim_mapping_validation_errors(
             "Missing mandatory covered achievement in generated claims: " + evidence_id
             for evidence_id in validate_mandatory_covered_achievements(graph, mappings)
         )
+    return tuple(errors)
+
+
+def _claim_metric_binding_errors(
+    *,
+    mappings: Iterable[GeneratedClaimMapping],
+    tailoring_plan: TailoringPlan,
+) -> tuple[str, ...]:
+    """Require each numeric claim to be supported by its own mapped evidence."""
+
+    errors: list[str] = []
+    evidence_by_id = tailoring_plan.evidence_by_id
+    for mapping in mappings:
+        location = _canonical_claim_location(mapping.location)
+        is_summary = location in {
+            "executive_profile",
+            "summary",
+            "resume.executive_profile",
+        } or bool(re.fullmatch(r"executive_profile\.sentence\[\d+\]", location))
+        is_experience_bullet = bool(
+            re.fullmatch(
+                r"(?:experience|experience_updates)(?:\.[^\[\]]+|\[\d+\])\.bullets\[\d+\]",
+                location,
+            )
+        )
+        if not (is_summary or is_experience_bullet):
+            continue
+
+        claim_metrics = extract_achievement_metrics(mapping.text)
+        if claim_metrics and not mapping.evidence_ids:
+            errors.append(
+                f"Generated claim {mapping.claim_id} contains metrics but cites no "
+                "achievement evidence."
+            )
+            continue
+
+        allowed_metrics: set[str] = set()
+        for evidence_id in mapping.evidence_ids:
+            item = evidence_by_id.get(evidence_id)
+            if item is None:
+                continue
+            allowed_metrics.update(
+                normalize_achievement_metric(metric)
+                for metric in merge_achievement_metrics(
+                    item.metrics,
+                    item.source_text,
+                    item.scope,
+                    item.action,
+                    item.outcome,
+                )
+            )
+        for metric in claim_metrics:
+            if normalize_achievement_metric(metric) not in allowed_metrics:
+                errors.append(
+                    f"Generated claim {mapping.claim_id} metric {metric!r} is not "
+                    "supported by its mapped achievement evidence."
+                )
+    return tuple(errors)
+
+
+def _experience_bullet_curation_errors(
+    *,
+    payload: dict,
+    mappings: Iterable[GeneratedClaimMapping],
+    tailoring_plan: TailoringPlan,
+) -> tuple[str, ...]:
+    """Enforce a smallest-sufficient, evidence-backed bullet set.
+
+    ``max_experience_bullets`` remains a ceiling. It is never a target. Each
+    bullet represents exactly one achievement. Target-covered and explicit
+    pinned achievements may appear; a required role with neither gets exactly
+    one evidence-backed positioning bullet so the role remains representable.
+    """
+
+    mapping_tuple = tuple(mappings)
+    evidence_by_id = tailoring_plan.evidence_by_id
+    pins = tailoring_plan.requirement_led_controls.required_content_pins
+    required_roles = set(pins.experience_entry_ids)
+    explicit_evidence_pins = set(tailoring_plan.required_evidence_ids)
+    seen_experience_evidence: set[str] = set()
+    errors: list[str] = []
+
+    updates = payload.get("experience_updates")
+    for update_index, update in enumerate(updates if isinstance(updates, list) else ()):
+        if not isinstance(update, dict):
+            continue
+        entry_id = str(update.get("id") or "").strip()
+        bullets = update.get("bullets")
+        role_claims: list[GeneratedClaimMapping] = []
+        for bullet_index, bullet in enumerate(bullets if isinstance(bullets, list) else ()):
+            text = str(bullet or "").strip()
+            if not text:
+                continue
+            locations = {
+                f"experience.{entry_id}.bullets[{bullet_index}]",
+                f"experience_updates.{entry_id}.bullets[{bullet_index}]",
+                f"experience_updates[{update_index}].bullets[{bullet_index}]",
+            }
+            matches = [
+                mapping for mapping in mapping_tuple
+                if _canonical_claim_location(mapping.location) in locations
+            ]
+            if len(matches) != 1:
+                continue  # the binding validator reports missing/duplicate mappings
+            mapping = matches[0]
+            role_claims.append(mapping)
+            if len(mapping.evidence_ids) != 1:
+                errors.append(
+                    f"Experience bullet {entry_id}[{bullet_index}] must cite exactly "
+                    "one primary achievement evidence id."
+                )
+                continue
+            evidence_id = mapping.evidence_ids[0]
+            evidence = evidence_by_id.get(evidence_id)
+            if evidence is not None and evidence.experience_entry_id != entry_id:
+                errors.append(
+                    f"Experience bullet {entry_id}[{bullet_index}] cites achievement "
+                    f"{evidence_id} from {evidence.experience_entry_id}."
+                )
+            if evidence_id in seen_experience_evidence:
+                errors.append(
+                    f"Achievement evidence {evidence_id} is repeated across experience "
+                    "bullets; one achievement must produce one bullet."
+                )
+            seen_experience_evidence.add(evidence_id)
+
+            if mapping.non_requirement_reason == "structure":
+                errors.append(
+                    f"Experience bullet {entry_id}[{bullet_index}] cannot be structure-only."
+                )
+            if mapping.non_requirement_reason == "pinned":
+                required_texts = {
+                    _normalize_generated_claim_text(value)
+                    for value in pins.bullets_by_experience_id.get(entry_id, ())
+                }
+                if (
+                    _normalize_generated_claim_text(text) not in required_texts
+                    and evidence_id not in explicit_evidence_pins
+                ):
+                    errors.append(
+                        f"Experience bullet {entry_id}[{bullet_index}] is labeled pinned "
+                        "but no user-required bullet supports that label."
+                    )
+
+        covered_or_pinned = [
+            mapping for mapping in role_claims
+            if mapping.coverage_edge_ids or mapping.non_requirement_reason == "pinned"
+        ]
+        positioning = [
+            mapping for mapping in role_claims
+            if not mapping.coverage_edge_ids
+            and mapping.non_requirement_reason == "positioning"
+        ]
+        if covered_or_pinned and positioning:
+            errors.extend(
+                f"Experience {entry_id} has target-covered or pinned evidence; "
+                f"positioning-only bullet {mapping.claim_id} is filler and must be removed."
+                for mapping in positioning
+            )
+        elif not covered_or_pinned:
+            if entry_id in required_roles and len(positioning) != 1:
+                errors.append(
+                    f"Required experience {entry_id} without target-covered or pinned "
+                    "evidence must have exactly one positioning-only bullet."
+                )
+            elif entry_id not in required_roles and positioning:
+                errors.append(
+                    f"Optional experience {entry_id} has no target-covered or pinned "
+                    "evidence and must be omitted."
+                )
     return tuple(errors)
 
 
@@ -1391,7 +1585,6 @@ def build_master_tailor_prompt(
     profile = snapshot.as_dict()
     require_resume_master(profile)
     resume = get_resume_master(profile)
-    constraints = get_resume_constraints(profile)
     required_experience_ids = get_required_experience_entry_ids(profile)
     required_skill_ids = get_required_skill_category_ids(profile)
     all_experience_entries = get_experience_entries(profile)
@@ -1441,8 +1634,6 @@ def build_master_tailor_prompt(
     writing_style = get_writing_style(profile)
     custom_tailoring_prompt = get_custom_tailoring_prompt(profile)
     max_bullets = get_max_experience_bullets(profile)
-    real_metrics = normalize_profile_list(constraints.get("real_metrics", []))
-    metrics_str = ", ".join(real_metrics) if real_metrics else "N/A"
     banned_str = ", ".join(BANNED_WORDS)
     policy_lines = [
         f"- Rewrite executive profile: {'yes' if tailoring_policy['allow_summary_rewrite'] else 'no, preserve the baseline summary'}",
@@ -1491,8 +1682,10 @@ The code will inject all fixed structure from the master resume:
 
 SOURCE OF TRUTH:
 - MASTER EXECUTIVE PROFILE, MASTER EXPERIENCE ENTRIES, MASTER EDUCATION
-  ENTRIES, MASTER SKILL CATEGORIES, REQUIRED BULLETS, and REAL METRICS are the
-  only evidence for candidate claims.
+  ENTRIES, MASTER SKILL CATEGORIES, REQUIRED BULLETS, and achievement evidence
+  in the TAILORING QUALITY PLAN are the only evidence for candidate claims.
+- A metric belongs only to the achievement evidence that contains it. Never use
+  a number from one achievement to quantify another claim.
 - TARGET JOB text is context only. Do NOT copy target-job technologies,
   systems, responsibilities, business claims, or phrases into the candidate's
   executive profile or bullets unless the same fact appears in the master
@@ -1511,9 +1704,10 @@ HARD RULES:
 - Do NOT add or remove skill categories
 - Do NOT rewrite historical experience titles or append job keywords to titles
 - Skill items must be exact strings from MASTER SKILL CATEGORIES; do NOT add job-only skills
-- Do NOT change real numbers ({metrics_str})
+- Preserve every number exactly and bind it to the same achievement that supplied it
 - Do NOT invent companies, roles, degrees, or certifications
-- Max {max_bullets} bullets per experience entry
+- Max {max_bullets} bullets per experience entry is a hard ceiling, never a target;
+  requirement coverage and required bullets do not permit an overflow
 - No em dashes
 - BANNED WORDS: {banned_str}
 - Use TARGET_PROFILE, COVERAGE_GRAPH, claim policy, generation permissions,
@@ -1532,6 +1726,11 @@ HARD RULES:
   rendered order joined with ", " (comma plus one space), not the category label
 - Every achievement_evidence_id present on any COVERAGE_GRAPH edge must appear
   in at least one bound mapping that cites that edge and its requirement_id
+- Each experience bullet must cite exactly one primary achievement evidence id
+- Use each achievement evidence id in at most one experience bullet
+- If a required role has target-covered or explicitly pinned evidence, include
+  only those bullets and no positioning-only filler. If it has neither, include
+  exactly one evidence-backed positioning bullet so the required role remains visible
 - non_requirement_reason is a required fallback classification. Choose pinned,
   positioning, or structure. When coverage_edge_ids is non-empty it is ignored;
   when coverage_edge_ids is empty it must truthfully classify the claim
@@ -1542,14 +1741,18 @@ HARD RULES:
 WRITING METHOD:
 - Treat required evidence and required bullets as pinned must-include achievements:
   keep the fact, metric, and meaning visible in the matching experience entry
-- For each experience row, order bullets strongest-to-weakest for this job.
-  Lead with bullets that map to requirement directives, required evidence, and
-  grounded job keywords; demote generic duties
-- Write bullets as result-first CAR/PAR achievements: strong past-tense verb,
-  outcome or scope or metric, then the action/context. If no verified metric
-  exists, use only supported scale, scope, frequency, or time from master evidence
-- Every bullet should prove a requirement, surface required evidence, or preserve
-  a profile fact. Do not write duty-only filler
+- Select the smallest sufficient set of achievements. Order selected bullets
+  strongest-to-weakest for this job; omit every optional bullet that does not
+  add distinct requirement evidence
+- Express one accomplishment per bullet: precise actor/agency, concrete action,
+  supported outcome or significance, and useful scope or metric when present
+- Preserve semantic roles and causal status. "Reduced operating spend" is not
+  "found some savings"; "secured executive approval" is not "got leaders to
+  agree"; "reallocated capital" is not "shifted spare cash." Do not optimize
+  synonyms or opening-verb variety
+- Use concise, professional executive language. Never make precise evidence more
+  casual, vague, or conversational
+- Do not write duty-only or profile-inventory filler
 - For skills, select and order exact existing skill strings by truthful target
   overlap first; never add unsupported skills
 - Executive profile should be a concise 2-4 sentence target-role summary using
@@ -1618,7 +1821,6 @@ def build_judge_prompt(
     """Build the LLM judge prompt from the snapshot."""
     profile = snapshot.as_dict()
     boundary = profile.get("skills_boundary", {})
-    resume_facts = profile.get("resume_facts", {})
     resume = get_resume_master(profile)
     experience_entries = get_experience_entries(profile)
     skill_categories = get_skill_categories(profile)
@@ -1632,8 +1834,6 @@ def build_judge_prompt(
     all_skills = sorted(set(all_skills), key=str.lower)
     skills_str = ", ".join(all_skills) if all_skills else "N/A"
 
-    real_metrics = normalize_profile_list(resume_facts.get("real_metrics", []))
-    metrics_str = ", ".join(real_metrics) if real_metrics else "N/A"
     quality_plan_block = (
         "\n" + tailoring_plan.to_prompt_context() + "\n"
         if tailoring_plan is not None
@@ -1655,9 +1855,17 @@ PASS only when all of these are true:
 - The resume does not add unsupported skills, certifications, employers,
   locations, degrees, seniority, or inflated metrics.
 - The resume is concise, readable, and ATS-friendly.
+- Every rewritten claim preserves the source actor/agency, action, outcome,
+  scope, stakeholder, causal relationship, certainty, and metric association.
+- Each bullet contains one coherent accomplishment in precise professional
+  language; it does not substitute casual synonyms for exact source meaning.
+- The bullet set is the smallest sufficient target-specific selection: no
+  optional positioning or inventory bullet remains when the role already has
+  target-covered or explicitly pinned evidence.
 
-FAIL for any unsupported claim, fabricated skill, changed metric, dropped
-required evidence, or material relevance problem. Do not give a pass because a
+FAIL for any unsupported claim, fabricated skill, changed or transplanted metric,
+dropped required evidence, semantic drift, casual/vague rewrite, redundant
+bullet, or material relevance problem. Do not give a pass because a
 skill is learnable or adjacent. Repair instructions should tell the generator
 what to fix in the next attempt.
 
@@ -1673,9 +1881,6 @@ CANONICAL SKILL CATEGORIES:
 ALLOWED SKILLS:
 {skills_str}
 
-REAL METRICS:
-{metrics_str}
-
 {quality_plan_block}
 
 REQUIRED BULLETS BY EXPERIENCE ID:
@@ -1688,14 +1893,21 @@ Judge dimensions for criterion_scores:
 - required_content_preserved
 - ats_readability
 - specificity_and_metrics
+- semantic_fidelity
+- bullet_selection_focus
+- professional_register
 
 Artifact quality checks:
 - JD match: must-have and keyword coverage must be truthful, supported, and
   naturally phrased, not stuffed
 - Achievement strength: experience bullets should be result-led CAR/PAR claims
   with verified metrics or supported scale/scope/frequency, not duty lists
-- Targeting and focus: executive profile, skills, and top bullets should signal
-  this role without letting irrelevant content dominate
+- Targeting and focus: every optional bullet must add distinct target evidence;
+  max bullets is not a fill target
+- Semantic fidelity: compare the final wording to its mapped evidence at the
+  actor/action/outcome/scope/stakeholder/causality level, not keyword overlap
+- Professional register: reject casual degradation such as "found some
+  savings," "spare cash," or "more useful stuff" when the evidence is precise
 - Red flags and language: penalize generic objectives, duty-only bullets,
   unsupported skills, repeated stock phrases, keyword stuffing, hidden
   instructions, inconsistent titles, and changed metrics"""
@@ -1715,16 +1927,11 @@ def build_cover_letter_prompt(snapshot: ProfileSnapshot) -> str:
         all_skills.extend(normalize_profile_list(items))
     skills_str = ", ".join(all_skills) if all_skills else "the tools listed in the resume"
 
-    real_metrics = normalize_profile_list(resume_facts.get("real_metrics", []))
     preserved_projects = normalize_profile_list(resume_facts.get("preserved_projects", []))
 
     projects_hint = ""
     if preserved_projects:
         projects_hint = f"\nKnown projects to reference: {', '.join(preserved_projects)}"
-    metrics_hint = ""
-    if real_metrics:
-        metrics_hint = f"\nReal metrics to use: {', '.join(real_metrics)}"
-
     all_banned = ", ".join(f'"{w}"' for w in BANNED_WORDS)
     leak_banned = ", ".join(f'"{p}"' for p in LLM_LEAK_PHRASES)
 
@@ -1746,7 +1953,7 @@ Dear Hiring Manager,
 
 PARAGRAPH 1 (2-3 sentences): Open with a specific thing YOU built that solves THEIR problem. Not "I'm excited about this role." Not "This role aligns with my experience." Start with the work.
 
-PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST relevant to THIS job. Use a number only when that exact candidate fact appears in the RESUME. Otherwise use supported scope or outcomes. Frame as solving their problem, not listing your accomplishments.{projects_hint}{metrics_hint}
+PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST relevant to THIS job. Use a number only in the same achievement that contains that exact candidate fact in the RESUME. Otherwise use supported scope or outcomes. Frame as solving their problem, not listing your accomplishments.{projects_hint}
 
 PARAGRAPH 3 (1-2 sentences): One specific thing about the company from the job description (a product or technical challenge). Describe it qualitatively. NEVER repeat a number, date, percentage, money amount, team size, goal period, or timeline from the TARGET JOB. Then close. "Happy to walk through any of this in more detail." or "Let's discuss." Nothing else.
 
@@ -1986,6 +2193,10 @@ class TailorResumeUseCase:
             employer_analysis=employer_analysis,
             requirement_fit_report=requirement_fit_report,
         )
+        require_artifact_budget_feasible(
+            profile_snapshot.as_dict(),
+            tailoring_plan,
+        )
         tailor_prompt_base = build_master_tailor_prompt(
             profile_snapshot,
             tailoring_plan=tailoring_plan,
@@ -2033,6 +2244,8 @@ class TailorResumeUseCase:
                 error="No parseable JSON in any attempt",
             )
 
+        parsed_payload = mark_current_artifact_budget(parsed_payload)
+
         # Phase 3: run the explicit voice pass on the SELECTED candidate BEFORE the
         # final audit (VOICE-03), then compute provenance + coverage against the
         # text that actually ships. ``final_payload`` is the voiced payload when the
@@ -2052,13 +2265,18 @@ class TailorResumeUseCase:
             voice_record,
             fabrication_error,
             final_grounding,
+            final_verdict,
         ) = self._voice_and_audit(
             profile_snapshot=profile_snapshot,
             job=job,
             tailored_payload=parsed_payload,
             employer_analysis=employer_analysis,
             requirement_fit_report=requirement_fit_report,
+            tailoring_plan=tailoring_plan,
+            validation_mode=validation_mode,
+            base_verdict=verdict,
         )
+        verdict = final_verdict
         if commit_guard is not None:
             commit_guard()
         if fabrication_error is not None:
@@ -2094,6 +2312,7 @@ class TailorResumeUseCase:
             size_bytes = None
 
         judge_record = self._judge_record(verdict)
+        report["final_judge"] = judge_record
         resume_template = _resolve_effective_resume_template(
             self._repository,
             tenant_id,
@@ -2135,6 +2354,7 @@ class TailorResumeUseCase:
             "change_annotations": report.get("change_annotations") or [],
             "candidate_summaries": report.get("candidate_summaries") or [],
             "judge": judge_record,
+            "final_judge": judge_record,
             # Phase 3 audit signals (canonical home is the provenance set; mirrored
             # here so the artifact report is self-contained for inspection).
             "voice_pass": voice_record.to_dict(),
@@ -3059,8 +3279,22 @@ class TailorResumeUseCase:
             }
         except (TypeError, ValueError):
             return JudgeVerdict.failed(notes="judge error: invalid criterion_scores")
-        if not criterion_scores:
-            return JudgeVerdict.failed(notes="judge error: missing criterion_scores")
+        missing_criteria = [
+            criterion
+            for criterion in TAILORING_JUDGE_CRITERIA
+            if criterion not in criterion_scores
+        ]
+        if missing_criteria:
+            return JudgeVerdict.failed(
+                notes="judge error: missing criterion_scores: "
+                + ", ".join(missing_criteria)
+            )
+        if any(
+            value < 0.0 or value > 1.0
+            for criterion, value in criterion_scores.items()
+            if criterion in TAILORING_JUDGE_CRITERIA
+        ):
+            return JudgeVerdict.failed(notes="judge error: criterion_scores out of range")
         approved = (
             verdict == "PASS"
             and score >= self._llm_policy.judge_min_score
@@ -3469,14 +3703,11 @@ class TailorResumeUseCase:
     def _grounded_rows(
         payload: dict,
         rows: tuple[BulletProvenance, ...],
-        prior_rows: tuple[BulletProvenance, ...] = (),
     ) -> tuple[tuple[BulletProvenance, ...], ClaimGrounding]:
         """Ground the payload's claim mappings against ``rows`` and enrich them.
 
-        ``prior_rows`` carry the pre-voice text of the same bullets so a claim
-        validated against the pre-voice wording stays grounded to the reworded
-        shipped line (voice keeps bullet identity 1:1). Unparseable mappings
-        ground nothing — rows then keep their keyword-served links only.
+        Voice rewrites rebind mapping text before this method runs, so grounding
+        uses only the final shipped wording. Unparseable mappings ground nothing.
         """
         mappings, parse_errors = _claim_mappings_from_payload(payload)
         if parse_errors:
@@ -3484,7 +3715,6 @@ class TailorResumeUseCase:
         grounding = ground_claim_mappings(
             mappings,
             tuple((row.bullet_id, row.generated_text) for row in rows),
-            prior_lines=tuple((row.bullet_id, row.generated_text) for row in prior_rows),
         )
         return enrich_provenance_requirements(rows, grounding), grounding
 
@@ -3496,6 +3726,9 @@ class TailorResumeUseCase:
         tailored_payload: dict,
         employer_analysis: EmployerAnalysis,
         requirement_fit_report: "RequirementFitReport | None" = None,
+        tailoring_plan: TailoringPlan,
+        validation_mode: str,
+        base_verdict: JudgeVerdict | None,
     ) -> tuple[
         dict,
         tuple[BulletProvenance, ...],
@@ -3503,15 +3736,16 @@ class TailorResumeUseCase:
         VoicePassRecord,
         str | None,
         ClaimGrounding,
+        JudgeVerdict | None,
     ]:
         """Run the voice pass before the final audit (VOICE-01/02/03 + GROUND-06).
 
         Returns ``(final_payload, provenance_rows, coverage, voice_record,
-        fabrication_error)``:
+        fabrication_error, grounding, final_verdict)``:
 
           * ``final_payload`` — the payload that actually ships: the voiced payload
-            when the voice pass improved the deterministic proxies AND grounding
-            re-validated against the voiced text, else the clean pre-voice candidate.
+            when the voice pass removed a configured buzzword and the complete
+            final gate stack accepted it, else the clean pre-voice candidate.
           * ``provenance_rows`` — provenance computed against ``final_payload`` (so
             ``generated_text`` is byte-identical to the rendered/PDF text), with any
             bullet the voice pass reworded re-marked ``transform_type == voice``.
@@ -3522,11 +3756,15 @@ class TailorResumeUseCase:
           * ``fabrication_error`` — set when the SHIPPED payload still fails the
             deterministic detector / FK gate (the pre-voice candidate itself was
             ungrounded), so ``execute`` hard-rejects it exactly as in Phase 2.
+          * ``grounding`` — exact claim-to-final-rendered-line bindings.
+          * ``final_verdict`` — the judge verdict for the payload that ships, or
+            ``None`` when validation rejected the candidate before judging ran.
 
         The pre-voice candidate is always audited first; the voiced payload is only
-        adopted when it both improves voice AND survives the SAME grounding gate, so
-        a voice edit that injects an unsourced metric/title/date/employer (VOICE-03)
-        or regresses voice never reaches the user.
+        adopted only when it edits an eligible line, reduces buzzwords, and survives
+        mapping, rendering, quality, provenance, fabrication, fit, judge, and any
+        applicable adversarial gate. Semantic or register regressions therefore
+        fall back to the already accepted candidate.
         """
         base_rows, base_error, _base_findings = self._compute_provenance(
             profile_snapshot=profile_snapshot,
@@ -3534,30 +3772,68 @@ class TailorResumeUseCase:
             tailored_payload=tailored_payload,
             employer_analysis=employer_analysis,
             requirement_fit_report=requirement_fit_report,
+            plan=tailoring_plan,
         )
         corpus = build_evidence_corpus(profile_snapshot.as_dict())
 
         # No voice port, or the pre-voice candidate is already ungrounded: keep the
         # pre-voice payload (the fabrication gate will reject it upstream if needed).
         # Coverage is still computed canonically over whatever grounded rows exist.
-        if self._voice is None or base_error is not None:
+        if base_verdict is None or self._voice is None or base_error is not None:
             base_rows, base_grounding = self._grounded_rows(tailored_payload, base_rows)
             coverage = self._coverage_for(base_rows, employer_analysis, base_error, corpus)
             record = (
-                VoicePassRecord.skipped("no_voice_port")
-                if self._voice is None
-                else VoicePassRecord.skipped("pre_voice_candidate_rejected")
+                VoicePassRecord.skipped("pre_voice_candidate_rejected")
+                if base_verdict is None or base_error is not None
+                else VoicePassRecord.skipped("no_voice_port")
             )
-            return tailored_payload, base_rows, coverage, record, base_error, base_grounding
+            return (
+                tailored_payload,
+                base_rows,
+                coverage,
+                record,
+                base_error,
+                base_grounding,
+                base_verdict,
+            )
 
         base_rows, base_grounding = self._grounded_rows(tailored_payload, base_rows)
         voiced_payload, voice_record = self._run_voice(
-            tailored_payload=tailored_payload, base_rows=base_rows
+            tailored_payload=tailored_payload
         )
         if voiced_payload is None:
             # Voice did not run / errored / no-op — ship the pre-voice candidate.
             coverage = self._coverage_for(base_rows, employer_analysis, None, corpus)
-            return tailored_payload, base_rows, coverage, voice_record, None, base_grounding
+            return (
+                tailored_payload,
+                base_rows,
+                coverage,
+                voice_record,
+                None,
+                base_grounding,
+                base_verdict,
+            )
+
+        mapping_errors = _claim_mapping_validation_errors(
+            payload=voiced_payload,
+            tailoring_plan=tailoring_plan,
+        )
+        if mapping_errors:
+            rejected = replace(
+                voice_record,
+                accepted=False,
+                reason="voice_broke_claim_contract: " + "; ".join(mapping_errors),
+            )
+            coverage = self._coverage_for(base_rows, employer_analysis, None, corpus)
+            return (
+                tailored_payload,
+                base_rows,
+                coverage,
+                rejected,
+                None,
+                base_grounding,
+                base_verdict,
+            )
 
         voiced_rows, voiced_error, _voiced_findings = self._compute_provenance(
             profile_snapshot=profile_snapshot,
@@ -3565,22 +3841,125 @@ class TailorResumeUseCase:
             tailored_payload=voiced_payload,
             employer_analysis=employer_analysis,
             requirement_fit_report=requirement_fit_report,
+            plan=tailoring_plan,
         )
         if voiced_error is not None:
             # VOICE-03: the voice pass introduced a fabrication / broke a binding.
             # Discard the voiced payload and ship the clean pre-voice candidate; the
             # failed voice stays as audit history (never destroys the good material).
             log.warning("Voice pass rejected for %s (re-validation failed): %s", job.get("url"), voiced_error)
-            rejected = VoicePassRecord(
-                ran=True,
+            rejected = replace(
+                voice_record,
                 accepted=False,
-                model=voice_record.model,
-                proxy_delta=voice_record.proxy_delta,
                 reason=f"voice_introduced_fabrication: {voiced_error}",
-                summary_rejection_reason=voice_record.summary_rejection_reason,
             )
             coverage = self._coverage_for(base_rows, employer_analysis, None, corpus)
-            return tailored_payload, base_rows, coverage, rejected, None, base_grounding
+            return (
+                tailored_payload,
+                base_rows,
+                coverage,
+                rejected,
+                None,
+                base_grounding,
+                base_verdict,
+            )
+
+        voiced_text = self._assembler.assemble_resume_text(voiced_payload, profile_snapshot)
+        voiced_validation = self._validator.validate_json_fields(
+            voiced_payload,
+            profile_snapshot,
+            mode=validation_mode,
+        )
+        if voiced_validation.passed:
+            rendered_validation = self._validator.validate_tailored_resume(
+                voiced_text,
+                profile_snapshot,
+            )
+            if not rendered_validation.passed:
+                voiced_validation = rendered_validation
+        voiced_quality = evaluate_tailoring_quality(
+            voiced_payload,
+            voiced_text,
+            tailoring_plan,
+        )
+        final_validation_errors = (
+            *voiced_validation.errors,
+            *voiced_quality.errors,
+        )
+        if final_validation_errors:
+            rejected = replace(
+                voice_record,
+                accepted=False,
+                reason="voice_final_validation_rejected: "
+                + "; ".join(final_validation_errors),
+            )
+            coverage = self._coverage_for(base_rows, employer_analysis, None, corpus)
+            return (
+                tailored_payload,
+                base_rows,
+                coverage,
+                rejected,
+                None,
+                base_grounding,
+                base_verdict,
+            )
+
+        if validation_mode == "lenient":
+            final_verdict = base_verdict
+            final_judge_record: dict[str, Any] = {
+                "verdict": "SKIPPED",
+                "passed": True,
+                "issues": [],
+                "score": 1.0,
+                "reason": "lenient_validation_mode",
+            }
+        else:
+            final_verdict = self._judge_resume(
+                profile_snapshot=profile_snapshot,
+                tailoring_plan=tailoring_plan,
+                tailored_payload=voiced_payload,
+                tailored_text=voiced_text,
+                job=job,
+            )
+            final_judge_record = self._judge_record(final_verdict) or {}
+            if final_verdict.approved:
+                adversarial_review = self._adversarial_review(
+                    profile_snapshot=profile_snapshot,
+                    tailoring_plan=tailoring_plan,
+                    tailored_payload=voiced_payload,
+                    tailored_text=voiced_text,
+                    job=job,
+                    validation_mode=validation_mode,
+                )
+                final_judge_record["adversarial_review"] = (
+                    adversarial_review.to_voice_pass_dict()
+                )
+                if not adversarial_review.passed:
+                    final_verdict = self._adversarial_failed_verdict(
+                        final_verdict,
+                        adversarial_review,
+                    )
+                    final_judge_record = self._judge_record(final_verdict) or final_judge_record
+                    final_judge_record["adversarial_review"] = (
+                        adversarial_review.to_voice_pass_dict()
+                    )
+        if not final_verdict.approved:
+            rejected = replace(
+                voice_record,
+                accepted=False,
+                reason="voice_final_judge_rejected",
+                final_judge=final_judge_record,
+            )
+            coverage = self._coverage_for(base_rows, employer_analysis, None, corpus)
+            return (
+                tailored_payload,
+                base_rows,
+                coverage,
+                rejected,
+                None,
+                base_grounding,
+                base_verdict,
+            )
 
         # The voiced payload is grounded AND improved the proxies — adopt it. Mark
         # every reworded bullet ``transform_type == voice`` so the inspector shows
@@ -3588,17 +3967,27 @@ class TailorResumeUseCase:
         # claims against the voiced lines (pre-voice text of the same bullets keeps
         # meaning-preserved claims bound) and compute coverage over the shipped rows.
         marked_rows = _mark_voiced_rows(base_rows, voiced_rows)
-        marked_rows, final_grounding = self._grounded_rows(
-            voiced_payload, marked_rows, prior_rows=base_rows
-        )
+        marked_rows, final_grounding = self._grounded_rows(voiced_payload, marked_rows)
         coverage = self._coverage_for(marked_rows, employer_analysis, None, corpus)
-        return voiced_payload, marked_rows, coverage, voice_record, None, final_grounding
+        accepted_record = replace(
+            voice_record,
+            accepted=True,
+            final_judge=final_judge_record,
+        )
+        return (
+            voiced_payload,
+            marked_rows,
+            coverage,
+            accepted_record,
+            None,
+            final_grounding,
+            final_verdict,
+        )
 
     def _run_voice(
         self,
         *,
         tailored_payload: dict,
-        base_rows: tuple[BulletProvenance, ...],
     ) -> tuple[dict | None, VoicePassRecord]:
         """Call the voice SDK + gate the result on the deterministic proxies.
 
@@ -3609,7 +3998,10 @@ class TailorResumeUseCase:
         voice decision is inspectable, even on the fallback paths.
         """
         assert self._voice is not None
-        request = build_voice_request(tailored_payload, banned_terms=tuple(BANNED_WORDS))
+        request = build_voice_request(
+            tailored_payload,
+            banned_terms=BUZZWORD_LEXICON,
+        )
         try:
             result = self._run_voice_sdk(request)
         except Exception as exc:  # noqa: BLE001 — a voice failure must not sink the resume
@@ -3627,14 +4019,40 @@ class TailorResumeUseCase:
                 "Voice pass summary rejected (%s); keeping the pre-voice summary.",
                 summary_rejection,
             )
-        # Deterministic acceptance gate (VOICE-01): voice must MEASURABLY reduce
-        # buzzword density OR raise structural variety over the bullets that ship.
-        before_bullets = [row.generated_text for row in base_rows if row.section == "experience"]
+        scope_violations = voice_scope_violations(
+            tailored_payload,
+            voiced_payload,
+            banned_terms=request.banned_terms,
+        )
         after_request = build_voice_request(voiced_payload)
-        after_bullets = [
-            bullet for _entry_id, bullets in after_request.experience_bullets for bullet in bullets
+        before_lines = [
+            *(request.executive_profile_sentences or (request.executive_profile,)),
+            *(
+                bullet
+                for _entry_id, bullets in request.experience_bullets
+                for bullet in bullets
+            ),
         ]
-        delta = measure_voice_delta(before_bullets, after_bullets)
+        after_lines = [
+            *(
+                after_request.executive_profile_sentences
+                or (after_request.executive_profile,)
+            ),
+            *(
+            bullet for _entry_id, bullets in after_request.experience_bullets for bullet in bullets
+            ),
+        ]
+        delta = measure_voice_delta(before_lines, after_lines)
+        if scope_violations:
+            return None, VoicePassRecord(
+                ran=True,
+                accepted=False,
+                model=self._voice.model_id,
+                proxy_delta=delta.to_dict(),
+                reason="voice_changed_clean_claim",
+                summary_rejection_reason=summary_rejection,
+                scope_violations=scope_violations,
+            )
         record = VoicePassRecord(
             ran=True,
             accepted=delta.improved,
@@ -4368,6 +4786,7 @@ __all__ = [
     "SuppressTailoredArtifactsOutcome",
     "SuppressTailoredArtifactsUseCase",
     "TailorOutcome",
+    "ArtifactBudgetInfeasibleError",
     "TailoringPrerequisiteError",
     "TailorResumeUseCase",
     "build_cover_letter_prompt",

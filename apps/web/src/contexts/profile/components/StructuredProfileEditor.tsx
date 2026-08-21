@@ -1432,9 +1432,9 @@ export function StructuredProfileEditor({
 
           <DisclosureSection
             className="profile-disclosure profile-disclosure--baseline"
-            collapsedSummary="Experience · executive profile · verified metrics"
+            collapsedSummary="Experience · executive profile · bullet limits"
             defaultOpen
-            description="Default experience summary and verified evidence"
+            description="Default experience summary and tailoring limits"
             headingLevel={3}
             id="profile-baseline"
             title="Resume baseline"
@@ -1458,9 +1458,6 @@ export function StructuredProfileEditor({
             <AdaptiveFieldGrid>
               <AdaptiveFieldSpan span="full">
                 {textareaField("resume.executive_profile.baseline_text", "Executive profile baseline")}
-              </AdaptiveFieldSpan>
-              <AdaptiveFieldSpan span="full">
-                {listField("resume_constraints.real_metrics", "Verified resume metrics")}
               </AdaptiveFieldSpan>
             </AdaptiveFieldGrid>
           </DisclosureSection>
@@ -1530,6 +1527,10 @@ export function StructuredProfileEditor({
                       </AdaptiveFieldGrid>
                       <Separator />
                       <FieldGroup className="bullet-list">
+                        <FieldDescription>
+                          Keep each achievement and its numbers together. JobCtrl extracts metrics
+                          from the bullet and keeps them bound to that achievement when tailoring.
+                        </FieldDescription>
                         {bullets.map((bullet, bulletIndex) => {
                           const requiredBulletId = editorControlId(
                             "profile",

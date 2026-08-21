@@ -8,16 +8,13 @@ vibe (Pitfall 7). This module is the pure, no-LLM gate the voice pass is held to
     words, against a FOCUSED lexicon (the project's already-curated
     ``BANNED_WORDS`` + ``STOCK_PHRASE_MARKERS``, deduplicated). A high density is
     the single loudest low-quality prose smell.
-  * **Structural variety** — the average of (a) opening-token diversity (distinct
-    first words / number of bullets — uniform "Spearheaded X… Spearheaded Y…"
-    scores near zero) and (b) normalised bullet-length variance (every bullet the
-    same length is the template-y smell). Both are crude on purpose; they catch
-    the worst regressions cheaply.
+  * **Structural variety** — retained as an audit diagnostic only. Opening-token
+    variation is not an editing objective because forcing synonyms can distort
+    agency and causality.
 
-The voice pass must MEASURABLY improve at least one proxy vs its input — reduce
-buzzword density OR increase structural variety (:func:`measure_voice_delta`).
-That is the deterministic acceptance gate the use case applies before it accepts
-the voiced payload, independent of the (stochastic) voice LLM.
+The voice pass is eligible only when it reduces buzzword density. Semantic
+fidelity, clean-line scope, provenance, fabrication, and the final structured
+judge remain separate acceptance gates.
 
 Pure data, no I/O, no LLM. Unit-tested directly.
 """
@@ -192,13 +189,12 @@ class VoiceMetricsDelta:
 
     @property
     def improved(self) -> bool:
-        """The acceptance gate: voice MEASURABLY reduced buzzwords OR raised variety.
+        """Accept only a measurable reduction in the problem voice owns.
 
-        A pass that does neither (or makes both worse) is not an improvement and
-        the use case keeps the pre-voice payload rather than ship a no-op / a
-        regression as if it were "voiced".
+        Structural variety remains an audit signal. It is not permission to
+        synonym-rewrite already-clean, semantically precise achievements.
         """
-        return self.buzzword_density_reduced or self.structural_variety_increased
+        return self.buzzword_density_reduced
 
     def to_dict(self) -> dict[str, object]:
         return {

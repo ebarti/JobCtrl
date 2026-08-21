@@ -21,6 +21,16 @@ Profile writes are explicit saves/autosaves of canonical candidate data. A job
 tailoring run consumes a versioned snapshot; it does not silently mutate the
 profile to fit a posting.
 
+Achievement numbers are authored with the experience bullet or its structured
+achievement evidence. `resume_constraints.real_metrics` remains in the profile
+wire shape only as a non-authoritative compatibility projection. Derived
+achievement values lead the list; unmatched values already present in normalized
+storage are carried forward as unassigned legacy data so `GET`/`PATCH` round-trips
+cannot silently delete user facts. `PATCH` does not accept new free-floating
+metrics, and it drops derived values whose achievement was removed or changed.
+Neither compatibility category authorizes a generated claim; claim authority
+comes from the mapped achievement itself.
+
 ## Discovery Controls
 
 | Surface | Representative routes |

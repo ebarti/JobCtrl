@@ -945,7 +945,7 @@ function BulletOverflowAudit({
 }) {
   return (
     <section className="apply-review-audit-section">
-      <h4>Mandatory bullet-limit overflow</h4>
+      <h4>Legacy bullet-limit violation</h4>
       {overflows.length ? (
         <ol className="apply-review-audit-list">
           {overflows.map((overflow) => (
@@ -960,7 +960,7 @@ function BulletOverflowAudit({
           ))}
         </ol>
       ) : (
-        <p className="meta">No mandatory bullet-limit overflow was recorded.</p>
+        <p className="meta">No legacy bullet-limit violation was recorded.</p>
       )}
     </section>
   );

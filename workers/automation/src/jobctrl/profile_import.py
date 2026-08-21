@@ -11,6 +11,7 @@ from statistics import median
 from typing import Any
 
 from jobctrl.resume_profile import DEFAULT_WRITING_STYLE, get_tailoring_policy
+from jobctrl.domain.profile.achievement_metrics import extract_achievement_metrics
 from jobctrl.infrastructure.materials.resume_style import normalize_resume_style
 
 MAX_IMPORT_BYTES = 12 * 1024 * 1024
@@ -26,13 +27,6 @@ _DATE_RANGE_RE = re.compile(
     re.I,
 )
 _BULLET_RE = re.compile(r"^\s*(?:[•●▪◦\-*]|[\d]+[.)])\s+")
-_METRIC_RE = re.compile(
-    r"(?:[$€£]\s?\d+(?:[.,]\d+)?\s?[kKmMbB]?|\d+(?:\.\d+)?%|\d+(?:[.,]\d+)?\s?[kKmMbB]?\+?\s?"
-    r"(?:users|customers|requests|events|engineers|teams|apps|services|systems|employees|incidents|"
-    r"deployments|minutes|hours|days|revenue|savings|costs|cost))",
-    re.I,
-)
-
 _SECTION_ALIASES = {
     "summary": {
         "summary",
@@ -208,7 +202,15 @@ def profile_from_resume_text(text: str, *, base_profile: dict[str, Any] | None =
     _infer_target_search_intent(exp_meta, lines=lines, experiences=experiences, skills=skills)
 
     constraints = profile.setdefault("resume_constraints", {})
-    constraints["real_metrics"] = _extract_metrics(lines)
+    constraints["real_metrics"] = list(
+        extract_achievement_metrics(
+            "\n".join(
+                str(bullet)
+                for entry in experiences
+                for bullet in entry.get("bullets", [])
+            )
+        )
+    )
     profile.setdefault("work_authorization", {})
     profile.setdefault("availability", {})
     profile.setdefault("compensation", {})
@@ -537,13 +539,6 @@ def _parse_skills(lines: list[str]) -> list[dict[str, Any]]:
 
 def _split_items(value: str) -> list[str]:
     return _dedupe([item.strip(" •;,.") for item in re.split(r"[,;|•]", value) if item.strip(" •;,.")])
-
-
-def _extract_metrics(lines: list[str]) -> list[str]:
-    metrics: list[str] = []
-    for line in lines:
-        metrics.extend(match.group(0).strip() for match in _METRIC_RE.finditer(line))
-    return _dedupe(metrics)[:30]
 
 
 def _infer_years(lines: list[str]) -> int | None:

@@ -626,6 +626,9 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
           promptVersion: "voice-pass-v1",
           proxyDelta: { improved: true },
           reason: "",
+          summaryRejectionReason: "",
+          scopeViolations: [],
+          finalJudge: {},
         });
         // (4) The derived keyword block mirrors the canonical coverage (Phase 4),
         // including the A6b declared bucket (empty here — no skills-only keyword).

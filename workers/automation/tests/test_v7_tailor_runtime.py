@@ -18,7 +18,11 @@ from jobctrl.domain.materials.analysis import (
     ReasonedKeyword,
     compute_snapshot_hash,
 )
-from jobctrl.domain.materials.use_cases import TailoringPrerequisiteError
+from jobctrl.domain.materials.quality import ArtifactBudgetViolation
+from jobctrl.domain.materials.use_cases import (
+    ArtifactBudgetInfeasibleError,
+    TailoringPrerequisiteError,
+)
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
@@ -518,6 +522,65 @@ def test_tailor_job_by_id_blocks_stale_requirement_fit_without_consuming_retry(
     ).fetchone()
     assert event["event_type"] == "StageBlocked"
     assert json.loads(event["payload_json"])["errorCode"] == "REQUIREMENT_FIT_STALE"
+
+
+def test_tailor_job_by_id_blocks_infeasible_artifact_budget_without_consuming_retry(
+    conn: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.com/infeasible-budget")
+    error = ArtifactBudgetInfeasibleError(
+        (
+            ArtifactBudgetViolation(
+                experience_entry_id="role_1",
+                role="Acme — Principal Engineer",
+                required_achievement_count=5,
+                ceiling=4,
+            ),
+        )
+    )
+    monkeypatch.setattr(tailor_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    monkeypatch.setattr(
+        tailor_module,
+        "_tailor_one_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+
+    result = tailor_module.tailor_job_by_id(
+        _JOB_ID,
+        tenant_id=_TENANT_A,
+        snapshot=SimpleNamespace(),
+        llm_model=None,
+        workflow_id="workflow-run-infeasible-budget",
+    )
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "artifact_budget_infeasible"
+    state = conn.execute(
+        "SELECT state, attempt_count, error_code, retryable, blocked_by_json, "
+        "next_action, metadata_json FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()
+    assert tuple(state)[:5] == (
+        "blocked",
+        0,
+        "ARTIFACT_BUDGET_INFEASIBLE",
+        0,
+        None,
+    )
+    assert "Reduce the required achievements" in state["next_action"]
+    assert json.loads(state["metadata_json"])["violations"] == [
+        {
+            "experience_entry_id": "role_1",
+            "role": "Acme — Principal Engineer",
+            "required_achievement_count": 5,
+            "ceiling": 4,
+        }
+    ]
 
 
 def test_tailor_job_replay_closes_running_state_from_committed_approved_resume(

@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from jobctrl.domain.tenant import TenantId
+from jobctrl.domain.profile.achievement_metrics import merge_achievement_metrics
 from jobctrl.domain.profile.value_objects import (
     ApplicationDefaults,
     ApplicationAttestations,
@@ -47,6 +48,49 @@ class InvalidProfileError(ValueError):
     def __init__(self, reasons: list[str]):
         self.reasons = list(reasons)
         super().__init__("; ".join(self.reasons))
+
+
+def _derived_resume_metric_index(
+    entries: list[ExperienceEntry],
+) -> tuple[str, ...]:
+    """Compatibility read projection derived from achievement-owned evidence."""
+
+    metrics: list[str] = []
+    for entry in entries:
+        metrics.extend(merge_achievement_metrics((), *entry.bullets))
+        for evidence in entry.achievement_evidence:
+            metrics.extend(
+                merge_achievement_metrics(
+                    evidence.metrics,
+                    evidence.source_text,
+                    evidence.scope,
+                    evidence.action,
+                    evidence.outcome,
+                )
+            )
+    return tuple(dict.fromkeys(metrics))
+
+
+def _compatibility_resume_metric_index(
+    entries: list[ExperienceEntry],
+    legacy_metrics: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Keep old flat metrics without granting them tailoring authority.
+
+    Achievement-owned metrics lead the compatibility projection. Unmatched
+    values from older profiles remain as unassigned legacy facts so loading and
+    saving a profile cannot silently destroy user-entered data. Tailoring plans
+    intentionally derive their claim allowlist from achievement evidence only.
+    """
+
+    metrics = list(_derived_resume_metric_index(entries))
+    seen = {metric.casefold() for metric in metrics}
+    for metric in legacy_metrics:
+        normalized = metric.casefold()
+        if normalized not in seen:
+            seen.add(normalized)
+            metrics.append(metric)
+    return tuple(metrics)
 
 
 # ---------------------------------------------------------------------------
@@ -212,10 +256,14 @@ class Profile:
             education_entries=tuple(education_entries),
             skill_categories=tuple(skill_categories),
             tailoring_rules=TailoringRules.from_dict(resume.get("tailoring_rules")),
-            resume_constraints=ResumeConstraints.from_dict(data.get("resume_constraints")),
+            resume_constraints=ResumeConstraints(
+                real_metrics=_compatibility_resume_metric_index(
+                    experience_entries,
+                    ResumeConstraints.from_dict(data.get("resume_constraints")).real_metrics,
+                )
+            ),
             extra=extra,
         )
-
     # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------

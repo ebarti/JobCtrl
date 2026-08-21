@@ -16,11 +16,14 @@ from jobctrl.domain.materials.analysis import (
     compute_snapshot_hash,
 )
 from jobctrl.domain.materials.quality import (
+    ArtifactBudgetInfeasibleError,
     TailoringPrerequisiteError,
     build_tailoring_change_annotations,
     build_tailoring_plan,
     evaluate_tailoring_quality,
+    require_artifact_budget_feasible,
 )
+from jobctrl.domain.materials.requirement_coverage import CoverageEdge, CoverageGraph
 from jobctrl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
@@ -305,7 +308,70 @@ def test_build_tailoring_plan_maps_legacy_resume_bullets_to_evidence_ids() -> No
 
     assert plan.evidence_items[0].evidence_id == "acme_swe_bullet_1"
     assert plan.evidence_items[0].source_text == "Reduced API latency 35% by replacing synchronous calls."
-    assert "acme_swe_bullet_1" in plan.required_evidence_ids
+    # Relevance does not silently promote an achievement into a hard pin.
+    assert plan.required_evidence_ids == ()
+
+
+def test_artifact_budget_precheck_unions_pins_and_required_coverage_per_role() -> None:
+    profile = _profile()
+    entry = profile["resume"]["experience_entries"][0]
+    evidence = []
+    bullets = []
+    for index in range(1, 6):
+        bullet = f"Owned canonical achievement {index} for the platform."
+        bullets.append(bullet)
+        evidence.append(
+            {
+                "id": f"ev_{index}",
+                "source_text": bullet,
+                "scope": "platform",
+                "action": bullet,
+                "tools": [],
+                "metrics": [],
+                "outcome": bullet,
+                "seniority_signal": "ownership",
+                "evidence_strength": "verified",
+                "claim_confidence": 0.95,
+                "user_confirmed": True,
+                "tags": [],
+            }
+        )
+    entry["bullets"] = bullets
+    entry["achievement_evidence"] = evidence
+    profile["resume"]["tailoring_rules"]["required_bullets_by_experience_id"] = {
+        "acme_swe": [bullets[0]]
+    }
+    plan = build_tailoring_plan(
+        profile,
+        _senior_job(),
+        employer_analysis=_employer_analysis("platform"),
+    )
+    plan = replace(
+        plan,
+        coverage_graph=CoverageGraph(
+            coverage_edges=tuple(
+                CoverageEdge(
+                    edge_id=f"edge_{index}",
+                    requirement_id=f"req_{index}",
+                    achievement_evidence_id=f"ev_{index}",
+                    coverage_kind="direct",
+                    strength="direct",
+                    required_claim_policy="verified_only",
+                )
+                for index in range(1, 6)
+            )
+        ),
+    )
+
+    with pytest.raises(ArtifactBudgetInfeasibleError) as raised:
+        require_artifact_budget_feasible(profile, plan)
+
+    violation = raised.value.violations[0]
+    # ev_1 is both pinned and requirement-covered, so it consumes one slot.
+    assert violation.required_achievement_count == 5
+    assert violation.ceiling == 4
+    assert violation.experience_entry_id == "acme_swe"
+    assert violation.role == "Acme Corp — Senior SWE"
 
 
 def test_quality_counts_fixed_education_in_final_resume_evidence() -> None:
@@ -384,7 +450,7 @@ def test_quality_counts_fixed_education_in_final_resume_evidence() -> None:
         plan,
     )
 
-    assert "education:edu_state" in plan.required_evidence_ids
+    assert plan.required_evidence_ids == ()
     assert "education:edu_state" in result.represented_evidence_ids
     assert "education:edu_state" not in result.missing_evidence_ids
     assert not any("Missing required evidence support" in error for error in result.errors)
@@ -429,8 +495,8 @@ def test_build_tailoring_change_annotations_explain_reframed_resume_sections() -
     ]
     assert "api" in experience["job_signals"]
     assert experience["evidence_ids"] == ["ev_latency"]
-    assert any("35% latency reduction" in note for note in experience["evidence_notes"])
-    assert "ev_latency" in plan.required_evidence_ids
+    assert any("35%" in note for note in experience["evidence_notes"])
+    assert plan.required_evidence_ids == ()
     assert "ev_latency" in plan.seniority_evidence_ids
     assert "python" in plan.job_keywords
     assert "latency" in plan.job_keywords
@@ -510,7 +576,7 @@ def test_build_tailoring_plan_uses_requirement_fit_directives() -> None:
         requirement_fit_report=report,
     )
 
-    assert plan.required_evidence_ids[0] == "ev_latency"
+    assert plan.required_evidence_ids == ()
     assert plan.job_keywords[0] == "python api reliability"
     assert plan.prohibited_claims == ("Direct Salesforce administration.",)
     assert [item.action for item in plan.requirement_directives] == [

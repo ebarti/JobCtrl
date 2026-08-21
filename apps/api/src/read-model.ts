@@ -3512,7 +3512,51 @@ function parseVoicePass(value: string | null): VoicePassAudit | null {
     promptVersion: metadataText(record.prompt_version, 64) ?? "",
     proxyDelta,
     reason: metadataText(record.reason, 600) ?? "",
+    summaryRejectionReason: metadataText(record.summary_rejection_reason, 600) ?? "",
+    scopeViolations: metadataTextList(record.scope_violations).slice(0, 20),
+    finalJudge: parseVoiceFinalJudge(record.final_judge),
   };
+}
+
+function parseVoiceFinalJudge(value: unknown): Record<string, unknown> {
+  const judge = metadataRecord(value);
+  const parsed: Record<string, unknown> = {};
+  const passed = metadataBoolean(judge.passed);
+  const verdict = metadataText(judge.verdict, 20);
+  const score = metadataNumber(judge.score);
+  if (passed !== null) parsed.passed = passed;
+  if (verdict) parsed.verdict = verdict;
+  if (score !== null) parsed.score = score;
+
+  for (const [key, limit] of [
+    ["issues", 12],
+    ["unsupported_claims", 12],
+    ["fabrications", 12],
+    ["missing_required_evidence", 12],
+    ["repair_instructions", 12],
+  ] as const) {
+    const values = metadataTextList(judge[key], limit, 220);
+    if (values.length) parsed[key] = values;
+  }
+
+  const judgeModel = metadataText(judge.judge_model, 120);
+  const judgeSchemaVersion = metadataText(judge.judge_schema_version, 120);
+  if (judgeModel) parsed.judge_model = judgeModel;
+  if (judgeSchemaVersion) parsed.judge_schema_version = judgeSchemaVersion;
+
+  const criterionScores: Record<string, number> = {};
+  for (const [key, rawScore] of Object.entries(metadataRecord(judge.criterion_scores)).slice(0, 24)) {
+    const safeKey = safeEvidenceId(key);
+    const parsedScore = metadataNumber(rawScore);
+    if (safeKey && parsedScore !== null) criterionScores[safeKey] = parsedScore;
+  }
+  if (Object.keys(criterionScores).length) parsed.criterion_scores = criterionScores;
+
+  const adversarialReview = parseAdversarialReview(judge.adversarial_review);
+  if (adversarialReview) {
+    parsed.adversarial_review = { ...adversarialReview, audit: null };
+  }
+  return parsed;
 }
 
 /**

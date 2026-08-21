@@ -29,6 +29,15 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   const resumeEditorView = page.getByRole("button", { name: "Resume editor" });
   await expect(profileDataView).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText(/Full name/i).first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Verified resume metrics", { exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: /Experience entries/ }).click();
+  await expect(
+    page.getByText(
+      "Keep each achievement and its numbers together. JobCtrl extracts metrics from the bullet and keeps them bound to that achievement when tailoring.",
+      { exact: true },
+    ),
+  ).toBeVisible();
 
   await resumeEditorView.click();
   await expect(resumeEditorView).toHaveAttribute("aria-pressed", "true");

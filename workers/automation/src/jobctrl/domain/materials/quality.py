@@ -13,6 +13,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from jobctrl.domain.identifiers import canonical_job_id
+from jobctrl.domain.profile.achievement_metrics import (
+    extract_achievement_metrics,
+    merge_achievement_metrics,
+)
 from jobctrl.domain.materials.analysis import EmployerAnalysis
 from jobctrl.domain.materials.policy import (
     RequirementLedTailoringControls,
@@ -31,12 +35,12 @@ from jobctrl.resume_profile import (
     get_custom_tailoring_prompt,
     get_education_entries,
     get_experience_entries,
+    get_max_experience_bullets,
     get_required_bullets_by_experience_id,
     get_required_experience_entry_ids,
     get_required_skills_by_category_id,
     get_revision_gates,
     get_resume_master,
-    get_resume_constraints,
     get_skill_categories,
     get_tailoring_policy,
     get_tailoring_quality_controls,
@@ -193,18 +197,6 @@ _LOW_SIGNAL_JOB_KEYWORDS: set[str] = {
 }
 
 _WORD_RE = re.compile(r"[a-z0-9][a-z0-9+#./-]*")
-_METRIC_RE = re.compile(
-    r"(?ix)"
-    r"(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?)"
-    r"|(?:\b\d+(?:\.\d+)?\s?%)"
-    r"|(?:\b\d+(?:\.\d+)?\s?x\b)"
-    r"|(?:\b\d+(?:\.\d+)?\s?"
-    r"(?:ms|milliseconds?|s|sec|seconds?|minutes?|hours?|days?|weeks?|months?|years?|"
-    r"users?|customers?|engineers?|teams?|services?|systems?|pipelines?|applications?|"
-    r"requests?|req/s|qps|revenue|cost|latency|uptime)\b)"
-)
-
-
 @dataclass(frozen=True)
 class EvidencePlanItem:
     evidence_id: str
@@ -510,6 +502,117 @@ class TailoringPrerequisiteError(ValueError):
         return "REQUIREMENT_FIT_STALE"
 
 
+@dataclass(frozen=True)
+class ArtifactBudgetViolation:
+    """One role whose mandatory achievement set cannot fit its bullet ceiling."""
+
+    experience_entry_id: str
+    role: str
+    required_achievement_count: int
+    ceiling: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "experience_entry_id": self.experience_entry_id,
+            "role": self.role,
+            "required_achievement_count": self.required_achievement_count,
+            "ceiling": self.ceiling,
+        }
+
+
+class ArtifactBudgetInfeasibleError(ValueError):
+    """Profile pins and required coverage cannot fit the configured artifact."""
+
+    reason = "artifact_budget_infeasible"
+    error_code = "ARTIFACT_BUDGET_INFEASIBLE"
+
+    def __init__(self, violations: tuple[ArtifactBudgetViolation, ...]) -> None:
+        if not violations:
+            raise ValueError("ArtifactBudgetInfeasibleError requires a violation")
+        self.violations = violations
+        details = "; ".join(
+            f"{item.role} ({item.experience_entry_id}) requires "
+            f"{item.required_achievement_count} achievements but the ceiling is {item.ceiling}"
+            for item in violations
+        )
+        super().__init__(f"Resume artifact budget is infeasible: {details}.")
+
+
+def require_artifact_budget_feasible(profile: dict, plan: TailoringPlan) -> None:
+    """Reject impossible per-role plans before any generator model is called.
+
+    A single rendered bullet represents one canonical achievement. Explicit
+    user pins and seeded requirement coverage are both mandatory, but an
+    achievement that satisfies both consumes only one slot.
+    """
+
+    ceiling = get_max_experience_bullets(profile)
+    experience_entries = {
+        str(entry.get("id") or ""): entry
+        for entry in get_experience_entries(profile)
+        if str(entry.get("id") or "")
+    }
+    mandatory_by_entry: dict[str, set[str]] = {
+        entry_id: set() for entry_id in experience_entries
+    }
+    evidence_by_id = plan.evidence_by_id
+
+    for evidence_id in plan.required_evidence_ids:
+        evidence = evidence_by_id.get(evidence_id)
+        if evidence is not None and evidence.experience_entry_id in mandatory_by_entry:
+            mandatory_by_entry[evidence.experience_entry_id].add(f"evidence:{evidence_id}")
+
+    if plan.coverage_graph is not None:
+        for edge in plan.coverage_graph.coverage_edges:
+            evidence = evidence_by_id.get(edge.achievement_evidence_id)
+            if evidence is not None and evidence.experience_entry_id in mandatory_by_entry:
+                mandatory_by_entry[evidence.experience_entry_id].add(
+                    f"evidence:{edge.achievement_evidence_id}"
+                )
+
+    pinned_bullets = plan.requirement_led_controls.required_content_pins.bullets_by_experience_id
+    for entry_id, bullets in pinned_bullets.items():
+        if entry_id not in mandatory_by_entry:
+            continue
+        for bullet in bullets:
+            mapped = _select_required_evidence_ids(
+                evidence_items=plan.evidence_items,
+                required_bullets_by_experience_id={entry_id: [bullet]},
+            )
+            token = (
+                f"evidence:{mapped[0]}"
+                if mapped
+                else f"pinned:{_normalize_space(bullet).casefold()}"
+            )
+            mandatory_by_entry[entry_id].add(token)
+
+    required_roles = set(
+        plan.requirement_led_controls.required_content_pins.experience_entry_ids
+    )
+    for entry_id in required_roles:
+        if entry_id in mandatory_by_entry and not mandatory_by_entry[entry_id]:
+            mandatory_by_entry[entry_id].add(f"positioning:{entry_id}")
+
+    violations: list[ArtifactBudgetViolation] = []
+    for entry_id, mandatory in mandatory_by_entry.items():
+        if len(mandatory) <= ceiling:
+            continue
+        entry = experience_entries[entry_id]
+        title = _normalize_space(str(entry.get("title") or ""))
+        company = _normalize_space(str(entry.get("company") or ""))
+        role = " — ".join(part for part in (company, title) if part) or entry_id
+        violations.append(
+            ArtifactBudgetViolation(
+                experience_entry_id=entry_id,
+                role=role,
+                required_achievement_count=len(mandatory),
+                ceiling=ceiling,
+            )
+        )
+    if violations:
+        raise ArtifactBudgetInfeasibleError(tuple(violations))
+
+
 def build_tailoring_plan(
     profile: dict,
     job: dict,
@@ -579,15 +682,11 @@ def build_tailoring_plan(
     )
     required_evidence_ids = _select_required_evidence_ids(
         evidence_items=evidence_items,
-        job_keywords=job_keywords,
-        directive_evidence_ids=_directive_evidence_ids(requirement_directives),
-        target_seniority=target_seniority,
-        seniority_evidence_ids=seniority_evidence_ids,
+        required_bullets_by_experience_id=get_required_bullets_by_experience_id(profile),
     )
     verified_metrics = tuple(
         dict.fromkeys(
-            _text_list(get_resume_constraints(profile).get("real_metrics"))
-            + [metric for item in evidence_items for metric in item.metrics]
+            [metric for item in evidence_items for metric in item.metrics]
             + _baseline_experience_metrics(profile)
         )
     )
@@ -819,7 +918,10 @@ def evaluate_tailoring_quality(
             "Missing required evidence support: " + ", ".join(missing_evidence_ids)
         )
 
-    metric_claims, unknown_metrics = _check_metrics(generated_lower, plan)
+    metric_claims, unknown_metrics = _check_metrics(
+        _achievement_claim_payload_text(tailored_payload),
+        plan,
+    )
     for metric in unknown_metrics:
         errors.append(f"Unknown metric not found in verified profile evidence: {metric}")
 
@@ -896,15 +998,25 @@ def evaluate_tailoring_quality(
 
 
 def _evidence_item(item: dict) -> EvidencePlanItem:
+    source_text = str(item.get("source_text", "")).strip()
+    scope = str(item.get("scope", "")).strip()
+    action = str(item.get("action", "")).strip()
+    outcome = str(item.get("outcome", "")).strip()
     return EvidencePlanItem(
         evidence_id=str(item.get("id", "")).strip(),
         experience_entry_id=str(item.get("experience_entry_id", "")).strip(),
-        source_text=str(item.get("source_text", "")).strip(),
-        scope=str(item.get("scope", "")).strip(),
-        action=str(item.get("action", "")).strip(),
+        source_text=source_text,
+        scope=scope,
+        action=action,
         tools=tuple(_text_list(item.get("tools"))),
-        metrics=tuple(_text_list(item.get("metrics"))),
-        outcome=str(item.get("outcome", "")).strip(),
+        metrics=merge_achievement_metrics(
+            _text_list(item.get("metrics")),
+            source_text,
+            scope,
+            action,
+            outcome,
+        ),
+        outcome=outcome,
         seniority_signal=str(item.get("seniority_signal", "")).strip(),
         evidence_strength=str(item.get("evidence_strength", "")).strip(),
         claim_confidence=float(item.get("claim_confidence") or 0.0),
@@ -951,42 +1063,59 @@ def _education_evidence_items(profile: dict) -> tuple[EvidencePlanItem, ...]:
 def _select_required_evidence_ids(
     *,
     evidence_items: tuple[EvidencePlanItem, ...],
-    job_keywords: tuple[str, ...],
-    directive_evidence_ids: tuple[str, ...],
-    target_seniority: str,
-    seniority_evidence_ids: tuple[str, ...],
+    required_bullets_by_experience_id: dict[str, list[str]],
 ) -> tuple[str, ...]:
-    if not evidence_items:
-        return ()
+    """Map only user-required bullets to their canonical evidence IDs.
 
-    valid_evidence_ids = {item.evidence_id for item in evidence_items if item.evidence_id}
-    selected = [
-        evidence_id
-        for evidence_id in directive_evidence_ids
-        if evidence_id in valid_evidence_ids
-    ]
-    selected = list(dict.fromkeys(selected))[:6]
+    Job relevance is a selection signal, not a pin. Treating the six strongest
+    matches as required made the coverage graph an inclusion list and bloated
+    every tailored role even when no bullet was checked "Required".
+    """
 
-    scored: list[tuple[int, str]] = []
-    keyword_set = set(job_keywords)
-    for item in evidence_items:
-        evidence_terms = _evidence_terms(item)
-        overlap = len(keyword_set & evidence_terms)
-        if overlap:
-            scored.append((overlap, item.evidence_id))
+    selected: list[str] = []
+    for entry_id, required_bullets in required_bullets_by_experience_id.items():
+        candidates = [
+            item for item in evidence_items if item.experience_entry_id == entry_id
+        ]
+        for required_bullet in required_bullets:
+            normalized_required = _normalize_space(required_bullet).casefold()
+            exact = next(
+                (
+                    item
+                    for item in candidates
+                    if _normalize_space(item.source_text).casefold()
+                    == normalized_required
+                ),
+                None,
+            )
+            if exact is not None:
+                selected.append(exact.evidence_id)
+                continue
 
-    scored.sort(key=lambda pair: (-pair[0], pair[1]))
-    for _, evidence_id in scored:
-        if evidence_id not in selected:
-            selected.append(evidence_id)
-        if len(selected) >= 6:
-            break
-    if target_seniority in SENIORITY_REQUIRED_LEVELS:
-        for evidence_id in seniority_evidence_ids:
-            if evidence_id not in selected:
-                selected.append(evidence_id)
-                break
-    return tuple(selected)
+            # Structured evidence may enrich the checkbox bullet with scope,
+            # tools, or outcome text. Resolve that common case by a conservative
+            # token-containment score, and refuse ambiguous/weak matches.
+            required_terms = set(_significant_tokens(required_bullet))
+            if not required_terms:
+                continue
+            ranked = sorted(
+                (
+                    (
+                        len(required_terms & _evidence_terms(item))
+                        / len(required_terms),
+                        item.evidence_id,
+                        item,
+                    )
+                    for item in candidates
+                ),
+                key=lambda value: (-value[0], value[1]),
+            )
+            if not ranked or ranked[0][0] < 0.6:
+                continue
+            if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
+                continue
+            selected.append(ranked[0][2].evidence_id)
+    return tuple(dict.fromkeys(evidence_id for evidence_id in selected if evidence_id))
 
 
 def _requirement_directive_items(
@@ -1121,17 +1250,6 @@ def _requirement_keywords(
         if normalized:
             keywords.append(normalized)
     return tuple(dict.fromkeys(keywords))
-
-
-def _directive_evidence_ids(
-    directives: tuple[RequirementDirectivePlanItem, ...],
-) -> tuple[str, ...]:
-    ids: list[str] = []
-    for directive in directives:
-        if directive.action not in {"double_down", "bridge_gap"}:
-            continue
-        ids.extend(directive.allowed_evidence_ids)
-    return tuple(dict.fromkeys(ids))
 
 
 def _legitimate_claim_corpus(
@@ -1496,6 +1614,23 @@ def _payload_text(payload: dict) -> str:
     return "\n".join(parts)
 
 
+def _achievement_claim_payload_text(payload: dict) -> str:
+    """Return only prose where a number is an achievement claim.
+
+    Versioned declared skills such as ``Java 17`` are grounded against the
+    skills corpus, not interpreted as resume achievement metrics.
+    """
+
+    parts: list[str] = []
+    executive = payload.get("executive_profile")
+    if isinstance(executive, str):
+        parts.append(executive)
+    for update in payload.get("experience_updates") or []:
+        if isinstance(update, dict):
+            parts.extend(_flatten_text(update.get("bullets")))
+    return "\n".join(parts)
+
+
 def _check_required_evidence(
     generated_lower: str,
     plan: TailoringPlan,
@@ -1503,7 +1638,17 @@ def _check_required_evidence(
     represented: list[str] = []
     missing: list[str] = []
     evidence_by_id = plan.evidence_by_id
-    for evidence_id in plan.required_evidence_ids:
+    # Explicit pins are mandatory generated content. Education is different:
+    # the assembler injects it unchanged, so a target-covered credential should
+    # still be audited in the final resume without turning it into a bullet pin.
+    audited_ids = list(plan.required_evidence_ids)
+    if plan.coverage_graph is not None:
+        audited_ids.extend(
+            edge.achievement_evidence_id
+            for edge in plan.coverage_graph.coverage_edges
+            if edge.achievement_evidence_id.startswith("education:")
+        )
+    for evidence_id in dict.fromkeys(audited_ids):
         item = evidence_by_id.get(evidence_id)
         if item is None:
             continue
@@ -1517,18 +1662,23 @@ def _check_required_evidence(
 def _evidence_represented(generated_lower: str, item: EvidencePlanItem) -> bool:
     if item.evidence_id and item.evidence_id.lower() in generated_lower:
         return True
-    if any(_contains_metric_text(generated_lower, metric) for metric in item.metrics):
-        return True
+    if item.metrics:
+        # A quantified achievement is not represented by generic overlap such
+        # as "Python" + "backend". Its defining number must remain visible.
+        return any(
+            _contains_metric_text(generated_lower, metric)
+            for metric in item.metrics
+        )
     terms = _evidence_terms(item)
     hits = [term for term in terms if _contains_term(generated_lower, term)]
     return len(hits) >= 2
 
 
 def _check_metrics(
-    generated_lower: str,
+    generated_text: str,
     plan: TailoringPlan,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    metric_claims = tuple(dict.fromkeys(_display_metric(match.group(0)) for match in _METRIC_RE.finditer(generated_lower)))
+    metric_claims = extract_achievement_metrics(generated_text)
     allowed_text = " ".join(plan.verified_metrics).lower()
     unknown = tuple(
         metric for metric in metric_claims if metric and not _contains_metric_text(allowed_text, metric)
@@ -1561,7 +1711,7 @@ def _baseline_experience_metrics(profile: dict) -> list[str]:
         if not isinstance(entry, dict):
             continue
         for bullet in _text_list(entry.get("bullets")):
-            metrics.extend(_normalize_metric(match.group(0)) for match in _METRIC_RE.finditer(bullet))
+            metrics.extend(extract_achievement_metrics(bullet))
     return [metric for metric in metrics if metric]
 
 
@@ -1705,10 +1855,6 @@ def _normalize_metric(value: str) -> str:
     return re.sub(r"\s+", "", str(value).lower().replace(",", "")).strip(".")
 
 
-def _display_metric(value: str) -> str:
-    return re.sub(r"\s+", " ", str(value).strip().replace(",", "")).strip(".")
-
-
 def _normalize_phrase(value: str) -> str:
     return " ".join(_WORD_RE.findall(str(value).lower())).strip()
 
@@ -1724,6 +1870,8 @@ def _text_list(value: object) -> list[str]:
 
 
 __all__ = [
+    "ArtifactBudgetInfeasibleError",
+    "ArtifactBudgetViolation",
     "STOCK_PHRASE_MARKERS",
     "EvidencePlanItem",
     "TailoringPlan",
@@ -1732,4 +1880,5 @@ __all__ = [
     "build_tailoring_change_annotations",
     "build_tailoring_plan",
     "evaluate_tailoring_quality",
+    "require_artifact_budget_feasible",
 ]

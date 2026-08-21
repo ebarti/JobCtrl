@@ -17,7 +17,7 @@ Why a separate deterministic detector at all (CONTROL-03 / GROUND-05):
     about its own grounding still fails here.
 
 The "evidence corpus" is assembled once from canonical profile data (experience
-bullets, evidence items, verified metrics, titles, companies, date ranges,
+bullets, achievement-scoped evidence metrics, titles, companies, date ranges,
 education) — the source of truth a real fact must appear in. Membership is decided
 by literal containment after normalising only insignificant whitespace and case,
 so trivial formatting differences do not produce false rejections while genuine
@@ -73,7 +73,6 @@ from jobctrl.resume_profile import (
     get_achievement_evidence,
     get_education_entries,
     get_experience_entries,
-    get_resume_constraints,
     get_skill_categories,
 )
 
@@ -99,7 +98,8 @@ _WORD_FORM_TERM_RE = re.compile(r"[a-z0-9 ]+")
 # suffix is consumed with its digits (``10M`` keys ``bare:10000000``, not ``10``).
 _NUMERIC_RE = re.compile(
     r"(?ix)"
-    r"(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?(?:k|m|b|\s?million|\s?billion)?)"  # money (suffix adjacent unless spelled out)
+    r"(?:[$€£]\s?\d+(?:[,.]\d+)*(?:\.\d+)?(?:k|m|b|\s?million|\s?billion)?\+?)"  # money
+    r"|(?:\b\d[\d,]*(?:\.\d+)?\+?\s?(?:bps|basis\s+points?)\b)"  # basis points
     r"|(?:\b\d+(?:\.\d+)?\s?%)"  # percentage
     r"|(?:\b\d+(?:\.\d+)?\s?x\b)"  # multiplier
     r"|(?:\b\d[\d,]*(?:\.\d+)?(?:k|m|b|\s?million|\s?billion)\b)"  # bare magnitude (no $): "10M", "5K", "35 million"
@@ -270,7 +270,7 @@ _MAGNITUDE_FACTORS: dict[str, int] = {
     "million": 1_000_000,
     "billion": 1_000_000_000,
 }
-_MAGNITUDE_RE = re.compile(r"(?i)(k|m|b|million|billion)\b\.?$")
+_MAGNITUDE_RE = re.compile(r"(?i)(k|m|b|million|billion)\b\.?\+?$")
 
 
 def _normalize_numeric(token: str) -> str | None:
@@ -296,10 +296,12 @@ def _normalize_numeric(token: str) -> str | None:
     if not number_text:
         return None
 
-    if lowered.startswith("$"):
+    if lowered.startswith(("$", "€", "£")):
         kind = "money"
     elif "%" in lowered:
         kind = "pct"
+    elif re.search(r"\b(?:bps|basis\s+points?)\b", lowered):
+        kind = "bps"
     elif re.search(r"\dx\b", lowered) or lowered.endswith("x"):
         kind = "mult"
     else:
@@ -435,7 +437,6 @@ def build_evidence_corpus(profile: dict) -> EvidenceCorpus:
       * experience entries — titles, companies, date ranges, locations, bullets;
       * achievement evidence items — source text, metrics, tools, outcomes,
         scope, seniority signals;
-      * resume constraints — the user's declared ``real_metrics``;
       * education entries — degrees, institutions, dates.
 
     The SKILLS section is deliberately EXCLUDED: a declared skill's version numeric
@@ -478,8 +479,6 @@ def build_evidence_corpus(profile: dict) -> EvidenceCorpus:
                 },
                 fragments,
             )
-
-    _collect(get_resume_constraints(profile).get("real_metrics"), fragments)
 
     for entry in get_education_entries(profile):
         if isinstance(entry, dict):

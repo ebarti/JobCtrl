@@ -19,6 +19,7 @@ from jobctrl.domain.materials.voice import (
     apply_voice_to_payload,
     build_voice_request,
     summary_voice_rejection_reason,
+    voice_scope_violations,
 )
 
 
@@ -62,6 +63,74 @@ def test_apply_replaces_prose_and_preserves_skills_and_structure() -> None:
     assert voiced["skill_category_updates"] == [{"id": "lang", "items": ["Python", "Go"]}]
     # Title slot preserved.
     assert voiced["experience_updates"][0]["title"] == ""
+
+
+def test_apply_rebinds_claim_mapping_text_to_the_final_voiced_surface() -> None:
+    payload = _payload()
+    payload["generated_claim_mappings"] = [
+        {
+            "claim_id": "summary",
+            "location": "executive_profile",
+            "text": payload["executive_profile"],
+        },
+        {
+            "claim_id": "bullet-1",
+            "location": "experience.acme.bullets[0]",
+            "text": payload["experience_updates"][0]["bullets"][0],
+        },
+        {
+            "claim_id": "bullet-2",
+            "location": "experience_updates[0].bullets[1]",
+            "text": payload["experience_updates"][0]["bullets"][1],
+        },
+    ]
+    result = VoiceResult(
+        executive_profile="Built specific systems.",
+        executive_profile_sentences=("Built specific systems.",),
+        experience_bullets=(("acme", ("Cut latency 40%.", "Owned billing end to end.")),),
+    )
+
+    voiced = apply_voice_to_payload(payload, result)
+
+    assert [mapping["text"] for mapping in voiced["generated_claim_mappings"]] == [
+        "Built specific systems.",
+        "Cut latency 40%.",
+        "Owned billing end to end.",
+    ]
+
+
+def test_voice_scope_rejects_changes_to_clean_claims() -> None:
+    source = {
+        "executive_profile": "Engineering leader.",
+        "executive_profile_sentences": ["Engineering leader."],
+        "experience_updates": [
+            {
+                "id": "acme",
+                "title": "",
+                "bullets": [
+                    "Reduced synthetic warehouse energy spend by £240k.",
+                    "Spearheaded a robust platform migration.",
+                ],
+            }
+        ],
+    }
+    voiced = {
+        **source,
+        "experience_updates": [
+            {
+                "id": "acme",
+                "title": "",
+                "bullets": [
+                    "Found £240k by cutting warehouse power bills.",
+                    "Led a platform migration.",
+                ],
+            }
+        ],
+    }
+
+    assert voice_scope_violations(source, voiced, banned_terms=("spearheaded", "robust")) == (
+        "experience.acme.bullets[0] changed without a banned phrase in the source",
+    )
 
 
 def test_apply_does_not_mutate_the_input_payload() -> None:

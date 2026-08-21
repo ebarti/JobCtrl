@@ -39,16 +39,20 @@ last accepted resume.
    employer analysis with a versioned Candidate Profile snapshot, requirement
    fit, tailoring permissions, required evidence pins, and writing style. The
    posting may guide emphasis; only profile evidence may support claims about
-   you.
+   you. Each target requirement keeps only its strongest grounded achievement
+   edge, while one achievement may cover several requirements.
 2. **Ask each ready generator for structured content.** Configured candidate
    models receive the same plan. Their response must reference known experience
    and skill-category IDs, preserve source titles, respect bullet limits, and
-   use skills that already exist in the profile.
+   use skills that already exist in the profile. The generator selects the
+   smallest sufficient achievement set: a maximum bullet count is a ceiling,
+   not a quota, and optional inventory does not become required content.
 3. **Validate the assembled resume, not just model JSON.** Deterministic checks
    run over the actual candidate text for grounding, preserved employers,
    education, section structure, prohibited claims, metrics, seniority, and
-   requirement/keyword coverage. A keyword counts as covered only when it is in
-   the rendered grounded text.
+   requirement/keyword coverage. Every experience bullet cites exactly one
+   achievement, and every number must occur in that same achievement's evidence.
+   A keyword counts as covered only when it is in the rendered grounded text.
 4. **Repair bounded quality failures.** The current post-generation defaults
    require fit of at least `8/10` and must-have coverage of at least `85%`, with
    one revision attempt. These are artifact-quality gates after generation, not
@@ -60,9 +64,11 @@ last accepted resume.
    six-persona adversarial review. Repair instructions from rejected candidates
    feed the bounded retry.
 6. **Select and persist the best clean candidate.** JobCtrl chooses the approved
-   candidate with the best judge result. An optional voice pass is kept only if
-   deterministic voice measures improve and grounding still passes; the final
-   fabrication gate runs again afterward. Rendering and generation persistence
+   candidate with the best judge result. An optional voice pass may edit only
+   lines containing a configured buzzword and is kept only when it removes one
+   without changing the claim. The final voiced artifact is re-bound to its
+   evidence and re-runs deterministic validation, provenance, fabrication,
+   quality, and the structured judge. Rendering and generation persistence
    complete together, so a PDF failure or rejected replacement leaves the last
    accepted generation intact.
 

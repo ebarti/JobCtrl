@@ -16,7 +16,13 @@ from __future__ import annotations
 
 import re
 
-_LEGACY_BULLET_METRIC_RE = re.compile(
+from jobctrl.domain.profile.achievement_metrics import extract_achievement_metrics
+
+# Recognition-only compatibility for materialized evidence written before the
+# canonical achievement-metric extractor was introduced.  New rows are always
+# derived with ``extract_achievement_metrics``; this pattern exists solely so a
+# subsequent profile save can recognize and replace the old auto-derived row.
+_LEGACY_BULLET_METRIC_RE_V1 = re.compile(
     r"(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?"
     r"|\d+(?:\.\d+)?%"
     r"|\d+(?:\.\d+)?x"
@@ -387,7 +393,11 @@ def _is_materialized_legacy_bullet_evidence(item: dict, entry_id: str) -> bool:
         str(item.get("action", "")).strip() == source_text
         and str(item.get("outcome", "")).strip() == source_text
         and _text_list(item.get("tools")) == []
-        and _text_list(item.get("metrics")) == _legacy_bullet_metrics(source_text)
+        and _text_list(item.get("metrics"))
+        in (
+            _legacy_bullet_metrics(source_text),
+            _legacy_bullet_metrics_v1(source_text),
+        )
         and str(item.get("evidence_strength", "supported")).strip() == "supported"
         and float(item.get("claim_confidence", 0.0)) == 0.8
         and bool(item.get("user_confirmed", False)) is True
@@ -443,9 +453,15 @@ def _legacy_bullet_achievement_evidence(
 
 
 def _legacy_bullet_metrics(source_text: str) -> list[str]:
+    return list(extract_achievement_metrics(source_text))
+
+
+def _legacy_bullet_metrics_v1(source_text: str) -> list[str]:
+    """Reproduce the pre-canonical extractor for stale-row recognition only."""
+
     return [
         re.sub(r"\s+", " ", match.group(0).strip())
-        for match in _LEGACY_BULLET_METRIC_RE.finditer(source_text)
+        for match in _LEGACY_BULLET_METRIC_RE_V1.finditer(source_text)
     ]
 
 
@@ -464,24 +480,39 @@ def tailored_experience_title(entry: dict, update: dict, profile: dict) -> str:
 
 
 _MANDATORY_BULLET_OVERFLOW_KEY = "_allow_mandatory_bullet_overflow"
+_ARTIFACT_BUDGET_VERSION_KEY = "_jobctrl_artifact_budget_version"
+_CURRENT_ARTIFACT_BUDGET_VERSION = 1
+
+
+def mark_current_artifact_budget(tailored_payload: dict) -> dict:
+    """Return a selected payload marked with the current hard-ceiling policy."""
+
+    return {
+        **tailored_payload,
+        _ARTIFACT_BUDGET_VERSION_KEY: _CURRENT_ARTIFACT_BUDGET_VERSION,
+    }
 
 
 def experience_updates_by_id(tailored_payload: dict) -> dict:
-    """Index tailoring experience updates by entry id for every render path.
+    """Index updates while preserving already-approved legacy artifacts.
 
-    The plain-text assembler, both PDF renderers, and the provenance audit
-    trail must select the identical bullet set, so the mandatory-overflow
-    allowance is injected here once. When the payload carries
-    ``generated_claim_mappings`` the requirement-led validator has already
-    accepted the (possibly over-length) bullet lists, so
-    ``tailored_experience_bullets`` keeps every pinned bullet instead of trimming
-    to ``max_experience_bullets``.
+    Current generation rejects a candidate whose mandatory achievements exceed
+    the configured ceiling before it can be accepted.  Older accepted payloads
+    can legitimately contain that overflow, however, and are identifiable by
+    canonical claim mappings without the current budget-version marker.
+    Render-only PDF/template refreshes must not silently truncate those reviewed
+    lines.
     """
-    allow_mandatory_overflow = isinstance(tailored_payload.get("generated_claim_mappings"), list)
+
+    preserve_accepted_overflow = (
+        isinstance(tailored_payload.get("generated_claim_mappings"), list)
+        and tailored_payload.get(_ARTIFACT_BUDGET_VERSION_KEY)
+        != _CURRENT_ARTIFACT_BUDGET_VERSION
+    )
     return {
         update.get("id"): {
             **update,
-            _MANDATORY_BULLET_OVERFLOW_KEY: allow_mandatory_overflow,
+            _MANDATORY_BULLET_OVERFLOW_KEY: preserve_accepted_overflow,
         }
         for update in tailored_payload.get("experience_updates") or []
         if isinstance(update, dict) and update.get("id")
@@ -508,8 +539,6 @@ def tailored_experience_bullets(entry: dict, update: dict, profile: dict) -> lis
     if len(bullets) <= max_bullets:
         return bullets
 
-    # Overflow is validated before a candidate is accepted. Rendering must not
-    # trim requirement-covered or pinned bullets after that validator allows it.
     if isinstance(update, dict) and update.get(_MANDATORY_BULLET_OVERFLOW_KEY):
         return bullets
 
@@ -517,7 +546,7 @@ def tailored_experience_bullets(entry: dict, update: dict, profile: dict) -> lis
     kept_required = [bullet for bullet in bullets if _normalize_text(bullet) in required_norm]
     kept_other = [bullet for bullet in bullets if _normalize_text(bullet) not in required_norm]
     if len(kept_required) >= max_bullets:
-        return kept_required
+        return kept_required[:max_bullets]
     return kept_required + kept_other[: max_bullets - len(kept_required)]
 
 

@@ -71,6 +71,9 @@
       "tailoring_rules": {
         "required_experience_entry_ids": ["acme_swe"],
         "required_skill_category_ids": ["languages"],
+        "required_bullets_by_experience_id": {
+          "acme_swe": ["Reduced API latency 35% by replacing synchronous enrichment calls."]
+        },
         "max_experience_bullets": 4,
         "tailoring_policy": {
           "mode": "aggressive",
