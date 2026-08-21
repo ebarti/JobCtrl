@@ -95,10 +95,11 @@ updates:
       time: "04:00"
       timezone: "Europe/Madrid"
     open-pull-requests-limit: 3
+    # Dependabot rejects semver-granular cooldowns for github-actions
+    # (actions resolve as refs, not semver packages); only a general
+    # cooldown is supported here.
     cooldown:
-      semver-major-days: 30
-      semver-minor-days: 7
-      semver-patch-days: 3
+      default-days: 7
     groups:
       actions-minor-and-patch:
         patterns:
