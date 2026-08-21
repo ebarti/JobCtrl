@@ -116,9 +116,14 @@ line-length = 120
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
-faulthandler_timeout = 180
+# "thread" dumps every thread's stack at the bound and hard-exits the process.
+# "signal" raised only in the main thread and could not unwind a worker-pool
+# thread blocked in a SQLite BEGIN IMMEDIATE wait, which wedged the lane for
+# its whole job ceiling (run 32481181792, Python 3.11). faulthandler stays as
+# the slightly later second-chance dump if pytest-timeout itself fails.
+faulthandler_timeout = 240
 timeout = 180
-timeout_method = "signal"
+timeout_method = "thread"
 markers = [
     "core: hermetic tests that do not own a Temporal test server or migration fixture",
     "migration: database migration and copy tests routed to memory-backed CI storage",

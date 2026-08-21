@@ -60,8 +60,6 @@ jobs:
         run: corepack pnpm --filter @jobctrl/domain-types test
       - name: Test API
         run: corepack pnpm api:test
-      - name: Test scripts
-        run: corepack pnpm scripts:test
 
   web:
     name: Web unit, types, and build

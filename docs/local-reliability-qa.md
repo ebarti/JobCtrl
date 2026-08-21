@@ -33,15 +33,18 @@ healthy worker before starting worker-backed stages.
 CI is plain path-filtered GitHub Actions with no routing layer: each workflow
 under `.github/workflows/` declares the paths it owns and runs whole when a
 pull request or a `main` push touches them. `typescript.yml` runs the API, web,
-Storybook, web E2E, extension, and repo-script suites; `python.yml` lints and
+Storybook, web E2E, and extension suites; `python.yml` lints and
 runs the full pytest suite on each supported Python version; `launcher.yml`
 runs the native launcher race suite together with the cross-runtime migration
 boundary (Go opens the candidate with the locked Python migration runtime,
 then the TypeScript API reopens it); `distribution.yml` audits the fail-closed
 release contracts when dependency locks or packaging inputs change — the
 surface Dependabot PRs touch; `docs-site.yml` and `demo-site.yml` build (and
-on `main`, deploy) their sites; `release-check.yml` runs the privacy gate on
-every pull request with no paths filter.
+on `main`, deploy) their sites. Two workflows deliberately take no paths
+filter: `release-check.yml` (any file can leak PII) and `repo-scripts.yml`,
+whose `scripts:test` suite asserts contracts across inputs that sprawl the
+repository (docs launch copy, version parity into `launcher.go` and the
+release workflows, demo composition, dev supervisor lifecycle).
 
 Python CI syncs `workers/automation/uv.lock` with `--locked --all-extras`; it
 must never resolve the floating ranges in `pyproject.toml` in place of the
@@ -49,7 +52,9 @@ locked candidate graph. Ephemeral Temporal test environments must start and
 stop only through the bounded, retried lifecycle in
 `workers/automation/tests/temporal_env.py` — two hosted lanes previously hung
 for GitHub's full six-hour ceiling on a wedged test-server start — and every
-test carries a three-minute `pytest-timeout` bound with a 45-minute job
+test carries a three-minute `pytest-timeout` bound that dumps all thread
+stacks and hard-exits the wedged process (`timeout_method = "thread"`; a
+signal cannot unwind a blocked worker-pool thread), with a 45-minute job
 ceiling behind it. CI points `TMPDIR` at `/dev/shm` when available so
 hosted-runner disk latency cannot amplify the SQLite migration tests; the
 macOS launcher workflow still proves the migration boundary on real disk.
