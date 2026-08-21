@@ -87,7 +87,21 @@ jobs:
           if [[ -n "$current_apparmor" && "$current_apparmor" != "0" ]]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
+      - name: Use memory-backed temp storage when available
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Hosted-runner disk latency once stretched the SQLite migration
+          # tests from ~50s to ~620s in one lane; tmpfs removes that
+          # amplification. The macOS launcher workflow still exercises the
+          # migration boundary on real disk.
+          if [[ -d /dev/shm && -w /dev/shm ]]; then
+            tmpdir="/dev/shm/jobctrl-${GITHUB_RUN_ID}-py${{ matrix.python-version }}"
+            mkdir -p "$tmpdir"
+            echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
+          fi
       - name: Test
-        run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q
+        run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q --durations=25
       - name: Build package
         run: uv --project workers/automation run --locked --all-extras python -m build --no-isolation workers/automation

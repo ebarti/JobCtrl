@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 from temporalio import workflow
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.database import close_connection, init_db
@@ -41,7 +41,7 @@ async def test_enrich_activity_invokes_observed_enrich_core():
         "jobctrl.pipeline.runner._run_stage_observed",
         return_value=({"status": "ok"}, 0.2, "ok"),
     ) as observed_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,

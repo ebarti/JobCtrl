@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import local_env, time_skipping_env
 
 import jobctrl.infrastructure.temporal.worker as temporal_worker_module
 from jobctrl.infrastructure.temporal import (
@@ -53,7 +53,7 @@ def test_build_worker_separates_temporal_and_blocking_activity_executors(
 
 @pytest.mark.asyncio
 async def test_build_worker_binds_to_jobctrl_task_queue():
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         worker = build_worker(env.client, workflows=[], activities=[])
         try:
             async with worker:
@@ -66,7 +66,7 @@ async def test_build_worker_binds_to_jobctrl_task_queue():
 
 @pytest.mark.asyncio
 async def test_build_worker_accepts_explicit_task_queue_override():
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         worker = build_worker(
             env.client,
             workflows=[],
@@ -92,7 +92,7 @@ async def test_build_worker_validates_real_registry_under_production_sandbox():
     test failure here instead of a boot-time ``RuntimeError`` against a live
     Temporal server.
     """
-    async with await WorkflowEnvironment.start_local() as env:
+    async with local_env() as env:
         worker = build_worker(
             env.client,
             workflows=WORKFLOWS,

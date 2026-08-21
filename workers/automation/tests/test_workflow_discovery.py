@@ -13,7 +13,7 @@ import pytest
 from temporalio import activity
 from temporalio.client import ScheduleOverlapPolicy, WorkflowFailureError
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.cli import _reconcile_discovery_schedule
@@ -582,7 +582,7 @@ async def test_discover_workflow_runs_sources_then_enrichment_and_fanout() -> No
     )
     queue = f"discover-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -637,7 +637,7 @@ async def test_compensation_refresh_failure_warns_without_failing_discovery() ->
         for item in _discovery_activities()
     ]
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -713,7 +713,7 @@ async def test_discover_workflow_starts_enrichment_before_source_family_complete
         _discovery_preparation_fanout,
     ]
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -758,7 +758,7 @@ async def test_only_the_preloop_sweep_derives_pending_tailor() -> None:
     )
     queue = f"discover-scoreonly-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -797,7 +797,7 @@ async def test_discover_workflow_tolerates_partial_source_failure() -> None:
     )
     queue = f"discover-partial-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -867,7 +867,7 @@ async def test_discover_workflow_preserves_partial_enrichment_site_errors() -> N
     )
     queue = f"discover-partial-enrichment-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -920,7 +920,7 @@ async def test_discover_workflow_fails_only_when_every_source_fails() -> None:
     _reset_state()
     queue = f"discover-allfail-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -989,7 +989,7 @@ async def test_discover_workflow_surfaces_real_enrichment_failure_after_preparat
     )
     queue = f"discover-enrichfail-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -1072,7 +1072,7 @@ async def test_discover_workflow_kill_worker_resumption(monkeypatch: pytest.Monk
     )
     queue = f"discover-resume-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         # max_cached_workflows=0 disables sticky task queues: the time-skipping
         # test server never fires the sticky schedule-to-start timeout for a
         # dead worker's queue, so without this the post-crash workflow task
@@ -1167,7 +1167,7 @@ def _parallel_activities():
 
 
 async def _run_parallel_discover(queue: str) -> Any:
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -1279,7 +1279,7 @@ async def test_parallel_family_cancellation_cancels_the_run(monkeypatch: pytest.
         _discovery_preparation_fanout,
     ]
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,

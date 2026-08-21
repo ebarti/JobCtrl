@@ -5,7 +5,7 @@ import uuid
 import pytest
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.database import get_connection, init_db
@@ -91,7 +91,7 @@ async def test_profile_import_workflow_runs_activity_and_projects_succeeded(
     queue = f"profile-import-{uuid.uuid4()}"
     workflow_id = f"profile-import-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -133,7 +133,7 @@ async def test_compensation_refresh_workflow_runs_activity_and_projects_succeede
     queue = f"comp-refresh-{uuid.uuid4()}"
     workflow_id = f"comp-refresh-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -175,7 +175,7 @@ async def test_profile_import_workflow_records_typed_activity_failure(
     queue = f"profile-import-fail-{uuid.uuid4()}"
     workflow_id = f"profile-import-fail-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,

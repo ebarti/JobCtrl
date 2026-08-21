@@ -53,7 +53,11 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         if source is None:
             source = item_path.read_text(encoding="utf-8")
             source_by_path[item_path] = source
-        if "WorkflowEnvironment." in source:
+        if (
+            "WorkflowEnvironment." in source
+            or "time_skipping_env(" in source
+            or "local_env(" in source
+        ):
             item.add_marker(pytest.mark.temporal)
         else:
             item.add_marker(pytest.mark.core)

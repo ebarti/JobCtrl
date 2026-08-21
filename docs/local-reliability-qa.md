@@ -45,9 +45,17 @@ every pull request with no paths filter.
 
 Python CI syncs `workers/automation/uv.lock` with `--locked --all-extras`; it
 must never resolve the floating ranges in `pyproject.toml` in place of the
-locked candidate graph. Dependabot staggers package-manager batches weekly,
-groups compatible minor and patch updates, and applies a rolling cooldown
-before opening a candidate lockfile.
+locked candidate graph. Ephemeral Temporal test environments must start and
+stop only through the bounded, retried lifecycle in
+`workers/automation/tests/temporal_env.py` — two hosted lanes previously hung
+for GitHub's full six-hour ceiling on a wedged test-server start — and every
+test carries a three-minute `pytest-timeout` bound with a 45-minute job
+ceiling behind it. CI points `TMPDIR` at `/dev/shm` when available so
+hosted-runner disk latency cannot amplify the SQLite migration tests; the
+macOS launcher workflow still proves the migration boundary on real disk.
+Dependabot staggers package-manager batches weekly, groups compatible minor
+and patch updates, and applies a rolling cooldown before opening a candidate
+lockfile.
 
 For compensation changes, the Job Detail product-path check must cover both an
 accepted range and an insufficient-evidence result. Verify that the posted
