@@ -780,8 +780,8 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     "distribution-release.finalizer.bundle.mjs verify-prepared",
     "distribution-release.finalizer.bundle.mjs finalize",
     "distribution-release.mjs smoke",
-    "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
-    "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
     "gh release create \"$RELEASE_TAG\"",
     "gh release edit \"$RELEASE_TAG\" --draft=false",
     "channel-pointer.json",
@@ -825,7 +825,7 @@ test("release workflows use protected manual signing, artifact handoff, candidat
   assert.match(releaseWorkflow, /needs: \[resolve, publication-preflight, prepare\]/);
   assert.doesNotMatch(releaseWorkflow, /JOBCTRL_RELEASE_UPLOAD_BASE_URL/);
   assert.doesNotMatch(homebrewWorkflow, /workflow_dispatch:/);
-  assert.match(homebrewWorkflow, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
+  assert.match(homebrewWorkflow, /actions\/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c/);
   assert.match(homebrewWorkflow, /--trust "\$TRUST_PATH"/);
   assert.doesNotMatch(homebrewWorkflow, /environment: release-publication|HOMEBREW_TAP_DEPLOY_KEY|^  publish:/m);
   const syncHomebrew = releaseWorkflow.slice(
@@ -856,12 +856,12 @@ test("release workflows use protected manual signing, artifact handoff, candidat
   assert.doesNotMatch(`${releaseWorkflow}\n${homebrewWorkflow}`, /uses:\s+[^\s@]+@(?![0-9a-f]{40}(?:\s|$|#))/);
   const releaseGate = releaseWorkflow.indexOf("distribution-release.finalizer.bundle.mjs verify-pypi-gate");
   const buildDependencies = releaseWorkflow.indexOf("--only-group release-build");
-  const publish = releaseWorkflow.indexOf("uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b");
+  const publish = releaseWorkflow.indexOf("uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33");
   assert.ok(
     releaseGate >= 0 && releaseGate < buildDependencies && buildDependencies < publish,
     "PyPI must verify signed evidence before build dependencies and upload",
   );
-  assert.doesNotMatch(releaseWorkflow, /pypa\/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d/);
+  assert.doesNotMatch(releaseWorkflow, /pypa\/gh-action-pypi-publish@a892a5a61159132606e93a2fa6f4358831b04d26/);
   assert.match(releaseWorkflow, /JOBCTRL_RELEASE_PUBLIC_KEY: \$\{\{ needs\.resolve\.outputs\.release_public_key \}\}/);
   assert.match(releaseWorkflow, /JOBCTRL_RELEASE_KEY_ID: \$\{\{ needs\.resolve\.outputs\.release_key_id \}\}/);
   assert.match(releaseWorkflow, /filter="data"/);

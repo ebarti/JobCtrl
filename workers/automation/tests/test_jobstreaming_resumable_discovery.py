@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from temporalio import activity
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 from jobstreaming import (
     AdapterCapabilities,
@@ -934,7 +934,7 @@ async def test_temporal_worker_loss_after_store_before_ack_reclaims_and_complete
     _TEMPORAL_REGISTRY = _registry()
     queue = f"jobstreaming-resume-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         first_worker = Worker(
             env.client,
             task_queue=queue,

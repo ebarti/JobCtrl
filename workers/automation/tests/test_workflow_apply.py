@@ -16,7 +16,7 @@ import pytest
 from temporalio import activity
 from temporalio.client import WorkflowFailureError
 from temporalio.exceptions import ActivityError, ApplicationError
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.apply.activities import apply_activity
@@ -74,7 +74,7 @@ async def test_apply_workflow_returns_ok_when_apply_main_succeeds():
         "jobctrl.apply.launcher.main",
         return_value=(3, 0),
     ) as apply_main_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -115,7 +115,7 @@ async def test_live_apply_workflow_does_not_retry_transient_failures():
         "jobctrl.apply.launcher.main",
         side_effect=RuntimeError("apply boom"),
     ) as apply_main_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -150,7 +150,7 @@ async def test_dry_run_apply_workflow_recovers_when_first_attempt_fails():
         "jobctrl.apply.launcher.main",
         side_effect=[RuntimeError("transient"), (1, 0)],
     ) as apply_main_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -266,7 +266,7 @@ async def test_continuous_apply_workflow_budget_exceeded_halts_before_apply():
         "jobctrl.apply.launcher.main",
         return_value=(1, 0),
     ) as apply_main_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -305,7 +305,7 @@ async def test_apply_workflow_does_not_retry_lookup_errors():
         "jobctrl.apply.launcher.main",
         side_effect=LookupError("no matching JobId"),
     ) as apply_main_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,

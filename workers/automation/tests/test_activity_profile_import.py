@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 from temporalio import workflow
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.profile.activities import (
@@ -44,7 +44,7 @@ async def test_profile_import_activity_returns_draft_from_importer():
         "jobctrl.profile.importer.import_profile_pdf",
         return_value=fake_result,
     ) as import_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,

@@ -34,6 +34,35 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         shutil.rmtree(_TEST_APP_DIR, ignore_errors=True)
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Assign every test file exactly one suite marker for targeted runs.
+
+    Migration files take precedence, then any file that owns a Temporal
+    ``WorkflowEnvironment`` lifecycle, then the hermetic core. Reading source
+    keeps the assignment current when a new Temporal test file is added, so
+    ``-m temporal`` / ``-m migration`` / ``-m core`` stay exact selectors.
+    """
+
+    source_by_path: dict[Path, str] = {}
+    for item in items:
+        item_path = Path(str(item.path))
+        if item_path.name.startswith("test_v6_to_v7_"):
+            item.add_marker(pytest.mark.migration)
+            continue
+        source = source_by_path.get(item_path)
+        if source is None:
+            source = item_path.read_text(encoding="utf-8")
+            source_by_path[item_path] = source
+        if (
+            "WorkflowEnvironment." in source
+            or "time_skipping_env(" in source
+            or "local_env(" in source
+        ):
+            item.add_marker(pytest.mark.temporal)
+        else:
+            item.add_marker(pytest.mark.core)
+
+
 @pytest.fixture(autouse=True)
 def disable_langfuse_network_export_by_default(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
     """Keep routine tests from exporting spans to a real Langfuse project.

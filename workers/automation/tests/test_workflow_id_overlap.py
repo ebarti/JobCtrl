@@ -12,7 +12,7 @@ import uuid
 import pytest
 from temporalio import workflow
 from temporalio.common import WorkflowIDConflictPolicy
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 _run_count = 0
@@ -42,7 +42,7 @@ async def test_double_start_returns_existing_handle_no_duplicate() -> None:
     queue = f"overlap-{uuid.uuid4()}"
     workflow_id = f"apply-{uuid.uuid4().hex}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,

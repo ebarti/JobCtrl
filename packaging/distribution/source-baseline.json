@@ -8,8 +8,8 @@
     "pnpmPackageRecords": 1452,
     "pythonCoreRuntimeDirect": 20,
     "pythonProviderRuntimeDirect": 4,
-    "pythonDevelopmentDirect": 8,
-    "uvPackageRecords": 102
+    "pythonDevelopmentDirect": 9,
+    "uvPackageRecords": 103
   },
   "referenceFootprint": {
     "status": "observational",
@@ -79,7 +79,7 @@
     "notes": [
       "The exact logical-byte snapshot sums the planning checkout's files and excludes filesystem block overhead and download caches.",
       "The approximate observations came from the original planning audit and may use a different filesystem accounting context; they explain the current cold-machine estimate rather than define a reproducible target.",
-      "Only reproducibleCounts is compared for source dependency drift in P0.",
+      "Direct dependency and package-file reproducibleCounts are enforced contracts; raw lock-record totals are reported as closure-review evidence.",
       "P1 measures the built production payload and its components from two clean builds; never reuse this source snapshot as a release artifact report."
     ]
   }

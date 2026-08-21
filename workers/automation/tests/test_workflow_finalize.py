@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 from temporalio import activity
 from temporalio.client import WorkflowFailureError
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.database import get_connection
@@ -83,7 +83,7 @@ async def test_finalize_records_succeeded_on_normal_completion() -> None:
     workflow_id = f"run-{uuid.uuid4().hex}"
 
     with patch("jobctrl.pipeline.runner._run_stage_observed", return_value=_OK_OBSERVED):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -113,7 +113,7 @@ async def test_finalize_records_failed_on_stage_failure() -> None:
 
     failing = ({"status": "failed", "error": "llm exploded"}, 0.1, "failed")
     with patch("jobctrl.pipeline.runner._run_stage_observed", return_value=failing):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -145,7 +145,7 @@ async def test_configuration_error_records_non_retryable_error_code_on_attempt_o
         raise ConfigurationError("missing scoring config")
 
     with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_raise_configuration):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -181,7 +181,7 @@ async def test_transient_error_retries_then_records_succeeded() -> None:
         return _OK_OBSERVED
 
     with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_raise_twice):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -222,7 +222,7 @@ async def test_workflow_cancel_records_canceled_projection_row() -> None:
         return _OK_OBSERVED
 
     with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_blocking_runner):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,

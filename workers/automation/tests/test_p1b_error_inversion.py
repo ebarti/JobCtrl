@@ -25,7 +25,7 @@ from temporalio.exceptions import (
     TimeoutError as TemporalTimeoutError,
     TimeoutType,
 )
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.database import init_db
@@ -267,7 +267,7 @@ async def test_tailor_job_durable_attempt_exhaustion_is_non_retryable() -> None:
         job_id=JobId("00000000-0000-4000-8000-000000000001"),
     )
     with patch("jobctrl.materials.activities._tailor_one_job", side_effect=_exhausted):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -301,7 +301,7 @@ async def test_activity_wrapper_configuration_error_is_non_retryable(case: _Acti
 
     queue = f"p1b-{case.name}-config-{uuid.uuid4()}"
     with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_raise_configuration):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -337,7 +337,7 @@ async def test_activity_wrapper_transient_error_retries_then_succeeds(case: _Act
 
     queue = f"p1b-{case.name}-transient-{uuid.uuid4()}"
     with patch("jobctrl.pipeline.runner._run_stage_observed", side_effect=_transient_then_ok):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -361,7 +361,7 @@ async def test_run_in_activity_cancel_event_stops_cooperative_thread() -> None:
     _cooperative_observed_cancel.clear()
     queue = f"p1b-run-in-activity-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -458,7 +458,7 @@ async def test_start_to_close_timeout_rotates_capacity_for_next_activity() -> No
     set_activity_executor(ThreadPoolExecutor(max_workers=1))
 
     try:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,

@@ -13,7 +13,7 @@ from temporalio import activity
 from temporalio.client import WorkflowFailureError
 from temporalio.common import RetryPolicy, WorkflowIDConflictPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.domain.identifiers import JobId
@@ -361,7 +361,7 @@ async def test_duplicate_preparation_workflow_start_attaches_without_duplicate_s
         idempotency_key=workflow_id.removeprefix("prep-"),
     )
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -457,7 +457,7 @@ async def test_preparation_workflow_fails_fast_when_budget_exceeded_and_spends_n
         idempotency_key=f"preparation:{uuid.uuid4().hex}",
     )
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -560,7 +560,7 @@ async def test_preparation_workflow_resumes_at_cover_after_worker_restart(
     )
 
     try:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -662,7 +662,7 @@ async def test_preparation_workflow_resumes_pdf_after_worker_loss(
     )
 
     try:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             first_worker = Worker(
                 env.client,
                 task_queue=queue,
@@ -740,7 +740,7 @@ async def test_preparation_workflow_retries_pdf_when_renderer_returns(
     )
 
     try:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -804,7 +804,7 @@ async def test_preparation_workflow_retries_transient_tailor_failure(
     )
 
     try:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
