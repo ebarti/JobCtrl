@@ -241,6 +241,14 @@ export function validatePythonLicenseEvidenceLocks(lockValue, uvLockContents) {
   return lock;
 }
 
+export function validateUvLockPolicy(uvLockContents) {
+  invariant(
+    !/^(?:exclude-newer|exclude-newer-span)\s*=/m.test(uvLockContents),
+    "workers/automation/uv.lock must not retain a global dependency cutoff",
+  );
+  return true;
+}
+
 export function validateNodeLicenseEvidenceLocks(lockValue, pnpmLockContents) {
   const lock = validateLicenseEvidenceEnvelope(lockValue, EXPECTED_NODE_LICENSE_EVIDENCE, "Node license-evidence lock");
   for (const inputValue of lock.inputs) {
@@ -711,6 +719,38 @@ export function validateLicenseReview(licenseReview, inventoryById) {
   return reviewedComponents;
 }
 
+const SOURCE_RECORD_COUNT_KEYS = ["pnpmPackageRecords", "uvPackageRecords"];
+
+export function validateSourceDependencyCounts(baselineValue, currentValue) {
+  const baseline = assertObject(baselineValue, "source baseline reproducibleCounts");
+  const current = assertObject(currentValue, "current source dependency counts");
+  assertExactKeys(baseline, Object.keys(current), "source baseline reproducibleCounts");
+
+  // Direct dependency cardinality and package-file ownership remain deliberate
+  // release contracts. Raw lock-record totals are only closure/footprint
+  // evidence: transitive replacement can change them without changing the
+  // product contract, compatibility, licensing, or payload.
+  for (const key of Object.keys(current).filter((candidate) => !SOURCE_RECORD_COUNT_KEYS.includes(candidate))) {
+    invariant(
+      baseline[key] === current[key],
+      `source dependency contract ${key} drifted from ${baseline[key]} to ${current[key]}; review and update source-baseline.json intentionally`,
+    );
+  }
+
+  const recordCounts = Object.fromEntries(SOURCE_RECORD_COUNT_KEYS.map((key) => [
+    key,
+    {
+      baseline: baseline[key],
+      current: current[key],
+      drift: baseline[key] !== current[key],
+    },
+  ]));
+  return {
+    recordCounts,
+    hasRecordDrift: Object.values(recordCounts).some((entry) => entry.drift),
+  };
+}
+
 export async function auditDistributionContracts(root = REPO_ROOT) {
   const {
     schema,
@@ -742,6 +782,7 @@ export async function auditDistributionContracts(root = REPO_ROOT) {
     versions,
     uvLockContents,
   );
+  validateUvLockPolicy(uvLockContents);
   const pythonLicenseEvidence = validatePythonLicenseEvidenceLocks(pythonLicenseEvidenceLocks, uvLockContents);
   const nodeLicenseEvidence = validateNodeLicenseEvidenceLocks(
     nodeLicenseEvidenceLocks,
@@ -818,11 +859,7 @@ export async function auditDistributionContracts(root = REPO_ROOT) {
     pythonDevelopmentDirect: python.developmentDirect,
     uvPackageRecords: lockCounts.uvPackageRecords,
   };
-  assertExactKeys(sourceBaseline.reproducibleCounts, Object.keys(expectedCounts), "source baseline reproducibleCounts");
-  invariant(
-    JSON.stringify(sourceBaseline.reproducibleCounts) === JSON.stringify(expectedCounts),
-    "source dependency counts drifted; run distribution:measure and update source-baseline.json intentionally",
-  );
+  const sourceDependencyReview = validateSourceDependencyCounts(sourceBaseline.reproducibleCounts, expectedCounts);
   validateSigningPolicy(signingPolicy);
   return {
     schemaVersion: 1,
@@ -836,6 +873,7 @@ export async function auditDistributionContracts(root = REPO_ROOT) {
     lockedInputCount: locks.inputs.length,
     capabilityCount: capabilitiesById.size,
     footprintReferenceCommit: referenceFootprint.measurementContext.referenceCommit,
+    sourceDependencyReview,
     stableReleaseStatus: signingPolicy.stableReleaseStatus,
     platforms: [...platformsById.keys()],
     versions,

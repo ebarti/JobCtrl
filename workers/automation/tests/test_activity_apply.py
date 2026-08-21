@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 from temporalio import workflow
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl import config
@@ -62,7 +62,7 @@ async def test_apply_activity_invokes_apply_main_and_returns_ok():
         "jobctrl.apply.launcher.main",
         return_value=(2, 0),
     ) as apply_main_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -108,7 +108,7 @@ async def test_apply_activity_continuous_calls_apply_main_with_limit_zero():
         "jobctrl.apply.launcher.main",
         return_value=(0, 0),
     ) as apply_main_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -154,7 +154,7 @@ async def test_auto_apply_activity_live_reads_min_score_and_workers(monkeypatch,
         "jobctrl.apply.launcher.main",
         return_value=(0, 0),
     ) as apply_main_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -187,7 +187,7 @@ async def test_apply_activity_continuous_dry_run_keeps_submit_guard_mode():
         "jobctrl.apply.launcher.main",
         return_value=(0, 0),
     ) as apply_main_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -221,7 +221,7 @@ async def test_apply_activity_non_continuous_floors_limit_at_one():
         "jobctrl.apply.launcher.main",
         return_value=(0, 0),
     ) as apply_main_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,

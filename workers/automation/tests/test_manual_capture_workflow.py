@@ -12,7 +12,7 @@ import pytest
 from temporalio import activity, workflow
 from temporalio.client import WorkflowFailureError
 from temporalio.exceptions import ActivityError, ApplicationError
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl import config
@@ -495,7 +495,7 @@ async def test_manual_capture_workflow_projects_terminal_result(
     queue = f"manual-capture-{uuid.uuid4()}"
     workflow_id = f"manual-capture-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -539,7 +539,7 @@ async def test_manual_capture_activity_enforces_expected_runtime_guard() -> None
         expected_db_path="/definitely/not/the-worker-app/jobctrl.db",
     )
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,

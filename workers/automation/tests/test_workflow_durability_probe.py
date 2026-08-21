@@ -16,7 +16,7 @@ import uuid
 import pytest
 from temporalio import activity
 from temporalio.client import WorkflowExecutionStatus
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import local_env, time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.infrastructure.temporal.durability_probe import (
@@ -48,7 +48,7 @@ async def test_durability_probe_completes_and_records_lifecycle() -> None:
     async def record_outcome(payload: WorkflowOutcomeInput) -> None:
         events.append(f"outcome:{payload.status}")
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -82,7 +82,7 @@ async def test_durability_probe_clamps_absurd_hold_to_ceiling() -> None:
     async def record_outcome(_payload: WorkflowOutcomeInput) -> None:
         return None
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,
@@ -138,7 +138,7 @@ async def test_durability_probe_resumes_same_run_after_worker_crash() -> None:
             workflow_runner=UnsandboxedWorkflowRunner(),
         )
 
-    async with await WorkflowEnvironment.start_local() as env:
+    async with local_env() as env:
         # --- worker A: start the probe and let it reach the durable timer ---
         worker_a = asyncio.create_task(new_worker(env.client).run())
         handle = await env.client.start_workflow(

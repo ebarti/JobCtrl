@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from temporalio import workflow
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -68,7 +68,7 @@ async def test_score_activity_emits_pipeline_span_and_stage_events(monkeypatch, 
         raising=False,
     )
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with time_skipping_env() as env:
         async with Worker(
             env.client,
             task_queue=queue,

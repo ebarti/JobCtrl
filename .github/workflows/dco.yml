@@ -14,10 +14,11 @@ jobs:
     if: ${{ github.event.pull_request.user.login != github.repository_owner }}
     name: DCO sign-off
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
       - name: Check commit sign-offs
-        uses: KineticCafe/actions-dco@v3.1.0
+        uses: KineticCafe/actions-dco@5f160e3ee086af8fc0fb567b8add0937d074123e # v3.2.0
         with:
           config: |
             [bot]

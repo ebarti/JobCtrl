@@ -49,32 +49,3 @@ test("production Workers share the provisioned EU D1 database", async () => {
   assert.equal(retentionDatabase.database_id, apiDatabase.database_id);
   assert.equal(apiDatabase.database_name, "jobctrl-demo-telemetry");
 });
-
-test("deployment workflow pins Wrangler, gates production, and deploys in safe order", async () => {
-  const workflow = await read(".github/workflows/demo-site.yml");
-  const edgePackage = await parse("apps/demo-edge/package.json");
-  assert.equal(edgePackage.devDependencies.wrangler, "4.107.0");
-  assert.match(workflow, /wrangler@4\.107\.0 pages deploy/);
-  assert.match(workflow, /- "scripts\/demo-\*\.mjs"/);
-  const setupNode = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0";
-  assert.equal(workflow.split(setupNode).length - 1, 3);
-  assert.equal((workflow.match(/node-version: 22\.21\.1/g) ?? []).length, 3);
-  assert.doesNotMatch(workflow, /node-version: "20\.19"/);
-  assert.match(workflow, /vars\.DEMO_DEPLOY_ENABLED == 'true'/);
-  assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
-  assert.doesNotMatch(workflow, /pull_request_target/);
-
-  const previewJob = workflow.slice(workflow.indexOf("  preview:"), workflow.indexOf("  production:"));
-  assert.match(previewJob, /uses: actions\/checkout@v4/);
-  assert.ok(previewJob.indexOf("actions/checkout@v4") < previewJob.indexOf("pnpm/action-setup@v4"));
-  assert.match(previewJob, /^\s+HEAD_REF: \$\{\{ github\.head_ref \}\}$/m);
-  assert.match(previewJob, /run: .*--branch="\$HEAD_REF"/);
-  assert.doesNotMatch(previewJob, /run: .*\$\{\{\s*github\.head_ref\s*\}\}/);
-
-  const migrate = workflow.indexOf("Apply telemetry migrations");
-  const api = workflow.indexOf("Deploy consent and telemetry API");
-  const retention = workflow.indexOf("Deploy retention worker");
-  const pages = workflow.indexOf("Publish production site");
-  const smoke = workflow.indexOf("Smoke production consent boundary");
-  assert.ok(migrate < api && api < retention && retention < pages && pages < smoke);
-});

@@ -10,7 +10,7 @@ import pytest
 from temporalio import workflow
 from temporalio.client import WorkflowFailureError
 from temporalio.common import RetryPolicy
-from temporalio.testing import WorkflowEnvironment
+from .temporal_env import time_skipping_env
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.materials.activities import (
@@ -40,7 +40,7 @@ async def test_tailor_activity_invokes_observed_tailor_core():
         "jobctrl.pipeline.runner._run_stage_observed",
         return_value=({"status": "ok"}, 0.4, "ok"),
     ) as observed_mock:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,
@@ -86,7 +86,7 @@ async def test_tailor_activity_raises_observed_failure_status():
         "jobctrl.pipeline.runner._run_stage_observed",
         return_value=({"status": "failed", "error": "failed"}, 0.4, "failed"),
     ):
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with time_skipping_env() as env:
             async with Worker(
                 env.client,
                 task_queue=queue,

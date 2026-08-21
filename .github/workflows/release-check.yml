@@ -12,26 +12,44 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: release-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   release-check:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: Release check
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
 
-      - name: Install test runner
-        run: python -m pip install pytest
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: 0.11.7
+          enable-cache: true
+          cache-dependency-glob: workers/automation/uv.lock
+          cache-suffix: release-check
+
+      - name: Sync locked privacy-gate tools
+        run: uv --project workers/automation sync --locked --only-group release-check
 
       - name: Run release check
-        run: python3 scripts/release_check.py --strict-prompt
+        run: uv --project workers/automation run --locked --only-group release-check python scripts/release_check.py --strict-prompt
 
       - name: Run release check self-test
-        run: python3 -m pytest -q --noconftest workers/automation/tests/test_release_check.py
+        run: uv --project workers/automation run --locked --only-group release-check pytest -q -c /dev/null -p no:cacheprovider --noconftest workers/automation/tests/test_release_check.py
