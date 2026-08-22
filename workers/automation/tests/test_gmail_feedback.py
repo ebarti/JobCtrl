@@ -16,11 +16,15 @@ from jobctrl.infrastructure.gmail.feedback import (
     ensure_application_feedback_tables,
     scan_gmail_feedback,
 )
+from jobctrl.infrastructure.migrations.schema_v7 import (
+    create_unstamped_exact_v7_candidate,
+)
 
 
 RECIPIENT = "candidate@example.com"
 JOB_URL = "https://jobs.example.com/platform-engineer"
 APPLIED_AT = "2026-06-01T10:00:00+00:00"
+JOB_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
 
 
 class FakeGmailClient:
@@ -381,6 +385,156 @@ def test_raw_body_is_not_written_to_events_or_summary(tmp_path: Path) -> None:
         assert body_text not in payloads
     finally:
         conn.close()
+
+
+def test_outcome_anchors_join_v7_job_id(tmp_path: Path) -> None:
+    """A v7 application_outcomes row joins jobs by the canonical job_id and
+    yields an anchor (job_key = jobs.url) instead of raising
+    'no such column: o.job_key'."""
+    db_path = tmp_path / "jobctrl.db"
+    conn = sqlite3.connect(db_path)
+    create_unstamped_exact_v7_candidate(conn)
+    conn.execute(
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "local",
+            JOB_ID,
+            JOB_URL,
+            "Principal Platform Engineer",
+            "ExampleCo",
+            "https://boards.greenhouse.io/exampleco/jobs/123",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO application_outcomes (
+            tenant_id, outcome_id, job_id, kind, source, occurred_at, recorded_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "local",
+            "outcome-1",
+            JOB_ID,
+            "interview",
+            "gmail",
+            "2026-06-02T12:00:00+00:00",
+            "2026-06-02T12:01:00+00:00",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    client = FakeGmailClient(
+        [
+            {
+                "id": "no-match",
+                "threadId": "thread-outcome",
+                "subject": "Weekly engineering newsletter",
+                "from": "newsletter@other.example",
+                "to": RECIPIENT,
+                "date": "Tue, 02 Jun 2026 13:00:00 +0000",
+                "snippet": "General career content with no application signal.",
+                "internalDate": str(epoch_ms("2026-06-02T13:00:00+00:00")),
+            }
+        ]
+    )
+
+    summary = scan_gmail_feedback(
+        db_path=db_path,
+        client=client,
+        recipient_email=RECIPIENT,
+        limit=10,
+        max_results_per_anchor=5,
+        window_days=7,
+    )
+
+    assert summary["ok"] is True
+    # The outcome row is the only anchor source; it must resolve to the job and
+    # drive the search query with the job's company/title.
+    assert summary["scannedAnchorCount"] == 1
+    assert any("ExampleCo" in call["query"] for call in client.search_calls)
+
+
+def test_v7_linked_message_writes_canonical_job_id(tmp_path: Path) -> None:
+    """A linked message on a v7 database persists evidence/suggestions keyed by
+    the canonical jobs.job_id instead of the application URL."""
+    db_path = tmp_path / "jobctrl.db"
+    conn = sqlite3.connect(db_path)
+    create_unstamped_exact_v7_candidate(conn)
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            tenant_id, job_id, url, title, company, application_url,
+            applied_at, apply_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "local",
+            JOB_ID,
+            JOB_URL,
+            "Principal Platform Engineer",
+            "ExampleCo",
+            "https://boards.greenhouse.io/exampleco/jobs/123",
+            APPLIED_AT,
+            "applied",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    body_text = "Private application confirmation body for the candidate."
+    client = FakeGmailClient(
+        [
+            {
+                "id": "v7-linked",
+                "threadId": "thread-v7",
+                "subject": "ExampleCo application received for Platform Engineer",
+                "from": "recruiting@exampleco.com",
+                "to": RECIPIENT,
+                "date": "Mon, 01 Jun 2026 12:00:00 +0000",
+                "snippet": "Thank you for applying to ExampleCo.",
+                "internalDate": str(epoch_ms("2026-06-01T12:00:00+00:00")),
+            }
+        ],
+        {
+            "v7-linked": {
+                "id": "v7-linked",
+                "threadId": "thread-v7",
+                "subject": "ExampleCo application received for Platform Engineer",
+                "from": "recruiting@exampleco.com",
+                "to": RECIPIENT,
+                "date": "Mon, 01 Jun 2026 12:00:00 +0000",
+                "snippet": "Thank you for applying to ExampleCo.",
+                "body_text": body_text,
+            }
+        },
+    )
+
+    summary = scan_gmail_feedback(
+        db_path=db_path,
+        client=client,
+        recipient_email=RECIPIENT,
+        limit=10,
+        max_results_per_anchor=5,
+        window_days=7,
+    )
+
+    assert summary["linkedEvidenceCount"] == 1
+    conn = sqlite3.connect(db_path)
+    try:
+        evidence_job_id = conn.execute(
+            "SELECT job_id FROM application_email_evidence"
+        ).fetchone()[0]
+        suggestion_job_id = conn.execute(
+            "SELECT job_id FROM application_outcome_suggestions"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert evidence_job_id == JOB_ID
+    assert suggestion_job_id == JOB_ID
 
 
 def seed_feedback_db(tmp_path: Path) -> Path:

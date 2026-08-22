@@ -435,11 +435,18 @@ def _store_linked_message(
     to_addresses = _email_addresses(_text(full_message.get("to") or metadata.get("to")))
     thread_id = _nullable_text(full_message.get("threadId") or metadata.get("threadId"))
     linked_at_text = _iso(linked_at)
+    evidence_columns = _columns(conn, "application_email_evidence")
+    evidence_job_column = "job_id" if "job_id" in evidence_columns else "job_key"
+    evidence_job_value = (
+        _job_id_for_url(conn, anchor.job_key)
+        if evidence_job_column == "job_id"
+        else anchor.job_key
+    )
 
     conn.execute(
-        """
+        f"""
         INSERT INTO application_email_evidence (
-            tenant_id, evidence_id, job_key, provider, provider_message_id,
+            tenant_id, evidence_id, {evidence_job_column}, provider, provider_message_id,
             provider_thread_id, from_address, to_addresses_json, subject, snippet,
             received_at, linked_at, link_confidence, link_signals_json,
             body_text, body_sha256, body_stored_at
@@ -448,7 +455,7 @@ def _store_linked_message(
         (
             TENANT_ID,
             evidence_id,
-            anchor.job_key,
+            evidence_job_value,
             PROVIDER,
             message_id,
             thread_id,
@@ -486,17 +493,24 @@ def _store_suggestion(
         "gmail-suggestion",
         f"{anchor.job_key}|{provider_message_id}|{classification.kind}",
     )
+    suggestion_columns = _columns(conn, "application_outcome_suggestions")
+    suggestion_job_column = "job_id" if "job_id" in suggestion_columns else "job_key"
+    suggestion_job_value = (
+        _job_id_for_url(conn, anchor.job_key)
+        if suggestion_job_column == "job_id"
+        else anchor.job_key
+    )
     cursor = conn.execute(
-        """
+        f"""
         INSERT OR IGNORE INTO application_outcome_suggestions (
-            tenant_id, suggestion_id, job_key, evidence_id, suggested_kind,
+            tenant_id, suggestion_id, {suggestion_job_column}, evidence_id, suggested_kind,
             confidence, rationale, status, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             TENANT_ID,
             suggestion_id,
-            anchor.job_key,
+            suggestion_job_value,
             evidence_id,
             classification.kind,
             classification.confidence,
@@ -534,7 +548,11 @@ def _record_safe_event(
         "linkSignals": list(signals),
     }
     values: dict[str, Any] = {
+        "tenant_id": TENANT_ID,
         "job_url": job_key,
+        "job_id": _job_id_for_url(conn, job_key),
+        # identity_version matches the v7 event store's EVENT_IDENTITY_VERSION.
+        "identity_version": 1,
         "stage": "apply",
         "event_type": "ApplicationEmailFeedbackIngested",
         "level": "info",
@@ -642,16 +660,25 @@ def _job_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
 def _outcome_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
     if not _table_exists(conn, "application_outcomes") or not _table_exists(conn, "jobs"):
         return []
+    outcome_columns = _columns(conn, "application_outcomes")
+    # The v7 sealed schema keys feedback rows by the canonical jobs.job_id;
+    # older (v2.0.8/v6) databases still use the application job URL. job_key is
+    # taken from jobs.url, so an outcome whose job no longer exists is dropped
+    # instead of producing an empty-query anchor.
+    outcome_job_column = "job_id" if "job_id" in outcome_columns else "job_key"
     columns = _columns(conn, "jobs")
     title_expr = _column_expr(columns, "title", prefix="j")
     company_expr = _first_column_expr(columns, ["company", "site", "employer"], prefix="j")
     application_url_expr = _column_expr(columns, "application_url", prefix="j")
+    job_join_expr = (
+        "j.job_id = o.job_id" if outcome_job_column == "job_id" else "j.url = o.job_key"
+    )
     rows = conn.execute(
         f"""
-        SELECT o.job_key AS job_key, {title_expr} AS title, {company_expr} AS company,
+        SELECT j.url AS job_key, {title_expr} AS title, {company_expr} AS company,
                {application_url_expr} AS application_url, o.occurred_at AS anchor_at
         FROM application_outcomes o
-        LEFT JOIN jobs j ON j.url = o.job_key
+        LEFT JOIN jobs j ON {job_join_expr}
         WHERE o.tenant_id = ?
           AND o.kind IN (
             'applied_confirmation', 'recruiter_reply', 'interview',
@@ -670,13 +697,21 @@ def _apply_run_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
     title_expr = _column_expr(columns, "title", prefix="j")
     company_expr = _first_column_expr(columns, ["company", "site", "employer"], prefix="j")
     application_url_expr = _column_expr(columns, "application_url", prefix="j")
+    # On v7, apply_run_projections.job_id is the canonical jobs.job_id; on the
+    # legacy schema it holds the application URL.
+    if "job_id" in columns:
+        job_key_expr = "j.url"
+        join_expr = "j.job_id = a.job_id"
+    else:
+        job_key_expr = "a.job_id"
+        join_expr = "j.url = a.job_id"
     rows = conn.execute(
         f"""
-        SELECT a.job_id AS job_key, {title_expr} AS title, {company_expr} AS company,
+        SELECT {job_key_expr} AS job_key, {title_expr} AS title, {company_expr} AS company,
                {application_url_expr} AS application_url,
                COALESCE(NULLIF(a.finished_at, ''), NULLIF(a.started_at, '')) AS anchor_at
         FROM apply_run_projections a
-        LEFT JOIN jobs j ON j.url = a.job_id
+        LEFT JOIN jobs j ON {join_expr}
         WHERE COALESCE(a.dry_run, 0) = 0
           AND (
             lower(COALESCE(a.status, '')) IN ('succeeded', 'success', 'complete', 'completed')
@@ -737,6 +772,19 @@ def _provider_message_exists(conn: sqlite3.Connection, provider_message_id: str)
         (TENANT_ID, PROVIDER, provider_message_id),
     ).fetchone()
     return row is not None
+
+
+def _job_id_for_url(conn: sqlite3.Connection, url: str) -> str | None:
+    if not url or not _table_exists(conn, "jobs"):
+        return None
+    columns = _columns(conn, "jobs")
+    if "job_id" not in columns or "url" not in columns or "tenant_id" not in columns:
+        return None
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ? LIMIT 1",
+        (TENANT_ID, url),
+    ).fetchone()
+    return row["job_id"] if row else None
 
 
 def _message_datetime(message: dict[str, Any]) -> datetime | None:
