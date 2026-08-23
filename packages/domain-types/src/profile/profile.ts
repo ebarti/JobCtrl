@@ -144,6 +144,7 @@ export interface ExperienceEntry {
   readonly company: string;
   readonly dateRange: string;
   readonly location: string;
+  readonly summary: string;
   readonly bullets: readonly string[];
   readonly achievementEvidence: readonly AchievementEvidence[];
 }

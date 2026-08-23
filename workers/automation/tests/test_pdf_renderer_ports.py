@@ -61,6 +61,7 @@ def _profile() -> dict:
                     "title": "Senior SWE",
                     "company": "Acme",
                     "location": "Remote",
+                    "summary": "Owned the distributed systems mandate.",
                     "bullets": ["Built systems."],
                 }
             ],
@@ -229,6 +230,7 @@ def test_build_resume_document_reuses_tailoring_policy_helpers() -> None:
     assert document["summary"] == "Tailored summary."
     assert document["experience"][0]["title"] == "Senior SWE"
     assert document["experience"][0]["company"] == "Acme"
+    assert document["experience"][0]["summary"] == "Owned the distributed systems mandate."
     assert document["experience"][0]["bullets"][0]["text"] == "Cut latency."
     assert document["skills"][0]["items"] == ["Python"]
 
@@ -278,6 +280,109 @@ def test_build_resume_html_matches_moderncv_contact_and_experience_layout() -> N
     )
     assert "Mar 2024 -- Present" not in html
     assert html.index("resume-entry-company-row") < html.index("resume-entry-role-row")
+    assert 'data-resume-layout-target="experience:acme_swe:summary"' in html
+    assert "Owned the distributed systems mandate." in html
+    assert html.index("experience:acme_swe:heading") < html.index("experience:acme_swe:summary")
+    assert html.index("experience:acme_swe:summary") < html.index("experience:acme_swe:bullet:1")
+
+
+def test_resume_preserves_profile_experience_order_and_places_education_degree_below_institution() -> None:
+    profile = _profile()
+    profile["resume"]["experience_entries"] = [
+        {
+            "id": "older",
+            "date_range": "Jan 2018 - Dec 2020",
+            "title": "Older role",
+            "company": "Older company",
+            "location": "",
+            "bullets": ["Older work."],
+        },
+        {
+            "id": "current",
+            "date_range": "Mar 2024 - Present",
+            "title": "Current role",
+            "company": "Current company",
+            "location": "",
+            "bullets": ["Current work."],
+        },
+        {
+            "id": "recent",
+            "date_range": "Jun 2021 - Feb 2024",
+            "title": "Recent role",
+            "company": "Recent company",
+            "location": "",
+            "bullets": ["Recent work."],
+        },
+    ]
+
+    document = build_resume_document({}, profile)
+    text = ResumeAssembler().assemble_resume_text({}, profile)
+    html = build_resume_html(document)
+
+    assert [entry["id"] for entry in document["experience"]] == ["older", "current", "recent"]
+    assert text.index("Older role | Older company") < text.index(
+        "Current role | Current company"
+    )
+    assert text.index("Current role | Current company") < text.index(
+        "Recent role | Recent company"
+    )
+    assert (
+        '<span class="resume-entry-row resume-entry-education-row"><span class="resume-entry-main '
+        'resume-entry-institution">State | City</span><span class="resume-entry-date">2015</span></span>'
+        in html
+    )
+    assert html.index('data-resume-layout-target="education:edu:subtitle"') < html.index(
+        'data-resume-layout-target="education:edu:degree"'
+    )
+    assert text.index("State | City | 2015") < text.index("BS CS")
+
+
+def test_build_resume_html_omits_empty_position_summary() -> None:
+    profile = _profile()
+    profile["resume"]["experience_entries"][0]["summary"] = ""
+
+    html = build_resume_html(build_resume_document(_payload(), profile))
+
+    assert 'data-resume-layout-target="experience:acme_swe:summary"' not in html
+    assert '<p class="resume-entry-summary"' not in html
+
+
+def test_build_resume_html_compacts_experience_without_bullets() -> None:
+    profile = _profile()
+    profile["resume"]["experience_entries"][0]["bullets"] = []
+
+    html = build_resume_html(build_resume_document({}, profile))
+
+    assert '<article class="resume-entry resume-entry--no-bullets">' in html
+    assert '<ul class="resume-bullets">' not in html
+    assert ".resume-entry.resume-entry--no-bullets" in html
+    assert ".resume-entry--no-bullets .resume-entry-summary:last-child" in html
+
+
+def test_position_summary_matches_sanitized_text_and_html_ordering() -> None:
+    profile = _profile()
+    profile["resume"]["experience_entries"][0]["summary"] = (
+        "Owned distributed systems — across regions."
+    )
+    payload = _payload()
+
+    text = ResumeAssembler().assemble_resume_text(payload, profile)
+    document = build_resume_document(payload, profile)
+    html = build_resume_html(document)
+    sanitized_summary = "Owned distributed systems, across regions."
+
+    assert document["experience"][0]["summary"] == sanitized_summary
+    assert sanitized_summary in text
+    assert sanitized_summary in html
+    assert text.index("Senior SWE | Acme") < text.index("Remote | 2020-Present")
+    assert text.index("Remote | 2020-Present") < text.index(sanitized_summary)
+    assert text.index(sanitized_summary) < text.index("- Cut latency.")
+    assert html.index("experience:acme_swe:heading") < html.index(
+        "experience:acme_swe:summary"
+    )
+    assert html.index("experience:acme_swe:summary") < html.index(
+        "experience:acme_swe:bullet:1"
+    )
 
 
 def test_html_resume_adapter_returns_resume_pdf_with_layout_metadata(

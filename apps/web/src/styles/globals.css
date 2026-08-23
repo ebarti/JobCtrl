@@ -2336,6 +2336,11 @@ input[type="radio"] {
   color: #c8c8c8;
 }
 
+.resume-pdf-export-error {
+  color: #fecaca;
+  font-size: var(--jh-type-label-size);
+}
+
 .resume-format-toolbar {
   display: flex;
   position: relative;
@@ -2427,6 +2432,24 @@ input[type="radio"] {
 
 .resume-format-select input {
   inline-size: 64px;
+}
+
+.resume-format-size-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.resume-format-size-control input {
+  inline-size: 72px;
+  background: #242424 !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff;
+}
+
+.resume-format-size-control > span {
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
 }
 
 .resume-link-popover {
@@ -2724,6 +2747,15 @@ input[type="radio"] {
   margin-block-end: 2.2mm;
 }
 
+.resume-plate-document .resume-entry.resume-entry--no-bullets {
+  margin-block-end: 1.6mm;
+}
+
+.resume-plate-document .resume-entry--no-bullets .resume-entry-heading:last-child,
+.resume-plate-document .resume-entry--no-bullets .resume-entry-summary:last-child {
+  margin-block-end: 0;
+}
+
 .resume-plate-document .resume-entry-heading {
   display: grid;
   gap: 0.2mm;
@@ -2743,6 +2775,7 @@ input[type="radio"] {
 }
 
 .resume-plate-document .resume-entry-company,
+.resume-plate-document .resume-entry-institution,
 .resume-plate-document .resume-entry-location {
   font-weight: 700;
 }
@@ -2751,6 +2784,10 @@ input[type="radio"] {
   color: var(--resume-template-accent, var(--resume-template-default-accent));
   font-style: italic;
   font-weight: 400;
+}
+
+.resume-plate-document .resume-education-degree {
+  margin: 0 0 1mm;
 }
 
 .resume-plate-document .resume-entry-date {
@@ -2773,6 +2810,14 @@ input[type="radio"] {
   color: var(--resume-template-accent, var(--resume-template-default-accent));
   font-size: var(--resume-template-entry-meta-font-size, var(--resume-template-default-entry-meta-font-size));
   line-height: var(--resume-template-meta-line-height, var(--resume-template-default-meta-line-height));
+}
+
+.resume-plate-document .resume-entry-summary {
+  margin: 0 0 1.1mm;
+  color: var(--resume-template-accent, var(--resume-template-default-accent));
+  line-height: var(--resume-template-meta-line-height, var(--resume-template-default-meta-line-height));
+  text-align: var(--resume-template-body-align, var(--resume-template-default-body-align));
+  break-inside: avoid;
 }
 
 .resume-plate-document .resume-bullets {

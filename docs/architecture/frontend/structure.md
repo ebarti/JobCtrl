@@ -222,6 +222,7 @@ apps/web/
 │   │   │   ├── SessionPort.ts
 │   │   │   ├── ClipboardPort.ts
 │   │   │   ├── OpenInOsPort.ts
+│   │   │   ├── PdfExportPort.ts
 │   │   │   ├── TelemetryPort.ts
 │   │   │   ├── FeatureFlagPort.ts
 │   │   │   ├── lib/parseDomainEvent.ts     # SSE frame → DomainEventEnvelope (DOMAIN_EVENT_TYPES membership check)
@@ -234,6 +235,7 @@ apps/web/
 │   │   │       ├── LocalSessionAdapter.ts
 │   │   │       ├── NavigatorClipboardAdapter.ts
 │   │   │       ├── OpenArtifactAdapter.ts     # OpenInOsPort impl
+│   │   │       ├── BrowserPdfExportAdapter.ts # live Plate DOM → browser PDF download
 │   │   │       ├── ConsoleTelemetryAdapter.ts
 │   │   │       └── StaticFeatureFlagAdapter.ts
 │   │   ├── stores/

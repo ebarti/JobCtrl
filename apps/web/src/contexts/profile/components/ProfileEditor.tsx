@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { CardHeader } from "../../../shared/ui/card-header.js";
@@ -6,8 +6,11 @@ import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { ToggleGroup, ToggleGroupItem } from "../../../shared/ui/toggle-group.js";
-import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeAuditPins.js";
-import { ProfileForm } from "../forms/profile-form.js";
+import {
+  ResumeStandalonePlateEditor,
+  type ResumePlateSemanticTextChange,
+} from "../../materials/components/ResumeAuditPins.js";
+import { ProfileForm, type ProfilePlateTextController } from "../forms/profile-form.js";
 import { useProfileHtmlPreviewUrl } from "../hooks/useProfileHtmlPreviewUrl.js";
 import { useProfileQuery } from "../hooks/useProfileQuery.js";
 import { useResumeTemplatesQuery } from "../hooks/useResumeTemplatesQuery.js";
@@ -34,6 +37,7 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
   const resumeTemplatesQuery = useResumeTemplatesQuery();
   const { url: profileHtmlPreviewUrl } = useProfileHtmlPreviewUrl();
   const layoutRef = useRef<HTMLDivElement>(null);
+  const plateTextControllerRef = useRef<ProfilePlateTextController | null>(null);
   const [workspaceView, setWorkspaceView] = useState<ProfileWorkspaceView>("profile-data");
   const [editorWidth, setEditorWidth] = useState(() => {
     const saved = storage.get<number>(SPLIT_STORAGE_KEY);
@@ -53,6 +57,12 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
   } as CSSProperties;
   const cardTitle =
     section === "preferences" ? "Configuration & templates" : "Resume data";
+  const handlePlateTextControllerChange = useCallback((controller: ProfilePlateTextController | null) => {
+    plateTextControllerRef.current = controller;
+  }, []);
+  const handlePlateSemanticTextChange = useCallback((changes: readonly ResumePlateSemanticTextChange[]) => {
+    plateTextControllerRef.current?.apply(changes);
+  }, []);
 
   const setWidthFromClientX = (clientX: number, persist = false) => {
     const rect = layoutRef.current?.getBoundingClientRect();
@@ -135,7 +145,11 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
               </div>
             </>
           ) : (
-            <ProfileForm initial={profileQuery.data} section={section} />
+            <ProfileForm
+              initial={profileQuery.data}
+              onPlateTextControllerChange={handlePlateTextControllerChange}
+              section={section}
+            />
           )
         ) : errorMessage ? (
           <div className="profile-editor-state" role="alert">
@@ -236,8 +250,10 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
                 : {})}
               className="profile-resume-plate-editor"
               htmlUrl={profileHtmlPreviewUrl}
+              pdfFilename="baseline-resume.pdf"
               previewStyle={resumePreviewStyle}
               title="Baseline resume editor"
+              onSemanticTextChange={handlePlateSemanticTextChange}
             />
           </aside>
       </div>

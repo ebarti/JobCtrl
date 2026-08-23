@@ -1,6 +1,7 @@
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
 import { FetchApiClientAdapter } from "../src/shared/adapters/local/FetchApiClientAdapter.js";
+import { BrowserPdfExportAdapter } from "../src/shared/adapters/local/BrowserPdfExportAdapter.js";
 import type {
   ClipboardPort,
   DomainEventEnvelope,
@@ -134,6 +135,7 @@ export function buildStoryPorts(): Ports {
     session: new StorySessionPort(),
     clipboard: new StoryClipboardPort(),
     openInOs: new StoryOpenInOsPort(),
+    pdfExport: new BrowserPdfExportAdapter(),
     telemetry: new StoryTelemetryPort(),
     featureFlags: new StoryFeatureFlagPort(),
   };

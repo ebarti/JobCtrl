@@ -33,8 +33,8 @@ test("public application versions agree without resetting compatibility counters
     /\[\[package\]\]\nname = "jobctrl"\nversion = "0\.1\.0"\nsource = \{ editable = "\." \}/,
   );
 
-  assert.match(await read("apps/api/src/schema-manifest.ts"), /EXACT_V8_SCHEMA_MANIFEST[\s\S]*?version: 8,/);
-  assert.match(await read("workers/automation/src/jobctrl/database.py"), /^SCHEMA_VERSION = 8$/m);
+  assert.match(await read("apps/api/src/schema-manifest.ts"), /EXACT_V9_SCHEMA_MANIFEST[\s\S]*?version: 9,/);
+  assert.match(await read("workers/automation/src/jobctrl/database.py"), /^SCHEMA_VERSION = 9$/m);
   assert.equal((await readJson("launcher/runtime-manifest.json")).launcherProtocol, 1);
   assert.match(await read("launcher/internal/launcher/launcher.go"), /^\s*launcherProtocol\s+= 1$/m);
   assert.match(await read("launcher/internal/launcher/launcher.go"), /^\s*stateSchemaVersion\s+= 1$/m);

@@ -15,7 +15,7 @@ vi.mock("../src/read-model.js", async (importOriginal) => ({
   getJobDetail,
 }));
 
-import { hasExactV8SchemaManifest } from "../src/schema-manifest.js";
+import { hasExactV9SchemaManifest } from "../src/schema-manifest.js";
 import { buildApp } from "../src/server.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 
@@ -104,7 +104,7 @@ describe("score correction exact-v7 identity", () => {
             event_type: "ScoreCorrected",
           }),
         ]);
-        expect(hasExactV8SchemaManifest(db)).toBe(true);
+        expect(hasExactV9SchemaManifest(db)).toBe(true);
       } finally {
         db.close();
       }
@@ -136,7 +136,7 @@ describe("score correction exact-v7 identity", () => {
           identity_version: 1,
           event_type: "ScoreRescoreRequested",
         }));
-        expect(hasExactV8SchemaManifest(resetDb)).toBe(true);
+        expect(hasExactV9SchemaManifest(resetDb)).toBe(true);
       } finally {
         resetDb.close();
       }

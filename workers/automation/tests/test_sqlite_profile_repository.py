@@ -33,6 +33,7 @@ def _valid_profile() -> dict:
                     "company": "Acme",
                     "date_range": "2022 -- Present",
                     "location": "Remote",
+                    "summary": "Owned the backend platform mandate.",
                     "bullets": ["Built APIs.", "Reduced incidents 40%."],
                 }
             ],
@@ -158,6 +159,7 @@ def test_save_and_load_round_trips_profile_through_relational_rows(tmp_path):
     loaded = repo.load(LOCAL_TENANT)
     assert loaded is not None
     loaded_entry = loaded.to_dict()["resume"]["experience_entries"][0]
+    assert loaded_entry["summary"] == "Owned the backend platform mandate."
     assert loaded_entry["bullets"] == ["Built APIs.", "Reduced incidents 40%."]
     assert [item["id"] for item in loaded_entry["achievement_evidence"]] == [
         "role_1_bullet_1",

@@ -1170,6 +1170,7 @@ function ResumeLineReview({
         htmlUrl={api.artifactPreviewHtmlUrl(pdfArtifactId, `${pdfArtifactId}:${item.jobKey}`)}
         layoutBoxes={item.materialsPreview.resumePdfLayoutBoxes}
         lineTargets={lineTargets}
+        pdfFilename="tailored-resume-preview.pdf"
         profileSourceFields={item.materialsPreview.profileSourceFields}
         renderError={renderError}
         renderPending={renderDraft.isPending}

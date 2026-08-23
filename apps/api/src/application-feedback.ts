@@ -1629,9 +1629,10 @@ function appendProfileExperienceSourceFields(db: SqliteDatabase, fields: ApplyRe
     title: string;
     company: string;
     location: string;
+    summary: string;
   }>(
     db,
-    `SELECT entry_id, position_index, date_range, title, company, location
+    `SELECT entry_id, position_index, date_range, title, company, location, summary
        FROM candidate_profile_experience_entries
       WHERE tenant_id = ? AND profile_id = ?
       ORDER BY position_index`,
@@ -1644,6 +1645,7 @@ function appendProfileExperienceSourceFields(db: SqliteDatabase, fields: ApplyRe
     addProfileSourceField(fields, profileField(`Profile > Experience entries > ${heading} > Company`, `resume.experience_entries.${index}.company`, "profile_experience"), entry.company);
     addProfileSourceField(fields, profileField(`Profile > Experience entries > ${heading} > Location`, `resume.experience_entries.${index}.location`, "profile_experience"), entry.location);
     addProfileSourceField(fields, profileField(`Profile > Experience entries > ${heading} > Date range`, `resume.experience_entries.${index}.date_range`, "profile_experience"), entry.date_range);
+    addProfileSourceField(fields, profileField(`Profile > Experience entries > ${heading} > Position summary`, `resume.experience_entries.${index}.summary`, "profile_experience"), entry.summary);
   }
   const bullets = allRows<{
     position_index: number;

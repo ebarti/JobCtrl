@@ -935,6 +935,7 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 		return false, fmt.Errorf("quiesce interrupted transition: %w", err)
 	}
 	cleanupV7Candidate(ctx.Instance.StateDir, journal.ID)
+	cleanupV9Candidate(ctx.Instance.StateDir, journal.ID)
 	if journal.BackupID != "" {
 		var pair databasePair
 		if err := decodeStrictRegular(filepath.Join(ctx.Instance.StateDir, "backups", journal.BackupID, "pair.json"), &pair); err != nil {
@@ -1120,12 +1121,14 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	switch databaseVersion {
 	case legacyJobCtrlSchemaVersion:
 		if err := temporalQuiescenceProof(activeRuntime, candidateRuntime); err != nil {
-			return restartBeforeBackup(fmt.Errorf("v6-to-v8 upgrade blocked before backup: %w", err))
+			return restartBeforeBackup(fmt.Errorf("v6-to-v9 upgrade blocked before backup: %w", err))
 		}
 	case exactJobCtrlSchemaVersion:
-		// Exact v7 upgrades add v8 only after the stopped-runtime paired backup.
+		// Exact v7 upgrades retain the private v8 step before the additive v9 step.
+	case previousJobCtrlSchemaVersion:
+		// Exact v8 upgrades add v9 only after the stopped-runtime paired backup.
 	case currentJobCtrlSchemaVersion:
-		// Ordinary exact-v8 release promotion uses the paired lifecycle unchanged.
+		// Ordinary exact-v9 release promotion uses the paired lifecycle unchanged.
 	default:
 		return restartBeforeBackup(fmt.Errorf("unsupported stopped JobCtrl schema version %d", databaseVersion))
 	}
@@ -1153,6 +1156,7 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	rollbackFailure := func(cause error) error {
 		_ = store.Advance(&journal, release.RollbackRestoring, cause)
 		cleanupV7Candidate(ctx.Instance.StateDir, journal.ID)
+		cleanupV9Candidate(ctx.Instance.StateDir, journal.ID)
 		if stopErr := stop(ctx); stopErr != nil { // Candidate records share the canonical state identity.
 			return fmt.Errorf("%v; refusing paired rollback restore while the candidate could not be quiesced: %w", cause, stopErr)
 		}
@@ -1174,13 +1178,13 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	if databaseVersion != currentJobCtrlSchemaVersion {
 		candidatePath, err := sealedV7CandidateBuilder(candidateRuntime, pair, journal.ID)
 		if err != nil {
-			return rollbackFailure(fmt.Errorf("build exact-v8 migration candidate: %w", err))
+			return rollbackFailure(fmt.Errorf("build exact-v9 migration candidate: %w", err))
 		}
 		if err := advance(store, &journal, release.MigrationCandidateReady); err != nil {
 			return rollbackFailure(err)
 		}
 		if err := sealedV7CandidateInstaller(candidateRuntime, candidatePath); err != nil {
-			return rollbackFailure(fmt.Errorf("activate exact-v8 database: %w", err))
+			return rollbackFailure(fmt.Errorf("activate exact-v9 database: %w", err))
 		}
 		if err := advance(store, &journal, release.MigrationActivated); err != nil {
 			return rollbackFailure(err)

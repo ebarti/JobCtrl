@@ -520,7 +520,8 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
     all_education_entries = get_education_entries(profile)
     all_skill_categories = get_skill_categories(profile)
     experience_entries = [
-        entry for entry in all_experience_entries
+        entry
+        for entry in all_experience_entries
         if not required_experience_ids or entry.get("id") in required_experience_ids
     ] or all_experience_entries
     education_entries = [
@@ -572,6 +573,9 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
         subtitle = " | ".join(part for part in subtitle_parts if part)
         if subtitle:
             lines.append(sanitize_text(subtitle))
+        summary = sanitize_text(str(entry.get("summary", "")))
+        if summary:
+            lines.append(summary)
 
         bullets = tailored_experience_bullets(entry, update, profile)
         for bullet in bullets:
@@ -580,11 +584,11 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
 
     lines.append("EDUCATION")
     for entry in education_entries:
-        lines.append(sanitize_text(str(entry.get("degree", ""))))
         subtitle_parts = [entry.get("institution", ""), entry.get("location", ""), entry.get("date", "")]
         subtitle = " | ".join(part for part in subtitle_parts if part)
         if subtitle:
             lines.append(sanitize_text(subtitle))
+        lines.append(sanitize_text(str(entry.get("degree", ""))))
         if entry.get("details"):
             lines.append(sanitize_text(str(entry["details"])))
         lines.append("")

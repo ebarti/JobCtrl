@@ -50,9 +50,11 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type ReactNode,
+  type RefObject,
   type SetStateAction,
 } from "react";
 
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Input } from "../../../shared/ui/input.js";
@@ -84,6 +86,7 @@ interface ResumePlateEditorProps {
   readonly htmlUrl: string | null;
   readonly layoutBoxes: readonly ResumeLayoutBox[];
   readonly lineTargets: readonly PdfAuditLineTarget[];
+  readonly pdfFilename: string;
   readonly profileSourceFields?: readonly ApplyReviewProfileSourceField[];
   readonly renderError?: string | null;
   readonly renderPending?: boolean;
@@ -191,6 +194,12 @@ type ResumeEditorFontFamily = ResumeTemplateTheme["fontFamily"] | "resume" | "mo
 type ResumeEditorLegacyFontSize = "resume" | "small" | "large" | "heading";
 type ResumeEditorFontSize = number | ResumeEditorLegacyFontSize;
 
+export interface ResumePlateSemanticTextChange {
+  readonly semanticId: string;
+  readonly baselineTexts: readonly string[];
+  readonly plateTexts: readonly string[];
+}
+
 interface ResumeEditorFormattingApi {
   readonly align: (value: ResumeEditorTextAlign) => void;
   readonly clearLink: () => void;
@@ -230,6 +239,10 @@ const RESUME_EDITOR_DEFAULT_SIZE_SCALE = 1;
 const RESUME_EDITOR_MIN_SIZE_SCALE = 0.75;
 const RESUME_EDITOR_MAX_SIZE_SCALE = 1.5;
 const RESUME_EDITOR_SIZE_SCALE_STEP = 0.05;
+const RESUME_EDITOR_DEFAULT_SIZE_PERCENT = RESUME_EDITOR_DEFAULT_SIZE_SCALE * 100;
+const RESUME_EDITOR_MIN_SIZE_PERCENT = RESUME_EDITOR_MIN_SIZE_SCALE * 100;
+const RESUME_EDITOR_MAX_SIZE_PERCENT = RESUME_EDITOR_MAX_SIZE_SCALE * 100;
+const RESUME_EDITOR_SIZE_PERCENT_STEP = RESUME_EDITOR_SIZE_SCALE_STEP * 100;
 const RESUME_EDITOR_CHROME_SELECTOR = '[data-resume-editor-chrome="true"]';
 const RESUME_LINE_SELECTOR = "[data-resume-line-number]";
 
@@ -1035,6 +1048,40 @@ function resumeTextFromPlateNode(node: Descendant): string {
     .trim();
 }
 
+function rawResumeTextFromPlateNode(node: Descendant): string {
+  if ("text" in node) {
+    return typeof node.text === "string" ? node.text : "";
+  }
+  return node.children
+    .map((child) => {
+      const text = rawResumeTextFromPlateNode(child);
+      return "text" in child || child.type !== "resume_block"
+        ? text
+        : `\n${text}\n`;
+    })
+    .join("");
+}
+
+function resumeSemanticTextsFromPlateNode(node: Descendant): readonly string[] {
+  const texts = rawResumeTextFromPlateNode(node)
+    .split(/\r?\n/u)
+    .map((text) => text.replace(/\s+/g, " ").trim());
+  return texts.length > 0 ? texts : [""];
+}
+
+function resumeBulletSemanticId(node: Descendant): string {
+  if ("text" in node || typeof node.semanticId !== "string") return "";
+  const semanticId = node.semanticId.trim();
+  return /^experience:.+:bullet:[1-9]\d*$/u.test(semanticId)
+    ? semanticId
+    : "";
+}
+
+function isResumeBulletContainer(node: Descendant): boolean {
+  if ("text" in node || typeof node.className !== "string") return false;
+  return node.className.split(/\s+/u).includes("resume-bullets");
+}
+
 function resumeTextFromPlateValue(value: Value): string {
   const lines = value
     .flatMap(resumeLineTextsFromPlateNode)
@@ -1048,6 +1095,66 @@ function resumeTextFromPlateValue(value: Value): string {
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .join("\n");
+}
+
+function resumeSemanticTextSnapshotFromPlateValue(
+  value: Value,
+): ReadonlyMap<string, readonly string[]> {
+  const textsBySemanticId = new Map<string, string[]>();
+
+  const append = (semanticId: string, node: Descendant): void => {
+    const texts = textsBySemanticId.get(semanticId) ?? [];
+    texts.push(...resumeSemanticTextsFromPlateNode(node));
+    textsBySemanticId.set(semanticId, texts);
+  };
+
+  const visit = (node: Descendant): void => {
+    if ("text" in node) return;
+    if (isResumeBulletContainer(node)) {
+      let previousSemanticId = "";
+      node.children.forEach((child, index) => {
+        if ("text" in child) return;
+        const ownSemanticId = resumeBulletSemanticId(child);
+        const nextSemanticId = node.children
+          .slice(index + 1)
+          .map(resumeBulletSemanticId)
+          .find(Boolean);
+        const semanticId = ownSemanticId || previousSemanticId || nextSemanticId || "";
+        if (semanticId) append(semanticId, child);
+        if (ownSemanticId) previousSemanticId = ownSemanticId;
+      });
+      return;
+    }
+    const semanticId = typeof node.semanticId === "string" ? node.semanticId.trim() : "";
+    if (semanticId) {
+      append(semanticId, node);
+    }
+    node.children.forEach(visit);
+  };
+
+  value.forEach(visit);
+  return textsBySemanticId;
+}
+
+export function resumeSemanticTextChangesFromPlateValues(
+  baselineValue: Value,
+  plateValue: Value,
+): readonly ResumePlateSemanticTextChange[] {
+  const baseline = resumeSemanticTextSnapshotFromPlateValue(baselineValue);
+  const current = resumeSemanticTextSnapshotFromPlateValue(plateValue);
+  const semanticIds = new Set([...baseline.keys(), ...current.keys()]);
+
+  return Array.from(semanticIds).flatMap((semanticId) => {
+    const baselineTexts = baseline.get(semanticId) ?? [];
+    const plateTexts = current.get(semanticId) ?? [];
+    if (
+      baselineTexts.length === plateTexts.length &&
+      baselineTexts.every((text, index) => text === plateTexts[index])
+    ) {
+      return [];
+    }
+    return [{ semanticId, baselineTexts, plateTexts }];
+  });
 }
 
 function resumeLineTextsFromPlateNode(node: Descendant): string[] {
@@ -2271,7 +2378,8 @@ function ResumeEditorToolbarControls({
   const linkInputId = useId();
   const linkErrorId = useId();
   const linkPopoverId = useId();
-  const [fontSizeScale, setFontSizeScale] = useState(String(RESUME_EDITOR_DEFAULT_SIZE_SCALE));
+  const fontSizeDescriptionId = useId();
+  const [fontSizePercent, setFontSizePercent] = useState(String(RESUME_EDITOR_DEFAULT_SIZE_PERCENT));
   const [linkUrl, setLinkUrl] = useState("");
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
@@ -2325,33 +2433,33 @@ function ResumeEditorToolbarControls({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [disabled, openLinkPopover]);
-  const applyFontSizeScale = useCallback(
+  const applyFontSizePercent = useCallback(
     (rawValue: string) => {
       const value = Number(rawValue);
       if (
         !Number.isFinite(value) ||
-        value < RESUME_EDITOR_MIN_SIZE_SCALE ||
-        value > RESUME_EDITOR_MAX_SIZE_SCALE
+        value < RESUME_EDITOR_MIN_SIZE_PERCENT ||
+        value > RESUME_EDITOR_MAX_SIZE_PERCENT
       ) {
         return;
       }
-      onFontSize(Number(value.toFixed(2)));
+      onFontSize(Number((value / 100).toFixed(2)));
     },
     [onFontSize],
   );
-  const normalizeFontSizeScale = useCallback(() => {
-    const value = Number(fontSizeScale);
+  const normalizeFontSizePercent = useCallback(() => {
+    const value = Number(fontSizePercent);
     if (
       !Number.isFinite(value) ||
-      value < RESUME_EDITOR_MIN_SIZE_SCALE ||
-      value > RESUME_EDITOR_MAX_SIZE_SCALE
+      value < RESUME_EDITOR_MIN_SIZE_PERCENT ||
+      value > RESUME_EDITOR_MAX_SIZE_PERCENT
     ) {
-      setFontSizeScale(String(RESUME_EDITOR_DEFAULT_SIZE_SCALE));
+      setFontSizePercent(String(RESUME_EDITOR_DEFAULT_SIZE_PERCENT));
       onFontSize(RESUME_EDITOR_DEFAULT_SIZE_SCALE);
       return;
     }
-    setFontSizeScale(String(Number(value.toFixed(2))));
-  }, [fontSizeScale, onFontSize]);
+    setFontSizePercent(String(Number(value.toFixed(0))));
+  }, [fontSizePercent, onFontSize]);
   const applyLink = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
@@ -2533,22 +2641,29 @@ function ResumeEditorToolbarControls({
       </label>
       <label className="resume-format-select" htmlFor={fontSizeId}>
         <span>Size</span>
-        <Input
-          aria-label="Size"
-          disabled={disabled}
-          id={fontSizeId}
-          max={RESUME_EDITOR_MAX_SIZE_SCALE}
-          min={RESUME_EDITOR_MIN_SIZE_SCALE}
-          step={RESUME_EDITOR_SIZE_SCALE_STEP}
-          title="1 uses the resume default size."
-          type="number"
-          value={fontSizeScale}
-          onBlur={normalizeFontSizeScale}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => {
-            setFontSizeScale(event.currentTarget.value);
-            applyFontSizeScale(event.currentTarget.value);
-          }}
-        />
+        <span className="resume-format-size-control">
+          <Input
+            aria-describedby={fontSizeDescriptionId}
+            aria-label="Size"
+            disabled={disabled}
+            id={fontSizeId}
+            max={RESUME_EDITOR_MAX_SIZE_PERCENT}
+            min={RESUME_EDITOR_MIN_SIZE_PERCENT}
+            step={RESUME_EDITOR_SIZE_PERCENT_STEP}
+            title="100% uses the resume default size."
+            type="number"
+            value={fontSizePercent}
+            onBlur={normalizeFontSizePercent}
+            onChange={(event: ChangeEvent<HTMLInputElement>) => {
+              setFontSizePercent(event.currentTarget.value);
+              applyFontSizePercent(event.currentTarget.value);
+            }}
+          />
+          <span aria-hidden="true">%</span>
+        </span>
+        <span className="sr-only" id={fontSizeDescriptionId}>
+          Percentage of the resume default size.
+        </span>
       </label>
       <div className="resume-format-button-group" aria-label="Alignment">
         <Button
@@ -2741,6 +2856,65 @@ function ResumeHtmlUnavailable({
   );
 }
 
+function ResumePdfExportControl({
+  disabled,
+  filename,
+  sourceRef,
+}: {
+  readonly disabled: boolean;
+  readonly filename: string;
+  readonly sourceRef: RefObject<HTMLElement | null>;
+}): JSX.Element {
+  const { pdfExport, telemetry } = usePorts();
+  const [exportPending, setExportPending] = useState(false);
+  const [exportError, setExportError] = useState(false);
+  const handleExport = useCallback(async () => {
+    const source =
+      sourceRef.current?.querySelector<HTMLElement>(".resume-plate-document");
+    if (!source || exportPending) return;
+    setExportError(false);
+    setExportPending(true);
+    const startedAt = performance.now();
+    try {
+      await pdfExport.downloadPdf({ filename, source });
+      telemetry.timing("resume_pdf_export", performance.now() - startedAt, {
+        status: "succeeded",
+      });
+    } catch {
+      telemetry.timing("resume_pdf_export", performance.now() - startedAt, {
+        status: "failed",
+      });
+      telemetry.event("resume_pdf_export_failed", {
+        operation: "resume_pdf_export",
+      });
+      setExportError(true);
+    } finally {
+      setExportPending(false);
+    }
+  }, [exportPending, filename, pdfExport, sourceRef, telemetry]);
+
+  return (
+    <>
+      <Button
+        className="tab"
+        disabled={disabled || exportPending}
+        size="sm"
+        type="button"
+        onClick={() => {
+          void handleExport();
+        }}
+      >
+        {exportPending ? "Exporting PDF…" : "Export PDF"}
+      </Button>
+      {exportError ? (
+        <span className="resume-pdf-export-error" role="alert">
+          PDF export failed. Try again.
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 function useResumeHtmlState(
   htmlUrl: string | null,
   htmlTransform?: (html: string) => string,
@@ -2799,18 +2973,22 @@ export function ResumeStandalonePlateEditor({
   className,
   htmlTransform,
   htmlUrl,
+  pdfFilename,
   previewStyle,
   title,
   transformKey,
   workspaceControls,
+  onSemanticTextChange,
 }: {
   readonly className?: string;
   readonly htmlTransform?: ((html: string) => string) | undefined;
   readonly htmlUrl: string | null;
+  readonly pdfFilename: string;
   readonly previewStyle?: CSSProperties | undefined;
   readonly title: string;
   readonly transformKey?: string;
   readonly workspaceControls?: ReactNode;
+  readonly onSemanticTextChange?: (changes: readonly ResumePlateSemanticTextChange[]) => void;
 }): JSX.Element {
   const htmlState = useResumeHtmlState(htmlUrl, htmlTransform, transformKey);
   const layoutBoxes = useMemo<readonly ResumeLayoutBox[]>(() => [], []);
@@ -2829,6 +3007,7 @@ export function ResumeStandalonePlateEditor({
   const [editorVersion, setEditorVersion] = useState(0);
   const formattingApiRef = useRef<ResumeEditorFormattingApi | null>(null);
   const [formattingApiReady, setFormattingApiReady] = useState(false);
+  const exportSourceRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setCurrentPlateValue(initialPlateValue);
@@ -2857,6 +3036,17 @@ export function ResumeStandalonePlateEditor({
   const handleClearLineSelection = useCallback(() => {
     setSelectedLine(null);
   }, []);
+  const handlePlateValueChange = useCallback(
+    (value: Value) => {
+      setCurrentPlateValue(value);
+      if (initialPlateValue && onSemanticTextChange) {
+        onSemanticTextChange(
+          resumeSemanticTextChangesFromPlateValues(initialPlateValue, value),
+        );
+      }
+    },
+    [initialPlateValue, onSemanticTextChange],
+  );
   const handleToggleBold = useCallback(() => formattingApiRef.current?.toggleBold(), []);
   const handleToggleItalic = useCallback(() => formattingApiRef.current?.toggleItalic(), []);
   const handleToggleUnderline = useCallback(() => formattingApiRef.current?.toggleUnderline(), []);
@@ -2889,8 +3079,9 @@ export function ResumeStandalonePlateEditor({
   const handleFontSize = useCallback((value: ResumeEditorFontSize) => formattingApiRef.current?.setFontSize(value), []);
   const handleReset = useCallback(() => {
     setCurrentPlateValue(initialPlateValue);
+    onSemanticTextChange?.([]);
     setResetVersion((currentVersion) => currentVersion + 1);
-  }, [initialPlateValue]);
+  }, [initialPlateValue, onSemanticTextChange]);
 
   const unavailableMessage =
     htmlState.status === "legacy" || htmlState.status === "missing" || htmlState.status === "error"
@@ -2924,6 +3115,11 @@ export function ResumeStandalonePlateEditor({
           onToggleItalic={handleToggleItalic}
           onToggleUnderline={handleToggleUnderline}
         />
+        <ResumePdfExportControl
+          disabled={!currentPlateValue}
+          filename={pdfFilename}
+          sourceRef={exportSourceRef}
+        />
         <Button
           className="tab"
           disabled={!dirty || !initialPlateValue}
@@ -2944,6 +3140,7 @@ export function ResumeStandalonePlateEditor({
       <div className="resume-plate-scroll" tabIndex={0}>
         {htmlState.status === "ready" && initialPlateValue && currentPlateValue ? (
           <div
+            ref={exportSourceRef}
             className="resume-plate-page"
             aria-label="Editable baseline resume page"
             data-draft-dirty={dirty ? "true" : "false"}
@@ -2957,7 +3154,7 @@ export function ResumeStandalonePlateEditor({
               onClearLineSelection={handleClearLineSelection}
               onFormattingApiChange={handleFormattingApiChange}
               onSelectLine={handleSelectLine}
-              onValueChange={setCurrentPlateValue}
+              onValueChange={handlePlateValueChange}
               pins={[]}
               replyPending={false}
               risk={risk}
@@ -2987,6 +3184,7 @@ export function ResumePlateEditor({
   htmlUrl,
   layoutBoxes,
   lineTargets,
+  pdfFilename,
   profileSourceFields = [],
   renderError = null,
   renderPending = false,
@@ -3040,6 +3238,7 @@ export function ResumePlateEditor({
   const [formattingApiReady, setFormattingApiReady] = useState(false);
   const [editorVersion, setEditorVersion] = useState(0);
   const [draftSourceVersion, setDraftSourceVersion] = useState(0);
+  const exportSourceRef = useRef<HTMLDivElement | null>(null);
   const initialPlateValue = useMemo<Value | null>(() => {
     const savedValue = draft?.latestRevision?.plateDocument;
     if (isPlateValue(savedValue)) {
@@ -3277,6 +3476,11 @@ export function ResumePlateEditor({
           onToggleItalic={handleToggleItalic}
           onToggleUnderline={handleToggleUnderline}
         />
+        <ResumePdfExportControl
+          disabled={!currentPlateValue}
+          filename={pdfFilename}
+          sourceRef={exportSourceRef}
+        />
         <Button
           className="tab"
           disabled={saveDisabled}
@@ -3331,6 +3535,7 @@ export function ResumePlateEditor({
       <div className="resume-plate-scroll" tabIndex={0}>
         {htmlState.status === "ready" && initialPlateValue && currentPlateValue ? (
           <div
+            ref={exportSourceRef}
             className="resume-plate-page"
             aria-label="Editable resume page"
             data-draft-dirty={draftDirty ? "true" : "false"}

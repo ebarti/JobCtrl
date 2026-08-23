@@ -18,6 +18,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyReviewKeys } from "../../contexts/operations/applyReviewKeys.js";
 import { routeTree } from "../../routeTree.gen.js";
 import {
+  BrowserPdfExportAdapter,
+  type PdfDocumentFactory,
+  type PdfPageRasterizer,
+  type PdfRasterizationOptions,
+} from "../../shared/adapters/local/BrowserPdfExportAdapter.js";
+import {
   makeApplyAudit,
   makeRepeatApplicationAssessment,
   makeArtifactDetail,
@@ -1339,6 +1345,63 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
   });
 
+  it("exports the current unsaved tailored resume from the Plate editor", async () => {
+    const save = vi.fn();
+    const pageCanvas = document.createElement("canvas");
+    const rasterizer: PdfPageRasterizer = vi.fn(
+      async (exportSource: HTMLElement, options: PdfRasterizationOptions) => {
+        expect(exportSource).toHaveClass("resume-plate-document");
+        expect(exportSource).toHaveTextContent("unsaved tailored export");
+        expect(exportSource.scrollWidth).toBe(1_014);
+        expect(
+          exportSource.querySelector<HTMLElement>(".resume-page")?.scrollWidth,
+        ).toBe(1_014);
+        expect(options.windowWidth).toBe(794);
+        expect(options.pageHeightPx).toBe(1_123);
+        return [
+          {
+            canvas: pageCanvas,
+            slice: { endPx: 1_123, startPx: 0 },
+          },
+        ];
+      },
+    );
+    const pdfDocumentFactory: PdfDocumentFactory = vi.fn(async () => ({
+      addPage: vi.fn(),
+      addPageImage: vi.fn(),
+      addSearchableText: vi.fn(),
+      save,
+      setPage: vi.fn(),
+    }));
+    const pdfExport = new BrowserPdfExportAdapter(pdfDocumentFactory, rasterizer);
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({ pdfExport }),
+    });
+
+    const plateEditor = await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    await userEvent.click(plateEditor);
+    await userEvent.type(plateEditor, " unsaved tailored export");
+    const resumePage = plateEditor.querySelector<HTMLElement>(".resume-page");
+    const auditBubble = plateEditor.querySelector<HTMLElement>(
+      ".resume-plate-comment[data-resume-editor-chrome='true']",
+    );
+    expect(resumePage).toBeInstanceOf(HTMLElement);
+    expect(auditBubble).toBeInstanceOf(HTMLElement);
+    Object.defineProperty(resumePage, "scrollWidth", { value: 1_014 });
+    Object.defineProperty(plateEditor, "scrollWidth", { value: 1_014 });
+    await userEvent.click(screen.getByRole("button", { name: "Export PDF" }));
+
+    await waitFor(() => expect(save).toHaveBeenCalledWith("tailored-resume-preview.pdf"));
+    expect(pdfDocumentFactory).toHaveBeenCalledWith({
+      format: "a4",
+      heightMm: 297,
+      heightPx: 1_123,
+      widthMm: 210,
+      widthPx: 794,
+    });
+    expect(rasterizer).toHaveBeenCalledTimes(1);
+  });
+
   it("labels the grounded shipped fit and revision usage for a grounded audit", async () => {
     const groundedQueue = {
       ...sampleApplyReviewQueue,
@@ -1918,7 +1981,7 @@ describe("<ApplyReviewView>", () => {
 
     const sizeInput = screen.getByLabelText("Size");
     await userEvent.clear(sizeInput);
-    fireEvent.change(sizeInput, { target: { value: "1.1" } });
+    fireEvent.change(sizeInput, { target: { value: "110" } });
     fireEvent.blur(sizeInput);
     await waitFor(() =>
       expect(shadowElementWithText(shadow, "Owned platform reliability improvements for incident response.").style.fontSize).toBe(
@@ -2922,6 +2985,74 @@ describe("<ApplyReviewView>", () => {
     expect(
       shadowText(shadow),
     ).not.toContain("No Profile source field mapping was recorded for this selected resume line.");
+  });
+
+  it("resolves position summaries to their exact Profile source field", async () => {
+    const positionSummary = "Owned engineering, security, and platform operations.";
+    const queueWithPositionSummary = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              materialsPreview: {
+                ...item.materialsPreview,
+                resumeText: [
+                  "Jordan Candidate",
+                  "",
+                  "EXPERIENCE",
+                  "Director of Engineering | Northstar Labs",
+                  "Harbor City (Remote) | Mar 2024 - Present",
+                  positionSummary,
+                  "- Owned platform reliability improvements for incident response.",
+                ].join("\n"),
+                profileSourceFields: [
+                  ...item.materialsPreview.profileSourceFields,
+                  {
+                    path: "resume.experience_entries.0.summary",
+                    label:
+                      "Profile > Experience entries > Director of Engineering at Northstar Labs > Position summary",
+                    value: positionSummary,
+                    section: "profile_experience",
+                  },
+                ],
+              },
+            }
+          : item,
+      ),
+    };
+    const artifact = vi.fn(async (artifactId: string) => ({
+      ok: true as const,
+      artifact: {
+        ...sampleArtifact,
+        artifactId,
+        jobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+        title: "Principal Platform Engineer Resume",
+        company: sampleApplyReviewQueue.items[0]!.company,
+      },
+      layoutBoxes: [],
+      tailoringExplanation: sampleTailoringExplanation,
+    }));
+    htmlPreviewResumeText = queueWithPositionSummary.items[0]!.materialsPreview.resumeText;
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => queueWithPositionSummary),
+          artifact,
+        },
+      }),
+    });
+
+    await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
+    const shadow = await findResumeShadowRoot();
+    await selectResumeLine(shadow, positionSummary);
+    await waitFor(() => expect(shadowText(shadow)).toContain("Profile source field"));
+    expect(shadowText(shadow)).toContain("Position summary");
+    expect(shadowText(shadow)).toContain(positionSummary);
+    expect(shadowText(shadow)).not.toContain(
+      "No Profile source field mapping was recorded for this selected resume line.",
+    );
   });
 
   it("feeds resume text line targets into the resume audit viewer", async () => {

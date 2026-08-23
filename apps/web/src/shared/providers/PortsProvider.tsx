@@ -6,6 +6,7 @@ import type {
   EventStreamPort,
   FeatureFlagPort,
   OpenInOsPort,
+  PdfExportPort,
   SessionPort,
   StoragePort,
   TelemetryPort,
@@ -18,6 +19,7 @@ export interface Ports {
   session: SessionPort;
   clipboard: ClipboardPort;
   openInOs: OpenInOsPort;
+  pdfExport: PdfExportPort;
   telemetry: TelemetryPort;
   featureFlags: FeatureFlagPort;
 }

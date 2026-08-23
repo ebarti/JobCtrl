@@ -2233,3 +2233,82 @@ no-mixed-runtime invariants above. V8 adds versioned role-family taxonomy and
 physically separate append-only authorities for direct benchmarks, price-level
 inputs, and geographic extrapolations; per-job market estimates remain derived
 materialized output rather than benchmark authority.
+
+Amended (2026-08-20): exact schema v9 supersedes v8 as the sole runtime
+contract. Exact-v8 sources receive an additive stopped-runtime migration that
+adds the optional per-position summary field. Retained v6 and exact-v7 sources
+compose their existing private migrations through an exact-v8 intermediate and
+then apply the same v9 step; no intermediate becomes the live database. Every
+route preserves the paired backup, owner-private candidate and intermediate
+files, atomic activation, exact-source rollback, interrupted-transition
+cleanup, and no-mixed-runtime invariants above.
+
+## 2026-08-20: Profile Plate Direct-Text Projection Uses The Canonical Form Draft
+
+Status: accepted
+
+Decision: the Profile Plate surface may project only rendered text with an
+unambiguous Candidate Profile semantic owner—full name, executive profile,
+position summary, and experience bullet—into the existing TanStack Profile
+form draft. It does not create a second profile store or bypass validation,
+undo, autosave, mutation invalidation, profile versioning, or downstream
+replacement safeguards. Composite display lines are not parsed back into
+multiple facts, and rich formatting remains local to the Plate document. The
+**Export PDF** command has no additional persistence side effect.
+
+Rationale: a direct edit to a canonical bullet must remain visible in the
+boxed Profile editor and follow the same save boundary, while splitting a
+rendered company/location/title/date row or treating visual formatting as a
+candidate fact would be ambiguous and unsafe. Semantic IDs provide a stable,
+explicit bridge for the direct fields without introducing a shadow profile.
+
+Amended (2026-08-21): projection is driven by committed Plate model values,
+not native DOM `input` events. Each update carries only semantic text that
+differs from the mounted HTML baseline, including ordered duplicate semantic
+IDs created by a bullet split. The form applies those deltas as a per-target
+three-way merge. Unrelated boxed draft changes survive; if the same target or
+its bullet structure no longer matches the rendered baseline or the last
+Plate-applied value, the boxed value wins and the UI surfaces the conflict.
+
+## 2026-08-20: Profile Experience Sequence Owns Resume Presentation Order
+
+Status: accepted
+
+Decision: `resume.experience_entries` order in the saved Candidate Profile is
+the single presentation order for baseline HTML, canonical resume text,
+tailored HTML/PDF, and the Profile Plate preview. The Profile editor exposes
+accessible move-up and move-down controls plus an explicit newest-first action;
+all three update the existing TanStack form draft and normal Profile save path.
+Resume assembly and rendering preserve the resulting sequence and do not apply
+an implicit date sort. An experience with no rendered bullets is marked as
+such by the semantic renderer so browser and server CSS omit empty-list and
+full bullet-bearing spacing.
+
+Rationale: SQLite already persists each experience's `position_index`, so an
+output-time date sort discarded deliberate user state and made UI reordering
+impossible. Keeping the ordering operation at the Profile boundary gives the
+user both a one-click chronological default and a durable custom override,
+while one canonical sequence keeps text, HTML, Plate, and PDF artifacts in
+parity.
+
+## 2026-08-20: Plate PDF Export Uses Browser-Raster Visual Fidelity
+
+Status: accepted
+
+Decision: direct Plate exports use the browser-rendered page as the PDF's
+visible layer, sliced at physical A4 or Letter page boundaries without cutting
+through a text line. A separate invisible, normalized text layer preserves
+search and extraction. The clean render clone carries the mounted template
+context and removes editor-only selection, comment, and audit chrome before
+capture.
+
+Rationale: routing HTML through jsPDF's text renderer substituted its built-in
+fonts for the browser's active fonts. Unsupported glyphs changed or vanished,
+and the substituted glyph metrics did not match the browser-positioned words,
+so punctuation-adjacent spacing could collapse. Making the browser render the
+visual authority preserves the exact mounted appearance; keeping text as a
+separate invisible layer avoids trading that fidelity for a picture-only PDF.
+
+Consequences: `PdfExportPort` remains browser-local and receives only the
+currently mounted Plate element. Export does not persist the editor, call a
+generation endpoint, register or replace an artifact, or change approval state.

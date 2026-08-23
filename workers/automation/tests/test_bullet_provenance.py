@@ -876,6 +876,23 @@ def test_detector_grounds_profile_summary_and_experience_metadata_numbers() -> N
     assert [f for f in findings if f.kind == "numeric"] == []
 
 
+def test_detector_grounds_position_summary_facts() -> None:
+    profile = _profile()
+    position_summary = "Oversaw 42 production services across three regions."
+    profile["resume"]["experience_entries"][0]["summary"] = position_summary
+
+    corpus = build_evidence_corpus(profile)
+    findings = find_fabricated_tokens(
+        "experience:acme_swe:summary",
+        position_summary,
+        corpus,
+        employers=employer_name_set(profile),
+    )
+
+    assert position_summary.lower() in corpus.text
+    assert findings == []
+
+
 def test_detector_flags_invented_metric() -> None:
     profile = _profile()
     corpus = build_evidence_corpus(profile)

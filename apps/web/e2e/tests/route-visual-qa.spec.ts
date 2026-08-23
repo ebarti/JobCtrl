@@ -2180,7 +2180,7 @@ test("Profile and Preferences subjects share one expandable-card hierarchy", asy
   await expect(resumeStyleContent).toBeVisible();
 });
 
-test("Profile experience date ranges stay compact and reflow on mobile", async ({
+test("Profile experience date ranges use the full row with compact controls", async ({
   page,
 }) => {
   for (const viewport of [
@@ -2207,6 +2207,9 @@ test("Profile experience date ranges stay compact and reflow on mobile", async (
     await expect(dateRange).toBeVisible();
     const metrics = await dateRange.evaluate((element) => {
       const body = element.getBoundingClientRect();
+      const field = element
+        .closest(".date-range-field")
+        ?.getBoundingClientRect();
       const section = element
         .closest(".profile-disclosure")
         ?.getBoundingClientRect();
@@ -2223,6 +2226,7 @@ test("Profile experience date ranges stay compact and reflow on mobile", async (
         documentOverflow:
           document.documentElement.scrollWidth -
           document.documentElement.clientWidth,
+        fieldWidth: field?.width ?? 0,
         presentWidth: present?.width ?? Number.POSITIVE_INFINITY,
         sectionWidth: section?.width ?? 0,
         startWidth: start?.width ?? Number.POSITIVE_INFINITY,
@@ -2231,12 +2235,12 @@ test("Profile experience date ranges stay compact and reflow on mobile", async (
 
     expect(metrics.borderWidth).toBe("0px");
     expect(metrics.documentOverflow).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics.bodyWidth - metrics.fieldWidth)).toBeLessThanOrEqual(
+      1,
+    );
     expect(metrics.bodyWidth).toBeLessThanOrEqual(metrics.sectionWidth - 40);
     expect(metrics.startWidth).toBeLessThanOrEqual(281);
     expect(metrics.presentWidth).toBeLessThanOrEqual(140);
-    if (viewport.width >= 1000) {
-      expect(metrics.bodyWidth).toBeLessThanOrEqual(480);
-    }
   }
 });
 

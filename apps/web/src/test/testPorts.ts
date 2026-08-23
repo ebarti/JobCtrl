@@ -10,6 +10,8 @@ import type {
   EventStreamSubscription,
   FeatureFlagPort,
   OpenInOsPort,
+  PdfExportPort,
+  PdfExportRequest,
   Session,
   SessionPort,
   StoragePort,
@@ -172,6 +174,10 @@ export class FakeOpenInOsPort implements OpenInOsPort {
   }));
 }
 
+export class FakePdfExportPort implements PdfExportPort {
+  readonly downloadPdf = vi.fn(async (_request: PdfExportRequest): Promise<void> => {});
+}
+
 export class FakeTelemetryPort implements TelemetryPort {
   readonly event = vi.fn();
   readonly error = vi.fn();
@@ -188,6 +194,7 @@ export interface BuildTestPortsOptions {
   readonly api?: Partial<Ports["api"]>;
   readonly eventStream?: EventStreamPort;
   readonly openInOs?: OpenInOsPort;
+  readonly pdfExport?: PdfExportPort;
 }
 
 export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
@@ -340,6 +347,7 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
     session: new FakeSessionPort(),
     clipboard: new FakeClipboardPort(),
     openInOs: overrides.openInOs ?? new FakeOpenInOsPort(),
+    pdfExport: overrides.pdfExport ?? new FakePdfExportPort(),
     telemetry: new FakeTelemetryPort(),
     featureFlags: new FakeFeatureFlagPort(),
   };

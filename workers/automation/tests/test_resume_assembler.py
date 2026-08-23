@@ -32,6 +32,7 @@ def _profile() -> dict:
                     "title": "Senior SWE",
                     "company": "Acme Corp",
                     "location": "Remote",
+                    "summary": "Owned the platform mandate — across regions.",
                     "bullets": ["Built a distributed system."],
                 }
             ],
@@ -117,6 +118,18 @@ def test_assembler_includes_master_bullets_when_llm_omits_update() -> None:
     payload["experience_updates"] = []
     text = _ASSEMBLER.assemble_resume_text(payload, _profile())
     assert "Built a distributed system." in text
+
+
+def test_assembler_emits_sanitized_position_summary_between_heading_and_bullets() -> None:
+    text = _ASSEMBLER.assemble_resume_text(_payload(), _profile())
+
+    heading_index = text.index("Senior SWE | Acme Corp")
+    subtitle_index = text.index("Remote | 2020-Present")
+    summary_index = text.index("Owned the platform mandate, across regions.")
+    bullet_index = text.index("- Tailored bullet about latency.")
+
+    assert heading_index < subtitle_index < summary_index < bullet_index
+    assert "Owned the platform mandate — across regions." not in text
 
 
 def test_assembler_preserves_required_skills_when_llm_omits_them() -> None:
