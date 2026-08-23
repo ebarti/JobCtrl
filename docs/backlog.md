@@ -6,7 +6,7 @@ This is the detailed engineering backlog. The public roadmap lives in
 `docs/plans/implemented/`. Delivery history lives in the git log and the
 implemented plan records.
 
-## Current State Snapshot (2026-08-12)
+## Current State Snapshot (2026-08-23)
 
 Delivered work is recorded in the git log and the implemented plan directory.
 Discovery RFC production wiring and scoring intelligence are implemented via
@@ -30,17 +30,19 @@ of legacy `jobs.*` storage fallbacks, table/artifact/profile UX improvements,
 browser QA gaps, frontend a11y deferrals, and tooling / CI enforcement gaps.
 Hosted product, hosted data, hosted automation, and cloud-mode frontend adapters
 remain deferred until the local product is solid. Native distribution is
-implemented. The public application version is resetting to the `0.1.0`
-early-access line while the withdrawn pre-launch `2.0.x` tags, releases, and
-immutable artifacts remain preserved. P7 clean-machine product QA remains an
-operational release follow-up rather than unfinished implementation.
+implemented. The published `0.1.0` build established the early-access line,
+and the `0.1.1` release candidate advances it while the withdrawn pre-launch
+`2.0.x` tags, releases, and immutable artifacts remain preserved. P7
+clean-machine product QA remains an operational release follow-up rather than
+unfinished implementation.
 
 ## Release Hardening Follow-Ups
 
-- Publish `v0.1.0` through the signed stable workflow as sequence 3 while
+- Publish `v0.1.1` through the signed stable workflow as sequence 4 while
   retaining minimum-safe sequence 2 and the existing `v2.0.7` revocation, then
-  run the published-artifact, lifecycle, clean-machine, and real-path TTFV
-  acceptance matrix recorded in `docs/publish-checklist.md`.
+  cut over the canonical installers and run the published-artifact, lifecycle,
+  clean-machine, and real-path TTFV acceptance matrix recorded in
+  `docs/publish-checklist.md`.
 - Treat analytics-optional public-demo access and post-accept
   withdrawal/current-visitor erasure as separately scoped privacy work. Keep
   the shipped consent-required behavior unchanged unless an explicit
@@ -51,7 +53,7 @@ operational release follow-up rather than unfinished implementation.
   capability checks, connection verification, model discovery, telemetry and
   spend semantics, every core `LlmPort` operation, employer-analysis synthesis,
   and fail-closed readiness before `LLM_URL` or an equivalent setting can return
-  to the product surface. The `0.1.0` early-access release supports only Codex,
+  to the product surface. The `0.1.x` early-access line supports only Codex,
   Claude, and Google.
 - Implement the explicitly deferred W2.4 spend-control delta after the initial
   public release:

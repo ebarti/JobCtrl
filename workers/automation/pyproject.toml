@@ -1,6 +1,6 @@
 [project]
 name = "jobctrl"
-version = "0.1.0"
+version = "0.1.1"
 description = "AI-powered end-to-end job application pipeline"
 readme = "README.md"
 license = "AGPL-3.0-only"
