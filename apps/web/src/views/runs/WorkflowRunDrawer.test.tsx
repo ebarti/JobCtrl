@@ -129,6 +129,76 @@ describe("<WorkflowRunDrawer>", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("labels legacy-inferred provider failures separately from automatic retry and manual recovery", async () => {
+    const workflowRun = vi.fn(async () =>
+      makeWorkflowRunDetail({
+        errorCode: "attempt_budget_exhausted",
+        errorMessage: "Tailor durable attempt budget exhausted.",
+        retryable: false,
+        failureDiagnostics: {
+          automaticRetryable: false,
+          manualRecoveryAvailable: true,
+          providerFailures: {
+            total: 8,
+            counts: [
+              {
+                source: "legacy_inferred",
+                provider: "codex",
+                model: "codex:gpt-5.6-sol",
+                operation: "unknown",
+                category: "legacy_inferred",
+                errorType: "legacy_builder_error",
+                code: "builder_error",
+                retryable: null,
+                count: 8,
+              },
+            ],
+            latest: {
+              source: "legacy_inferred",
+              provider: "codex",
+              model: "codex:gpt-5.6-sol",
+              operation: "unknown",
+              category: "legacy_inferred",
+              errorType: "legacy_builder_error",
+              code: "builder_error",
+              retryable: null,
+              messageCode: null,
+              additionalDetailCode: null,
+              additionalDetailsPresent: null,
+              providerCode: null,
+              httpStatus: null,
+              candidateId: null,
+              innerAttempt: null,
+              durableAttempt: null,
+              promptFingerprint: null,
+              schemaVersion: null,
+              traceId: null,
+              spanId: null,
+            },
+          },
+        },
+      }),
+    );
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { workflowRun } }),
+    });
+    const router = buildRouter();
+    render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+
+    const failure = await screen.findByRole("region", { name: "Failure details" });
+    expect(within(failure).getByText("Automatic retry")).toBeInTheDocument();
+    expect(within(failure).getByText("Manual recovery")).toBeInTheDocument();
+    expect(within(failure).getByText("Available")).toBeInTheDocument();
+    expect(within(failure).getByRole("heading", { level: 4, name: "Provider diagnostics" })).toBeInTheDocument();
+    expect(within(failure).getByText("8 provider failures recorded")).toBeInTheDocument();
+    expect(within(failure).getByText("legacy_inferred: builder_error")).toBeInTheDocument();
+    expect(within(failure).getByText(/recorded before structured provider instrumentation/i)).toBeInTheDocument();
+    expect(within(failure).getByText("Legacy inferred")).toBeInTheDocument();
+    expect(within(failure).getByRole("list", { name: "Provider failure counts" })).toHaveTextContent(
+      "8 codex / codex:gpt-5.6-sol / unknown: legacy_inferred: builder_error (legacy inferred)",
+    );
+  });
+
   it("names a maintenance pipeline from its selected stage scope", async () => {
     const workflowRun = vi.fn(async () =>
       makeWorkflowRunDetail({

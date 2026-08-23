@@ -62,6 +62,8 @@ import type {
   StageSummary,
   VoicePassAudit,
   WorkflowRunDetail,
+  WorkflowRunFailureDiagnostics,
+  WorkflowRunProviderFailureDiagnostic,
   WorkflowRunStatus,
   WorkflowRunSummary,
   WorkflowRunTimelineEvent,
@@ -5955,6 +5957,9 @@ export function getWorkflowRunDetail(
   // (including the superseded execution's terminal events).
   const row = applyWorkflowLifecycleFold(rawRow, loadWorkflowRunLifecycleFolds(db).get(runId));
   const summary = rowToWorkflowRunSummary(row);
+  const automaticRetryable = Boolean(row.retryable);
+  const inputSummary = parseInputSummary(row.input_summary_json);
+  const temporalRunId = nullableString(row.temporal_run_id);
   return {
     workflowId: summary.workflowId,
     runId: summary.runId,
@@ -5968,14 +5973,287 @@ export function getWorkflowRunDetail(
     result: summary.result,
     errorCode: nullableString(row.error_code),
     errorMessage: nullableString(row.error_message),
-    retryable: Boolean(row.retryable),
-    inputSummary: parseInputSummary(row.input_summary_json),
-    temporalRunId: nullableString(row.temporal_run_id),
+    retryable: automaticRetryable,
+    failureDiagnostics: providerFailureDiagnosticsForWorkflowRun(
+      db,
+      summary.jobKey,
+      temporalRunId,
+      automaticRetryable,
+      manualTailorRecoveryAvailable(
+        db,
+        summary.jobKey,
+        summary.workflowType,
+        summary.status,
+        inputSummary,
+      ),
+    ),
+    inputSummary,
+    temporalRunId,
     startedAt: summary.startedAt,
     finishedAt: summary.finishedAt,
     durationMs: summary.durationMs,
     events: parseWorkflowRunTimeline(row.events_json),
   };
+}
+
+const PROVIDER_FAILURE_MAX_TOTAL = 100;
+const PROVIDER_FAILURE_MAX_COUNTS = 12;
+const SAFE_PROVIDER_FAILURE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const SAFE_TRACE_ID = /^[a-f0-9]{32}$/;
+const SAFE_SPAN_ID = /^[a-f0-9]{16}$/;
+const SAFE_PROMPT_FINGERPRINT = /^sha256:[a-f0-9]{64}$/;
+
+/**
+ * Project only the allowlisted provider envelope from a run-bound tailoring
+ * audit. The materials metadata is an internal audit store and can contain
+ * prompts or generated content; this boundary must never return either.
+ */
+function providerFailureDiagnosticsForWorkflowRun(
+  db: SqliteDatabase,
+  jobId: string,
+  temporalRunId: string | null,
+  automaticRetryable: boolean,
+  manualRecoveryAvailable: boolean,
+): WorkflowRunFailureDiagnostics {
+  const base: WorkflowRunFailureDiagnostics = {
+    automaticRetryable,
+    manualRecoveryAvailable,
+    providerFailures: null,
+  };
+  // Tailoring audits store the Temporal execution ID, not the logical
+  // workflow ID. Fail closed when an older projection lacks this identity.
+  if (!jobId || !temporalRunId || !tableExists(db, "job_materials")) return base;
+
+  const rows = allRows<{ metadata_json: string | null }>(
+    db,
+    `SELECT metadata_json
+       FROM job_materials
+      WHERE tenant_id = ? AND job_id = ?
+      ORDER BY generation DESC
+      LIMIT 20`,
+    [DEFAULT_TENANT, jobId],
+  );
+  const counts = new Map<string, {
+    source: "structured" | "legacy_inferred";
+    provider: string;
+    model: string;
+    operation: string;
+    category: string;
+    errorType: string;
+    code: string;
+    retryable: boolean | null;
+    count: number;
+  }>();
+  let total = 0;
+  let latest: WorkflowRunProviderFailureDiagnostic | null = null;
+
+  for (const row of rows) {
+    const metadata = parseJsonRecord(row.metadata_json);
+    const audits = metadata?.["tailoring_attempt_audits"];
+    if (!Array.isArray(audits)) continue;
+    // The append-only audit is oldest-to-newest. Process the newest matching
+    // execution first so `latest` remains the current bounded diagnostic.
+    for (const audit of [...audits].reverse()) {
+      if (!isRecord(audit) || audit["execution_id"] !== temporalRunId) continue;
+      const report = audit["report"];
+      if (!isRecord(report) || !Array.isArray(report["attempt_history"])) continue;
+      for (const attempt of [...report["attempt_history"]].reverse()) {
+        if (!isRecord(attempt) || !Array.isArray(attempt["candidates"])) continue;
+        for (const candidate of [...attempt["candidates"]].reverse()) {
+          if (total >= PROVIDER_FAILURE_MAX_TOTAL) break;
+          if (!isRecord(candidate)) continue;
+          const diagnostic = parseCandidateProviderFailureDiagnostic(candidate);
+          if (!diagnostic) continue;
+          total += 1;
+          if (latest === null) latest = diagnostic;
+          const key = [
+            diagnostic.source,
+            diagnostic.provider,
+            diagnostic.model,
+            diagnostic.operation,
+            diagnostic.category,
+            diagnostic.errorType,
+            diagnostic.code,
+            diagnostic.retryable === null
+              ? "retryability_unknown"
+              : diagnostic.retryable
+                ? "retryable"
+                : "not_retryable",
+          ].join("|");
+          const current = counts.get(key);
+          if (current) {
+            current.count += 1;
+          } else if (counts.size < PROVIDER_FAILURE_MAX_COUNTS) {
+            counts.set(key, {
+              source: diagnostic.source,
+              provider: diagnostic.provider,
+              model: diagnostic.model,
+              operation: diagnostic.operation,
+              category: diagnostic.category,
+              errorType: diagnostic.errorType,
+              code: diagnostic.code,
+              retryable: diagnostic.retryable,
+              count: 1,
+            });
+          }
+        }
+      }
+    }
+  }
+  if (!total) return base;
+  return {
+    ...base,
+    providerFailures: {
+      total,
+      counts: [...counts.values()].sort((left, right) =>
+        right.count - left.count || left.code.localeCompare(right.code),
+      ),
+      latest,
+    },
+  };
+}
+
+function parseCandidateProviderFailureDiagnostic(
+  candidate: Record<string, unknown>,
+): WorkflowRunProviderFailureDiagnostic | null {
+  if (candidate["status"] === "provider_error" && isRecord(candidate["provider_error"])) {
+    return parseProviderFailureDiagnostic(candidate["provider_error"]);
+  }
+  return parseLegacyCodexBuilderErrorDiagnostic(candidate);
+}
+
+/**
+ * Historical Codex executions recorded SDK turn failures as parse errors.
+ * This bridge is deliberately exact: no other parse error or free-form text
+ * may be reclassified as a provider failure.
+ */
+function parseLegacyCodexBuilderErrorDiagnostic(
+  candidate: Record<string, unknown>,
+): WorkflowRunProviderFailureDiagnostic | null {
+  const model = safeProviderFailureToken(candidate["model"]);
+  if (
+    candidate["status"] !== "parse_error" ||
+    candidate["parse_error"] !== "builder error" ||
+    !model ||
+    !model.startsWith("codex:") ||
+    model.length === "codex:".length
+  ) {
+    return null;
+  }
+  return {
+    source: "legacy_inferred",
+    provider: "codex",
+    model,
+    operation: "unknown",
+    category: "legacy_inferred",
+    errorType: "legacy_builder_error",
+    code: "builder_error",
+    retryable: null,
+    messageCode: null,
+    additionalDetailCode: null,
+    additionalDetailsPresent: null,
+    providerCode: null,
+    httpStatus: null,
+    candidateId: null,
+    innerAttempt: null,
+    durableAttempt: null,
+    promptFingerprint: null,
+    schemaVersion: null,
+    traceId: null,
+    spanId: null,
+  };
+}
+
+function manualTailorRecoveryAvailable(
+  db: SqliteDatabase,
+  jobId: string,
+  workflowType: string,
+  workflowStatus: WorkflowRunStatus,
+  inputSummary: Record<string, unknown>,
+): boolean {
+  if (
+    workflowType !== "JobPreparationWorkflow" ||
+    workflowStatus !== "failed" ||
+    !jobId ||
+    !tableExists(db, "job_stage_states")
+  ) {
+    return false;
+  }
+  const steps = inputSummary["steps"];
+  if (!Array.isArray(steps) || !steps.some((step) => step === "tailor")) return false;
+  const stage = getRow<{ state: string; retryable: number | null }>(
+    db,
+    `SELECT state, retryable
+       FROM job_stage_states
+      WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'
+      LIMIT 1`,
+    [DEFAULT_TENANT, jobId],
+  );
+  if (!stage || !["failed", "exhausted"].includes(stage.state)) return false;
+  if (stage.state === "exhausted") return true;
+  return stage.retryable !== 0 && latestStageRetryabilityByEvent(db, jobId).get("tailor") !== false;
+}
+
+function parseProviderFailureDiagnostic(
+  value: Record<string, unknown>,
+): WorkflowRunProviderFailureDiagnostic | null {
+  const provider = safeProviderFailureToken(value["provider"]);
+  const model = safeProviderFailureToken(value["model"]);
+  const operation = safeProviderFailureToken(value["operation"]);
+  const category = safeProviderFailureToken(value["category"]);
+  const errorType = safeProviderFailureToken(value["error_type"]);
+  const code = safeProviderFailureToken(value["code"]);
+  if (!provider || !model || !operation || !category || !errorType || !code) return null;
+  return {
+    source: "structured",
+    provider,
+    model,
+    operation,
+    category,
+    errorType,
+    code,
+    retryable: typeof value["retryable"] === "boolean" ? value["retryable"] : null,
+    messageCode: safeProviderFailureToken(value["message_code"]),
+    additionalDetailCode: safeProviderFailureToken(value["additional_detail_code"]),
+    additionalDetailsPresent: value["additional_details_present"] === true,
+    providerCode: safeProviderFailureToken(value["codex_error_code"]),
+    httpStatus: safeHttpStatus(value["http_status"]),
+    candidateId: safeProviderFailureToken(value["candidate_id"]),
+    innerAttempt: safePositiveInteger(value["inner_attempt"]),
+    durableAttempt: safePositiveInteger(value["durable_attempt"]),
+    promptFingerprint: safeFingerprint(value["prompt_fingerprint"]),
+    schemaVersion: safeProviderFailureToken(value["schema_version"]),
+    traceId: safeTraceId(value["trace_id"]),
+    spanId: safeSpanId(value["span_id"]),
+  };
+}
+
+function safeProviderFailureToken(value: unknown): string | null {
+  return typeof value === "string" && SAFE_PROVIDER_FAILURE_TOKEN.test(value) ? value : null;
+}
+
+function safeHttpStatus(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599
+    ? value
+    : null;
+}
+
+function safePositiveInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 1000
+    ? value
+    : null;
+}
+
+function safeFingerprint(value: unknown): string | null {
+  return typeof value === "string" && SAFE_PROMPT_FINGERPRINT.test(value) ? value : null;
+}
+
+function safeTraceId(value: unknown): string | null {
+  return typeof value === "string" && SAFE_TRACE_ID.test(value) ? value : null;
+}
+
+function safeSpanId(value: unknown): string | null {
+  return typeof value === "string" && SAFE_SPAN_ID.test(value) ? value : null;
 }
 
 function parseInputSummary(value: unknown): Record<string, unknown> {

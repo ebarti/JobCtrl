@@ -833,3 +833,70 @@ async def test_preparation_workflow_retries_transient_tailor_failure(
     assert result.steps_completed == ["tailor"]
     assert result.steps_failed == []
     assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_preparation_tailor_failure_owns_the_temporal_execution_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new Tailor audit must be owned by the execution UUID, not its logical ID."""
+
+    queue = f"prep-tailor-audit-owner-{uuid.uuid4()}"
+    observed_audit_execution_ids: list[str | None] = []
+
+    @activity.defn(name="record_workflow_started")
+    async def record_started(_payload) -> None:
+        return None
+
+    @activity.defn(name="record_workflow_outcome")
+    async def record_outcome(_payload) -> None:
+        return None
+
+    @activity.defn(name="recover_preparation_state")
+    async def recover_state(_payload) -> None:
+        return None
+
+    def exhausted_tailor(payload, **_kwargs) -> dict[str, object]:
+        observed_audit_execution_ids.append(payload.workflow_id)
+        return {
+            "status": "exhausted",
+            "error": "Tailor durable attempt budget exhausted.",
+        }
+
+    monkeypatch.setattr("jobctrl.materials.activities._tailor_one_job", exhausted_tailor)
+    payload = JobPreparationInput(
+        tenant_id="local",
+        job_id=_JOB_ID,
+        steps=["tailor"],
+        target_version="1",
+        idempotency_key=f"preparation:{uuid.uuid4().hex}",
+    )
+    logical_workflow_id = f"prep-{payload.idempotency_key}"
+
+    async with time_skipping_env() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[JobPreparationWorkflow],
+            activities=[
+                _check_spend_budget,
+                record_started,
+                record_outcome,
+                recover_state,
+                tailor_job_activity,
+            ],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await env.client.start_workflow(
+                JobPreparationWorkflow.run,
+                payload,
+                id=logical_workflow_id,
+                task_queue=queue,
+                id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+            )
+            result = await asyncio.wait_for(handle.result(), timeout=30)
+
+    assert result.steps_failed == ["tailor"]
+    assert result.error_code == "attempt_budget_exhausted"
+    assert observed_audit_execution_ids == [handle.first_execution_run_id]
+    assert observed_audit_execution_ids[0] != logical_workflow_id

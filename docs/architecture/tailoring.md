@@ -389,6 +389,23 @@ The retry loop is separate from the durable preparation work-item retry budget.
 The inner loop improves one tailoring run. The durable work item controls how
 many failed runs the background preparation queue auto-requeues.
 
+A provider-call failure is not a JSON parse failure. Candidate attempt audit
+records use `provider_error` only for an application-owned, allowlisted failure
+envelope: provider/model/operation, category/type/code, retryability, known
+structured provider codes, candidate and inner/durable attempt, workflow
+identity, prompt fingerprint, schema version, and available trace/span IDs.
+Provider messages, `additional_details` text, SDK objects, prompts, responses,
+resume/job text, paths, URLs, and secrets are never copied into that envelope.
+The workflow-run detail projects bounded counts and the latest safe summary for
+the matching execution, so repeated provider failures remain distinguishable
+from a validation or parsing failure.
+
+For pre-instrumentation records only, the run detail has one deliberately exact
+legacy bridge: a matching Temporal execution whose candidate is a Codex-routed
+model with `status: "parse_error"` and literal `parse_error: "builder error"`.
+It is labeled `legacy_inferred`, has unknown per-call retryability, and omits
+all structured provider fields. No other parse error is reclassified.
+
 ## Validation Layers
 
 Tailoring has multiple gates. Some are deterministic, some are LLM-judged.

@@ -1415,10 +1415,97 @@ def _safe_candidate_summary(record: dict[str, Any]) -> dict[str, Any]:
         "judge": record.get("judge"),
         "fabrication_gate": record.get("fabrication_gate"),
         "parse_error": record.get("parse_error"),
+        "provider_error": record.get("provider_error"),
         "post_generation_fit": record.get("post_generation_fit"),
         "bullet_limit_overflows": record.get("bullet_limit_overflows") or [],
         "summary": _candidate_payload_summary(payload),
     }
+
+
+class _LlmPayloadParseError(ValueError):
+    """The provider returned text, but no valid JSON payload could be decoded."""
+
+
+def _safe_provider_audit_token(value: object, *, fallback: str) -> str:
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value):
+        return value
+    return fallback
+
+
+def _provider_for_model(model: object) -> str:
+    value = str(model or "").lower()
+    if value.startswith(("gpt-", "o1", "o3", "o4", "codex")):
+        return "openai"
+    if value.startswith("claude"):
+        return "anthropic"
+    if value.startswith("gemini"):
+        return "google"
+    return "unknown"
+
+
+def _safe_provider_error_record(
+    exc: BaseException,
+    *,
+    model: str,
+    candidate_id: str,
+    inner_attempt: int,
+    workflow_run_id: str | None,
+    durable_attempt: int | None,
+    prompt_fingerprint: str,
+) -> dict[str, Any]:
+    """Return a bounded audit record without serializing an exception or SDK object."""
+
+    envelope = getattr(exc, "envelope", None)
+    serialized = envelope.to_dict() if callable(getattr(envelope, "to_dict", None)) else {}
+    if not isinstance(serialized, dict):
+        serialized = {}
+    record: dict[str, Any] = {
+        "provider": _safe_provider_audit_token(
+            serialized.get("provider"),
+            fallback=_provider_for_model(serialized.get("model") or model),
+        ),
+        "model": _safe_provider_audit_token(
+            serialized.get("model") or model, fallback="unknown"
+        ),
+        "operation": _safe_provider_audit_token(
+            serialized.get("operation"), fallback="chat_json"
+        ),
+        "category": _safe_provider_audit_token(
+            serialized.get("category"), fallback="provider_exception"
+        ),
+        "error_type": _safe_provider_audit_token(
+            serialized.get("error_type"), fallback="unknown_exception"
+        ),
+        "code": _safe_provider_audit_token(
+            serialized.get("code"), fallback="unclassified_exception"
+        ),
+        "retryable": serialized.get("retryable") is True,
+        "candidate_id": candidate_id,
+        "inner_attempt": inner_attempt,
+        "prompt_fingerprint": prompt_fingerprint,
+        "schema_version": TAILORING_SCHEMA_VERSION,
+    }
+    for key, limit in (
+        ("message_code", 64),
+        ("additional_detail_code", 64),
+        ("codex_error_code", 64),
+        ("trace_id", 32),
+        ("span_id", 16),
+    ):
+        value = serialized.get(key)
+        if isinstance(value, str) and re.fullmatch(r"[a-zA-Z0-9_:-]{1," + str(limit) + r"}", value):
+            record[key] = value
+    http_status = serialized.get("http_status")
+    if isinstance(http_status, int) and 100 <= http_status <= 599:
+        record["http_status"] = http_status
+    if serialized.get("additional_details_present") is True:
+        record["additional_details_present"] = True
+    safe_workflow_id = _safe_provider_audit_token(workflow_run_id, fallback="")
+    if safe_workflow_id:
+        record["workflow_run_id"] = safe_workflow_id
+    if durable_attempt is not None:
+        record["durable_attempt"] = durable_attempt
+    return record
 
 
 def _with_tailoring_attempt_audit(
@@ -2215,6 +2302,8 @@ class TailorResumeUseCase:
             tailoring_plan=tailoring_plan,
             tailor_prompt_base=tailor_prompt_base,
             execution_guard=commit_guard,
+            audit_execution_id=audit_execution_id,
+            durable_attempt=durable_attempt,
         )
         if commit_guard is not None:
             commit_guard()
@@ -2235,13 +2324,22 @@ class TailorResumeUseCase:
                 if commit_guard is not None:
                     commit_guard()
                 self._repository.save(materials)
-            self._publish_failed(materials, validation_errors=("exhausted_retries",), attempt=attempts)
+            provider_failed = str(report.get("status")) == "provider_error"
+            self._publish_failed(
+                materials,
+                validation_errors=(("provider_error",) if provider_failed else ("exhausted_retries",)),
+                attempt=attempts,
+            )
             return TailorOutcome(
                 materials=materials,
-                status="exhausted_retries",
+                status="provider_error" if provider_failed else "exhausted_retries",
                 attempts=attempts,
                 report=report,
-                error="No parseable JSON in any attempt",
+                error=(
+                    "All candidate provider calls failed"
+                    if provider_failed
+                    else "No parseable JSON in any attempt"
+                ),
             )
 
         parsed_payload = mark_current_artifact_budget(parsed_payload)
@@ -2629,6 +2727,8 @@ class TailorResumeUseCase:
         tailoring_plan: TailoringPlan,
         tailor_prompt_base: str,
         execution_guard: Callable[[], None] | None = None,
+        audit_execution_id: str | None = None,
+        durable_attempt: int | None = None,
     ) -> tuple[dict, dict | None, ValidationResult, JudgeVerdict | None]:
         """Run the LLM ⇒ validate ⇒ judge attempt loop.
 
@@ -2762,6 +2862,8 @@ class TailorResumeUseCase:
                     job=job,
                     attempt=attempt + 1,
                     employer_analysis=employer_analysis,
+                    audit_execution_id=audit_execution_id,
+                    durable_attempt=durable_attempt,
                 )
                 attempt_record["candidates"].append(candidate.record)
                 last_payload = candidate.payload or last_payload
@@ -2922,7 +3024,17 @@ class TailorResumeUseCase:
                 "prompt_fingerprint"
             )
             return report, best_rejected.payload, best_rejected.validation, best_rejected.verdict
-        if last_payload is not None and not last_validation.passed:
+        provider_candidates = [
+            candidate
+            for attempt_record in report["attempt_history"]
+            for candidate in attempt_record.get("candidates") or []
+        ]
+        if last_payload is None and provider_candidates and all(
+            str(candidate.get("status") or "") == "provider_error"
+            for candidate in provider_candidates
+        ):
+            report["status"] = "provider_error"
+        elif last_payload is not None and not last_validation.passed:
             report["status"] = "failed_validation"
         return report, last_payload, last_validation, last_verdict
 
@@ -3004,12 +3116,15 @@ class TailorResumeUseCase:
         job: dict,
         attempt: int,
         employer_analysis: EmployerAnalysis,
+        audit_execution_id: str | None,
+        durable_attempt: int | None,
     ) -> _TailorCandidate:
         candidate_id = f"candidate-{abs(hash((model, len(messages), messages[-1].content[:80]))) % 10_000_000}"
         record: dict[str, Any] = {
             "candidate_id": candidate_id,
             "model": model,
             "schema_version": TAILORING_SCHEMA_VERSION,
+            "inner_attempt": attempt,
             "prompt_fingerprint": fingerprint_value(
                 [
                     {"role": message.role, "content": message.content}
@@ -3027,9 +3142,28 @@ class TailorResumeUseCase:
                 max_tokens=self._llm_policy.candidate_max_tokens,
                 thinking_budget=self._llm_policy.thinking_budget,
             )
-        except Exception as exc:  # noqa: BLE001
+        except (json.JSONDecodeError, _LlmPayloadParseError):
             record["status"] = "parse_error"
-            record["parse_error"] = str(exc)
+            record["parse_error"] = {"code": "invalid_json"}
+            return _TailorCandidate(
+                payload={},
+                validation=empty_validation,
+                verdict=None,
+                tailored_text="",
+                model=model,
+                record=record,
+            )
+        except Exception as exc:  # noqa: BLE001 - persist only a typed safe envelope
+            record["status"] = "provider_error"
+            record["provider_error"] = _safe_provider_error_record(
+                exc,
+                model=model,
+                candidate_id=candidate_id,
+                inner_attempt=attempt,
+                workflow_run_id=audit_execution_id,
+                durable_attempt=durable_attempt,
+                prompt_fingerprint=str(record["prompt_fingerprint"]),
+            )
             return _TailorCandidate(
                 payload={},
                 validation=empty_validation,
@@ -3220,7 +3354,10 @@ class TailorResumeUseCase:
                 response_schema=schema,
                 thinking_budget=thinking_budget,
             )
-            return _extract_json(raw)
+            try:
+                return _extract_json(raw)
+            except ValueError as exc:
+                raise _LlmPayloadParseError("invalid JSON payload") from exc
 
     def _judge_resume(
         self,
