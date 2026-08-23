@@ -563,6 +563,9 @@ def _judge_pass() -> str:
                 "required_content_preserved": 1.0,
                 "ats_readability": 0.9,
                 "specificity_and_metrics": 0.85,
+                "semantic_fidelity": 0.95,
+                "bullet_selection_focus": 0.95,
+                "professional_register": 0.95,
             },
             "issues": [],
             "unsupported_claims": [],
@@ -679,17 +682,15 @@ def test_accepted_resume_updates_requirement_fit_artifact_coverage(tmp_path: Pat
     assert salesforce_coverage.state == "missing_from_profile"
 
 
-def test_suffixed_bare_magnitude_is_hard_rejected_by_detector_and_writes_no_provenance(
+def test_suffixed_bare_magnitude_is_rejected_by_achievement_binding_and_writes_no_provenance(
     tmp_path: Path,
 ) -> None:
     """Regression for the High finding (criterion 4 / CONTROL-03): a metrics-hungry
     job tempts the model to invent a bare magnitude with no leading ``$`` (``10M``).
-    The profile carries no such number, the base quality gate accepts the line
-    (it also has the grounded ``40%`` + a seniority signal) and the scripted judge
-    passes — so ONLY the deterministic never-fabricate detector can catch it. Before
-    the regex fix ``10M`` was not even extracted, so the unsourced metric was
-    approved and persisted with zero findings. It must now HARD-REJECT the resume
-    and persist no provenance."""
+    The profile carries no such number. Achievement-scoped metric validation now
+    rejects it before a judge can approve the candidate; the independent detector
+    remains covered by its direct regression suite. No rejected provenance may be
+    persisted."""
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()
     publisher = _RecordingPublisher()
@@ -697,12 +698,13 @@ def test_suffixed_bare_magnitude_is_hard_rejected_by_detector_and_writes_no_prov
     fabricated = _payload(
         "Owned the API, cut latency 40% with Python, and scaled it to 10M users."
     )
-    llm = _ScriptedLlm([fabricated, _judge_pass()] * 4)
+    llm = _ScriptedLlm([fabricated] * 4)
     outcome = _use_case(materials_repo, provenance_repo, llm, publisher).execute(
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
 
-    # The resume is NOT approved despite the judge pass — the detector gated it.
+    # The resume is rejected before the judge because the cited achievement does
+    # not contain the invented magnitude.
     assert outcome.status == "failed_validation"
     assert outcome.materials is not None
     assert not outcome.materials.is_resume_approved
@@ -711,9 +713,9 @@ def test_suffixed_bare_magnitude_is_hard_rejected_by_detector_and_writes_no_prov
     assert not any(
         getattr(e, "event_type", "") == "BulletProvenanceRecorded" for e in publisher.events
     )
-    # The fabrication is surfaced as the rejection reason, naming the bare magnitude.
+    # The rejection identifies the achievement-scoped support failure.
     errors = " ".join(outcome.materials.last_validation.errors)
-    assert "fabricate" in errors.lower() or "fabrication" in errors.lower()
+    assert "not supported by its mapped achievement evidence" in errors.lower()
     assert "10m" in errors.lower()
 
 

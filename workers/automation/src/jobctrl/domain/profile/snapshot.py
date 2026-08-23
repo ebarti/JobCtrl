@@ -141,5 +141,7 @@ def _build_resume_facts(profile: Profile) -> dict[str, Any]:
         ],
         "preserved_projects": [],
         "preserved_school": " ; ".join(education_lines),
+        # Non-authoritative compatibility projection only. Profile derives
+        # achievement metrics and preserves unmatched legacy values losslessly.
         "real_metrics": list(profile.resume_constraints.real_metrics),
     }

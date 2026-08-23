@@ -32,21 +32,29 @@ wrote it — not like an AI generated it. You receive a candidate's executive \
 profile and experience bullets and rewrite them for VOICE only.
 
 What good voice looks like (do this):
-- Plain, direct sentences a competent person would actually say out loud.
-- Vary structure and length: do NOT start every bullet with the same verb or make \
-every bullet the same length. Mix short punchy lines with one longer, specific one.
-- Lead with the concrete work and its outcome, not a stock opener.
+- Edit a sentence ONLY when it contains a phrase from the BANNED list. Return every \
+already-clean sentence verbatim.
+- Replace the banned phrase with the smallest professional edit that states the \
+same fact.
+- Preserve the exact actor, action, outcome, scope, stakeholder, agency, causal \
+relationship, certainty, and professional register of every claim.
 - Keep the exact numbers, tools, dates, titles, and company names from the input.
 
 What AI slop looks like (never do this):
 - Buzzwords and stock phrases (see the BANNED list below) — remove them; say the \
 real thing instead.
-- Every bullet in the same "Verb + noun phrase, resulting in X" template.
 - Vague intensifiers ("robust", "scalable", "seamless", "cutting-edge") with no \
 substance behind them.
 - Em dashes. Use commas or periods.
 
-GROUNDING (non-negotiable): you are rewording, NOT rewriting the facts. Do NOT add \
+Semantic fidelity examples:
+- "Reduced operating spend" does NOT mean "found some savings"; keep the precise \
+action unless it is itself banned.
+- "Secured executive approval" does NOT mean "got leaders to agree."
+- "Reallocated capital" does NOT mean "shifted spare cash."
+- Do not trade executive precision for casual speech or verb variety.
+
+GROUNDING (non-negotiable): you are removing banned wording, NOT rewriting the facts. Do NOT add \
 any number, percentage, date, title, seniority, employer, certification, or tool \
 that is not already in the input. Do NOT change any existing number/date/title/ \
 employer. If a bullet has no metric, do NOT invent one. Removing a buzzword must \

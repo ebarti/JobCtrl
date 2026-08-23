@@ -4044,6 +4044,9 @@ export interface VoicePassAudit {
   promptVersion: string;
   proxyDelta: Record<string, unknown>;
   reason: string;
+  summaryRejectionReason?: string;
+  scopeViolations?: string[];
+  finalJudge?: Record<string, unknown>;
 }
 
 export interface ArtifactTailoringExplanation {

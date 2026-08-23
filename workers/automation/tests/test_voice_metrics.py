@@ -74,8 +74,8 @@ def test_delta_improves_when_buzzwords_removed() -> None:
     assert delta.improved
 
 
-def test_delta_improves_when_structure_varied_even_if_buzzwords_flat() -> None:
-    """A pass that varies structure (no buzzwords either side) still counts."""
+def test_delta_does_not_accept_synonym_rewrites_for_structure_alone() -> None:
+    """Structure is diagnostic, not authority to rewrite already-clean claims."""
     before = [
         "Built the alpha service for the team.",
         "Built the beta service for the team.",
@@ -89,7 +89,7 @@ def test_delta_improves_when_structure_varied_even_if_buzzwords_flat() -> None:
     delta = measure_voice_delta(before, after)
     assert delta.buzzword_density_delta == 0.0  # neither side has buzzwords
     assert delta.structural_variety_increased
-    assert delta.improved
+    assert not delta.improved
 
 
 def test_delta_does_not_improve_when_voice_makes_it_worse() -> None:

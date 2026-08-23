@@ -16,6 +16,13 @@ behind a stack of gates. What it guarantees:
   never candidate evidence.
 - Required experience and skill-category IDs and required bullets are preserved;
   the model cannot add sections, experiences, skill categories, or education.
+- Optional achievements are selected, not copied wholesale. The planner keeps
+  one strongest grounded achievement edge per requirement, and the generator
+  emits the smallest sufficient set. A per-role maximum is a ceiling, never a
+  fill target.
+- Every experience bullet maps to one achievement. Each numeric claim must be
+  present in that same achievement's evidence; a global metric inventory is not
+  claim authority.
 - No fabricated metric, date, title, employer, or ungrounded named technology
   survives into an approved artifact.
 - Keyword coverage is computed against the rendered resume text, never inferred
@@ -31,7 +38,7 @@ Approval must clear every gate below (each detailed under
 | Schema + field validation | JSON shape, required IDs, allowed skills, title safety, max bullets | deterministic |
 | Rendered-text + quality | required anchors present, evidence/metrics verified, prohibited claims absent, keyword stuffing bounded | deterministic |
 | Post-generation fit | fit score and must-have coverage against the target profile | LLM + deterministic |
-| Structured judge | independent pass/fail safety and quality (skipped only in lenient mode) | LLM |
+| Structured judge | independent pass/fail safety, selection focus, semantic fidelity, and professional register; re-run on accepted post-voice text (skipped only in lenient mode) | LLM |
 | Adversarial review | six-persona challenge for high-fit jobs | LLM |
 | Fabrication gate | never-fabricate token scan + prose skill/tool allowlist; re-run after the voice pass; fails closed | deterministic |
 
@@ -54,7 +61,8 @@ The model is asked:
 ```text
 Here is the candidate's canonical master resume, the target job, the tailoring
 policy, target profile, requirement-achievement coverage graph, required
-profile evidence, allowed skills, verified metrics, and the quality plan.
+profile evidence, allowed skills, achievement-owned metrics, and the quality
+plan.
 
 Rewrite only these mutable resume fields and return JSON plus generated claim
 mapping:
@@ -113,7 +121,7 @@ Tailoring combines several inputs. Each input has a different authority.
 
 | Input | Source | What It Controls |
 | --- | --- | --- |
-| Candidate master resume | `ProfileSnapshot` / profile aggregate | The only source of candidate facts: summary, experience, education, skill categories, required bullets, real metrics |
+| Candidate master resume | `ProfileSnapshot` / profile aggregate | The only source of candidate facts: summary, experience, education, skill categories, required bullets, and achievement-owned metrics. The flat `real_metrics` field is a non-authoritative compatibility projection; unmatched legacy values are preserved but remain unassigned. |
 | Tailoring policy | Profile tailoring rules | Claim policy, generation permissions, required content pins, max bullets, and advanced auto-approval |
 | Writing style | Profile writing preferences | Tone, bullet standards, verbosity, advisory keyword emphasis, first-person preference |
 | Target job | Job record | The target role, description, responsibilities, skills, and company context |
@@ -183,16 +191,18 @@ The system prompt contains these sections:
   only where policy allows it, and skill category items.
 - Fixed structure boundary: contact header, experience metadata, education, and
   section order are injected by code.
-- Source-of-truth rules: profile data, required bullets, and real metrics are
-  the only candidate evidence.
+- Source-of-truth rules: profile data and required bullets are the only candidate
+  evidence; metrics are extracted from and remain scoped to their owning
+  achievement.
 - Hard rules: return every required profile ID exactly once, preserve required
-  bullets, include every requirement-covered achievement, do not add/remove
-  experience, education, or skill categories, do not invent skills or metrics,
-  and treat max bullet count as a layout budget that mandatory covered/pinned
-  content may exceed with an audit reason.
-- Writing method: use pinned evidence, order bullets strongest-to-weakest inside
-  each experience entry, write result-first CAR/PAR bullets, order existing
-  skills by truthful target overlap, and write a concise grounded summary.
+  bullets, include the pruned strongest requirement-covered achievements, do not
+  add/remove experience, education, or skill categories, do not invent skills
+  or metrics, cite one achievement per bullet, and treat max bullet count as a
+  ceiling rather than a quota.
+- Writing method: retain explicit pins, select the smallest sufficient
+  achievement set, order it strongest-to-weakest, express precise action and
+  outcome without changing agency or causality, order existing skills by
+  truthful target overlap, and write a concise grounded summary.
 - Master resume payloads: existing experience rows, education rows, and skill
   categories.
 - Tailoring policy and writing style.
@@ -297,11 +307,13 @@ The plan includes:
   directives.
 - `requirement_directives`: requirement-level instructions derived from the
   requirement fit report when it matches the same job and analysis generation.
-- `required_evidence_ids`: profile evidence that must be represented.
+- `required_evidence_ids`: only evidence explicitly pinned by a required
+  baseline bullet; relevance or seniority never silently creates a hard pin.
 - `seniority_evidence_ids`: profile evidence that supports senior/staff/director
   positioning.
-- `verified_metrics`: metrics from profile constraints, achievement evidence,
-  and baseline bullets.
+- `verified_metrics`: a compatibility index derived from achievement evidence
+  and baseline bullets. Claim validation still checks each number against the
+  specific evidence ID mapped to that claim.
 - `prohibited_claims`: claims that must not appear because the requirement fit
   says they are missing/blocked or explicitly avoidable.
 - `requirement_led_controls`: claim policy, generation permissions, required
@@ -319,8 +331,9 @@ The plan includes:
   be promoted to resume coverage by one bad declaration.
 - `coverage_graph`: requirement nodes, achievement nodes, coverage edges,
   uncovered requirements, and unused achievements. Existing
-  `RequirementFitReport.fit.evidence_ids` seed direct/transferable edges before
-  the constrained planner can add more.
+  `RequirementFitReport.fit.evidence_ids` seed direct/transferable candidates;
+  deterministic ranking retains one strongest achievement per requirement while
+  allowing one achievement to cover several requirements.
 - `deterministic_checks`: a prompt-visible summary of important hard checks.
 
 Requirement directives are sorted by priority, weight, and requirement ID. They
@@ -334,6 +347,17 @@ can say, for example:
 - target specific grounded keywords.
 
 ## Attempt Loop And Candidate Selection
+
+Before `_run_attempts()` builds or sends any generator message, the domain
+computes the distinct mandatory achievement set for each experience role. User
+pins and requirement-coverage edges share one slot when they reference the same
+canonical evidence. If that union exceeds `max_experience_bullets`, Tailor
+blocks with `ARTIFACT_BUDGET_INFEASIBLE`, records the role, required count, and
+ceiling, preserves the durable attempt count, and asks the user to reduce pins
+or raise the ceiling. An impossible profile configuration never consumes model
+or retry budget. Selected payloads receive an internal artifact-budget version;
+render-only refreshes preserve mandatory overflow on older accepted mapped
+payloads that predate that marker instead of silently changing reviewed text.
 
 `_run_attempts()` owns the generator retry loop.
 
@@ -389,8 +413,14 @@ profile contract:
 - `skill_category_updates` must exist and be non-empty.
 - Each required experience ID must appear exactly once.
 - Unknown or duplicate experience IDs are rejected.
-- Experience bullet count cannot exceed the profile max unless every overflow
-  bullet is mapped as pinned or requirement-covered content.
+- Experience bullet count cannot exceed the profile max. Requirement coverage
+  and explicit pins do not bypass this hard ceiling.
+- Every experience bullet must have exactly one bound claim mapping and exactly
+  one primary achievement evidence ID; the same achievement cannot produce
+  several bullets.
+- A covered or explicitly pinned role cannot carry positioning-only filler. A
+  required role with neither receives exactly one evidence-backed positioning
+  bullet; an optional unsupported role is omitted.
 - Generated title must be empty or exactly match the source title.
 - Each required skill category ID must appear exactly once.
 - Unknown or duplicate skill category IDs are rejected.
@@ -441,7 +471,9 @@ It applies profile policy helpers:
 
 - standard resume sections exist,
 - required evidence IDs are represented,
-- all metrics are verified,
+- all metrics are recognized from achievement-owned evidence,
+- every summary or experience metric is supported by that claim's mapped
+  achievement rather than merely appearing elsewhere in the profile,
 - prohibited claims do not appear,
 - target keyword coverage is not extremely low,
 - keyword repetition stays below stuffing thresholds,
@@ -489,10 +521,10 @@ lifecycle-labeled post-voice grounded fit record
 
 ### 7. Structured Judge
 
-`build_judge_prompt()` asks a separate judge model whether the tailored resume is
+`build_judge_prompt()` asks a separate judge model whether the exact candidate is
 safe to show the user. The judge receives canonical profile evidence, allowed
-skills, real metrics, the tailoring quality plan, the target job, the tailored
-JSON, and the rendered resume.
+skills, achievement-owned metrics, the tailoring quality plan, the target job,
+the tailored JSON, and the rendered resume.
 
 The judge returns `TAILORING_JUDGE_RESPONSE_SCHEMA`:
 
@@ -509,6 +541,8 @@ Approval requires:
 
 - `verdict == PASS`,
 - score at or above `tailorJudgeMinScore`,
+- every required criterion score, including `semantic_fidelity`,
+  `bullet_selection_focus`, and `professional_register`,
 - no unsupported claims, fabrications, or missing required evidence.
 
 In `lenient` mode, the structured judge is skipped.
@@ -526,10 +560,14 @@ instructions remain inspectable audit data; only the code-owned
 
 ### 9. Optional Voice Pass
 
-If a `VoicePort` is injected, the selected candidate can be rewritten for voice
-after selection but before final provenance and coverage. The voice pass is kept
-only when deterministic voice proxies improve and grounding re-validates. If it
-introduces fabrication or regresses grounding, the pre-voice candidate ships.
+If a `VoicePort` is injected, it may rewrite only lines that contain a configured
+buzzword. Clean lines must remain byte-for-byte unchanged. A rewrite is eligible
+only when it reduces buzzword density; opening-verb or length variety is audit
+diagnostic data, not an optimization target. Before the voiced payload can ship,
+claim text is rebound to the final prose and JobCtrl re-runs mapping validation,
+rendered quality, provenance, fabrication, final fit, the structured judge, and
+the high-fit adversarial review when applicable. Any scope, semantic, grounding,
+or judge regression keeps the already accepted pre-voice candidate.
 
 ### 10. Deterministic Fabrication Gate
 
@@ -589,7 +627,7 @@ Approved resume metadata includes:
 - quality plan,
 - quality checks,
 - post-generation fit score and revision decision,
-- bullet-limit overflow reasons,
+- bullet-limit violations on rejected candidates or legacy artifacts,
 - adversarial review,
 - retry/review feedback,
 - change annotations,
@@ -603,7 +641,7 @@ Approved resume metadata includes:
 Requirement-led audit data exposed to Apply Review is bounded and safe. It can
 show covered requirements, uncovered requirements, unused achievement IDs,
 evidence-backed generated claims, pinned claims, adjacent/draft claim labels,
-bullet-limit overflow reasons, revision decisions, and review blockers. It
+legacy bullet-limit violations, revision decisions, and review blockers. It
 must not expose raw prompts, full profile payloads, full job descriptions, local
 paths, PDFs, logs, browser data, or SQLite contents.
 
@@ -643,10 +681,10 @@ artifact or provenance rows.
 | Profile contract validation | Deterministic | Required IDs, allowed skills, title safety, max bullets |
 | Text assembly | Deterministic | Code injects fixed sections and profile metadata |
 | Rendered text validation | Deterministic | Checks final text has required structure/profile anchors |
-| Tailoring quality checks | Deterministic | Evidence, metrics, prohibited claims, keyword coverage/repetition, seniority signals, stock phrases |
-| Structured judge | LLM | Independent pass/fail quality and safety gate |
+| Tailoring quality checks | Deterministic | Evidence-scoped metrics, prohibited claims, keyword coverage/repetition, seniority signals, stock phrases, and smallest-set bullet curation |
+| Structured judge | LLM | Independent pass/fail quality, semantic-fidelity, selection-focus, and register gate; repeated on accepted post-voice text |
 | Adversarial review | LLM | Optional high-fit challenge review |
-| Voice pass | LLM plus deterministic gate | Optional, only retained if grounded and improved |
+| Voice pass | LLM plus deterministic gates | Optional buzzword-only edit; clean lines are immutable and final text must reduce buzzwords and pass all final gates |
 | Fabrication + skill gate | Deterministic | Never-fabricate token scan plus prose skill/tool allowlist gate; hard reject with repair-loop feedback |
 | Claim grounding | Deterministic | Binds coverage-bearing claims to shipped rendered lines before they count |
 | Provenance and coverage rows | Deterministic | Built from final generated text, profile evidence, and employer analysis |
@@ -673,8 +711,11 @@ The current implementation can safely:
 - rewrite and order bullets inside existing experience entries,
 - select and order existing skill strings inside existing skill categories,
 - preserve required bullets,
-- preserve every requirement-covered achievement even when that exceeds the max
-  bullet budget,
+- choose the smallest sufficient set from the pruned strongest
+  requirement-achievement edges while treating the max bullet budget as a
+  ceiling,
+- bind one achievement to each experience bullet and keep its metrics scoped to
+  that achievement,
 - label generated claims with requirement/evidence coverage or pinned/
   positioning reasons,
 - score generated output against the target profile and route one gated
@@ -742,6 +783,11 @@ generation, preserves the durable Tailor attempt count, records both generation
 identities, and asks for a fresh score. Scoring resolves employer analysis
 through its complete cache identity first, so the replacement fit report and
 the Tailoring coverage graph describe the same posting snapshot.
+
+Tailoring also does not retry an impossible artifact budget. The stage is
+blocked non-retryably before candidate generation, with bounded per-role
+violation facts and no synthetic judge result. Once the profile constraint is
+changed, a new Tailor execution can proceed normally.
 
 ## How To Change Tailoring Safely
 

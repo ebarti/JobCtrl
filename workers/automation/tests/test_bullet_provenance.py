@@ -51,6 +51,7 @@ from jobctrl.infrastructure.materials.bullet_provenance_repository import (
 from jobctrl.infrastructure.materials.html_resume_pdf import build_resume_document
 from jobctrl.infrastructure.materials.unit_of_work import SqliteUnitOfWork
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctrl.resume_profile import mark_current_artifact_budget
 
 JOB_URL = "https://example.com/senior-backend"
 PERSISTED_JOB_ID = JobId("00000000-0000-4000-8000-000000000041")
@@ -377,12 +378,8 @@ def _assembled_experience_bullets(profile: dict, payload: dict) -> list[str]:
     return [line.removeprefix("- ") for line in text.splitlines() if line.startswith("- ")]
 
 
-def test_provenance_keeps_mandatory_overflow_bullets_matching_shipped_resume() -> None:
-    """Regression (GROUND-06 / byte-identity): when a validated candidate pins
-    requirement-coverage bullets as mandatory overflow (``generated_claim_mappings``
-    present), the assembler keeps every bullet past ``max_experience_bullets``. The
-    provenance audit trail claims byte-identity with the shipped resume, so it MUST
-    emit one row per shipped bullet — not a set silently trimmed to the cap."""
+def test_provenance_caps_covered_bullets_to_match_shipped_resume() -> None:
+    """GROUND-06 byte identity holds after the per-role hard ceiling is applied."""
     profile = _profile()  # max_experience_bullets == 4
     bullets = [
         "Reduced API latency 35% by replacing synchronous calls.",
@@ -405,12 +402,13 @@ def test_provenance_keeps_mandatory_overflow_bullets_matching_shipped_resume() -
         }
         for index, bullet in enumerate(bullets)
     ]
+    payload = mark_current_artifact_budget(payload)
 
     rows = _build(profile, payload, _analysis())
     experience_texts = [row.generated_text for row in rows if row.section == "experience"]
 
     assert experience_texts == _assembled_experience_bullets(profile, payload)
-    assert len(experience_texts) == len(bullets)  # not trimmed to the cap of 4
+    assert experience_texts == bullets[:4]
 
 
 # --------------------------------------------------------------------------
@@ -936,7 +934,9 @@ def test_detector_grounds_equivalent_money_renderings() -> None:
     same recorded quantity (``$1.2M`` / ``$1.2 million`` / ``$1,200,000``) collapse
     to one key, so a bullet rendering differs only in format is still grounded."""
     profile = _profile()
-    profile["resume_constraints"] = {"real_metrics": ["$1.2M ARR"]}
+    evidence = profile["resume"]["experience_entries"][0]["achievement_evidence"][0]
+    evidence["source_text"] += " Grew the book of business to $1.2M ARR."
+    evidence["metrics"].append("$1.2M ARR")
     corpus = build_evidence_corpus(profile)
     for rendering in ("$1.2M", "$1.2 million", "$1,200,000"):
         findings = find_fabricated_tokens(
@@ -984,7 +984,9 @@ def test_detector_does_not_eat_kmb_initial_word_after_grounded_money() -> None:
     ``budget`` into the token, minting a phantom ``money:1.2e15`` and hard-rejecting
     a real figure. The single-letter magnitude suffix is now adjacency-only."""
     profile = _profile()
-    profile["resume_constraints"] = {"real_metrics": ["$1.2M budget", "$5K monthly"]}
+    evidence = profile["resume"]["experience_entries"][0]["achievement_evidence"][0]
+    evidence["source_text"] += " Managed a $1.2M budget and trimmed $5K monthly spend."
+    evidence["metrics"].extend(["$1.2M budget", "$5K monthly"])
     corpus = build_evidence_corpus(profile)
     employers = employer_name_set(profile)
     for bullet in (

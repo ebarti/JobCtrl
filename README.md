@@ -229,7 +229,10 @@ evidence, qualifications, and the complete capability matrix.
 - Import one public posting URL from Jobs. A usable active posting enters the
   same durable preparation path as discovery—score, tailor, cover letter, and
   PDFs—while Apply remains a separate, explicitly guarded action.
-- Generate tailored resumes, cover letters, PDFs, and review artifacts.
+- Generate tailored resumes, cover letters, PDFs, and review artifacts. Resume
+  tailoring selects the smallest job-relevant set of profile achievements;
+  per-role bullet limits are ceilings, and each metric stays bound to the
+  achievement that contains it.
 - Triage jobs through the real **Active**, **Deleted**, and **Hidden** queues.
   The default Active view keeps source and warning columns available but hidden,
   uses destructive styling for deletion, and opens a row through its focused

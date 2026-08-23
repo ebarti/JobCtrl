@@ -1603,10 +1603,26 @@ function loadProvenanceAuxByArtifact(
       coverage.set(row.artifact_id, row.coverage_json);
     }
     if (!voice.has(row.artifact_id) && row.voice_json && row.voice_json.trim()) {
-      voice.set(row.artifact_id, row.voice_json);
+      voice.set(row.artifact_id, normalizeVoicePassJson(row.voice_json));
     }
   }
   return { coverage, voice };
+}
+
+function normalizeVoicePassJson(value: string): string {
+  const parsed = parseJsonObject(value);
+  return JSON.stringify({
+    ran: parsed.ran === true,
+    accepted: parsed.accepted === true,
+    model: typeof parsed.model === "string" ? parsed.model : "",
+    prompt_version: typeof parsed.prompt_version === "string" ? parsed.prompt_version : "",
+    proxy_delta: record(parsed.proxy_delta),
+    reason: typeof parsed.reason === "string" ? parsed.reason : "",
+    summary_rejection_reason:
+      typeof parsed.summary_rejection_reason === "string" ? parsed.summary_rejection_reason : "",
+    scope_violations: stringList(parsed.scope_violations),
+    final_judge: record(parsed.final_judge),
+  });
 }
 
 function rebuildEvidenceUsageProjection(db: SqliteDatabase, tenantId: string): void {

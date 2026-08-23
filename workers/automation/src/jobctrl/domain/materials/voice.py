@@ -1,4 +1,4 @@
-"""Voice pass domain model — de-buzzword / vary-structure transform (Phase 3).
+"""Voice pass domain model — narrow de-buzzword transform (Phase 3).
 
 The explicit voice pass (VOICE-01/02/03) runs AFTER the selected candidate is
 chosen and BEFORE the final audit, so the audited + coverage text equals the
@@ -15,12 +15,12 @@ rendered/PDF text (GROUND-06 / Pitfall 4). This module is the PURE half:
     lists are left untouched (they are keyword lists, not prose, and re-voicing
     them risks dropping a grounded skill).
 
-The voice pass NEVER invents facts: the adapter is instructed to preserve every
-number/date/title/employer, and — crucially — the deterministic never-fabricate
-detector + provenance builder are RE-RUN against the voiced text by the use case
-(VOICE-03), so the prompt is not trusted; the gate is. Identity matching of which
-bullet maps to which is by ``(experience_id, index)`` so a voiced bullet replaces
-exactly its source line and the audit's bullet identity is preserved.
+The voice pass may edit only prose that contains a configured buzzword. It must
+preserve actor, agency, action, causality, outcome, scope, stakeholder, certainty,
+register, and every number/date/title/employer. The use case then re-runs claim
+binding, quality, provenance, fabrication, and the final structured judge against
+the voiced text, so the prompt is not trusted; the gates are. Identity matching
+of each bullet uses ``(experience_id, index)`` so the audit identity is preserved.
 
 Pure data, no I/O, no LLM. The SDK adapter + the use-case orchestration live in
 their own layers.
@@ -36,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # Bump when the voice system prompt / contract changes so audits can tell which
 # voice contract produced a given generation (mirrors ``PROMPT_VERSION``).
-VOICE_PROMPT_VERSION = "voice-pass-v2-explicit-summary-sentences"
+VOICE_PROMPT_VERSION = "voice-pass-v3-semantic-fidelity"
 
 
 # ---------------------------------------------------------------------------
@@ -225,19 +225,148 @@ def apply_voice_to_payload(tailored_payload: dict, result: VoiceResult) -> dict:
         if len(replacement) == len(source_bullets) and all(b.strip() for b in replacement):
             update["bullets"] = list(replacement)
 
+    _rebind_generated_claim_mapping_text(tailored_payload, voiced)
+
     return voiced
+
+
+def _rebind_generated_claim_mapping_text(source: dict, voiced: dict) -> None:
+    """Keep claim mappings byte-bound to the prose that actually ships."""
+
+    replacements: dict[str, tuple[str, str]] = {}
+    source_sentences = [
+        str(item) for item in source.get("executive_profile_sentences") or ()
+    ]
+    voiced_sentences = [
+        str(item) for item in voiced.get("executive_profile_sentences") or ()
+    ]
+    if len(source_sentences) == len(voiced_sentences):
+        for index, (before, after) in enumerate(zip(source_sentences, voiced_sentences, strict=True)):
+            replacements[f"executive_profile.sentence[{index}]"] = (before, after)
+        if len(source_sentences) == 1:
+            pair = (
+                str(source.get("executive_profile") or ""),
+                str(voiced.get("executive_profile") or ""),
+            )
+            for location in ("executive_profile", "summary", "resume.executive_profile"):
+                replacements[location] = pair
+
+    voiced_updates = {
+        str(update.get("id") or ""): update
+        for update in voiced.get("experience_updates") or ()
+        if isinstance(update, dict) and str(update.get("id") or "")
+    }
+    for update_index, update in enumerate(source.get("experience_updates") or ()):
+        if not isinstance(update, dict):
+            continue
+        entry_id = str(update.get("id") or "")
+        voiced_update = voiced_updates.get(entry_id)
+        if voiced_update is None:
+            continue
+        before_bullets = [str(item) for item in update.get("bullets") or ()]
+        after_bullets = [str(item) for item in voiced_update.get("bullets") or ()]
+        if len(before_bullets) != len(after_bullets):
+            continue
+        for bullet_index, (before, after) in enumerate(
+            zip(before_bullets, after_bullets, strict=True)
+        ):
+            pair = (before, after)
+            for location in (
+                f"experience.{entry_id}.bullets[{bullet_index}]",
+                f"experience_updates.{entry_id}.bullets[{bullet_index}]",
+                f"experience_updates[{update_index}].bullets[{bullet_index}]",
+            ):
+                replacements[location] = pair
+
+    mappings = voiced.get("generated_claim_mappings")
+    if not isinstance(mappings, list):
+        return
+    for mapping in mappings:
+        if not isinstance(mapping, dict):
+            continue
+        location = _canonical_voice_claim_location(str(mapping.get("location") or ""))
+        replacement = replacements.get(location)
+        if replacement is None:
+            continue
+        before, after = replacement
+        if str(mapping.get("text") or "") == before:
+            mapping["text"] = after
+
+
+def _canonical_voice_claim_location(location: str) -> str:
+    import re
+
+    normalized = str(location or "").strip()
+    sentence_match = re.fullmatch(
+        r"(?:(?:profile\.)?(?:executive_profile|summary))(?:\.sentences?)?\[(\d+)\]",
+        normalized,
+    )
+    if sentence_match:
+        return f"executive_profile.sentence[{sentence_match.group(1)}]"
+    return re.sub(r"\.bullet\[(\d+)\]$", r".bullets[\1]", normalized)
+
+
+def voice_scope_violations(
+    source_payload: dict,
+    voiced_payload: dict,
+    *,
+    banned_terms: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Reject edits to already-clean claims.
+
+    The voice pass exists only to remove a named banned phrase. Structural
+    variation or synonym preference is not authority to alter a clean claim.
+    """
+
+    def has_banned_term(text: str) -> bool:
+        lowered = str(text or "").casefold()
+        return any(str(term or "").casefold() in lowered for term in banned_terms if term)
+
+    violations: list[str] = []
+    source_sentences = [str(item) for item in source_payload.get("executive_profile_sentences") or ()]
+    voiced_sentences = [str(item) for item in voiced_payload.get("executive_profile_sentences") or ()]
+    if len(source_sentences) == len(voiced_sentences):
+        for index, (before, after) in enumerate(zip(source_sentences, voiced_sentences, strict=True)):
+            if before != after and not has_banned_term(before):
+                violations.append(
+                    f"executive_profile.sentence[{index}] changed without a banned phrase in the source"
+                )
+
+    voiced_by_id = {
+        str(update.get("id") or ""): update
+        for update in voiced_payload.get("experience_updates") or ()
+        if isinstance(update, dict)
+    }
+    for update in source_payload.get("experience_updates") or ():
+        if not isinstance(update, dict):
+            continue
+        entry_id = str(update.get("id") or "")
+        voiced_update = voiced_by_id.get(entry_id)
+        if voiced_update is None:
+            continue
+        before_bullets = [str(item) for item in update.get("bullets") or ()]
+        after_bullets = [str(item) for item in voiced_update.get("bullets") or ()]
+        if len(before_bullets) != len(after_bullets):
+            continue
+        for index, (before, after) in enumerate(zip(before_bullets, after_bullets, strict=True)):
+            if before != after and not has_banned_term(before):
+                violations.append(
+                    f"experience.{entry_id}.bullets[{index}] changed without a banned phrase in the source"
+                )
+    return tuple(violations)
 
 
 @dataclass(frozen=True)
 class VoicePassRecord:
-    """Audit record of one voice pass — what it changed, by which proxy (VOICE-02).
+    """Audit record of one narrow voice pass and its final gates (VOICE-02).
 
     Persisted/surfaced so the voice edit is inspectable (not a hidden prompt
     tweak): whether the pass ran, the model that produced it, the prompt version,
-    and the deterministic proxy delta (buzzword density / structural variety) that
-    justified accepting the voiced payload. ``accepted`` records whether the voiced
-    payload was kept (the proxies improved AND grounding re-validated) or rolled
-    back to the pre-voice candidate. ``summary_rejection_reason`` labels the
+    and the deterministic proxy delta. Only reduced buzzword density can justify
+    the edit; structural variety is diagnostic. ``accepted`` records whether the
+    voiced payload also passed scope, claim, grounding, quality, fabrication, and
+    final judge gates or rolled back to the pre-voice candidate.
+    ``summary_rejection_reason`` labels the
     post-generation sentence-identity gate: when non-empty, the voiced summary was
     dropped for that reason and the last accepted summary shipped, even though
     voiced bullets may still have been adopted (``accepted`` alone reflects the
@@ -251,6 +380,8 @@ class VoicePassRecord:
     proxy_delta: dict[str, Any] = field(default_factory=dict)
     reason: str = ""
     summary_rejection_reason: str = ""
+    scope_violations: tuple[str, ...] = ()
+    final_judge: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def skipped(cls, reason: str) -> VoicePassRecord:
@@ -265,6 +396,8 @@ class VoicePassRecord:
             "proxy_delta": dict(self.proxy_delta),
             "reason": self.reason,
             "summary_rejection_reason": self.summary_rejection_reason,
+            "scope_violations": list(self.scope_violations),
+            "final_judge": dict(self.final_judge),
         }
 
     @classmethod
@@ -281,6 +414,14 @@ class VoicePassRecord:
             proxy_delta=dict(proxy_delta) if isinstance(proxy_delta, dict) else {},
             reason=str(data.get("reason") or ""),
             summary_rejection_reason=str(data.get("summary_rejection_reason") or ""),
+            scope_violations=tuple(
+                str(value) for value in data.get("scope_violations") or () if str(value)
+            ),
+            final_judge=(
+                dict(data.get("final_judge"))
+                if isinstance(data.get("final_judge"), dict)
+                else {}
+            ),
         )
 
 
@@ -294,4 +435,5 @@ __all__ = [
     "apply_voice_to_payload",
     "build_voice_request",
     "summary_voice_rejection_reason",
+    "voice_scope_violations",
 ]

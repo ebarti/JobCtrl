@@ -22,7 +22,7 @@ def _profile() -> Profile:
                         "company": "Acme",
                         "date_range": "2022 -- Present",
                         "location": "Remote",
-                        "bullets": ["Shipped things."],
+                        "bullets": ["Maintained 99% uptime."],
                     }
                 ],
                 "education_entries": [
@@ -79,7 +79,9 @@ def test_as_dict_returns_deep_copy_so_consumers_cannot_mutate_source():
     second = snapshot.as_dict()
     assert second["personal"]["full_name"] == "Jordan"
     assert second["skills_boundary"]["lang"] == ["Python", "Go"]
-    assert second["resume"]["experience_entries"][0]["bullets"] == ["Shipped things."]
+    assert second["resume"]["experience_entries"][0]["bullets"] == [
+        "Maintained 99% uptime."
+    ]
 
 
 def test_property_accessors_also_deep_copy():

@@ -94,6 +94,20 @@ sentence-level aliases, exact rendered bullet and skill-group text, mandatory
 coverage-edge evidence, missing or duplicate generated surfaces, and immutable
 raw audit payloads before any judge call.
 
+Tailoring selection and metric ownership are also one contract. With no
+required bullets and a maximum of ten bullets per role, prove the maximum stays
+a ceiling: the graph retains only the strongest achievement for each target
+requirement, uncovered optional inventory is omitted, and no positioning filler
+is added beside covered or pinned evidence. Each emitted experience bullet must
+cite exactly one achievement and may use only numbers extracted from that same
+achievement, including standalone numeric claims. Profile `GET`/`PATCH` must
+lead the legacy flat metric projection with bullet/evidence-derived values,
+preserve unmatched old values as non-authoritative and unassigned, and expose
+no separate metric editor in the Profile UI. A synthetic voice fixture must
+prove a clean, precise achievement cannot be rewritten merely for verb variety; any accepted
+voiced line must pass the final mapping, quality, provenance, fabrication, and
+judge gates.
+
 The [complete matrix](complete-checklist.md#temporal-fault-injection-matrix)
 lists the exact tests for Discover, Pipeline, Preparation, Apply, Profile Import,
 Compensation Refresh, and Interview Prep workflows.

@@ -441,7 +441,7 @@ def test_default_sans_resume_theme_uses_geist() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Cross-renderer parity — mandatory bullet overflow (submitted PDF == reviewed .txt)
+# Cross-renderer parity — hard bullet ceiling (submitted PDF == reviewed .txt)
 # ---------------------------------------------------------------------------
 
 
@@ -455,19 +455,14 @@ _OVERFLOW_BULLETS = [
 ]
 
 
-def _overflow_payload(*, mandatory: bool) -> dict:
-    """Payload whose single entry pins six bullets past ``max_experience_bullets`` (4).
-
-    When ``mandatory`` the payload carries ``generated_claim_mappings`` — the
-    requirement-led signal the validator accepts — so every render path keeps all
-    six bullets. Otherwise the cap still trims to four.
-    """
+def _overflow_payload(*, mapped: bool) -> dict:
+    """Payload with six bullets and an optional requirement-coverage mapping."""
     payload: dict = {
         "executive_profile": "Tailored summary.",
         "experience_updates": [{"id": "acme_swe", "bullets": list(_OVERFLOW_BULLETS)}],
         "skill_category_updates": [{"id": "languages", "items": ["Python"]}],
     }
-    if mandatory:
+    if mapped:
         payload["generated_claim_mappings"] = [
             {
                 "claim_id": f"claim-{index}",
@@ -493,27 +488,21 @@ def _html_experience_bullets(payload: dict, profile: dict) -> list[str]:
     return [bullet["text"] for entry in document["experience"] for bullet in entry["bullets"]]
 
 
-def test_html_pdf_renderer_renders_all_mandatory_overflow_bullets_like_txt() -> None:
-    """Regression: a validated candidate that pins mandatory-overflow bullets must
-    ship the identical bullet set in the reviewed .txt AND in the submitted PDF.
-    Previously a PDF renderer built its experience map without the overflow
-    allowance and silently trimmed the pinned bullets, so the employer received a
-    weaker resume than the one the user reviewed."""
+def test_html_pdf_renderer_preserves_legacy_approved_mandatory_overflow_like_txt() -> None:
+    """Render-only refresh never truncates a previously approved mapped payload."""
     profile = _profile()
-    payload = _overflow_payload(mandatory=True)
+    payload = _overflow_payload(mapped=True)
 
     txt_bullets = _txt_experience_bullets(payload, profile)
-    assert txt_bullets == _OVERFLOW_BULLETS  # .txt keeps all six (past the cap of 4)
+    assert txt_bullets == _OVERFLOW_BULLETS
 
     assert _html_experience_bullets(payload, profile) == txt_bullets
 
 
-def test_html_pdf_renderer_respects_max_experience_bullets_without_overflow() -> None:
-    """Without the mandatory-overflow signal the cap still applies identically in
-    every render path: the .txt trims to ``max_experience_bullets`` and the PDF
-    match it exactly (no silent divergence in either direction)."""
+def test_html_pdf_renderer_respects_max_experience_bullets_without_mappings() -> None:
+    """The same hard cap applies when no generated mappings are present."""
     profile = _profile()
-    payload = _overflow_payload(mandatory=False)
+    payload = _overflow_payload(mapped=False)
 
     txt_bullets = _txt_experience_bullets(payload, profile)
     assert txt_bullets == _OVERFLOW_BULLETS[:4]  # capped at max_experience_bullets

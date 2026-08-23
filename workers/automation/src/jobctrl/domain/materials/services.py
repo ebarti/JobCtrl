@@ -39,6 +39,7 @@ from jobctrl.resume_profile import (
     get_education_entries,
     get_experience_entries,
     get_max_experience_bullets,
+    get_required_bullets_by_experience_id,
     get_required_education_entry_ids,
     get_required_experience_entry_ids,
     get_required_skill_category_ids,
@@ -210,12 +211,13 @@ def _validate_master_json_fields(
     entry_by_id = {str(entry.get("id") or ""): entry for entry in experience_entries}
     all_experience_ids = {entry.get("id") for entry in experience_entries}
     required_experience_ids = set(get_required_experience_entry_ids(profile)) & all_experience_ids
+    required_bullets_by_entry = get_required_bullets_by_experience_id(profile)
     required_skill_ids = set(get_required_skill_category_ids(profile))
     max_bullets = get_max_experience_bullets(profile)
 
     all_text_parts: list[str] = [executive_profile]
     seen_experience_ids: set[str] = set()
-    for update_index, update in enumerate(experience_updates):
+    for update in experience_updates:
         if not isinstance(update, dict):
             errors.append("Experience update must be an object")
             continue
@@ -231,12 +233,14 @@ def _validate_master_json_fields(
         if not isinstance(bullets, list) or not bullets:
             errors.append(f"Experience update '{entry_id}' must include bullets")
             continue
-        if len(bullets) > max_bullets and not _bullet_overflow_is_mandatory(
-            data,
-            entry_id=entry_id,
-            update_index=update_index,
-            bullet_count=len(bullets),
-        ):
+        effective_bullets = [str(bullet).strip() for bullet in bullets if str(bullet).strip()]
+        seen_effective = {_normalize_output_term(bullet) for bullet in effective_bullets}
+        for required_bullet in required_bullets_by_entry.get(entry_id, ()):
+            normalized_required = _normalize_output_term(required_bullet)
+            if normalized_required and normalized_required not in seen_effective:
+                effective_bullets.append(required_bullet)
+                seen_effective.add(normalized_required)
+        if len(effective_bullets) > max_bullets:
             errors.append(f"Experience update '{entry_id}' exceeds {max_bullets} bullets")
         title = str(update.get("title") or "").strip()
         source_title = str(entry_by_id.get(entry_id, {}).get("title") or "").strip()
@@ -318,50 +322,6 @@ def _validate_master_json_fields(
     if errors:
         return ValidationResult.failure(tuple(errors), warnings=tuple(warnings))
     return ValidationResult.success(warnings=tuple(warnings))
-
-
-def _bullet_overflow_is_mandatory(
-    data: dict,
-    *,
-    entry_id: str,
-    update_index: int,
-    bullet_count: int,
-) -> bool:
-    mappings = data.get("generated_claim_mappings")
-    if not isinstance(mappings, list):
-        return False
-    mandatory_indexes: set[int] = set()
-    prefixes = (
-        f"experience.{entry_id}.bullets[",
-        f"experience_updates.{entry_id}.bullets[",
-        f"experience_updates[{update_index}].bullets[",
-    )
-    for mapping in mappings:
-        if not isinstance(mapping, dict):
-            continue
-        location = str(mapping.get("location") or "")
-        index = _claim_bullet_index(location, prefixes)
-        if index is None:
-            continue
-        coverage_edges = mapping.get("coverage_edge_ids")
-        non_requirement_reason = str(mapping.get("non_requirement_reason") or "")
-        if (
-            isinstance(coverage_edges, (list, tuple))
-            and any(str(edge).strip() for edge in coverage_edges)
-        ) or non_requirement_reason == "pinned":
-            mandatory_indexes.add(index)
-    return len(mandatory_indexes) >= bullet_count
-
-
-def _claim_bullet_index(location: str, prefixes: tuple[str, ...]) -> int | None:
-    for prefix in prefixes:
-        if not location.startswith(prefix):
-            continue
-        try:
-            return int(location.removeprefix(prefix).split("]", 1)[0])
-        except (TypeError, ValueError):
-            return None
-    return None
 
 
 # ---------------------------------------------------------------------------

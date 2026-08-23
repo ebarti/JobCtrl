@@ -86,9 +86,18 @@ class SqliteProfileRepository:
         previous = self.load(tenant_id)
         previous_dict = previous.to_dict() if previous is not None else {}
 
-        validated = Profile.from_dict(tenant_id, profile.to_dict(), profile_id=profile.profile_id or self._profile_id)
-        _reject_unsupported_top_level_fields(validated)
         row = self._profile_row(tenant_id)
+        candidate = _profile_dict_with_reconciled_achievement_evidence(profile)
+        if row is not None:
+            candidate["resume_constraints"] = {
+                "real_metrics": list(self._legacy_unassigned_metrics(tenant_id, row))
+            }
+        validated = Profile.from_dict(
+            tenant_id,
+            candidate,
+            profile_id=profile.profile_id or self._profile_id,
+        )
+        _reject_unsupported_top_level_fields(validated)
         version = int(row["version"]) + 1 if row is not None else 1
         rendering = self.load_rendering_settings(tenant_id)
         self._replace_profile(tenant_id, validated, version=version, rendering=rendering)
@@ -110,6 +119,30 @@ class SqliteProfileRepository:
             logger.exception("Failed to publish ProfileUpdated event")
 
         return snapshot
+
+    def _legacy_unassigned_metrics(
+        self,
+        tenant_id: TenantId,
+        row: sqlite3.Row,
+    ) -> tuple[str, ...]:
+        """Return only old flat values that current achievements do not own."""
+
+        stored_profile = self._row_to_profile_dict(tenant_id, row)
+        stored_metrics = tuple(
+            str(value)
+            for value in _record(stored_profile.get("resume_constraints")).get(
+                "real_metrics", ()
+            )
+            if str(value).strip()
+        )
+        stored_profile["resume_constraints"] = {"real_metrics": []}
+        derived_metrics = Profile.from_dict(
+            tenant_id,
+            stored_profile,
+            profile_id=self._profile_id,
+        ).resume_constraints.real_metrics
+        derived_keys = {metric.casefold() for metric in derived_metrics}
+        return tuple(metric for metric in stored_metrics if metric.casefold() not in derived_keys)
 
     def load_snapshot(self, tenant_id: TenantId) -> ProfileSnapshot:
         profile = self.load(tenant_id)
@@ -933,6 +966,30 @@ def _achievement_evidence_by_entry(profile: Profile) -> dict[str, list[dict[str,
             continue
         by_entry.setdefault(entry_id, []).append(item)
     return by_entry
+
+
+def _profile_dict_with_reconciled_achievement_evidence(profile: Profile) -> dict[str, Any]:
+    """Materialize bullet-derived evidence before deriving compatibility metrics."""
+
+    profile_dict = profile.to_dict()
+    by_entry = _achievement_evidence_by_entry(profile)
+    resume = _record(profile_dict.get("resume"))
+    entries = resume.get("experience_entries")
+    if not isinstance(entries, list):
+        return profile_dict
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        entry_id = str(entry.get("id") or "")
+        entry["achievement_evidence"] = [
+            {
+                key: value
+                for key, value in evidence.items()
+                if key != "experience_entry_id"
+            }
+            for evidence in by_entry.get(entry_id, ())
+        ]
+    return profile_dict
 
 
 def _record(value: Any) -> dict[str, Any]:

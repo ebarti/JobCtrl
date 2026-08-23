@@ -595,6 +595,21 @@ component accessibility, route-level browser behavior, and visual consistency.
 The [Frontend QA guide](developer/qa/frontend.md) gives the commands and the
 [Browser Smoke guide](developer/qa/browser-smoke.md) gives the user paths.
 
+For achievement selection and metric ownership, exercise `/profile` with
+synthetic data. The editor must show metrics as part of each achievement bullet,
+not as a separate **Verified resume metrics** input. Saving a synthetic bullet
+containing `£240k`, `12%`, and `£2M+` must round-trip those exact values in the
+API's derived compatibility projection, while an old unrelated flat metric is
+retained only as non-authoritative, unassigned legacy data. Then tailor a synthetic role
+with no required bullets: the accepted artifact must never exceed the per-role
+maximum, contain no uncovered filler, and preserve the exact agency
+and causal meaning of every selected achievement through the final voice/judge
+audit. Also configure one synthetic role whose distinct pinned plus
+requirement-covered achievements exceed that maximum: Tailor must block before
+any generator call, keep the durable attempt count unchanged, and report the
+role, required count, and ceiling. Never run this check against a real
+application or submit anything.
+
 For direct URL import, exercise the Jobs-page dialog through the product API
 and worker boundary. A readable JSON-LD posting must create one canonical job,
 refresh the list, and open that job. A custom careers page with an individual
