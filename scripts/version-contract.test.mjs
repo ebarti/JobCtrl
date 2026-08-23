@@ -8,7 +8,7 @@ const execFileAsync = promisify(execFile);
 const root = new URL("../", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
 const readJson = async (path) => JSON.parse(await read(path));
-const APP_VERSION = "0.1.0";
+const APP_VERSION = "0.1.1";
 
 test("public application versions agree without resetting compatibility counters", async () => {
   const packageVersions = await Promise.all([
@@ -26,11 +26,11 @@ test("public application versions agree without resetting compatibility counters
   }
 
   assert.equal((await readJson("apps/extension/public/manifest.json")).version, APP_VERSION);
-  assert.match(await read("workers/automation/pyproject.toml"), /^version = "0\.1\.0"$/m);
-  assert.match(await read("workers/automation/src/jobctrl/__init__.py"), /^__version__ = "0\.1\.0"$/m);
+  assert.match(await read("workers/automation/pyproject.toml"), /^version = "0\.1\.1"$/m);
+  assert.match(await read("workers/automation/src/jobctrl/__init__.py"), /^__version__ = "0\.1\.1"$/m);
   assert.match(
     await read("workers/automation/uv.lock"),
-    /\[\[package\]\]\nname = "jobctrl"\nversion = "0\.1\.0"\nsource = \{ editable = "\." \}/,
+    /\[\[package\]\]\nname = "jobctrl"\nversion = "0\.1\.1"\nsource = \{ editable = "\." \}/,
   );
 
   assert.match(await read("apps/api/src/schema-manifest.ts"), /EXACT_V9_SCHEMA_MANIFEST[\s\S]*?version: 9,/);
@@ -42,10 +42,10 @@ test("public application versions agree without resetting compatibility counters
   assert.deepEqual(platforms.platforms[0].launcherCompatibility, { minimum: 1, maximum: 1 });
 });
 
-test("release parity gate accepts the reset tag v0.1.0", async () => {
+test("release parity gate accepts the current tag v0.1.1", async () => {
   const { stdout, stderr } = await execFileAsync(
     "python3",
-    ["scripts/release_check.py", "--release-tag", "v0.1.0"],
+    ["scripts/release_check.py", "--release-tag", "v0.1.1"],
     { cwd: new URL("../", import.meta.url), maxBuffer: 16 * 1024 * 1024 },
   );
   assert.equal(stderr, "");

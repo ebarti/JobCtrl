@@ -72,10 +72,10 @@ credentials, resumes, application data, logs, or other personal information.
 
 ## Get Started
 
-JobCtrl `0.1.0` is an early-access application release. The public version was
-reset from the pre-launch `2.0.x` numbering so the version communicates the
-product's actual maturity; this is not a product, data, database-schema,
-launcher-protocol, or security downgrade.
+JobCtrl `0.1.1` is the current early-access application release. The public
+version began at `0.1.0` after the pre-launch `2.0.x` numbering was withdrawn so
+the version communicates the product's actual maturity; this did not downgrade
+the product, data, database schema, launcher protocol, or security controls.
 
 Install the signed Apple-silicon macOS release with the bundled installer:
 

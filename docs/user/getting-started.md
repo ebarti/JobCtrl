@@ -9,10 +9,11 @@ files stay on your computer unless you explicitly connect an external provider.
 Install it once, then use the same `jobctrl` command from any directory.
 
 ::: warning Early access
-JobCtrl `0.1.0` resets the public application version from the pre-launch
-`2.0.x` numbering so the version reflects the product's actual maturity. The
-reset does not downgrade product behavior, local data, database schemas,
-launcher protocols, signed-release safety, or security controls.
+JobCtrl `0.1.1` is the current early-access application release. The public
+version began at `0.1.0` after the pre-launch `2.0.x` numbering was withdrawn so
+the version reflects the product's actual maturity. That change did not
+downgrade product behavior, local data, database schemas, launcher protocols,
+signed-release safety, or security controls.
 :::
 
 ::: tip Want to explore before installing?

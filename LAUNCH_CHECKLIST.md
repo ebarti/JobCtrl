@@ -1,11 +1,10 @@
 # JobCtrl Public Launch Status
 
-JobCtrl's public application version is resetting to `v0.1.0` as an
-early-access release. The withdrawn pre-launch `2.0.x` numbering remains
-preserved in tags, releases, signatures, and immutable artifacts; the reset
-corrects maturity signaling and does not reset product data, database schemas,
-launcher protocols, or signed-release security counters. The detailed release
-and recovery record remains in
+JobCtrl's current early-access line is `0.1.x`; the `v0.1.1` release candidate
+advances the published `v0.1.0` build without changing product data, database
+schemas, launcher protocols, or signed-release security counters. The withdrawn
+pre-launch `2.0.x` numbering remains preserved in tags, releases, signatures,
+and immutable artifacts. The detailed release and recovery record remains in
 [`docs/publish-checklist.md`](docs/publish-checklist.md).
 
 ## Live Public Surfaces
@@ -21,8 +20,10 @@ and recovery record remains in
 
 ## Remaining Distribution Follow-Up
 
-- [ ] Publish and verify the `0.1.0` early-access Python package, then yank the
+- [x] Publish and verify the `0.1.0` early-access Python package, then yank the
   preserved `2.0.7` and `2.0.8` files without deleting them.
+- [ ] Publish and verify `v0.1.1` through signed stable sequence 4, then cut the
+  canonical installers over to its immutable release assets.
 - [ ] Complete the published-artifact, lifecycle, clean-machine, and real-path
   TTFV acceptance matrix recorded in `docs/publish-checklist.md`.
 

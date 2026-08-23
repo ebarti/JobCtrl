@@ -407,6 +407,29 @@ especially §§11–14. This is a release precondition, not permission to publis
   with a yank warning. Update the existing GitHub release descriptions without
   changing their immutable assets: label `v2.0.7` withdrawn and revoked, and
   label `v2.0.8` a safe historical build superseded by the numbering reset.
+- **Approved `v0.1.1` stable increment.** Publish the merged release-preparation
+  commit as annotated tag `v0.1.1`, then manually dispatch the signed workflow
+  at that tag ref. This is an additive patch release on the established `0.1.x`
+  line. Advance the signed anti-rollback sequence to 4, retain minimum-safe
+  sequence 2, carry the bytewise-sorted `v2.0.7` revocation, and keep the safe
+  `v0.1.0` build unrevoked. Use these promotion inputs:
+
+  ```text
+  release_tag=v0.1.1
+  channel=stable
+  pypi_recovery_only=false
+  sequence=4
+  minimum_safe_sequence=2
+  revoked_build_ids=["2.0.7-db257efe1087ec00ac2ec49b846a95d2423aecc2-darwin-arm64"]
+  expected_channel_pointer_sha256=38dd07f0473bf6f8ad6c0931e42eaf1791774a2c17267eda3e425bb405fc130a
+  ```
+
+  Re-read the public stable pointer immediately before dispatch. If its digest
+  changed, stop and reconcile the intervening signed release instead of
+  weakening the compare-and-swap guard. After the workflow succeeds, verify
+  the immutable GitHub Release, signed R2 descriptor and stable pointer,
+  Homebrew formula, and `0.1.1` wheel and source distribution on PyPI before
+  starting the separate canonical-installer cutover in 9.6.
 - **Rollback.** Preserve the immutable Release and tag as audit evidence. Yank
   a bad PyPI file/version when necessary, then publish a new higher-sequence
   signed release that explicitly revokes or supersedes the affected build.
