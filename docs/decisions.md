@@ -2154,6 +2154,12 @@ contention only when they are queued or observed as active work. Selected-run
 sweep demand reserves one slot per remaining preparation workflow and blocks
 the source range only when those workflows exceed currently spare capacity.
 
+Amended (2026-08-28): the provider pin advances to JobStreaming 0.0.4 without
+changing JobCtrl's request, typed-event, or checkpoint ownership. The provider
+release reduces LinkedIn continuation pacing, uses the observed ten-card page
+contract, stops after a partial final page, and avoids detail work for identities
+already present in the current or resumed provider checkpoint.
+
 ## 2026-07-29: Stable Job Identity And Human-Approved Feedback Learning
 
 Status: accepted

@@ -162,7 +162,7 @@ def _normalize_tls_adapter_timeouts(
 
 
 class JobStreamingGateway:
-    """Build and consume the pinned JobStreaming 0.0.3 event contract."""
+    """Build and consume the pinned JobStreaming event contract."""
 
     @staticmethod
     def build_request(spec: JobStreamingSearchSpec) -> SearchRequest:

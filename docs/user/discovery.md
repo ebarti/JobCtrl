@@ -196,7 +196,7 @@ Temporal run ID, and the bounded repair reason code remain available under
 
 ### Resumable Broad-Board Searches
 
-Broad-board discovery uses JobStreaming 0.0.3. At the beginning of the source
+Broad-board discovery uses JobStreaming 0.0.4. At the beginning of the source
 activity, JobCtrl compiles an immutable unit for every query, target/provider
 location, and board under the exact Discover workflow/run identity. JobCtrl,
 not the provider, owns whether that unit is pending, running, completed, failed,
