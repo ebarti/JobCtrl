@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from jobctrl.infrastructure.rpc import handlers
@@ -38,8 +36,3 @@ def test_rejects_empty_pdf_path(tmp_path):
     html_path.write_text("x", encoding="utf-8")
     with pytest.raises(_RpcParamError):
         handlers.render_resume_pdf({"htmlPath": str(html_path), "pdfPath": "  "})
-
-
-def test_registered_as_a_sync_method():
-    source = Path(handlers.__file__).read_text(encoding="utf-8")
-    assert 'server.register("render_resume_pdf", render_resume_pdf, mode="sync")' in source

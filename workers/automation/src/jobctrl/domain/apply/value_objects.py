@@ -306,8 +306,8 @@ __all__ = [
 # The launcher's approval-gate refusal vocabulary. Pinned cross-runtime to
 # packages/domain-types/test/fixtures/apply_approval_gate_reasons.json (the
 # TypeScript source is APPLY_REVIEW_APPROVAL_GATE_REASONS in
-# packages/contracts); tests/test_apply_approval_vocabulary.py enforces that
-# every literal _approval_refusal_reason can return stays inside this set.
+# packages/contracts); tests/test_apply_approval_vocabulary.py keeps the shared
+# runtime vocabulary aligned with that fixture.
 APPROVAL_GATE_REFUSAL_REASONS: frozenset[str] = frozenset(
     {
         "awaiting_approval",

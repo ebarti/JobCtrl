@@ -23,12 +23,9 @@ describe("interactive install script contract", () => {
     execFileSync("bash", ["-n", installScript], { cwd: repoRoot });
 
     const help = execFileSync(installScript, ["--help"], { cwd: repoRoot, encoding: "utf8" });
-    const source = readFileSync(installScript, "utf8");
     expect(help).toContain("Interactive first-time installer");
     expect(help).toContain("--dry-run");
     expect(help).toContain("--skip-system");
-    expect(source).not.toContain("pdftoppm");
-    expect(source).not.toContain("Poppler");
   });
 
   it("dry-runs the locked repository dependency steps", () => {

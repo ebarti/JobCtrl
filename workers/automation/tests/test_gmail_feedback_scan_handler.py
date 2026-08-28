@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from jobctrl.infrastructure.rpc import handlers
 
 
@@ -69,8 +67,3 @@ def test_scan_exceptions_become_ok_false_with_the_real_message(monkeypatch):
         "ok": False,
         "message": "Gmail auth required: run jobctrl gmail-auth",
     }
-
-
-def test_registered_as_a_sync_method():
-    source = Path(handlers.__file__).read_text(encoding="utf-8")
-    assert 'server.register("gmail_feedback_scan", gmail_feedback_scan, mode="sync")' in source

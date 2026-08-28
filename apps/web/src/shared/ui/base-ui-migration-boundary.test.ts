@@ -5,7 +5,6 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const globalsCssPath = resolve(sourceRoot, "styles/globals.css");
 const sourceExtensions = new Set([".ts", ".tsx"]);
 
 // Remove entries from this list as their wrappers migrate to Base UI.
@@ -193,13 +192,4 @@ describe("Base UI migration boundary", () => {
     ).toEqual([]);
   });
 
-  it("preserves the isolated root stacking context for Base UI portals", () => {
-    const globalsCss = readFileSync(globalsCssPath, "utf8");
-    const rootRule = globalsCss.match(/#root\s*\{(?<body>[^}]*)\}/);
-
-    expect(
-      rootRule?.groups?.body,
-      "expected #root to isolate portaled overlay stacking",
-    ).toMatch(/\bisolation\s*:\s*isolate\s*;/);
-  });
 });

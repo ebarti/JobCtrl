@@ -607,22 +607,6 @@ def test_save_canceled_state_emits_stage_canceled(db):
     assert ("StageCanceled", "enrich", "info") in events
 
 
-def test_save_does_not_use_legacy_dual_write_path(db):
-    """Regression: the bespoke UPDATE/INSERT INTO job_stage_states blocks are gone.
-
-    Asserts the repository module no longer contains literal 'INSERT INTO
-    job_stage_states' or 'UPDATE job_stage_states' SQL — it must call into
-    the canonical helper instead.
-    """
-    import inspect
-
-    from jobctrl.infrastructure.pipeline import sqlite_repository
-
-    source = inspect.getsource(sqlite_repository)
-    assert "INSERT INTO job_stage_states" not in source, source
-    assert "UPDATE job_stage_states" not in source, source
-
-
 def test_set_stage_state_with_expected_version_round_trip(db):
     """state.set_stage_state honours expected_version when supplied."""
     set_stage_state(

@@ -731,9 +731,10 @@ web knobs (D4).
     on the batch path (`detail.py:980`) and the recovery pre-pass (`detail.py:1728`),
     while rate + budget stay ON everywhere — the recovery pass is gated through
     `session.guard` and defers with `politeness_deferred` when budget/rate blocks
-    (`detail.py:615`, `:1814`). `user_agent=None` at every `LinkedInApplyUrlResolver(...)`
-    construction (`detail.py:1683`), AST-enforced by
-    `tests/test_fetch_surface_enforcement.py::test_authenticated_linkedin_context_never_uses_bot_ua_at_any_site`.
+    (`detail.py:615`, `:1814`). Authenticated resolver identity and anonymous
+    browser/gateway identity are covered behaviorally by
+    `tests/test_enrichment_politeness_gate.py` and
+    `tests/test_browser_ua_propagation.py`.
 - **D4 — Default rate / concurrency / budget values.** Per-host min-interval (or
   req/s), per-host max concurrency, and per-run request/page budget defaults; and
   whether the registry UI exposes a per-source policy editor. (Blocks P1 defaults /

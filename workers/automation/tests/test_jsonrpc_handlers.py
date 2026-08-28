@@ -138,6 +138,8 @@ def test_default_handlers_are_registered(monkeypatch) -> None:
         "provider_status",
         "provider_models",
         "provider_verify",
+        "render_resume_pdf",
+        "gmail_feedback_scan",
     }
     # Force dispatch on each method name with deliberately invalid params
     # — we only care that the response is NOT METHOD_NOT_FOUND.

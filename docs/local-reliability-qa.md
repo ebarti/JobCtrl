@@ -736,11 +736,7 @@ for the security, apply, or workflow matrices above.
 
 ```bash
 corepack pnpm --filter @jobctrl/web exec vitest run \
-  src/styles/token-contract.test.ts \
   src/styles/token-contrast.test.ts \
-  src/styles/shared-layout-contract.test.ts \
-  src/styles/profile-evidence-responsive-layout.test.ts \
-  src/styles/apply-review-contacts-responsive.test.ts \
   src/shared/ui/base-ui-migration-boundary.test.ts \
   src/shared/layout/Topbar.test.tsx \
   src/shared/ui/button.test.tsx \

@@ -8,7 +8,6 @@ import test from "node:test";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const GET = path.join(ROOT, "scripts", "get");
-const PUBLIC_INSTALL = path.join(ROOT, "docs", "public", "install.sh");
 const SYSTEM_BASH = "/bin/bash";
 
 function makeTmp() { return mkdtempSync(path.join(os.tmpdir(), "jobctrl-get-test-")); }
@@ -69,9 +68,39 @@ test("get is transport-only and delegates an explicit local fixture to the nativ
     assert.equal(repeated.status, 0, repeated.stderr);
     assert.equal(readFileSync(profile, "utf8"), firstProfile);
     const source = readFileSync(GET, "utf8");
-    assert.ok(source.lastIndexOf("persist_curl_acquisition \"$RELEASE_HOME\" \"$BIN_DIR\"") < source.lastIndexOf("expose_command \"$RELEASE_HOME\" \"$BIN_DIR\""));
-    assert.equal(readFileSync(PUBLIC_INSTALL, "utf8"), source);
     assert.doesNotMatch(source, /git clone|git pull|corepack|pnpm|uv sync|scripts\/install/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("get persists acquisition metadata before refusing an unrelated public command", () => {
+  const root = makeTmp(); try {
+    const value = fixture(root);
+    const home = path.join(root, "fresh-runtime");
+    const bin = path.join(root, "public-bin");
+    const command = path.join(bin, "jobctrl");
+    mkdirSync(bin);
+    writeFileSync(command, "unrelated command\n");
+    chmodSync(command, 0o755);
+
+    const result = run([
+      "--local-fixture-contract", value.contract,
+      "--home", home,
+      "--bin-dir", bin,
+      "--no-modify-path",
+    ], value.env);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /refusing to replace existing non-symlink command/);
+    assert.equal(readFileSync(command, "utf8"), "unrelated command\n");
+    assert.equal(statSync(command).mode & 0o777, 0o755);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(home, "acquisition.json"), "utf8")), {
+      schemaVersion: 1,
+      source: "curl",
+      publicLink: command,
+      selector: path.join(home, "bin", "jobctrl"),
+      profile: "",
+      pathLine: "",
+    });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -1209,6 +1209,13 @@ def record_job_event(
     identity aliases are removed so untrusted content cannot spoof the
     persisted or published JobId.
     """
+    if not (
+        event_type
+        and event_type.isascii()
+        and event_type.isalnum()
+        and event_type[0].isupper()
+    ):
+        raise ValueError("event_type must be a PascalCase ASCII identifier")
     stable_job_id = canonical_job_id(str(job_id)) if job_id is not None else None
     current_payload = dict(payload or {})
     for identity_alias in (

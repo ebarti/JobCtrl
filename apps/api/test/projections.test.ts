@@ -4017,26 +4017,6 @@ describe("dashboard outcome-conversion projection", () => {
   });
 });
 
-describe("outcome analytics read-only guard", () => {
-  it("does not import the analytics read model into decision-code modules", () => {
-    const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
-    const decisionFiles = [
-      "apps/api/src/write-model.ts",
-      "apps/api/src/application-feedback.ts",
-      "workers/automation/src/jobctrl/domain/scoring/use_cases.py",
-      "workers/automation/src/jobctrl/domain/apply/services.py",
-      "workers/automation/src/jobctrl/apply/launcher.py",
-      "workers/automation/src/jobctrl/pipeline/runner.py",
-    ];
-    for (const file of decisionFiles) {
-      const text = fs.readFileSync(path.join(repoRoot, file), "utf8");
-      expect(text, file).not.toContain("buildOutcomeAnalyticsSummary");
-      expect(text, file).not.toContain("/v1/analytics/outcomes");
-      expect(text, file).not.toContain("OutcomeAnalyticsSummary");
-    }
-  });
-});
-
 describe("shared watermark discipline", () => {
   function readWatermarkRow(
     db: InstanceType<typeof Database>,

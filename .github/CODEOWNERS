@@ -1,0 +1,14 @@
+# Release authority is deliberately narrow. These files can change how signed
+# artifacts or public channels are produced, so changes require the repository
+# owner even when another collaborator opens the pull request.
+/.github/CODEOWNERS @ebarti
+/.github/workflows/ @ebarti
+/docs/public/install.sh @ebarti
+/packaging/distribution/ @ebarti
+/packaging/homebrew/ @ebarti
+/scripts/distribution-homebrew* @ebarti
+/scripts/distribution-release* @ebarti
+/scripts/get @ebarti
+/scripts/release_check.py @ebarti
+/workers/automation/pyproject.toml @ebarti
+/workers/automation/uv.lock @ebarti

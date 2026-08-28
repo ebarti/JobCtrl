@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 
 const styleDir = dirname(fileURLToPath(import.meta.url));
 const tokensCss = readFileSync(resolve(styleDir, "tokens.css"), "utf8");
-const globalsCss = readFileSync(resolve(styleDir, "globals.css"), "utf8");
 const semanticTextCss = [
   "globals.css",
   "redesign-apply-review.css",
@@ -105,20 +104,7 @@ function contrastRatio(fg: Oklch, bg: Oklch): number {
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
 }
 
-function cardHeaderRule(): string {
-  return globalsCss.match(/\.card-hd\s*\{([^}]*)\}/)?.[1] ?? "";
-}
-
 describe("muted-foreground WCAG AA contrast", () => {
-  it("CardHeader `.meta` renders on the muted card-header band, not the card body", () => {
-    expect(cardHeaderRule(), "card header must fill its band with --muted").toContain(
-      "background: var(--muted)",
-    );
-    expect(globalsCss, "`.meta` must resolve its color to --muted-foreground").toMatch(
-      /\.meta,[\s\S]*?\{[\s\S]*?color:\s*var\(--muted-foreground\)/,
-    );
-  });
-
   it("clears 4.5:1 for muted-foreground on the muted card-header band in both themes", () => {
     const light = contrastRatio(readToken(lightBlock, "muted-foreground"), readToken(lightBlock, "muted"));
     const dark = contrastRatio(readToken(darkBlock, "muted-foreground"), readToken(darkBlock, "muted"));

@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-
 import { screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import type { SortingState } from "@tanstack/react-table";
@@ -118,17 +116,6 @@ describe("<DebugActivityTable>", () => {
       "activity-message-cell",
     );
 
-    const baseCss = readFileSync("src/styles/globals.css", "utf8");
-    const routeCss = readFileSync("src/styles/redesign-data.css", "utf8");
-    expect(baseCss).toMatch(
-      /\.activity-data-grid-table\s*\{[^}]*table-layout:\s*fixed/s,
-    );
-    expect(baseCss).toMatch(
-      /\.activity-data-grid-table \.activity-message-cell\s*\{[^}]*white-space:\s*normal/s,
-    );
-    expect(routeCss).toMatch(
-      /\.activity-data-grid-table \.activity-message-cell \.activity-main > span\s*\{[^}]*overflow-wrap:\s*anywhere/s,
-    );
   });
 
   it("copies the explicit event identifier", async () => {

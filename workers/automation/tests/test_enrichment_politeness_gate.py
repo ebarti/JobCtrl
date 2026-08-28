@@ -185,14 +185,21 @@ class _SpyPage:
 
 
 class _SpyBrowser:
-    def __init__(self, sink: list[str], lock: threading.Lock) -> None:
+    def __init__(
+        self,
+        sink: list[str],
+        lock: threading.Lock,
+        page_options: list[dict[str, object]],
+    ) -> None:
         self._sink = sink
         self._lock = lock
+        self._page_options = page_options
 
     def new_context(self, **_kwargs: object) -> "_SpyBrowser":
         return self
 
     def new_page(self, **_kwargs: object) -> _SpyPage:
+        self._page_options.append(_kwargs)
         return _SpyPage(self._sink, self._lock)
 
     def close(self) -> None:
@@ -200,12 +207,18 @@ class _SpyBrowser:
 
 
 class _SpyChromium:
-    def __init__(self, sink: list[str], lock: threading.Lock) -> None:
+    def __init__(
+        self,
+        sink: list[str],
+        lock: threading.Lock,
+        page_options: list[dict[str, object]],
+    ) -> None:
         self._sink = sink
         self._lock = lock
+        self._page_options = page_options
 
     def launch(self, **_kwargs: object) -> _SpyBrowser:
-        return _SpyBrowser(self._sink, self._lock)
+        return _SpyBrowser(self._sink, self._lock, self._page_options)
 
 
 class _SpyPlaywright:
@@ -213,14 +226,26 @@ class _SpyPlaywright:
 
     def __init__(self, sink: list[str] | None = None, lock: threading.Lock | None = None) -> None:
         self.goto_calls: list[str] = sink if sink is not None else []
+        self.page_options: list[dict[str, object]] = []
         self._lock = lock or threading.Lock()
-        self.chromium = _SpyChromium(self.goto_calls, self._lock)
+        self.chromium = _SpyChromium(self.goto_calls, self._lock, self.page_options)
 
     def __enter__(self) -> "_SpyPlaywright":
         return self
 
     def __exit__(self, *_args: object) -> None:
         return None
+
+
+class _DecisionSession:
+    def __init__(self, decision: PolitenessDecision) -> None:
+        self._decision = decision
+        self.guarded_urls: list[str] = []
+
+    @contextmanager
+    def guard(self, url: str) -> Iterator[PolitenessDecision]:
+        self.guarded_urls.append(url)
+        yield self._decision
 
 
 class _OfflineLlm:
@@ -252,6 +277,60 @@ def tier1_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
         ],
     )
     monkeypatch.setattr(detail, "_collect_main_content", lambda _page: "<main>role</main>")
+
+
+def test_wttj_bootstrap_uses_the_guard_decision_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        _seed_pending(conn, "wttj-relative-slug", "WelcomeToTheJungle")
+        decision = PolitenessDecision(
+            allowed=True,
+            outcome=PolitenessOutcome.ALLOWED,
+            user_agent="OwnerCrawler/9 (+https://example.test/crawler)",
+        )
+        session = _DecisionSession(decision)
+        playwright = _SpyPlaywright()
+        monkeypatch.setattr(detail, "_default_enrichment_session", lambda *_a, **_kw: session)
+        monkeypatch.setattr(detail, "sync_playwright", lambda: playwright)
+
+        assert detail.resolve_wttj_urls(conn) == 0
+
+        assert session.guarded_urls == playwright.goto_calls
+        assert len(session.guarded_urls) == 1
+        assert playwright.page_options == [{"user_agent": decision.user_agent}]
+    finally:
+        close_connection(db_path)
+
+
+def test_wttj_bootstrap_does_not_navigate_when_the_guard_denies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        _seed_pending(conn, "wttj-relative-slug", "WelcomeToTheJungle")
+        session = _DecisionSession(
+            PolitenessDecision(
+                allowed=False,
+                outcome=PolitenessOutcome.ROBOTS_DISALLOWED,
+                user_agent="OwnerCrawler/9 (+https://example.test/crawler)",
+                reason="robots.txt disallows this path",
+            )
+        )
+        playwright = _SpyPlaywright()
+        monkeypatch.setattr(detail, "_default_enrichment_session", lambda *_a, **_kw: session)
+        monkeypatch.setattr(detail, "sync_playwright", lambda: playwright)
+
+        assert detail.resolve_wttj_urls(conn) == 0
+
+        assert len(session.guarded_urls) == 1
+        assert playwright.goto_calls == []
+        assert playwright.page_options == []
+    finally:
+        close_connection(db_path)
 
 
 # ---------------------------------------------------------------------------
@@ -479,11 +558,15 @@ def test_authenticated_linkedin_session_skips_robots_but_keeps_budget(
     try:
         _seed_pending(conn, url, "linkedin")
         sink: list[str] = []
+        resolver_options: list[dict[str, object]] = []
+
+        def _resolver_factory(**kwargs: object) -> _FakeResolver:
+            resolver_options.append(kwargs)
+            return _FakeResolver(sink, **kwargs)
+
         monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "1")
         monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: True)
-        monkeypatch.setattr(
-            detail, "LinkedInApplyUrlResolver", lambda **kw: _FakeResolver(sink, **kw)
-        )
+        monkeypatch.setattr(detail, "LinkedInApplyUrlResolver", _resolver_factory)
         # sync_playwright is only used for the anonymous fallback; the fake
         # resolver supplies the page here.
         monkeypatch.setattr(detail, "sync_playwright", lambda: _SpyPlaywright())
@@ -498,6 +581,8 @@ def test_authenticated_linkedin_session_skips_robots_but_keeps_budget(
         # Robots disallows the host, yet the owner's authenticated LinkedIn
         # session navigates (D1/D3 carve-out) — it is NOT folded as robots-blocked.
         assert sink == [url]
+        assert len(resolver_options) == 1
+        assert resolver_options[0]["user_agent"] is None
         assert stats["blocked"] == 0
         assert _blocked_metric(conn, url) is None
         assert _enrich_stage(conn, url)["state"] == "succeeded"
