@@ -70,10 +70,10 @@ proof for a later release.
   single owner-review gate; `release-publication`, `release-verification`, and
   `pypi` retain their scoped credentials or configuration without reviewers.
   The active repository tag ruleset allows only the owner to create, update, or
-  delete `v*` tags. The active `main` ruleset blocks collaborator direct and
-  force pushes and requires an approved pull request; release-authority paths
-  are assigned to the owner in `CODEOWNERS`. GitHub evaluates
-  required-reviewer approval per job, so adding a reviewer to the reused
+  delete `v*` tags. The active `main` ruleset blocks direct and force pushes and
+  requires changes to arrive through a pull request, without requiring the
+  sole maintainer to obtain an impossible approval from the PR author. GitHub
+  evaluates required-reviewer approval per job, so adding a reviewer to the reused
   `release-publication` environment would incorrectly request repeated
   approval for one release. Downstream jobs set `deployment: false`: they keep
   environment-scoped secrets, variables, tag policy, and OIDC identity without
@@ -426,10 +426,12 @@ evidence that a live environment secret or variable is absent.
   `release-verification`, and `pypi` without reviewers; those environments
   scope credentials or trusted configuration but are not additional human
   milestones. Every environment must admit only `v*` tags and no branches.
-  Keep the active owner-only `v*` tag ruleset and the release-authority
-  `CODEOWNERS` entries: together with the resolver's exact tag/SHA/main-lineage
-  checks, they prevent a collaborator from manufacturing an unreviewed release
-  path. The signing approval authorizes the exact run/tag/SHA, and every
+  Keep the active owner-only `v*` tag ruleset: together with the resolver's exact
+  tag/SHA/main-lineage checks and the signing approval, it prevents a
+  collaborator from manufacturing an unauthorized release tag or run. Do not
+  require CODEOWNER or approving review on `main` while the repository has only
+  one maintainer, because GitHub does not count an author's self-review. The
+  signing approval authorizes the exact run/tag/SHA, and every
   downstream publication remains fail-closed on the existing `needs`,
   checksum, signature, provenance, smoke, and compare-and-swap gates. Verify the
   external PyPI Trusted Publisher mapping named in 9.4 rather than replacing it.
@@ -437,9 +439,9 @@ evidence that a live environment secret or variable is absent.
   `release-signing` has exactly the owner as required reviewer;
   `release-publication`, `release-verification`, and `pypi` have no reviewer;
   all four admit only `v*` tags; the tag ruleset restricts `v*` creation,
-  update, and deletion to the owner; and the release-authority files remain
-  owner-owned under the active `main` pull-request ruleset. Verify every
-  non-signing environment reference uses `deployment: false`, leaving the
+  update, and deletion to the owner; and the active `main` ruleset requires the
+  pull-request path without requiring an approving or CODEOWNER review. Verify
+  every non-signing environment reference uses `deployment: false`, leaving the
   signing gate as the run's only GitHub deployment record. Dispatch at
   `refs/tags/<release_tag>` so `GITHUB_REF` and `GITHUB_SHA` identify the same
   audited tag and commit checked by the resolver. Confirm the jobs pause at
