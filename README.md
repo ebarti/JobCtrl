@@ -179,7 +179,7 @@ evidence, qualifications, and the complete capability matrix.
   posting before acknowledging its provider checkpoint. If the worker stops,
   the same Discover execution resumes unfinished query/location/board units;
   accepted postings and the run-wide new-job limit survive replay, and
-  Pipelines reports how many units resumed. JobStreaming 0.0.3 also supplies
+  Pipelines reports how many units resumed. JobStreaming 0.0.4 also supplies
   cursor-free provider page progress so the active crawl can show completed
   pages, raw listings, emitted jobs, and known continuation without guessing
   an unavailable provider total. JobCtrl can separately estimate source-family

@@ -95,7 +95,10 @@ def _scrape_with_retry(kwargs: dict, max_retries: int = 2, backoff: float = 5.0)
             scrape_legacy_options,
         )
     except ImportError as exc:
-        raise ImportError("jobstreaming 0.0.3 is not installed. Run the JobCtrl setup again.") from exc
+        raise ImportError(
+            "The pinned jobstreaming dependency is not installed. "
+            "Run the JobCtrl setup again."
+        ) from exc
     return scrape_legacy_options(
         kwargs,
         max_retries=max_retries,

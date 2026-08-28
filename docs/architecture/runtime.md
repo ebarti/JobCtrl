@@ -503,7 +503,7 @@ draft leg.
 
 ### Broad-Board Provider Boundary
 
-JobStreaming 0.0.3 is the provider boundary for Indeed, LinkedIn, Glassdoor,
+JobStreaming 0.0.4 is the provider boundary for Indeed, LinkedIn, Glassdoor,
 and ZipRecruiter. The infrastructure gateway translates JobCtrl-owned immutable
 search specifications into provider requests and projects typed provider events
 back into the existing discovery ingestion shape. Provider types do not enter
