@@ -37,10 +37,16 @@ class _EnrichHarness:
 async def test_enrich_activity_invokes_observed_enrich_core():
     queue = f"enrich-{uuid.uuid4()}"
 
-    with patch(
-        "jobctrl.pipeline.runner._run_stage_observed",
-        return_value=({"status": "ok"}, 0.2, "ok"),
-    ) as observed_mock:
+    with (
+        patch(
+            "jobctrl.pipeline.runner._run_stage_observed",
+            return_value=({"status": "ok"}, 0.2, "ok"),
+        ) as observed_mock,
+        patch(
+            "jobctrl.enrichment.activities._claim_activity_enrichment_lease",
+            return_value=None,
+        ),
+    ):
         async with time_skipping_env() as env:
             async with Worker(
                 env.client,
