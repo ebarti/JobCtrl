@@ -77,6 +77,14 @@ class _RemoteFilterLinkedIn(Scraper):
         return JobResponse()
 
 
+class _SelectiveDetailLinkedIn(_RemoteFilterLinkedIn):
+    detail_requests: list[tuple[str | None, float]] = []
+
+    def fetch_job_detail(self, job, request):
+        type(self).detail_requests.append((job.id, request.request_timeout))
+        return job.model_copy(update={"description": "Verified targeted detail"})
+
+
 class _TlsTimeoutInspectingAdapter(Scraper):
     seen_timeouts: list[object] = []
 
@@ -251,6 +259,36 @@ def test_linkedin_remote_filter_evidence_survives_batch_and_event_projection() -
         frame = gateway.frame_for_job_event(event, spec)
 
     assert frame.loc[0, "location"] == "Spain"
+    assert bool(frame.loc[0, "is_remote"]) is True
+
+
+def test_targeted_detail_reprojects_content_under_the_original_event_key() -> None:
+    registry = AdapterRegistry()
+    registry.register(Site.LINKEDIN, _SelectiveDetailLinkedIn)
+    _SelectiveDetailLinkedIn.detail_requests = []
+    gateway = JobStreamingGateway()
+    spec = JobStreamingSearchSpec(
+        sites=("linkedin",),
+        query="Engineering Manager",
+        location="European Union",
+        results_per_site=10,
+        remote_only=True,
+    )
+
+    with gateway.open_stream(spec, registry=registry, resume=False) as stream:
+        event = next(stream)
+        assert isinstance(event, JobEvent)
+        detailed = gateway.fetch_detail_for_job_event(
+            event,
+            request_timeout=7,
+            registry=registry,
+        )
+        assert detailed is not None
+        frame = gateway.frame_for_job_event(event, spec, job=detailed)
+
+    assert _SelectiveDetailLinkedIn.detail_requests == [("linkedin-remote-1", 7)]
+    assert frame.loc[0, "description"] == "Verified targeted detail"
+    assert frame.loc[0, "jobstreaming_job_key"] == event.job_key
     assert bool(frame.loc[0, "is_remote"]) is True
 
 

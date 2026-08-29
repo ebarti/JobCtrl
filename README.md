@@ -175,18 +175,20 @@ evidence, qualifications, and the complete capability matrix.
 - Discover jobs from configured searches and supported source registries,
   driven by your target roles, locations, and seniority — recording which
   source each job came from.
-- Stream broad-board results through JobStreaming and commit each accepted
-  posting before acknowledging its provider checkpoint. If the worker stops,
+- Stream broad-board results through JobStreaming and commit each admitted
+  lead before acknowledging its provider checkpoint. If the worker stops,
   the same Discover execution resumes unfinished query/location/board units;
-  accepted postings and the run-wide new-job limit survive replay, and
-  Pipelines reports how many units resumed. JobStreaming 0.0.4 also supplies
+  admitted leads and the run-wide new-job limit survive replay, and Pipelines
+  reports how many units resumed. JobStreaming 0.0.5 also supplies
   cursor-free provider page progress so the active crawl can show completed
   pages, raw listings, emitted jobs, and known continuation without guessing
   an unavailable provider total. JobCtrl can separately estimate source-family
   completion from recent whole-family durations when live queue and capacity
   observations bound the shared worker contention. LinkedIn search remains a
-  lightweight listing pass; full posting text is fetched by Detail Enrichment
-  only after a listing passes Discovery's acceptance checks.
+  lightweight listing pass. JobCtrl requests one posting's detail early only
+  when a sparse card may duplicate another stored job; other admitted
+  leads receive full posting text in Detail Enrichment. Admission means the
+  lead is safe to enrich, not that JobCtrl has judged it suitable or relevant.
 - Optionally reconcile a local Temporal Schedule for discovery; it is disabled
   by default and uses the configured cron only after you enable it.
 - Enrich postings with full descriptions, canonical posting URLs, and apply

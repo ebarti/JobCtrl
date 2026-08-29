@@ -23,6 +23,7 @@ from jobstreaming import (
     Scraper,
     ErrorEvent,
     JobEvent,
+    JobPost,
     ProgressEvent,
     SearchCompleteEvent,
     SearchRequest,
@@ -32,6 +33,7 @@ from jobstreaming import (
     WarningEvent,
     build_search_request,
     default_registry,
+    fetch_job_detail,
     stream_search,
 )
 from jobstreaming.batch import jobs_to_dataframe
@@ -239,6 +241,8 @@ class JobStreamingGateway:
         cls,
         event: JobEvent,
         spec: JobStreamingSearchSpec,
+        *,
+        job: JobPost | None = None,
     ) -> pd.DataFrame:
         """Project one provider event into the legacy storage frame.
 
@@ -249,13 +253,40 @@ class JobStreamingGateway:
 
         frame = _apply_provider_filter_evidence(
             jobs_to_dataframe(
-                [(event.site, event.job)],
+                [(event.site, job or event.job)],
                 cls.build_request(spec),
             ),
             spec,
         )
         frame["jobstreaming_job_key"] = event.job_key
         return frame
+
+    @staticmethod
+    def fetch_detail_for_job_event(
+        event: JobEvent,
+        *,
+        proxies: list[str] | str | None = None,
+        user_agent: str | None = None,
+        request_timeout: float = 30,
+        registry: AdapterRegistry | None = None,
+    ) -> JobPost | None:
+        """Fetch detail for one known provider event without starting a search.
+
+        JobCtrl owns the selective decision. JobStreaming owns the provider
+        transport and returns the same immutable posting with any available
+        detail attached. The original event key remains the durable
+        acknowledgement identity when the caller reprojects the result.
+        """
+
+        return fetch_job_detail(
+            event.site,
+            event.job,
+            proxies=proxies,
+            user_agent=user_agent,
+            description_format="markdown",
+            request_timeout=request_timeout,
+            registry=_normalize_tls_adapter_timeouts(registry),
+        )
 
     def collect(
         self,

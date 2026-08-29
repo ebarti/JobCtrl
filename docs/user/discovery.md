@@ -5,7 +5,7 @@ import DiscoveryPipeline from "../.vitepress/theme/DiscoveryPipeline.vue";
 # Discovery & Sources
 
 Discovery turns your target search into source queries, checks returned jobs
-against that intent, and prepares accepted jobs for scoring and materials. This
+against that intent, and prepares admitted leads for scoring and materials. This
 page owns the target-search controls, source/runtime settings, scheduling, crawl
 policy, and supervised contact-research boundary. For the end-to-end loop, start
 with [Daily Workflow](normal-flows.md); for providers and the shared spend
@@ -55,11 +55,19 @@ starts, so a change affects the next run rather than work already in progress.
 <a id="runtime-setting-results-per-board"></a>
 **Results per board.** Set the maximum number of results requested from each
 selected board for one search unit. This is a provider request limit, not a
-promise that every board will return that many accepted jobs; title, location,
+promise that every board will return that many admitted leads; title, location,
 age, and deduplication checks still apply. The next Discover run snapshots the
-new value. LinkedIn search does not download every result's full description:
-accepted listings enter Detail Enrichment, which fetches the posting content
-needed for scoring.
+new value. Admission means a lead is eligible for persistence and enrichment;
+it is not a relevance score or a judgment that the job is suitable.
+
+LinkedIn search keeps cards listing-only instead of downloading every result's
+full description. When an admitted sparse card has the same normalized role and
+genuine employer as another stored job, JobCtrl requests that one
+posting's detail so content evidence can resolve the possible duplicate before
+the new-job budget advances. Other admitted cards enter Detail Enrichment for
+their posting content. If targeted detail is unavailable, JobCtrl preserves the
+sparse lead and safely keeps it separate rather than dropping it or merging on
+title and employer alone.
 
 <a id="runtime-setting-posting-lookback-hours"></a>
 **Posting lookback hours.** Limit broad-board discovery to postings no older
@@ -198,21 +206,22 @@ Temporal run ID, and the bounded repair reason code remain available under
 
 ### Resumable Broad-Board Searches
 
-Broad-board discovery uses JobStreaming 0.0.4. At the beginning of the source
+Broad-board discovery uses JobStreaming 0.0.5. At the beginning of the source
 activity, JobCtrl compiles an immutable unit for every query, target/provider
 location, and board under the exact Discover workflow/run identity. JobCtrl,
 not the provider, owns whether that unit is pending, running, completed, failed,
 skipped, or canceled.
 
-For each posting event, JobCtrl applies the title/location policy and commits
-the accepted job, source observation, event records, and an idempotent unit
+For each posting event, JobCtrl applies the title/location admission policy and
+commits the admitted lead, source observation, event records, and an idempotent unit
 receipt before acknowledging the JobStreaming event. The acknowledgement then
 advances the provider checkpoint. If the process stops in that gap, the event
 is delivered again and the durable receipt makes the replay harmless. Results
 rejected by the caller's title/location policy get a separate hashed receipt
 before acknowledgement. Accepted new/existing counts, filtered counts, and the
 run-wide new-job limit are therefore read from durable receipts, so a retry
-cannot lose progress or start the limit over.
+cannot lose progress or start the limit over. This intake admission remains
+separate from the later score and relevance decision.
 
 Temporal retries reclaim only unfinished units with a newer activity-attempt
 fence. Retryable board errors resume from their checkpoint; an expired board

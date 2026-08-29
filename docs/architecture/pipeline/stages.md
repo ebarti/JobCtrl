@@ -91,11 +91,15 @@ Key facts about the four activities:
   exact-query duplicates never starve later recall queries or sources.
 
   The broad-board family further decomposes the immutable search plan into one
-  query/location/board unit per JobStreaming stream. Each posting is durably
-  accepted before explicit provider acknowledgement. Provider search captures
-  listing metadata only; in particular, LinkedIn full-description requests are
-  deferred until the accepted job reaches Detail Enrichment, so rejected and
-  duplicate listings do not pay the detail-fetch cost. The unit checkpoint,
+  query/location/board unit per JobStreaming stream. Each admitted lead is
+  durably stored before explicit provider acknowledgement; admission permits
+  enrichment and is not a suitability or relevance verdict. Provider search
+  captures listing metadata only. A sparse LinkedIn card receives one targeted
+  detail request before persistence only when its normalized title and genuine
+  employer collide with another stored job and content evidence is
+  needed to protect the new-job budget. All other full-description work remains
+  in Detail Enrichment. A failed targeted request preserves the sparse lead and
+  safely under-merges it. The unit checkpoint,
   accepted-job receipts, result-limit count, typed board failure, and current
   Temporal activity-attempt fence live in SQLite. A hard worker loss leaves the
   unit `running` for the next activity attempt to reclaim; replay is idempotent.

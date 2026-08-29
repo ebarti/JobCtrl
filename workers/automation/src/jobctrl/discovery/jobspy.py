@@ -835,6 +835,61 @@ def _find_existing_content_duplicate(
     )
 
 
+def _needs_linkedin_detail_for_content_identity(
+    conn: sqlite3.Connection,
+    frame: Any,
+) -> bool:
+    """Return whether one admitted sparse listing needs collision evidence.
+
+    This is not another suitability filter. The listing has already passed the
+    existing title/location policy. Detail is requested only when a
+    descriptionless LinkedIn card could be the same opening as a stored Job at
+    another URL with the same normalized role and genuine employer. Without
+    description evidence, the content-identity boundary must safely under-merge
+    instead of collapsing jobs on title and employer alone.
+    """
+
+    if frame.empty or len(frame.index) != 1:
+        return False
+    row = frame.iloc[0]
+    if normalize_identity_text(row.get("site")) != "linkedin":
+        return False
+    if _nullable_str(row.get("description")) is not None:
+        return False
+    url = _nullable_str(row.get("job_url"))
+    title = _nullable_str(row.get("title"))
+    company = _nullable_str(row.get("company"))
+    if not url or not title or not is_genuine_employer_identity(company):
+        return False
+
+    conn.create_function(
+        "jh_normalize_identity",
+        1,
+        normalize_identity_text,
+        deterministic=True,
+    )
+    return (
+        conn.execute(
+            """
+            SELECT 1
+              FROM jobs j
+             WHERE j.tenant_id = ?
+               AND j.url != ?
+               AND jh_normalize_identity(COALESCE(j.title, '')) = ?
+               AND jh_normalize_identity(COALESCE(j.company, '')) = ?
+             LIMIT 1
+            """,
+            (
+                str(LOCAL_TENANT),
+                url,
+                normalize_identity_text(title),
+                normalize_identity_text(company),
+            ),
+        ).fetchone()
+        is not None
+    )
+
+
 def _find_stored_content_duplicate_survivor(conn: sqlite3.Connection, *, url: str) -> str | None:
     row = conn.execute(
         """
@@ -1686,6 +1741,7 @@ def _durable_full_crawl(
         CheckpointMismatchError,
         ErrorEvent,
         JobEvent,
+        JobStreamingError,
         ProgressEvent,
         SearchCompleteEvent,
         SiteCompleteEvent,
@@ -1858,6 +1914,36 @@ def _durable_full_crawl(
                                     event.job_key,
                                 )
                             else:
+                                if _needs_linkedin_detail_for_content_identity(
+                                    conn,
+                                    accepted_frame,
+                                ):
+                                    try:
+                                        detailed_job = gateway.fetch_detail_for_job_event(
+                                            event,
+                                            proxies=proxies,
+                                            user_agent=politeness_ua,
+                                            registry=adapter_registry,
+                                        )
+                                    except JobStreamingError as exc:
+                                        # Detail is evidence for a possible
+                                        # cross-source identity match, not a
+                                        # new admission gate. Keep the viable
+                                        # lead on typed provider failure and
+                                        # safely under-merge it below.
+                                        log.warning(
+                                            "JobStreaming targeted detail for %s failed "
+                                            "with %s; preserving the sparse lead",
+                                            event.site.value,
+                                            type(exc).__name__,
+                                        )
+                                    else:
+                                        if detailed_job is not None:
+                                            accepted_frame = gateway.frame_for_job_event(
+                                                event,
+                                                provider_spec,
+                                                job=detailed_job,
+                                            )
                                 store_jobspy_results(
                                     conn,
                                     accepted_frame,

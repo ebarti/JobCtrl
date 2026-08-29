@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from temporalio import activity
 from .temporal_env import time_skipping_env
@@ -26,6 +27,7 @@ from jobstreaming import (
     Scraper,
     SearchCheckpoint,
     Site,
+    TransientNetworkError,
 )
 
 from jobctrl.database import close_connection, get_jobs_by_stage, init_db
@@ -204,6 +206,54 @@ class _ListingOnlyLinkedIn(Scraper):
         return JobResponse()
 
 
+class _ContentCollisionLinkedIn(Scraper):
+    capabilities = AdapterCapabilities(filters=frozenset({"location", "is_remote", "hours_old"}))
+    detail_requests: list[str | None] = []
+
+    def __init__(self, **_: object) -> None:
+        super().__init__(Site.LINKEDIN)
+
+    def scrape(self, request, context=None) -> JobResponse:
+        assert context is not None
+        listings = (
+            JobPost(
+                id="101",
+                title=request.search_term,
+                company_name="Acme",
+                job_url="https://www.linkedin.com/jobs/view/101",
+                location=Location(city="Remote"),
+                description="",
+                is_remote=True,
+            ),
+            JobPost(
+                id="202",
+                title=request.search_term,
+                company_name="Unique Example",
+                job_url="https://www.linkedin.com/jobs/view/202",
+                location=Location(city="Remote"),
+                description="",
+                is_remote=True,
+            ),
+        )
+        start = int(context.resume_state.get("start", 0))
+        for index, listing in enumerate(listings[start:], start=start):
+            if not context.emit_job(listing, {"start": index + 1}):
+                break
+        return JobResponse()
+
+    def fetch_job_detail(self, job, request):
+        assert request.site_type == (Site.LINKEDIN,)
+        type(self).detail_requests.append(job.id)
+        return job.model_copy(update={"description": _DESCRIPTION})
+
+
+class _FailingContentCollisionLinkedIn(_ContentCollisionLinkedIn):
+    def fetch_job_detail(self, job, request):
+        del request
+        type(self).detail_requests.append(job.id)
+        raise TransientNetworkError("targeted detail temporarily unavailable")
+
+
 class _CursorThenPosting(_SuccessfulIndeed):
     calls = 0
 
@@ -302,6 +352,28 @@ def _remote_eu_linkedin_config() -> dict:
         "local_accept_patterns": ["Barcelona, Spain"],
     }
     return cfg
+
+
+def _seed_cross_source_content_owner(conn) -> str:
+    owner_url = "https://boards.greenhouse.io/acme/jobs/director-engineering"
+    assert jobspy.store_jobspy_results(
+        conn,
+        pd.DataFrame(
+            [
+                {
+                    "job_url": owner_url,
+                    "title": "Director of Engineering",
+                    "company": "Acme",
+                    "description": _DESCRIPTION,
+                    "location": "Remote",
+                    "site": "greenhouse",
+                    "is_remote": True,
+                }
+            ]
+        ),
+        "Director of Engineering",
+    ) == (1, 0)
+    return owner_url
 
 
 def _registry(*, linkedin: bool = False, indeed_factory=_PagedIndeed):
@@ -899,6 +971,145 @@ def test_linkedin_listing_only_discovery_persists_job_for_detail_enrichment(
     assert stored["location"] == "Spain (Remote)"
     assert conn.execute("SELECT COUNT(*) FROM job_enrichments").fetchone()[0] == 0
     assert {row["job_id"] for row in get_jobs_by_stage(conn, "pending_detail", limit=0)} == {stored["job_id"]}
+
+
+def test_selective_detail_prevents_a_cross_source_collision_from_consuming_the_new_job_limit(
+    discovery_db,
+) -> None:
+    conn, _db_path = discovery_db
+    owner_url = _seed_cross_source_content_owner(conn)
+    execution = _execution("temporal-run-linkedin-content-collision")
+    registry = AdapterRegistry()
+    registry.register(Site.LINKEDIN, _ContentCollisionLinkedIn)
+    _ContentCollisionLinkedIn.detail_requests = []
+
+    result = jobspy.run_discovery(
+        cfg=_config(boards=("linkedin",)),
+        limit=1,
+        discovery_execution=execution,
+        activity_attempt=1,
+        activity_owner_token="content-collision-attempt-1",
+        adapter_registry=registry,
+    )
+
+    assert _ContentCollisionLinkedIn.detail_requests == ["101"]
+    assert result["new"] == 1
+    assert result["existing"] == 1
+    assert result["raw_total"] == 2
+    assert {row["url"] for row in conn.execute("SELECT url FROM jobs").fetchall()} == {
+        owner_url,
+        "https://www.linkedin.com/jobs/view/202",
+    }
+    link = conn.execute("SELECT surviving_job_id, reason FROM job_duplicate_links").fetchone()
+    assert link is not None
+    assert link["reason"] == "content_fingerprint_match"
+    assert (
+        conn.execute(
+            "SELECT job_id FROM jobs WHERE url = ?",
+            (owner_url,),
+        ).fetchone()["job_id"]
+        == link["surviving_job_id"]
+    )
+
+
+def test_selective_detail_replays_safely_when_provider_acknowledgement_is_lost(
+    discovery_db,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn, _db_path = discovery_db
+    owner_url = _seed_cross_source_content_owner(conn)
+    execution = _execution("temporal-run-linkedin-content-collision-replay")
+    registry = AdapterRegistry()
+    registry.register(Site.LINKEDIN, _ContentCollisionLinkedIn)
+    _ContentCollisionLinkedIn.detail_requests = []
+    original_save = SqliteDiscoverySearchUnitCheckpointStore.save
+    interrupted = False
+
+    def interrupt_first_job_ack(self, checkpoint) -> None:
+        nonlocal interrupted
+        if checkpoint.revision == 1 and not interrupted:
+            interrupted = True
+            raise RuntimeError("simulated worker loss after selective detail")
+        original_save(self, checkpoint)
+
+    monkeypatch.setattr(
+        SqliteDiscoverySearchUnitCheckpointStore,
+        "save",
+        interrupt_first_job_ack,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="simulated worker loss after selective detail",
+    ):
+        jobspy.run_discovery(
+            cfg=_config(boards=("linkedin",)),
+            limit=1,
+            discovery_execution=execution,
+            activity_attempt=1,
+            activity_owner_token="content-collision-replay-attempt-1",
+            adapter_registry=registry,
+        )
+
+    repository = SqliteDiscoverySearchUnitRepository(conn)
+    assert repository.execution_counts(execution) == {
+        "accepted": 1,
+        "new": 0,
+        "existing": 1,
+    }
+    assert repository.list_units(execution)[0].checkpoint_revision == 0
+
+    result = jobspy.run_discovery(
+        cfg=_config(boards=("linkedin",)),
+        limit=1,
+        discovery_execution=execution,
+        activity_attempt=2,
+        activity_owner_token="content-collision-replay-attempt-2",
+        adapter_registry=registry,
+    )
+
+    assert _ContentCollisionLinkedIn.detail_requests == ["101", "101"]
+    assert result["new"] == 1
+    assert result["existing"] == 1
+    assert result["raw_total"] == 2
+    assert {row["url"] for row in conn.execute("SELECT url FROM jobs").fetchall()} == {
+        owner_url,
+        "https://www.linkedin.com/jobs/view/202",
+    }
+    assert conn.execute("SELECT COUNT(*) FROM job_duplicate_links").fetchone()[0] == 1
+    assert repository.list_units(execution)[0].recovery_count == 1
+
+
+def test_selective_detail_failure_preserves_the_sparse_lead(
+    discovery_db,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    conn, _db_path = discovery_db
+    owner_url = _seed_cross_source_content_owner(conn)
+    execution = _execution("temporal-run-linkedin-content-collision-detail-failure")
+    registry = AdapterRegistry()
+    registry.register(Site.LINKEDIN, _FailingContentCollisionLinkedIn)
+    _FailingContentCollisionLinkedIn.detail_requests = []
+
+    with caplog.at_level("WARNING"):
+        result = jobspy.run_discovery(
+            cfg=_config(boards=("linkedin",)),
+            limit=1,
+            discovery_execution=execution,
+            activity_attempt=1,
+            activity_owner_token="content-collision-detail-failure-attempt-1",
+            adapter_registry=registry,
+        )
+
+    assert _FailingContentCollisionLinkedIn.detail_requests == ["101"]
+    assert result["new"] == 1
+    assert result["existing"] == 0
+    assert {row["url"] for row in conn.execute("SELECT url FROM jobs").fetchall()} == {
+        owner_url,
+        "https://www.linkedin.com/jobs/view/101",
+    }
+    assert conn.execute("SELECT COUNT(*) FROM job_duplicate_links").fetchone()[0] == 0
+    assert "preserving the sparse lead" in caplog.text
 
 
 def test_interrupted_legacy_linkedin_plan_keeps_its_frozen_detail_request(

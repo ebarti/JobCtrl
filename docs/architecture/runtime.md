@@ -503,7 +503,7 @@ draft leg.
 
 ### Broad-Board Provider Boundary
 
-JobStreaming 0.0.4 is the provider boundary for Indeed, LinkedIn, Glassdoor,
+JobStreaming 0.0.5 is the provider boundary for Indeed, LinkedIn, Glassdoor,
 and ZipRecruiter. The infrastructure gateway translates JobCtrl-owned immutable
 search specifications into provider requests and projects typed provider events
 back into the existing discovery ingestion shape. Provider types do not enter
@@ -512,12 +512,14 @@ the Discovery domain model.
 The responsibility split is deliberate:
 
 - JobCtrl owns the exact Discover execution, one immutable
-  query/location/board unit per provider stream, title/location acceptance,
+  query/location/board unit per provider stream, title/location admission,
   durable accepted counts, run-wide limits, lifecycle state, Temporal-attempt
-  fencing, checkpoint storage, and product-visible recovery.
+  fencing, checkpoint storage, selective detail decisions for content identity,
+  and product-visible recovery.
 - JobStreaming owns the board adapter and transport, cursor/resume state,
   stable job keys, typed error classification, cancellation-aware waits, and
-  explicit event acknowledgement.
+  explicit event acknowledgement. Its optional targeted-detail operation
+  fetches one already-known listing without changing search checkpoints.
 
 The consumer stores an accepted posting and its idempotent unit receipt before
 acknowledging the event. A newer activity attempt increments the unit lease
