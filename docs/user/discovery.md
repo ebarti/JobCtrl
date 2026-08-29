@@ -57,7 +57,9 @@ starts, so a change affects the next run rather than work already in progress.
 selected board for one search unit. This is a provider request limit, not a
 promise that every board will return that many accepted jobs; title, location,
 age, and deduplication checks still apply. The next Discover run snapshots the
-new value.
+new value. LinkedIn search does not download every result's full description:
+accepted listings enter Detail Enrichment, which fetches the posting content
+needed for scoring.
 
 <a id="runtime-setting-posting-lookback-hours"></a>
 **Posting lookback hours.** Limit broad-board discovery to postings no older

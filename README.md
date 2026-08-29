@@ -184,7 +184,9 @@ evidence, qualifications, and the complete capability matrix.
   pages, raw listings, emitted jobs, and known continuation without guessing
   an unavailable provider total. JobCtrl can separately estimate source-family
   completion from recent whole-family durations when live queue and capacity
-  observations bound the shared worker contention.
+  observations bound the shared worker contention. LinkedIn search remains a
+  lightweight listing pass; full posting text is fetched by Detail Enrichment
+  only after a listing passes Discovery's acceptance checks.
 - Optionally reconcile a local Temporal Schedule for discovery; it is disabled
   by default and uses the configured cron only after you enable it.
 - Enrich postings with full descriptions, canonical posting URLs, and apply
