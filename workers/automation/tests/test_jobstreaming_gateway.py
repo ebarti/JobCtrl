@@ -7,6 +7,7 @@ from jobstreaming import (
     JobPost,
     JobEvent,
     JobResponse,
+    Location,
     MemoryCheckpointStore,
     RateLimitError,
     Scraper,
@@ -50,6 +51,30 @@ class _RateLimitedAdapter(Scraper):
 
     def scrape(self, request, context=None) -> JobResponse:
         raise RateLimitError("slow down")
+
+
+class _RemoteFilterLinkedIn(Scraper):
+    capabilities = AdapterCapabilities(filters=frozenset({"location", "is_remote"}))
+
+    def __init__(self, **_: object) -> None:
+        super().__init__(Site.LINKEDIN)
+
+    def scrape(self, request, context=None) -> JobResponse:
+        assert request.is_remote is True
+        assert context is not None
+        context.emit_job(
+            JobPost(
+                id="linkedin-remote-1",
+                title="Engineering Manager",
+                company_name="Example",
+                job_url="https://www.linkedin.com/jobs/view/linkedin-remote-1",
+                location=Location(city="Spain"),
+                description="",
+                is_remote=False,
+            ),
+            {"start": 1},
+        )
+        return JobResponse()
 
 
 class _TlsTimeoutInspectingAdapter(Scraper):
@@ -201,6 +226,32 @@ def test_job_event_projection_preserves_the_provider_idempotency_key() -> None:
 
     assert frame.loc[0, "job_url"] == "https://example.test/jobs/1"
     assert frame.loc[0, "jobstreaming_job_key"] == event.job_key
+
+
+def test_linkedin_remote_filter_evidence_survives_batch_and_event_projection() -> None:
+    registry = AdapterRegistry()
+    registry.register(Site.LINKEDIN, _RemoteFilterLinkedIn)
+    gateway = JobStreamingGateway()
+    spec = JobStreamingSearchSpec(
+        sites=("linkedin",),
+        query="Engineering Manager",
+        location="European Union",
+        results_per_site=10,
+        remote_only=True,
+        linkedin_fetch_description=False,
+    )
+
+    batch = gateway.collect(spec, registry=registry)
+    assert batch.frame.loc[0, "location"] == "Spain"
+    assert bool(batch.frame.loc[0, "is_remote"]) is True
+
+    with gateway.open_stream(spec, registry=registry, resume=False) as stream:
+        event = next(stream)
+        assert isinstance(event, JobEvent)
+        frame = gateway.frame_for_job_event(event, spec)
+
+    assert frame.loc[0, "location"] == "Spain"
+    assert bool(frame.loc[0, "is_remote"]) is True
 
 
 def test_proxy_and_user_agent_reach_the_provider_constructor() -> None:

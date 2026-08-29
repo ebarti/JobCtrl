@@ -114,6 +114,29 @@ class JobStreamingSearchError(RuntimeError):
 _TLS_CLIENT_SITES = frozenset({Site.GLASSDOOR, Site.ZIP_RECRUITER})
 
 
+def _apply_provider_filter_evidence(
+    frame: pd.DataFrame,
+    spec: JobStreamingSearchSpec,
+) -> pd.DataFrame:
+    """Preserve provider-owned facts that listing text cannot reconstruct.
+
+    LinkedIn applies its remote-only request as a provider filter. Its listing
+    card can still contain only a country/region, and JobStreaming otherwise
+    derives ``is_remote`` from the title, location, and optional description.
+    When description fetching is disabled, treating that derived false as
+    stronger than the provider-filter result would drop valid remote listings.
+    """
+
+    if frame.empty or not spec.remote_only or "site" not in frame.columns:
+        return frame
+    linkedin_rows = frame["site"].astype(str).str.casefold().eq(Site.LINKEDIN.value)
+    if not linkedin_rows.any():
+        return frame
+    projected = frame.copy()
+    projected.loc[linkedin_rows, "is_remote"] = True
+    return projected
+
+
 class _IntegralTlsTimeoutAdapter(Scraper):
     """Normalize the provider timeout for tls-client adapters that require ints."""
 
@@ -224,9 +247,12 @@ class JobStreamingGateway:
         and its operational discovery run id have changed.
         """
 
-        frame = jobs_to_dataframe(
-            [(event.site, event.job)],
-            cls.build_request(spec),
+        frame = _apply_provider_filter_evidence(
+            jobs_to_dataframe(
+                [(event.site, event.job)],
+                cls.build_request(spec),
+            ),
+            spec,
         )
         frame["jobstreaming_job_key"] = event.job_key
         return frame
@@ -288,7 +314,10 @@ class JobStreamingGateway:
                 stream.ack(event)
 
         return JobStreamingBatch(
-            frame=jobs_to_dataframe(jobs, request),
+            frame=_apply_provider_filter_evidence(
+                jobs_to_dataframe(jobs, request),
+                spec,
+            ),
             failures=tuple(failures),
             warnings=tuple(warnings),
             completed=completed,
