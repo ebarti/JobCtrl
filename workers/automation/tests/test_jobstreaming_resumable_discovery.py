@@ -28,7 +28,7 @@ from jobstreaming import (
     Site,
 )
 
-from jobctrl.database import close_connection, init_db
+from jobctrl.database import close_connection, get_jobs_by_stage, init_db
 from jobctrl.discovery import jobspy
 from jobctrl.discovery.activities import (
     AutomaticCompensationRefreshActivityOutput,
@@ -176,6 +176,34 @@ class _InvalidLinkedIn(Scraper):
         raise InvalidRequestError("invalid request")
 
 
+class _ListingOnlyLinkedIn(Scraper):
+    capabilities = AdapterCapabilities(filters=frozenset({"location", "is_remote", "hours_old"}))
+    fetch_description_requests: list[bool] = []
+
+    def __init__(self, **_: object) -> None:
+        super().__init__(Site.LINKEDIN)
+
+    def scrape(self, request, context=None) -> JobResponse:
+        assert context is not None
+        fetch_description = bool(request.linkedin_fetch_description)
+        type(self).fetch_description_requests.append(fetch_description)
+        context.emit_job(
+            JobPost(
+                id="listing-only-1",
+                title=request.search_term,
+                company_name="Listing Only Example",
+                job_url="https://www.linkedin.com/jobs/view/listing-only-1",
+                # LinkedIn's remote-only filter is the evidence. Real listing
+                # cards can show only a region and contain no textual marker.
+                location=Location(city="Spain"),
+                description=_DESCRIPTION if fetch_description else "",
+                is_remote=False,
+            ),
+            {"start": 1},
+        )
+        return JobResponse()
+
+
 class _CursorThenPosting(_SuccessfulIndeed):
     calls = 0
 
@@ -257,6 +285,23 @@ def _config(
             "local_accept_patterns": ["Remote"],
         },
     }
+
+
+def _remote_eu_linkedin_config() -> dict:
+    cfg = _config(boards=("linkedin",))
+    cfg["locations"] = [
+        {
+            "label": "remote-eu",
+            "location": "European Union",
+            "remote": True,
+        }
+    ]
+    cfg["location"] = {
+        "accept_patterns": ["European Union"],
+        "reject_patterns": ["United States"],
+        "local_accept_patterns": ["Barcelona, Spain"],
+    }
+    return cfg
 
 
 def _registry(*, linkedin: bool = False, indeed_factory=_PagedIndeed):
@@ -821,6 +866,72 @@ def test_durable_plan_preserves_target_location_and_splits_glassdoor_request(
         "Barcelona",
     ]
     assert all(spec.target_location == "Barcelona, Catalonia, Spain" for spec in specs)
+    assert specs[1].sites == ("linkedin",)
+    assert specs[1].linkedin_fetch_description is False
+
+
+def test_linkedin_listing_only_discovery_persists_job_for_detail_enrichment(
+    discovery_db,
+) -> None:
+    conn, _db_path = discovery_db
+    execution = _execution("temporal-run-linkedin-listing-only")
+    cfg = _remote_eu_linkedin_config()
+    registry = AdapterRegistry()
+    registry.register(Site.LINKEDIN, _ListingOnlyLinkedIn)
+    _ListingOnlyLinkedIn.fetch_description_requests = []
+
+    result = jobspy.run_discovery(
+        cfg=cfg,
+        discovery_execution=execution,
+        activity_attempt=1,
+        activity_owner_token="listing-only-attempt-1",
+        adapter_registry=registry,
+    )
+
+    assert _ListingOnlyLinkedIn.fetch_description_requests == [False]
+    assert result["new"] == 1, json.dumps(result, sort_keys=True)
+    stored = conn.execute(
+        "SELECT job_id, description, full_description, location FROM jobs"
+    ).fetchone()
+    assert stored is not None
+    assert stored["description"] == ""
+    assert stored["full_description"] is None
+    assert stored["location"] == "Spain (Remote)"
+    assert conn.execute("SELECT COUNT(*) FROM job_enrichments").fetchone()[0] == 0
+    assert {row["job_id"] for row in get_jobs_by_stage(conn, "pending_detail", limit=0)} == {stored["job_id"]}
+
+
+def test_interrupted_legacy_linkedin_plan_keeps_its_frozen_detail_request(
+    discovery_db,
+) -> None:
+    conn, _db_path = discovery_db
+    execution = _execution("temporal-run-linkedin-legacy-plan")
+    cfg = _remote_eu_linkedin_config()
+    specs = jobspy._durable_search_specs(  # noqa: SLF001
+        cfg,
+        tiers=None,
+        locations=None,
+        sites=["linkedin"],
+        results_per_site=10,
+        hours_old=72,
+        linkedin_fetch_description=True,
+    )
+    SqliteDiscoverySearchUnitRepository(conn).plan_units(execution, specs)
+    registry = AdapterRegistry()
+    registry.register(Site.LINKEDIN, _ListingOnlyLinkedIn)
+    _ListingOnlyLinkedIn.fetch_description_requests = []
+
+    result = jobspy.run_discovery(
+        cfg=cfg,
+        discovery_execution=execution,
+        activity_attempt=1,
+        activity_owner_token="legacy-plan-attempt-1",
+        adapter_registry=registry,
+    )
+
+    assert _ListingOnlyLinkedIn.fetch_description_requests == [True]
+    assert result["new"] == 1
+    assert SqliteDiscoverySearchUnitRepository(conn).list_units(execution)[0].state == "completed"
 
 
 def test_partial_board_success_is_retained_with_typed_failure_evidence(

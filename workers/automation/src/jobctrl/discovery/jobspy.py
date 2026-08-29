@@ -1052,14 +1052,16 @@ def _run_one_search(
             "hours_old": hours_old,
             "description_format": "markdown",
             "country_indeed": defaults.get("country_indeed", "usa"),
+            # Detail enrichment owns full posting content. Keeping broad-board
+            # intake listing-only avoids one LinkedIn detail request for every
+            # raw result before title, location, and identity checks run.
+            "linkedin_fetch_description": False,
             "verbose": 0,
         }
         if s.get("remote"):
             kwargs["is_remote"] = True
         if proxy_config:
             kwargs["proxies"] = [proxy_config.jobspy]
-        if "linkedin" in other_sites:
-            kwargs["linkedin_fetch_description"] = True
         try:
             df, failures = _jobstreaming_frame_and_failures(_scrape_with_retry(kwargs, max_retries=max_retries))
             provider_errors += failures
@@ -1234,6 +1236,9 @@ def search_jobs(
         "hours_old": hours_old,
         "description_format": "markdown",
         "country_indeed": country_indeed,
+        # Full descriptions are fetched once, after listing acceptance, by the
+        # canonical detail-enrichment stage.
+        "linkedin_fetch_description": False,
         "verbose": 2,
     }
 
@@ -1242,9 +1247,6 @@ def search_jobs(
 
     if proxy_config:
         kwargs["proxies"] = [proxy_config.jobspy]
-
-    if "linkedin" in sites:
-        kwargs["linkedin_fetch_description"] = True
 
     # Pace this single manual search via the shared limiter (R10, D3). jobspy's
     # internal per-board transport remains unpoliced (documented residual).
@@ -1322,6 +1324,7 @@ def _durable_search_specs(
     sites: list[str],
     results_per_site: int,
     hours_old: int,
+    linkedin_fetch_description: bool = False,
 ) -> list[DiscoverySearchSpec]:
     """Split the crawl into immutable provider-location-compatible units."""
 
@@ -1367,7 +1370,9 @@ def _durable_search_specs(
                 DiscoverySearchSpec(
                     provider_location=provider_location,
                     sites=(site,),
-                    linkedin_fetch_description=site == "linkedin",
+                    linkedin_fetch_description=(
+                        site == "linkedin" and linkedin_fetch_description
+                    ),
                     **common,
                 )
             )
@@ -1695,6 +1700,18 @@ def _durable_full_crawl(
         SqliteDiscoverySearchUnitRepository,
     )
 
+    conn = init_db()
+    repository = SqliteDiscoverySearchUnitRepository(conn)
+    existing_units = repository.list_units(discovery_execution)
+    # New executions keep provider search listing-only. An interrupted
+    # execution must replay its already-frozen request exactly, including the
+    # legacy LinkedIn detail-fetch flag, or checkpoint fingerprints would no
+    # longer match after an upgrade.
+    persisted_linkedin_detail = any(
+        unit.spec.sites == ("linkedin",)
+        and unit.spec.linkedin_fetch_description
+        for unit in existing_units
+    )
     specs = _durable_search_specs(
         search_cfg,
         tiers=tiers,
@@ -1702,9 +1719,8 @@ def _durable_full_crawl(
         sites=sites,
         results_per_site=results_per_site,
         hours_old=hours_old,
+        linkedin_fetch_description=persisted_linkedin_detail,
     )
-    conn = init_db()
-    repository = SqliteDiscoverySearchUnitRepository(conn)
     repository.plan_units(discovery_execution, specs)
     proxy_config = parse_proxy(proxy) if proxy else None
     proxies = [proxy_config.jobspy] if proxy_config else None

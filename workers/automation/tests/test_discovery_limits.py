@@ -450,7 +450,12 @@ def test_jobspy_retains_partial_results_and_counts_typed_board_failure(monkeypat
         completed=False,
     )
     stored: list[str] = []
-    monkeypatch.setattr(jobspy, "_scrape_with_retry", lambda *_args, **_kwargs: batch)
+
+    def fake_scrape(options: dict, *_args, **_kwargs):
+        assert options["linkedin_fetch_description"] is False
+        return batch
+
+    monkeypatch.setattr(jobspy, "_scrape_with_retry", fake_scrape)
     monkeypatch.setattr(jobspy, "get_connection", lambda: object())
     monkeypatch.setattr(
         jobspy,
