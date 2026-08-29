@@ -816,6 +816,10 @@ def retire_invalid_source_jobs(
             accept_locs=accept_locs,
             reject_locs=reject_locs,
             locations=locations,
+            # Match the intake boundary: broad-board rows are durable listing
+            # leads even when Detail Enrichment is deferred or fails. Direct
+            # sources still promise usable content at discovery time.
+            require_description=family != "jobspy",
         )
         if not reasons:
             continue
@@ -897,6 +901,11 @@ def _posting_acceptance_policy(search_cfg: Mapping[str, Any]):
             accept_locs=accept_locs,
             reject_locs=reject_locs,
             locations=locations,
+            # Broad boards are lead generators. Their accepted listing metadata
+            # is enough to enter canonical Detail Enrichment, which owns the
+            # full-description requirement. Direct sources still need content
+            # at their intake boundary.
+            require_description=family != "jobspy",
         )
         if not reasons:
             return PostingAcceptance.accept()
@@ -967,11 +976,12 @@ def _source_rejection_reasons(
     accept_locs: list[str],
     reject_locs: list[str],
     locations: tuple[str, ...],
+    require_description: bool = True,
 ) -> list[str]:
     reasons: list[str] = []
     effective_accept_locs = accept_locs or [location for location in locations if location]
     location_evidence = " ".join(str(part).strip() for part in (location, title) if str(part or "").strip())
-    if not _usable_description_text(description):
+    if require_description and not _usable_description_text(description):
         reasons.append("missing_description")
     if query_specs and not title_matches_any_query(title, query_specs):
         reasons.append("title_mismatch")
