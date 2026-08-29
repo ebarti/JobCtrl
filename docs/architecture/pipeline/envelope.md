@@ -128,7 +128,7 @@ required-step list is never interpreted as proof of no work.
 ### Broad-Board Search Unit Envelope
 
 The `jobspy` source family name remains a compatibility key, but its provider is
-JobStreaming 0.0.4. At activity start, JobCtrl compiles or verifies an immutable
+JobStreaming 0.0.5. At activity start, JobCtrl compiles or verifies an immutable
 ordered plan of query/location/board units under the exact
 `DiscoveryExecutionRef`. Changing the live target-search configuration cannot
 rewrite a retrying execution's persisted plan.
@@ -139,16 +139,22 @@ increments the epoch; every accepted-job write and provider-checkpoint
 compare-and-swap verifies the current fence. This prevents a delayed old worker
 from advancing or canceling work after replacement.
 
-The event order is store, then acknowledge:
+The event order is admit, optionally resolve identity evidence, store, then
+acknowledge:
 
-1. project and filter the JobStreaming event;
-2. atomically persist accepted job/source/event facts and the unit receipt, or
+1. project the JobStreaming event and apply the existing title/location
+   admission policy;
+2. for an admitted, descriptionless LinkedIn card only, request targeted detail
+   when another stored job has the same normalized title and genuine
+   employer; a typed detail failure preserves the sparse lead and safely
+   under-merges it;
+3. atomically persist admitted job/source/event facts and the unit receipt, or
    a hashed filtered-result receipt when caller policy rejects the posting;
-3. acknowledge the exact event, which advances the provider checkpoint; and
-4. derive accepted/filtered progress and the global new-job limit from durable
+4. acknowledge the exact event, which advances the provider checkpoint; and
+5. derive admitted/filtered progress and the global new-job limit from durable
    receipts.
 
-Stopping before step 3 causes at-least-once replay, not lost work. Stable
+Stopping before step 4 causes at-least-once replay, not lost work. Stable
 provider keys and idempotent receipts make that replay harmless. A cursor reset
 is durable intent tied to the acknowledgement revision of its `ErrorEvent`; it
 cannot clear the checkpoint early. Request-fingerprint or cursor-schema

@@ -119,7 +119,7 @@ Broad-board progress uses `search units` as its source-level unit. Its
 `filteredJobs` comes from hashed filtered-result receipts, and `recoveredUnits`
 counts units reclaimed by a newer Temporal activity attempt.
 The TypeScript read model preserves that optional field and Pipelines renders
-it as `N resumed`. JobStreaming 0.0.4 `ProviderProgress` is a separate immutable
+it as `N resumed`. JobStreaming 0.0.5 `ProviderProgress` is a separate immutable
 value inside the source progress: provider, phase, unit, completed/total units,
 raw items seen, emitted jobs, and tri-state continuation. The worker stamps the
 exact Discover workflow/run identity onto the progress event, and Operations

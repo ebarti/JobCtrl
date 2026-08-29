@@ -2160,6 +2160,16 @@ release reduces LinkedIn continuation pacing, uses the observed ten-card page
 contract, stops after a partial final page, and avoids detail work for identities
 already present in the current or resumed provider checkpoint.
 
+Amended (2026-08-29): the provider pin advances to JobStreaming 0.0.5. Provider
+search remains listing-only by default. JobCtrl may request detail for one
+already-known LinkedIn card only after its existing title/location policy admits
+the lead and only when the sparse card could collide with another stored job on
+normalized title and genuine employer. JobStreaming owns that targeted
+transport without changing the search checkpoint; JobCtrl owns the decision,
+content-identity comparison, durable receipt, limit, and acknowledgement. A
+typed detail failure preserves the sparse lead and safely under-merges it rather
+than becoming a suitability filter or a title/employer-only merge.
+
 ## 2026-07-29: Stable Job Identity And Human-Approved Feedback Learning
 
 Status: accepted
