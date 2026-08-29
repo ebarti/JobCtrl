@@ -656,7 +656,7 @@ def test_jobspy_stores_company_and_backfills_existing_job(tmp_path):
         close_connection(db_path)
 
 
-def test_jobspy_store_filters_rows_without_descriptions_before_limit(tmp_path):
+def test_jobspy_store_accepts_listing_without_description_before_limit(tmp_path):
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
@@ -681,8 +681,11 @@ def test_jobspy_store_filters_rows_without_descriptions_before_limit(tmp_path):
         )
 
         assert jobspy.store_jobspy_results(conn, results, "Head of Engineering", limit=1) == (1, 0)
-        urls = {row["url"] for row in conn.execute("SELECT url FROM jobs").fetchall()}
-        assert urls == {"https://www.linkedin.com/jobs/view/with-description"}
+        rows = conn.execute("SELECT url, description FROM jobs").fetchall()
+        assert [(row["url"], row["description"]) for row in rows] == [
+            ("https://www.linkedin.com/jobs/view/no-description", "")
+        ]
+        assert conn.execute("SELECT COUNT(*) FROM job_enrichments").fetchone()[0] == 0
     finally:
         close_connection(db_path)
 
@@ -750,7 +753,7 @@ def test_jobspy_rejects_location_mismatches_before_discovery_persistence(tmp_pat
         close_connection(db_path)
 
 
-def test_jobspy_store_filters_null_description_sentinels(tmp_path):
+def test_jobspy_store_normalizes_null_description_sentinels_for_enrichment(tmp_path):
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
@@ -783,8 +786,10 @@ def test_jobspy_store_filters_null_description_sentinels(tmp_path):
             ]
         )
 
-        assert jobspy.store_jobspy_results(conn, results, "Head of Engineering", limit=10) == (0, 0)
-        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+        assert jobspy.store_jobspy_results(conn, results, "Head of Engineering", limit=10) == (3, 0)
+        descriptions = conn.execute("SELECT description FROM jobs").fetchall()
+        assert [row["description"] for row in descriptions] == ["", "", ""]
+        assert conn.execute("SELECT COUNT(*) FROM job_enrichments").fetchone()[0] == 0
     finally:
         close_connection(db_path)
 

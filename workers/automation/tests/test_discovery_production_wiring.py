@@ -903,7 +903,7 @@ def test_discovery_hygiene_retires_invalid_jobspy_rows(
     assert "location_mismatch" in deleted["https://www.linkedin.com/jobs/view/us-engineering-manager"]
 
 
-def test_discovery_hygiene_treats_serialized_null_descriptions_as_missing(
+def test_discovery_hygiene_retains_jobspy_listing_leads_without_descriptions(
     conn: sqlite3.Connection,
 ) -> None:
     rows = [
@@ -989,22 +989,9 @@ def test_discovery_hygiene_treats_serialized_null_descriptions_as_missing(
         run_id="hygiene:serialized-null",
     )
 
-    assert result["retired_jobs"] == 3
+    assert result["retired_jobs"] == 0
     deleted = _deleted_reasons_by_url(conn)
-    assert "https://www.linkedin.com/jobs/view/valid-head-engineering" not in deleted
-    assert (
-        "https://www.linkedin.com/jobs/view/enrichment-sentinel-with-fallback"
-        not in deleted
-    )
-    assert "missing_description" in deleted[
-        "https://www.linkedin.com/jobs/view/none-description"
-    ]
-    assert "missing_description" in deleted[
-        "https://www.linkedin.com/jobs/view/pandas-na-description"
-    ]
-    assert "missing_description" in deleted[
-        "https://www.linkedin.com/jobs/view/nan-description"
-    ]
+    assert not deleted
 
 
 def test_discovery_hygiene_applies_to_workday_and_smart_extract_rows(

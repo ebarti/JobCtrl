@@ -207,8 +207,10 @@ def store_jobspy_results(
                 salary += f"/{interval}"
 
         description = _nullable_str(row.get("description"))
-        if not (description or "").strip():
-            continue
+        # Discovery metadata explicitly permits an empty listing snippet.
+        # Persist the accepted lead so canonical detail enrichment can fetch
+        # the full description; dropping it here would make listing-only
+        # provider search silently lose otherwise valid jobs.
         site_name = str(row.get("site", source_label))
         is_remote = _truthy_remote(row.get("is_remote", False))
         location_str = normalize_location_display(location_str, is_remote=is_remote)
