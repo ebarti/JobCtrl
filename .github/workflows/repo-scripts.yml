@@ -1,7 +1,7 @@
 name: Repo Scripts
 
 # scripts/*.test.mjs asserts contracts across inputs that sprawl the whole
-# repository: docs launch copy against README/ROADMAP/LAUNCH_CHECKLIST and
+# repository: docs launch copy against README/ROADMAP and
 # .env.example, version parity into launcher.go and the release workflows,
 # demo composition and headers, and the dev supervisor lifecycle. The suite is
 # small and fast, so it runs on every pull request instead of maintaining a
