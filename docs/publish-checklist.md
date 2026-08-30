@@ -70,15 +70,19 @@ proof for a later release.
   single owner-review gate; `release-publication`, `release-verification`, and
   `pypi` retain their scoped credentials or configuration without reviewers.
   The active repository tag ruleset allows only the owner to create, update, or
-  delete `v*` tags. The active `main` ruleset restricts updates to the owner as
-  its sole pull-request bypass actor and blocks collaborator direct, force, and
-  merge updates. It retains the pull-request contribution path without requiring
-  the sole maintainer to obtain an impossible approval from the PR author. GitHub
-  evaluates required-reviewer approval per job, so adding a reviewer to the reused
-  `release-publication` environment would incorrectly request repeated
-  approval for one release. Downstream jobs set `deployment: false`: they keep
-  environment-scoped secrets, variables, tag policy, and OIDC identity without
-  adding misleading deployment records. The live stable R2 pointer resolves to
+  delete `v*` tags. Two active `main` rulesets separate universal history
+  protection from update authority. The no-bypass ruleset requires pull
+  requests, blocks deletion and force pushes, and requires zero approving or
+  CODEOWNER reviews. The update-only ruleset exempts the owner and blocks other
+  writers from direct or merged updates to `main`. Because that exemption is
+  scoped to the update-only ruleset, the owner still uses a normal pull request
+  and remains subject to the universal history protections, while collaborators
+  retain feature-branch and pull-request contribution access.
+  GitHub evaluates required-reviewer approval per job, so adding a reviewer to
+  the reused `release-publication` environment would incorrectly request
+  repeated approval for one release. Downstream jobs set `deployment: false`:
+  they keep environment-scoped secrets, variables, tag policy, and OIDC
+  identity without adding misleading deployment records. The live stable R2 pointer resolves to
   signed sequence 4 and the `v0.1.1` build. The public installer contains
   immutable `v0.1.0` pins, while the signed Homebrew tap formula is `v0.1.1`
   with `version_scheme 1`; the installer version difference remains explicit
@@ -431,25 +435,34 @@ evidence that a live environment secret or variable is absent.
   tag/SHA/main-lineage checks and the signing approval, it prevents a
   collaborator from manufacturing an unauthorized release tag or run. Do not
   require CODEOWNER or approving review on `main` while the repository has only
-  one maintainer, because GitHub does not count an author's self-review. Instead,
-  retain the `main` update restriction with the owner as its sole pull-request
-  bypass actor, so a write collaborator can propose a PR but cannot merge it.
-  The signing approval authorizes the exact run/tag/SHA, and every
-  downstream publication remains fail-closed on the existing `needs`,
+  one maintainer, because GitHub does not count an author's self-review. Keep
+  the universal `main` pull-request, deletion, and non-fast-forward rules in a
+  no-bypass ruleset. Keep the collaborator restriction in a separate
+  update-only ruleset with the owner `exempt`; do not use `pull_request` bypass
+  mode, which turns the owner's ordinary merge into an explicit protection
+  bypass. The split lets collaborators push feature branches and propose pull
+  requests without letting them update `main`, while the owner still cannot
+  direct-push, delete, or force-push `main`. The signing approval authorizes the
+  exact run/tag/SHA, and every downstream publication remains fail-closed on
+  the existing `needs`,
   checksum, signature, provenance, smoke, and compare-and-swap gates. Verify the
   external PyPI Trusted Publisher mapping named in 9.4 rather than replacing it.
 - **Verification.** Read back every environment rule before dispatch:
   `release-signing` has exactly the owner as required reviewer;
   `release-publication`, `release-verification`, and `pypi` have no reviewer;
   all four admit only `v*` tags; the tag ruleset restricts `v*` creation,
-  update, and deletion to the owner; and the active `main` ruleset restricts
-  updates to the owner as its sole pull-request bypass actor while requiring
-  zero approving or CODEOWNER reviews. Verify every non-signing environment
-  reference uses `deployment: false`, leaving the signing gate as the run's only
-  GitHub deployment record. Dispatch at
-  `refs/tags/<release_tag>` so `GITHUB_REF` and `GITHUB_SHA` identify the same
-  audited tag and commit checked by the resolver. Confirm the jobs pause at
-  `release-signing` exactly once, then advance through later publication jobs
+  update, and deletion to the owner; the universal `main` ruleset has no bypass
+  actors and requires pull requests with zero approving or CODEOWNER reviews
+  while blocking deletion and non-fast-forward updates; and the separate
+  update-only ruleset has exactly the owner as an `exempt` actor. Confirm an
+  owner-authored green pull request is normally mergeable without selecting a
+  bypass, while a non-owner writer cannot update `main`. Verify every
+  non-signing environment reference uses `deployment: false`, leaving the
+  signing gate as the run's only GitHub deployment record.
+  Dispatch at `refs/tags/<release_tag>` so `GITHUB_REF` and `GITHUB_SHA`
+  identify the same audited tag and commit checked by the resolver. Confirm the
+  jobs pause at `release-signing` exactly once, then advance through later
+  publication jobs
   without another review request while the workflow's fail-closed input and
   trust-anchor checks pass without printing protected values.
 - **Rollback.** Cancel the release run if an environment rule or protected
