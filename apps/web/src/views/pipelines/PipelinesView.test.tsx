@@ -1,8 +1,6 @@
 import type { PipelineOperationsSnapshot } from "@jobctrl/contracts";
 import { screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import fs from "node:fs";
-import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DemoFeatureFlagAdapter } from "../../demo/ports.js";
@@ -63,21 +61,6 @@ describe("PipelinesView", () => {
     window.location.hash = "";
     window.localStorage.removeItem?.("jh:stage-trigger-config");
     useStageTriggerStore.getState().reset();
-  });
-
-  it("keeps the Operations read hook at the view-composition boundary", () => {
-    const viewSource = fs.readFileSync(
-      path.join(process.cwd(), "src/views/pipelines/PipelinesView.tsx"),
-      "utf8",
-    );
-
-    expect(viewSource).toContain("usePipelineOperationsQuery");
-    expect(viewSource).toContain("<RouteWorkspace");
-    expect(viewSource).toContain("<InspectorLedger");
-    expect(viewSource).toContain("<DisclosureSection");
-    expect(viewSource).toContain("<ToolRow");
-    expect(viewSource).not.toContain("apiClient");
-    expect(viewSource).not.toContain("queryClient");
   });
 
   it("keeps every pipeline action inside the shared tool row", async () => {

@@ -10,63 +10,83 @@
 
 ## Purpose and boundary
 
-A concrete, verifiable checklist for the pending publication actions, each with
-a verification and a rollback note. This checklist **prepares and verifies** the
-steps; it does **not** execute them. The cumulative product-redesign acceptance
-gate is included because the redesigned application, screenshots, and owning
-documentation must be one exact-tree release candidate before publication.
+A concrete, verifiable checklist and historical record for publication actions,
+each with verification and rollback guidance. This checklist does **not** by
+itself authorize or execute a publication. Completed first-publication steps
+remain here as audit history; current state and future-release requirements are
+identified explicitly. The cumulative product-redesign acceptance gate is
+included because the application, screenshots, and owning documentation must be
+one exact-tree release candidate before publication.
 
 The **authoritative release gate is OSS spec §5**
 ([`docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md`](plans/implemented/2026-07-03-oss-release-remediation-spec.md)
 §5 "Release gate — flipping public"). That gate owns the capability and privacy
 preconditions (W0.\* privacy scanner, W1.\* apply safety, W2.\* naming/governance,
 Temporal P1b–P5). This checklist does not duplicate those; it lists only the
-publish *mechanics* that feed the gate. If GitHub cannot start hosted jobs while
-the repository is private, the owner may flip visibility after the complete
-exact-tree local gate passes solely to unblock those runs. The launch record has
-two linked identities: **R**, the immutable tagged-release source SHA/tree and
+publish *mechanics* that feed the gate. The repository visibility transition is
+complete and retained in 9.1 as historical evidence; future releases require
+hosted jobs to execute on the audited public ref. The launch record has two
+linked identities: **R**, the immutable tagged-release source SHA/tree and
 artifact evidence; and **D**, the separate post-release installer/docs commit,
 deployment SHA, and deployment evidence. It replaces an owner-signed
 claims-ledger freeze or any committee-style sign-off as a launch requirement.
 Release tagging, Homebrew stable publication, and PyPI publication remain
 prohibited until the applicable hosted gates execute and pass.
 
-## Owner-only actions (do not execute here)
+## Owner-only publication actions and records
 
 Every state-changing step below is an **owner-only** action. Implementing agents
-prepare and run read-only verification; the repository owner executes. The
-remaining actions are governed by the release gate plus the active bundled
-distribution, public-demo, and end-to-end redesign plans.
+prepare and run read-only verification; the repository owner executes. Completed
+steps are historical records rather than instructions to repeat them. Remaining
+actions are governed by the release gate plus the active bundled-distribution,
+public-demo, and end-to-end redesign plans.
 
 ## Current operational state (recheck at execution time)
 
-This is the **last validated snapshot**, not release evidence. At 2026-07-21,
-`origin/main` was private at `61a3de9d1952ecd75a3f7e7781b20667512718ff`
-(tree `5212c73d90e9c786d9f13c75c6a582ba4b3ef05b`), with no open pull requests
-and no GitHub Releases. More preparation PRs are expected, so this is not a
-final release candidate. The release coordinator must refresh `origin/main`,
-record its final validated SHA and tree, and confirm the exact candidate as the
-final pre-commit/pre-tag coordinator step; do not reuse this snapshot as its
-proof.
+This is the **last validated snapshot**, not release evidence. At 2026-08-28,
+`ebarti/JobCtrl` was public and `origin/main` was
+`726ca08bd893bba2b932cd6b66835a0bf6d56f7f` (tree
+`3cfb19af2d031fed0b565692e3750977ff478099`), with seven open pull requests.
+The latest immutable stable release was
+[`v0.1.1`](https://github.com/ebarti/JobCtrl/releases/tag/v0.1.1), published
+from that commit on 2026-08-25. More PRs are expected, so the release coordinator
+must still refresh `origin/main`, record the final candidate SHA and tree, and
+confirm the exact candidate before each new tag; do not reuse this snapshot as
+proof for a later release.
 
 - The docs and demo are already publicly served by Cloudflare and return HTTP
   200. `DOCS_DEPLOY_ENABLED=true` and `DEMO_DEPLOY_ENABLED=true` are already
   set. Neither site needs an Access change or a visibility cutover.
-- Hosted Actions currently fail before job steps because of the private
-  repository's account state. Do not buy, enable, or otherwise treat hosted
-  execution as a pre-public billing task. After the repository is public,
-  manually rerun the standard hosted workflows on the audited SHA and require
-  actual executed steps.
+- Hosted Actions execute on the public repository. Release-distribution run
+  [`32699712597`](https://github.com/ebarti/JobCtrl/actions/runs/32699712597)
+  completed successfully on the `v0.1.1` source commit. Every future release
+  still requires actual executed hosted steps on its own audited ref; a skipped
+  or zero-step run is not transferable evidence.
 - The signing, Apple Developer ID/notary, R2, and Homebrew environment
   credential names are configured, as are the release public-key variables.
   The PyPI Trusted Publisher is configured and `pypi` already has a `v*` tag
   policy. Never print credential values in this checklist or its evidence.
-- `release-signing`, `release-publication`, and `release-verification` have no
-  deployment protections yet. After the visibility flip, each must require the
-  owner and admit only protected `v*` tags. The live stable R2 pointer is 404,
-  `jobctrl.dev/install.sh` has intentionally empty pins and fails closed, and
-  the Homebrew tap is still a legacy HEAD/source formula. These are expected
-  first-release states, not stable-install evidence.
+- Every release environment admits only `v*` tags. `release-signing` is the
+  single owner-review gate; `release-publication`, `release-verification`, and
+  `pypi` retain their scoped credentials or configuration without reviewers.
+  The active repository tag ruleset allows only the owner to create, update, or
+  delete `v*` tags. Two active `main` rulesets separate universal history
+  protection from update authority. The no-bypass ruleset requires pull
+  requests, blocks deletion and force pushes, and requires zero approving or
+  CODEOWNER reviews. The update-only ruleset exempts the owner and blocks other
+  writers from direct or merged updates to `main`. Because that exemption is
+  scoped to the update-only ruleset, the owner still uses a normal pull request
+  and remains subject to the universal history protections, while collaborators
+  retain feature-branch and pull-request contribution access.
+  GitHub evaluates required-reviewer approval per job, so adding a reviewer to
+  the reused `release-publication` environment would incorrectly request
+  repeated approval for one release. Downstream jobs set `deployment: false`:
+  they keep environment-scoped secrets, variables, tag policy, and OIDC
+  identity without adding misleading deployment records. The live stable R2 pointer resolves to
+  signed sequence 4 and the `v0.1.1` build. The public installer contains
+  immutable `v0.1.0` pins, while the signed Homebrew tap formula is `v0.1.1`
+  with `version_scheme 1`; the installer version difference remains explicit
+  because its docs deployment is a separate record from the immutable release.
 - After the controller-disclosure PR lands, verify the controller and privacy
   contact in the canonical [Public demo disclosure](user/data-and-safety.md#public-demo).
   That page is the sole public source of those factual contact statements; it is
@@ -180,38 +200,25 @@ especially §§11–14. This is a release precondition, not permission to publis
   hide a failed parity, accessibility, safety, or auditability result with a
   cosmetic exception.
 
-### 9.1 — Repository visibility flip (owner-only)
+### 9.1 — Completed repository visibility transition (owner-only history)
 
-- **Preconditions.** The complete 9.0 gate passes on the frozen integration
-  tree, the merged `main` tree is identical, and every release-gate prerequisite
-  below is satisfied. Record the audited `main` SHA **and tree hash**, complete
-  local QA results, and the intended deploy ref in one release record before
-  changing visibility.
-- **Action.** Owner flips `github.com/ebarti/JobCtrl` from private to public.
-- **Verification.**
-  - Before the flip, run the complete local matrix on the exact `main` tree,
-    including strict release/privacy scanning and built-distribution scanning.
-  - Immediately after the flip, rerun Release Privacy Gate, Docs Site, Demo
-    Site, Native Launcher CI, Python CI, and TypeScript CI on that exact `main`
-    SHA. `Sync Homebrew Tap` is reusable only from the later signed-release
-    workflow; it is not a standalone post-flip build gate. A run with zero
-    executed steps is not passing evidence. The current private-repository
-    account failure is expected to occur before steps; rerunning on a public
-    repository is the hosted-execution proof, not a pre-public billing action.
-    If Release Privacy Gate fails after actually executing, return the repository
-    to private while investigating. Any other hosted failure blocks tagging and
-    publication.
-  - `python3 scripts/release_check.py` reports zero findings locally on the
-    exact commit to be published.
-  - Every box in OSS spec §5 is checked, including the final human manual QA
-    (`jobctrl doctor` clean; seeded `/apply-review` approval → dry-run
-    evidence → gated submit; one harness dry-run showing blocked-channel
-    evidence; no real applications).
-- **Rollback.** Flip back to private. **Honest limitation:** anything fetched
-  while the repository was public cannot be recalled, and git history remains
-  reachable — the real mitigation is the pre-flip privacy gate, not rollback.
-  OSS spec §1 records the owner's acceptance of historical blobs remaining
-  reachable.
+- **Status.** Complete. `github.com/ebarti/JobCtrl` is public. The successful
+  hosted workflows and immutable releases listed in the current operational
+  state supersede the pre-public assumption that Actions could not execute.
+- **Historical gate.** The owner made the repository public only after the
+  complete exact-tree local matrix, strict privacy and built-distribution scans,
+  and the OSS spec §5 checks passed. The post-transition Release Privacy Gate,
+  Docs Site, Demo Site, Native Launcher CI, Python CI, and TypeScript CI had to
+  execute real steps on the audited SHA. `Sync Homebrew Tap` remained reusable
+  only from the signed-release workflow.
+- **Future-release rule.** Keep `python3 scripts/release_check.py` at zero
+  findings and require the relevant local and hosted gates to execute on each
+  release's exact SHA. Public visibility is established state, not a step to
+  repeat and not evidence for a new candidate.
+- **Rollback limitation.** Making the repository private would not recall
+  anything already fetched and is not a substitute for the privacy gate. Treat
+  a visibility change as a separate owner incident response decision, not the
+  routine rollback for a failed release.
 
 ### 9.2 — Docs-site deployment verification (owner-only)
 
@@ -253,7 +260,7 @@ especially §§11–14. This is a release precondition, not permission to publis
 
 ### 9.3 — Repository-rename redirect (owner-only)
 
-- **Action.** After the visibility flip, verify GitHub's
+- **Action.** With the repository public, verify GitHub's
   automatic old-URL redirects resolve and confirm that `REPO_URL` in
   `docs/.vitepress/config.ts` and the README badges point at `ebarti/JobCtrl`.
   Repair any stale target and rerun `pnpm docs:build`.
@@ -326,40 +333,15 @@ especially §§11–14. This is a release precondition, not permission to publis
   before the single clean PyPI builder produces checksum-bound distributions.
   The `pypi` job then publishes only those unchanged bytes through OIDC. Verify
   the PyPI package and immutable GitHub Release after the workflow succeeds.
-- **Completed PyPI-only recovery path.** The recovery used
-  `Release distribution` from `main` with the
-  original stable inputs, `release_tag=v2.0.7`, and
-  `pypi_recovery_only=true`. The resolver must require that exact tag and
-  stable channel, prove the tag remains in `main`, and verify the existing
-  immutable public Release before any build. In this mode the workflow must
-  skip signing, notarization, R2 publication, native and Homebrew smoke, stable
-  pointer promotion, Homebrew publication, and GitHub Release publication. It
-  may run only the read-only recovery preflight and the existing
-  `pypi-resolve`, `pypi-build`, and OIDC `publish-pypi` chain. Each downstream
-  PyPI job must explicitly require its direct PyPI dependency to succeed while
-  using `!cancelled()` to override skip propagation from the intentionally
-  skipped release-mutation branch without overriding an operator cancellation.
-  Because the
-  corrected workflow definition exists on `main` while the immutable release
-  tag retains its original workflow, temporarily admit the `main` branch to
-  only the `release-verification` and `pypi` environments for this recovery.
-  Remove those two temporary branch policies immediately after the run reaches
-  a terminal state and verify both environments again admit only `v*` tags.
-  Do not change the policies of `release-signing` or `release-publication`.
-- **Immutable `v0.1.0` PyPI recovery.** Release run `31605551963` successfully
-  published the signed sequence-3 R2 pointer, Homebrew formula, and immutable
-  GitHub Release before the PyPI builder found that the tagged `pyproject.toml`
-  declares a seven-day dependency cutoff while its immutable `uv.lock` records
-  `P8D`. The OIDC publisher did not run. Preserve that tag and release. The
-  recovery workflow dispatched from `main` may admit only the explicitly
-  supported immutable `v2.0.7` and `v0.1.0` releases, must reverify the exact
-  ancestral immutable release before dependencies execute, and for `v0.1.0`
-  must require those exact mismatched records before setting
-  `UV_EXCLUDE_NEWER="8 days"`. `uv --locked` remains mandatory, so the recovery
-  reproduces the tagged lock input without changing dependency versions or
-  checksums. All native signing, R2, pointer, Homebrew, and GitHub publication
-  jobs remain skipped. Main and future release tags must instead carry the
-  regenerated `P7D` lock metadata and pass the static parity regression.
+- **Retired historical PyPI recoveries.** The bounded `v2.0.7` recovery
+  completed in run `30115379507`. The `v0.1.0` recovery reproduced that tag's
+  historical seven-day/`P8D` lock metadata without changing dependency versions
+  or checksums, then completed the already-published package line. Both
+  allowlisted recoveries are finished. The `pypi_recovery_only` input,
+  main-dispatched recovery preflight, skip-propagation conditions, and special
+  dependency branch have therefore been removed. `release-verification` and
+  `pypi` again admit only `v*` tags. A future package correction must use a new
+  audited, higher-sequence signed release rather than republishing from `main`.
 - **Published `v2.0.8` security release.** The signed workflow published
   `v2.0.8` from audited commit
   `92770fe5fcc99e73c0a06e73315acbb7b506a7af` in workflow run
@@ -389,7 +371,6 @@ especially §§11–14. This is a release precondition, not permission to publis
   ```text
   release_tag=v0.1.0
   channel=stable
-  pypi_recovery_only=false
   sequence=3
   minimum_safe_sequence=2
   revoked_build_ids=["2.0.7-db257efe1087ec00ac2ec49b846a95d2423aecc2-darwin-arm64"]
@@ -417,7 +398,6 @@ especially §§11–14. This is a release precondition, not permission to publis
   ```text
   release_tag=v0.1.1
   channel=stable
-  pypi_recovery_only=false
   sequence=4
   minimum_safe_sequence=2
   revoked_build_ids=["2.0.7-db257efe1087ec00ac2ec49b846a95d2423aecc2-darwin-arm64"]
@@ -445,18 +425,45 @@ evidence that a live environment secret or variable is absent.
 - **Action.** Read the live repository and environment-scoped secret/variable
   inventories by name without reading or printing values. If a workflow input
   is genuinely missing, stop and coordinate its provisioning outside this
-  checklist; do not embed key-generation or clipboard commands here. After the
-  visibility flip, require the owner and add a deployment policy matching only
-  protected `v*` tags to `release-signing`, `release-publication`, and
-  `release-verification`. Do not admit branches. `pypi` already has its `v*`
-  tag policy; verify that policy and its external Trusted Publisher mapping
-  named in 9.4 rather than replacing them.
-- **Verification.** Read back every environment rule before dispatch: each
-  `release-*` environment requires owner approval and admits only protected
-  `v*` tags, while `pypi` retains its tag-only policy. Dispatch at
-  `refs/tags/<release_tag>` so `GITHUB_REF` and `GITHUB_SHA` identify the same
-  audited tag and commit checked by the resolver. Confirm the jobs pause at
-  their intended approvals and that the workflow's fail-closed input and
+  checklist; do not embed key-generation or clipboard commands here. Keep the
+  owner as the only reviewer on `release-signing`, where protected signing
+  credentials first enter the run. Keep `release-publication`,
+  `release-verification`, and `pypi` without reviewers; those environments
+  scope credentials or trusted configuration but are not additional human
+  milestones. Every environment must admit only `v*` tags and no branches.
+  Keep the active owner-only `v*` tag ruleset: together with the resolver's exact
+  tag/SHA/main-lineage checks and the signing approval, it prevents a
+  collaborator from manufacturing an unauthorized release tag or run. Do not
+  require CODEOWNER or approving review on `main` while the repository has only
+  one maintainer, because GitHub does not count an author's self-review. Keep
+  the universal `main` pull-request, deletion, and non-fast-forward rules in a
+  no-bypass ruleset. Keep the collaborator restriction in a separate
+  update-only ruleset with the owner `exempt`; do not use `pull_request` bypass
+  mode, which turns the owner's ordinary merge into an explicit protection
+  bypass. The split lets collaborators push feature branches and propose pull
+  requests without letting them update `main`, while the owner still cannot
+  direct-push, delete, or force-push `main`. The signing approval authorizes the
+  exact run/tag/SHA, and every downstream publication remains fail-closed on
+  the existing `needs`,
+  checksum, signature, provenance, smoke, and compare-and-swap gates. Verify the
+  external PyPI Trusted Publisher mapping named in 9.4 rather than replacing it.
+- **Verification.** Read back every environment rule before dispatch:
+  `release-signing` has exactly the owner as required reviewer;
+  `release-publication`, `release-verification`, and `pypi` have no reviewer;
+  all four admit only `v*` tags; the tag ruleset restricts `v*` creation,
+  update, and deletion to the owner; the universal `main` ruleset has no bypass
+  actors and requires pull requests with zero approving or CODEOWNER reviews
+  while blocking deletion and non-fast-forward updates; and the separate
+  update-only ruleset has exactly the owner as an `exempt` actor. Confirm an
+  owner-authored green pull request is normally mergeable without selecting a
+  bypass, while a non-owner writer cannot update `main`. Verify every
+  non-signing environment reference uses `deployment: false`, leaving the
+  signing gate as the run's only GitHub deployment record.
+  Dispatch at `refs/tags/<release_tag>` so `GITHUB_REF` and `GITHUB_SHA`
+  identify the same audited tag and commit checked by the resolver. Confirm the
+  jobs pause at `release-signing` exactly once, then advance through later
+  publication jobs
+  without another review request while the workflow's fail-closed input and
   trust-anchor checks pass without printing protected values.
 - **Rollback.** Cancel the release run if an environment rule or protected
   input check fails. Correct the protection or external publisher mapping, and

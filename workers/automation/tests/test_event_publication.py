@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from jobctrl.database import close_connection, init_db
 from jobctrl.domain.identifiers import generate_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT
@@ -98,3 +100,26 @@ def test_record_job_event_typed_subscriber_only_receives_match(tmp_path: Path) -
 
     assert len(started) == 1
     assert len(completed) == 1
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    ["", "stage_completed", "stageCompleted", "Stage-Completed", "Stage Completed"],
+)
+def test_record_job_event_rejects_non_pascal_case_types(
+    tmp_path: Path,
+    event_type: str,
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+
+    try:
+        job_id = generate_job_id()
+        _seed_job(conn, job_id)
+        with pytest.raises(ValueError, match="PascalCase ASCII identifier"):
+            record_job_event(conn, job_id, "score", event_type)
+
+        count = conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0]
+        assert count == 0
+    finally:
+        close_connection(db_path)

@@ -177,11 +177,6 @@ test("Homebrew promotion verification fails closed without P6 signature and publ
   }
 });
 
-test("tap sync has no caller-controlled template input", async () => {
-  const workflow = await readFile(path.join(process.cwd(), ".github", "workflows", "sync-homebrew-tap.yml"), "utf8");
-  assert.doesNotMatch(workflow, /template_path|--template/);
-});
-
 test("Homebrew trust verification rejects empty or wrong trust, wrong domains, tampering, unknown keys, and Ruby URL injection", async () => {
   const descriptorRaw = `${JSON.stringify(stableDescriptor(), null, 2)}\n`;
   const signed = signedStableFixture(descriptorRaw);

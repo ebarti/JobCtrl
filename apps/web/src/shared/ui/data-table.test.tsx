@@ -1,7 +1,6 @@
 import type { ColumnDef, RowSelectionState, SortingState } from "@tanstack/react-table";
 import { render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import { DataTable } from "./data-table.js";
@@ -127,17 +126,6 @@ describe("DataTable", () => {
     expect(onRowActivate).toHaveBeenCalledTimes(3);
     expect(onRowActivate).toHaveBeenNthCalledWith(1, rows[0]);
     expect(dataRows[1]).toHaveAttribute("aria-selected", "true");
-  });
-
-  it("defines a real CSS visibility and keyboard-focus reveal contract", () => {
-    const css = readFileSync("src/styles/redesign-data.css", "utf8");
-
-    expect(css).toMatch(
-      /\.data-grid-row-activation-button\.row-activation-focus-only,\s*\.table-row-activation-button\.row-activation-focus-only\s*\{[^}]*position:\s*absolute;[^}]*width:\s*1px;[^}]*height:\s*1px;[^}]*overflow:\s*hidden;[^}]*clip:\s*rect\(0, 0, 0, 0\);[^}]*clip-path:\s*inset\(50%\);/s,
-    );
-    expect(css).toMatch(
-      /\.data-grid-row-activation-button\.row-activation-focus-only:focus-visible,\s*\.table-row-activation-button\.row-activation-focus-only:focus-visible\s*\{[^}]*position:\s*static;[^}]*width:\s*auto;[^}]*height:\s*auto;[^}]*overflow:\s*visible;[^}]*clip:\s*auto;[^}]*clip-path:\s*none;[^}]*text-transform:\s*none;/s,
-    );
   });
 
   it("keeps loading, empty, selection, and controlled sorting behavior visible", async () => {

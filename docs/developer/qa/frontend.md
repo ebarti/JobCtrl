@@ -28,9 +28,10 @@ browser behavior, and visual consistency catch different failures.
 The current frontend preset is `base-rhea`: Geist product type, JetBrains Mono
 for technical text, the 10px semantic radius scale, capped 24px cards, neutral
 chart ramps, violet primary/focus tokens, and domain status rendered as an
-icon/dot plus text rather than a colored capsule. Token and contrast tests own
-those values; route code should consume them instead of introducing local
-substitutes.
+icon/dot plus text rather than a colored capsule. Contrast calculations,
+focused primitive behavior, and the rendered token-foundation browser gate own
+those outcomes; route code should consume semantic tokens instead of
+introducing local substitutes.
 
 Interactive behavior belongs to wrappers under `apps/web/src/shared/ui/`.
 `base-ui-migration-boundary.test.ts` must find no direct `@radix-ui/*`
@@ -43,9 +44,12 @@ Use this focused starting point:
 
 ```bash
 corepack pnpm --filter @jobctrl/web exec vitest run \
-  src/styles/token-contract.test.ts \
   src/styles/token-contrast.test.ts \
-  src/shared/ui/base-ui-migration-boundary.test.ts
+  src/shared/ui/base-ui-migration-boundary.test.ts \
+  src/shared/ui/button.test.tsx \
+  src/shared/ui/input.test.tsx \
+  src/shared/ui/select.test.tsx \
+  src/shared/ui/tabs.test.tsx
 ```
 
 ## Token And Primitive Changes

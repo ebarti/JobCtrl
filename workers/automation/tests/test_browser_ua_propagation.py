@@ -40,7 +40,7 @@ from jobctrl.infrastructure.network import (
 )
 from jobctrl.infrastructure.network.politeness import resolve_honest_user_agent
 
-from .politeness_helpers import no_sleep_limiter
+from .politeness_helpers import DenyAllRobots, no_sleep_limiter
 
 OWNER_PRODUCT = "AcmeJobBot"
 OWNER_CONTACT = "https://acme.example/crawler"
@@ -72,10 +72,12 @@ class _Resp:
 
 
 class _RecordingPage:
-    def __init__(self) -> None:
+    def __init__(self, recorder: "_RecordingPlaywright") -> None:
+        self._recorder = recorder
         self.url = "https://example.test/final"
 
     def goto(self, url: str, **_kw: object) -> _Resp:
+        self._recorder.goto_urls.append(url)
         return _Resp()
 
     def wait_for_load_state(self, *_a: object, **_k: object) -> None:
@@ -114,7 +116,7 @@ class _RecordingBrowser:
     def new_page(self, *, user_agent: str | None = None, **_kw: object) -> _RecordingPage:
         if user_agent is not None:
             self._recorder.page_user_agents.append(user_agent)
-        return _RecordingPage()
+        return _RecordingPage(self._recorder)
 
     def close(self) -> None:
         return None
@@ -134,6 +136,7 @@ class _RecordingPlaywright:
     def __init__(self) -> None:
         self.context_user_agents: list[str | None] = []
         self.page_user_agents: list[str | None] = []
+        self.goto_urls: list[str] = []
         self.chromium = _RecordingChromium(self)
 
     def __enter__(self) -> "_RecordingPlaywright":
@@ -217,6 +220,32 @@ def test_playwright_fetcher_context_uses_owner_overridden_ua(
     assert all(ua == expected for ua in robots.seen_user_agents)  # robots == fetch
 
 
+def test_playwright_fetcher_does_not_construct_or_navigate_when_robots_denies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_fetcher_url_safety(monkeypatch)
+    session = PolitenessSession(
+        PolitenessGateway(
+            user_agent=_saved_discovery_identity(),
+            robots=DenyAllRobots(),
+            rate_limiter=no_sleep_limiter(),
+        ),
+        policy=ENRICHMENT_CRAWL_POLICY,
+        budget=RunBudgetCounter(ENRICHMENT_CRAWL_POLICY.max_requests_per_run),
+        context=PolitenessSourceContext(stage="enrich", adapter="test"),
+    )
+    recorder = _RecordingPlaywright()
+    monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: recorder)
+
+    page = PlaywrightDetailPageFetcher(session=session).fetch("https://example.test/jobs/1")
+
+    assert page.status is None
+    assert page.html == ""
+    assert recorder.context_user_agents == []
+    assert recorder.page_user_agents == []
+    assert recorder.goto_urls == []
+
+
 # ---------------------------------------------------------------------------
 # 2) smartextract.collect_page_intelligence (discovery/smartextract.py)
 # ---------------------------------------------------------------------------
@@ -242,6 +271,33 @@ def test_smartextract_page_uses_owner_overridden_ua(monkeypatch: pytest.MonkeyPa
     assert rec.page_user_agents == [expected]  # fetch identity == override
     assert robots.seen_user_agents
     assert all(ua == expected for ua in robots.seen_user_agents)  # robots == fetch
+
+
+def test_smartextract_does_not_navigate_when_robots_denies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_smartextract_url_safety(monkeypatch)
+    session = PolitenessSession(
+        PolitenessGateway(
+            user_agent=_saved_discovery_identity(),
+            robots=DenyAllRobots(),
+            rate_limiter=no_sleep_limiter(),
+        ),
+        policy=SMART_EXTRACT_EXPERIMENTAL_POLICY,
+        budget=RunBudgetCounter(SMART_EXTRACT_EXPERIMENTAL_POLICY.max_requests_per_run),
+        context=PolitenessSourceContext(stage="discover", adapter="smart_extract"),
+    )
+    recorder = _RecordingPlaywright()
+    monkeypatch.setattr(smartextract, "sync_playwright", lambda: recorder)
+
+    intel = smartextract.collect_page_intelligence(
+        "https://example.test/list",
+        session=session,
+    )
+
+    assert intel["page_title"] == ""
+    assert recorder.page_user_agents == [session.user_agent]
+    assert recorder.goto_urls == []
 
 
 # ---------------------------------------------------------------------------

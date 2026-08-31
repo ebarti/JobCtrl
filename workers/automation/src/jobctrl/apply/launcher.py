@@ -86,7 +86,12 @@ from jobctrl.domain.apply.repeat_application import (
     consume_repeat_application_override,
     evaluate_repeat_application,
 )
-from jobctrl.domain.apply.value_objects import ApplyPrompt, ApplyRunId, new_apply_run_id
+from jobctrl.domain.apply.value_objects import (
+    APPROVAL_GATE_REFUSAL_REASONS,
+    ApplyPrompt,
+    ApplyRunId,
+    new_apply_run_id,
+)
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import TenantId
@@ -538,7 +543,7 @@ def _dry_run_completion_binding(
     }
 
 
-def _approval_refusal_reason(
+def _approval_refusal_reason_unchecked(
     conn,
     *,
     tenant_id: str,
@@ -609,6 +614,28 @@ def _approval_refusal_reason(
             return None
         return "override_evidence_invalid"
     return "awaiting_dry_run"
+
+
+def _approval_refusal_reason(
+    conn,
+    *,
+    tenant_id: str,
+    job_id: str,
+    materials_generation: Any,
+    profile_version: int | None,
+    application_url: str,
+) -> str | None:
+    reason = _approval_refusal_reason_unchecked(
+        conn,
+        tenant_id=tenant_id,
+        job_id=job_id,
+        materials_generation=materials_generation,
+        profile_version=profile_version,
+        application_url=application_url,
+    )
+    if reason is not None and reason not in APPROVAL_GATE_REFUSAL_REASONS:
+        raise RuntimeError("apply approval gate produced an unsupported refusal reason")
+    return reason
 
 
 def _load_blocked():

@@ -151,10 +151,9 @@ a view component into a context (or to share helpers between two views
 - An ESLint dependency-cruiser rule enforces the dependency direction:
   `contexts/*` cannot import from `views/*`; `views/*` cannot import
   from other `views/*`.
-- The CODEOWNERS file routes `contexts/` and `views/` to the same
-  reviewer, ensuring boundary-crossing PRs get explicit attention.
-- The legacy-named `JobDetailDrawer` route-workspace example (§8.5) is the canonical reference for
-  composition; new cross-context UI surfaces follow the same pattern.
+- The legacy-named `JobDetailDrawer` route-workspace example (§8.5) is the
+  canonical reference for composition; new cross-context UI surfaces follow
+  the same pattern.
 
 ### R9. Aggressive `staleTime` defaults masking SSE-router bugs
 

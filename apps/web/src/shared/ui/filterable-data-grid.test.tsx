@@ -1,6 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -595,54 +594,4 @@ describe("FilterableDataGrid", () => {
     );
   });
 
-  it("keeps dense grid focus indicators tied to the standard ring token", () => {
-    const css = readFileSync("src/styles/globals.css", "utf8");
-    const redesignCss = readFileSync("src/styles/redesign-data.css", "utf8");
-
-    expect(css).toMatch(/:focus-visible\s*\{[^}]*--ring/s);
-    expect(css).toMatch(
-      /\.data-grid-row-activation-button:focus-visible,[\s\S]*?\.table-row-activation-button:focus-visible\s*\{[^}]*--ring/s,
-    );
-    expect(css).toMatch(
-      /\.data-grid-column-filter-button:focus-visible\s*\{[^}]*--ring/s,
-    );
-    expect(css).toMatch(
-      /\.data-grid-column-resizer:focus-visible\s*\{[^}]*--ring/s,
-    );
-    expect(redesignCss).toMatch(
-      /\.data-grid-column-reorder-handle:focus-visible\s*\{[^}]*--ring/s,
-    );
-
-    const quietTableStatuses = redesignCss.slice(
-      redesignCss.indexOf(".filterable-data-grid-table .stage-pill,"),
-      redesignCss.indexOf(".filterable-data-grid-table .stage-pill::before"),
-    );
-    expect(quietTableStatuses).toContain(
-      ".filterable-data-grid-table .stage-pill",
-    );
-    expect(quietTableStatuses).toContain("border: 0");
-    expect(quietTableStatuses).toContain("border-radius: 0");
-    expect(quietTableStatuses).toContain("background: transparent");
-    expect(quietTableStatuses).toContain("box-shadow: none");
-  });
-
-  it("defines two-column tablet and one-column mobile record reflow", () => {
-    const css = readFileSync("src/styles/redesign-data.css", "utf8");
-    const responsiveRules = css.slice(css.indexOf("Dense records reflow"));
-
-    expect(css).toMatch(
-      /\.filterable-data-grid-table thead th\s*\{[^}]*font-size: var\(--jh-type-label-size\)/s,
-    );
-    expect(css).toMatch(
-      /\.responsive-record-table thead th\s*\{[^}]*font-size: var\(--jh-type-label-size\)/s,
-    );
-    expect(responsiveRules).toMatch(/@media \(max-width: 900px\)/);
-    expect(responsiveRules).toMatch(
-      /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/,
-    );
-    expect(responsiveRules).toMatch(/width: 100% !important/);
-    expect(responsiveRules).toMatch(/overflow-x: clip/);
-    expect(responsiveRules).toMatch(/@media \(max-width: 560px\)/);
-    expect(responsiveRules).toContain(".responsive-record-table");
-  });
 });

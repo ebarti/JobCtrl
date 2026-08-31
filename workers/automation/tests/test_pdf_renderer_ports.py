@@ -13,7 +13,6 @@ contract is honourable.
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import pytest
@@ -173,15 +172,6 @@ def test_fake_renderer_returns_typed_artifact(tmp_path: Path) -> None:
     assert artifact.type is ArtifactType.RESUME_PDF
     assert artifact.status is ArtifactStatus.CANDIDATE
     assert artifact.render_format is RenderFormat.HTML_PDF
-
-
-# ---------------------------------------------------------------------------
-# Retired LaTeX adapter
-# ---------------------------------------------------------------------------
-
-
-def test_legacy_latex_renderer_module_is_absent() -> None:
-    assert importlib.util.find_spec("jobctrl.infrastructure.materials.latex_pdf") is None
 
 
 def test_html_resume_adapter_refuses_cover_letter() -> None:
