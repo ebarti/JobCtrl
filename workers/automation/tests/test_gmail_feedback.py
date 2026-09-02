@@ -12,6 +12,8 @@ from typing import Any
 import pytest
 
 from jobctrl.infrastructure.gmail.feedback import (
+    _apply_run_anchors,
+    _outcome_anchors,
     classify_outcome,
     ensure_application_feedback_tables,
     scan_gmail_feedback,
@@ -185,7 +187,7 @@ def test_linked_body_is_ingested_and_suggested(tmp_path: Path) -> None:
         {
             "suggestionId": summary["suggestions"][0]["suggestionId"],
             "evidenceId": summary["evidence"][0]["evidenceId"],
-            "jobKey": JOB_URL,
+            "jobId": JOB_ID,
             "kind": "applied_confirmation",
             "confidence": pytest.approx(0.9),
         }
@@ -388,11 +390,10 @@ def test_raw_body_is_not_written_to_events_or_summary(tmp_path: Path) -> None:
 
 
 def test_outcome_anchors_join_v7_job_id(tmp_path: Path) -> None:
-    """A v7 application_outcomes row joins jobs by the canonical job_id and
-    yields an anchor (job_key = jobs.url) instead of raising
-    'no such column: o.job_key'."""
+    """Outcome anchors use the tenant-scoped canonical job identity."""
     db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
     create_unstamped_exact_v7_candidate(conn)
     conn.execute(
         """
@@ -406,6 +407,20 @@ def test_outcome_anchors_join_v7_job_id(tmp_path: Path) -> None:
             "Principal Platform Engineer",
             "ExampleCo",
             "https://boards.greenhouse.io/exampleco/jobs/123",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "other",
+            JOB_ID,
+            "https://jobs.example.com/other-tenant-role",
+            "Other Tenant Role",
+            "OtherTenantCo",
+            "https://boards.example.com/other/456",
         ),
     )
     conn.execute(
@@ -424,43 +439,107 @@ def test_outcome_anchors_join_v7_job_id(tmp_path: Path) -> None:
             "2026-06-02T12:01:00+00:00",
         ),
     )
+    conn.execute(
+        """
+        INSERT INTO application_outcomes (
+            tenant_id, outcome_id, job_id, kind, source, occurred_at, recorded_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "other",
+            "outcome-other",
+            JOB_ID,
+            "interview",
+            "gmail",
+            "2026-06-02T12:00:00+00:00",
+            "2026-06-02T12:01:00+00:00",
+        ),
+    )
     conn.commit()
-    conn.close()
+    try:
+        anchors = _outcome_anchors(conn)
+    finally:
+        conn.close()
 
-    client = FakeGmailClient(
+    assert len(anchors) == 1
+    assert anchors[0].job_id == JOB_ID
+    assert anchors[0].job_url == JOB_URL
+    assert anchors[0].company == "ExampleCo"
+
+
+def test_apply_run_anchors_join_v7_tenant_and_job_id(tmp_path: Path) -> None:
+    """Apply-run anchors cannot cross tenants that share a JobId."""
+    db_path = tmp_path / "jobctrl.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    create_unstamped_exact_v7_candidate(conn)
+    conn.executemany(
+        """
+        INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
         [
-            {
-                "id": "no-match",
-                "threadId": "thread-outcome",
-                "subject": "Weekly engineering newsletter",
-                "from": "newsletter@other.example",
-                "to": RECIPIENT,
-                "date": "Tue, 02 Jun 2026 13:00:00 +0000",
-                "snippet": "General career content with no application signal.",
-                "internalDate": str(epoch_ms("2026-06-02T13:00:00+00:00")),
-            }
-        ]
+            (
+                "local",
+                JOB_ID,
+                JOB_URL,
+                "Principal Platform Engineer",
+                "ExampleCo",
+                "https://boards.greenhouse.io/exampleco/jobs/123",
+            ),
+            (
+                "other",
+                JOB_ID,
+                "https://jobs.example.com/other-tenant-role",
+                "Other Tenant Role",
+                "OtherTenantCo",
+                "https://boards.example.com/other/456",
+            ),
+        ],
     )
-
-    summary = scan_gmail_feedback(
-        db_path=db_path,
-        client=client,
-        recipient_email=RECIPIENT,
-        limit=10,
-        max_results_per_anchor=5,
-        window_days=7,
+    conn.executemany(
+        """
+        INSERT INTO apply_run_projections (
+            run_id, tenant_id, job_id, status, result, dry_run, started_at, finished_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                "run-local",
+                "local",
+                JOB_ID,
+                "succeeded",
+                "applied",
+                0,
+                "2026-06-01T10:00:00+00:00",
+                "2026-06-01T10:01:00+00:00",
+            ),
+            (
+                "run-other",
+                "other",
+                JOB_ID,
+                "succeeded",
+                "applied",
+                0,
+                "2026-06-01T10:00:00+00:00",
+                "2026-06-01T10:01:00+00:00",
+            ),
+        ],
     )
+    conn.commit()
+    try:
+        anchors = _apply_run_anchors(conn)
+    finally:
+        conn.close()
 
-    assert summary["ok"] is True
-    # The outcome row is the only anchor source; it must resolve to the job and
-    # drive the search query with the job's company/title.
-    assert summary["scannedAnchorCount"] == 1
-    assert any("ExampleCo" in call["query"] for call in client.search_calls)
+    assert len(anchors) == 1
+    assert anchors[0].job_id == JOB_ID
+    assert anchors[0].job_url == JOB_URL
+    assert anchors[0].company == "ExampleCo"
 
 
-def test_v7_linked_message_writes_canonical_job_id(tmp_path: Path) -> None:
-    """A linked message on a v7 database persists evidence/suggestions keyed by
-    the canonical jobs.job_id instead of the application URL."""
+def test_v7_scan_writes_canonical_job_id_and_sse_event(tmp_path: Path) -> None:
+    """The production scanner persists canonical records and an SSE-ready event."""
     db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
     create_unstamped_exact_v7_candidate(conn)
@@ -531,38 +610,68 @@ def test_v7_linked_message_writes_canonical_job_id(tmp_path: Path) -> None:
         suggestion_job_id = conn.execute(
             "SELECT job_id FROM application_outcome_suggestions"
         ).fetchone()[0]
+        event = conn.execute(
+            """
+            SELECT tenant_id, job_id, identity_version, stage, event_type,
+                   level, message, payload_json
+            FROM job_events
+            WHERE event_type = 'ApplicationEmailFeedbackIngested'
+            """
+        ).fetchone()
     finally:
         conn.close()
     assert evidence_job_id == JOB_ID
     assert suggestion_job_id == JOB_ID
+    assert event is not None
+    assert event[:7] == (
+        "local",
+        JOB_ID,
+        1,
+        "apply",
+        "ApplicationEmailFeedbackIngested",
+        "info",
+        "Application email feedback ingested.",
+    )
+    event_payload = json.loads(event[7])
+    assert set(event_payload) == {
+        "evidenceId",
+        "suggestionId",
+        "provider",
+        "suggestedKind",
+        "classificationConfidence",
+        "linkConfidence",
+        "linkSignals",
+        "stage",
+        "level",
+        "message",
+        "jobId",
+    }
+    assert event_payload["jobId"] == JOB_ID
+    assert event_payload["evidenceId"] == summary["evidence"][0]["evidenceId"]
+    assert event_payload["suggestionId"] == summary["suggestions"][0]["suggestionId"]
+    assert event_payload["stage"] == "apply"
+    assert event_payload["level"] == "info"
+    assert event_payload["message"] == "Application email feedback ingested."
+    assert "tenantId" not in event_payload
+    for legacy_alias in ("jobKey", "job_key", "jobUrl", "job_url", "job_id"):
+        assert legacy_alias not in event_payload
 
 
 def seed_feedback_db(tmp_path: Path) -> Path:
     db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute(
-        """
-        CREATE TABLE jobs (
-            url TEXT PRIMARY KEY,
-            title TEXT,
-            company TEXT,
-            site TEXT,
-            application_url TEXT,
-            applied_at TEXT,
-            apply_status TEXT,
-            discovered_at TEXT
-        )
-        """
-    )
+    create_unstamped_exact_v7_candidate(conn)
     conn.execute(
         """
         INSERT INTO jobs (
-            url, title, company, site, application_url, applied_at,
+            tenant_id, job_id, url, title, company, site, application_url, applied_at,
             apply_status, discovered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            "local",
+            JOB_ID,
             JOB_URL,
             "Principal Platform Engineer",
             "ExampleCo",
@@ -575,31 +684,11 @@ def seed_feedback_db(tmp_path: Path) -> Path:
     )
     conn.execute(
         """
-        CREATE TABLE candidate_profiles (
-            tenant_id TEXT NOT NULL DEFAULT 'local',
-            profile_id TEXT NOT NULL DEFAULT 'default',
-            personal_email TEXT NOT NULL DEFAULT '',
-            PRIMARY KEY (tenant_id, profile_id)
-        )
-        """
-    )
-    conn.execute(
-        "INSERT INTO candidate_profiles (tenant_id, profile_id, personal_email) VALUES (?, ?, ?)",
-        ("local", "default", RECIPIENT),
-    )
-    conn.execute(
-        """
-        CREATE TABLE job_events (
-            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_url TEXT,
-            stage TEXT,
-            event_type TEXT NOT NULL DEFAULT '',
-            level TEXT NOT NULL DEFAULT 'info',
-            message TEXT,
-            occurred_at TEXT NOT NULL,
-            payload_json TEXT
-        )
-        """
+        INSERT INTO candidate_profiles (
+            tenant_id, profile_id, personal_email, updated_at
+        ) VALUES (?, ?, ?, ?)
+        """,
+        ("local", "default", RECIPIENT, "2026-06-01T09:00:00+00:00"),
     )
     ensure_application_feedback_tables(conn)
     conn.commit()
@@ -613,7 +702,7 @@ def seed_existing_evidence(db_path: Path, *, provider_message_id: str) -> None:
     conn.execute(
         """
         INSERT INTO application_email_evidence (
-            tenant_id, evidence_id, job_key, provider, provider_message_id,
+            tenant_id, evidence_id, job_id, provider, provider_message_id,
             provider_thread_id, from_address, to_addresses_json, subject, snippet,
             received_at, linked_at, link_confidence, link_signals_json,
             body_text, body_sha256, body_stored_at
@@ -622,7 +711,7 @@ def seed_existing_evidence(db_path: Path, *, provider_message_id: str) -> None:
         (
             "local",
             "existing-evidence",
-            JOB_URL,
+            JOB_ID,
             "gmail",
             provider_message_id,
             "thread-dupe",

@@ -752,6 +752,28 @@ describe("local TypeScript API", () => {
         notePresent: false,
       }),
     );
+    // The production scanner regression in test_gmail_feedback.py pins this
+    // exact stored row shape. This side verifies that SSE preserves it.
+    const gmailFeedback = insertEvent.run(
+      "local",
+      jobId,
+      "apply",
+      "ApplicationEmailFeedbackIngested",
+      occurredAt,
+      JSON.stringify({
+        evidenceId: "evidence-gmail-1",
+        suggestionId: "suggestion-gmail-1",
+        provider: "gmail",
+        suggestedKind: "interview",
+        classificationConfidence: 0.9,
+        linkConfidence: 0.84,
+        linkSignals: ["recipient", "time_window", "company"],
+        stage: "apply",
+        level: "info",
+        message: "Application email feedback ingested.",
+        jobId,
+      }),
+    );
     const canonical = insertEvent.run(
       "local",
       jobId,
@@ -786,6 +808,9 @@ describe("local TypeScript API", () => {
     expect(streamed).toContain("event: ApplicationOutcomeRecorded");
     expect(streamed).toContain("outcome-historical");
     expect(streamed).toContain(`\"occurredAt\":\"${outcomeOccurredAt}\"`);
+    expect(streamed).toContain(`id: ${String(gmailFeedback.lastInsertRowid)}`);
+    expect(streamed).toContain("event: ApplicationEmailFeedbackIngested");
+    expect(streamed).toContain("evidence-gmail-1");
     expect(streamed).not.toContain("event: ProfileUpdated");
     expect(streamed).not.toContain("\"jobKey\"");
     expect(streamed).not.toContain("legacy-timestamp");
