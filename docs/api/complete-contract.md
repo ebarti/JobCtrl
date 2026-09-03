@@ -964,8 +964,8 @@ verification-code MCP server:
 - `POST /v1/outcomes/gmail/scan` runs a bounded Gmail feedback scan over known
   application anchors. The request accepts optional `recipientEmail`, `limit`,
   `maxResultsPerAnchor`, and `windowDays` values. The response returns counts
-  plus evidence/suggestion IDs, job keys, kinds, and confidence values only; it
-  never returns raw Gmail body text.
+  plus evidence/suggestion IDs, canonical `jobId` values, kinds, and confidence
+  values only; it never returns raw Gmail body text.
 
 The web review queue records approval facts only. `approve_submit` is bound to
 the material, profile, URL, and dry-run evidence shown in Apply Review; stale

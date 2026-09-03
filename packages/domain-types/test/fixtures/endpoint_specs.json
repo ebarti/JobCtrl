@@ -1998,7 +1998,7 @@
                 "evidenceId": {
                   "type": "string"
                 },
-                "jobKey": {
+                "jobId": {
                   "type": "string"
                 },
                 "providerMessageId": {
@@ -2010,7 +2010,7 @@
               },
               "required": [
                 "evidenceId",
-                "jobKey",
+                "jobId",
                 "providerMessageId",
                 "linkConfidence"
               ],
@@ -2028,7 +2028,7 @@
                 "evidenceId": {
                   "type": "string"
                 },
-                "jobKey": {
+                "jobId": {
                   "type": "string"
                 },
                 "kind": {
@@ -2053,7 +2053,7 @@
               "required": [
                 "suggestionId",
                 "evidenceId",
-                "jobKey",
+                "jobId",
                 "kind",
                 "confidence"
               ],

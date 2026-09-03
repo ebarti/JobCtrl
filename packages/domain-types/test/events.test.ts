@@ -848,7 +848,7 @@ describe("All events carry tenantId", () => {
       }),
     () =>
       createApplicationEmailFeedbackIngested(LOCAL_TENANT, {
-        jobKey: "j1",
+        jobId: "j1",
         evidenceId: "e1",
         suggestionId: "s1",
         provider: "gmail",
@@ -1174,7 +1174,7 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         reasonPresent: false,
       }).eventType,
       createApplicationEmailFeedbackIngested(LOCAL_TENANT, {
-        jobKey: "j",
+        jobId: "j",
         evidenceId: "e",
         suggestionId: "s",
         provider: "gmail",

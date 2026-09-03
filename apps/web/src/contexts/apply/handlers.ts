@@ -60,7 +60,7 @@ export const applicationEmailFeedbackIngestedHandler = (
   event: ApplicationEmailFeedbackIngested,
 ): readonly InvalidationItem[] => [
   invalidate(outcomesKeys.lists(event.tenantId)),
-  invalidate(outcomesKeys.detail(event.tenantId, event.payload.jobKey)),
+  invalidate(outcomesKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(applyReviewKeys.queue(event.tenantId)),
   invalidate(analyticsKeys.all(event.tenantId)),
 ];

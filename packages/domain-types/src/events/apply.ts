@@ -124,7 +124,7 @@ export function createEmailApplicationCandidateRecorded(
 // -- ApplicationEmailFeedbackIngested ---------------------------------------
 
 export interface ApplicationEmailFeedbackIngestedPayload {
-  readonly jobKey: string;
+  readonly jobId: string;
   readonly evidenceId: string;
   readonly suggestionId: string;
   readonly provider: "gmail";
