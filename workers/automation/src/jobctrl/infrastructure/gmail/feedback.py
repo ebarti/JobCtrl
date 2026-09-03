@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
+from jobctrl.domain.events.base import DomainEvent
+from jobctrl.domain.ports.events import EventHandler, EventPublisher, Subscription
 from jobctrl.infrastructure.gmail.client import GmailClient
 from jobctrl.state import record_job_event
 
@@ -76,6 +78,23 @@ class GmailFeedbackClient(Protocol):
         """Read a full Gmail message after metadata has been linked."""
 
 
+class _BufferedEventPublisher:
+    """Hold notifications until the linked-message transaction commits."""
+
+    def __init__(self) -> None:
+        self.events: list[DomainEvent] = []
+
+    def publish(self, event: DomainEvent) -> None:
+        self.events.append(event)
+
+    def subscribe(
+        self,
+        _event_type: str | None,
+        _handler: EventHandler,
+    ) -> Subscription:
+        raise RuntimeError("buffered event publisher does not accept subscriptions")
+
+
 @dataclass(frozen=True)
 class ApplicationAnchor:
     job_id: str
@@ -126,10 +145,16 @@ def scan_gmail_feedback(
     )
 
     conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=10000")
-    gmail = client or GmailClient()
     try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=10000")
+        conn.execute("PRAGMA foreign_keys=ON")
+        if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise GmailFeedbackError(
+                "Gmail feedback scan requires SQLite foreign-key enforcement."
+            )
+
+        gmail = client or GmailClient()
         ensure_application_feedback_tables(conn)
         recipient = (recipient_email or _profile_email(conn)).strip().lower()
         if not recipient or not _EMAIL_RE.match(recipient):
@@ -187,38 +212,56 @@ def scan_gmail_feedback(
                     continue
 
                 full_message = gmail.read_email(message_id=message_id)
-                evidence = _store_linked_message(
-                    conn=conn,
-                    anchor=anchor,
-                    metadata=metadata,
-                    full_message=full_message,
-                    decision=decision,
-                    linked_at=now,
-                )
                 classification = classify_outcome(
-                    subject=evidence["subject"] or "",
-                    snippet=evidence["snippet"] or "",
+                    subject=_text(full_message.get("subject") or metadata.get("subject")),
+                    snippet=_text(full_message.get("snippet") or metadata.get("snippet")),
                     body_text=_text(full_message.get("body_text")),
                 )
-                suggestion = _store_suggestion(
-                    conn=conn,
-                    anchor=anchor,
-                    evidence_id=evidence["evidenceId"],
-                    provider_message_id=message_id,
-                    classification=classification,
-                    created_at=now,
-                )
-                _record_safe_event(
-                    conn,
-                    job_id=anchor.job_id,
-                    evidence_id=evidence["evidenceId"],
-                    suggestion_id=suggestion["suggestionId"],
-                    classification=classification,
-                    link_confidence=evidence["linkConfidence"],
-                    signals=decision.signals,
-                    occurred_at=now,
-                )
-                conn.commit()
+                publisher = _BufferedEventPublisher()
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    if not _job_exists(conn, anchor.job_id):
+                        conn.rollback()
+                        summary["unlinkedCandidateCount"] += 1
+                        continue
+                    if _provider_message_exists(conn, message_id):
+                        conn.rollback()
+                        summary["duplicateMessageCount"] += 1
+                        continue
+
+                    evidence = _store_linked_message(
+                        conn=conn,
+                        anchor=anchor,
+                        metadata=metadata,
+                        full_message=full_message,
+                        decision=decision,
+                        linked_at=now,
+                    )
+                    suggestion = _store_suggestion(
+                        conn=conn,
+                        anchor=anchor,
+                        evidence_id=evidence["evidenceId"],
+                        provider_message_id=message_id,
+                        classification=classification,
+                        created_at=now,
+                    )
+                    _record_safe_event(
+                        conn,
+                        job_id=anchor.job_id,
+                        evidence_id=evidence["evidenceId"],
+                        suggestion_id=suggestion["suggestionId"],
+                        classification=classification,
+                        link_confidence=evidence["linkConfidence"],
+                        signals=decision.signals,
+                        occurred_at=now,
+                        publisher=publisher,
+                    )
+                    conn.commit()
+                except BaseException:
+                    if conn.in_transaction:
+                        conn.rollback()
+                    raise
+                _publish_committed_events(publisher)
 
                 summary["linkedEvidenceCount"] += 1
                 if suggestion["created"]:
@@ -519,6 +562,7 @@ def _record_safe_event(
     link_confidence: float,
     signals: tuple[str, ...],
     occurred_at: datetime,
+    publisher: EventPublisher,
 ) -> None:
     if not _table_exists(conn, "job_events"):
         return
@@ -539,7 +583,18 @@ def _record_safe_event(
             "linkConfidence": link_confidence,
             "linkSignals": list(signals),
         },
+        publisher=publisher,
     )
+
+
+def _publish_committed_events(publisher: _BufferedEventPublisher) -> None:
+    if not publisher.events:
+        return
+    from jobctrl.infrastructure.events import get_default_publisher
+
+    destination = get_default_publisher()
+    for event in publisher.events:
+        destination.publish(event)
 
 
 def _link_metadata(
@@ -711,9 +766,9 @@ def _anchor_query(anchor: ApplicationAnchor) -> str:
     hints: list[str] = []
     hints.extend(_name_tokens(anchor.company))
     hints.extend(_title_tokens(anchor.title))
-    hints.extend(_application_url_tokens(anchor.job_url))
     hints.extend(_application_url_tokens(anchor.application_url))
     hints.extend(hint for hint in _ATS_HINTS if hint in anchor.application_url.lower())
+    hints.extend(_application_url_tokens(anchor.job_url))
     return " ".join(_dedupe(hints))
 
 
@@ -741,6 +796,19 @@ def _provider_message_exists(conn: sqlite3.Connection, provider_message_id: str)
         LIMIT 1
         """,
         (TENANT_ID, PROVIDER, provider_message_id),
+    ).fetchone()
+    return row is not None
+
+
+def _job_exists(conn: sqlite3.Connection, job_id: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM jobs
+        WHERE tenant_id = ? AND job_id = ?
+        LIMIT 1
+        """,
+        (TENANT_ID, job_id),
     ).fetchone()
     return row is not None
 
