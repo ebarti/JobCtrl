@@ -21,7 +21,7 @@ Unless overridden by `JOBCTRL_DIR`, the local authority root is
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated and separately acquired provider runtime state. |
 | `tailored_resumes/`, `cover_letters/`, `logs/` | Generated material and logs registered by SQLite metadata where applicable. |
 | `browser-profiles/`, `extension-capability-token`, `chrome-workers/`, `apply-workers/` | Consented copied profiles, extension pairing, and browser/apply execution state. Browser-adoption metadata is in `config.json`. |
-| `backups/` and legacy `resume.*` / style files | User-created database snapshots and pre-migration resume inputs. |
+| `backups/` and legacy `resume.*` / style files | User-created database snapshots, guarded job-data-purge recovery bundles, and pre-migration resume inputs. |
 
 Developer supervisors additionally use checkout-local `.dev/` process, log,
 and Temporal files; those are not installed-user authorities but remain
@@ -86,6 +86,19 @@ preferred model IDs, and Levels.fyi/Glassdoor enablement, access-basis, and
 licensed-feed coverage policy. Public Levels.fyi Markdown needs no credential.
 Credentials, feed paths/URLs, feed contents, and provider payloads do not belong
 in the settings file.
+
+The guarded job-data purge uses aggregate ownership rather than table age. The
+Job graph, generated Materials, Apply/job projections, and the job/Discovery
+execution ledger (runs, search units, membership/recovery rows, pipeline steps,
+job-workflow projections, lifecycle/stage events, source-quality summaries, and
+operational-attempt metrics whose stage is `discover`, `enrich`, `score`,
+`tailor`, `cover`, or `apply`) are one deletion boundary because retaining the
+latter can recreate a projection, bias source scheduling, or retry work for a
+deleted Job. Candidate Profile, Discovery settings, source registry,
+templates/policies, contacts/outreach, unrelated workflow history, and
+operational-attempt metrics from non-job stages are separate authorities and
+remain. Bundled Temporal history is outside this command; the pre-purge
+database and archived files remain recoverable under `backups/`.
 
 ### Exact v9 runtime and compatible cutovers
 

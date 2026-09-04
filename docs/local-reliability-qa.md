@@ -22,11 +22,32 @@ final PR, then run product QA on the cumulative stack.
 | Public demo edge | `corepack pnpm demo-edge:check`, `corepack pnpm demo-edge:test`, and `corepack pnpm demo-edge:dry-run` |
 | Python worker | `uv --project workers/automation run --locked --all-extras ruff check .` and `uv --project workers/automation run --locked --all-extras pytest -q` |
 | SQLite schema or native migration | Focused Python schema/candidate tests, `corepack pnpm api:check`, `corepack pnpm api:test`, `corepack pnpm launcher:check`, and `corepack pnpm launcher:test` |
+| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then run inventory, confirmed purge, and a second inventory against a disposable exact-v9 workspace only |
 | Any patch | `git diff --check` |
 
 Start the attached full stack with `corepack pnpm dev` when the path needs the
 API, Temporal, worker, and web app together. Confirm `GET /v1/health` reports a
 healthy worker before starting worker-backed stages.
+
+For the job-data purge gate, the disposable workspace must contain a Candidate
+Profile, Discovery settings, source registry, resume template/default, at least
+one Job with registered Materials, an unregistered generated candidate, a
+generated cover letter, a registered job log, `config.json`, a baseline resume
+outside the generated directories, and a terminal Discover execution with a
+retrying recovery manifest, search unit, pipeline step, and lifecycle events.
+Seed source-quality state and a `discover` operational attempt for that run.
+Seed an unrelated maintenance workflow, a `stage = operations` attempt, and
+Profile/source events as preservation controls. Prove the dry run is read-only;
+the confirmed command creates a readable exact-schema backup, removes the
+complete Job graph and job/Discovery execution ledger, archives both registered
+and unregistered generated material, compacts the database, preserves every
+profile/search/template/config byte and the unrelated controls, and is
+idempotent. Also reproduce the post-purge edge case with zero Jobs but the old
+Discover ledger still present: the command must not report a no-op, and a second
+inventory must report zero execution/history rows while the unrelated
+operational attempt remains. Separately prove active work and an artifact path
+outside the owned generated-data roots fail before any backup or mutation.
+Never run this QA gate against a real user workspace.
 
 ## Pull-request CI
 

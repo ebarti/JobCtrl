@@ -155,6 +155,36 @@ processes launch. Use the printed web URL rather than assuming `5173`, because
 Vite can bind a higher port when another local JobCtrl web server is already
 using the requested port.
 
+### Purge A Source Workspace's Job Data
+
+This internal maintenance command is intended for disposable test workspaces
+and deliberate local reset work. `corepack pnpm data:purge-jobs` is read-only
+unless it receives the exact confirmation phrase. Use it first to resolve and
+count the target workspace:
+
+```bash
+corepack pnpm data:purge-jobs --app-dir /path/to/disposable-jobctrl-dir
+```
+
+Before execution, stop every JobCtrl process using that workspace and verify
+that no API or worker from another worktree still has `jobctrl.db` open. Then
+run:
+
+```bash
+corepack pnpm data:purge-jobs --app-dir /path/to/disposable-jobctrl-dir \
+  --confirm DELETE-ALL-JOB-DATA
+```
+
+The command backs up first, purges the exact-v9 local Job graph, archives live
+generated resume/cover-letter entries and registered job logs, removes the
+job/Discovery execution ledger, source-quality summaries, job-stage operational
+attempts, and projection-rebuilding lifecycle events, compacts SQLite, and
+checks that profile/templates/Discovery settings/Settings fingerprints did not
+change. It preserves unrelated Profile, source-control, contact/outreach,
+maintenance-workflow history, and non-job operational attempts. It is not a
+Temporal-history or secure-erasure command. The owning boundary is documented
+in [Storage](architecture/storage.md).
+
 Run individual components only when troubleshooting a specific process:
 
 ```bash
