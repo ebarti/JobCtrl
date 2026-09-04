@@ -18,6 +18,7 @@
     "dev:logs": "scripts/dev logs",
     "api:dev": "corepack pnpm --filter @jobctrl/api dev",
     "api:start": "corepack pnpm --filter @jobctrl/api start",
+    "data:purge-jobs": "corepack pnpm --filter @jobctrl/api data:purge-jobs",
     "api:check": "corepack pnpm --filter @jobctrl/api check",
     "api:test": "corepack pnpm --filter @jobctrl/api test",
     "web:check": "corepack pnpm --filter @jobctrl/web check",
